@@ -529,6 +529,7 @@ class TestToolNameNormalization:
         from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
 
         assert normalize_tool_name("Write-File") == "write_file"
+        assert normalize_tool_name("create") == "write_file"
         assert normalize_tool_name("readFile") == "read_file"
         assert normalize_tool_name("fs.read_file") == "read_file"
         assert normalize_tool_name("tools.repo-rg") == "repo_rg"

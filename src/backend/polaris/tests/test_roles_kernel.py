@@ -231,6 +231,44 @@ class TestRoleToolGateway:
         assert result["success"] is True
         assert result["tool"] == "repo_read_head"
 
+    def test_execute_tools_canonicalizes_llm_create_file_before_gateway_auth(
+        self,
+        registry,
+        temp_workspace,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Batch execution receives parser-level LLM calls and canonicalizes aliases before auth."""
+        director_profile = registry.get_profile("director")
+        gateway = RoleToolGateway(director_profile, temp_workspace)
+
+        class _FakeExecutor:
+            def __init__(self, workspace: str, **_kwargs) -> None:
+                self.workspace = workspace
+
+            def execute(self, tool_name: str, tool_args: dict):
+                return {"ok": True, "result": {"tool": tool_name, "args": tool_args}}
+
+        import polaris.kernelone.llm.toolkit as llm_toolkit_module
+
+        monkeypatch.setattr(llm_toolkit_module, "AgentAccelToolExecutor", _FakeExecutor)
+
+        results = gateway.execute_tools(
+            [
+                {
+                    "tool": "create_file",
+                    "args": {"path": "src/app.py", "content": "print('ok')\n"},
+                }
+            ]
+        )
+
+        assert results[0]["success"] is True
+        assert results[0]["tool"] == "write_file"
+        assert results[0]["result"]["tool"] == "write_file"
+        assert results[0]["result"]["args"] == {
+            "file": "src/app.py",
+            "content": "print('ok')\n",
+        }
+
     def test_execution_count_is_turn_scoped_after_reset(
         self,
         registry,

@@ -81,13 +81,26 @@ class ToolCallResult:
 
     def __post_init__(self) -> None:
         """初始化时创建canonical ToolCall"""
-        if self._canonical is None:
-            self._canonical = ToolCall(
-                id=f"kernel_{self.tool}_{uuid.uuid4().hex[:8]}",
-                name=str(self.tool or "").strip().lower(),
-                arguments=dict(self.args) if isinstance(self.args, dict) else {},
-                source="kernel_parser",
-            )
+        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments, normalize_tool_name
+
+        raw_tool_name = str(self.tool or "").strip().lower()
+        raw_args = self.args if isinstance(self.args, dict) else {}
+        resolved_name = normalize_tool_name(raw_tool_name)
+        if resolved_name == "write_file" and raw_tool_name != "write_file":
+            self.tool = resolved_name
+            self.args = normalize_tool_arguments(resolved_name, raw_args)
+        else:
+            self.tool = raw_tool_name
+            self.args = dict(raw_args)
+        existing = self._canonical
+        self._canonical = ToolCall(
+            id=existing.id if existing is not None else f"kernel_{self.tool}_{uuid.uuid4().hex[:8]}",
+            name=self.tool,
+            arguments=dict(self.args),
+            source=existing.source if existing is not None else "kernel_parser",
+            raw=existing.raw if existing is not None else "",
+            parse_error=existing.parse_error if existing is not None else None,
+        )
 
     @property
     def name(self) -> str:

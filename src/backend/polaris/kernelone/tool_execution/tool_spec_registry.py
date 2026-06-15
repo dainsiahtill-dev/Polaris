@@ -1019,7 +1019,7 @@ _BUILTIN_REGISTRY: dict[str, dict[str, Any]] = {
         "category": "write",
         "description": "Write content to a file, replacing the entire file. "
         "For partial modifications (changing specific lines), use edit_file or precision_edit instead.",
-        "aliases": ["create_file", "new_file"],
+        "aliases": ["create_file", "new_file", "create"],
         # Content-body synonyms (weak/diverse-LLM adaptation, 2026-06-15): weak Directors
         # routinely emit the file body under a non-`content` key (text/body/code/...). These
         # aliases resolve to `content` in normalize_tool_arguments BEFORE _drop_unknown_arguments

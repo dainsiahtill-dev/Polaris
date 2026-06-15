@@ -57,6 +57,11 @@ normalization could turn a benign-looking call into something the model did not 
 - [LANDED 2026-06-16] Textual recovery also accepts explicitly marker-bounded XML/Pythonic blocks
   such as `<tool_call>repo_read_head(file="src/a.py", n=50)</tool_call>`. This reuses the same
   keyword-only literal parser and does not scan arbitrary prose for `tool(args)` calls.
+- [LANDED 2026-06-16] Parse-phase `ToolCallResult` and legacy batch gateway execution canonicalize
+  registered LLM tool-name aliases before the single-tool authorization gate. This lets
+  `create_file`/`new_file`/`create` arrive at `RoleToolGateway.execute_tool()` as canonical `write_file`
+  while preserving the gate invariant that direct single-tool calls are checked before alias
+  normalization.
 
 ---
 

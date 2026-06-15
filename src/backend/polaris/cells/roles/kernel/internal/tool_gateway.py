@@ -569,15 +569,23 @@ class RoleToolGateway:
         for call in tool_calls:
             tool_name = call.get("tool") or call.get("name", "")
             tool_args = call.get("args") or call.get("arguments", {})
+            requested_name = str(tool_name or "").strip()
+            canonical_tool_name = self._normalize_tool_name(requested_name)
+            if canonical_tool_name == "write_file" and requested_name.lower() != "write_file":
+                execution_tool_name = canonical_tool_name
+                execution_tool_args = self._normalize_tool_args(canonical_tool_name, tool_args)
+            else:
+                execution_tool_name = requested_name
+                execution_tool_args = tool_args
 
             try:
-                result = self.execute_tool(tool_name, tool_args)
+                result = self.execute_tool(execution_tool_name, execution_tool_args)
                 results.append(result)
             except ToolAuthorizationError as e:
                 results.append(
                     {
                         "success": False,
-                        "tool": tool_name,
+                        "tool": execution_tool_name,
                         "error": str(e),
                         "authorized": False,
                     }

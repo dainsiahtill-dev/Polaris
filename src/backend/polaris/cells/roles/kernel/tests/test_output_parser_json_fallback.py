@@ -13,11 +13,27 @@ from __future__ import annotations
 
 import json
 
-from polaris.cells.roles.kernel.internal.output_parser import OutputParser
+from polaris.cells.roles.kernel.internal.output_parser import OutputParser, ToolCallResult
 
 
 class TestOutputParserJSONFallbackNormal:
     """Normal scenario tests: valid JSON tool calls in text."""
+
+    def test_tool_call_result_canonicalizes_create_file_alias(self) -> None:
+        """Parse-phase ToolCallResult should canonicalize LLM tool-name aliases."""
+        result = ToolCallResult(
+            tool="create_file",
+            args={"path": "src/app.py", "content": "print('ok')\n"},
+        )
+
+        assert result.tool == "write_file"
+        assert result.name == "write_file"
+        canonical = result.to_canonical()
+        assert canonical.name == "write_file"
+        assert canonical.arguments == {
+            "file": "src/app.py",
+            "content": "print('ok')\n",
+        }
 
     def test_native_calls_take_precedence_over_json(self) -> None:
         """Native tool calls should be returned before JSON fallback."""
