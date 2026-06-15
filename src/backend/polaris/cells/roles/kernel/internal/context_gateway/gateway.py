@@ -63,6 +63,16 @@ _CONTROL_PLANE_CONTEXT_KEYS = {
     # message and, alongside an uncapped value, were the dominant BudgetExceededError.
     "disable_internal_tool_rounds",
     "llm_call_timeout_seconds",
+    # Signal-rendered planes (2026-06-15): these are injected for the Director's
+    # BlueprintStepsSignal card (_get_blueprint_step renders them concisely) and must
+    # NOT be ALSO serialized verbatim into the context_override message — that was a
+    # 2143-token duplicate of construction_step (worsened by the P1 anchor contract)
+    # that blew the budget and crashed the Director turn (BudgetExceededError, Director
+    # barely ran). The signal reads them directly from context_override, not the message.
+    "construction_step",
+    "consumed_interfaces",
+    "pre_state_verify",
+    "last_failure",
     "domain",
     "factory_run_id",
     "host_kind",
@@ -1282,6 +1292,20 @@ class RoleContextGateway:
                 "一次 write_file 写完全部空桩即可，务必极简以一轮落盘"
                 "（试图实现整套逻辑会超出输出预算被截断、导致本步零落盘失败）。"
             )
+            # P2 (deterministic file-assembly protocol): the skeleton is the interface
+            # LAW. It must emit the COMPLETE file shell + one anchor marker per body so
+            # the fill steps are scoped patches a merger applies (P3) — not whole-file
+            # rewrites the weak model re-derives from memory every turn.
+            if step.get("file_shell_required"):
+                anchor_ids = [str(a).strip() for a in (step.get("anchor_ids") or []) if str(a).strip()]
+                lines.append(
+                    "[骨架=接口法律] 你的输出就是这个文件的接口契约，后续填充步只能在你定的锚点里填实现。必须包含："
+                    "①全部 import/require 与 export；②全局状态/常量/配置对象；③（前端）DOM 容器与事件绑定接口、元素 id；"
+                    "④上面每个签名的最小空桩。并在每个函数体处放一个锚点标记："
+                    "JS/TS: `// @anchor:函数名` 单独成行写在空函数体内；Python: `# @anchor:函数名`。"
+                    + (f"必须为这些锚点各放一个标记：{', '.join(anchor_ids)}。" if anchor_ids else "")
+                    + "只写外壳+空桩+锚点,不实现任何逻辑。"
+                )
         # Fill step (I3-r31): without this the weak model tries to implement the WHOLE
         # file at once (truncates) or stuffs prose into edit_blocks. Force a bounded,
         # code-only, anchored edit of ONLY this fill's assigned functions.
@@ -1289,12 +1313,28 @@ class RoleContextGateway:
             lines.append(
                 "[填充步·只实现被分配的函数] 本步只实现上面 signatures 列出的这几个函数/方法的函数体，"
                 "其它桩一律别动、也别实现。做法：先 read_file 看到这几个函数当前的空桩原文，"
-                "再用 edit_blocks 对每个函数各做一次 SEARCH/REPLACE"
-                "（SEARCH=空桩原文逐字照抄，REPLACE=实现后的完整函数）。"
+                "再用 edit_blocks 对每个函数各做一次 SEARCH/REPLACE。"
+                # P2.1 (codex 2026-06-15): the new assembly protocol is anchor-scoped, so
+                # the REPLACE must NOT be a free whole-function swap that drops the @anchor
+                # or alters the signature — that is exactly what the P3 merger rejects.
+                "优先只替换锚点函数体内部的实现；"
+                "若替换整个函数，函数签名必须逐字不变、`@anchor:` 标记必须原样保留。"
                 "edit_blocks 的 blocks/replace 参数里只放纯代码——严禁任何说明/计划/意图文字"
                 "（例如 'replace lines 1-46 with full implementation' 是错的，会被工具拒收）。"
-                "严禁 write_file 整文件重写、严禁实现未分配的函数（一次实现整个文件会超预算截断、零落盘）。"
+                "严禁 write_file 整文件重写、严禁改动 import/export/公共常量/DOM id/事件绑定、"
+                "严禁实现未分配的函数（一次实现整个文件会超预算截断、零落盘）。"
             )
+            # P2 (deterministic file-assembly protocol): name the exact anchors this fill
+            # owns and make the skeleton's interface inviolable. A fill that changes any
+            # import/export/signature/public-const/DOM-id is rejected by the merger (P3)
+            # and re-asked — never a silent dead-letter.
+            anchor_ids = [str(a).strip() for a in (step.get("anchor_ids") or []) if str(a).strip()]
+            if anchor_ids:
+                lines.append(
+                    f"[填充锚点] 你只负责这些锚点的函数体：{', '.join(anchor_ids)}。"
+                    "骨架定下的接口是法律：严禁新增/删除/改名任何 import/export/函数签名/公共常量/DOM id/事件绑定，"
+                    "严禁移动或删除任何 `@anchor:` 标记。只在你负责的锚点对应空桩处替换函数体，其余原样保留。"
+                )
         interfaces = [str(s).strip() for s in (step.get("interface_names") or []) if str(s).strip()]
         if interfaces:
             lines.append("interfaces: " + ", ".join(interfaces[:16]))

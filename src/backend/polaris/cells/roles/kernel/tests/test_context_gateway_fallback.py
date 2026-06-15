@@ -109,6 +109,42 @@ class TestBlueprintStepCard:
         assert card is not None
         assert "只实现被分配的函数" in card and "edit_blocks" in card and "整文件重写" in card
 
+    def test_p2_skeleton_shell_and_anchor_directive_rendered(self):
+        # P2 (deterministic file-assembly protocol): file_shell_required + anchor_ids →
+        # the skeleton must emit the complete shell + @anchor markers (interface law).
+        card = self._card(
+            {
+                "construction_step": {
+                    "step_id": "S-skel",
+                    "target_file": "main.js",
+                    "signatures": ["function init()", "function update()"],
+                    "skeleton_stub_only": True,
+                    "file_shell_required": True,
+                    "anchor_ids": ["init", "update"],
+                }
+            }
+        )
+        assert card is not None
+        assert "接口法律" in card and "@anchor:" in card
+        assert "init, update" in card  # the exact anchors the skeleton must mark
+
+    def test_p2_fill_anchor_interface_law_directive_rendered(self):
+        # P2: anchor_ids → the fill owns exactly these anchors and the skeleton's
+        # interface is inviolable (no signature/import/export/DOM-id changes).
+        card = self._card(
+            {
+                "construction_step": {
+                    "step_id": "S-fill1",
+                    "target_file": "main.js",
+                    "signatures": ["function update()"],
+                    "fill_scope_only": True,
+                    "anchor_ids": ["update"],
+                }
+            }
+        )
+        assert card is not None
+        assert "填充锚点" in card and "update" in card and "接口是法律" in card
+
 
 class TestProcessContextOverride:
     """Test _process_context_override method."""
@@ -196,6 +232,23 @@ class TestProcessContextOverride:
         assert result is not None
         assert "disable_internal_tool_rounds" not in result["content"]
         assert "llm_call_timeout_seconds" not in result["content"]
+        assert "keep_me: real context" in result["content"]
+
+    def test_signal_rendered_planes_not_duplicated_into_message(self):
+        """2026-06-15: construction_step/consumed_interfaces/pre_state_verify/last_failure
+        are rendered by the BlueprintStepsSignal card — they must NOT also be serialized
+        verbatim into the context_override message (a 2143-token construction_step dup blew
+        the Director budget and crashed the turn). They stay in context_override for the
+        signal, but are excluded from the data-plane serialization."""
+        override = {
+            "construction_step": {"step_id": "S3", "target_file": "app.js", "anchor_ids": ["a"] * 50},
+            "consumed_interfaces": {"index.html": {"identifiers": ["x"] * 50}},
+            "keep_me": "real context",
+        }
+        result = self._gateway()._process_context_override(override)
+        assert result is not None
+        assert "construction_step" not in result["content"]
+        assert "consumed_interfaces" not in result["content"]
         assert "keep_me: real context" in result["content"]
 
     def test_oversized_value_is_capped(self):

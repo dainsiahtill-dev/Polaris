@@ -155,6 +155,47 @@ class TestTriggerBoundaries:
         assert split_oversize_steps(steps, parent_pm_task=PARENT) is steps
 
 
+class TestFileAssemblyContractP1:
+    """P1 (deterministic file-assembly protocol, codex 2026-06-15): the skeleton is the
+    interface LAW (complete shell + one anchor per function); each fill carries the
+    constrained-patch contract (anchor_ids / expected_signatures / allowed_region) the
+    Director-side merger (P3) enforces, so a >120-line file is assembled by the SYSTEM,
+    not re-derived from weak-model memory every fill-turn."""
+
+    _SYMS = [
+        "init",
+        "createBricks",
+        "handleMouseMove",
+        "handleKeyDown",
+        "update",
+        "render",
+        "checkCollisions",
+        "loseLife",
+        "resetBall",
+        "gameOver",
+        "levelComplete",
+        "gameLoop",
+    ]
+
+    def test_skeleton_requires_full_shell_and_declares_every_anchor(self) -> None:
+        out = split_oversize_steps([_step("main.js", SIGS12, 200)], parent_pm_task=PARENT)
+        skel = out[0]
+        assert skel["file_shell_required"] is True
+        assert skel["anchor_ids"] == self._SYMS
+
+    def test_fill_carries_constrained_patch_contract(self) -> None:
+        out = split_oversize_steps([_step("main.js", SIGS12, 200)], parent_pm_task=PARENT)
+        fill1 = out[1]
+        assert fill1["anchor_ids"] == ["init", "createBricks", "handleMouseMove"]
+        assert fill1["expected_signatures"] == SIGS12[:3]
+        assert fill1["allowed_region"] == "anchors:init,createBricks,handleMouseMove"
+
+    def test_fill_anchors_union_equals_skeleton_anchors(self) -> None:
+        out = split_oversize_steps([_step("main.js", SIGS12, 200)], parent_pm_task=PARENT)
+        fill_anchors = [a for f in out[1:] for a in f["anchor_ids"]]
+        assert fill_anchors == out[0]["anchor_ids"]  # complete coverage, no loss / no dup
+
+
 class TestVerifyGeneration:
     def test_skeleton_verify_is_structural_syntax_check(self) -> None:
         out = split_oversize_steps([_step("main.js", SIGS12, 200)], parent_pm_task=PARENT)

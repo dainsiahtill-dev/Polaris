@@ -203,6 +203,13 @@ def _split_one(step: dict[str, Any], *, parent_pm_task: str) -> list[dict[str, A
         # the weak model tries to fully implement all signatures in one write and
         # truncates (live r30: a 13-function skeleton truncated finish_reason=length).
         "skeleton_stub_only": True,
+        # P1 (deterministic file-assembly protocol, codex 2026-06-15): the skeleton is
+        # the interface LAW — it must emit the COMPLETE file shell (imports/exports/all
+        # signatures as stubs) with a ``// @anchor:<symbol>`` marker per fillable body,
+        # so each fill is a scoped patch a deterministic merger applies, NOT a whole-file
+        # rewrite the weak model re-derives from memory every turn.
+        "file_shell_required": True,
+        "anchor_ids": [sym for s in signatures if (sym := _signature_symbol(s))],
     }
     out: list[dict[str, Any]] = [skeleton]
     prev_id = skeleton_id
@@ -229,6 +236,14 @@ def _split_one(step: dict[str, Any], *, parent_pm_task: str) -> list[dict[str, A
                 # weak model tries to implement the whole file at once and either truncates
                 # or stuffs prose into edit_blocks (live r31: fill1 dead-lettered).
                 "fill_scope_only": True,
+                # P1 (deterministic file-assembly protocol): this fill's CONSTRAINED-patch
+                # contract — it may ONLY implement the bodies at these anchors and MUST keep
+                # the skeleton's signatures unchanged (interface law). The Director-side
+                # merger (P3) enforces this; an interface-drifting fill is re-asked, never a
+                # silent dead-letter.
+                "anchor_ids": [sym for s in group if (sym := _signature_symbol(s))],
+                "expected_signatures": list(group),
+                "allowed_region": "anchors:" + ",".join(sym for s in group if (sym := _signature_symbol(s))),
                 "title": (f"{title} · fill {index}/{total}" if title else f"fill {index}/{total}"),
             }
         )

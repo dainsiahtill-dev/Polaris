@@ -121,7 +121,7 @@ export interface ContextOSModel {
   /** 估算的单次上下文窗口占用比例 0..1 */
   windowOccupancy: number;
   windowOccupancyTokens: number;
-  /** 是否绑定了真实观测遥测（llm.observations.jsonl 有数据）。 */
+  /** 是否绑定了真实实时遥测（WebSocket 运行时流有事件）。 */
   telemetryActive: boolean;
   /** 真实 ProjectionEngine 投影次数（telemetry 优先，无则回退 calls 估算）。 */
   projectionCount: number;
@@ -357,7 +357,7 @@ export function buildContextOSModel(input: {
   currentPhase: string;
   pmRunning: boolean;
   directorRunning: boolean;
-  /** 真实观测遥测（来自 llm.observations.jsonl）；缺省时退回代理估算。 */
+  /** 真实运行时遥测（派生自 useRuntime 经 WebSocket 实时推送的运行时流）；缺省时退回 usageStats 代理。 */
   telemetry?: ContextOSTelemetry | null;
 }): ContextOSModel {
   const {
@@ -390,35 +390,34 @@ export function buildContextOSModel(input: {
     : typeof rawIteration === 'string' && Number.isFinite(Number(rawIteration))
       ? Number(rawIteration)
       : null;
-  // token / 调用 / by_mode：优先真实遥测（4s 刷新，与 usageStats 同一份观测文件，
-  // 但更新更快），无遥测时退回 usageStats prop（30s 刷新）。
-  // 用单一谓词 telemetryActive 统一驱动所有"真实 vs 代理"切换，避免出现
-  // "token 来自 usageStats、事件流来自遥测"的混源不一致（仅投影、尚无 usage 的启动窗口）。
-  const useTel = telemetryActive;
+  // 数据来源的诚实分流：
+  //  - 活动指标（调用次数 / 投影 / 时延 / 事件 / 错误）来自 WS 实时遥测——随事件到达即更新，无轮询。
+  //  - token 精确量不在实时流上（WS 推送的是展示级事件，不含 per-call usage）。故 token 退回
+  //    usageStats（用量统计通道）作 best-effort 来源，UI 上仅在确有数值时呈现，且与"实时活动"区分，
+  //    绝不把 0 或估算冒充成实时精确 token。
   const totals = usageStats?.totals ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  const totalTokens = useTel ? telemetry.totalTokens : safeNumber(totals.total_tokens);
-  const promptTokens = useTel ? telemetry.promptTokens : safeNumber(totals.prompt_tokens);
-  const completionTokens = useTel ? telemetry.completionTokens : safeNumber(totals.completion_tokens);
-  const calls = useTel ? telemetry.totalCalls : safeNumber(usageStats?.calls);
-  const byMode: Record<string, { total_tokens: number; calls: number }> = useTel
+  const totalTokens = safeNumber(totals.total_tokens);
+  const promptTokens = safeNumber(totals.prompt_tokens);
+  const completionTokens = safeNumber(totals.completion_tokens);
+  const calls = telemetryActive ? telemetry.totalCalls : safeNumber(usageStats?.calls);
+  const byMode: Record<string, { total_tokens: number; calls: number }> = telemetryActive
     ? Object.fromEntries(
         Object.entries(telemetry.byMode).map(([key, value]) => [key, { total_tokens: value.totalTokens, calls: value.calls }]),
       )
     : usageStats?.by_mode ?? {};
-  const avgPerCall = calls > 0 ? Math.round(totalTokens / calls) : 0;
+  const avgPerCall = calls > 0 && totalTokens > 0 ? Math.round(totalTokens / calls) : 0;
 
-  // 真实 ContextOS 内部计数（telemetry 优先，无则估算回退）。
-  // projectionCount 现统计 context.build（全角色 ContextEngine 装配）+ PM prompt_context，
-  // 是真实的全角色上下文装配信号（不再仅 PM）。
-  const projectionCount = telemetryActive ? telemetry.projectionCount : calls;
+  // 真实 ContextOS 内部计数（来自 WS 实时遥测）。
+  // projectionCount = 实时流里识别为上下文装配/投影的事件（context.build / prompt_context / projection）。
+  const projectionCount = telemetryActive ? telemetry.projectionCount : 0;
+  // receiptCount / contextItemsCount：WS 展示级流不含结构化快照路径与 items_count，恒 0 / null（诚实）。
   const receiptCount = telemetry.receiptCount;
   const realLatencyMs = telemetry.lastLatencyMs ?? telemetry.avgLatencyMs;
   const lastTelemetryEpoch = telemetry.lastEventEpoch;
-  // 由后端字符估算得到 usage 的调用数（用于 token 总量旁的「含估算」标注）。
-  const estimatedCalls = telemetryActive ? telemetry.estimatedCalls : 0;
-  // 最近一次 context.build 装配的真实上下文项数（WorkingMem 在窗项数），无则 null。
-  const contextItemsCount = telemetryActive ? telemetry.contextItemsCount : null;
-  // 遥测只读尾部窗口时为 true：把「累计」诚实降级为「最近窗口」。
+  // 字符估算的调用数来自用量统计通道（WS 流无此信息）。
+  const estimatedCalls = safeNumber(usageStats?.estimated_calls);
+  const contextItemsCount = telemetry.contextItemsCount;
+  // 遥测只看到尾部窗口（某条 WS 流已达环形缓冲上限）时为 true：把「累计」诚实降级为「最近窗口」。
   const telemetryWindowed = telemetry.windowed;
 
   // 估算单次上下文窗口占用：以「平均单次提示 token」近似当前窗口压力。

@@ -264,6 +264,56 @@ def _repair_shrink_error(workspace: str, target: str, prior_size: int) -> str | 
     )
 
 
+def _fill_assembly_owned_anchors(payload: dict[str, Any]) -> list[str]:
+    """Anchors a ``fill_scope_only`` step is permitted to implement ([] for non-fills)."""
+    step = payload.get("construction_step")
+    if not isinstance(step, dict) or not step.get("fill_scope_only"):
+        return []
+    return [str(a).strip() for a in (step.get("anchor_ids") or []) if str(a).strip()]
+
+
+def _read_target_file_content(workspace: str, target: str) -> str | None:
+    if not target:
+        return None
+    try:
+        path = os.path.join(workspace, target)
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as fh:
+                return fh.read()
+    except OSError:
+        return None
+    return None
+
+
+def _fill_assembly_baseline(workspace: str, payload: dict[str, Any]) -> str | None:
+    """The target file content BEFORE an anchored-fill exec (the skeleton / prior-fill
+    baseline the deterministic merger validates against), or None when the step is not an
+    anchored fill (so non-fill steps are never gated — fail-open)."""
+    if not _fill_assembly_owned_anchors(payload):
+        return None
+    return _read_target_file_content(workspace, _step_target_file(payload))
+
+
+def _fill_assembly_drift_error(workspace: str, payload: dict[str, Any], baseline: str | None) -> tuple[str, str] | None:
+    """P3 deterministic merger gate (codex 2026-06-15): validate a fill's RESULTING file
+    against the skeleton baseline. Returns ``(error_code, message)`` on a contract
+    violation (interface drift / out-of-region / missing-or-dup anchor) so the caller can
+    REQUEUE + re-ask, else None. Fail-open: skips non-fill steps, a missing baseline, or
+    an unreadable target — never invents a failure."""
+    owned = _fill_assembly_owned_anchors(payload)
+    if not owned or baseline is None:
+        return None
+    proposed = _read_target_file_content(workspace, _step_target_file(payload))
+    if proposed is None:
+        return None
+    from polaris.kernelone.quality.assembly_merger import validate_fill_assembly
+
+    verdict = validate_fill_assembly(baseline, proposed, owned_anchors=owned)
+    if verdict.ok:
+        return None
+    return verdict.error_code, verdict.message
+
+
 def _read_consumed_interfaces(
     workspace: str, payload: dict[str, Any], step: dict[str, Any]
 ) -> dict[str, dict[str, Any]] | None:
@@ -649,6 +699,10 @@ class DirectorExecutionConsumer:
             # R7-C (I3-r28): snapshot the repair target's prior size BEFORE exec, so a
             # degenerate "rewrite smaller" repair is caught deterministically below.
             repair_prior_size = _repair_prior_target_size(self._workspace, payload)
+            # P3 (deterministic file-assembly): snapshot the skeleton/prior-fill baseline
+            # BEFORE an anchored fill exec, so the merger gate below can reject a fill that
+            # drifts the interface or touches an unassigned function.
+            fill_assembly_baseline = _fill_assembly_baseline(self._workspace, payload)
             # Execute (placeholder — actual execution delegated to DirectorAgent)
             exec_result = self._execute_task(task_id, payload, lease_token)
             changed_files = _normalize_string_list(exec_result.get("changed_files"))
@@ -698,6 +752,25 @@ class DirectorExecutionConsumer:
                         )
                     )
                     return {"task_id": task_id, "ok": False, "reason": "repair_shrank_file"}
+            # P3 deterministic merger gate (codex 2026-06-15): an anchored fill must keep
+            # the skeleton's interface (imports/exports/signatures), preserve every
+            # @anchor, and touch ONLY its owned function bodies. On drift, REQUEUE with a
+            # teaching error (becomes the next attempt's last_failure) — never dead-letter,
+            # so the weak model is corrected instead of the cluster silently failing.
+            assembly_drift = _fill_assembly_drift_error(self._workspace, payload, fill_assembly_baseline)
+            if assembly_drift is not None:
+                drift_code, drift_message = assembly_drift
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code=drift_code,
+                        error_message=drift_message,
+                        requeue_stage="pending_exec",
+                    )
+                )
+                return {"task_id": task_id, "ok": False, "reason": drift_code}
             registered_actions = self._register_compensation_actions(
                 task_id=task_id,
                 lease_token=lease_token,

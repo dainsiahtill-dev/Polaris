@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 
+import type { LogEntry } from '@/types/log';
 import {
-  parseObservationLog,
+  buildTelemetryFromStream,
   telemetryRoleTokens,
   telemetryRoleEvents,
   telemetryRoleHasUsageChannel,
@@ -9,229 +10,209 @@ import {
 } from './contextOSTelemetry';
 
 /**
- * 真实 schema 夹具：取自后端 io_events.emit_event 写入 llm.observations.jsonl 的记录形态。
- *  - context.build   = ContextEngine 装配 ContextPack（全角色，actor=System，含 items_count/total_tokens）
- *  - context.snapshot= 落盘上下文快照（actor=System，output.snapshot_path）—— 唯一的回执事实来源
- *  - prompt_context  = PM 规划路径的提示注入（actor=PM）
- *  - llm_invoke      = 携带 output.usage（含 estimated 标志）+ output.duration_ms 的 LLM 调用
- *  - error           = kind:"error" / ok:false / error 文本
+ * 夹具取自 useRuntime 经 WebSocket 推送、再由 parseLlmStreamLine / parseRuntimeEvent 解析出的
+ * LogEntry 形态（source/message/level/details/meta）。buildTelemetryFromStream 从这些**实时**流
+ * 派生 ContextOS 遥测——无任何文件轮询。
  */
-const CONTEXT_BUILD_LINE = JSON.stringify({
-  schema_version: 1,
-  ts: '2026-06-15T10:00:00.0Z',
-  ts_epoch: 1781856000.0,
-  seq: 10,
-  event_id: 'e10',
-  kind: 'observation',
-  actor: 'System',
-  name: 'context.build',
-  refs: { run_id: 'r1', step: 2, phase: 'director.execution' },
-  summary: 'ContextPack built (7 items)',
-  ok: true,
-  output: { request_hash: 'rh1', items_count: 7, total_tokens: 3400, snapshot_path: 'runtime/snap/abc123.json' },
+function logEntry(over: Partial<LogEntry> & { id: string; timestamp: string }): LogEntry {
+  return {
+    level: 'info',
+    source: 'System',
+    message: '',
+    ...over,
+  };
+}
+
+// LLM 流（channel=llm）
+const INVOKE_DONE: LogEntry = logEntry({
+  id: 'llm-done-1',
+  timestamp: '2026-06-15T10:00:03Z',
+  level: 'success',
+  source: 'PM',
+  message: 'LLM 响应已返回',
+  details: 'backend=minimax chars=120 2400ms',
+  meta: { channel: 'llm', streamEvent: 'invoke_done', role: 'PM' },
+  tags: ['invoke_done'],
+});
+const INVOKE_ERROR: LogEntry = logEntry({
+  id: 'llm-err-1',
+  timestamp: '2026-06-15T10:00:05Z',
+  level: 'error',
+  source: 'Director',
+  message: 'LLM 调用失败: provider 500',
+  details: 'backend=local',
+  meta: { channel: 'llm', streamEvent: 'invoke_error', role: 'Director' },
+  tags: ['invoke_error'],
+});
+const TOOL_CALL: LogEntry = logEntry({
+  id: 'llm-tool-1',
+  timestamp: '2026-06-15T10:00:04Z',
+  level: 'thinking',
+  source: 'Director',
+  message: '调用工具: write_file',
+  meta: { channel: 'llm', streamEvent: 'tool_call', role: 'Director' },
+  tags: ['tool_call'],
+});
+const THINKING_CHUNK: LogEntry = logEntry({
+  id: 'llm-chunk-1',
+  timestamp: '2026-06-15T10:00:02Z',
+  level: 'thinking',
+  source: 'PM',
+  message: '正在思考…',
+  meta: { channel: 'llm', streamEvent: 'thinking_chunk', role: 'PM' },
+  tags: ['thinking_chunk'],
 });
 
-const PROJECTION_LINE = JSON.stringify({
-  schema_version: 1,
-  ts: '2026-06-15T10:00:00.5Z',
-  ts_epoch: 1781856000.5,
-  seq: 11,
-  event_id: 'e11',
-  kind: 'observation',
-  actor: 'PM',
-  name: 'prompt_context',
-  refs: { run_id: 'r1', step: 2 },
-  summary: 'Prompt Context Injection',
-  ok: true,
-  output: { context_hash: 'abc123', context_snapshot: 'runtime/snap/abc123.json' },
+// 运行时事件流（channel=runtime_events，emit_event 经总线推送）
+const CONTEXT_BUILD: LogEntry = logEntry({
+  id: 'rt-build-1',
+  timestamp: '2026-06-15T10:00:01Z',
+  level: 'info',
+  source: 'System',
+  message: 'context.build',
+  meta: { channel: 'runtime_events' },
+});
+const RUNTIME_ERROR: LogEntry = logEntry({
+  id: 'rt-fail-1',
+  timestamp: '2026-06-15T10:00:06Z',
+  level: 'error',
+  source: 'Director',
+  message: '任务执行失败',
+  meta: { channel: 'runtime_events' },
 });
 
-const SNAPSHOT_LINE = JSON.stringify({
-  schema_version: 1,
-  ts: '2026-06-15T10:00:00.8Z',
-  ts_epoch: 1781856000.8,
-  seq: 12,
-  event_id: 'e11b',
-  kind: 'observation',
-  actor: 'System',
-  name: 'context.snapshot',
-  refs: { run_id: 'r1', step: 2 },
-  summary: 'Context snapshot stored',
-  ok: true,
-  output: { request_hash: 'rh1', snapshot_path: 'runtime/snap/abc123.json', snapshot_hash: 'sh1' },
+// 进程流（channel=process）
+const PROCESS_LINE: LogEntry = logEntry({
+  id: 'proc-1',
+  timestamp: '2026-06-15T10:00:00Z',
+  level: 'info',
+  source: 'Process',
+  message: 'director process spawned',
+  meta: { channel: 'process' },
 });
 
-const PM_CALL_LINE = JSON.stringify({
-  schema_version: 1,
-  ts: '2026-06-15T10:00:01.5Z',
-  ts_epoch: 1781856001.5,
-  seq: 13,
-  event_id: 'e12',
-  kind: 'observation',
-  actor: 'PM',
-  name: 'llm_invoke',
-  refs: { run_id: 'r1', step: 2, mode: 'pm.planning' },
-  summary: 'PM planning call',
-  ok: true,
-  // 真实 llm_invoke：时延在 output.duration_ms（非顶层），usage 为真实（estimated 缺省 false）。
-  output: { usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 }, duration_ms: 2400 },
-});
+const LLM_STREAM = [INVOKE_DONE, INVOKE_ERROR, TOOL_CALL, THINKING_CHUNK];
+const EXECUTION = [CONTEXT_BUILD, RUNTIME_ERROR];
+const PROCESS = [PROCESS_LINE];
 
-const DIRECTOR_ERROR_LINE = JSON.stringify({
-  schema_version: 1,
-  ts: '2026-06-15T10:00:05Z',
-  ts_epoch: 1781856005.0,
-  seq: 14,
-  event_id: 'e13',
-  kind: 'error',
-  actor: 'Director',
-  name: 'llm_failed',
-  refs: { mode: 'director.execution' },
-  summary: 'provider exploded',
-  ok: false,
-  error: 'provider 500',
-});
-
-const DIRECTOR_CALL_LINE = JSON.stringify({
-  schema_version: 1,
-  ts: '2026-06-15T10:00:06Z',
-  ts_epoch: 1781856006.0,
-  seq: 15,
-  event_id: 'e14',
-  kind: 'observation',
-  actor: 'Director',
-  name: 'llm_invoke',
-  refs: { mode: 'director.execution' },
-  ok: true,
-  // 字符估算的 usage：后端打 estimated=true，UI 应据此计入 estimatedCalls。
-  output: { usage: { prompt_tokens: 800, completion_tokens: 200, total_tokens: 1000, estimated: true }, duration_ms: 1800 },
-});
-
-const FIXTURE_LOG = [
-  CONTEXT_BUILD_LINE,
-  PROJECTION_LINE,
-  SNAPSHOT_LINE,
-  PM_CALL_LINE,
-  '   ', // blank line tolerated
-  '{not valid json', // malformed line skipped
-  DIRECTOR_ERROR_LINE,
-  DIRECTOR_CALL_LINE,
-  '',
-].join('\n');
-
-describe('parseObservationLog', () => {
-  it('returns EMPTY_TELEMETRY for empty / whitespace content', () => {
-    expect(parseObservationLog('')).toBe(EMPTY_TELEMETRY);
-    expect(parseObservationLog('   \n  \n')).toBe(EMPTY_TELEMETRY);
-    expect(parseObservationLog(null)).toBe(EMPTY_TELEMETRY);
+describe('buildTelemetryFromStream', () => {
+  it('returns EMPTY_TELEMETRY when every stream is empty / nullish', () => {
+    expect(buildTelemetryFromStream([], [], [])).toBe(EMPTY_TELEMETRY);
+    expect(buildTelemetryFromStream(null, undefined, null)).toBe(EMPTY_TELEMETRY);
   });
 
-  it('skips malformed lines and parses the valid ones', () => {
-    const t = parseObservationLog(FIXTURE_LOG);
+  it('derives real telemetry from the live WS streams', () => {
+    const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
     expect(t.hasData).toBe(true);
-    // 6 valid JSON records (blank + malformed skipped).
+    // thinking_chunk 是流式噪声，被排除；其余 6 条进入聚合。
     expect(t.events).toHaveLength(6);
     expect(t.parsedLines).toBe(6);
   });
 
-  it('aggregates real tokens, calls, projections, receipts and errors', () => {
-    const t = parseObservationLog(FIXTURE_LOG);
-    expect(t.totalCalls).toBe(2); // two usage-bearing observations
-    expect(t.estimatedCalls).toBe(1); // director call is char-estimated
-    expect(t.totalTokens).toBe(2500);
-    expect(t.promptTokens).toBe(2000);
-    expect(t.completionTokens).toBe(500);
-    expect(t.projectionCount).toBe(2); // context.build + prompt_context
-    expect(t.receiptCount).toBe(1); // only the canonical context.snapshot
-    expect(t.errorCount).toBe(1);
+  it('counts discrete LLM calls from invoke_done / invoke_error (not chunks)', () => {
+    const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
+    expect(t.totalCalls).toBe(2); // invoke_done + invoke_error
   });
 
-  it('surfaces the latest context.build assembly size (items + tokens)', () => {
-    const t = parseObservationLog(FIXTURE_LOG);
-    expect(t.contextItemsCount).toBe(7);
-    expect(t.contextTokensLatest).toBe(3400);
+  it('counts errors from error-level / invoke_error events', () => {
+    const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
+    expect(t.errorCount).toBe(2); // invoke_error + runtime 任务执行失败
   });
 
-  it('computes latency aggregates from output.duration_ms (llm_invoke)', () => {
-    const t = parseObservationLog(FIXTURE_LOG);
-    expect(t.avgLatencyMs).toBe(2100); // (2400 + 1800) / 2
-    // Newest event with a duration is the Director call (10:00:06, 1800ms).
-    expect(t.lastLatencyMs).toBe(1800);
+  it('counts context-assembly events as projections', () => {
+    const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
+    expect(t.projectionCount).toBe(1); // context.build
+  });
+
+  it('recovers latency from invoke_done details', () => {
+    const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
+    expect(t.avgLatencyMs).toBe(2400);
+    expect(t.lastLatencyMs).toBe(2400);
+  });
+
+  it('keeps tokens at zero — the WS stream carries no precise per-call usage (honest)', () => {
+    const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
+    expect(t.totalTokens).toBe(0);
+    expect(t.estimatedCalls).toBe(0);
+    expect(t.receiptCount).toBe(0);
+    expect(t.contextItemsCount).toBeNull();
+  });
+
+  it('recovers structured signals (items_count / snapshot) from runtime_events meta', () => {
+    // parseRuntimeEvent 把事件 name 覆盖成 summary，但 meta = data/output 仍保真携带结构化字段。
+    const build = logEntry({
+      id: 'b1',
+      timestamp: '2026-06-15T10:00:01Z',
+      source: 'System',
+      message: 'ContextPack built (5 items)', // 注意：文本里没有 "context.build"
+      meta: { channel: 'runtime_events', request_hash: 'rh', items_count: 5, total_tokens: 3200, snapshot_path: 'runtime/snap/rh.json' },
+    });
+    const snap = logEntry({
+      id: 's1',
+      timestamp: '2026-06-15T10:00:02Z',
+      source: 'System',
+      message: 'Context snapshot stored',
+      meta: { channel: 'runtime_events', request_hash: 'rh', snapshot_path: 'runtime/snap/rh.json', snapshot_hash: 'sh1' },
+    });
+    const t = buildTelemetryFromStream([], [build, snap], []);
+    expect(t.projectionCount).toBe(1); // build via items_count; snapshot is a receipt, not a projection
+    expect(t.receiptCount).toBe(1); // snapshot_hash signature
+    expect(t.contextItemsCount).toBe(5);
+    expect(t.contextTokensLatest).toBe(3200);
+  });
+
+  it('classifies each event into the right category', () => {
+    const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
+    const byId = Object.fromEntries(t.events.map((e) => [e.id, e]));
+    expect(byId['llm-done-1'].category).toBe('call');
+    expect(byId['llm-done-1'].isCall).toBe(true);
+    expect(byId['llm-done-1'].durationMs).toBe(2400);
+    expect(byId['llm-err-1'].category).toBe('error');
+    expect(byId['llm-tool-1'].category).toBe('tool');
+    expect(byId['rt-build-1'].category).toBe('projection');
+    expect(byId['rt-build-1'].isProjection).toBe(true);
+    expect(byId['llm-chunk-1']).toBeUndefined(); // chunk excluded
   });
 
   it('orders events strictly newest-first by epoch', () => {
-    const t = parseObservationLog(FIXTURE_LOG);
-    expect(t.events.map((e) => e.id)).toEqual(['e14', 'e13', 'e12', 'e11b', 'e11', 'e10']);
+    const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
+    expect(t.events[0].id).toBe('rt-fail-1'); // 10:00:06 newest
+    expect(t.events[t.events.length - 1].id).toBe('proc-1'); // 10:00:00 oldest
   });
 
-  it('flags projection / receipt / context-build fields on the right events', () => {
-    const t = parseObservationLog(FIXTURE_LOG);
-    const build = t.events.find((e) => e.id === 'e10');
-    expect(build?.isProjection).toBe(true); // context.build counts as a projection/assembly
-    expect(build?.category).toBe('projection');
-    expect(build?.contextItems).toBe(7);
-    expect(build?.hasReceipt).toBe(false); // build is not a snapshot receipt
-
-    const promptCtx = t.events.find((e) => e.id === 'e11');
-    expect(promptCtx?.isProjection).toBe(true);
-    // PM prompt_context carries context_snapshot key, but receipts are counted only from
-    // the canonical context.snapshot event to avoid double-counting → hasReceipt is false here.
-    expect(promptCtx?.hasReceipt).toBe(false);
-
-    const snapshot = t.events.find((e) => e.id === 'e11b');
-    expect(snapshot?.hasReceipt).toBe(true); // canonical context.snapshot
-
-    const error = t.events.find((e) => e.id === 'e13');
-    expect(error?.category).toBe('error');
-    expect(error?.error).toBe('provider 500');
-
-    const call = t.events.find((e) => e.id === 'e12');
-    expect(call?.hasUsage).toBe(true);
-    expect(call?.estimatedTokens).toBe(false);
-    expect(call?.totalTokens).toBe(1500);
-    expect(call?.durationMs).toBe(2400); // recovered from output.duration_ms
-    expect(call?.mode).toBe('pm.planning');
-
-    const dirCall = t.events.find((e) => e.id === 'e14');
-    expect(dirCall?.estimatedTokens).toBe(true);
+  it('aggregates events by actor', () => {
+    const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
+    expect(t.byActor['PM']).toEqual({ totalTokens: 0, calls: 1, events: 1 });
+    expect(t.byActor['Director']).toEqual({ totalTokens: 0, calls: 1, events: 3 });
+    expect(t.byActor['System']).toEqual({ totalTokens: 0, calls: 0, events: 1 });
   });
 
-  it('aggregates by mode and by actor', () => {
-    const t = parseObservationLog(FIXTURE_LOG);
-    expect(t.byMode['pm.planning']).toEqual({ totalTokens: 1500, calls: 1 });
-    expect(t.byMode['director.execution']).toEqual({ totalTokens: 1000, calls: 1 });
-    expect(t.byActor['PM']).toEqual({ totalTokens: 1500, calls: 1, events: 2 });
-    expect(t.byActor['Director']).toEqual({ totalTokens: 1000, calls: 1, events: 2 });
-    expect(t.byActor['System']).toEqual({ totalTokens: 0, calls: 0, events: 2 });
-  });
-
-  it('marks the read as windowed only when parsed lines reach the read cap', () => {
-    expect(parseObservationLog(FIXTURE_LOG).windowed).toBe(false); // no cap passed
-    expect(parseObservationLog(FIXTURE_LOG, 100).windowed).toBe(false); // 6 < 100
-    expect(parseObservationLog(FIXTURE_LOG, 6).windowed).toBe(true); // 6 >= 6 → tail window
+  it('flags windowed when a stream reaches its ring-buffer cap', () => {
+    expect(buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS).windowed).toBe(false);
+    const bigExecution = Array.from({ length: 100 }, (_, i) =>
+      logEntry({ id: `rt-${i}`, timestamp: '2026-06-15T10:00:00Z', source: 'System', message: 'tick', meta: { channel: 'runtime_events' } }),
+    );
+    expect(buildTelemetryFromStream([], bigExecution, []).windowed).toBe(true);
   });
 });
 
 describe('telemetry role helpers', () => {
-  const t = parseObservationLog(FIXTURE_LOG);
-
-  it('maps actor tokens onto role ids', () => {
-    expect(telemetryRoleTokens(t, 'pm')).toBe(1500);
-    expect(telemetryRoleTokens(t, 'director')).toBe(1000);
-    expect(telemetryRoleTokens(t, 'qa')).toBe(0);
-  });
+  const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
 
   it('maps actor event counts onto role ids', () => {
-    expect(telemetryRoleEvents(t, 'pm')).toBe(2);
-    expect(telemetryRoleEvents(t, 'director')).toBe(2);
-    expect(telemetryRoleEvents(t, 'architect')).toBe(0);
+    expect(telemetryRoleEvents(t, 'pm')).toBe(1);
+    expect(telemetryRoleEvents(t, 'director')).toBe(3);
+    expect(telemetryRoleEvents(t, 'qa')).toBe(0);
   });
 
-  it('reports a real usage channel only for roles that emit usage-bearing observations', () => {
-    expect(telemetryRoleHasUsageChannel(t, 'pm')).toBe(true);
-    expect(telemetryRoleHasUsageChannel(t, 'director')).toBe(true);
-    // architect/qa/chief_engineer have no usage-bearing observation in the real backend.
-    expect(telemetryRoleHasUsageChannel(t, 'architect')).toBe(false);
+  it('reports zero role tokens — WS stream has no precise usage', () => {
+    expect(telemetryRoleTokens(t, 'pm')).toBe(0);
+    expect(telemetryRoleTokens(t, 'director')).toBe(0);
+  });
+
+  it('reports no usage channel for any role over the realtime stream', () => {
+    expect(telemetryRoleHasUsageChannel(t, 'pm')).toBe(false);
+    expect(telemetryRoleHasUsageChannel(t, 'director')).toBe(false);
     expect(telemetryRoleHasUsageChannel(t, 'qa')).toBe(false);
   });
 });

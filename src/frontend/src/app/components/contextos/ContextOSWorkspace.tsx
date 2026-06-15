@@ -6,8 +6,11 @@
  * 角色信号 → project() 消息装配 → CompressionEngine 装配后预算压缩兜底 → LLM 调用，再回流到
  * Receipt / Telemetry 回执遥测的反馈闭环（顺序忠实于后端 gateway.py 真实装配流）。
  *
- * 数据全部源自真实观测日志 runtime/events/llm.observations.jsonl（见 contextOSData.ts /
- * contextOSTelemetry.ts）；后端未写入或仅尾部窗口的量以「估算 / 最近窗口」明确标注，不伪造精度。
+ * 数据源 = Polaris 既有实时框架（无轮询）：emit_event/emit_llm_event → MessageBus →
+ * WebSocket /v2/ws/runtime → useRuntime → llmStreamEvents/executionLogs/processStreamEvents
+ * 这些 props 经 buildTelemetryFromStream 派生为遥测（见 contextOSTelemetry.ts / contextOSData.ts）。
+ * 组件随 WS 事件到达即重渲染。实时流是展示级事件，不含精确 per-call token，故 token 退回用量统计
+ * 通道并明确标注「非实时」，绝不伪造精度。
  */
 
 import { useMemo, useState, type ReactNode } from 'react';
@@ -53,7 +56,7 @@ import {
   type PipelineState,
   type RoleCard,
 } from './contextOSData';
-import { useContextOSTelemetry } from './useContextOSTelemetry';
+import { buildTelemetryFromStream } from './contextOSTelemetry';
 
 export interface ContextOSWorkspaceProps {
   workspace: string;
@@ -68,6 +71,10 @@ export interface ContextOSWorkspaceProps {
   llmRuntimeState: LlmRuntimeGateState;
   dialogueEvents: DialogueEvent[];
   executionLogs: LogEntry[];
+  /** LLM 流（WebSocket 实时推送，channel=llm）。 */
+  llmStreamEvents: LogEntry[];
+  /** 进程/系统流（WebSocket 实时推送，channel=process）。 */
+  processStreamEvents: LogEntry[];
   snapshot: SnapshotPayload | null;
   qualityGate?: QualityGateData | null;
 }
@@ -374,11 +381,17 @@ export function ContextOSWorkspace({
   llmRuntimeState,
   dialogueEvents,
   executionLogs,
+  llmStreamEvents,
+  processStreamEvents,
   snapshot,
   qualityGate,
 }: ContextOSWorkspaceProps) {
-  // 真实 ContextOS 观测遥测（轮询 llm.observations.jsonl，4s 实时刷新）。
-  const { telemetry, lastUpdated, refresh: refreshTelemetry } = useContextOSTelemetry(workspace);
+  // 真实 ContextOS 遥测：直接派生自 useRuntime 经 WebSocket(/v2/ws/runtime) 实时推送的运行时流。
+  // 完全无轮询——这些 props 随 WS 事件到达即变化，组件随之重渲染。
+  const telemetry = useMemo(
+    () => buildTelemetryFromStream(llmStreamEvents, executionLogs, processStreamEvents),
+    [llmStreamEvents, executionLogs, processStreamEvents],
+  );
 
   const model = useMemo(
     () => buildContextOSModel({
@@ -407,15 +420,11 @@ export function ContextOSWorkspace({
   const idle = !model.telemetryActive && (model.dataIdle || (!live && !model.running));
   const pipelineLive = observed && live;
 
-  // 新鲜度以"最近一条真实观测事件"的时间为准（而非轮询时刻），避免陈旧数据被误读为实时。
+  // 新鲜度以"最近一条 WS 推送事件"的时间为准（而非轮询时刻），避免陈旧数据被误读为实时。
   const lastEventEpoch = model.lastTelemetryEpoch;
   const telemetryAgeMs = lastEventEpoch ? Date.now() - lastEventEpoch : null;
   const telemetryFresh = telemetryAgeMs !== null && telemetryAgeMs < 30_000; // 30s 内视为"实时"
-  const freshnessLabel = lastEventEpoch
-    ? formatFreshness(lastEventEpoch)
-    : lastUpdated
-      ? formatFreshness(lastUpdated)
-      : null;
+  const freshnessLabel = lastEventEpoch ? formatFreshness(lastEventEpoch) : null;
 
   const filteredDecisions = useMemo(
     () => model.decisions.filter((row) => decisionMatchesRole(row.actor, activeRole)),
@@ -424,9 +433,9 @@ export function ContextOSWorkspace({
 
   const toggleRole = (roleId: string) => setActiveRole((prev) => (prev === roleId ? null : roleId));
 
+  // WS 是推送模型——遥测随事件自动更新；刷新按钮仅触发外层（重连/状态拉取）。
   const handleRefresh = () => {
     onRefresh?.();
-    refreshTelemetry();
   };
 
   return (
@@ -474,12 +483,31 @@ export function ContextOSWorkspace({
               <span className="font-mono text-[10px]">质量门 {gatePassed ? 'PASS' : 'HOLD'}</span>
             </StatusBadge>
           )}
-          <div className="flex items-center gap-1.5 rounded-lg border border-accent-secondary/20 bg-black/30 px-2.5 py-1">
-            <Coins className="h-3.5 w-3.5 text-accent-secondary" />
-            <span className="font-mono text-[11px] font-bold text-text-main">{model.totalTokens.toLocaleString()}</span>
-            <span className="text-[9px] font-bold uppercase tracking-wider text-accent-secondary/70">tokens</span>
+          {/* 实时活动（WebSocket 推送）：LLM 调用次数 + 最近时延——这是仪表盘的实时主指标。 */}
+          <div
+            className="flex items-center gap-1.5 rounded-lg border border-accent-secondary/20 bg-black/30 px-2.5 py-1"
+            title="实时 LLM 活动（WebSocket /v2/ws/runtime 推送）：调用次数 · 最近时延"
+            data-testid="contextos-activity-chip"
+          >
+            <Activity className="h-3.5 w-3.5 text-accent-secondary" />
+            <span className="font-mono text-[11px] font-bold text-text-main">{model.calls.toLocaleString()}</span>
+            <span className="text-[9px] font-bold uppercase tracking-wider text-accent-secondary/70">调用</span>
+            {model.realLatencyMs !== null && (
+              <span className="font-mono text-[10px] text-text-muted">· {model.realLatencyMs}ms</span>
+            )}
           </div>
-          {/* 真实遥测实时性指示：以最近一条观测事件的时间为准。新鲜=实时(脉冲)，陈旧=不脉冲。 */}
+          {/* token 不在实时流上（WS 是展示级事件）：仅当用量统计通道确有数值时呈现，标注「非实时」。 */}
+          {model.totalTokens > 0 && (
+            <div
+              className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/30 px-2.5 py-1"
+              title="累计 token（来自用量统计通道，非实时 WS 流）"
+            >
+              <Coins className="h-3.5 w-3.5 text-gold" />
+              <span className="font-mono text-[11px] font-bold text-text-main">{model.totalTokens.toLocaleString()}</span>
+              <span className="text-[9px] font-bold uppercase tracking-wider text-gold/70">tok</span>
+            </div>
+          )}
+          {/* 真实遥测实时性指示：以最近一条 WS 推送事件的时间为准。新鲜=实时(脉冲)，陈旧=不脉冲。 */}
           <StatusBadge
             color={model.telemetryActive ? (telemetryFresh ? 'success' : 'warning') : 'default'}
             variant="dot"
@@ -487,7 +515,7 @@ export function ContextOSWorkspace({
           >
             <span
               className="font-mono text-[10px]"
-              title="ContextOS 真实观测遥测 (runtime/events/llm.observations.jsonl)，时间为最近一条观测事件"
+              title="ContextOS 实时遥测（WebSocket /v2/ws/runtime 推送），时间为最近一条事件"
               data-testid="contextos-telemetry-freshness"
             >
               {model.telemetryActive
@@ -648,7 +676,7 @@ export function ContextOSWorkspace({
                 ))}
               </div>
               <p className="mt-2.5 text-[9px] leading-relaxed text-text-dim">
-                Token 归并仅 PM 携 usage 观测；其余角色按真实事件数计（后端暂无 per-role UsageContext）。
+                角色卡按 WebSocket 实时事件量呈现活跃度；精确 per-role token 不在实时流上（需走 /v2 诊断端点）。
               </p>
             </SectionCard>
 
@@ -657,8 +685,8 @@ export function ContextOSWorkspace({
               subtitle={
                 model.telemetryActive
                   ? activeRole
-                    ? `实时观测流 · 仅 ${activeRole.toUpperCase()}`
-                    : '实时观测流 · llm.observations.jsonl'
+                    ? `实时事件流 · 仅 ${activeRole.toUpperCase()}`
+                    : '实时事件流 · WebSocket 推送'
                   : activeRole
                     ? `决策与回执流 · 仅 ${activeRole.toUpperCase()}`
                     : '决策与回执流'
@@ -670,10 +698,10 @@ export function ContextOSWorkspace({
                   <span
                     className="rounded-full border border-accent-secondary/20 bg-accent-secondary/[0.08] px-2 py-0.5 font-mono text-[9px] text-accent-secondary"
                     data-testid="contextos-telemetry-source"
-                    title="决策流来自真实观测遥测 (runtime/events/llm.observations.jsonl)"
+                    title="决策流来自 ContextOS 实时遥测（WebSocket /v2/ws/runtime 推送）"
                   >
-                    REAL · {model.projectionCount} 投影 · {model.receiptCount} 快照
-                    {model.telemetryWindowed ? ' · 最近800条' : ''}
+                    REAL · {model.calls} 调用 · {model.projectionCount} 投影
+                    {model.telemetryWindowed ? ' · 最近窗口' : ''}
                   </span>
                 ) : undefined
               }
@@ -688,30 +716,48 @@ export function ContextOSWorkspace({
               <div className="space-y-4">
                 <div>
                   <div className="flex flex-wrap items-baseline gap-2">
-                    <span className="font-heading text-3xl font-bold text-text-main">{model.totalTokens.toLocaleString()}</span>
-                    <span className="text-[11px] text-text-dim">{model.telemetryWindowed ? '窗口 tokens' : '累计 tokens'}</span>
-                    {model.estimatedCalls > 0 && (
-                      <span
-                        className="rounded bg-status-warning/10 px-1 py-0.5 text-[9px] text-status-warning"
-                        data-testid="contextos-estimated-marker"
-                        title={`其中 ${model.estimatedCalls} 次调用的 token 为后端字符估算 (output.usage.estimated)`}
-                      >
-                        含估算 {model.estimatedCalls}
+                    {model.totalTokens > 0 ? (
+                      <>
+                        <span className="font-heading text-3xl font-bold text-text-main">{model.totalTokens.toLocaleString()}</span>
+                        <span className="text-[11px] text-text-dim">tokens · 用量统计</span>
+                        {model.estimatedCalls > 0 && (
+                          <span
+                            className="rounded bg-status-warning/10 px-1 py-0.5 text-[9px] text-status-warning"
+                            data-testid="contextos-estimated-marker"
+                            title={`其中 ${model.estimatedCalls} 次调用的 token 为字符估算（用量统计通道）`}
+                          >
+                            含估算 {model.estimatedCalls}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-[12px] leading-relaxed text-text-dim" data-testid="contextos-tokens-unavailable">
+                        精确 token 不在实时流上 · 需 /v2 诊断端点
                       </span>
                     )}
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-text-dim">
-                    <span>{model.calls} 次调用</span>
-                    <span>·</span>
-                    <span>{contextOSFormat.tokens(model.avgPerCall)} tok / 次</span>
+                    <span>{model.calls} 次调用（实时）</span>
+                    {model.realLatencyMs !== null && (
+                      <>
+                        <span>·</span>
+                        <span>{model.realLatencyMs}ms 最近时延</span>
+                      </>
+                    )}
+                    {model.avgPerCall > 0 && (
+                      <>
+                        <span>·</span>
+                        <span>{contextOSFormat.tokens(model.avgPerCall)} tok / 次</span>
+                      </>
+                    )}
                     {model.telemetryWindowed && (
                       <>
                         <span>·</span>
                         <span
                           className="text-status-warning/80"
-                          title="观测日志仅读取尾部 800 行，统计为最近窗口而非全程累计"
+                          title="某条 WS 实时流已达环形缓冲上限，统计为最近窗口而非全程累计"
                         >
-                          最近 800 条窗口
+                          最近窗口
                         </span>
                       </>
                     )}

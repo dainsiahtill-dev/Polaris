@@ -6,8 +6,12 @@ import { expect, test } from "./fixtures";
 /**
  * ContextOS 实时视图 — Playwright 真机审计
  *
- * 目标：在真实 Electron 应用里证明 ContextOS 入口可达、视图可渲染、且绑定真实运行时数据
- * （而非仅在 jsdom 单测中渲染）。同时截图供人工视觉审计。
+ * 目标：在真实 Electron 应用里证明
+ *   1) ContextOS 入口可达、视图可渲染；
+ *   2) 仪表盘的实时数据来自 Polaris **既有的实时框架**（WebSocket /v2/ws/runtime），而非文件轮询：
+ *      把一条真实 schema 的 runtime 事件写入后端 runtime_events 通道文件（runtime.events.jsonl），
+ *      重连后 WS 把它作为通道快照推送 → useRuntime → ContextOS 实时呈现。
+ *      （ContextOS 自身不读任何文件——它只消费 WS 推送的 props。）
  */
 
 const SCREENSHOT_PATH = "/tmp/contextos-audit.png";
@@ -76,6 +80,9 @@ test("ContextOS entry is reachable and the real-time dashboard renders", async (
     await expect(window.locator(`[data-testid='contextos-role-${id}']`)).toBeVisible();
   }
 
+  // The realtime activity chip (WebSocket-driven, no polling) is always present.
+  await expect(window.locator("[data-testid='contextos-activity-chip']")).toBeVisible();
+
   // Role-tab cross-filter is interactive in the real app.
   await window.locator("[data-testid='contextos-roletab-pm']").click();
   await expect(window.locator("[data-testid='contextos-roletab-pm']")).toHaveAttribute("aria-pressed", "true");
@@ -97,18 +104,18 @@ test("ContextOS entry is reachable and the real-time dashboard renders", async (
 });
 
 /**
- * 端到端证明「真正能看到 ContextOS 实时数据」：把一条真实 schema 的观测日志
- * 写入后端解析出的物理路径（runtime/events/llm.observations.jsonl），然后进入
- * ContextOS 视图，断言仪表盘把这些真实事件实时呈现出来。
+ * 端到端证明「ContextOS 经 WebSocket 实时框架呈现真实数据，无轮询」：
+ *   把真实 schema 的 runtime 事件写入后端 runtime_events 通道文件 → 重连让 WS 推送通道快照 →
+ *   进入 ContextOS → 断言仪表盘把这些事件实时呈现（含经 WS meta 保真送达的 items_count / 快照）。
  */
-test("ContextOS renders REAL telemetry seeded into the observation log", async ({ window }, testInfo) => {
-  // 1) 通过后端解析出观测日志的物理路径（即便文件尚不存在也会返回路径）。
+test("ContextOS renders REAL telemetry pushed over the runtime WebSocket (no polling)", async ({ window }, testInfo) => {
+  // 1) 解析后端 runtime_events 通道文件（runtime.events.jsonl）的物理路径。
   const resolved = await window.evaluate(async () => {
     const api = (window as unknown as { polaris?: { getBackendInfo: () => Promise<{ baseUrl: string; token: string }> } }).polaris;
     if (!api) return { ok: false, path: "", error: "polaris API missing" };
     const backend = await api.getBackendInfo();
     if (!backend?.baseUrl || !backend?.token) return { ok: false, path: "", error: "backend info missing" };
-    const resp = await fetch(`${backend.baseUrl}/files/read?path=runtime/events/llm.observations.jsonl`, {
+    const resp = await fetch(`${backend.baseUrl}/files/read?path=runtime/events/runtime.events.jsonl`, {
       headers: { authorization: `Bearer ${backend.token}` },
       cache: "no-store",
     });
@@ -117,74 +124,55 @@ test("ContextOS renders REAL telemetry seeded into the observation log", async (
   });
 
   expect(resolved.ok, `backend file resolution failed: ${resolved.error}`).toBeTruthy();
-  expect(resolved.path, "backend must resolve a physical observation-log path").toBeTruthy();
+  expect(resolved.path, "backend must resolve a physical runtime-events path").toBeTruthy();
 
-  // 2) 写入真实 schema 的观测记录（取自后端 io_events.emit_event / ContextEngine._emit_context_events）：
-  //    context.build(全角色装配) + prompt_context(PM 注入) + context.snapshot(落盘回执) + 两条 llm_invoke。
+  // 2) 追加真实 schema 的 runtime 事件（context.build 装配 + context.snapshot 落盘回执）。
+  //    这是 WS runtime_events 通道的来源文件；ContextOS 不读它——它只消费 WS 推送的流。
+  const nowIso = new Date().toISOString();
   const nowEpoch = Date.now() / 1000;
-  const seededLines = [
+  const lines = [
     {
-      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch, seq: 1, event_id: "seed-build",
-      kind: "observation", actor: "System", name: "context.build", refs: { run_id: "seed", step: 1, phase: "director.execution" },
-      summary: "ContextPack built (5 items)", ok: true,
-      output: { request_hash: "seedhash", items_count: 5, total_tokens: 3200, snapshot_path: "runtime/snap/seedhash.json" },
+      schema_version: 1, ts: nowIso, ts_epoch: nowEpoch, seq: 1, event_id: "e2e-build",
+      kind: "observation", actor: "System", name: "context.build", refs: { run_id: "e2e", step: 1 },
+      summary: "E2E ContextPack built", ok: true,
+      // items_count / total_tokens 经 parseRuntimeEvent 的 meta(=output) 保真送达 WS。
+      output: { request_hash: "e2ehash", items_count: 5, total_tokens: 3200, snapshot_path: "runtime/snap/e2e.json" },
     },
     {
-      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch + 1, seq: 2, event_id: "seed-proj",
-      kind: "observation", actor: "PM", name: "prompt_context", refs: { run_id: "seed", step: 1 },
-      summary: "Prompt Context Injection", ok: true,
-      output: { context_hash: "seedhash", context_snapshot: "runtime/snap/seedhash.json" },
-    },
-    {
-      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch + 2, seq: 3, event_id: "seed-snap",
-      kind: "observation", actor: "System", name: "context.snapshot", refs: { run_id: "seed", step: 1 },
-      summary: "Context snapshot stored", ok: true,
-      output: { request_hash: "seedhash", snapshot_path: "runtime/snap/seedhash.json", snapshot_hash: "seedsnap" },
-    },
-    {
-      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch + 3, seq: 4, event_id: "seed-call",
-      kind: "observation", actor: "PM", name: "llm_invoke", refs: { run_id: "seed", step: 1, mode: "pm.planning" },
-      summary: "seeded planning call", ok: true,
-      // 真实 llm_invoke：时延在 output.duration_ms。
-      output: { usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 }, duration_ms: 2400 },
-    },
-    {
-      schema_version: 1, ts: new Date().toISOString(), ts_epoch: nowEpoch + 4, seq: 5, event_id: "seed-dir",
-      kind: "observation", actor: "Director", name: "llm_invoke", refs: { run_id: "seed", mode: "director.execution" },
-      summary: "seeded director call", ok: true,
-      // 字符估算的 usage → estimated:true，UI 应显示「含估算」标记。
-      output: { usage: { prompt_tokens: 800, completion_tokens: 200, total_tokens: 1000, estimated: true }, duration_ms: 1800 },
+      schema_version: 1, ts: nowIso, ts_epoch: nowEpoch + 1, seq: 2, event_id: "e2e-snap",
+      kind: "observation", actor: "System", name: "context.snapshot", refs: { run_id: "e2e", step: 1 },
+      summary: "E2E snapshot stored", ok: true,
+      output: { request_hash: "e2ehash", snapshot_path: "runtime/snap/e2e.json", snapshot_hash: "e2esnap" },
     },
   ];
-  const content = `${seededLines.map((line) => JSON.stringify(line)).join("\n")}\n`;
+  const content = `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`;
   fs.mkdirSync(path.dirname(resolved.path), { recursive: true });
-  fs.writeFileSync(resolved.path, content, { encoding: "utf8" });
+  fs.appendFileSync(resolved.path, content, { encoding: "utf8" });
 
-  // 3) 进入 ContextOS 并刷新以拾取种子文件（也会被 4s 轮询自动拾取）。
+  // 3) 重连 WebSocket（reload），让 runtime_events 通道快照（tail）包含这两条事件。
+  await window.reload();
+  await expect(window.locator("[data-testid='project-progress-panel']")).toBeVisible({ timeout: 30000 });
+
+  // 4) 进入 ContextOS。
   await enterContextOS(window);
   await expect(window.locator("[data-testid='contextos-workspace']")).toBeVisible();
-  await window.locator("[data-testid='contextos-refresh']").click();
 
-  // 4) 断言真实遥测被实时呈现。
+  // 5) 断言真实事件经 WS 实时呈现（无轮询）。
   const source = window.locator("[data-testid='contextos-telemetry-source']");
-  await expect(source).toBeVisible();
+  await expect(source).toBeVisible({ timeout: 20000 });
   await expect(source).toContainText("REAL");
-  await expect(source).toContainText("投影");
-  // Canonical context.snapshot is counted as a real receipt (快照).
-  await expect(source).toContainText("快照");
+  await expect(source).toContainText("投影"); // context.build → projection
+
+  // 新鲜度徽章翻转为「实时遥测」（事件时间戳为当下）。
   await expect(window.getByTestId("contextos-telemetry-freshness")).toContainText("实时遥测");
-  await expect(window.getByText("Prompt Context Injection", { exact: false }).first()).toBeVisible();
-  await expect(window.getByText("seeded planning call", { exact: false }).first()).toBeVisible();
 
-  // Real event-type distribution (derived from observation categories) is shown.
-  await expect(window.locator("[data-testid='contextos-event-types']")).toBeVisible();
-  // The 5th role (Chief Engineer / 工部尚书) is part of the real role-signal plane.
-  await expect(window.locator("[data-testid='contextos-role-chief_engineer']")).toBeVisible();
-  // The estimated-token honesty marker appears because the seeded director call has usage.estimated=true.
-  await expect(window.getByTestId("contextos-estimated-marker")).toContainText("含估算");
+  // 结构化信号经 WS meta 保真送达：WorkingMem 显示真实在窗项数（items_count=5）。
+  await expect(window.locator("[data-testid='contextos-component-working_mem']")).toContainText("5 项在窗");
+  // 快照回执（snapshot_hash 签名）在 Receipt · Telemetry 卡呈现。
+  await expect(window.locator("[data-testid='contextos-component-telemetry']")).toContainText("快照");
 
-  // 截图供人工视觉审计（真实数据态）。
-  const shot = "/tmp/contextos-realdata.png";
+  // 截图供人工视觉审计（真实 WS 数据态）。
+  const shot = "/tmp/contextos-ws-realtime.png";
   await window.screenshot({ path: shot, fullPage: true });
-  await testInfo.attach("contextos-real-telemetry", { path: shot, contentType: "image/png" });
+  await testInfo.attach("contextos-ws-realtime", { path: shot, contentType: "image/png" });
 });

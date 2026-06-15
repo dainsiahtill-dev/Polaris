@@ -1013,6 +1013,8 @@ function AppContent() {
           llmRuntimeState={llmRuntimeState}
           dialogueEvents={dialogueEvents}
           executionLogs={executionLogs}
+          llmStreamEvents={llmStreamEvents}
+          processStreamEvents={processStreamEvents}
           snapshot={displaySnapshot ?? snapshot}
           qualityGate={qualityGate}
         />

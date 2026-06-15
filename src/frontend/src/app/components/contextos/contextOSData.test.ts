@@ -6,7 +6,7 @@ import {
   contextOSFormat,
   NOMINAL_CONTEXT_WINDOW,
 } from './contextOSData';
-import { parseObservationLog } from './contextOSTelemetry';
+import { buildTelemetryFromStream } from './contextOSTelemetry';
 import type { UsageStats } from '@/app/components/UsageHUD';
 import type { DialogueEvent } from '@/app/components/DialoguePanel';
 import type { LogEntry } from '@/types/log';
@@ -158,109 +158,92 @@ describe('buildContextOSModel', () => {
   });
 });
 
-describe('buildContextOSModel with real telemetry', () => {
-  const TELEMETRY_LOG = [
-    JSON.stringify({
-      ts: '2026-06-15T10:00:00Z', ts_epoch: 1781856000.0, seq: 1, event_id: 'cb1',
-      kind: 'observation', actor: 'System', name: 'context.build', refs: { run_id: 'r1', step: 1 },
-      summary: 'ContextPack built (6 items)', ok: true,
-      output: { request_hash: 'rh1', items_count: 6, total_tokens: 3000, snapshot_path: 'runtime/snap/h1.json' },
-    }),
-    JSON.stringify({
-      ts: '2026-06-15T10:00:01Z', ts_epoch: 1781856001.0, seq: 2, event_id: 'p1',
-      kind: 'observation', actor: 'PM', name: 'prompt_context', refs: { run_id: 'r1', step: 1 },
-      summary: 'Prompt Context Injection', ok: true,
-      output: { context_hash: 'h1', context_snapshot: 'runtime/snap/h1.json' },
-    }),
-    JSON.stringify({
-      ts: '2026-06-15T10:00:01.5Z', ts_epoch: 1781856001.5, seq: 3, event_id: 's1',
-      kind: 'observation', actor: 'System', name: 'context.snapshot', refs: { run_id: 'r1', step: 1 },
-      summary: 'Context snapshot stored', ok: true,
-      output: { request_hash: 'rh1', snapshot_path: 'runtime/snap/h1.json', snapshot_hash: 'sh1' },
-    }),
-    JSON.stringify({
-      ts: '2026-06-15T10:00:02Z', ts_epoch: 1781856002.0, seq: 4, event_id: 'c1',
-      kind: 'observation', actor: 'PM', name: 'llm_invoke', refs: { mode: 'pm.planning' },
-      summary: 'pm call', ok: true,
-      // real llm_invoke: duration lives in output.duration_ms (not top-level).
-      output: { usage: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 }, duration_ms: 2400 },
-    }),
-    JSON.stringify({
-      ts: '2026-06-15T10:00:04Z', ts_epoch: 1781856004.0, seq: 5, event_id: 'c2',
-      kind: 'observation', actor: 'Director', name: 'llm_invoke', refs: { mode: 'director.execution' },
-      summary: 'director call', ok: true,
-      // char-estimated usage → estimated:true.
-      output: { usage: { prompt_tokens: 800, completion_tokens: 200, total_tokens: 1000, estimated: true }, duration_ms: 1800 },
-    }),
-  ].join('\n');
+describe('buildContextOSModel with real WS telemetry', () => {
+  // 夹具取自 useRuntime 经 WebSocket 推送、再解析出的 LogEntry 流（无文件轮询）。
+  function wsLog(over: Partial<LogEntry> & { id: string; timestamp: string }): LogEntry {
+    return { level: 'info', source: 'System', message: '', ...over };
+  }
+  const LLM_STREAM: LogEntry[] = [
+    wsLog({ id: 'c1', timestamp: '2026-06-15T10:00:02Z', level: 'success', source: 'PM', message: 'LLM 响应已返回', details: 'chars=120 2400ms', meta: { channel: 'llm', streamEvent: 'invoke_done', role: 'PM' }, tags: ['invoke_done'] }),
+    wsLog({ id: 'c2', timestamp: '2026-06-15T10:00:04Z', level: 'success', source: 'Director', message: 'LLM 响应已返回', details: 'chars=80 1800ms', meta: { channel: 'llm', streamEvent: 'invoke_done', role: 'Director' }, tags: ['invoke_done'] }),
+  ];
+  const EXECUTION: LogEntry[] = [
+    wsLog({ id: 'cb1', timestamp: '2026-06-15T10:00:00Z', source: 'System', message: 'context.build', meta: { channel: 'runtime_events' } }),
+    wsLog({ id: 'p1', timestamp: '2026-06-15T10:00:01Z', source: 'PM', message: 'prompt_context', meta: { channel: 'runtime_events' } }),
+  ];
+  const telemetryOf = (llm = LLM_STREAM, exec = EXECUTION, proc: LogEntry[] = []) =>
+    buildTelemetryFromStream(llm, exec, proc);
 
-  it('prefers real telemetry for tokens, projections, receipts and decisions', () => {
-    const telemetry = parseObservationLog(TELEMETRY_LOG);
-    const model = buildContextOSModel(baseInput({ telemetry }));
+  it('drives activity (calls / projections / latency) from the live WS stream', () => {
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf() }));
 
     expect(model.telemetryActive).toBe(true);
-    // Telemetry-derived totals (no usageStats prop supplied).
-    expect(model.totalTokens).toBe(2500);
-    expect(model.calls).toBe(2);
-    expect(model.estimatedCalls).toBe(1); // director call is char-estimated
-    expect(model.projectionCount).toBe(2); // context.build + prompt_context (all-role)
-    expect(model.receiptCount).toBe(1); // canonical context.snapshot only
-    expect(model.contextItemsCount).toBe(6); // real context.build items_count
-    expect(model.realLatencyMs).toBe(1800); // recovered from output.duration_ms
+    expect(model.calls).toBe(2); // two invoke_done
+    expect(model.projectionCount).toBe(2); // context.build + prompt_context
+    expect(model.realLatencyMs).toBe(1800); // newest call's recovered latency
+    // tokens are NOT on the realtime stream → 0 unless usageStats provides them (honest).
+    expect(model.totalTokens).toBe(0);
+    expect(model.receiptCount).toBe(0);
+    expect(model.contextItemsCount).toBeNull();
 
     // Pipeline projection node shows the real (all-role) projection count.
     expect(model.pipeline.find((s) => s.id === 'projection')?.metric).toBe('2 投影');
-    // WorkingMem stage shows the real in-window item count (not the estimate path).
-    expect(model.pipeline.find((s) => s.id === 'working_mem')?.metric).toBe('6 项在窗');
 
-    // Decision log is the real observation stream (newest first), with token/receipt enrichment.
+    // Decision log is the real WS event stream (newest first).
     expect(model.decisions[0].source).toBe('telemetry');
     expect(model.decisions[0].actor).toBe('Director');
-    const snapshotRow = model.decisions.find((d) => d.id === 's1');
-    expect(snapshotRow?.receipt).toBe(true); // canonical context.snapshot is the receipt
-    const callRow = model.decisions.find((d) => d.id === 'c1');
-    expect(callRow?.tokens).toBe(1500);
 
-    // Not idle even though pmRunning/directorRunning are false — telemetry is observed activity.
+    // Observed activity even though pmRunning/directorRunning are false.
     expect(model.dataIdle).toBe(false);
   });
 
-  it('derives a real event-type distribution from observation categories', () => {
-    const telemetry = parseObservationLog(TELEMETRY_LOG);
-    const model = buildContextOSModel(baseInput({ telemetry }));
-    // TELEMETRY_LOG = context.build + prompt_context (2 projection) + context.snapshot (1 event) + 2 llm_invoke (call).
-    expect(model.eventTypesTotal).toBe(5);
+  it('keeps token totals from the usage-stats channel while activity stays realtime (honest split)', () => {
+    const usageStats: UsageStats = {
+      totals: { prompt_tokens: 1200, completion_tokens: 300, total_tokens: 1500 },
+      calls: 7,
+      estimated_calls: 1,
+      by_mode: {},
+    };
+    const model = buildContextOSModel(baseInput({ usageStats, telemetry: telemetryOf() }));
+    // tokens come from the usage-stats channel...
+    expect(model.totalTokens).toBe(1500);
+    expect(model.estimatedCalls).toBe(1);
+    // ...but calls / projections stay realtime from the WS stream.
+    expect(model.calls).toBe(2);
+    expect(model.projectionCount).toBe(2);
+  });
+
+  it('derives a real event-type distribution from WS categories', () => {
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf() }));
+    // 4 events: 2 projection (context.build + prompt_context) + 2 call (invoke_done).
+    expect(model.eventTypesTotal).toBe(4);
     const byKey = Object.fromEntries(model.eventTypes.map((s) => [s.key, s.count]));
     expect(byKey['projection']).toBe(2);
     expect(byKey['call']).toBe(2);
-    expect(byKey['event']).toBe(1); // context.snapshot
-    // ratios sum to 1 over the present categories.
     const ratioSum = model.eventTypes.reduce((acc, s) => acc + s.ratio, 0);
     expect(ratioSum).toBeCloseTo(1, 5);
   });
 
-  it('maps telemetry actor tokens onto role cards and marks them active', () => {
-    const telemetry = parseObservationLog(TELEMETRY_LOG);
-    const model = buildContextOSModel(baseInput({ telemetry }));
+  it('shows per-role activity by event count; no role claims realtime tokens', () => {
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf() }));
     const pm = model.roles.find((r) => r.id === 'pm');
     const director = model.roles.find((r) => r.id === 'director');
-    expect(pm?.tokens).toBe(1500);
-    expect(pm?.tokensReal).toBe(true); // PM has a real usage channel
-    expect(pm?.state).toBe('active'); // produced telemetry events
-    expect(director?.tokens).toBe(1000);
-    expect(director?.tokensReal).toBe(true);
     const qa = model.roles.find((r) => r.id === 'qa');
+    expect(pm?.state).toBe('active'); // produced WS events (invoke_done + prompt_context)
+    expect(pm?.tokensReal).toBe(false); // WS stream carries no per-call usage
+    expect(pm?.detail).toBe('2 事件');
+    expect(director?.state).toBe('active');
+    expect(director?.tokensReal).toBe(false);
     expect(qa?.state).toBe('idle');
-    expect(qa?.tokensReal).toBe(false); // no usage channel for QA
+    expect(qa?.tokensReal).toBe(false);
   });
 
-  it('marks token totals as windowed when the read hit the tail cap', () => {
-    // 5 parsed lines; a cap of 5 means we only saw the tail window.
-    const telemetry = parseObservationLog(TELEMETRY_LOG, 5);
-    const model = buildContextOSModel(baseInput({ telemetry }));
-    expect(model.telemetryWindowed).toBe(true);
-    const wide = buildContextOSModel(baseInput({ telemetry: parseObservationLog(TELEMETRY_LOG, 800) }));
-    expect(wide.telemetryWindowed).toBe(false);
+  it('flags windowed when a WS stream reaches its ring-buffer cap', () => {
+    expect(buildContextOSModel(baseInput({ telemetry: telemetryOf() })).telemetryWindowed).toBe(false);
+    const bigExec = Array.from({ length: 100 }, (_, i) =>
+      wsLog({ id: `rt-${i}`, timestamp: '2026-06-15T10:00:00Z', message: 'tick', meta: { channel: 'runtime_events' } }),
+    );
+    expect(buildContextOSModel(baseInput({ telemetry: telemetryOf([], bigExec) })).telemetryWindowed).toBe(true);
   });
 
   it('falls back to proxy derivation when telemetry is empty', () => {
