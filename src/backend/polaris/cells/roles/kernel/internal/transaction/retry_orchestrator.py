@@ -303,8 +303,7 @@ def _should_bootstrap_original_read_batch(
         return False
     if _requires_write_only_single_target_repair(context):
         logger.warning(
-            "mutation-contract READ-ONLY bootstrap blocked by single-target "
-            "write-only repair: turn_id=%s tools=%s",
+            "mutation-contract READ-ONLY bootstrap blocked by single-target write-only repair: turn_id=%s tools=%s",
             turn_id,
             [extract_invocation_tool_name(inv) for inv in original_bootstrap_invocations],
         )

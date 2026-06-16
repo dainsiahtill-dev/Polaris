@@ -5204,6 +5204,23 @@ async def _run_materialization_quality_repair_retry(
             "type": "function",
             "function": {"name": "write_file"},
         }
+        repair_context["_transaction_kernel_forced_tool_definitions"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "description": "Write a complete UTF-8 text file at the requested target path.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file": {"type": "string"},
+                            "content": {"type": "string", "minLength": 1},
+                        },
+                        "required": ["file", "content"],
+                    },
+                },
+            }
+        ]
         repair_context["director_quality_repair"]["write_only_single_target"] = {
             "tool": "write_file",
             "target_file": single_target_file,
@@ -5424,6 +5441,7 @@ def _build_materialization_quality_repair_message(
             single_missing = missing_target_files[0]
             single_missing_block = (
                 "SINGLE MISSING TARGET REPAIR:\n"
+                "[director_quality_repair:write_only_single_target]\n"
                 f"- Target path: {single_missing}\n"
                 "- Emit exactly one write_file tool call for that target path.\n"
                 "- The write_file content must be the complete non-empty file body.\n"

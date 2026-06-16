@@ -7,6 +7,8 @@ analysis back with a transcribe-don't-re-explain instruction.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from polaris.cells.roles.kernel.internal.transaction import retry_orchestrator as _ro
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     extract_target_files_from_message,
@@ -16,6 +18,7 @@ from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
     _clear_read_bootstrap_progress,
     _extract_latest_assistant_message,
     _read_bootstrap_makes_no_progress,
+    _should_bootstrap_original_read_batch,
     _workspace_materialization_fingerprint,
     build_contract_retry_context,
 )
@@ -106,6 +109,39 @@ def test_retry_context_lists_all_detected_target_files_for_large_repair() -> Non
 
 
 # --- F24 progress-aware read-loop bound (2026-06-16) ------------------------
+
+
+def test_original_read_bootstrap_allowed_without_single_target_marker(tmp_path) -> None:
+    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    assert _should_bootstrap_original_read_batch(
+        context=[{"role": "user", "content": "Create src/styles.css"}],
+        turn_id="step-normal-bootstrap",
+        config=SimpleNamespace(workspace=str(tmp_path)),
+        original_bootstrap_invocations=[{"tool_name": "repo_tree"}],
+    )
+
+
+def test_single_target_repair_blocks_original_read_bootstrap(tmp_path) -> None:
+    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    assert not _should_bootstrap_original_read_batch(
+        context=[
+            {
+                "role": "user",
+                "content": (
+                    "SINGLE MISSING TARGET REPAIR:\n"
+                    "[director_quality_repair:write_only_single_target]\n"
+                    "- Target path: services/product_service/app.py\n"
+                ),
+            }
+        ],
+        turn_id="step-single-target",
+        config=SimpleNamespace(workspace=str(tmp_path)),
+        original_bootstrap_invocations=[{"tool_name": "repo_tree"}],
+    )
 
 
 def test_unmeasurable_workspace_never_forces(tmp_path) -> None:

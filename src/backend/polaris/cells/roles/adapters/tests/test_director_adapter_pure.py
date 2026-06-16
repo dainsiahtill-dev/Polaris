@@ -4828,8 +4828,7 @@ class TestQualityRepairMissingTargetContract:
             original_message="Create the missing product service file.",
             llm_call_timeout=10,
             artifact_quality_errors=[
-                "Artifact quality scan failed: declared target file missing "
-                "'services/product_service/app.py'"
+                "Artifact quality scan failed: declared target file missing 'services/product_service/app.py'"
             ],
             changed_files=["services/product_service/__init__.py"],
         )
@@ -4839,6 +4838,12 @@ class TestQualityRepairMissingTargetContract:
             "type": "function",
             "function": {"name": "write_file"},
         }
+        assert (
+            adapter.repair_context["_transaction_kernel_forced_tool_definitions"][0]["function"]["name"] == "write_file"
+        )
+        assert adapter.repair_context["_transaction_kernel_forced_tool_definitions"][0]["function"]["parameters"][
+            "required"
+        ] == ["file", "content"]
         assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
             "tool": "write_file",
             "target_file": "services/product_service/app.py",
@@ -4859,6 +4864,7 @@ class TestQualityRepairMissingTargetContract:
             missing_target_files=["src/styles.css"],
         )
         assert "MISSING TARGET FILES" in message
+        assert "[director_quality_repair:write_only_single_target]" in message
         assert "src/styles.css" in message
         # Changed files appear only as a count — path-shaped tokens seed the
         # retry target extractor with wrong targets.
