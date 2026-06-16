@@ -690,3 +690,164 @@ class TestPythonCrossFileSymbolCoherence:
         (tmp_path / "pkg" / "__init__.py").write_text("from .constants import Foo\n", encoding="utf-8")
 
         assert _symbol_errors(scan_workspace_artifact_quality(str(tmp_path))) == []
+
+
+class TestTypescriptCrossFileSymbolCoherence:
+    """Dark-launched TS/JS symbol coherence (KERNELONE_TS_SYMBOL_COHERENCE).
+
+    Mirrors TestPythonCrossFileSymbolCoherence but for TS/JS named imports. The
+    gate runs on every materialization including L2 JS projects, so the matrix is
+    dominated by FALSE-POSITIVE guards: every ambiguous/unknowable construct must
+    yield ZERO symbol errors. False negatives are acceptable; false positives
+    would break the L2 floor.
+    """
+
+    _FLAG = "KERNELONE_TS_SYMBOL_COHERENCE"
+
+    def _on(self, monkeypatch) -> None:
+        monkeypatch.setenv(self._FLAG, "1")
+
+    def _errors(self, tmp_path: Path) -> list[str]:
+        return _symbol_errors(scan_workspace_artifact_quality(str(tmp_path)))
+
+    # --- floor-safety: dark-launch is inert unless explicitly enabled ----------
+    def test_flag_off_is_inert_even_with_missing_symbol(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.delenv(self._FLAG, raising=False)
+        (tmp_path / "sibling.ts").write_text("export const Other = 1;\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { Missing } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    # --- positive detection ----------------------------------------------------
+    def test_missing_named_symbol_flagged(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("export const Other = 1;\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { Missing } from './sibling';\n", encoding="utf-8")
+        errors = self._errors(tmp_path)
+        assert any("Missing" in e for e in errors)
+        assert not any("Other" in e for e in errors)
+
+    def test_missing_named_symbol_flagged_in_js(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.js").write_text("export function helper() {}\n", encoding="utf-8")
+        (tmp_path / "main.js").write_text("import { ghost } from './sibling';\n", encoding="utf-8")
+        assert any("ghost" in e for e in self._errors(tmp_path))
+
+    def test_aliased_import_checks_original_name(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("export const Present = 1;\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { Missing as M } from './sibling';\n", encoding="utf-8")
+        errors = self._errors(tmp_path)
+        assert any("Missing" in e for e in errors)
+
+    # --- export-form recognition (must NOT flag) -------------------------------
+    def test_all_declaration_export_forms_recognized(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text(
+            "export const A = 1;\n"
+            "export function B() {}\n"
+            "export class C {}\n"
+            "export interface D { x: number }\n"
+            "export type E = string;\n"
+            "export enum F { X }\n"
+            "export async function G() {}\n"
+            "export abstract class H {}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "index.ts").write_text(
+            "import { A, B, C, D, E, F, G, H } from './sibling';\n", encoding="utf-8"
+        )
+        assert self._errors(tmp_path) == []
+
+    def test_aliased_export_recognized(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("const x = 1;\nexport { x as Public };\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { Public } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    def test_reexport_clause_recognized(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "base.ts").write_text("export const Z = 1;\n", encoding="utf-8")
+        (tmp_path / "sibling.ts").write_text("export { Z } from './base';\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { Z } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    # --- fail-open guards (unknowable surface -> ZERO symbol errors) -----------
+    def test_export_star_barrel_fails_open(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("export * from './deep';\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { Anything } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    def test_commonjs_module_exports_fails_open(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.js").write_text("module.exports = { foo: 1 };\n", encoding="utf-8")
+        (tmp_path / "main.js").write_text("import { bar } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    def test_commonjs_exports_property_fails_open(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.js").write_text("exports.foo = 1;\n", encoding="utf-8")
+        (tmp_path / "main.js").write_text("import { bar } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    def test_export_assignment_fails_open(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("class Thing {}\nexport = Thing;\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { Whatever } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    def test_destructured_export_fails_open(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("const o = { a: 1, b: 2 };\nexport const { a, b } = o;\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { missing } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    def test_declare_module_fails_open(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("declare module 'x' { export const Y: number }\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { Missing } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    # --- import shapes that must NOT be checked --------------------------------
+    def test_default_import_not_checked(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("export default function () {}\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import Whatever from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    def test_namespace_import_not_checked(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("export const A = 1;\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import * as NS from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    def test_type_only_import_not_checked(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("export const A = 1;\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import type { Missing } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    def test_inline_type_member_skipped(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("export const Real = 1;\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { type Phantom, Real } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    def test_default_plus_named_checks_only_named(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("export default 1;\nexport const Named = 2;\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import Def, { Named } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []
+
+    def test_unresolved_specifier_yields_no_symbol_error(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "index.ts").write_text("import { X } from './does-not-exist';\n", encoding="utf-8")
+        # The module-missing case is reported by the existing relative-import
+        # check, not as a symbol error; the resolver returns None -> skipped.
+        assert self._errors(tmp_path) == []
+
+    def test_commented_export_does_not_cause_false_positive(self, tmp_path: Path, monkeypatch) -> None:
+        self._on(monkeypatch)
+        (tmp_path / "sibling.ts").write_text("// export const Hidden = 1;\nexport const Shown = 2;\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { Shown } from './sibling';\n", encoding="utf-8")
+        assert self._errors(tmp_path) == []

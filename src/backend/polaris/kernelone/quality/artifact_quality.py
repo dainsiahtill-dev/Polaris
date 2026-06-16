@@ -93,6 +93,52 @@ _IMPORT_SPECIFIER_RE = re.compile(
 )
 _TS_JS_SOURCE_EXTS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
 _TS_SOURCE_EXTS = {".ts", ".tsx"}
+
+# Cross-file symbol-coherence detection for TS/JS named imports. Dark-launched:
+# the live gate runs on every materialization (including L2 JS projects), and a
+# regex export-surface (no TS parser available in-process) cannot be ast-proven
+# free of false positives, which would break the L2 floor. Default OFF until
+# codex bench-validates ON across L2 + L4-L8 TS projects (zero false positives),
+# then flips the default. See blueprints/TS_SYMBOL_COHERENCE_DETECTION_20260617.md.
+_TS_SYMBOL_COHERENCE_FLAG = "KERNELONE_TS_SYMBOL_COHERENCE"
+
+# Surface-unknowable constructs: ANY occurrence (even in a comment/string) forces
+# fail-open, which only ever causes a SKIPPED check (false negative = safe), never
+# a false positive. Detected on RAW text so comments cannot hide them.
+_TS_DYNAMIC_EXPORT_RE = re.compile(
+    r"\bexport\s*\*"  # export * / export * from / export * as
+    r"|\bexport\s*="  # TS export assignment
+    r"|\bmodule\s*\.\s*exports\b"  # CommonJS module.exports
+    r"|\bexports\s*\.\s*[A-Za-z_$]"  # CommonJS exports.x =
+    r"|\bexports\s*\["  # CommonJS exports['x'] =
+    r"|\bObject\s*\.\s*defineProperty\s*\(\s*exports\b"  # transpiled exports
+    r"|\bdeclare\s+(?:module|global|namespace)\b"  # ambient declarations
+    r"|\bexport\s+(?:declare\s+)?(?:const|let|var)\s+[\[{]",  # destructured export
+)
+# Generous export-name capture: missing a real export form would be a FALSE
+# POSITIVE, so capture every plausible declaration form. `enum`/`from` are kept
+# out of the const/let/var capture by the explicit keyword forms below.
+_TS_EXPORT_DECL_RE = re.compile(
+    r"\bexport\s+(?:async\s+)?function\s*\*?\s*(?P<fn>[A-Za-z_$][\w$]*)"
+    r"|\bexport\s+(?:abstract\s+)?class\s+(?P<cls>[A-Za-z_$][\w$]*)"
+    r"|\bexport\s+(?:declare\s+)?(?:interface|type|enum|namespace|module)\s+(?P<ty>[A-Za-z_$][\w$]*)"
+    r"|\bexport\s+const\s+enum\s+(?P<cenum>[A-Za-z_$][\w$]*)"
+    r"|\bexport\s+(?:declare\s+)?(?:const|let|var)\s+(?!enum\b)(?P<var>[A-Za-z_$][\w$]*)",
+)
+# `export { A, B as C }` and `export { A } from './y'` — the EXPORTED name is the
+# alias when `as` is present. `export default {…}` is excluded (no `{` directly
+# after `export`); `export type { … }` handled by the optional `type`.
+_TS_EXPORT_CLAUSE_RE = re.compile(r"\bexport\s+(?:type\s+)?\{(?P<inner>[^{}]*)\}")
+_TS_EXPORT_DEFAULT_RE = re.compile(r"\bexport\s+default\b")
+# `import [type] [Default,] { names } from '<spec>'` — only this shape is
+# symbol-checked. Default-only / `* as NS` / side-effect imports have no `{` and
+# never match, so they are skipped (no named symbol to verify).
+_TS_NAMED_IMPORT_RE = re.compile(
+    r"\bimport\s+(?P<typeonly>type\s+)?"
+    r"(?:[A-Za-z_$][\w$]*\s*,\s*)?"  # optional default import before the brace
+    r"\{(?P<names>[^{}]*)\}"
+    r"\s*from\s*['\"](?P<spec>[^'\"]+)['\"]",
+)
 _NODE_BUILTIN_IMPORTS = {
     "assert",
     "async_hooks",
@@ -645,6 +691,8 @@ def _scan_typescript_imports(root_full: Path, full_path: Path, text: str, relati
             continue
         if not _is_test_like_artifact_path(relative_path):
             errors.append(f"Artifact quality scan failed: undeclared runtime import {specifier!r} in {relative_path}")
+    if _ts_symbol_coherence_enabled():
+        errors.extend(_scan_typescript_symbol_coherence(root_full, full_path, text, relative_path))
     return errors
 
 
@@ -722,6 +770,133 @@ def _relative_import_candidates(base: Path) -> list[Path]:
         seen.add(candidate)
         candidates.append(candidate)
     return candidates
+
+
+_TS_MODULE_READ_CAP_BYTES = 512 * 1024
+
+
+def _ts_symbol_coherence_enabled() -> bool:
+    """Dark-launch gate: TS/JS cross-file symbol coherence is OFF by default."""
+    return os.environ.get(_TS_SYMBOL_COHERENCE_FLAG, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_ts_clause_names(inner: str, *, for_export: bool) -> set[str]:
+    """Parse the identifiers in an `import {…}` or `export {…}` clause.
+
+    For exports the bound name is the alias (`A as B` exports ``B``); for imports
+    the name that must exist in the sibling is the original (`A as B` imports
+    ``A``). Inline type-only members (`type X`) are skipped — they are erased at
+    runtime and carry ambient/declaration-merging risk we will not adjudicate.
+    """
+    names: set[str] = set()
+    for raw in str(inner or "").split(","):
+        token = raw.strip()
+        if not token or token == "type" or token.startswith("type "):
+            continue
+        parts = re.split(r"\s+as\s+", token)
+        chosen = (parts[-1] if for_export else parts[0]).strip()
+        if re.fullmatch(r"[A-Za-z_$][\w$]*", chosen):
+            names.add(chosen)
+    return names
+
+
+def _typescript_module_exports(text: str) -> set[str] | None:
+    """Best-effort export surface of a TS/JS module, or ``None`` (fail-open).
+
+    Returns ``None`` whenever the surface cannot be safely determined (any
+    surface-unknowable construct: ``export *``, ``export =``, CommonJS
+    ``module.exports``/``exports.x``, ambient ``declare module``, destructured
+    export). Capture is otherwise generous — missing a real export form would be
+    a FALSE POSITIVE (a runnable product wrongly failed), whereas over-capturing
+    only yields a benign false negative — so every plausible declaration and
+    clause form is collected.
+    """
+    if not text:
+        return None
+    if _TS_DYNAMIC_EXPORT_RE.search(text):
+        return None
+    exports: set[str] = set()
+    for match in _TS_EXPORT_DECL_RE.finditer(text):
+        name = (
+            match.group("fn") or match.group("cls") or match.group("ty") or match.group("cenum") or match.group("var")
+        )
+        if name:
+            exports.add(name)
+    for match in _TS_EXPORT_CLAUSE_RE.finditer(text):
+        exports.update(_parse_ts_clause_names(match.group("inner"), for_export=True))
+    if _TS_EXPORT_DEFAULT_RE.search(text):
+        exports.add("default")
+    return exports
+
+
+def _resolve_typescript_module_file(root_full: Path, importer_path: Path, specifier: str) -> Path | None:
+    """Resolve a RELATIVE TS/JS import specifier to its single sibling file."""
+    if not specifier.startswith("."):
+        return None
+    base = (importer_path.parent / specifier).resolve()
+    try:
+        base.relative_to(root_full)
+    except ValueError:
+        return None
+    for candidate in _relative_import_candidates(base):
+        try:
+            candidate.relative_to(root_full)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _read_typescript_module_exports(module_file: Path) -> set[str] | None:
+    try:
+        if module_file.stat().st_size > _TS_MODULE_READ_CAP_BYTES:
+            return None
+        content = module_file.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    return _typescript_module_exports(content)
+
+
+def _scan_typescript_symbol_coherence(root_full: Path, full_path: Path, text: str, relative_path: str) -> list[str]:
+    """Flag named imports of a resolvable relative sibling that the sibling never
+    exports — the TS/JS analogue of the Python symbol-coherence check. Conservative
+    by construction: only plain named imports of relative specifiers are checked,
+    and any ambiguity (type-only import, unresolved specifier, unknowable export
+    surface) is skipped, never flagged.
+    """
+    errors: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    exports_cache: dict[Path, set[str] | None] = {}
+    for match in _TS_NAMED_IMPORT_RE.finditer(text):
+        if match.group("typeonly"):
+            continue
+        specifier = str(match.group("spec") or "").strip()
+        if not specifier.startswith("."):
+            continue
+        imported = _parse_ts_clause_names(match.group("names"), for_export=False)
+        if not imported:
+            continue
+        module_file = _resolve_typescript_module_file(root_full, full_path, specifier)
+        if module_file is None:
+            continue
+        if module_file not in exports_cache:
+            exports_cache[module_file] = _read_typescript_module_exports(module_file)
+        surface = exports_cache[module_file]
+        if surface is None:
+            continue
+        for name in sorted(imported):
+            if name in surface:
+                continue
+            key = (name, specifier)
+            if key in seen:
+                continue
+            seen.add(key)
+            errors.append(
+                f"Artifact quality scan failed: unresolved import symbol {name!r} "
+                f"from {specifier!r} in {relative_path} (sibling module does not define it)"
+            )
+    return errors
 
 
 def _is_test_like_artifact_path(relative_path: str) -> bool:
