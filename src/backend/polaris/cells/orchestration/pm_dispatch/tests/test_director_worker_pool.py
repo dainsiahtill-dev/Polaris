@@ -438,6 +438,47 @@ class TestF15MidRunResilience:
         # Returned via the watchdog (~0.3s stall + bounded join), not after the 30s hung wait.
         assert elapsed < 10.0
 
+    def test_active_claim_is_not_retired_by_short_claim_progress_stall(self, tmp_path: Path) -> None:
+        """A long but live claimed task must not be treated as a no-progress drive
+        stall just because poll_once has not returned its result yet."""
+        self._config(tmp_path)
+
+        class _SlowActiveClaimConsumer:
+            def __init__(self) -> None:
+                self._served = False
+                self._active_started_at: float | None = None
+
+            def active_claim_watchdog_snapshot(self) -> dict[str, Any]:
+                return {
+                    "task_id": "slow-live",
+                    "started_monotonic": self._active_started_at,
+                    "timeout_seconds": 10.0,
+                }
+
+            def poll_once(self) -> list[dict[str, Any]]:
+                if self._served:
+                    return []
+                self._active_started_at = time.monotonic()
+                time.sleep(2.3)
+                self._active_started_at = None
+                self._served = True
+                return [{"task_id": "slow-live", "ok": True}]
+
+        class _EmptyConsumer:
+            def poll_once(self) -> list[dict[str, Any]]:
+                return []
+
+        start = time.monotonic()
+        merged = _drive_director_workers(
+            [(_SlowActiveClaimConsumer(), "prov-local"), (_EmptyConsumer(), "prov-lan")],
+            poll_interval=0.005,
+            stall_seconds=0.05,
+        )
+        elapsed = time.monotonic() - start
+
+        assert {row["task_id"] for row in merged if row.get("ok")} == {"slow-live"}
+        assert elapsed >= 2.0
+
     def test_non_resolving_claims_are_paced_to_yield_to_siblings(self, tmp_path: Path) -> None:
         """Fairness: a churning step that requeues without resolving must NOT be
         re-grabbed at full speed by the same worker (which starves idle siblings on

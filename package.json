@@ -97,6 +97,7 @@
     "dompurify": "^3.3.1",
     "embla-carousel-react": "^8.0.0",
     "framer-motion": "^12.29.2",
+    "headroom-ai": "^0.22.4",
     "immer": "^11.1.4",
     "input-otp": "^1.2.4",
     "jspdf": "^4.2.1",

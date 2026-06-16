@@ -1028,6 +1028,32 @@ def _drive_role_workers(
         except (TypeError, ValueError):
             return None
 
+    def _active_claim_snapshot(consumer: Any) -> tuple[str, float, float] | None:
+        snapshotter = getattr(consumer, "active_claim_watchdog_snapshot", None)
+        if not callable(snapshotter):
+            return None
+        try:
+            snapshot = snapshotter()
+        except (RuntimeError, TypeError, ValueError):
+            return None
+        if not isinstance(snapshot, dict):
+            return None
+        started_raw = snapshot.get("started_monotonic")
+        if not isinstance(started_raw, int | float):
+            return None
+        timeout_raw = snapshot.get("timeout_seconds", stall_timeout)
+        if timeout_raw is None:
+            timeout_raw = stall_timeout
+        try:
+            timeout_seconds = float(timeout_raw)
+        except (TypeError, ValueError):
+            timeout_seconds = stall_timeout
+        return (
+            str(snapshot.get("task_id") or "").strip(),
+            float(started_raw),
+            max(float(stall_timeout), timeout_seconds),
+        )
+
     def _retire(index: int, provider_id: str, reason: str) -> None:
         logger.warning("director worker w%d (%s) retired mid-cycle (F15): %s", index, provider_id, reason)
         _pool_trace(f"w{index} ({provider_id}) RETIRED: {reason}")
@@ -1136,7 +1162,41 @@ def _drive_role_workers(
         if progressed != last_progress:
             last_progress = progressed
             last_progress_ts = now
-        elif now - last_progress_ts > stall_timeout:
+        else:
+            active_claims = [
+                (index, provider_id, snapshot)
+                for index, (consumer, provider_id) in enumerate(workers)
+                if (snapshot := _active_claim_snapshot(consumer)) is not None
+            ]
+            fresh_active_claims = [
+                (index, provider_id, snapshot)
+                for index, provider_id, snapshot in active_claims
+                if now - snapshot[1] <= snapshot[2]
+            ]
+            if fresh_active_claims:
+                last_progress_ts = now
+                time.sleep(min(0.2, stall_timeout / 10.0))
+                continue
+            if active_claims:
+                index, provider_id, snapshot = max(active_claims, key=lambda item: now - item[2][1])
+                task_id, started_at, timeout_seconds = snapshot
+                age = now - started_at
+                logger.warning(
+                    "director drive active claim stalled %.0fs > %.0fs; retiring pool (F15 backstop): "
+                    "worker=w%d provider=%s task_id=%s",
+                    age,
+                    timeout_seconds,
+                    index,
+                    provider_id,
+                    task_id,
+                )
+                _pool_trace(
+                    f"DRIVE STALL: active claim {task_id or '<unknown>'} on w{index} "
+                    f"({provider_id}) age {age:.0f}s > {timeout_seconds:.0f}s; stopping"
+                )
+                stop.set()
+                break
+        if now - last_progress_ts > stall_timeout:
             logger.warning(
                 "director drive stalled %.0fs with no claim progress; retiring pool (F15 backstop)",
                 now - last_progress_ts,

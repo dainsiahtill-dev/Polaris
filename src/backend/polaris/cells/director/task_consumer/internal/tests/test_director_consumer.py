@@ -687,6 +687,59 @@ class TestDirectorExecutionConsumerPollOnce:
         assert results[0]["ok"] is True
         assert mock_svc.renew_task_lease.call_count >= 1
 
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_active_claim_snapshot_is_visible_only_during_execution(self, mock_get_svc: MagicMock) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-active"
+        claim_result.lease_token = "lease-active"
+        claim_result.payload = {"blueprint_id": "bp-active"}
+
+        ack_result = MagicMock()
+        ack_result.ok = True
+        ack_result.status = "pending_qa"
+
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.acknowledge_task_stage.return_value = ack_result
+
+        consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1", visibility_timeout_seconds=600)
+        execution_started = threading.Event()
+        release_execution = threading.Event()
+
+        def _blocking_execute(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            execution_started.set()
+            assert release_execution.wait(timeout=5.0)
+            return {"changed_files": ["src/main.py"], "duration": 0, "side_effects": []}
+
+        result_box: dict[str, Any] = {}
+
+        def _run_poll() -> None:
+            with patch.object(consumer, "_execute_task", side_effect=_blocking_execute):
+                result_box["results"] = consumer.poll_once()
+
+        thread = threading.Thread(target=_run_poll)
+        thread.start()
+        try:
+            assert execution_started.wait(timeout=5.0)
+            snapshot = consumer.active_claim_watchdog_snapshot()
+            assert snapshot["task_id"] == "task-active"
+            assert isinstance(snapshot["started_monotonic"], float)
+            assert snapshot["timeout_seconds"] == 600.0
+            release_execution.set()
+            thread.join(timeout=5.0)
+            assert not thread.is_alive()
+        finally:
+            release_execution.set()
+            thread.join(timeout=5.0)
+
+        assert result_box["results"][0]["ok"] is True
+        assert consumer.active_claim_watchdog_snapshot()["started_monotonic"] is None
+
 
 class TestScopeConflictDetector:
     def test_no_conflict_when_empty_scope(self) -> None:

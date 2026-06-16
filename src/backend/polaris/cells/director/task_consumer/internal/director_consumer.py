@@ -625,6 +625,30 @@ class DirectorExecutionConsumer:
         self._svc = get_task_market_service()
         self._conflict_detector = ScopeConflictDetector()
         self._task_executor = task_executor
+        self._active_claim_lock = threading.Lock()
+        self._active_claim_task_id = ""
+        self._active_claim_started_monotonic: float | None = None
+        self._active_claim_timeout_seconds = float(max(1, int(self._visibility_timeout)))
+
+    def active_claim_watchdog_snapshot(self) -> dict[str, Any]:
+        """Return the currently executing claim, if any, for outer pool watchdogs."""
+        with self._active_claim_lock:
+            return {
+                "task_id": self._active_claim_task_id,
+                "started_monotonic": self._active_claim_started_monotonic,
+                "timeout_seconds": self._active_claim_timeout_seconds,
+            }
+
+    def _mark_active_claim(self, task_id: str) -> None:
+        with self._active_claim_lock:
+            self._active_claim_task_id = str(task_id or "").strip()
+            self._active_claim_started_monotonic = time.monotonic()
+
+    def _clear_active_claim(self, task_id: str) -> None:
+        with self._active_claim_lock:
+            if self._active_claim_task_id == str(task_id or "").strip():
+                self._active_claim_task_id = ""
+                self._active_claim_started_monotonic = None
 
     def poll_once(self) -> list[dict[str, Any]]:
         """Poll once for PENDING_EXEC tasks."""
@@ -642,7 +666,11 @@ class DirectorExecutionConsumer:
             if not claim.ok:
                 break
 
-            processed = self._process_claim(claim)
+            self._mark_active_claim(str(claim.task_id or ""))
+            try:
+                processed = self._process_claim(claim)
+            finally:
+                self._clear_active_claim(str(claim.task_id or ""))
             results.append(processed)
         return results
 
