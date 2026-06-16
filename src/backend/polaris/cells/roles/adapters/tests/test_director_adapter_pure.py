@@ -4776,6 +4776,74 @@ class TestQualityRepairMissingTargetContract:
 
         assert missing == []
 
+    @pytest.mark.asyncio
+    async def test_single_missing_target_repair_sets_forced_write_context(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self.repair_context: dict[str, Any] = {}
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, timeout_seconds, stage_label
+                self.repair_context = context
+                return {"content": ""}
+
+        (tmp_path / "services" / "product_service").mkdir(parents=True)
+        adapter = _Adapter()
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["services/product_service/app.py"]},
+            target_task_id="PM-0001-1",
+            run_id="run-single-missing-write-only",
+            context={},
+            original_message="Create the missing product service file.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: declared target file missing "
+                "'services/product_service/app.py'"
+            ],
+            changed_files=["services/product_service/__init__.py"],
+        )
+
+        assert summary["missing_target_files"] == ["services/product_service/app.py"]
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "write_file"},
+        }
+        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
+            "tool": "write_file",
+            "target_file": "services/product_service/app.py",
+        }
+
     def test_repair_message_names_missing_targets_and_hides_changed_paths(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,

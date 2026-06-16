@@ -22,22 +22,11 @@ sys.path.insert(0, str(__file__).rsplit("/polaris/", 1)[0] if "/polaris/" in __f
 
 # T2-A tests deliberately keep imports INSIDE the test methods (not
 # module-scope). Pulling ``RoleContextCompressor`` / ``RoleContextIdentity``
-# up to module scope triggers F811 redefinition errors against the
-# pre-existing in-method imports in this file (lines 153/195/259/...) and
-# also perturbs mypy's inference of ``messages`` in the pre-existing
-# ``test_micro_compact_replaces_old_tool_results`` test.
-#
-# The TYPE_CHECKING import below is a mypy/ruff-friendly forward declaration
-# for the ``_make_compressor`` helper return type — it is NOT a runtime
-# import (it is guarded by ``TYPE_CHECKING``) so it does not collide with
-# the in-method imports, and it satisfies ruff F821 / mypy [name-defined].
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from polaris.kernelone.context.compaction import (  # noqa: F401  (typing-only)
-        RoleContextCompressor,
-        RoleContextIdentity,
-    )
+# up to module scope (runtime OR TYPE_CHECKING) triggers F811 redefinition
+# errors against the pre-existing in-method imports in this file
+# (lines 153/195/259/...) AND perturbs mypy's strict inference of
+# ``messages`` in the pre-existing ``test_micro_compact_replaces_old_tool_results``
+# test. The slice helper therefore keeps an unannotated return type.
 
 
 class TestContextCompressorIntegration:
@@ -105,7 +94,7 @@ class TestContextCompressorIntegration:
         short_content_c = "C"  # 长度 < 100，不会被压缩
         short_content_d = "D"
 
-        messages = [
+        messages: list[dict[str, object]] = [
             {"role": "system", "content": "You are a helpful assistant."},
             {
                 "role": "assistant",

@@ -5198,6 +5198,16 @@ async def _run_materialization_quality_repair_retry(
             "changed_files": changed_files[:40],
         },
     }
+    if len(missing_target_files) == 1:
+        single_target_file = missing_target_files[0]
+        repair_context["_transaction_kernel_forced_tool_choice"] = {
+            "type": "function",
+            "function": {"name": "write_file"},
+        }
+        repair_context["director_quality_repair"]["write_only_single_target"] = {
+            "tool": "write_file",
+            "target_file": single_target_file,
+        }
     try:
         result = await adapter._invoke_role_dialogue_with_timeout(
             repair_message,

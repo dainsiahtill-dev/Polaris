@@ -209,6 +209,7 @@ _DEFAULT_RETRY_ESCALATION_TEMPERATURE = 0.2
 _MAX_STALLED_READ_BOOTSTRAPS = 2
 _READ_BOOTSTRAP_PROGRESS: dict[str, tuple[tuple[int, int] | None, int]] = {}
 _READ_BOOTSTRAP_PROGRESS_MAX_KEYS = 512
+_WRITE_ONLY_SINGLE_TARGET_REPAIR_MARKER = "[director_quality_repair:write_only_single_target]"
 _FINGERPRINT_SOURCE_EXTS = (
     ".py",
     ".js",
@@ -280,6 +281,43 @@ def _read_bootstrap_makes_no_progress(turn_id: str, workspace: str) -> bool:
 def _clear_read_bootstrap_progress(turn_id: str) -> None:
     """Reset a step's read-bootstrap progress once it converges to a write."""
     _READ_BOOTSTRAP_PROGRESS.pop(turn_id, None)
+
+
+def _requires_write_only_single_target_repair(context: list[dict]) -> bool:
+    """Return True for Director quality repair of exactly one missing target."""
+    latest_user_request = extract_latest_user_message(context).lower()
+    return _WRITE_ONLY_SINGLE_TARGET_REPAIR_MARKER in latest_user_request
+
+
+def _should_bootstrap_original_read_batch(
+    *,
+    context: list[dict],
+    turn_id: str,
+    config: Any,
+    original_bootstrap_invocations: list[Any],
+) -> bool:
+    """Decide whether an original read-only violating batch may be executed."""
+    if not original_bootstrap_invocations:
+        return False
+    if not is_safe_readonly_bootstrap_invocations(original_bootstrap_invocations):
+        return False
+    if _requires_write_only_single_target_repair(context):
+        logger.warning(
+            "mutation-contract READ-ONLY bootstrap blocked by single-target "
+            "write-only repair: turn_id=%s tools=%s",
+            turn_id,
+            [extract_invocation_tool_name(inv) for inv in original_bootstrap_invocations],
+        )
+        return False
+    progress_workspace = _resolve_materialization_workspace(config)
+    if _read_bootstrap_makes_no_progress(turn_id, progress_workspace):
+        logger.warning(
+            "mutation-contract READ-ONLY bootstrap stalled (no new materialization) "
+            "-> forcing write escalation: turn_id=%s",
+            turn_id,
+        )
+        return False
+    return True
 
 
 def _resolve_materialization_workspace(config: Any) -> str:
@@ -1855,7 +1893,12 @@ class RetryOrchestrator:
         # (observed: hallucinated vue-element-admin Windows paths). Bootstrap the
         # ORIGINAL reads directly — never throw away the model's correct request.
         original_bootstrap_invocations = _extract_decision_invocations(original_decision)
-        if original_bootstrap_invocations and is_safe_readonly_bootstrap_invocations(original_bootstrap_invocations):
+        if _should_bootstrap_original_read_batch(
+            context=context,
+            turn_id=turn_id,
+            config=self.config,
+            original_bootstrap_invocations=original_bootstrap_invocations,
+        ):
             # F24 (2026-06-16): progress-aware read-loop bound. Bootstrap the reads
             # (gather evidence) UNLESS this step's read-only bootstraps have stalled
             # — i.e. materialised no new bytes across the last few reads (L4-19: all
@@ -1863,8 +1906,7 @@ class RetryOrchestrator:
             # the forced-write escalation ladder. Unlike the reverted F21 count-based
             # ceiling, normal read-then-write flows change the workspace fingerprint
             # and never trip this, so the L2 floor is not regressed.
-            progress_workspace = _resolve_materialization_workspace(self.config)
-            if _read_bootstrap_makes_no_progress(turn_id, progress_workspace):
+            if False:
                 logger.warning(
                     "mutation-contract READ-ONLY bootstrap stalled (no new materialization) "
                     "-> forcing write escalation: turn_id=%s",
