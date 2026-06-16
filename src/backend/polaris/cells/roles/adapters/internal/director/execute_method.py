@@ -2154,6 +2154,11 @@ _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE = re.compile(
     r"unresolved relative import ['\"](?P<specifier>[^'\"]+)['\"] in (?P<path>\S+)",
     re.IGNORECASE,
 )
+_UNRESOLVED_IMPORT_SYMBOL_ERROR_RE = re.compile(
+    r"unresolved (?:import )?symbol ['\"](?P<symbol>[^'\"]+)['\"] "
+    r"from ['\"](?P<module>[^'\"]+)['\"] in (?P<path>\S+)",
+    re.IGNORECASE,
+)
 _DECLARED_TARGET_FILE_MISSING_ERROR_RE = re.compile(
     r"declared target file missing ['\"](?P<path>[^'\"]+)['\"]",
     re.IGNORECASE,
@@ -5352,6 +5357,38 @@ def _relative_import_suffix_order(importer_rel: str) -> tuple[str, ...]:
     return (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
 
 
+def _build_unresolved_import_symbol_repair_block(artifact_quality_errors: list[str]) -> str:
+    symbol_errors: list[tuple[str, str, str]] = []
+    for item in artifact_quality_errors:
+        match = _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.search(str(item or ""))
+        if not match:
+            continue
+        symbol = str(match.group("symbol") or "").strip()
+        module = str(match.group("module") or "").strip()
+        importer = _normalize_declared_task_path(match.group("path"))
+        if symbol and module and importer:
+            symbol_errors.append((symbol, module, importer))
+
+    if not symbol_errors:
+        return ""
+
+    symbol_lines = "\n".join(
+        f"- Module '{module}' must define/export symbol '{symbol}' for importer '{importer}'."
+        for symbol, module, importer in symbol_errors[:12]
+    )
+    return (
+        "CROSS-FILE SYMBOL REPAIR: an importing file already exists, but the "
+        "sibling/exporting module does not define a symbol that importer needs. "
+        "Do not edit the importing file. Do not remove or weaken the import. "
+        "Update only the exporting module named after `from ...` and make the "
+        "exporting module define or export exactly the missing symbol(s). "
+        "Do not create unrelated files. Emit exactly one write_file or edit_file "
+        "for that module now. Do not read files first. Do not list directories. "
+        "Do not explore. Do not explain.\n"
+        f"{symbol_lines}\n"
+    )
+
+
 def _build_materialization_quality_repair_message(
     *,
     original_message: str,
@@ -5408,6 +5445,12 @@ def _build_materialization_quality_repair_message(
             "edit the importing file.\n"
             f"{coherence_lines}\n"
         )
+    symbol_repair_block = _build_unresolved_import_symbol_repair_block(artifact_quality_errors)
+    if symbol_repair_block:
+        changed_line = (
+            f"{len(changed_files)} file(s) were already written; do not rewrite unrelated files. "
+            "For CROSS-FILE SYMBOL REPAIR, only edit the exporting module named above."
+        )
     syntax_block = ""
     truncation_signatures = ("unexpected end of input", "truncated/incomplete html", "was never closed")
     if any(
@@ -5449,6 +5492,7 @@ def _build_materialization_quality_repair_message(
         f"{missing_block}"
         f"{single_missing_block}"
         f"{coherence_block}"
+        f"{symbol_repair_block}"
         f"{syntax_block}"
         "Do not repeat the same package/script/test scaffold. Replace the bad artifact with concrete runnable code, "
         "source files, and executable tests required by the task contract.\n"

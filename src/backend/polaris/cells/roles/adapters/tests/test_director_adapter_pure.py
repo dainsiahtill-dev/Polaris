@@ -4818,6 +4818,32 @@ class TestQualityRepairMissingTargetContract:
         assert "Do not read" in message
         assert "Do not list" in message
 
+    def test_unresolved_symbol_repair_targets_exporting_module(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="Create shared SDK.",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: unresolved import symbol 'HTTPClient' "
+                "from 'common.http_client' in common/__init__.py "
+                "(sibling module does not define it)"
+            ],
+            changed_files=["common/__init__.py", "common/http_client.py"],
+            missing_target_files=[],
+        )
+
+        assert "CROSS-FILE SYMBOL REPAIR" in message
+        assert "common.http_client" in message
+        assert "HTTPClient" in message
+        assert "common/__init__.py" in message
+        assert "Do not edit the importing file" in message
+        assert "make the exporting module define or export exactly the missing symbol" in message
+        assert "Do not read files first" in message
+        assert "Do not list directories" in message
+        assert "Emit exactly one write_file or edit_file" in message
+
     def test_repair_message_without_missing_block_when_none(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,
