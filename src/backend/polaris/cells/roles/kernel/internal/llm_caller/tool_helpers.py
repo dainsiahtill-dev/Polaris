@@ -316,10 +316,16 @@ def build_native_tool_schemas(profile: Any) -> list[dict[str, Any]]:
     if not whitelist:
         return []
 
-    if _ccr_retrieve_offering_enabled() and "context_retrieve" not in whitelist:
+    tool_policy = getattr(profile, "tool_policy", None)
+    policy_opt_in = bool(getattr(tool_policy, "ccr_retrieve_opt_in", False))
+
+    if _ccr_retrieve_offering_enabled() and policy_opt_in and "context_retrieve" not in whitelist:
         # Flag-gated CCR consumer-loop closure (T1-A): ensure the spec is registered
         # so the create_default_registry() lookup below resolves it, then offer the
-        # tool to the model. Inert unless KERNELONE_CCR_RETRIEVE is set.
+        # tool to the model. Inert unless KERNELONE_CCR_RETRIEVE is set AND the
+        # role's tool policy has ccr_retrieve_opt_in=True. This fail-closed gate
+        # prevents the env flag from silently overriding per-role tool policy
+        # (a role that did not opt in will not see context_retrieve).
         try:
             from polaris.kernelone.llm.toolkit.executor.handlers.context_retrieve import (
                 ensure_context_retrieve_spec_registered,
