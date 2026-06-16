@@ -4797,6 +4797,62 @@ class TestTruncatedFileDirective:
         assert "TRUNCATED FILE DIRECTIVE" not in message
 
 
+class TestCrossFileCoherenceRepair:
+    """C7-text W3 (#54 repair-mode cross-file coherence): an unresolved relative
+    import means the importer points at a module that does not exist yet. The
+    repair message reframes it as a coherence obligation (create the module,
+    export what the importer uses) instead of a bare missing path. Floor-safe:
+    absent unless an unresolved-import error is present."""
+
+    def test_unresolved_import_gets_coherence_directive(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="实现 React 应用",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: unresolved relative import './router' in src/main.tsx"
+            ],
+            changed_files=["src/main.tsx"],
+            missing_target_files=["src/router.tsx"],
+        )
+        assert "CROSS-FILE COHERENCE REPAIR" in message
+        assert "./router" in message
+        assert "EXPORT" in message
+        # Must not steer the model to rewrite the (existing) importing file.
+        assert "Do not edit the importing file" in message
+
+    def test_no_coherence_block_without_unresolved_imports(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="task",
+            artifact_quality_errors=["Artifact quality scan failed: declared target file missing 'readme.md'"],
+            changed_files=[],
+            missing_target_files=["readme.md"],
+        )
+        assert "CROSS-FILE COHERENCE REPAIR" not in message
+
+    def test_coherence_block_is_floor_inert(self) -> None:
+        """Floor-safety lock: with no unresolved-import error the builder emits
+        no trace of the coherence block (the L2 success path is unperturbed)."""
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="build app",
+            artifact_quality_errors=["Artifact quality scan failed: syntax error in app.js: ..."],
+            changed_files=["app.js"],
+            missing_target_files=[],
+        )
+        assert "CROSS-FILE COHERENCE REPAIR" not in message
+        assert "coherence" not in message.lower()
+
+
 class TestCollectStepVerifyErrors:
     """写后即查（Fix-9, live I3-r11）: step verify 必须在执行轮内跑进修复梯,
     而不是等 exec→QA→bounce→exec 的市场往返(~30min/圈盲猜)。"""
