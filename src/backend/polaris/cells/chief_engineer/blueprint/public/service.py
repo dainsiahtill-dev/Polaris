@@ -10,14 +10,36 @@ from ..internal.blueprint_persistence import BlueprintPersistence
 from ..internal.ce_consumer import CEConsumer
 from ..internal.chief_engineer_agent import ChiefEngineerAgent
 from ..internal.chief_engineer_preflight import run_pre_dispatch_chief_engineer
+from ..internal.quality_gate import evaluate_quality_gate
+from ..internal.risks import RiskRegister, build_risk_event
 from ..internal.rollback_guard import create_rollback_guard
+from ..internal.rollback_link import build_rollback_link
+from ..internal.tech_debt import TechDebtLedger, build_tech_debt_event
 from .contracts import (
     ChiefEngineerBlueprintError,
     ChiefEngineerBlueprintErrorV1,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
+    GovernanceSummaryV1,
+    ListRisksQueryV1,
+    ListTechDebtQueryV1,
+    QualityGateResultV1,
+    RegisterRiskCommandV1,
+    RegisterTechDebtCommandV1,
+    RiskEventV1,
+    RiskRecordV1,
+    RiskSeverity,
+    RiskStatus,
+    RollbackLinkV1,
+    RollbackStrategy,
     TaskBlueprintGeneratedEventV1,
     TaskBlueprintResultV1,
+    TechDebtEventV1,
+    TechDebtRecordV1,
+    TechDebtSeverity,
+    TechDebtStatus,
+    UpdateRiskStatusCommandV1,
+    UpdateTechDebtStatusCommandV1,
 )
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -243,6 +265,15 @@ def generate_task_blueprint(command: GenerateTaskBlueprintCommandV1) -> TaskBlue
     }
 
     BlueprintPersistence(command.workspace).save(blueprint_id, payload)
+
+    # Tier-1: attach governance summary (risk + tech-debt summary +
+    # quality gate + rollback link) to the persisted blueprint. The
+    # governance field is additive; old consumers that ignore unknown
+    # keys are unaffected. ``attach_governance_to_blueprint`` mutates
+    # ``payload`` in place (adds ``governance`` + recomputes
+    # ``handoff_ready``) and rewrites the on-disk JSON.
+    attach_governance_to_blueprint(command.workspace, blueprint_id, payload)
+
     return TaskBlueprintResultV1(
         ok=True,
         task_id=command.task_id,
@@ -289,6 +320,190 @@ def get_blueprint_status(query: GetBlueprintStatusQueryV1) -> TaskBlueprintResul
     )
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Tier-1 governance surface (Risk Register, Tech-Debt Ledger, Quality
+# Gate, Rollback Link, Governance Summary). All functions are additive;
+# they do not change existing service signatures.
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def register_risk(command: RegisterRiskCommandV1) -> RiskRecordV1:
+    """Register a new entry in the workspace Risk Register."""
+
+    register = RiskRegister(command.workspace)
+    record = register.register(command)
+    event = build_risk_event(
+        risk_id=record.risk_id,
+        workspace=command.workspace,
+        action="registered",
+        actor=command.owner,
+    )
+    logger.info(
+        "chief_engineer.risk_registered risk_id=%s task_id=%s severity=%s event_id=%s",
+        record.risk_id,
+        record.task_id,
+        record.severity.value,
+        event.event_id,
+    )
+    return record
+
+
+def list_risks(query: ListRisksQueryV1) -> list[RiskRecordV1]:
+    """List Risk Register entries for the workspace with optional filters."""
+
+    return RiskRegister(query.workspace).list(
+        task_id=query.task_id,
+        severity=query.severity,
+        status=query.status,
+    )
+
+
+def update_risk_status(
+    command: UpdateRiskStatusCommandV1,
+    *,
+    actor: str = "system",
+) -> RiskRecordV1:
+    """Transition a risk to a new status; append a history entry."""
+
+    record = RiskRegister(command.workspace).update_status(command, actor)
+    event = build_risk_event(
+        risk_id=record.risk_id,
+        workspace=command.workspace,
+        action=f"status:{record.status.value}",
+        actor=actor,
+        note=command.note,
+    )
+    logger.info(
+        "chief_engineer.risk_status_changed risk_id=%s status=%s event_id=%s",
+        record.risk_id,
+        record.status.value,
+        event.event_id,
+    )
+    return record
+
+
+def register_tech_debt(command: RegisterTechDebtCommandV1) -> TechDebtRecordV1:
+    """Register a new entry in the workspace Tech-Debt Ledger."""
+
+    ledger = TechDebtLedger(command.workspace)
+    record = ledger.register(command)
+    event = build_tech_debt_event(
+        debt_id=record.debt_id,
+        workspace=command.workspace,
+        action="registered",
+        actor=command.owner,
+    )
+    logger.info(
+        "chief_engineer.tech_debt_registered debt_id=%s surface=%s severity=%s event_id=%s",
+        record.debt_id,
+        record.surface,
+        record.severity.value,
+        event.event_id,
+    )
+    return record
+
+
+def list_tech_debt(query: ListTechDebtQueryV1) -> list[TechDebtRecordV1]:
+    """List Tech-Debt Ledger entries for the workspace with optional filters."""
+
+    return TechDebtLedger(query.workspace).list_for_query(query)
+
+
+def update_tech_debt_status(
+    command: UpdateTechDebtStatusCommandV1,
+    *,
+    actor: str = "system",
+) -> TechDebtRecordV1:
+    """Transition a tech-debt entry to a new status; append a history entry."""
+
+    record = TechDebtLedger(command.workspace).update_status(command, actor)
+    event = build_tech_debt_event(
+        debt_id=record.debt_id,
+        workspace=command.workspace,
+        action=f"status:{record.status.value}",
+        actor=actor,
+        note=command.note,
+    )
+    logger.info(
+        "chief_engineer.tech_debt_status_changed debt_id=%s status=%s event_id=%s",
+        record.debt_id,
+        record.status.value,
+        event.event_id,
+    )
+    return record
+
+
+def summarize_risks(workspace: str, *, task_id: str | None = None) -> dict[str, Any]:
+    """Return aggregate counts for the workspace Risk Register."""
+
+    return RiskRegister(workspace, ensure_directory=False).summarize(task_id=task_id)
+
+
+def summarize_tech_debt(workspace: str, *, surface: str | None = None) -> dict[str, Any]:
+    """Return aggregate counts for the workspace Tech-Debt Ledger."""
+
+    return TechDebtLedger(workspace, ensure_directory=False).summarize(surface=surface)
+
+
+def build_blueprint_governance(
+    workspace: str,
+    blueprint_id: str,
+    blueprint: dict[str, Any],
+) -> GovernanceSummaryV1:
+    """Compute the governance summary for a blueprint payload.
+
+    Pulls risks from the workspace register, evaluates the quality gate,
+    and assembles a :class:`GovernanceSummaryV1`. The function is pure
+    except for the Risk Register read; pass an explicit ``risks`` list
+    on the blueprint to make it fully deterministic.
+    """
+    task_id = str(blueprint.get("task_id") or "").strip()
+    risk_register = RiskRegister(workspace, ensure_directory=False)
+    risks = risk_register.list(task_id=task_id) if task_id else risk_register.list()
+    gate = evaluate_quality_gate(blueprint, risks=risks)
+    rollback = build_rollback_link(
+        workspace=workspace,
+        blueprint_id=blueprint_id,
+        blueprint=blueprint,
+        risks=risks,
+    )
+    return GovernanceSummaryV1(
+        blueprint_id=blueprint_id,
+        risk_summary=risk_register.summarize(task_id=task_id),
+        tech_debt_summary=TechDebtLedger(workspace, ensure_directory=False).summarize(),
+        quality_gate=gate,
+        rollback=rollback,
+    )
+
+
+def attach_governance_to_blueprint(
+    workspace: str,
+    blueprint_id: str,
+    blueprint: dict[str, Any],
+) -> GovernanceSummaryV1:
+    """Compute and *persist* governance for a blueprint.
+
+    The governance summary is computed from the current payload and the
+    workspace's Risk Register / Tech-Debt Ledger, then written back to
+    the blueprint JSON under the ``governance`` key. ``blueprint`` is
+    mutated in place: the ``governance`` field is added and
+    ``handoff_ready`` is recomputed from the quality gate. This call is
+    idempotent and safe to invoke from blueprint regeneration paths.
+    """
+    summary = build_blueprint_governance(workspace, blueprint_id, blueprint)
+    blueprint["governance"] = summary.to_dict()
+    blueprint["handoff_ready"] = bool(summary.quality_gate.passed)
+    BlueprintPersistence(workspace).save(blueprint_id, blueprint)
+    return summary
+
+
+# Required for governance logger; defined at module bottom to avoid a
+# top-level `logging.getLogger` if any future refactor reorders imports.
+import logging  # noqa: E402
+
+logger = logging.getLogger(__name__)
+
+
 __all__ = [
     "CEConsumer",
     "ChiefEngineerAgent",
@@ -296,10 +511,33 @@ __all__ = [
     "ChiefEngineerBlueprintErrorV1",
     "GenerateTaskBlueprintCommandV1",
     "GetBlueprintStatusQueryV1",
+    "GovernanceSummaryV1",
+    "ListRisksQueryV1",
+    "ListTechDebtQueryV1",
+    "QualityGateResultV1",
+    "RegisterRiskCommandV1",
+    "RegisterTechDebtCommandV1",
+    "RiskEventV1",
+    "RiskRecordV1",
+    "RollbackLinkV1",
     "TaskBlueprintGeneratedEventV1",
     "TaskBlueprintResultV1",
+    "TechDebtEventV1",
+    "TechDebtRecordV1",
+    "UpdateRiskStatusCommandV1",
+    "UpdateTechDebtStatusCommandV1",
+    "attach_governance_to_blueprint",
+    "build_blueprint_governance",
     "create_rollback_guard",
     "generate_task_blueprint",
     "get_blueprint_status",
+    "list_risks",
+    "list_tech_debt",
+    "register_risk",
+    "register_tech_debt",
     "run_pre_dispatch_chief_engineer",
+    "summarize_risks",
+    "summarize_tech_debt",
+    "update_risk_status",
+    "update_tech_debt_status",
 ]
