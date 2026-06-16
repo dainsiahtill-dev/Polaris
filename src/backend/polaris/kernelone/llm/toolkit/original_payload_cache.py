@@ -24,6 +24,7 @@ All text I/O is explicit UTF-8.
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import threading
@@ -33,10 +34,13 @@ from pathlib import Path
 
 import blake3
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "DEFAULT_TTL_SECONDS",
     "OriginalPayloadCache",
     "build_ref_marker",
+    "capture_under",
     "get_default_cache",
     "hash_content",
     "strip_ref_markers",
@@ -186,6 +190,29 @@ class OriginalPayloadCache:
                 self._sqlite_put(ref_hash, text, deadline)
         return build_ref_marker(ref_hash)
 
+    def put_under(self, key: str, content: str) -> None:
+        """Store ``content`` under an explicit, caller-chosen ``key``.
+
+        Unlike :meth:`put` (which keys by content hash and returns the
+        ``<<ref:HASH>>`` marker), this stores under a caller-supplied reference
+        such as a ReceiptStore ``receipt_id``. It lets a later ``context_retrieve``
+        resolve the *exact* pointer the model already sees in the transcript
+        (e.g. ``[receipt_ref:ID]``) without changing that pointer's text —
+        closing the pointerization loop in a floor-safe way (the prompt is
+        unchanged). No-op for an empty key.
+        """
+        ref_key = str(key or "").strip()
+        if not ref_key:
+            return
+        text = str(content or "")
+        deadline = self._now() + self._ttl
+        with self._lock:
+            self._purge_locked()
+            self._entries[ref_key] = _Entry(content=text, expires_at=deadline)
+            self._evict_if_needed_locked()
+            if self._sqlite_path is not None:
+                self._sqlite_put(ref_key, text, deadline)
+
     def get(self, ref_or_marker: str) -> str | None:
         """Resolve a ref (bare hash or any known marker) to its original payload.
 
@@ -302,3 +329,18 @@ def get_default_cache() -> OriginalPayloadCache:
             if _default_cache is None:
                 _default_cache = OriginalPayloadCache()
     return _default_cache
+
+
+def capture_under(key: str, content: str) -> None:
+    """Mirror an offloaded original into the process CCR cache under ``key``.
+
+    Intended as a ``ReceiptStore`` ``on_offload`` hook (T1-A producer loop
+    closure): it stores ``content`` under the receipt ref ``key`` so a later
+    ``context_retrieve`` resolves the same ``[receipt_ref:ID]`` pointer the model
+    already sees. Best-effort — all errors are swallowed because CCR mirroring
+    must never break the hot context-build / offload path.
+    """
+    try:
+        get_default_cache().put_under(key, content)
+    except Exception:  # noqa: BLE001 - best-effort cache mirror, never fatal.
+        logger.debug("CCR capture_under failed for key=%s", key, exc_info=True)

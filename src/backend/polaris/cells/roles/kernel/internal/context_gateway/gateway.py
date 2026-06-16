@@ -1189,7 +1189,14 @@ class RoleContextGateway:
         strategy receipt, user message) is folded into the projection dict so
         that message generation is fully owned by ProjectionEngine.
         """
-        receipt_store = ReceiptStore(workspace=str(self.workspace))
+        # CCR producer loop closure (T1-A): mirror every offloaded original into
+        # the process CCR cache keyed by its receipt_id, so a later
+        # context_retrieve resolves the same [receipt_ref:ID] pointer the model
+        # sees. Floor-safe: capture_under is best-effort and changes no prompt
+        # text (the placeholder is unchanged), so the L2 success path is intact.
+        from polaris.kernelone.llm.toolkit.original_payload_cache import capture_under
+
+        receipt_store = ReceiptStore(workspace=str(self.workspace), on_offload=capture_under)
         sources: list[str] = []
         sorted_events = ProjectionFormatter.sort_events_by_routing_priority(projection.active_window)
 

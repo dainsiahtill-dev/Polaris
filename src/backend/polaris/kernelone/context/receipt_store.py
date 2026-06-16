@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Mapping
+import logging
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 if TYPE_CHECKING:
     from polaris.kernelone.context.context_os.content_store import ContentRef
 
 from polaris.kernelone.context.context_os.content_store import ContentStore
+
+logger = logging.getLogger(__name__)
 
 
 class ReceiptStore:
@@ -17,10 +20,21 @@ class ReceiptStore:
     async receipts) that should not be duplicated in prompt text.
     """
 
-    def __init__(self, workspace: str = ".") -> None:
+    def __init__(
+        self,
+        workspace: str = ".",
+        *,
+        on_offload: Callable[[str, str], None] | None = None,
+    ) -> None:
         self.workspace = workspace
         self._content_store = ContentStore(workspace=workspace)
         self._index: dict[str, ContentRef] = {}
+        # CCR producer hook (T1-A loop closure): when set, every offloaded
+        # original is mirrored into a retrievable cache keyed by its receipt_id,
+        # so a later context_retrieve(ref) resolves the SAME pointer the model
+        # sees. Optional + default None -> every existing caller is byte-for-byte
+        # unchanged (floor-inert). Never allowed to break the offload path.
+        self._on_offload = on_offload
 
     def put(self, receipt_id: str, content: str) -> str:
         """Store receipt content and return its content hash."""
@@ -47,6 +61,11 @@ class ReceiptStore:
         if len(content) <= threshold:
             return content, ()
         self.put(receipt_id, content)
+        if self._on_offload is not None:
+            try:
+                self._on_offload(receipt_id, content)
+            except Exception:  # noqa: BLE001 - CCR mirroring must never break offload.
+                logger.debug("ReceiptStore on_offload hook failed for receipt_id=%s", receipt_id, exc_info=True)
         return placeholder, (receipt_id,)
 
     def export_receipts(self) -> dict[str, str]:
