@@ -223,7 +223,30 @@ class CompactionStrategy:
         tokens_recovered = max(0, original_tokens - final_tokens)
         compacted_items = micro_compacted_count + truncated_count
 
-        # Step 3: Build summary
+        # Step 3 (T2-A): token-shrink rejection guard.
+        #
+        # Compaction may *run* (drop receipts / truncate messages) yet not
+        # actually reduce the token estimate -- re-serialization and placeholder
+        # substitution can be net-neutral or even expand on small inputs. A pass
+        # that did not shrink tokens is a no-op, and callers must never treat it
+        # as a win. Mirrors headroom's "reject if not smaller" rule; fail-closed:
+        # we would rather report "did not compact" than falsely claim recovery.
+        if compacted_items > 0 and tokens_recovered <= 0:
+            no_op_summary = (
+                "CompactionStrategy [no-op]. "
+                f"Original: {original_count} msgs / ~{original_tokens} tokens. "
+                f"Final: {len(compacted)} msgs / ~{final_tokens} tokens. "
+                "Compaction ran but did not reduce tokens; treated as no-op."
+            )
+            _logger.debug("compact: %s", no_op_summary)
+            return CompactionResult(
+                triggered=False,
+                compacted_items=0,
+                tokens_recovered=0,
+                summary=no_op_summary,
+            )
+
+        # Step 4: Build summary
         if compacted_items == 0:
             method = "none"
         elif truncated_count > 0:

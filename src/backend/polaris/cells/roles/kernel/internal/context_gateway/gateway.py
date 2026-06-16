@@ -18,6 +18,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence, cast
 
+from polaris.kernelone.context.cache_stability import (
+    extract_prefix as extract_prefix_slice,
+    get_prefix_drift_observer,
+)
 from polaris.kernelone.context.context_os import StateFirstContextOS
 from polaris.kernelone.context.context_os.domain_adapters import get_context_domain_adapter
 from polaris.kernelone.context.context_os.models_v2 import ContextOSSnapshotV2 as ContextOSSnapshot
@@ -725,6 +729,16 @@ class RoleContextGateway:
             projection_id=projection_id,
         )
 
+        # Headroom T1-B step 1: emit a per-session prefix-stability observation
+        # (NON-MUTATING — does not change request bytes or reorder tools). Lets
+        # the ContextOS dashboard / RoleSignalPlane surface whether the cache-hot
+        # prefix drifts across turns and busts the local prompt cache.
+        self._emit_prefix_drift_observation(
+            request,
+            messages=messages,
+            system_prompt=system_prompt,
+        )
+
         logger.debug(
             "[DEBUG][ContextGateway] _build_context_impl end: messages=%d token_estimate=%d/%d compression=%s sources=%s",
             len(messages),
@@ -825,6 +839,98 @@ class RoleContextGateway:
             )
         except (OSError, ValueError) as exc:  # pragma: no cover - never break a turn
             logger.debug("context.build emit failed: %s", exc)
+
+    def _resolve_run_events_path(self, request: ContextRequest) -> str:
+        """Resolve the per-run events file for this request, or ``""`` to skip.
+
+        Shared fail-safe resolution used by the per-run observation emitters:
+        an explicit ``request.events_path`` is trusted; otherwise the per-run
+        file is self-resolved from ``workspace + run_id`` via the canonical
+        ``resolve_run_dir`` and emitted to ONLY if that run directory already
+        exists (created by the orchestration that owns the run). A resolution
+        mismatch therefore skips silently rather than writing a phantom file.
+        """
+        run_id = str(getattr(request, "run_id", "") or "").strip()
+        if not run_id:
+            return ""
+        events_path = str(getattr(request, "events_path", "") or "").strip()
+        if events_path:
+            return events_path
+        try:
+            run_dir = resolve_run_dir(str(self.workspace), "", run_id)
+        except (OSError, ValueError) as exc:  # pragma: no cover - defensive
+            logger.debug("run events path resolve_run_dir failed: %s", exc)
+            return ""
+        if not run_dir or not os.path.isdir(run_dir):
+            return ""
+        return os.path.join(run_dir, "events", "runtime.events.jsonl")
+
+    def _emit_prefix_drift_observation(
+        self,
+        request: ContextRequest,
+        *,
+        messages: Sequence[Mapping[str, Any]],
+        system_prompt: str | None,
+    ) -> None:
+        """Emit a ``context.prefix_drift`` observation (Headroom T1-B step 1).
+
+        NON-MUTATING. Fingerprints the cache-hot prefix (role ``system_prompt`` +
+        the leading frozen ``system`` segment) and reports whether it drifted
+        since this session's previous assembly, plus any volatile tokens that
+        would bust the local vLLM/llama.cpp prompt cache. The session is keyed by
+        ``run_id`` + role; ``ContextRequest`` has no standalone ``session_id``
+        field, so ``run_id`` + role is the stable per-session identity.
+
+        Fail-safe identically to ``_emit_context_build_observation``: emits only
+        when the per-run events file is resolvable, swallows all errors, and
+        never breaks a turn. Pure diagnostic — request bytes are untouched.
+        """
+        run_id = str(getattr(request, "run_id", "") or "").strip()
+        if not run_id:
+            return
+        events_path = self._resolve_run_events_path(request)
+        if not events_path:
+            return
+        role_id = str(getattr(self.profile, "role_id", "") or "")
+        try:
+            prefix = extract_prefix_slice(messages, system_prompt)
+            session_key = f"{run_id}:{role_id}"
+            report = get_prefix_drift_observer().observe(session_key, prefix)
+            emit_event(
+                events_path,
+                kind="observation",
+                actor="System",
+                name="context.prefix_drift",
+                refs={
+                    "run_id": run_id,
+                    "role": role_id,
+                    "task_id": getattr(request, "task_id", None),
+                },
+                summary=(
+                    "prefix drift detected"
+                    if report.drifted
+                    else ("prefix first seen" if report.first_seen else "prefix stable")
+                ),
+                output={
+                    "fingerprint": report.fingerprint,
+                    "drifted": bool(report.drifted),
+                    "first_seen": bool(report.first_seen),
+                    "previous_fingerprint": report.previous_fingerprint,
+                    "prefix_chars": int(report.prefix_chars),
+                    "prefix_message_count": int(report.prefix_message_count),
+                    "volatile_findings": [
+                        {
+                            "kind": finding.kind.value,
+                            "sample": finding.sample,
+                            "count": int(finding.count),
+                        }
+                        for finding in report.volatile_findings
+                    ],
+                    "role": role_id,
+                },
+            )
+        except (OSError, ValueError) as exc:  # pragma: no cover - never break a turn
+            logger.debug("context.prefix_drift emit failed: %s", exc)
 
     def _extract_strategy_override(self, request: ContextRequest) -> tuple[dict[str, Any], tuple[str, ...]]:
         merged: dict[str, Any] = {}

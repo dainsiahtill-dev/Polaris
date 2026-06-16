@@ -5249,6 +5249,32 @@ def _build_materialization_quality_repair_message(
         missing_block = (
             f"MISSING TARGET FILES — create these exact paths NOW, one write_file call per path:\n{missing_lines}\n"
         )
+    # C7-text W3 (2026-06-16 deliberation): cross-file coherence repair. An
+    # unresolved relative import means the importer references a module that
+    # does not exist yet; QA detects it, but the bare "MISSING TARGET FILES"
+    # list does not tell the weak Director WHY the file must exist or WHAT it
+    # must expose — the #54 repair-mode cross-file-symbol-consistency wall.
+    # Reframing each unresolved import as a coherence obligation ("create the
+    # module this import resolves to, exporting what the importer uses") gives
+    # the laborer the missing linkage. The path tokens are already present in
+    # the "Quality errors" block below, so this introduces no new target-
+    # extractor seeding, and it explicitly forbids editing the importing file.
+    # Floor-safe: empty unless an unresolved-import error is present (the L2
+    # success path never reaches here with one) -> message byte-for-byte
+    # unchanged. Generic import reasoning only, no project specifics (§8).
+    coherence_block = ""
+    unresolved_import_errors = [
+        str(item) for item in artifact_quality_errors if "unresolved relative import" in str(item).lower()
+    ]
+    if unresolved_import_errors:
+        coherence_lines = "\n".join(f"- {item}" for item in unresolved_import_errors[:12])
+        coherence_block = (
+            "CROSS-FILE COHERENCE REPAIR: each unresolved import below points at a module that does "
+            "not exist yet. Create the missing module at the path the import resolves to, and make it "
+            "EXPORT exactly the symbols the importer uses (its named imports / default export). Do not "
+            "edit the importing file.\n"
+            f"{coherence_lines}\n"
+        )
     syntax_block = ""
     truncation_signatures = ("unexpected end of input", "truncated/incomplete html", "was never closed")
     if any(
@@ -5288,6 +5314,7 @@ def _build_materialization_quality_repair_message(
         "MATERIALIZATION QUALITY REPAIR MODE:\n"
         "The previous write reached the workspace but failed Polaris artifact quality gates.\n"
         f"{missing_block}"
+        f"{coherence_block}"
         f"{syntax_block}"
         "Do not repeat the same package/script/test scaffold. Replace the bad artifact with concrete runnable code, "
         "source files, and executable tests required by the task contract.\n"

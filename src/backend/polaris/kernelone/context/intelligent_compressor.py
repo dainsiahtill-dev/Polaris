@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.context._token_estimator import estimate_tokens as _estimate_tokens_from_module
+from polaris.kernelone.context.crushers import crush_by_type
 
 logger = logging.getLogger(__name__)
 
@@ -417,7 +418,21 @@ class IntelligentCompressor:
         # 4. Build compressed content
         compressed_content = self._build_compressed_context(selected)
 
-        # 5. Calculate compression ratio (clamp to [0.0, 1.0] to handle edge case
+        # 5 (T2-A): never-EXPAND guard. The greedy pass may append a summary
+        # whose tokens exceed what was saved, so the assembled string can be
+        # *larger* than the original. Compression must never expand: degrade to
+        # the best-effort smallest by dropping summary items and keeping only the
+        # selected high-score items. If that is still not smaller, accept it
+        # (it is the smallest faithful selection we have) but never emit a result
+        # bigger than the original.
+        final_tokens = self._estimate_tokens(compressed_content)
+        if final_tokens >= original_tokens and any(isinstance(item, dict) and "_summary" in item for item in selected):
+            selected = [item for item in selected if not (isinstance(item, dict) and "_summary" in item)]
+            compressed_content = self._build_compressed_context(selected)
+            final_tokens = self._estimate_tokens(compressed_content)
+            total_tokens = min(total_tokens, final_tokens)
+
+        # 6. Calculate compression ratio (clamp to [0.0, 1.0] to handle edge case
         # where added summary tokens exceed saved tokens, giving ratio > 1.0)
         compression_ratio = min(1.0, total_tokens / original_tokens) if original_tokens > 0 else 1.0
 
@@ -500,6 +515,13 @@ class IntelligentCompressor:
             return self._fallback_summarize(items)
 
         combined_content = "\n---\n".join(content_parts[:20])  # Limit combined length
+
+        # T2-B: deterministic content-type-aware crush pre-pass. Before paying
+        # for an LLM summary, try to shrink structured tool output (JSON / log /
+        # diff / search results) with a no-LLM crusher. The crusher is
+        # tokenizer-validated and only returns a smaller string, so this can
+        # never expand the input and never raises on the hot path.
+        combined_content = crush_by_type(combined_content).text
 
         prompt = self._build_summary_prompt(combined_content)
 

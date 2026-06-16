@@ -32,6 +32,20 @@ warnings.warn(
 )
 
 
+def _sort_schema_keys(value: Any) -> Any:
+    """Recursively sort dict keys for stable, order-independent serialization.
+
+    Lists keep their order (e.g. ``required`` / ``enum`` semantics depend on
+    membership, not container ordering, and a tool's parameter list order is
+    meaningful for readability); only mapping key order is normalized.
+    """
+    if isinstance(value, dict):
+        return {key: _sort_schema_keys(value[key]) for key in sorted(value)}
+    if isinstance(value, list):
+        return [_sort_schema_keys(item) for item in value]
+    return value
+
+
 @dataclass
 class ToolParameter:
     """工具参数定义."""
@@ -249,6 +263,24 @@ class ToolRegistry:
     def to_anthropic_tools(self) -> list[dict[str, Any]]:
         """转换为 Anthropic tools 列表."""
         return [tool.to_anthropic_tool() for tool in self._tools.values()]
+
+    def to_openai_functions_deterministic(self) -> list[dict[str, Any]]:
+        """OpenAI functions in a STABLE order (tools alpha-sorted, schema keys recursively sorted).
+
+        Mirrors headroom's ``tool_def_normalize`` (a prefix-cache stabilizer): an
+        identical tool set always serializes byte-for-byte the same regardless of
+        registration order, which keeps provider/local prompt-prefix caches warm.
+
+        This is an OPT-IN emitter — ``to_openai_functions`` is left untouched so no
+        existing caller's behavior changes.
+        """
+        ordered = sorted(self._tools.values(), key=lambda t: t.name)
+        return [_sort_schema_keys(tool.to_openai_function()) for tool in ordered]
+
+    def to_anthropic_tools_deterministic(self) -> list[dict[str, Any]]:
+        """Anthropic tools in a STABLE order (see ``to_openai_functions_deterministic``)."""
+        ordered = sorted(self._tools.values(), key=lambda t: t.name)
+        return [_sort_schema_keys(tool.to_anthropic_tool()) for tool in ordered]
 
     def to_prompt_documentation(self) -> str:
         """生成 Prompt 文档."""
