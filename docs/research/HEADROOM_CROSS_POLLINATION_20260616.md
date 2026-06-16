@@ -167,3 +167,52 @@
 | **standing** | **inertness gate**：每个新落 guard/veto 先 `codegraph_callers` 证生产调用方，全是测→FAIL landing。能拦下 T2-A + crushers 这类"绿测落死模块" | — | 防假信号 |
 
 > 二次审计经验：第一轮把 T2-A 当 "✅ LANDED"、把 T1-A 当 "✅ LOOP CLOSED"——都因**绿测落在零生产调用方的模块 / 未测主路径形态**。对抗验证 + `codegraph_callers` 重跑证据拦下了它。这是 [[use-codegraph-mcp-always]] + superpowers re-run-evidence 的复利；新增 standing inertness gate 把它制度化。
+
+> ⚠️ **§4.2 的 P0（CCR-3a）排序已被三次审计 §5 推翻**：真 P0 是**工具供给层**（context_retrieve 不在任何角色白名单→模型永不被供给→CCR-3 moot）。CCR-3a 仍正确但降为 §5.3 的 #3，且其 regex 需锚定修正。权威路径见 **§5.3**。
+
+---
+
+## 5) 三次深度审计 + 修订计划（2026-06-17，6 维 codegraph + superpowers 对抗，25 agent / 2M tok，无 rate-limit 损耗）
+
+第三轮：把 pass-2 的 hypothetical 用真实运行时**实证定论**，审计前两轮**从未碰的面**（工具供给层可达性 / drift 数据流 / 单例线程安全），并对抗 design-review pass-2 提的修复。**最深的发现推翻了 §4.2 的 P0 排序。**
+
+### 5.1 诚实头条：三轮后，整个 headroom campaign 今天 ≈ 0 活效果
+
+| 特性 | 真实活性（实证） | 证据 |
+|---|---|---|
+| **T1-A** CCR retrieve | **producer 活 / consumer 死**：`context_retrieve` 不在任何角色 `tool_policy.whitelist`，`build_native_tool_schemas`（`tool_helpers.py:291`）只发白名单内工具 → 活 Director 拿 17 个 native schema，**无 context_retrieve** → 模型永不被供给该工具 → producer 缓存的字节无人能读回=**纯内存开销** | OFFER-1 blocker real（我本人 + auditor + skeptic 三方实证）|
+| **T1-B** drift 观测 | **活 + compute 正确，但 sink 盲**：`_emit_prefix_drift_observation` 在热路径无 env gate 真发 `context.prefix_drift`、是真跨 turn 检测器（推翻"单指纹"假设）——但**该事件零消费者**（无 Python reader / 无前端 telemetry 映射 / 无 RoleSignalPlane reader）→ 它存在的目的（收 drift 数据定 tool-def 归一化）永远无法达成 | T1B-SINK-1 high real |
+| **T2-A** 否决门 | **死模块**：`CompactionStrategy` 0 调用方（同 pass-2）；活路径 `compact_if_needed` 无否决 | D3 real |
+| **T2-B** crush | **基本 inert**：`IntelligentCompressor` 0 活调用方；`savings_report` observe-only by design（诚实声明）；**但** `crush_by_type` 在 `intelligent_compressor.py:524` artifact 压缩路径有 1 活调用（"完全 inert"略不准）| fix-design-review 旁证 |
+| **T2-C** tokenizer | blueprint-only | — |
+| §8/§6.6/线程安全 | **全 CLEAN（实证）**：CCR 单例在 director 真并发模型（threading.Thread/RLock，24线程×4000op stress 零损坏）下线程安全；cache 严格进程内 verbatim、无跨 run 答案记忆；workspace 48-bit 命名空间安全到 ~20M；§6.6 context_retrieve 不改 raw 名 | TS-1 / S8-S66-OK real |
+
+**= producer 在缓存无人能读的字节（纯开销），观测在向虚空发数据，否决门守死模块。没有任何一个特性今天改变一个真实 Director turn 的一个 token/决策。**
+
+### 5.2 关键修复：T1-A 三层供给 inert（最深，supersede §4.2 P0 与 CCR-3）
+
+pass-2 的 CCR-3（指针双形）**moot 直到工具被供给**。真实阻塞是三层叠加，每层独立致命：
+1. **供给层**（OFFER-1 blocker real）：不在任何 `tool_policy.whitelist`（pm/architect/CE 14、director 18、qa 9、scout 18 全无）→ 不进 native schema。
+2. **注册层**（OFFER-2 high **被 skeptic 部分证伪**）：spec 不在持久 `_BUILTIN_REGISTRY`（`tool_spec_registry.py:384`，与 `context_retrieve.py:52-57` "durable home 在此"注释矛盾），只靠 handler import 时 ContextVar self-register。skeptic 实证 **warm-context（真实 role loop 里几乎总有先跑过的工具）下 dispatch 正常**，故"Unknown tool 不可派发"过强=refuted；但 cold-start 仍可能漏 → 把 spec 移进 `_BUILTIN_REGISTRY`（cheap，floor-free）消除 latent gate。
+3. **可用层**（OFFER-3，root cause 是 #1 故 standalone refuted）：系统提示 7044 字符无一字提 context_retrieve/receipt_ref/retrieve（我本人实证）→ 即便供给，弱模型不知何时调。
+
+### 5.3 修订后关键路径（到"第一个真实活效果"，按解锁价值排序）
+
+| # | 动作 | floor | 备注 |
+|---|---|---|---|
+| **1** | **供给工具**：context_retrieve 加 director(+qa) 白名单（两份 core_roles.yaml）+ 移 spec 进 `_BUILTIN_REGISTRY` | 白名单部分**改 tool-schema 前缀→须 L2 bench**（env flag default off 对照）；registry 部分 floor-free | 没这步其它全 moot |
+| **2** | **提示 nudge**：Director 工具提示加一行"见 [receipt_ref:ID]/[Large output stored in receipt …] 就 call context_retrieve(ref) 取回原文" | 改前缀→并入 #1 bench | 与 #4 配对才有意义 |
+| **3** | **CCR-3a（修订版）**：`_MARKER_PATTERNS` 加**锚定+精确 id 字符类**两 pattern：`^\[\s*Large (output\|content) stored in receipt\s+(?P<ref>[A-Za-z0-9_.\-]+)\s*\]$`（捕获 id 已含 tool_/evt_ 前缀=正是 cache key，无需剥）+ 对抗性 prose-rejection 单测 | retrieve 冷路径，**免 bench** | pass-2 裸 `.+?` 会过匹配正常散文=已修正 |
+| **4** | **E2E proof-of-effect**：mocked-LLM director turn 断言 offload(>threshold)→模型发 context_retrieve(ref)→handler 返 verbatim→记前后投影 token delta | 测，免 bench | **三轮来第一个真实活效果证明 + 回归守卫；测不了就管不了** |
+| **5** | **接 T1-B 一个消费者**：前端 ContextOS telemetry builder 加 `prefix_drift` 分支（纯读已发 JSONL）或 tiny reader | 只读，免 bench | 不接=观测向虚空 |
+| **6** | **T2-A 否决移植（修订版）**：**非 verbatim port**——死模块 veto 只 relabel report，活 `compact_if_needed` 返回的是 messages；正确=**仅 llm_compact 分支**（`compaction.py:813` 无条件返回）加"未缩小则 REVERT 到输入 messages + 发 noshrink snapshot"；auto_compact（:809）已自我否决无需碰 | **改活压缩返回 messages→须 L2 bench** | pass-2 "verbatim port"语义错=已修正 |
+
+### 5.4 治理 + 降级
+- **降级 pass-2 P1-doc**（CCR2-1 real）：director run 是**单长寿 asyncio 进程**（`cli_thin.py:213`）+ 线程 worker（`dispatch_pipeline.py:1142`，非 ProcessPool/subprocess），单例 id() 跨线程不变、offload↔retrieve 实证共享同一 cache → **"必加 sqlite 持久"降为"文档化 in-process scope"** + `dispatch_pipeline.py:1142` 加 tripwire 注释"CCR 正确性依赖 worker 是单进程内线程；改 ProcessPool 会静默打断内存 CCR"。可选 TTL 300→600s（一标量 floor-free）吸尾延。
+- **三态 inertness gate**（INERTNESS-GATE-REFINE）：pass-2 二元门会误杀诚实 deferred 的 observe-first（savings_report 明确自述）→ 改三态：**LIVE**（≥1 非测生产调用方 + 工具须现于 `build_native_tool_schemas` 输出）/ **DEFERRED-DOCUMENTED**（0 调用方但有 greppable marker + blueprint id）/ **INERT-UNDECLARED=FAIL**。同时放过 savings_report 又抓住 T2-A 死模块 + context_retrieve 供给缺口。
+- **加前两轮都缺的"工具到线"测**：断言 `build_native_tool_schemas(director_profile)` 输出含 context_retrieve + `execute('context_retrieve',{ref})` 不返回 "Unknown tool"（两轮漏检都因没这类测）。
+- **次要**：director 白名单 18 条但 `build_native_tool_schemas` 出 17——有一条静默掉（normalize 成 `create_default_registry` 没有的名），审计哪条丢了。
+
+### 5.5 诚实标注（contested / 未决）
+- **CCR-3 双指针拓扑有争议**：fix-design-review 称 active-window（inline 占位符，build_turns）与 supplemental（[receipt_ref:ID]，_normalize_turn）是**不同 turn 通道**非同一 payload 两形；net-effect skeptic 称 [receipt_ref:ID] **就贴在** inline prose 之后同一 message（`projection_engine.py:254-256`）→ CCR-3 严重度被两 skeptic 降级。**结论稳健不受拓扑影响**：#3 锚定 retrieve-side regex 让 inline 形可解析，两解读下都对、floor-free。
+- **cadence 数据弱**：durability auditor 称用"真实数据"（2/43 run >300s），但 fix-design-review 称 `audit-2026-06.jsonl` 仅 3 行/加密、`.polaris/runtime` 无逐 turn cadence trace → 300s 够不够**部分不可复现**。进程模型定论稳（多方一致），TTL 余量结论保守（故 600s 仅可选）；且当前 **TTL 全 moot**（工具未供给）。

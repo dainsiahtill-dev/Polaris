@@ -117,3 +117,24 @@ Coordinate with the concurrent CCR agent on `context_retrieve.py` / `original_pa
 
 ### 10.4 不变项（CCR-5，第一轮做对的）
 `offload_content` 无论 `on_offload` 是否接、返回**同一 placeholder 对象**（`receipt_store.py:69`）→ 模型可见前缀字节不变 → producer 接线本身**确 floor-safe、免 bench**。workspace 隔离（`7670e903`）+ §8 verbatim-only 均 clean。**任何 CCR-3 修复必须保住此不变式**（优先冷路径/retrieve-side）。
+
+---
+
+## 11. 三次深度审计修订（2026-06-17，实证定论）
+
+> 第三轮把 §10 的 hypothetical 用真实运行时定论，并发现一个**比 CCR-3 更上游、决定整个 T1-A 死活**的阻塞。证据见 `docs/research/HEADROOM_CROSS_POLLINATION_20260616.md` §5。
+
+### 11.1 真正的 keystone 阻塞：consumer 在供给层 inert（supersede CCR-3）
+**`context_retrieve` 不在任何角色 `tool_policy.whitelist`**（pm/architect/CE 14、director 18、qa 9、scout 18 全无）。活 Director 工具集由 `build_native_tool_schemas(profile)`（`tool_helpers.py:291`）**只发白名单内工具**构造 → 模型拿 17 个 native schema、**无 context_retrieve** → 永不被供给该工具。系统提示 7044 字符也无一字提 retrieve/receipt_ref（本人实证）。⟹ **producer（本蓝图主体）缓存的字节无任何模型能读回 = 纯内存开销；§10 的 CCR-3 指针修复 moot 直到工具被供给。** 三方实证（lead 本人 + auditor + adversarial skeptic）一致，severity=blocker。
+
+三层叠加，每层独立致命，须一起修：
+1. **供给层**：加 context_retrieve 进 director(+qa) 白名单（两份 core_roles.yaml）。**改 tool-schema 前缀 → 须 L2 bench**（env flag default off 对照）。
+2. **注册层**：spec 不在持久 `_BUILTIN_REGISTRY`（与 `context_retrieve.py:52-57` 注释矛盾），只靠 handler import 时 ContextVar self-register。skeptic 实证 warm-context（真实 role loop 几乎总有先跑的工具）下 dispatch 正常 → "Unknown tool 不可派发"过强=**refuted**；但 cold-start 仍可能漏 → 移 spec 进 `_BUILTIN_REGISTRY`（cheap，floor-free）。
+3. **可用层**：系统提示加一行 nudge 解释何时调（并入 #1 bench）。
+之后才轮到 §10 的 CCR-3a（且 regex 须**锚定 + 精确字符类** `^\[\s*Large (output|content) stored in receipt\s+(?P<ref>[A-Za-z0-9_.\-]+)\s*\]$`，捕获 id 已含 tool_/evt_ 前缀=正是 cache key），最后加 E2E proof-of-effect 测。
+
+### 11.2 §10.2 耐久性 DECIDED（降级，非升级）
+director run 是**单长寿 asyncio 进程**（`cli_thin.py:213`）+ 线程 worker（`dispatch_pipeline.py:1142`，**非** ProcessPool/subprocess）。`get_default_cache()` 单例 id() 跨线程不变，offload（gateway 侧）↔ retrieve（executor 侧）实证命中**同一** cache 实例。⟹ **§10.2 的"必加 sqlite 持久 / 建 receipt_id_index"降为"文档化 in-process scope"**：在 `get_default_cache()` 加 docstring + `dispatch_pipeline.py:1142` 加 tripwire 注释"CCR 正确性依赖 worker 是单进程内线程；改 ProcessPool 会静默打断内存 CCR"。可选 TTL 300→600s（一标量 floor-free）吸尾延（cadence 数据部分不可复现，故仅可选）。
+
+### 11.3 线程安全 + §8/§6.6 实证 CLEAN
+CCR 单例在真并发（threading.Thread/RLock，24线程×4000op stress 零损坏）下线程安全；唯一 latent hazard=lock 跨 sqlite IO 持有，但 live 单例 sqlite_path=None 故该分支 DEAD（若将来上持久 sqlite 须把 IO 移出锁）。§8：cache 严格进程内 verbatim、无跨 run 答案记忆，execute_method 合成器若其工具结果被 pointerize 也是 verbatim 且随进程蒸发。workspace 48-bit 命名空间安全到 ~20M。§6.6 clean。**这些是"实际没问题"的实证结论，非待办。**
