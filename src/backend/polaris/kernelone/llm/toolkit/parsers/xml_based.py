@@ -22,6 +22,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Tool-arg names that are ALWAYS free text and must never be JSON-coerced by
+# parse_value(): a file body / patch / command that happens to be valid JSON
+# ("[1, 2, 3]", '{"a": 1}', "42") would otherwise be decoded into a Python
+# list/dict/int and then str()-reprs into a corrupted artifact. Genuinely scalar
+# params (line numbers, flags) are not listed, so they keep their coercion.
+_STRING_TYPED_PARAM_NAMES = frozenset(
+    {
+        "content",
+        "file",
+        "path",
+        "file_path",
+        "filepath",
+        "old_string",
+        "new_string",
+        "old_str",
+        "new_str",
+        "search",
+        "replace",
+        "command",
+        "cmd",
+        "pattern",
+        "query",
+        "text",
+        "code",
+        "message",
+        "description",
+        "directory",
+        "dir",
+        "cwd",
+        "url",
+    }
+)
+
 
 class XMLToolParser:
     """XML tool parser.
@@ -226,15 +259,27 @@ class XMLToolParser:
                 continue
             content = match.group(2)
             arguments = {}
+            matched_spans: list[tuple[int, int]] = []
             for param_match in cls.QWEN3CODER_PARAM_PATTERN.finditer(content):
                 key = param_match.group(1)
-                value = parse_value(html.unescape(param_match.group(2).strip()))
-                arguments[key] = value
+                raw_value = html.unescape(param_match.group(2).strip())
+                # String-typed params (content/file/path/...) must keep their raw
+                # text: routing them through parse_value() JSON-decodes a body like
+                # "[1, 2, 3]" or '{"a": 1}' into a Python list/dict, which the write
+                # handler then str()-reprs into a corrupted file. Only coerce
+                # genuinely scalar params (line numbers, flags).
+                arguments[key] = raw_value if key.lower() in _STRING_TYPED_PARAM_NAMES else parse_value(raw_value)
+                matched_spans.append(param_match.span())
             if not arguments:
                 continue
-            # Truncation guard: an unclosed <parameter=> (cut off mid-value)
-            # means missing content — skip rather than write a partial file.
-            if len(cls.QWEN3CODER_PARAM_OPEN_PATTERN.findall(content)) != len(arguments):
+            # Truncation guard: a <parameter=> opener that lies OUTSIDE every
+            # fully-closed span is a genuine mid-value truncation (skip, re-ask).
+            # A literal <parameter=> *inside* a value is not — counting raw openers
+            # (the old guard) false-positives and silently drops a complete call.
+            if any(
+                not any(start <= opener.start() < end for start, end in matched_spans)
+                for opener in cls.QWEN3CODER_PARAM_OPEN_PATTERN.finditer(content)
+            ):
                 continue
             counter += 1
             tools.append(

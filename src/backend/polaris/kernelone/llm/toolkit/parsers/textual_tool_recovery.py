@@ -422,17 +422,29 @@ def _iter_qwen3coder_xml_calls(text: str) -> list[tuple[int, int, str, dict[str,
         span_end = close_match.end() if close_match is not None and close_match.start() == body_end else body_end
         body = text[body_start:body_end]
         args: dict[str, Any] = {}
+        matched_spans: list[tuple[int, int]] = []
         for param_match in _QWEN3CODER_PARAM_RE.finditer(body):
             key = param_match.group(1).strip()
             if key:
                 args[key] = param_match.group(2).strip()
+            matched_spans.append(param_match.span())
         if not args:
             continue
-        # Truncation guard: a ``<parameter=`` opened but never closed means the
-        # output was cut off mid-value (e.g. a file body truncated at the token
-        # budget).  Recovering only the closed params would materialise a write
-        # with missing content — worse than a clean re-ask.  Skip the whole call.
-        if len(_QWEN3CODER_PARAM_OPEN_RE.findall(body)) != len(args):
+        # Truncation guard: a ``<parameter=`` opener that lies OUTSIDE every
+        # fully-closed ``<parameter=...>...</parameter>`` span means the output
+        # was cut off mid-value (e.g. a file body truncated at the token budget).
+        # Recovering only the closed params would materialise a write with
+        # missing content — worse than a clean re-ask — so skip the whole call.
+        #
+        # NB: counting raw ``<parameter=`` openers (the old guard) is WRONG: a
+        # literal ``<parameter=...>`` occurring *inside* a parameter value (docs,
+        # a tutorial that quotes the tool syntax, a duplicate key) inflates the
+        # count and false-positives, silently dropping a complete call. Only an
+        # opener that starts no closed span is a genuine mid-value truncation.
+        if any(
+            not any(start <= opener.start() < end for start, end in matched_spans)
+            for opener in _QWEN3CODER_PARAM_OPEN_RE.finditer(body)
+        ):
             continue
         results.append((fn_match.start(), span_end, tool_name, args))
     return results

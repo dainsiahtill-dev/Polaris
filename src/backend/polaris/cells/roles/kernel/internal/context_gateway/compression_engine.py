@@ -502,6 +502,23 @@ class CompressionEngine:
                 }
                 total = self._token_estimator.estimate(_assemble())
 
+        # Guarantee fit: when every plane is already at the floor and the assembly
+        # STILL overflows (many pinned system planes on a small window), the
+        # floor-trim loop above stops over budget — and the gateway then raises
+        # BudgetExceededError, aborting the turn before any write (the #46 floor
+        # symptom: "Director barely ran / 0 files"). Drop whole lowest-priority
+        # planes — keeping the highest-priority one, and as an absolute last
+        # resort all of them — so the turn DEGRADES instead of crashing. The
+        # final user turn is never dropped here (it carries the current
+        # instruction; losing it defaults the turn to ANALYZE_ONLY); the gateway
+        # re-inserts the role system prompt afterwards.
+        while total > max_tokens and len(system_msgs) > 1:
+            system_msgs.pop()
+            total = self._token_estimator.estimate(_assemble())
+        if total > max_tokens and system_msgs and final_user is not None:
+            system_msgs = []
+            total = self._token_estimator.estimate(_assemble())
+
         # Absolute last resort: the final user instruction is content-truncated only
         # if even truncated system planes cannot make room. Preserving the user turn
         # keeps the delivery-contract resolver from defaulting to ANALYZE_ONLY.

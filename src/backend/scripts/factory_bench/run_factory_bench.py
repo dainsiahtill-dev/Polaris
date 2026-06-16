@@ -307,7 +307,15 @@ def purge_project_runtime(workspace: Path) -> None:
             continue
 
 
-def run_chain(project: dict[str, Any], workspace: Path, *, timeout_s: int, log_path: Path) -> dict[str, Any]:
+def run_chain(
+    project: dict[str, Any],
+    workspace: Path,
+    *,
+    timeout_s: int,
+    log_path: Path,
+    director_workflow_execution_mode: str = "serial",
+    director_dispatch_driver: str = "workflow",
+) -> dict[str, Any]:
     """Invoke the full role chain headlessly on the workspace (subprocess).
 
     The exact invocation is centralized here; see factory-bench recon notes in
@@ -331,6 +339,13 @@ def run_chain(project: dict[str, Any], workspace: Path, *, timeout_s: int, log_p
             cwd=str(workspace),
             check=False,
         )
+    dispatch_driver = str(director_dispatch_driver or "workflow").strip().lower()
+    if dispatch_driver not in {"workflow", "task-market"}:
+        raise ValueError(f"unsupported director dispatch driver: {director_dispatch_driver!r}")
+    workflow_mode = str(director_workflow_execution_mode or "serial").strip().lower()
+    if workflow_mode not in {"serial", "parallel"}:
+        raise ValueError(f"unsupported director workflow execution mode: {director_workflow_execution_mode!r}")
+
     cmd = [
         sys.executable,
         "-m",
@@ -339,18 +354,27 @@ def run_chain(project: dict[str, Any], workspace: Path, *, timeout_s: int, log_p
         str(workspace),
         "--iterations",
         "1",
-        "--run-director",
         "--requirements-path",
         str(requirements_path.resolve()),
-        "--director-workflow-execution-mode",
-        "serial",
         # Local 27B decodes ~20 tok/s; the 360s default PM timeout is sized for
         # cloud latency and kills planning mid-JSON.
         "--timeout",
         "1800",
     ]
+    if dispatch_driver == "workflow":
+        cmd.extend(
+            [
+                "--run-director",
+                "--director-workflow-execution-mode",
+                workflow_mode,
+            ]
+        )
     env = dict(os.environ)
     env.setdefault("KERNELONE_WORKSPACE", str(workspace))
+    if dispatch_driver == "task-market":
+        env.setdefault("KERNELONE_TASK_MARKET_MODE", "mainline-full")
+        env.setdefault("KERNELONE_TASK_MARKET_ROLE_POOLS", "director")
+        env.setdefault("KERNELONE_TASK_MARKET_ENABLE_SAFE_PARALLEL_DIRECTOR", "1")
     # Module imports come from PYTHONPATH, NOT cwd: parts of the chain key
     # role-session/storage roots off the CURRENT DIRECTORY's workspace
     # resolution (docs sentinel). Running with cwd=src/backend made every
@@ -374,7 +398,34 @@ def run_chain(project: dict[str, Any], workspace: Path, *, timeout_s: int, log_p
             timeout=timeout_s,
             check=False,
         )
-    return {"exit_code": proc.returncode, "duration_s": round(time.time() - started, 1)}
+        if dispatch_driver != "task-market" or proc.returncode != 0:
+            return {"exit_code": proc.returncode, "duration_s": round(time.time() - started, 1)}
+        log_fh.write("\n[factory-bench] === task-market dispatch ===\n")
+        log_fh.flush()
+        market_cmd = [
+            sys.executable,
+            str(_BACKEND_ROOT / "scripts" / "factory_bench" / "run_market_chain.py"),
+            "--workspace",
+            str(workspace),
+            "--fresh-market",
+            "--archive-label",
+            f"factory-bench-{project['id']}",
+        ]
+        market_proc = subprocess.run(
+            market_cmd,
+            cwd=str(workspace),
+            env=env,
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            timeout=timeout_s,
+            check=False,
+        )
+    return {
+        "exit_code": market_proc.returncode,
+        "duration_s": round(time.time() - started, 1),
+        "planning_exit_code": proc.returncode,
+        "task_market_exit_code": market_proc.returncode,
+    }
 
 
 def main() -> int:
@@ -384,6 +435,18 @@ def main() -> int:
     ap.add_argument("--work-dir", default=os.path.expanduser("~/Temp/factory-bench"))
     ap.add_argument("--timeout", type=int, default=5400, help="per-project chain timeout seconds")
     ap.add_argument("--max-failed", type=int, default=3, help="early stop after N audit failures")
+    ap.add_argument(
+        "--director-workflow-execution-mode",
+        choices=("serial", "parallel"),
+        default="serial",
+        help="PM Director workflow mode; keep serial by default, use parallel with task-market role pools",
+    )
+    ap.add_argument(
+        "--director-dispatch-driver",
+        choices=("workflow", "task-market"),
+        default="workflow",
+        help="Director dispatch path: legacy PM workflow or task-market chain after PM planning",
+    )
     args = ap.parse_args()
 
     projects = load_projects()
@@ -409,7 +472,14 @@ def main() -> int:
         log_path = base / f"{pid}.chain.log"
         print(f"[factory-bench] === {pid} {project['title']} ===", flush=True)
         try:
-            chain = run_chain(project, workspace, timeout_s=args.timeout, log_path=log_path)
+            chain = run_chain(
+                project,
+                workspace,
+                timeout_s=args.timeout,
+                log_path=log_path,
+                director_workflow_execution_mode=args.director_workflow_execution_mode,
+                director_dispatch_driver=args.director_dispatch_driver,
+            )
         except subprocess.TimeoutExpired:
             chain = {"exit_code": -1, "duration_s": float(args.timeout), "timeout": True}
         runtime_dir = resolve_runtime_dir_for_workspace(workspace)

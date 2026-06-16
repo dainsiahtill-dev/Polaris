@@ -78,7 +78,23 @@ def map_error_to_category(error: Exception) -> tuple[Enum, bool, str | None]:
     if any(kw in error_str for kw in ["network", "connection", "connect", "dns", "refused"]):
         return PlatformRetryCategory.NETWORK_ERROR, True, "网络错误，请检查连接后重试"
 
-    if any(kw in error_str for kw in ["503", "service unavailable", "service temporarily unavailable"]):
+    # Transient server-side failures (5xx) and provider overload are retryable.
+    # Use distinctive phrases / "http 5xx" rather than bare "500"/"502" so a
+    # token count like "5000 tokens" can't be misclassified as a 5xx.
+    if any(
+        kw in error_str
+        for kw in [
+            "503",
+            "service unavailable",
+            "service temporarily unavailable",
+            "internal server error",
+            "http 500",
+            "bad gateway",
+            "http 502",
+            "overloaded",  # Anthropic overloaded_error (HTTP 529)
+            "529",
+        ]
+    ):
         return PlatformRetryCategory.SERVICE_UNAVAILABLE, True, "服务暂时不可用，请稍后重试"
 
     # 内核层可修复错误

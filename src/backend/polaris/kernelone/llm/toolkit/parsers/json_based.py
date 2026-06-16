@@ -37,6 +37,45 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _iter_top_level_json_objects(text: str) -> list[str]:
+    """Return each top-level ``{...}`` substring, brace-depth + string aware.
+
+    Replaces a single-level-nesting regex that could not match an object whose
+    arguments contain depth>=2 braces — extremely common when a ``write_file``
+    body holds JS/JSON like ``{a: {b: 1}}``. The regex silently skipped such a
+    leading object and recovered only later, simpler calls, dropping the write.
+    This scanner respects string literals and escapes, so braces inside string
+    values never affect depth. A truncated trailing object (opened, never
+    closed) is simply not emitted — the leading complete objects still are.
+    """
+    objects: list[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escape = False
+    for index, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                objects.append(text[start : index + 1])
+                start = -1
+    return objects
+
+
 def _normalize_tool_name_for_matching(tool_name: str) -> str:
     """Return the canonical tool name used for filtering and namespace checks."""
     from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
@@ -120,20 +159,6 @@ class JSONToolParser:
     # Keys that indicate the tool name field
     TOOL_NAME_KEYS: frozenset[str] = frozenset({"name", "tool", "function", "action", "tool_name"})
 
-    # Regex patterns for JSON tool call detection
-    # Matches JSON objects containing name and arguments fields
-    _JSON_TOOL_CALL_RE = re.compile(
-        r"""
-        \{                           # Opening brace
-        (?P<content>
-            (?:[^{}]|              # Non-brace characters
-             \{[^{}]*\})*          # Or single-level nested objects
-        )
-        \}                           # Closing brace
-        """,
-        re.VERBOSE | re.DOTALL,
-    )
-
     # Pattern to validate JSON structure has required fields
     _HAS_NAME_RE = re.compile(
         r'"(' + '"|'.join(TOOL_NAME_KEYS) + r'")\s*:',
@@ -206,9 +231,11 @@ class JSONToolParser:
         except (json.JSONDecodeError, TypeError):
             pass
 
-        # Strategy 2: Extract and parse individual JSON objects
-        for match in self._JSON_TOOL_CALL_RE.finditer(text):
-            json_str = match.group(0)
+        # Strategy 2: Extract and parse individual top-level JSON objects.
+        # Brace-depth + string aware so an object with deeply-nested arguments
+        # (a write_file body containing ``{a: {b: 1}}``) is matched too, instead
+        # of being silently skipped by a single-level-nesting regex.
+        for json_str in _iter_top_level_json_objects(text):
             try:
                 parsed = json.loads(json_str)
                 if isinstance(parsed, dict):
