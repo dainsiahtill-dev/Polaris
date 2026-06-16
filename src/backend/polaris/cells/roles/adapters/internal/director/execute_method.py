@@ -668,6 +668,28 @@ async def _handle_claim_required(
     }
 
 
+def _pin_materialize_delivery_mode(message: str, requires_fresh_materialization: bool) -> str:
+    """Pin ``[mode:materialize]`` for a from-scratch build task.
+
+    The kernel resolves the delivery contract by TEXT-CLASSIFYING the Director's
+    turn message (``resolve_delivery_mode``). A weak or terse build goal can fall
+    through to the default ``ANALYZE_ONLY``, whose delivery-mode-filter then
+    DROPS the Director's write tools -> ``director_no_materialized_changes`` even
+    though the Director DID emit writes (factory-bench L4-23: 3 write tools
+    dropped in analyze_only mode, 0 files materialised). A task that requires
+    fresh materialisation must always materialise, so pin the contract
+    deterministically with the explicit highest-priority marker
+    (``intent_classifier`` rule 1) instead of relying on stochastic signal
+    matching. Inert when the task is not a fresh create or the marker is already
+    present.
+    """
+    text = str(message or "")
+    if requires_fresh_materialization and "[mode:materialize]" not in text.lower():
+        logger.warning("[F31] pinned [mode:materialize] for requires_fresh build turn (delivery-mode determinism)")
+        return f"[mode:materialize]\n{text}"
+    return message
+
+
 async def _execute_standard_llm_flow(
     adapter: Any,
     task: dict[str, Any],
@@ -686,6 +708,7 @@ async def _execute_standard_llm_flow(
     await _attach_director_file_event_bus(adapter)
     message = adapter._build_director_message(task)
     requires_fresh_materialization = _task_requires_fresh_materialization(task)
+    message = _pin_materialize_delivery_mode(message, requires_fresh_materialization)
     workspace_name = Path(str(getattr(adapter, "workspace", "") or "")).resolve().name
     direct_fallback_summary: dict[str, Any] | None = None
     tool_results: list[dict[str, Any]] = []
@@ -2675,38 +2698,40 @@ def _apply_deterministic_materialization_quality_repairs(
             artifact_quality_errors=artifact_quality_errors,
         )
     )
-    results.extend(
-        _apply_deterministic_node_test_file_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
+    if _scaffold_synthesis_enabled():
+        results.extend(
+            _apply_deterministic_node_test_file_repair(
+                adapter,
+                task=task,
+                task_id=task_id,
+                artifact_quality_errors=artifact_quality_errors,
+            )
         )
-    )
-    results.extend(
-        _apply_deterministic_audit_service_contract_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
+    if _business_contract_synthesis_enabled():
+        results.extend(
+            _apply_deterministic_audit_service_contract_repair(
+                adapter,
+                task=task,
+                task_id=task_id,
+                artifact_quality_errors=artifact_quality_errors,
+            )
         )
-    )
-    results.extend(
-        _apply_deterministic_task_service_contract_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
+        results.extend(
+            _apply_deterministic_task_service_contract_repair(
+                adapter,
+                task=task,
+                task_id=task_id,
+                artifact_quality_errors=artifact_quality_errors,
+            )
         )
-    )
-    results.extend(
-        _apply_deterministic_framework_free_service_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
-            artifact_quality_errors=artifact_quality_errors,
+        results.extend(
+            _apply_deterministic_framework_free_service_repair(
+                adapter,
+                task=task,
+                task_id=task_id,
+                artifact_quality_errors=artifact_quality_errors,
+            )
         )
-    )
     results.extend(
         _apply_deterministic_runtime_dependency_repair(
             adapter,
@@ -2722,20 +2747,21 @@ def _apply_deterministic_materialization_quality_repairs(
             artifact_quality_errors=artifact_quality_errors,
         )
     )
-    results.extend(
-        _apply_deterministic_task_model_contract_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
+    if _business_contract_synthesis_enabled():
+        results.extend(
+            _apply_deterministic_task_model_contract_repair(
+                adapter,
+                task=task,
+                task_id=task_id,
+            )
         )
-    )
-    results.extend(
-        _apply_deterministic_tenant_model_contract_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
+        results.extend(
+            _apply_deterministic_tenant_model_contract_repair(
+                adapter,
+                task=task,
+                task_id=task_id,
+            )
         )
-    )
     source_tools: list[str] = []
     for item in results:
         result = item.get("result")
@@ -2819,20 +2845,21 @@ def _apply_deterministic_declared_target_contract_repairs(
     task_id: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    results.extend(
-        _apply_deterministic_task_model_contract_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
+    if _business_contract_synthesis_enabled():
+        results.extend(
+            _apply_deterministic_task_model_contract_repair(
+                adapter,
+                task=task,
+                task_id=task_id,
+            )
         )
-    )
-    results.extend(
-        _apply_deterministic_tenant_model_contract_repair(
-            adapter,
-            task=task,
-            task_id=task_id,
+        results.extend(
+            _apply_deterministic_tenant_model_contract_repair(
+                adapter,
+                task=task,
+                task_id=task_id,
+            )
         )
-    )
     source_tools: list[str] = []
     for item in results:
         result = item.get("result")
@@ -3579,6 +3606,8 @@ def _apply_deterministic_node_test_file_repair(
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
+    if not _scaffold_synthesis_enabled():
+        return []
     if not any(
         _NODE_TEST_RUNNER_WITHOUT_TEST_FILES_ERROR_RE.search(str(error or "")) for error in artifact_quality_errors
     ):
@@ -4667,6 +4696,22 @@ def _scaffold_synthesis_enabled() -> bool:
     depend on the templates can opt in explicitly.
     """
     return os.environ.get("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", "0").strip().lower() in {"1", "true", "on", "yes"}
+
+
+def _business_contract_synthesis_enabled() -> bool:
+    """Opt-in gate for historical project-specific business contract synthesis.
+
+    These templates encode target-domain answers such as Task, Tenant, DAG, and
+    Audit service contracts. Keeping them default-on would let the Director
+    fabricate product-specific implementation instead of surfacing the actual
+    model/tool failure. Historical benchmark fixtures can opt in explicitly.
+    """
+    return os.environ.get("KERNELONE_DIRECTOR_BUSINESS_CONTRACT_SYNTHESIS", "0").strip().lower() in {
+        "1",
+        "true",
+        "on",
+        "yes",
+    }
 
 
 def _synthesize_declared_target_file_content(relative_path: str, *, node_test_runner: str = "") -> str:

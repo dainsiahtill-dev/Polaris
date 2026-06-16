@@ -193,6 +193,23 @@ def is_empty_write_content_violation(rel: str, content: str) -> bool:
     return any(normalized.endswith(ext) for ext in _EMPTY_WRITE_GUARD_EXTENSIONS)
 
 
+def is_blank_sentinel_write(rel: str, content: str) -> bool:
+    """True when a blank write targets a legitimately-empty sentinel file.
+
+    An empty ``__init__.py`` / ``py.typed`` / ``.gitkeep`` is valid and often
+    REQUIRED (the Python package marker). The PreWriteGuard's EmptyCode syntax
+    check must skip these blanks, otherwise the marker never lands, the
+    materialization quality gate reports it "missing", and the weak Director
+    burns its budget in a repair read-loop and dead-letters (factory-bench
+    L4-19: empty ``backend/__init__.py`` blocked -> 0/3 successes). A NON-empty
+    sentinel still validates normally.
+    """
+    if content.strip():
+        return False
+    basename = rel.replace("\\", "/").rsplit("/", 1)[-1]
+    return basename in _EMPTY_WRITE_SENTINEL_BASENAMES
+
+
 # Line-anchored insertion directives a weak model sometimes emits as the ENTIRE
 # write_file content — treating a full-file write like an incremental edit. The
 # canonical live failure (L2-08 world-clock, 2026-06-16): app.js written as
@@ -815,8 +832,7 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
     # (factory-bench L4-19: empty backend/__init__.py blocked -> 0/3 successes).
     # A NON-empty sentinel still validates normally. Mirrors the Wall-2 sentinel
     # exemption (is_empty_write_wall2_violation, _EMPTY_WRITE_SENTINEL_BASENAMES).
-    _blank_sentinel = not text.strip() and rel.replace("\\", "/").rsplit("/", 1)[-1] in _EMPTY_WRITE_SENTINEL_BASENAMES
-    if not _blank_sentinel and any(rel.endswith(ext) for ext in code_extensions):
+    if not is_blank_sentinel_write(rel, text) and any(rel.endswith(ext) for ext in code_extensions):
         validation_result = validate_code_syntax(text, rel)
         if not validation_result.is_valid:
             error_msg = format_validation_error(validation_result, rel)

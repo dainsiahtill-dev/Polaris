@@ -282,6 +282,25 @@ def _clear_read_bootstrap_progress(turn_id: str) -> None:
     _READ_BOOTSTRAP_PROGRESS.pop(turn_id, None)
 
 
+def _resolve_materialization_workspace(config: Any) -> str:
+    """Resolve the workspace for the F24 fingerprint / forced-write targeting.
+
+    F32 (2026-06-16): ``config.workspace`` is sometimes the literal CWD marker
+    ``"."`` (truthy), which short-circuited the ``or KERNELONE_WORKSPACE``
+    fallback in the old inline resolution. ``"."`` is UNMEASURABLE
+    (``_workspace_materialization_fingerprint`` returns None), so F24 silently
+    never fired and read-only bootstraps ran unbounded — factory-bench L4-23:
+    6 consecutive read-only bootstraps, SAME turn_id, NO interspersed writes,
+    yet ``_read_bootstrap_makes_no_progress`` returned False every time and the
+    write escalation never engaged. Treat ``"."``/empty as unset so the real
+    workspace (``KERNELONE_WORKSPACE``) is used and the fingerprint is measurable.
+    """
+    cfg_ws = str(getattr(config, "workspace", "") or "").strip()
+    if cfg_ws and cfg_ws != ".":
+        return cfg_ws
+    return str(os.environ.get("KERNELONE_WORKSPACE", "") or "").strip() or "."
+
+
 _RETRY_OUTPUT_FLOOR_ENV = "KERNELONE_RETRY_OUTPUT_FLOOR_TOKENS"
 _DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS = 2500
 
@@ -1604,9 +1623,7 @@ class RetryOrchestrator:
         )
         allowed_retry_tool_names = extract_allowed_tool_names_from_definitions(retry_tool_definitions)
         _latest_request = extract_latest_user_message(context)
-        _retry_workspace = str(
-            getattr(self.config, "workspace", "") or os.environ.get("KERNELONE_WORKSPACE", "") or "."
-        )
+        _retry_workspace = _resolve_materialization_workspace(self.config)
         _retry_target_files = tuple(extract_target_files_from_message(_latest_request))
         forced_write_tool_name = select_retry_forced_write_tool_name(
             retry_tool_definitions,
@@ -1841,9 +1858,7 @@ class RetryOrchestrator:
             # the forced-write escalation ladder. Unlike the reverted F21 count-based
             # ceiling, normal read-then-write flows change the workspace fingerprint
             # and never trip this, so the L2 floor is not regressed.
-            progress_workspace = str(
-                getattr(self.config, "workspace", "") or os.environ.get("KERNELONE_WORKSPACE", "") or "."
-            )
+            progress_workspace = _resolve_materialization_workspace(self.config)
             if _read_bootstrap_makes_no_progress(turn_id, progress_workspace):
                 logger.warning(
                     "mutation-contract READ-ONLY bootstrap stalled (no new materialization) "

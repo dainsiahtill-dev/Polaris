@@ -56,6 +56,20 @@ def _make_adapter(tmp_path: Any, task_board: Any = None, task_runtime: Any = Non
     return adapter
 
 
+def _source_tools_from_tool_results(tool_results: Any) -> list[str]:
+    source_tools: list[str] = []
+    if not isinstance(tool_results, list):
+        return source_tools
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        raw_result = item.get("result")
+        if not isinstance(raw_result, dict):
+            continue
+        source_tools.append(str(raw_result.get("source_tool") or ""))
+    return source_tools
+
+
 def test_validate_generated_output_allows_todo_status_enum_value(tmp_path: Any) -> None:
     executor = DirectorPatchExecutor(str(tmp_path))
     target = tmp_path / "src" / "models" / "task.model.ts"
@@ -448,10 +462,11 @@ class TestBuildDirectorMessage:
 class TestDirectorFailureClosure:
     @pytest.fixture(autouse=True)
     def _enable_scaffold_synthesis(self, monkeypatch):
-        # Synthesis became opt-in (CLAUDE.md §8 fix, 2026-06-12): these tests
-        # cover the legacy capability, so they enable it explicitly. Default-
-        # off behavior is covered by test_scaffold_synthesis_default_off.
+        # Synthesis became opt-in (CLAUDE.md §8 fix, 2026-06-12/16): these tests
+        # cover legacy fixture capabilities, so they enable them explicitly.
+        # Default-off behavior is covered by dedicated §8 integrity tests.
         monkeypatch.setenv("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", "1")
+        monkeypatch.setenv("KERNELONE_DIRECTOR_BUSINESS_CONTRACT_SYNTHESIS", "1")
 
     """Runtime failures must fail the claimed task instead of leaving it running."""
 
@@ -1476,10 +1491,7 @@ export function summary() {
             str(tmp_path),
             relative_paths=["src/models/task_definition.ts", "package.json"],
         )
-        source_tools = [
-            str((item.get("result") if isinstance(item, dict) else {}).get("source_tool") or "")
-            for item in result["tool_results"]
-        ]
+        source_tools = _source_tools_from_tool_results(result["tool_results"])
 
         assert result["success"] is True, result
         assert "type TaskDefinitionData = z.infer<typeof TaskDefinitionSchema>;" in repaired
@@ -1913,10 +1925,7 @@ export function summary() {
         assert result["success"] is True, result
         assert "from 'vitest'" not in test_text
         assert "describe('TaskGraph'" in test_text
-        assert "deterministic_node_test_file_repair" in [
-            str((item.get("result") if isinstance(item, dict) else {}).get("source_tool") or "")
-            for item in result["tool_results"]
-        ]
+        assert "deterministic_node_test_file_repair" in _source_tools_from_tool_results(result["tool_results"])
 
     @pytest.mark.asyncio
     async def test_execute_synthesizes_declared_targets_when_llm_returns_no_write_tool(
@@ -1982,10 +1991,7 @@ export function summary() {
             str(tmp_path),
             relative_paths=["src/models/base.model.ts", "src/repositories/base.repository.ts"],
         )
-        source_tools = [
-            str((item.get("result") if isinstance(item, dict) else {}).get("source_tool") or "")
-            for item in result["tool_results"]
-        ]
+        source_tools = _source_tools_from_tool_results(result["tool_results"])
 
         assert result["success"] is True, result
         assert "BaseModel" in model_text
@@ -4246,6 +4252,75 @@ def test_scaffold_synthesis_default_off(monkeypatch) -> None:
     assert _synthesize_declared_target_file_content("readme.md") == ""
     assert _synthesize_declared_target_file_content("package.json") == ""
     assert _synthesize_declared_target_file_content("src/models/tenant.model.ts") == ""
+
+
+def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> None:
+    """§8 regression: Director must not fabricate business-domain service code
+    unless a legacy benchmark explicitly opts into the synthesizer."""
+    monkeypatch.delenv("KERNELONE_DIRECTOR_BUSINESS_CONTRACT_SYNTHESIS", raising=False)
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    task = {
+        "subject": "Audit service",
+        "description": "Create audit service and middleware.",
+        "target_files": [
+            "src/services/audit.service.ts",
+            "src/middleware/audit.middleware.ts",
+        ],
+    }
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task=task,
+        task_id="task-1",
+        artifact_quality_errors=[
+            "unresolved relative import './audit.entity' in src/services/audit.service.ts",
+        ],
+    )
+
+    assert results == []
+    assert summary["attempted"] is False
+    assert not (tmp_path / "src" / "services" / "audit.service.ts").exists()
+    assert not (tmp_path / "src" / "middleware" / "audit.middleware.ts").exists()
+
+
+def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any) -> None:
+    """§8 regression: missing test files should not be masked by fabricated
+    placeholder tests in production/director hot paths."""
+    monkeypatch.delenv("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", raising=False)
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"test": "vitest run"}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task={"target_files": ["package.json"]},
+        task_id="task-1",
+        artifact_quality_errors=[
+            "npm package manifest has test runner script but no test/spec files exist in package.json",
+        ],
+    )
+
+    assert results == []
+    assert summary["attempted"] is False
+    assert not (tmp_path / "tests" / "unit" / "workspace.test.ts").exists()
 
 
 class TestDeclaredPathCaseInsensitiveMatching:

@@ -9,6 +9,7 @@ from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
     _should_use_whole_file_placeholder_replacement,
     _should_use_whole_file_prefix_replacement,
     _write_temp_verify_rename,
+    is_blank_sentinel_write,
     is_empty_write_content_violation,
 )
 
@@ -48,6 +49,34 @@ class TestEmptyWriteContentViolation:
 
         error = "Empty write content: write_file for style.css received blank content."
         assert any(anchor in error for anchor in _WRITE_ARGUMENT_SHAPE_FAILURE_ANCHORS)
+
+
+class TestBlankSentinelWrite:
+    """F29 (2026-06-16): the PreWriteGuard EmptyCode syntax check blocked a blank
+    `__init__.py`, so the Python package marker never landed, the quality gate
+    reported it "missing", and the weak Director dead-lettered in a repair
+    read-loop (factory-bench L4-19: empty backend/__init__.py -> 0/3 successes).
+    A blank sentinel write must be exempt from syntax validation."""
+
+    @pytest.mark.parametrize(
+        "rel",
+        ["__init__.py", "backend/__init__.py", "pkg/sub/__init__.py", "py.typed", "src/py.typed", "assets/.gitkeep"],
+    )
+    @pytest.mark.parametrize("blank", ["", "   ", "\n\t\n", "  \r\n  "])
+    def test_blank_sentinel_is_exempt(self, rel: str, blank: str) -> None:
+        assert is_blank_sentinel_write(rel, blank) is True
+
+    def test_non_blank_sentinel_still_validated(self) -> None:
+        # A NON-empty __init__.py is real code and must validate normally.
+        assert is_blank_sentinel_write("backend/__init__.py", "from .app import main\n") is False
+
+    @pytest.mark.parametrize("rel", ["backend/main.py", "app.ts", "index.html", "style.css", "src/db.py"])
+    def test_blank_non_sentinel_is_not_exempt(self, rel: str) -> None:
+        # An empty real code file is still (correctly) rejected by EmptyCode.
+        assert is_blank_sentinel_write(rel, "") is False
+
+    def test_windows_path_separator_normalized(self) -> None:
+        assert is_blank_sentinel_write("backend\\__init__.py", "") is True
 
 
 class TestWriteTempVerifyRename:

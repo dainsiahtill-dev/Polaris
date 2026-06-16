@@ -1,0 +1,59 @@
+id: vc-20260616-director-synthesis-integrity-gate
+title: Director synthesis integrity gate
+date: "2026-06-16"
+classification: structural
+status: passed
+owner: codex
+scope:
+  - src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py
+  - src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py
+related_blueprint: src/backend/docs/blueprints/DIRECTOR_SYNTHESIS_INTEGRITY_GATE_BLUEPRINT_20260616.md
+assumption_register:
+  - id: A1
+    statement: Director materialization repair currently synthesizes business-domain artifacts by default.
+    evidence:
+      - src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py
+      - "RED: test_business_contract_synthesis_default_off wrote audit.service.ts and audit.middleware.ts"
+    verified: true
+  - id: A2
+    statement: Placeholder test-file synthesis also masks real missing-test failures by default.
+    evidence:
+      - src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py
+      - "RED: test_placeholder_node_test_synthesis_default_off wrote tests/unit/workspace.test.ts"
+    verified: true
+  - id: A3
+    statement: Generic syntax/package repair should remain active because it is language/toolchain based, not business-answer based.
+    evidence:
+      - "_apply_deterministic_typescript_return_object_semicolon_repair"
+      - "_apply_deterministic_typescript_escaped_newline_repair"
+      - "_apply_deterministic_runtime_dependency_repair"
+    verified: true
+pre_mortem:
+  - risk: Removing all deterministic repair would regress language-level floor fixes.
+    mitigation: Gate only business/scaffold synthesis; keep generic syntax/package repairs active.
+  - risk: Deleting legacy helpers outright could break historical fixture tests and obscure intent.
+    mitigation: Leave helpers behind explicit opt-in gates and update tests to set the gates where legacy behavior is intentionally exercised.
+  - risk: A future change could re-enable business synthesis silently.
+    mitigation: Add default-off hot-path regression tests.
+verification_plan:
+  - command: "PYTHONPATH=. pytest polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::test_business_contract_synthesis_default_off polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::test_placeholder_node_test_synthesis_default_off -q"
+    expected: "Default-off hot-path tests pass."
+  - command: "PYTHONPATH=. pytest polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -q"
+    expected: "Director adapter pure test suite passes."
+  - command: "ruff check <changed python files> --fix && ruff format <changed python files>"
+    expected: "Ruff passes."
+  - command: "PYTHONPATH=src/backend mypy <changed python files>"
+    expected: "Success: no issues found."
+verification_results:
+  - command: "PYTHONPATH=. pytest polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::test_business_contract_synthesis_default_off polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::test_placeholder_node_test_synthesis_default_off -q"
+    result: "RED then PASS"
+    evidence: "Before the gate both tests failed because audit.service.ts/audit.middleware.ts and tests/unit/workspace.test.ts were written; after the gate both tests passed."
+  - command: "ruff check src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py --fix && ruff format src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    result: "PASS"
+    evidence: "All checks passed; 2 files left unchanged."
+  - command: "PYTHONPATH=src/backend mypy src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    result: "PASS"
+    evidence: "Success: no issues found in 2 source files."
+  - command: "PYTHONPATH=. pytest polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -q"
+    result: "PASS"
+    evidence: "145 passed, 1 CUDA-driver warning from torch environment."
