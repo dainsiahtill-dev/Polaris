@@ -10,6 +10,20 @@
   forced-write merger 仍未落地。单元/adapter 回归已绿；L2 floor 本轮为 5/6，失败项 L2-11 未触发
   unresolved-import 路径，归因仍是弱模型 declared-missing/bootstrap 写收敛墙，不能把 W1a 记为完整 floor 绿。
 
+### 0.1) 2026-06-16 专家研讨修正（19-agent codegraph deliberation — 关键纠偏，覆盖 §2/§3 旧锚点）
+- **`repair_service.py`(RepairService / `run_repair` / `run_repair_loop` / `_build_repair_brief:303`) 是死/并行路径**：
+  codegraph 实证 `RepairService(` 零非测实例化、`run_repair*` 零非测/跨模块调用方。**在此实现 W2/W3 = 零活效果(地雷)**。
+  §2 的 (B) 分支、§3 的 "W2 在 repair_service.run_repair / W3 在 `_build_repair_brief:296`" 锚点**作废**。
+- **唯一活 repair 路径**：`execute_method.py:_run_materialization_quality_repair_retry(:5027)`
+  → `_build_materialization_quality_repair_message(:5224)`（已含 W1a `missing_block` :5238-5243 + syntax/truncation block）
+  → `adapter._invoke_role_dialogue_with_timeout(... stage_label="quality_repair")`。
+- **C7-text 落点全部在 `execute_method.py`**，而该文件正被 codex 的未提交 F31 diff 占用
+  → **C7-text(W3)落地 HELD until codex commits F31**（避免合并冲突）。
+- **C7 拆分(研讨裁决)**：① W3 符号一致性 hint（生成式通用，留在 `_build_materialization_quality_repair_message`，无契约改动）= **floor-safe，F31 提交后即落**；
+  ② W2 per-file forced-write tool_choice **= bench-gated**：需把可选 `tool_choice` 穿透**公共契约** `ExecuteRoleSessionCommandV1`
+  (`_invoke_role_dialogue_with_timeout` 当前签名仅 message/context/timeout/stage_label，~20 活调用方,热路径=F21/F22/F25 撤回类)，
+  default=None 对所有现存调用方 inert，仅 repair retry 设值。**顺序：C7-text(W3) 先于 C6-2A**（共享 execute_method.py + `_missing_declared_target_files`，先落避免二次改）。
+
 ## 1) 根因（已被代码 + L3-14 实证锁定）
 
 L3-14 工作区落了 7 文件（package.json / tsconfig / vite.config / index.html / tsconfig.node / `src/main.tsx` / `src/app.tsx`），
@@ -75,11 +89,20 @@ QA / artifact_quality_scan
 - **floor-safe**：只在 repair 模式 + 缺失集非空时触发；正常 turn（首批真写）永不进入。**进展感知**：
   每轮强制写后重算物化指纹，**有新文件落盘才续**（借 F24 的 `_read_bootstrap_makes_no_progress` 信号，避免 F21 计数误判）。
 
-### W3 — 符号一致性 brief 强化
-- **在哪**：`_build_repair_brief`（:296）+ W2 的 per-file brief。
-- **做什么**：brief 里对每个缺失文件**列出其被引用的符号**（从 importer 的 `import { A, B }` 抽取），
-  命令"该文件必须 `export` 这些符号"。把"文件存在"升级为"文件导出 importer 需要的符号"。
-- **floor-safe**：纯 prompt 增强，只在 repair brief 内；不改正常路径。
+### W3 — 符号一致性 brief 强化（live spec，已按 §0.1 重锚）
+- **在哪（live）**：`execute_method.py:_build_materialization_quality_repair_message(:5224)`，在 `missing_block`
+  之后、`syntax_block` 之前追加一个 `symbol_block`（**不是** 死的 `repair_service._build_repair_brief`）。
+- **做什么**：从 `artifact_quality_errors` 里形如 `unresolved relative import './router' in src/main.tsx` 的错误，
+  对每个缺失目标抽取 importer 的具名导入符号（`import { router } from './router'` → `router`；
+  `import { A, B }` → A,B；默认导入/`import './x.css'` 无具名符号则跳过该文件的符号行），
+  生成 `symbol_block`：每行 "`src/router/index.tsx` must export: router"。把"文件存在"升级为"文件导出 importer 需要的符号"。
+- **floor-safe 论证**：纯 prompt 增强，**gated 在 artifact_quality_errors 含 unresolved-import 签名**；
+  L2 全集 import 自洽 → 无 unresolved-import 错误 → `symbol_block` 为空字符串 → 该 builder 输出字节级不变（F26 安全类）。
+- **§8 合规**：纯静态 `import { ... }` 符号抽取（语言无关正则），非项目专用硬编码。
+- **单测（确定性无 LLM）**：① 给含 `unresolved relative import './router' in src/main.tsx` + importer 源
+  `import { router } from './router'` 的 errors → 断言 message 含 "must export: router"；② 无 unresolved-import 的 errors →
+  断言 message 与未加 symbol_block 时逐字节一致（floor-inert 回归锁）。
+- **HELD**：与整个 C7-text 一样,**等 codex 提交 F31 后再动 `execute_method.py`**。
 
 > 优先级：**W1+W2 是主干**（覆盖 + 强制写收敛），W3 是质量增强。最小可行 = W1+W2。
 

@@ -175,11 +175,14 @@ def _allows_no_execution_evidence(payload: dict[str, Any]) -> bool:
 
 
 def _step_target_file(payload: dict[str, Any]) -> str:
-    """Declared single target of a CE construction step ('' for non-steps)."""
+    """Declared single target for fission or direct single-file work."""
     step = payload.get("construction_step")
-    if not isinstance(step, dict):
-        return ""
-    return str(step.get("target_file") or "").strip().replace("\\", "/").lstrip("./")
+    if isinstance(step, dict):
+        return str(step.get("target_file") or "").strip().replace("\\", "/").lstrip("./")
+    target_files = _normalize_string_list(payload.get("target_files"))
+    if len(target_files) == 1:
+        return target_files[0].strip().replace("\\", "/").lstrip("./")
+    return ""
 
 
 def _changed_files_cover_target(target_file: str, changed_files: list[str]) -> bool:

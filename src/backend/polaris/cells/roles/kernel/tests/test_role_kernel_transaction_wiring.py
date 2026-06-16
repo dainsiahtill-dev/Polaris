@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from polaris.cells.roles.kernel.internal.kernel import core as kernel_core
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
@@ -87,6 +88,45 @@ class TestTransactionKernelFeatureFlag:
         request = _MockRequest(message="Please inspect the repository.")
 
         assert RoleExecutionKernel._request_forces_no_transaction_tools(request) is False
+
+
+class TestContextDeliveryModeMarker:
+    def test_materialize_context_restores_marker_on_latest_user_message(self) -> None:
+        ensure_marker = getattr(kernel_core, "_ensure_context_delivery_mode_marker", None)
+        messages = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "Create worker_1.txt"},
+        ]
+
+        assert ensure_marker is not None
+        result = ensure_marker(messages, {"delivery_mode": "materialize_changes"})
+
+        assert result is not messages
+        assert result[-1]["content"].startswith("[mode:materialize]\n")
+        assert "Create worker_1.txt" in result[-1]["content"]
+        assert messages[-1]["content"] == "Create worker_1.txt"
+
+    def test_propose_context_leaves_messages_unchanged(self) -> None:
+        ensure_marker = getattr(kernel_core, "_ensure_context_delivery_mode_marker", None)
+        messages = [{"role": "user", "content": "Return fenced file sections"}]
+
+        assert ensure_marker is not None
+        assert ensure_marker(messages, {"delivery_mode": "propose_patch"}) == messages
+
+
+class TestTransactionTurnId:
+    def test_task_scoped_turn_id_distinguishes_concurrent_tasks(self) -> None:
+        resolve_turn_id = getattr(kernel_core, "_resolve_transaction_turn_id", None)
+
+        assert resolve_turn_id is not None
+        first = resolve_turn_id(_MockRequest(run_id="run-1", task_id="D4-SAT-1"), "run-1")
+        second = resolve_turn_id(_MockRequest(run_id="run-1", task_id="D4-SAT-2"), "run-1")
+
+        assert first != second
+        assert first.startswith("run-1")
+        assert second.startswith("run-1")
+        assert "D4-SAT-1" in first
+        assert "D4-SAT-2" in second
 
 
 class TestContextHandoffPackMapping:
@@ -470,6 +510,53 @@ class TestExecuteTransactionKernelTurn:
         assert result.content.startswith("```file:")
         assert mock_execute.await_args is not None
         assert mock_execute.await_args.args[2] == []
+
+    @pytest.mark.asyncio
+    async def test_execute_transaction_kernel_turn_restores_materialize_marker_from_request_message(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(
+            role_id="director",
+            tool_policy=MagicMock(policy_id="tp1", whitelist=["write_file", "read_file"]),
+        )
+        request = _MockRequest(
+            message="[mode:materialize]\nCreate worker_1.txt with D4-SAT-1",
+            run_id="run_123",
+            context_override={"context_os_snapshot": {}},
+        )
+        fingerprint = _MockFingerprint()
+        mock_execute = AsyncMock(
+            return_value={
+                "turn_id": "turn_abc",
+                "kind": "final_answer",
+                "visible_content": "ok",
+                "metrics": {"duration_ms": 100, "llm_calls": 1, "tool_calls": 0},
+            }
+        )
+
+        with (
+            patch.object(kernel, "_create_transaction_kernel", return_value=MagicMock(execute=mock_execute)),
+            patch(
+                "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+                return_value=MagicMock(
+                    build_context=AsyncMock(
+                        return_value=MagicMock(messages=[{"role": "user", "content": "Create worker_1.txt"}])
+                    )
+                ),
+            ),
+        ):
+            await kernel._execute_transaction_kernel_turn(
+                role="director",
+                profile=profile,
+                request=request,
+                system_prompt="You are a Director",
+                fingerprint=fingerprint,
+                observer_run_id="run_123",
+                response_schema=None,
+            )
+
+        assert mock_execute.await_args is not None
+        passed_messages = mock_execute.await_args.args[1]
+        assert passed_messages[-1]["content"].startswith("[mode:materialize]\n")
 
     @pytest.mark.asyncio
     async def test_execute_transaction_kernel_turn_handoff_populates_metadata(self) -> None:

@@ -46,6 +46,15 @@ class TestExtractLatestUserMessage:
         context = [{"role": "user", "content": prompt}]
         assert extract_latest_user_message(context) == "Read utils.py"
 
+    def test_continuation_prompt_preserves_outer_explicit_mode_marker(self) -> None:
+        prompt = (
+            "[mode:materialize]\n"
+            "<Goal>\nCreate the worker marker file\n</Goal>\n"
+            "<Instruction>\nCreate worker_1.txt with D4-SAT-1\n</Instruction>"
+        )
+        context = [{"role": "user", "content": prompt}]
+        assert extract_latest_user_message(context) == "[mode:materialize]\nCreate worker_1.txt with D4-SAT-1"
+
     def test_skips_non_user_messages(self) -> None:
         context = [
             {"role": "assistant", "content": "Hi"},

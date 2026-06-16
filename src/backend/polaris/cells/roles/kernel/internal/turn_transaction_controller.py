@@ -126,6 +126,34 @@ from polaris.cells.storage.layout.public.service import resolve_polaris_roots
 
 logger = logging.getLogger(__name__)
 
+_EXPLICIT_MATERIALIZE_MODE_MARKERS = ("[mode:materialize]", "[mode:materialize_changes]")
+
+
+def _has_explicit_materialize_delivery_marker(user_message: str) -> bool:
+    lowered = str(user_message or "").lower()
+    return any(marker in lowered for marker in _EXPLICIT_MATERIALIZE_MODE_MARKERS)
+
+
+def _enforce_explicit_materialize_delivery_marker(
+    user_message: str,
+    contract: DeliveryContract,
+) -> DeliveryContract:
+    """Make an explicit materialize marker authoritative over classifier output."""
+
+    if not _has_explicit_materialize_delivery_marker(user_message):
+        return contract
+    if contract.mode == DeliveryMode.MATERIALIZE_CHANGES:
+        return contract
+    return DeliveryContract(
+        mode=DeliveryMode.MATERIALIZE_CHANGES,
+        requires_mutation=True,
+        requires_verification=contract.requires_verification,
+        allow_inline_code=False,
+        allow_patch_proposal=False,
+        enrichment=contract.enrichment,
+    )
+
+
 _MONITORING_METRIC_KEYS: tuple[str, ...] = (
     "transaction_kernel.violation_count",
     "turn.single_batch_ratio",
@@ -1233,6 +1261,24 @@ class TurnTransactionController:
 
         # === Phase 1b: 解析交付契约 ===
         latest_user_request = extract_latest_user_message(context)
+        if os.getenv("KERNELONE_DELIVERY_MODE_TRACE") == "1":
+            context_has_materialize_marker = any(
+                isinstance(message, Mapping)
+                and str(message.get("role") or "").strip().lower() == "user"
+                and (
+                    "[mode:materialize]" in str(message.get("content") or "").lower()
+                    or "[mode:materialize_changes]" in str(message.get("content") or "").lower()
+                )
+                for message in context
+            )
+            logger.warning(
+                "delivery-mode-controller-trace: turn_id=%s latest_marker=%s context_marker=%s latest_user_preview=%r",
+                turn_id,
+                "[mode:materialize]" in latest_user_request.lower()
+                or "[mode:materialize_changes]" in latest_user_request.lower(),
+                context_has_materialize_marker,
+                latest_user_request[:160],
+            )
         if not latest_user_request and context:
             # A user-turn-free context resolves to the ANALYZE_ONLY default and
             # silently neuters mutation turns (write tools filtered). The
@@ -1252,6 +1298,23 @@ class TurnTransactionController:
                 }
             )
         delivery_contract = await self._resolve_delivery_mode_hybrid(latest_user_request)
+        enforced_contract = _enforce_explicit_materialize_delivery_marker(latest_user_request, delivery_contract)
+        if enforced_contract is not delivery_contract:
+            logger.warning(
+                "delivery-contract-explicit-marker-overrode: turn_id=%s previous_mode=%s latest_msg=%r",
+                turn_id,
+                delivery_contract.mode.value,
+                latest_user_request[:160],
+            )
+            ledger.anomaly_flags.append(
+                {
+                    "type": "DELIVERY_CONTRACT_EXPLICIT_MARKER_OVERRIDDEN",
+                    "turn_id": turn_id,
+                    "previous_mode": delivery_contract.mode.value,
+                    "latest_request": latest_user_request,
+                }
+            )
+            delivery_contract = enforced_contract
 
         # 多轮对话保护：如果最新消息丢失 mutation 意图（如"继续""开始吧"），
         # 但历史消息中最近存在 MATERIALIZE_CHANGES 意图，则继承该意图

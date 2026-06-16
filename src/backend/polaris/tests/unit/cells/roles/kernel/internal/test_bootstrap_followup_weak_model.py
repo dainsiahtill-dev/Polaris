@@ -138,6 +138,85 @@ def test_bootstrap_context_non_content_results_keep_fragment_form() -> None:
 
 
 # ---------------------------------------------------------------------------
+# C3 (2026-06-16 deliberation): successful-files write-steer must be suppressed
+# on a from-scratch CREATE. The real target cannot have been read (it does not
+# exist on disk yet), so steering the weak Director to "write only to the files
+# you successfully read" points it at adjacent context files instead of the new
+# target -> 0 correct-file output (write-convergence wall). The fix is guard-only
+# + default-False, so the edit-existing path is byte-for-byte unchanged.
+# ---------------------------------------------------------------------------
+
+
+def _receipt_adjacent_read_plus_failed_target(adjacent: str, target: str) -> dict[str, Any]:
+    """A bootstrap that successfully read an ADJACENT context file and failed to
+    read the (not-yet-existing) TARGET file — the exact from-scratch-create shape.
+    """
+    return {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "success",
+                "result": {"file": adjacent, "content": "export const helper = 1;\n"},
+                "arguments": {"file": adjacent},
+            },
+            {
+                "tool_name": "read_file",
+                "status": "error",
+                "result": {"error": f"File not found: {target}"},
+                "arguments": {"file": target},
+            },
+        ]
+    }
+
+
+def test_successful_files_steer_present_on_edit_existing_default() -> None:
+    """Default (from_scratch_create omitted == False) keeps the read-existing
+    steer byte-for-byte: this is the legitimate edit-existing turn where the
+    write target IS among the successfully-read files."""
+    context = build_retry_write_after_bootstrap_context(
+        original_context=[{"role": "user", "content": "edit helper.ts to fix the bug"}],
+        bootstrap_receipt=_receipt_adjacent_read_plus_failed_target("helper.ts", "missing.ts"),
+        forced_write_tool_name="write_file",
+    )
+    rendered = "\n".join(str(m.get("content") or "") for m in context)
+    assert "selected from successfully-read files only" in rendered
+    assert "helper.ts" in rendered
+
+
+def test_successful_files_steer_suppressed_on_from_scratch_create() -> None:
+    """from_scratch_create=True drops the read-existing steer (which would point
+    at the adjacent helper.ts instead of the new game.ts), while KEEPING the
+    failed-file create guidance, which is correct for a create."""
+    context = build_retry_write_after_bootstrap_context(
+        original_context=[{"role": "user", "content": "create game.ts implementing the loop"}],
+        bootstrap_receipt=_receipt_adjacent_read_plus_failed_target("helper.ts", "game.ts"),
+        forced_write_tool_name="write_file",
+        from_scratch_create=True,
+    )
+    rendered = "\n".join(str(m.get("content") or "") for m in context)
+    # The read-existing steer (and the adjacent file it would name) must be gone.
+    assert "selected from successfully-read files only" not in rendered
+    assert "helper.ts" not in rendered
+    # The create guidance for the failed/not-yet-existing target is still emitted.
+    assert "game.ts" in rendered
+    assert "use write_file/create_file/append_to_file" in rendered
+
+
+def test_from_scratch_create_with_no_successful_reads_is_unaffected() -> None:
+    """When the bootstrap read nothing successfully, the steer was already absent;
+    the guard must be a no-op there (no spurious change to the create path)."""
+    context = build_retry_write_after_bootstrap_context(
+        original_context=[{"role": "user", "content": "create app.ts"}],
+        bootstrap_receipt=_failed_read_receipt("app.ts"),
+        forced_write_tool_name="write_file",
+        from_scratch_create=True,
+    )
+    rendered = "\n".join(str(m.get("content") or "") for m in context)
+    assert "selected from successfully-read files only" not in rendered
+    assert "app.ts" in rendered  # still steered to create the failed target
+
+
+# ---------------------------------------------------------------------------
 # deterministic write_file fallback — never stomp, never invent
 # ---------------------------------------------------------------------------
 
@@ -237,9 +316,7 @@ def test_non_leaf_refuses_to_guess_among_multiple_targets(tmp_path: Path) -> Non
     picking viable_targets[0] is the wrong-file bug. Refuse rather than guess."""
     decision = build_deterministic_bootstrap_followup_write_decision(
         turn_id="t-multi",
-        original_context=[
-            {"role": "user", "content": "please create index.html and main.js and style.css for me"}
-        ],
+        original_context=[{"role": "user", "content": "please create index.html and main.js and style.css for me"}],
         bootstrap_receipt=_failed_read_receipt("index.html"),
         allowed_tool_names={"write_file"},
         workspace=str(tmp_path),

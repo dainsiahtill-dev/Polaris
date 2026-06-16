@@ -11,6 +11,7 @@ marker for requires-fresh tasks so the contract is deterministic.
 
 from __future__ import annotations
 
+from polaris.cells.roles.adapters.internal.director import execute_method as director_execute_method
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _pin_materialize_delivery_mode,
 )
@@ -19,6 +20,24 @@ from polaris.cells.roles.kernel.internal.transaction.intent_classifier import re
 
 
 class TestPinMaterializeDeliveryMode:
+    def test_fresh_create_context_pins_materialize_control_plane(self) -> None:
+        context = {"context_os_snapshot": {}, "metadata": {"task_id": "t1"}}
+        pin_context = getattr(director_execute_method, "_pin_materialize_context_delivery_mode", None)
+
+        assert pin_context is not None
+        assert pin_context(context, True) is context
+        assert context["delivery_mode"] == "materialize_changes"
+        assert context["metadata"]["delivery_mode"] == "materialize_changes"
+
+    def test_non_fresh_context_is_unchanged(self) -> None:
+        context = {"context_os_snapshot": {}, "metadata": {"task_id": "t1"}}
+        pin_context = getattr(director_execute_method, "_pin_materialize_context_delivery_mode", None)
+
+        assert pin_context is not None
+        assert pin_context(context, False) is context
+        assert "delivery_mode" not in context
+        assert context["metadata"] == {"task_id": "t1"}
+
     def test_fresh_create_without_marker_is_pinned(self) -> None:
         out = _pin_materialize_delivery_mode("Create main.py and a package", True)
         assert out.startswith("[mode:materialize]\n")

@@ -42,6 +42,14 @@ _SUPER_READONLY_STAGE_MARKERS: tuple[str, ...] = (
     "[/SUPER_MODE_READONLY_STAGE]",
     "stage_type: readonly_planning",
 )
+_EXPLICIT_DELIVERY_MODE_MARKERS: tuple[str, ...] = (
+    "[mode:materialize]",
+    "[mode:materialize_changes]",
+    "[mode:propose]",
+    "[mode:propose_patch]",
+    "[mode:analyze]",
+    "[mode:analyze_only]",
+)
 
 
 def _strip_benchmark_boilerplate(text: str) -> str:
@@ -60,6 +68,16 @@ def _strip_benchmark_boilerplate(text: str) -> str:
     if idx == -1:
         return text
     return text[:idx].strip()
+
+
+def _outer_explicit_delivery_mode_marker(content: str) -> str | None:
+    goal_start = content.lower().find("<goal>")
+    prefix = content if goal_start < 0 else content[:goal_start]
+    lowered_prefix = prefix.lower()
+    for marker in _EXPLICIT_DELIVERY_MODE_MARKERS:
+        if marker in lowered_prefix:
+            return marker
+    return None
 
 
 def _extract_instruction_from_continuation_prompt(content: str) -> str | None:
@@ -85,7 +103,12 @@ def _extract_instruction_from_continuation_prompt(content: str) -> str | None:
     if start < 0 or end < 0 or end <= start:
         return None
     instruction = content[start:end].strip()
-    return instruction if instruction else None
+    if not instruction:
+        return None
+    mode_marker = _outer_explicit_delivery_mode_marker(content)
+    if mode_marker is not None and mode_marker not in instruction.lower():
+        return f"{mode_marker}\n{instruction}"
+    return instruction
 
 
 def extract_continuation_prompt_metadata(content: str) -> dict[str, Any]:

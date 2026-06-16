@@ -92,6 +92,8 @@ _CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS = frozenset(
 )
 _CONTEXT_EXPENSIVE_TOOL_NAMES = frozenset({"read_file"})
 ContextGatewayConfigFactory = Callable[[str, RoleProfile, RoleTurnRequest], ContextGatewayConfig | None]
+_MATERIALIZE_DELIVERY_MODE_VALUES = frozenset({"materialize", "materialize_changes"})
+_MATERIALIZE_DELIVERY_MODE_MARKERS = frozenset({"[mode:materialize]", "[mode:materialize_changes]"})
 
 
 @dataclass(frozen=True)
@@ -104,6 +106,78 @@ class ValidationReport:
     passed: bool
     checks: dict[str, bool]
     errors: list[str]
+
+
+def _context_requests_materialize_delivery(context_override: Any) -> bool:
+    if not isinstance(context_override, dict):
+        return False
+    value = context_override.get("delivery_mode")
+    if value is None:
+        metadata = context_override.get("metadata")
+        if isinstance(metadata, dict):
+            value = metadata.get("delivery_mode")
+    return str(value or "").strip().lower() in _MATERIALIZE_DELIVERY_MODE_VALUES
+
+
+def _text_requests_materialize_delivery(text: Any) -> bool:
+    lowered = str(text or "").lower()
+    return any(marker in lowered for marker in _MATERIALIZE_DELIVERY_MODE_MARKERS)
+
+
+def _ensure_context_delivery_mode_marker(
+    messages: list[dict[str, Any]],
+    context_override: Any,
+    source_message: Any = None,
+) -> list[dict[str, Any]]:
+    """Restore the materialize marker after ContextOS projection when needed."""
+
+    if not _context_requests_materialize_delivery(context_override) and not _text_requests_materialize_delivery(
+        source_message
+    ):
+        return messages
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if str(message.get("role") or "").lower() != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        if _text_requests_materialize_delivery(content):
+            return messages
+        patched_messages = list(messages)
+        patched_messages[index] = {**message, "content": f"[mode:materialize]\n{content}"}
+        return patched_messages
+    return messages
+
+
+def _latest_user_content_preview(messages: list[dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("role") or "").strip().lower() != "user":
+            continue
+        content = str(message.get("content") or "")
+        return content[:160]
+    return ""
+
+
+def _turn_id_component(value: Any) -> str:
+    raw = str(value or "").strip()
+    return "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "-" for ch in raw)[:120]
+
+
+def _resolve_transaction_turn_id(request: RoleTurnRequest, observer_run_id: str) -> str:
+    base = _turn_id_component(getattr(request, "run_id", None) or observer_run_id)
+    if not base:
+        base = uuid.uuid4().hex[:12]
+    task_id = _turn_id_component(getattr(request, "task_id", None))
+    if not task_id:
+        metadata = getattr(request, "metadata", None)
+        if isinstance(metadata, dict):
+            task_id = _turn_id_component(metadata.get("task_id") or metadata.get("pm_task_id"))
+    if task_id and task_id not in base:
+        return f"{base}--{task_id}"
+    return base
 
 
 class RoleExecutionKernel:
@@ -1178,7 +1252,7 @@ class RoleExecutionKernel:
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
 
         tk = self._create_transaction_kernel(role, profile, request)
-        turn_id = str(request.run_id or observer_run_id or uuid.uuid4().hex[:12])
+        turn_id = _resolve_transaction_turn_id(request, observer_run_id)
 
         controller = ToolLoopController.from_request(request=request, profile=profile)
         context_request = controller.build_context_request()
@@ -1191,6 +1265,22 @@ class RoleExecutionKernel:
         # second projection pass.
         context_result = await context_gateway.build_context(context_request, system_prompt=system_prompt)
         messages: list[dict[str, Any]] = list(context_result.messages)
+        messages = _ensure_context_delivery_mode_marker(
+            messages,
+            getattr(request, "context_override", None),
+            getattr(request, "message", None),
+        )
+        if os.getenv("KERNELONE_DELIVERY_MODE_TRACE") == "1":
+            context_override = getattr(request, "context_override", None)
+            logger.warning(
+                "delivery-mode-kernel-trace: role=%s request_marker=%s context_materialize=%s latest_marker=%s "
+                "latest_user_preview=%r",
+                role,
+                _text_requests_materialize_delivery(getattr(request, "message", None)),
+                _context_requests_materialize_delivery(context_override),
+                _text_requests_materialize_delivery(_latest_user_content_preview(messages)),
+                _latest_user_content_preview(messages),
+            )
 
         tool_definitions = (
             []

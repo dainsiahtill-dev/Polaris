@@ -932,6 +932,7 @@ def build_retry_write_after_bootstrap_context(
     original_context: list[dict],
     bootstrap_receipt: Mapping[str, Any],
     forced_write_tool_name: str | None,
+    from_scratch_create: bool = False,
 ) -> list[dict]:
     latest_user = extract_latest_user_message(original_context)
     summary_lines: list[str] = []
@@ -1009,7 +1010,19 @@ def build_retry_write_after_bootstrap_context(
         "Bootstrap read summary:\n"
         f"{summary_block}"
     )
-    if successful_files:
+    # C3 (2026-06-16 deliberation): on a from-scratch CREATE the real write
+    # target does not exist on disk yet, so it can never appear in
+    # successful_files (which only collects files the bootstrap successfully
+    # READ). Emitting this steer there points a weak Director at the adjacent
+    # context files it happened to read instead of the new target it must
+    # create -> 0 correct-file output (write-convergence wall). Suppress it for
+    # creates; keep it for edit-existing turns where the target IS among the
+    # read files. Guard-only + default-False keeps the edit-existing path
+    # byte-for-byte (floor-inert). NOTE: deliberately do NOT inject a positive
+    # target steer here -- that re-creates the r21 wrong-file clobber
+    # (F21/F22/F25 revert class) on multi-file leaf steps whose user message
+    # names every sibling file.
+    if successful_files and not from_scratch_create:
         retry_system += (
             "\nWrite targets must be selected from successfully-read files only: " + ", ".join(successful_files) + "."
         )
@@ -2096,6 +2109,7 @@ class RetryOrchestrator:
                 original_context=context,
                 bootstrap_receipt=bootstrap_receipt,
                 forced_write_tool_name=followup_forced_write_tool_name,
+                from_scratch_create=from_scratch_create,
             )
             if followup_forced_write_tool_name != forced_write_tool_name:
                 logger.warning(

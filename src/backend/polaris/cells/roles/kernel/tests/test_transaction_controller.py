@@ -19,13 +19,14 @@ from uuid import uuid4
 
 import pytest
 from polaris.cells.roles.kernel.internal.metrics import MetricsCollector
-from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
     CompletionEvent,
     TransactionConfig,
     TurnTransactionController,
+    _enforce_explicit_materialize_delivery_marker,
 )
 from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecisionKind
 from polaris.cells.storage.layout.public.service import resolve_polaris_roots
@@ -49,6 +50,38 @@ def _native_tool_call(
 
 
 # ============ Fixtures ============
+
+
+class TestExplicitDeliveryModeMarker:
+    def test_materialize_marker_overrides_analyze_contract(self) -> None:
+        contract = _enforce_explicit_materialize_delivery_marker(
+            "[mode:materialize]\nCreate worker_1.txt",
+            DeliveryContract(
+                mode=DeliveryMode.ANALYZE_ONLY,
+                requires_mutation=False,
+                requires_verification=False,
+                allow_inline_code=True,
+                allow_patch_proposal=False,
+            ),
+        )
+
+        assert contract.mode == DeliveryMode.MATERIALIZE_CHANGES
+        assert contract.requires_mutation is True
+        assert contract.allow_patch_proposal is False
+
+    def test_plain_message_keeps_existing_mode(self) -> None:
+        original = DeliveryContract(
+            mode=DeliveryMode.ANALYZE_ONLY,
+            requires_mutation=False,
+            requires_verification=False,
+            allow_inline_code=True,
+            allow_patch_proposal=False,
+        )
+        contract = _enforce_explicit_materialize_delivery_marker("Analyze the architecture", original)
+
+        assert contract is original
+        assert contract.mode == DeliveryMode.ANALYZE_ONLY
+        assert contract.requires_mutation is False
 
 
 @pytest.fixture

@@ -690,6 +690,29 @@ def _pin_materialize_delivery_mode(message: str, requires_fresh_materialization:
     return message
 
 
+def _pin_materialize_context_delivery_mode(
+    context: dict[str, Any],
+    requires_fresh_materialization: bool,
+) -> dict[str, Any]:
+    """Carry the materialize contract on the control plane for ContextOS turns.
+
+    F31's text marker is still the TransactionKernel classifier's input, but
+    ContextOS can re-project messages before the transaction turn. The control
+    field gives the kernel a deterministic way to restore the marker after
+    projection without relying on the raw Director prompt surviving verbatim.
+    """
+
+    if not requires_fresh_materialization:
+        return context
+    context["delivery_mode"] = "materialize_changes"
+    metadata = context.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        context["metadata"] = metadata
+    metadata["delivery_mode"] = "materialize_changes"
+    return context
+
+
 async def _execute_standard_llm_flow(
     adapter: Any,
     task: dict[str, Any],
@@ -708,6 +731,7 @@ async def _execute_standard_llm_flow(
     await _attach_director_file_event_bus(adapter)
     message = adapter._build_director_message(task)
     requires_fresh_materialization = _task_requires_fresh_materialization(task)
+    context = _pin_materialize_context_delivery_mode(context, requires_fresh_materialization)
     message = _pin_materialize_delivery_mode(message, requires_fresh_materialization)
     workspace_name = Path(str(getattr(adapter, "workspace", "") or "")).resolve().name
     direct_fallback_summary: dict[str, Any] | None = None

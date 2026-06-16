@@ -3546,6 +3546,61 @@ export function summary() {
         assert metadata["external_task_id"] == "PM-AUTO-COMBAT"
         assert runtime_execution["external_task_id"] == "PM-AUTO-COMBAT"
 
+    @pytest.mark.asyncio
+    async def test_task_market_claim_materializes_requested_external_id_without_ready_queue_fallback(
+        self, tmp_path: Any
+    ) -> None:
+        existing_target = tmp_path / "worker_3.py"
+        existing_target.write_text('MARKER = "D4-SAT-3"\n', encoding="utf-8")
+        adapter = _make_adapter(tmp_path)
+        sibling = adapter.task_board.create(
+            subject="Create independent saturation Python file 3",
+            description="Create worker_3.py.",
+            metadata={
+                "external_task_id": "D4-SAT-3",
+                "source_task_id": "D4-SAT-3",
+                "target_files": ["worker_3.py"],
+                "scope_paths": ["worker_3.py"],
+            },
+        )
+
+        async def _empty_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "role_model_not_configured"}
+
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+        adapter._invoke_role_dialogue_with_timeout = _empty_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id="D4-SAT-2",
+            input_data={
+                "task_id": "D4-SAT-2",
+                "subject": "Create independent saturation Python file 2",
+                "description": "Create worker_2.py.",
+                "input": "Create worker_2.py with MARKER D4-SAT-2.",
+                "target_files": ["worker_2.py"],
+                "scope_paths": ["worker_2.py"],
+                "metadata": {
+                    "task_market_task_id": "D4-SAT-2",
+                    "pm_task_id": "D4-SAT-2",
+                    "source": "runtime.task_market.pending_exec",
+                },
+            },
+            context={"run_id": "run-director-task-market-exact"},
+        )
+
+        assert result["task_id"] != str(sibling.id)
+        materialized = adapter.task_runtime.get_task("D4-SAT-2")
+        assert materialized is not None
+        assert materialized["metadata"]["external_task_id"] == "D4-SAT-2"
+        sibling_after = adapter.task_board.get_task(str(sibling.id))
+        assert sibling_after is not None
+        assert sibling_after["status"] != "completed"
+
     def test_claim_external_task_id_prefers_selected_task_source(self) -> None:
         assert (
             _resolve_claim_external_task_id(
@@ -3560,6 +3615,35 @@ export function summary() {
             )
             == "PM-AUTO-COMBAT"
         )
+
+    def test_get_task_resolves_external_task_id_before_queue_fallback(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        adapter.task_board.create(
+            subject="Create independent saturation Python file 3",
+            description="Create worker_3.py.",
+            metadata={
+                "external_task_id": "D4-SAT-3",
+                "source_task_id": "D4-SAT-3",
+                "target_files": ["worker_3.py"],
+            },
+        )
+        adapter.task_board.create(
+            subject="Create independent saturation Python file 2",
+            description="Create worker_2.py.",
+            metadata={
+                "external_task_id": "D4-SAT-2",
+                "source_task_id": "D4-SAT-2",
+                "target_files": ["worker_2.py"],
+            },
+        )
+
+        selected = adapter._get_task("D4-SAT-2")
+
+        assert selected is not None
+        metadata_raw = selected.get("metadata")
+        metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+        assert metadata["external_task_id"] == "D4-SAT-2"
+        assert metadata["target_files"] == ["worker_2.py"]
 
     @pytest.mark.asyncio
     async def test_execute_rejects_existing_autofix_scaffold_without_real_materialization(self, tmp_path: Any) -> None:

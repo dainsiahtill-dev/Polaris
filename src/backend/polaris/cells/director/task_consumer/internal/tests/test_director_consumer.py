@@ -235,6 +235,43 @@ class TestDirectorExecutionConsumerPollOnce:
         assert "readme.md" in fail_call.error_message
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_direct_route_target_file_not_in_changed_files_requeues(self, mock_get_svc: MagicMock) -> None:
+        """Direct PM->Director single-file work must also enforce target_files."""
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "D4-SAT-3"
+        claim_result.lease_token = "lease-direct"
+        claim_result.payload = {
+            "route": "direct_to_director",
+            "target_files": ["worker_3.py"],
+            "scope_paths": ["worker_3.py"],
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+
+        consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
+        with patch.object(
+            consumer,
+            "_execute_task",
+            return_value={"changed_files": ["worker_4.py"], "duration": 1, "side_effects": []},
+        ):
+            results = consumer.poll_once()
+
+        assert len(results) == 1
+        assert results[0]["ok"] is False
+        assert results[0]["reason"] == "step_target_missing"
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "EXEC_TARGET_MISSING"
+        assert fail_call.requeue_stage == "pending_exec"
+        assert "worker_3.py" in fail_call.error_message
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_execute_task_forwards_bounce_teaching_to_adapter_context(
         self,
         mock_get_svc: MagicMock,
