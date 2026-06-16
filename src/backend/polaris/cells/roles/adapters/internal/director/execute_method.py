@@ -2581,6 +2581,27 @@ def _is_node_runtime_source_path(path: str) -> bool:
     return Path(normalized).suffix in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}
 
 
+def _case_insensitive_file_match(target_path: Path) -> bool:
+    """Return True when a sibling file matches ``target_path``'s name ignoring case.
+
+    PM/CE often declare a target with different casing than the file the
+    Director actually wrote (declared ``readme.md`` vs disk ``README.md``). On a
+    case-sensitive filesystem the strict ``is_file`` check below would report the
+    declared target missing and drive a spurious materialization-quality repair
+    loop that never clears — failing an otherwise-complete, runnable product.
+    The write-side already collapses case variants (the case-variant redirect),
+    so this scan must agree. Mirrors the existence-gate / soft-check
+    case-insensitive matching (F19/F20).
+    """
+    name_lower = target_path.name.lower()
+    if not name_lower:
+        return False
+    try:
+        return any(entry.name.lower() == name_lower and entry.is_file() for entry in target_path.parent.iterdir())
+    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError):
+        return False
+
+
 def _declared_target_file_quality_errors(
     *,
     workspace_full: str,
@@ -2606,7 +2627,7 @@ def _declared_target_file_quality_errors(
             continue
         if not Path(normalized).suffix:
             continue
-        if not target_path.is_file():
+        if not target_path.is_file() and not _case_insensitive_file_match(target_path):
             errors.append(f"Artifact quality scan failed: declared target file missing {normalized!r}")
     return errors
 

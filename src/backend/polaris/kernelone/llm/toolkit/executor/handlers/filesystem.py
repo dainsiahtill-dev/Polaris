@@ -808,7 +808,15 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
     # ========================================================================
     # Only validate for code files (Python, JS, TS, etc.)
     code_extensions = {".py", ".pyw", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs"}
-    if any(rel.endswith(ext) for ext in code_extensions):
+    # A blank sentinel file (__init__.py / py.typed / .gitkeep) is legitimately
+    # empty — the EmptyCode syntax check must NOT block it, or the package marker
+    # never lands -> the materialization quality gate reports it "missing" -> the
+    # Director burns its budget in a repair read-loop and dead-letters
+    # (factory-bench L4-19: empty backend/__init__.py blocked -> 0/3 successes).
+    # A NON-empty sentinel still validates normally. Mirrors the Wall-2 sentinel
+    # exemption (is_empty_write_wall2_violation, _EMPTY_WRITE_SENTINEL_BASENAMES).
+    _blank_sentinel = not text.strip() and rel.replace("\\", "/").rsplit("/", 1)[-1] in _EMPTY_WRITE_SENTINEL_BASENAMES
+    if not _blank_sentinel and any(rel.endswith(ext) for ext in code_extensions):
         validation_result = validate_code_syntax(text, rel)
         if not validation_result.is_valid:
             error_msg = format_validation_error(validation_result, rel)

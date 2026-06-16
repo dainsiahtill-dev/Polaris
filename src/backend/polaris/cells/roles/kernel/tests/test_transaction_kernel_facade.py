@@ -2172,6 +2172,61 @@ class TestWriteArgumentShapeFailureGuard:
         )
         assert batch_write_results_all_failed_on_argument_shape(receipt) is True
 
+    def test_empty_write_content_raw_error_triggers(self) -> None:
+        """Wall 2 regression: ToolBatchRuntime can serialize a failed write with
+        the diagnostic only in raw_results, leaving canonical ``result`` empty."""
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = {
+            "results": [
+                {
+                    "call_id": "c0",
+                    "tool_name": "write_file",
+                    "status": "error",
+                    "result": None,
+                }
+            ],
+            "raw_results": [
+                {
+                    "call_id": "c0",
+                    "tool_name": "write_file",
+                    "status": "error",
+                    "result": None,
+                    "error": "Empty write content: write_file for src/app.py received blank content.",
+                }
+            ],
+        }
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is True
+
+    def test_raw_error_without_call_id_does_not_broadcast_to_mixed_write_failures(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = {
+            "results": [
+                {"tool_name": "write_file", "status": "error", "result": None},
+                {"tool_name": "write_file", "status": "error", "result": None},
+            ],
+            "raw_results": [
+                {
+                    "tool_name": "write_file",
+                    "status": "error",
+                    "result": None,
+                    "error": "Empty write content: write_file for src/app.py received blank content.",
+                },
+                {
+                    "tool_name": "write_file",
+                    "status": "error",
+                    "result": None,
+                    "error": "stale_edit: target not read in this session",
+                },
+            ],
+        }
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is False
+
     def test_any_successful_write_disarms(self) -> None:
         from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
             batch_write_results_all_failed_on_argument_shape,

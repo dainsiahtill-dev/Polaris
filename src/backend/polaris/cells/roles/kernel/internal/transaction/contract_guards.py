@@ -622,6 +622,52 @@ _WRITE_ARGUMENT_SHAPE_FAILURE_ANCHORS: tuple[str, ...] = (
 )
 
 
+def _collect_write_error_text(item: Mapping[str, Any]) -> str:
+    """Collect auditable error text from one normalized write receipt item."""
+    fragments: list[str] = []
+    payload = item.get("result")
+    if isinstance(payload, Mapping):
+        for key in ("error", "message", "error_message", "stderr"):
+            value = payload.get(key)
+            if value:
+                fragments.append(str(value))
+    for key in ("error", "message", "error_message", "stderr"):
+        value = item.get(key)
+        if value:
+            fragments.append(str(value))
+    return "\n".join(fragments)
+
+
+def _matching_raw_write_error_text(raw_results: list[Any], item: Mapping[str, Any]) -> str:
+    """Return error text from the raw receipt matching a canonical result item."""
+    call_id = str(item.get("call_id") or "").strip()
+    tool_name = str(item.get("tool_name") or "").strip()
+    candidates: list[Mapping[str, Any]] = []
+    for raw_item in raw_results:
+        if not isinstance(raw_item, Mapping):
+            continue
+        raw_call_id = str(raw_item.get("call_id") or "").strip()
+        raw_tool_name = str(raw_item.get("tool_name") or "").strip()
+        if call_id:
+            if raw_call_id != call_id:
+                continue
+            if tool_name and raw_tool_name and raw_tool_name != tool_name:
+                continue
+        elif tool_name and raw_tool_name != tool_name:
+            continue
+        candidates.append(raw_item)
+
+    if not call_id and len(candidates) != 1:
+        return ""
+
+    fragments: list[str] = []
+    for raw_item in candidates:
+        error_text = _collect_write_error_text(raw_item)
+        if error_text:
+            fragments.append(error_text)
+    return "\n".join(fragments)
+
+
 def batch_write_results_all_failed_on_argument_shape(batch_receipt: Mapping[str, Any]) -> bool:
     """判定:批内出现过写调用,且全部因参数形状失败(无一成功)。
 
@@ -635,6 +681,9 @@ def batch_write_results_all_failed_on_argument_shape(batch_receipt: Mapping[str,
     (如 stale-edit、目标漂移——各有专属守卫)→ False;批内无写调用 → False。
     """
     results = batch_receipt.get("results") or []
+    raw_results = batch_receipt.get("raw_results") or []
+    if not isinstance(raw_results, list):
+        raw_results = []
     write_seen = False
     for item in results:
         if not isinstance(item, Mapping):
@@ -648,7 +697,9 @@ def batch_write_results_all_failed_on_argument_shape(batch_receipt: Mapping[str,
         payload_ok = payload.get("ok") if isinstance(payload, Mapping) else None
         if status == "success" and payload_ok is not False:
             return False
-        error_text = str(payload.get("error") or "") if isinstance(payload, Mapping) else ""
+        error_text = _collect_write_error_text(item)
+        if not error_text:
+            error_text = _matching_raw_write_error_text(raw_results, item)
         if not any(anchor in error_text for anchor in _WRITE_ARGUMENT_SHAPE_FAILURE_ANCHORS):
             return False
     return write_seen
