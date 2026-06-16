@@ -104,6 +104,22 @@ exports recognized; `as`-aliased export recognized. Plus the positive case:
    caught.
 3. Flip the default to ON in a follow-up commit once both are clean.
 
+## 7. Pre-merge adversarial verification (completed 2026-06-17)
+
+Probed 25 realistic false-positive patterns (multiline imports, trailing commas,
+generic types, default+named, decorated classes, aliased re-exports, CRLF,
+indented exports, namespace, const enum, declared exports, the realistic L4
+React App.tsx pattern). Result: **zero real false positives**. The three
+"hits" that looked like false positives were all actually invalid ESM/JS:
+`export default class Foo {}` then `import { Foo }` is not valid ESM (the
+class's name is not a separate export); `export<newline>id` is not valid JS
+(`export` must continue on the same line); `export default { a: 1 }` then
+`import { a }` is not valid ESM (properties of a default are not named
+exports). The detector correctly catches all three. Positive detection
+confirmed: `App.tsx` importing `Card` from `components.tsx` that exports only
+`Button` is correctly flagged. Safe to enable once the L2 + L4-L8 bench
+validations pass.
+
 ## 7. Constraints honored
 
 §8 (generic import/symbol reasoning, no project literals); floor-safe (flag OFF
