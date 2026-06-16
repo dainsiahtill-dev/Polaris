@@ -23,6 +23,7 @@ See docs/blueprints/HEADROOM_PREFIX_DRIFT_OBSERVER_20260616.md.
 from __future__ import annotations
 
 from .drift_detector import (
+    DriftSummary,
     PrefixDriftObserver,
     PrefixDriftReport,
     PrefixSlice,
@@ -32,9 +33,11 @@ from .drift_detector import (
     fingerprint_prefix,
     get_prefix_drift_observer,
     scan_volatile_tokens,
+    summarize_drift_events,
 )
 
 __all__ = [
+    "DriftSummary",
     "PrefixDriftObserver",
     "PrefixDriftReport",
     "PrefixSlice",
@@ -44,4 +47,5 @@ __all__ = [
     "fingerprint_prefix",
     "get_prefix_drift_observer",
     "scan_volatile_tokens",
+    "summarize_drift_events",
 ]

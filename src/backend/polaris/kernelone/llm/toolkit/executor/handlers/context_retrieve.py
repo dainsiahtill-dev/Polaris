@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.toolkit.original_payload_cache import (
     get_default_cache,
-    strip_ref_markers,
+    try_strip_ref_marker,
     workspace_scoped_ref,
 )
 
@@ -58,9 +58,20 @@ _RECEIPT_DB_CANDIDATES: tuple[tuple[str, ...], ...] = (
 _CONTEXT_RETRIEVE_SPEC: dict[str, Any] = {
     "category": "read",
     "description": (
-        "Retrieve the ORIGINAL content behind a compression/receipt pointer "
-        "(e.g. <<ref:HASH>>, [receipt_ref:ID], <receipt_ref:ID>). Use this to "
-        "recover context that was pointerized away during compaction."
+        "Retrieve the ORIGINAL content behind a compression/receipt pointer. "
+        "Whenever the context shows a placeholder such as [receipt_ref:ID], "
+        "<<ref:HASH>>, [Large output stored in receipt ID], or "
+        "[Large content stored in receipt ID], pass that pointer as the `ref` "
+        "argument to recover the verbatim original bytes that were pointerized "
+        "away during compaction. The accepted argument names are `ref`, `hash`, "
+        "`id`, `pointer`, and `receipt_ref` (they all map to the same canonical "
+        "`ref` parameter; paste the literal placeholder you saw into whichever "
+        "name feels most natural). CALL THIS TOOL INSTEAD of re-reading the file "
+        "or re-running the command that produced the pointer: a model that "
+        "re-reads or re-runs defeats the CCR cache, wastes tokens, and may even "
+        "fail if the source is no longer reachable. If the pointer cannot be "
+        "resolved (expired or unknown) the tool returns `ok=false` with reason "
+        "`not_retrievable` — it never silently fabricates content."
     ),
     "aliases": ["expand_pointer", "expand_receipt", "fetch_receipt", "retrieve_original"],
     "arg_aliases": {"hash": "ref", "id": "ref", "pointer": "ref", "receipt_ref": "ref"},
@@ -165,11 +176,26 @@ def _handle_context_retrieve(self: AgentAccelToolExecutor, **kwargs: Any) -> dic
             "error_type": "missing_ref",
         }
 
-    ref = strip_ref_markers(raw_ref)
-    if not ref:
+    # `try_strip_ref_marker` reports (matched, inner) so we can distinguish
+    # three failure modes that must not collapse:
+    #   - matched=True, inner=="" : the model pasted a marker that points to
+    #                               nothing (e.g. ``<<ref:>>``) — unparseable_ref
+    #   - matched=False            : the model pasted prose, not a marker —
+    #                               unparseable_ref (this was dead code before
+    #                               the helper existed: ``strip_ref_markers``
+    #                               returns the prose unchanged so the empty
+    #                               check below could never fire)
+    #   - matched=True, inner!="" : a well-formed ref that the cache happens
+    #                               to not have — not_retrievable (handled by
+    #                               the cache miss path below)
+    matched, ref = try_strip_ref_marker(raw_ref)
+    if not matched or not ref:
         return {
             "ok": False,
-            "error": f"Could not parse a reference out of {raw_ref!r}",
+            "error": (
+                f"Could not parse a reference out of {raw_ref!r} "
+                "(expected a marker such as <<ref:HASH>> or [receipt_ref:ID])"
+            ),
             "error_type": "unparseable_ref",
         }
 

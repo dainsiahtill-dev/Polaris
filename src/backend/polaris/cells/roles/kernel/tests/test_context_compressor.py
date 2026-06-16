@@ -20,6 +20,25 @@ import pytest
 # 确保 polaris 在路径中
 sys.path.insert(0, str(__file__).rsplit("/polaris/", 1)[0] if "/polaris/" in __file__ else ".")
 
+# T2-A tests deliberately keep imports INSIDE the test methods (not
+# module-scope). Pulling ``RoleContextCompressor`` / ``RoleContextIdentity``
+# up to module scope triggers F811 redefinition errors against the
+# pre-existing in-method imports in this file (lines 153/195/259/...) and
+# also perturbs mypy's inference of ``messages`` in the pre-existing
+# ``test_micro_compact_replaces_old_tool_results`` test.
+#
+# The TYPE_CHECKING import below is a mypy/ruff-friendly forward declaration
+# for the ``_make_compressor`` helper return type — it is NOT a runtime
+# import (it is guarded by ``TYPE_CHECKING``) so it does not collide with
+# the in-method imports, and it satisfies ruff F821 / mypy [name-defined].
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from polaris.kernelone.context.compaction import (  # noqa: F401  (typing-only)
+        RoleContextCompressor,
+        RoleContextIdentity,
+    )
+
 
 class TestContextCompressorIntegration:
     """测试上下文压缩在 kernel 中的集成"""
@@ -402,6 +421,208 @@ class TestContextCompactionBlueprint:
 
         # 未超过阈值不应压缩
         assert snapshot is None or len(compressed) > 0, "应该返回有效结果"
+
+
+class TestT2AVetoOnLiveLlmCompact:
+    """T2-A reject-if-not-smaller veto on the LIVE llm_compact path.
+
+    The veto is env-gated (KERNELONE_T2A_VETO, default off) because reverting to
+    the input messages on a non-shrinking pass changes which message list ships
+    to the LLM -> L2-floor bench required to enable. Default-off keeps the
+    compressed message list byte-identical to historical behaviour.
+
+    Adversarial cases covered:
+      * default-off is byte-identical to historical (no rejected-snapshot path)
+      * flag-on + non-shrinking pass -> revert + llm_rejected_noshrink snapshot
+      * flag-on + shrinking pass -> normal llm path
+      * flag-on + degenerate original_tokens==0 -> NO veto (guarded explicitly)
+      * flag-on + exact-shrink-by-1 boundary -> NO veto (strict <)
+      * case-insensitive flag values (TRUE/Yes/on) all enable
+    """
+
+    def _make_compressor(self, llm_summary: str, workspace: str):
+        # The runtime type is ``RoleContextCompressor``. We deliberately do
+        # NOT import it at module scope (see file-level note) and we
+        # deliberately omit the explicit return annotation to avoid ruff
+        # F821 on a forward-reference that has no static resolver here.
+        from polaris.kernelone.context.compaction import RoleContextCompressor
+
+        client = MagicMock()
+        client.messages.create.return_value = MagicMock(content=[MagicMock(text=llm_summary)])
+        return RoleContextCompressor(
+            workspace=workspace,
+            role_name="veto_test",
+            llm_client=client,
+        )
+
+    def _enable_flag(self, monkeypatch) -> None:
+        monkeypatch.setenv("KERNELONE_T2A_VETO", "1")
+
+    def test_flag_off_byte_identical_to_historical(self, tmp_path, monkeypatch) -> None:
+        """Default-off: the compressed message list is unchanged (floor-inert)."""
+        monkeypatch.delenv("KERNELONE_T2A_VETO", raising=False)
+        from polaris.kernelone.context.compaction import RoleContextIdentity
+
+        # An absurd summary that would otherwise expand the tokens is irrelevant:
+        # the flag-off path returns the LLM-summary's compressed list regardless.
+        compressor = self._make_compressor("X", workspace=str(tmp_path))
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello there, friend"},
+        ]
+        identity = RoleContextIdentity(role_id="t", role_type="unknown", goal="g", scope=[])
+
+        _compressed, snapshot = compressor.llm_compact(messages, identity)
+        # Flag-off branch: method is "llm" / "deterministic", NOT "llm_rejected_noshrink".
+        assert snapshot is not None
+        assert snapshot.method in {"llm", "deterministic"}
+        assert snapshot.method != "llm_rejected_noshrink"
+
+    def test_flag_on_non_shrinking_pass_reverts_to_input_messages(self, tmp_path, monkeypatch) -> None:
+        """Flag-on + non-shrinking pass: messages are REVERTED, snapshot records it."""
+        self._enable_flag(monkeypatch)
+        from polaris.kernelone.context.compaction import RoleContextIdentity
+
+        # Craft a summary that, when wrapped in the reinjection prompt + ack,
+        # is LARGER than the input -> veto fires and we REVERT.
+        huge_summary = "S" * 10000
+        compressor = self._make_compressor(huge_summary, workspace=str(tmp_path))
+        messages = [{"role": "user", "content": "short"}]
+        identity = RoleContextIdentity(role_id="t", role_type="unknown", goal="g", scope=[])
+
+        reverted, snapshot = compressor.llm_compact(messages, identity)
+
+        # Veto fired -> snapshot records the rejection, messages REVERTED verbatim.
+        assert snapshot is not None
+        assert snapshot.method == "llm_rejected_noshrink"
+        assert snapshot.compressed_tokens == snapshot.original_tokens
+        assert reverted == messages, "non-shrinking pass must REVERT to the input messages"
+
+    def test_flag_on_shrinking_pass_still_uses_llm_compact(self, tmp_path, monkeypatch) -> None:
+        """Flag-on + shrinking pass: the veto does NOT fire; llm_compact normal path runs."""
+        self._enable_flag(monkeypatch)
+        from polaris.kernelone.context.compaction import RoleContextIdentity
+
+        compressor = self._make_compressor("brief", workspace=str(tmp_path))
+        # Many long messages so the summary genuinely shrinks.
+        messages = [
+            {"role": "user", "content": "x" * 2000},
+            {"role": "assistant", "content": "y" * 2000},
+        ] * 10
+        identity = RoleContextIdentity(role_id="t", role_type="unknown", goal="g", scope=[])
+
+        compressed, snapshot = compressor.llm_compact(messages, identity)
+        assert snapshot is not None
+        assert snapshot.method != "llm_rejected_noshrink"
+        # The compressed list is SHORTER than the input -> the veto correctly stayed silent.
+        assert len(compressed) < len(messages)
+
+    def test_flag_on_degenerate_zero_original_tokens_skips_veto(self, tmp_path, monkeypatch) -> None:
+        """Adversarial: original_tokens == 0 must NOT trigger the veto.
+
+        The guard explicitly requires ``original_tokens > 0`` so an empty
+        input cannot be expanded into the rejected-snapshot path. Without
+        this guard, an empty messages list + a non-empty LLM summary would
+        produce a false-positive noshrink rejection.
+        """
+        self._enable_flag(monkeypatch)
+        from polaris.kernelone.context.compaction import RoleContextIdentity
+
+        compressor = self._make_compressor("any summary", workspace=str(tmp_path))
+        # Forge the degenerate case: a token estimator that always returns 0.
+        compressor.estimate_tokens = lambda _msgs: 0  # type: ignore[assignment, misc]
+        messages: list[dict[str, object]] = []
+        identity = RoleContextIdentity(role_id="t", role_type="unknown", goal="g", scope=[])
+
+        _compressed, snapshot = compressor.llm_compact(messages, identity)
+
+        assert snapshot is not None
+        # The degenerate case must NOT trip the veto; the normal llm path runs.
+        assert snapshot.method != "llm_rejected_noshrink"
+        assert snapshot.original_tokens == 0
+
+    def test_flag_on_shrinking_exactly_by_one_keeps_llm_path(self, tmp_path, monkeypatch) -> None:
+        """Adversarial: compressed_tokens == original_tokens - 1 (strict <) keeps llm path.
+
+        The design is a strict ``compressed_tokens < original_tokens`` veto,
+        not <=. A single-token shrink must be enough to bypass the gate;
+        otherwise over-eager rejections would silently downgrade modest
+        genuine wins into rejected-snapshot noise.
+
+        Implementation note: we key the mock estimator off the message-list
+        structure rather than ``len()`` because the compressed reinjection
+        block also has 2 entries (user reinjection + assistant ack).
+        """
+        self._enable_flag(monkeypatch)
+        from polaris.kernelone.context.compaction import RoleContextIdentity
+
+        compressor = self._make_compressor("ignored", workspace=str(tmp_path))
+        # Distinguish input (>=3 messages, long historical context) from
+        # the compressed reinjection block (exactly 2 short messages).
+        input_messages = [
+            {"role": "user", "content": "x" * 400},
+            {"role": "assistant", "content": "y" * 400},
+            {"role": "user", "content": "z" * 400},
+        ]
+
+        def _fake_estimate_tokens(msgs: list[dict[str, object]]) -> int:
+            # Compressed reinjection block: 2 entries.
+            if len(msgs) == 2:
+                return 99
+            # Otherwise we're measuring the input.
+            return 100
+
+        compressor.estimate_tokens = _fake_estimate_tokens  # type: ignore[assignment, misc]
+        identity = RoleContextIdentity(role_id="t", role_type="unknown", goal="g", scope=[])
+
+        _compressed, snapshot = compressor.llm_compact(input_messages, identity)
+
+        assert snapshot is not None
+        # 99 < 100 strict -> veto stays silent and the normal llm path runs.
+        assert snapshot.method != "llm_rejected_noshrink"
+        assert snapshot.compressed_tokens == 99
+        assert snapshot.original_tokens == 100
+
+    @pytest.mark.parametrize(
+        "flag_value",
+        ["TRUE", "True", "Yes", "yes", "ON", "on", "1", "true"],
+    )
+    def test_flag_on_accepts_case_insensitive_enabled_values(self, tmp_path, monkeypatch, flag_value: str) -> None:
+        """Adversarial: enabled values must be case-insensitive (TRUE / Yes / on)."""
+        monkeypatch.setenv("KERNELONE_T2A_VETO", flag_value)
+        from polaris.kernelone.context.compaction import RoleContextIdentity
+
+        compressor = self._make_compressor("S" * 10000, workspace=str(tmp_path))
+        messages = [{"role": "user", "content": "tiny"}]
+        identity = RoleContextIdentity(role_id="t", role_type="unknown", goal="g", scope=[])
+
+        reverted, snapshot = compressor.llm_compact(messages, identity)
+        assert snapshot is not None
+        assert snapshot.method == "llm_rejected_noshrink", (
+            f"flag_value={flag_value!r} should enable the veto (case-insensitive)"
+        )
+        assert reverted == messages
+
+    @pytest.mark.parametrize("flag_value", ["", "0", "false", "off", "no", "random"])
+    def test_flag_off_unrecognised_values_keep_historical_path(self, tmp_path, monkeypatch, flag_value: str) -> None:
+        """Adversarial: anything outside the enabled-set must keep historical behaviour.
+
+        Guards against future config-store / env-passthrough layers silently
+        propagating truthy-looking strings (e.g. ``"enabled"``) that would
+        accidentally turn the veto on. Floor discipline: only the literal
+        enabled set, case-folded, may flip the gate.
+        """
+        monkeypatch.setenv("KERNELONE_T2A_VETO", flag_value)
+        from polaris.kernelone.context.compaction import RoleContextIdentity
+
+        # Huge summary that would trigger the veto if the flag were honoured.
+        compressor = self._make_compressor("S" * 10000, workspace=str(tmp_path))
+        messages = [{"role": "user", "content": "tiny"}]
+        identity = RoleContextIdentity(role_id="t", role_type="unknown", goal="g", scope=[])
+
+        _compressed, snapshot = compressor.llm_compact(messages, identity)
+        assert snapshot is not None
+        assert snapshot.method != "llm_rejected_noshrink", f"flag_value={flag_value!r} must NOT enable the veto"
 
 
 if __name__ == "__main__":

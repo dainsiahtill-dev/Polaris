@@ -3,12 +3,30 @@
 This module owns the reusable context compaction capability for
 AI/Agent runtimes. It intentionally excludes message-queue or
 role-lifecycle concerns.
+
+Floor discipline
+---------------
+The live ``llm_compact`` path can change which message list ships to the
+LLM. Two env-gated levers are pre-reserved here and MUST stay default-OFF
+until an L2-floor bench authorises them:
+
+* ``KERNELONE_T2A_VETO`` - reject-if-not-smaller veto: on a non-shrinking
+  pass the LLM-summary branch REVERTS to the input messages and emits a
+  snapshot tagged ``method="llm_rejected_noshrink"``. ``auto_compact``
+  already self-vetoes and is intentionally NOT touched by this gate.
+* The flag is consumed ONLY inside ``llm_compact``; everywhere else in
+  this module is unchanged. Default-off keeps the shipped message list
+  byte-identical to historical behaviour.
+
+Enabling either flag is the bench's responsibility, not this module's.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import re
 import time
 from collections.abc import Mapping
@@ -21,6 +39,13 @@ if TYPE_CHECKING:
 
 from polaris.kernelone.context.control_plane_noise import is_control_plane_noise
 from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
+
+# T2-A veto gate (Headroom token-shrink veto, fix-design-review-corrected form).
+# Default OFF because the veto can change WHICH messages ship to the LLM on a
+# non-shrinking llm_compact pass; that is a real prompt-byte change on the live
+# role-agent compaction path and needs an L2-floor bench to enable.
+_T2A_VETO_ENV = "KERNELONE_T2A_VETO"
+_T2A_VETO_ENABLED = {"1", "true", "yes", "on"}
 
 
 @runtime_checkable
@@ -571,6 +596,33 @@ class RoleContextCompressor:
         ]
 
         compressed_tokens = self.estimate_tokens(compressed)
+
+        # T2-A reject-if-not-smaller veto (flag-gated). On a non-shrinking pass the
+        # expansion (e.g. tokenization noise, control-plane re-injection) is pure
+        # regression for the LLM; REVERT to the input messages and record a snapshot
+        # so callers can see the veto fired. auto_compact (line ~809) already
+        # self-vetoes, so this is scoped to the llm_compact branch only.
+        if (
+            os.environ.get(_T2A_VETO_ENV, "").strip().lower() in _T2A_VETO_ENABLED
+            and compressed_tokens >= original_tokens
+            and original_tokens > 0
+        ):
+            noshrink_snapshot = CompactSnapshot(
+                timestamp=time.time(),
+                original_tokens=original_tokens,
+                compressed_tokens=original_tokens,
+                original_hash=original_hash,
+                summary_hash="",
+                method="llm_rejected_noshrink",
+                transcript_path=str(transcript_path),
+                role_name=self.role_name,
+            )
+            logging.getLogger(__name__).debug(
+                "T2-A veto: llm_compact did not shrink (%d -> %d), reverting to original messages",
+                original_tokens,
+                compressed_tokens,
+            )
+            return list(messages), noshrink_snapshot
 
         snapshot = CompactSnapshot(
             timestamp=time.time(),

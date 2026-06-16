@@ -57,12 +57,28 @@ def test_ccr_cache_hit_returns_original_content() -> None:
     assert result["chars"] == len(original)
 
 
-def test_bare_hash_resolves_without_marker_wrapper() -> None:
+def test_marker_roundtrip_put_then_retrieve() -> None:
+    """The canonical CCR loop: cache.put() returns a ``<<ref:HASH>>`` marker;
+    the model pastes that marker (NOT a bare hash) and the handler resolves it.
+    A bare hash (without the marker wrapper) is now ``unparseable_ref`` — the
+    strict contract that distinguishes 'model typed prose' from 'model typed a
+    real pointer that happens to be unknown'."""
+    marker = get_default_cache().put("body")
+    result = _handle_context_retrieve(_fake(), ref=marker)
+    assert result["ok"] is True
+    assert result["content"] == "body"
+
+
+def test_bare_hash_without_marker_fails_closed_as_unparseable() -> None:
+    """A bare hash (the inner ref without the ``<<ref:>>`` wrapper) is
+    rejected with ``unparseable_ref`` per the strict contract. This is
+    intentional: a weak model that strips the marker must get a teaching
+    error, not a silent lookup miss that could match the wrong entry."""
     marker = get_default_cache().put("body")
     bare = marker.removeprefix("<<ref:").removesuffix(">>")
     result = _handle_context_retrieve(_fake(), ref=bare)
-    assert result["ok"] is True
-    assert result["content"] == "body"
+    assert result["ok"] is False
+    assert result["error_type"] == "unparseable_ref"
 
 
 def test_missing_ref_fails_closed() -> None:
@@ -105,7 +121,7 @@ def test_receipt_metadata_best_effort(tmp_path: Path) -> None:
         result_ref="ptr://artifact/1",
     )
 
-    result = _handle_context_retrieve(_fake(str(workspace)), ref="job-xyz")
+    result = _handle_context_retrieve(_fake(str(workspace)), ref="[receipt_ref:job-xyz]")
     assert result["ok"] is True
     assert result["source"] == "receipt_store"
     assert result["receipt"]["result_ref"] == "ptr://artifact/1"
@@ -160,7 +176,7 @@ def test_ccr_takes_priority_over_receipt(tmp_path: Path) -> None:
         content="real-original",
         expires_at=cache._now() + 100,
     )
-    result = _handle_context_retrieve(_fake(str(workspace)), ref="collide")
+    result = _handle_context_retrieve(_fake(str(workspace)), ref="[receipt_ref:collide]")
     assert result["ok"] is True
     assert result["source"] == "ccr_cache"
     assert result["content"] == "real-original"
@@ -210,3 +226,98 @@ def test_end_to_end_weak_model_hash_alias(tmp_path: Path) -> None:
 
     assert result["ok"] is True
     assert result["result"]["content"] == "aliased-via-registry"
+
+
+# ---------------------------------------------------------------------------
+# Description weak-model nudge regression guard
+# ---------------------------------------------------------------------------
+# This description is the FIRST place the model learns that context_retrieve is
+# the right tool to call when it sees a pointer placeholder. A model that does
+# not get this hint will re-read or re-run, defeating the CCR cache. If anyone
+# edits the description and drops the nudge, this test fails CI. The string is
+# a model-facing ground truth, NOT an audit record (per slice charter §6.6).
+
+
+_REQUIRED_PLACEHOLDER_HINTS = (
+    "[receipt_ref:ID]",
+    "<<ref:HASH>>",
+    "[Large output stored in receipt ID]",
+    "[Large content stored in receipt ID]",
+)
+_REQUIRED_ARG_ALIAS_HINTS = ("hash", "id", "pointer", "receipt_ref", "ref")
+_REQUIRED_NUDGE_PHRASES = (
+    "instead",  # "instead of re-reading/re-running"
+    "re-reading",
+    "re-running",
+    "not_retrievable",  # tells the model what an honest miss looks like
+)
+
+
+def _get_offered_spec() -> dict[str, Any]:
+    """Return the spec that the model-facing tool layer would see."""
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    ensure_context_retrieve_spec_registered()
+    spec = ToolSpecRegistry.get_all_specs().get("context_retrieve")
+    assert spec is not None, "context_retrieve spec must be registered before checks run"
+    return spec
+
+
+def test_spec_category_is_read_for_tool_batching_and_acl() -> None:
+    """category=read is required so the executor classifies this as a read tool
+    (no batched-commit side effects, allowed in any phase)."""
+    assert _get_offered_spec()["category"] == "read"
+
+
+def test_spec_arguments_pin_ref_as_required() -> None:
+    """The canonical argument MUST be `ref` and MUST be required. A drift here
+    breaks the handler's `_extract_ref` resolution order."""
+    args = _get_offered_spec()["arguments"]
+    assert len(args) == 1
+    assert args[0]["name"] == "ref"
+    assert args[0]["required"] is True
+
+
+def test_spec_arg_aliases_cover_all_weak_model_variants() -> None:
+    """The SchemaDriven normalizer relies on these aliases. If any drift, the
+    inline fallback is the only safety net."""
+    aliases = _get_offered_spec()["arg_aliases"]
+    for alias in ("hash", "id", "pointer", "receipt_ref"):
+        assert aliases.get(alias) == "ref", f"arg_aliases missing or wrong for {alias!r}: {aliases!r}"
+
+
+def test_spec_description_is_weak_model_nudge() -> None:
+    """The description is what the model reads. It must contain the four
+    placeholder hints and the 'call instead of re-reading/re-running' nudge,
+    and must surface every accepted arg alias. Catches accidental edits that
+    drop the nudge and silently regress the loop-closure contract.
+    """
+    description = _get_offered_spec()["description"]
+    assert isinstance(description, str) and description.strip(), "description must be a non-empty string"
+    for hint in _REQUIRED_PLACEHOLDER_HINTS:
+        assert hint in description, f"description missing required placeholder hint: {hint!r}"
+    for alias in _REQUIRED_ARG_ALIAS_HINTS:
+        assert alias in description, f"description missing required arg-alias name: {alias!r}"
+    for phrase in _REQUIRED_NUDGE_PHRASES:
+        assert phrase.lower() in description.lower(), (
+            f"description missing required weak-model nudge phrase: {phrase!r}"
+        )
+
+
+def test_spec_registered_at_import_time_and_via_register_handlers() -> None:
+    """The spec must be present both for cold-start (import) and warm
+    (register_handlers) call sites. Defends against ordering regressions."""
+    # Re-import the module fresh in a subprocess-like isolation: we already
+    # imported it at collection time, so verify the spec is in place AND that
+    # calling register_handlers() is idempotent.
+    handlers = register_handlers()
+    assert handlers.get("context_retrieve") is _handle_context_retrieve
+
+    from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+    assert ToolSpecRegistry.is_registered("context_retrieve")
+    # Calling register again must not raise or duplicate.
+    ensure_context_retrieve_spec_registered()
+    ensure_context_retrieve_spec_registered()
+    # Still one canonical entry.
+    assert ToolSpecRegistry.is_canonical("context_retrieve")

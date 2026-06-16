@@ -27,13 +27,16 @@ names, file templates, domain models, or hardcoded paths.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 __all__ = [
+    "DriftSummary",
     "PrefixDriftObserver",
     "PrefixDriftReport",
     "PrefixSlice",
@@ -43,6 +46,7 @@ __all__ = [
     "fingerprint_prefix",
     "get_prefix_drift_observer",
     "scan_volatile_tokens",
+    "summarize_drift_events",
 ]
 
 # Maximum characters of a volatile-token sample we keep in a finding. Keeping a
@@ -270,3 +274,96 @@ def get_prefix_drift_observer() -> PrefixDriftObserver:
     module-level learning-key pattern used by ProjectionEngine.
     """
     return _OBSERVER_SINGLETON
+
+
+@dataclass(frozen=True)
+class DriftSummary:
+    """Per-run aggregate of ``context.prefix_drift`` events (Headroom T1-B consumer)."""
+
+    observed: int
+    drifted: int
+    first_seen: int
+    stable: int
+    by_role: dict[str, int]
+    volatile_kinds: dict[str, int]
+
+    def to_dict(self) -> dict[str, int | dict[str, int]]:
+        return {
+            "observed": self.observed,
+            "drifted": self.drifted,
+            "first_seen": self.first_seen,
+            "stable": self.stable,
+            "by_role": dict(self.by_role),
+            "volatile_kinds": dict(self.volatile_kinds),
+        }
+
+
+def summarize_drift_events(
+    events_path: str,
+    *,
+    encoding: str = "utf-8",
+) -> DriftSummary:
+    """Read ``context.prefix_drift`` events from a per-run events JSONL.
+
+    Floor-free: reads already-emitted bytes only; never writes, never mutates
+    the projection/prefix path. Returns a :class:`DriftSummary` with the total
+    observations, drift / first-seen / stable counts, per-role breakdown, and a
+    tally of volatile-token kinds the observer has flagged.
+
+    A missing or empty file is treated as zero observations (not an error) so
+    consumers can call this unconditionally in their hot path.
+    """
+    by_role: dict[str, int] = {}
+    volatile_kinds: dict[str, int] = {}
+    observed = 0
+    drifted = 0
+    first_seen = 0
+    stable = 0
+
+    try:
+        with open(events_path, encoding=encoding) as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                if row.get("name") != "context.prefix_drift":
+                    continue
+                observed += 1
+                raw_output = row.get("output")
+                output: dict[str, Any] = raw_output if isinstance(raw_output, dict) else {}
+                refs_raw = row.get("refs")
+                refs: dict[str, Any] = refs_raw if isinstance(refs_raw, dict) else {}
+                role = str(output.get("role") or refs.get("role") or "")
+                if role:
+                    by_role[role] = by_role.get(role, 0) + 1
+                if bool(output.get("drifted")):
+                    drifted += 1
+                elif bool(output.get("first_seen")):
+                    first_seen += 1
+                else:
+                    stable += 1
+                findings_raw = output.get("volatile_findings")
+                if not isinstance(findings_raw, list):
+                    continue
+                for finding in findings_raw:
+                    if not isinstance(finding, dict):
+                        continue
+                    kind = str(finding.get("kind") or "unknown")
+                    volatile_kinds[kind] = volatile_kinds.get(kind, 0) + int(finding.get("count") or 0)
+    except OSError:
+        return DriftSummary(0, 0, 0, 0, {}, {})
+
+    return DriftSummary(
+        observed=observed,
+        drifted=drifted,
+        first_seen=first_seen,
+        stable=stable,
+        by_role=by_role,
+        volatile_kinds=volatile_kinds,
+    )

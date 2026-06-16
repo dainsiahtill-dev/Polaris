@@ -288,6 +288,21 @@ def pin_write_tool_file_param_to_targets(
     return pinned
 
 
+# CCR consumer-loop offering gate (Headroom T1-A). Offering context_retrieve to a
+# role enlarges its per-turn native tool-schema list, which mutates the cacheable
+# tool-definition prefix on the hot path -> floor-sensitive. Default OFF so the
+# emitted tool set stays byte-identical to historical behaviour until an L2-floor
+# bench validates enabling it. The handler/cache (producer side) are already wired;
+# this flag only controls whether the model is OFFERED the retrieve tool.
+_CCR_RETRIEVE_OFFER_ENV = "KERNELONE_CCR_RETRIEVE"
+_CCR_RETRIEVE_OFFER_ENABLED = {"1", "true", "yes", "on"}
+
+
+def _ccr_retrieve_offering_enabled() -> bool:
+    """Return True when context_retrieve should be offered to the model (flag-gated)."""
+    return os.environ.get(_CCR_RETRIEVE_OFFER_ENV, "").strip().lower() in _CCR_RETRIEVE_OFFER_ENABLED
+
+
 def build_native_tool_schemas(profile: Any) -> list[dict[str, Any]]:
     """Build OpenAI-format tool schemas from profile tool whitelist.
 
@@ -300,6 +315,20 @@ def build_native_tool_schemas(profile: Any) -> list[dict[str, Any]]:
     whitelist = list(getattr(getattr(profile, "tool_policy", None), "whitelist", []) or [])
     if not whitelist:
         return []
+
+    if _ccr_retrieve_offering_enabled() and "context_retrieve" not in whitelist:
+        # Flag-gated CCR consumer-loop closure (T1-A): ensure the spec is registered
+        # so the create_default_registry() lookup below resolves it, then offer the
+        # tool to the model. Inert unless KERNELONE_CCR_RETRIEVE is set.
+        try:
+            from polaris.kernelone.llm.toolkit.executor.handlers.context_retrieve import (
+                ensure_context_retrieve_spec_registered,
+            )
+
+            ensure_context_retrieve_spec_registered()
+            whitelist.append("context_retrieve")
+        except (ImportError, RuntimeError, ValueError):  # pragma: no cover - defensive
+            logger.debug("context_retrieve offering skipped: spec registration failed")
 
     try:
         from polaris.kernelone.llm.toolkit.definitions import create_default_registry

@@ -46,6 +46,7 @@ __all__ = [
     "hash_content",
     "make_offload_capture",
     "strip_ref_markers",
+    "try_strip_ref_marker",
     "workspace_scoped_ref",
 ]
 
@@ -59,15 +60,29 @@ _HASH_PREFIX_LEN: int = 24
 # These align with the pointer/receipt markers injected elsewhere in ContextOS:
 #   - ``<<ref:HASH>>``     (this cache, primary CCR marker)
 #   - ``<<ccr:HASH>>``     (headroom-compatible alias)
-#   - ``[receipt_ref:ID]`` (projection_engine.py injection)
+#   - ``[receipt_ref:ID]`` (projection_engine.py injection, supplemental turns)
 #   - ``<receipt_ref:ID>`` (context_os models injection)
 #   - ``[See path]``       (engine pointerization)
+#   - ``[Large output stored in receipt tool_<id>]``   (projection_engine.py:539,
+#   - ``[Large content stored in receipt evt_<id>]``    :546 — the DOMINANT
+#                            model-visible placeholder on the active-window turn
+#                            path; the captured id is exactly the receipt_id the
+#                            CCR cache is keyed under, so no prefix stripping is
+#                            needed). The id uses the restricted char-class that
+#                            ``_sanitize_receipt_ref`` permits, and the pattern is
+#                            fully anchored so it cannot over-match arbitrary model
+#                            prose that merely contains the phrase mid-sentence.
 _MARKER_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^<<\s*ref\s*:\s*(?P<ref>.+?)\s*>>$", re.IGNORECASE | re.DOTALL),
     re.compile(r"^<<\s*ccr\s*:\s*(?P<ref>.+?)\s*>>$", re.IGNORECASE | re.DOTALL),
     re.compile(r"^\[\s*receipt_ref\s*:\s*(?P<ref>.+?)\s*\]$", re.IGNORECASE | re.DOTALL),
     re.compile(r"^<\s*receipt_ref\s*:\s*(?P<ref>.+?)\s*>$", re.IGNORECASE | re.DOTALL),
     re.compile(r"^\[\s*See\s+(?P<ref>.+?)\s*\]$", re.IGNORECASE | re.DOTALL),
+    re.compile(
+        r"^\[\s*Large\s+(?:output|content)\s+stored\s+in\s+receipt\s+"
+        r"(?P<ref>[A-Za-z0-9_.\-]+)\s*\]$",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -101,6 +116,28 @@ def strip_ref_markers(raw: str) -> str:
         if match:
             return match.group("ref").strip()
     return text
+
+
+def try_strip_ref_marker(raw: str) -> tuple[bool, str]:
+    """Return ``(matched, inner)`` for one of the known marker shapes.
+
+    Unlike :func:`strip_ref_markers` — which silently returns the prose
+    unchanged when no marker matches and therefore hides whether the input
+    was actually a marker — this helper reports the MATCH decision so the
+    caller can fail-closed with a distinct error_type on prose input. This
+    is the prerequisite for the ``_handle_context_retrieve`` failure modes
+    ``unparseable_ref`` (looked like a marker but inner was empty) vs
+    ``not_retrievable`` (well-formed bare id, but the cache has nothing for
+    it). The two cases must not collapse into one.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return False, ""
+    for pattern in _MARKER_PATTERNS:
+        match = pattern.match(text)
+        if match:
+            return True, match.group("ref").strip()
+    return False, text
 
 
 @dataclass(slots=True)
