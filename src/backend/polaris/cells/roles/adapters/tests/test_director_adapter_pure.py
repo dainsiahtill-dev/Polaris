@@ -4483,6 +4483,112 @@ class TestQualityRepairMissingTargetContract:
         task = {"target_files": ["readme.md"]}
         assert _missing_declared_target_files(task, str(tmp_path)) == []
 
+    @pytest.mark.asyncio
+    async def test_quality_repair_retry_targets_unresolved_relative_import(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+            ) -> list[dict[str, Any]]:
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self.repair_message = ""
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                self.repair_message = message
+                return {"content": ""}
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.tsx").write_text(
+            "import { router } from './router';\n",
+            encoding="utf-8",
+        )
+        task = {"target_files": ["src/main.tsx"]}
+        adapter = _Adapter()
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task=task,
+            target_task_id="task-1",
+            run_id="run-1",
+            context={},
+            original_message="Create the React app shell.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: unresolved relative import './router' in src/main.tsx",
+            ],
+            changed_files=["src/main.tsx"],
+        )
+
+        assert summary["missing_target_files"] == ["src/router.tsx"]
+        assert "MISSING TARGET FILES" in adapter.repair_message
+        assert "src/router.tsx" in adapter.repair_message
+
+    def test_repair_targets_css_import_exact_path(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _missing_materialization_quality_repair_target_files,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.tsx").write_text(
+            "import './styles/global.css';\n",
+            encoding="utf-8",
+        )
+
+        missing = _missing_materialization_quality_repair_target_files(
+            {"target_files": ["src/app.tsx"]},
+            str(tmp_path),
+            ["Artifact quality scan failed: unresolved relative import './styles/global.css' in src/app.tsx"],
+        )
+
+        assert missing == ["src/styles/global.css"]
+
+    def test_repair_targets_existing_import_case_variant_is_not_missing(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _missing_materialization_quality_repair_target_files,
+        )
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "Router.TSX").write_text(
+            "export const router = {};\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "main.tsx").write_text(
+            "import { router } from './router';\n",
+            encoding="utf-8",
+        )
+
+        missing = _missing_materialization_quality_repair_target_files(
+            {"target_files": ["src/main.tsx"]},
+            str(tmp_path),
+            ["Artifact quality scan failed: unresolved relative import './router' in src/main.tsx"],
+        )
+
+        assert missing == []
+
     def test_repair_message_names_missing_targets_and_hides_changed_paths(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,

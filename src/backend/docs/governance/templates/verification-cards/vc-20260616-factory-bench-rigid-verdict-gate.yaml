@@ -1,0 +1,79 @@
+id: vc-20260616-factory-bench-rigid-verdict-gate
+title: Factory-bench rigid verdict gate
+date: "2026-06-16"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/backend/scripts/factory_bench/run_factory_bench.py
+  - src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py
+  - src/backend/polaris/kernelone/benchmark/factory_audit.py
+  - src/backend/polaris/tests/unit/kernelone/test_factory_audit.py
+related_blueprint: src/backend/docs/blueprints/FACTORY_BENCH_RIGID_VERDICT_GATE_BLUEPRINT_20260616.md
+assumption_register:
+  - id: A1
+    statement: Factory-bench could report PASS when the role chain failed and QA did not pass.
+    evidence:
+      - "/home/dains/Temp/factory-bench/L2-11.l2int4.log"
+      - "Observed: L2-11 PASS: chain=fail qa_ran=False qa_passed=False chain_exit=1."
+    verified: true
+  - id: A2
+    statement: The verdict bug lives in the runner, not factory_audit static checks.
+    evidence:
+      - "build_factory_audit_record() sets all_checks_passed from static project checks."
+      - "run_factory_bench.py appended chain_results after record creation but did not fold them into all_checks_passed."
+    verified: true
+  - id: A3
+    statement: A full-chain benchmark PASS must require static checks, required artifacts, clean chain exit, integration QA pass, and no wrong-product signal.
+    evidence:
+      - src/backend/docs/blueprints/FACTORY_BENCH_RIGID_VERDICT_GATE_BLUEPRINT_20260616.md
+    verified: true
+  - id: A4
+    statement: Static artifact audit should fail closed when a package script invokes a missing local entrypoint.
+    evidence:
+      - "L2-08 package.json declared scripts.test = 'node test/check.js'."
+      - "No test/check.js existed, and integration QA failed with MODULE_NOT_FOUND."
+    verified: true
+pre_mortem:
+  - risk: Tightening verdict semantics can lower historical scores.
+    mitigation: Treat lower scores as correct measurement, and expose per-gate reasons in logs/audit records.
+  - risk: A helper-only fix could pass tests but leave main output unchanged.
+    mitigation: Main runner calls apply_factory_bench_gates before status logging and aggregate serialization.
+  - risk: Reusing all_checks_passed could obscure static vs full-chain failure.
+    mitigation: Preserve static_checks_passed separately and add factory_gates.
+  - risk: Package-script validation could become a domain-specific scoring rule.
+    mitigation: Validate only generic local interpreter entrypoints declared in package.json scripts; do not require tests or inspect business behavior.
+verification_plan:
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py -q"
+    expected: "Factory-bench verdict-gate tests pass."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/tests/unit/kernelone/test_factory_audit.py -q"
+    expected: "Factory audit static checks pass, including package script entrypoint validation."
+  - command: "ruff check src/backend/scripts/factory_bench/run_factory_bench.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py --fix && ruff format src/backend/scripts/factory_bench/run_factory_bench.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py"
+    expected: "Ruff passes."
+  - command: "PYTHONPATH=src/backend mypy src/backend/scripts/factory_bench/run_factory_bench.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py src/backend/polaris/kernelone/benchmark/factory_audit.py src/backend/polaris/tests/unit/kernelone/test_factory_audit.py"
+    expected: "Success: no issues found."
+verification_results:
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py -q"
+    result: "RED then PASS"
+    evidence: "Before implementation import failed because apply_factory_bench_gates did not exist; after implementation 3 passed."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/tests/unit/kernelone/test_factory_audit.py::TestAuditRecord::test_package_script_missing_local_entrypoint_fails_record -q"
+    result: "RED then PASS"
+    evidence: "Before implementation the test failed because record['checks'] had no package_scripts entry; after implementation it passed."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/tests/unit/kernelone/test_factory_audit.py -q"
+    result: "PASS"
+    evidence: "19 passed; package script entrypoint validation is covered."
+  - command: "ruff check src/backend/scripts/factory_bench/run_factory_bench.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py src/backend/polaris/kernelone/benchmark/factory_audit.py src/backend/polaris/tests/unit/kernelone/test_factory_audit.py --fix && ruff format src/backend/scripts/factory_bench/run_factory_bench.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py src/backend/polaris/kernelone/benchmark/factory_audit.py src/backend/polaris/tests/unit/kernelone/test_factory_audit.py"
+    result: "PASS"
+    evidence: "All checks passed; formatter left target files unchanged."
+  - command: "PYTHONPATH=src/backend mypy src/backend/scripts/factory_bench/run_factory_bench.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py src/backend/polaris/kernelone/benchmark/factory_audit.py src/backend/polaris/tests/unit/kernelone/test_factory_audit.py"
+    result: "PASS"
+    evidence: "Success: no issues found in 4 source files."
+  - command: "KERNELONE_LLM_CONFIG=/home/dains/Temp/factory-bench/configs/llm_local.json python scripts/factory_bench/run_factory_bench.py --project-ids L2-11 --work-dir /home/dains/Temp/factory-bench/rigid_gate_live --timeout 1700"
+    result: "PASS"
+    evidence: "Live L2-11 run printed gate:plan_artifact_present, gate:blueprint_artifact_present, gate:qa_verdict_artifact_present, gate:chain_clean, gate:integration_qa_passed, and gate:wrong_product_guard; factory_audits.json persisted static_checks_passed=true and all six factory_gates ok."
+  - command: "PYTHONPATH=/home/dains/Documents/polaris/src/backend KERNELONE_DIRECTOR_POOL_TRACE=1 KERNELONE_LLM_CONFIG=/home/dains/Temp/factory-bench/configs/llm_local.json timeout 10800 python scripts/factory_bench/run_factory_bench.py --project-ids L2-07,L2-08,L2-09,L2-10,L2-11,L2-12 --work-dir /home/dains/Temp/factory-bench/rigid_l2_seq --timeout 1700 --max-failed 999"
+    result: "PASS: runner completed; benchmark verdict 5/6"
+    evidence: "Sequential rigid L2 baseline completed with L2-07, L2-09, L2-10, L2-11, and L2-12 PASS. L2-08 correctly failed despite static_checks_passed=true because factory_gates chain_clean and integration_qa_passed failed: chain_state=partial exit_code=5, qa_ran=True qa_passed=False. Audit file: /home/dains/Temp/factory-bench/rigid_l2_seq/factory_audits.json."
+  - command: "PYTHONPATH=src/backend python - <<'PY' ... build_factory_audit_record over /home/dains/Temp/factory-bench/rigid_l2_seq/L2-07..L2-12 ... PY"
+    result: "PASS: recompute completed"
+    evidence: "Recomputed static audit over existing L2 workspaces: only L2-08 changed to static=False, with package_scripts failing on missing test/check.js; L2-07, L2-09, L2-10, L2-11, and L2-12 remained static=True."

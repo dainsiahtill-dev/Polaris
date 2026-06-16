@@ -5,6 +5,10 @@
 - 触发证据：L3-14（React/Vite/TS 博客 SPA）在 int4 上**稳定 FAIL**（非 flaky）：
   `chain=fail files=7 director={total:3,successes:0,failures:1}`。
 - 本蓝图只描述方案；实现须 gated + 单测含负例 + **过 L2-floor 回归**后才保留（F21/F22/F25 前车）。
+- 2026-06-16 W1a 已落地：`_run_materialization_quality_repair_retry` 现在会把 unresolved relative import
+  派生出的缺失目标文件并入 `MISSING TARGET FILES`，使 repair re-ask 拿到明确写入路径。W2 per-file
+  forced-write merger 仍未落地。单元/adapter 回归已绿；L2 floor 本轮为 5/6，失败项 L2-11 未触发
+  unresolved-import 路径，归因仍是弱模型 declared-missing/bootstrap 写收敛墙，不能把 W1a 记为完整 floor 绿。
 
 ## 1) 根因（已被代码 + L3-14 实证锁定）
 
@@ -56,6 +60,10 @@ QA / artifact_quality_scan
   解析到盘上不存在的文件 → 加入"待创建缺失集"，**不再要求它必须是 task 声明目标**。
 - **§8 合规**：纯静态依赖分析（语言无关的相对路径解析），非项目专用硬编码。
 - **floor-safe**：只在已有 unresolved-import 错误时扩集；import 全解析的项目（L2 全部、L3 多数）此扫描产出空 → inert。
+- **W1a 实际落点**：quality gate 的错误文本形如
+  `unresolved relative import './router' in src/main.tsx`；其中 `src/main.tsx` 是 importer，不是缺失文件。
+  代码在 `execute_method.py` 内用 importer + specifier 派生候选目标（如 `src/router.tsx`、
+  `src/styles/global.css`），并沿用大小写不敏感存在性检查，避免与 F26 冲突。
 
 ### W2 — 收敛：对缺失集做 per-file 强制写（复用既有 forced-function tool_choice 阶梯）
 - **在哪**：repair 驱动处（`repair_service.run_repair` 或其 `_repair_executor` 接线），复用

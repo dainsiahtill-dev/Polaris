@@ -83,6 +83,26 @@ class TestAuditRecord:
         record = build_factory_audit_record(project={"id": "x", "level": 1, "checks": []}, workspace=str(tmp_path))
         assert record["all_checks_passed"] is False
 
+    def test_package_script_missing_local_entrypoint_fails_record(self, tmp_path: Path) -> None:
+        ws = _project_workspace(tmp_path)
+        (ws / "app.js").write_text("console.log('ok');\n", encoding="utf-8")
+        (ws / "package.json").write_text(
+            '{"scripts":{"start":"http-server .","test":"node test/check.js"}}\n',
+            encoding="utf-8",
+        )
+
+        record = build_factory_audit_record(
+            project={"id": "L2-08", "level": 2, "checks": ["html", "js_syntax", "min_files:2"]},
+            workspace=str(ws),
+        )
+
+        assert record["all_checks_passed"] is False
+        package_checks = [check for check in record["checks"] if check["check"] == "package_scripts"]
+        assert package_checks
+        assert package_checks[0]["ok"] is False
+        assert "test/check.js" in package_checks[0]["detail"]
+        assert all(check["ok"] for check in record["checks"] if check["check"] != "package_scripts")
+
     def test_aggregate_by_level(self, tmp_path: Path) -> None:
         ws = _project_workspace(tmp_path)
         good = build_factory_audit_record(project={"id": "L1-01", "level": 1, "checks": ["html"]}, workspace=str(ws))

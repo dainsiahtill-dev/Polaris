@@ -208,6 +208,72 @@ def grade_chain_state(chain_results: dict[str, Any], exit_code: Any) -> str:
     return "fail"
 
 
+def _bench_gate(gate: str, ok: bool, detail: str) -> dict[str, Any]:
+    return {"gate": gate, "ok": bool(ok), "detail": detail}
+
+
+def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build fail-closed full-chain gates for the factory-bench verdict.
+
+    The per-project deterministic checks measure artifact shape/content only.
+    A benchmark run must not pass if the Polaris chain failed, QA was skipped or
+    failed, required governance artifacts are absent, or the product was likely
+    for a different brief.
+    """
+
+    chain_results = record.get("chain_results")
+    if not isinstance(chain_results, dict):
+        chain_results = {}
+    chain_state = str(record.get("chain_state") or "")
+    chain_exit_code = chain.get("exit_code")
+    return [
+        _bench_gate(
+            "plan_artifact_present",
+            bool(record.get("has_plan_doc")),
+            "plan artifact discovered" if record.get("has_plan_doc") else "plan artifact missing",
+        ),
+        _bench_gate(
+            "blueprint_artifact_present",
+            bool(record.get("has_blueprint_doc")),
+            "blueprint artifact discovered" if record.get("has_blueprint_doc") else "blueprint artifact missing",
+        ),
+        _bench_gate(
+            "qa_verdict_artifact_present",
+            bool(record.get("has_qa_verdict")),
+            "QA verdict artifact discovered" if record.get("has_qa_verdict") else "QA verdict artifact missing",
+        ),
+        _bench_gate(
+            "chain_clean",
+            chain_state == "clean" and chain_exit_code == 0,
+            f"chain_state={chain_state or 'unknown'} exit_code={chain_exit_code}",
+        ),
+        _bench_gate(
+            "integration_qa_passed",
+            chain_results.get("qa_ran") is True and chain_results.get("qa_passed") is True,
+            f"qa_ran={chain_results.get('qa_ran')} qa_passed={chain_results.get('qa_passed')}",
+        ),
+        _bench_gate(
+            "wrong_product_guard",
+            not bool(record.get("wrong_product_suspect")),
+            (
+                "no wrong-product signal"
+                if not record.get("wrong_product_suspect")
+                else f"wrong-product suspect match={record.get('wrong_product_match') or 'unknown'}"
+            ),
+        ),
+    ]
+
+
+def apply_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> None:
+    """Fold full-chain gates into ``all_checks_passed`` in-place."""
+
+    static_checks_passed = bool(record.get("static_checks_passed", record.get("all_checks_passed")))
+    gates = build_factory_bench_gates(record, chain)
+    record["static_checks_passed"] = static_checks_passed
+    record["factory_gates"] = gates
+    record["all_checks_passed"] = static_checks_passed and all(gate["ok"] for gate in gates)
+
+
 def build_requirements_doc(project: dict[str, Any]) -> str:
     """Frame the project brief as the requirements file the PM chain consumes."""
     return (
@@ -379,6 +445,7 @@ def main() -> int:
         record["wrong_product_suspect"] = bool(contract_goal and best_other > max(0.18, own_overlap + 0.1))
         record["wrong_product_match"] = best_other_id if record["wrong_product_suspect"] else ""
         record["chain_state"] = grade_chain_state(record["chain_results"], chain.get("exit_code"))
+        apply_factory_bench_gates(record, chain)
         records.append(record)
         status = "PASS" if record["all_checks_passed"] else "FAIL"
         print(
@@ -394,6 +461,11 @@ def main() -> int:
         for check in record["checks"]:
             print(
                 f"[factory-bench]   - {check['check']}: {'ok' if check['ok'] else 'FAIL'} ({check['detail']})",
+                flush=True,
+            )
+        for gate in record["factory_gates"]:
+            print(
+                f"[factory-bench]   - gate:{gate['gate']}: {'ok' if gate['ok'] else 'FAIL'} ({gate['detail']})",
                 flush=True,
             )
         out_path = base / "factory_audits.json"

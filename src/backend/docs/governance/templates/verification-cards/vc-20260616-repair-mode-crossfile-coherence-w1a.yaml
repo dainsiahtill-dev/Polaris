@@ -1,0 +1,82 @@
+id: vc-20260616-repair-mode-crossfile-coherence-w1a
+title: Repair-mode cross-file coherence W1a
+date: "2026-06-16"
+classification: pattern
+status: passed
+owner: codex
+scope:
+  - src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py
+  - src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py
+related_blueprint: src/backend/docs/blueprints/REPAIR_MODE_CROSSFILE_COHERENCE_BLUEPRINT_20260616.md
+assumption_register:
+  - id: A1
+    statement: Materialization quality errors for unresolved relative imports contain enough data to derive a concrete repair target.
+    evidence:
+      - "Artifact quality scan failed: unresolved relative import './router' in src/main.tsx"
+      - src/backend/polaris/kernelone/quality/artifact_quality.py
+    verified: true
+  - id: A2
+    statement: The previous repair retry only listed missing declared target files, so import-referenced non-declared files never reached the MISSING TARGET FILES block.
+    evidence:
+      - src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py
+      - "RED: test_quality_repair_retry_targets_unresolved_relative_import saw missing_target_files == []"
+    verified: true
+  - id: A3
+    statement: The fix can remain generic by resolving only local relative import specifiers and using existing case-insensitive workspace existence checks.
+    evidence:
+      - "_workspace_path_exists_case_insensitive"
+      - "Tests cover CSS exact targets and Router.TSX case variants."
+    verified: true
+pre_mortem:
+  - risk: The parser could mistake the importer file for the missing target.
+    mitigation: Capture both specifier and importer, then derive target candidates from importer.parent/specifier.
+  - risk: The repair target could bypass F26 and duplicate files with only case drift.
+    mitigation: Reuse _workspace_path_exists_case_insensitive before adding a derived target.
+  - risk: The change could drift into project-specific router/page synthesis.
+    mitigation: Only add target paths to repair context; do not synthesize content or inspect project names/domains.
+verification_plan:
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::TestQualityRepairMissingTargetContract -q"
+    expected: "Missing-target and unresolved-import repair contract tests pass."
+  - command: "ruff check src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py --fix && ruff format src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    expected: "Ruff passes."
+  - command: "PYTHONPATH=src/backend mypy src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    expected: "Success: no issues found."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -q"
+    expected: "Director adapter pure suite passes."
+verification_results:
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::TestQualityRepairMissingTargetContract::test_quality_repair_retry_targets_unresolved_relative_import -q"
+    result: "RED then PASS"
+    evidence: "Before the fix summary['missing_target_files'] was []; after W1a it is ['src/router.tsx']."
+  - command: "ruff check src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py --fix && ruff format src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    result: "PASS"
+    evidence: "All checks passed; 2 files left unchanged."
+  - command: "PYTHONPATH=src/backend mypy src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    result: "PASS"
+    evidence: "Success: no issues found in 2 source files."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py::TestQualityRepairMissingTargetContract -q"
+    result: "PASS"
+    evidence: "7 passed."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -q"
+    result: "PASS"
+    evidence: "148 passed, 1 CUDA-driver warning from torch environment."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/cells/roles/adapters/tests/test_declared_target_case_insensitive.py -q"
+    result: "PASS"
+    evidence: "5 passed."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/kernelone/llm/toolkit/executor/handlers/tests/test_filesystem_transactional_writes.py -q"
+    result: "PASS"
+    evidence: "85 passed."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/cells/roles/adapters/tests/test_pin_materialize_delivery_mode.py -q"
+    result: "PASS"
+    evidence: "7 passed."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/cells/roles/kernel/internal/transaction/tests/test_f32_materialization_workspace.py -q"
+    result: "PASS"
+    evidence: "6 passed."
+  - command: "/home/dains/Temp/factory-bench/run_batch_L2int4.sh"
+    result: "PARTIAL"
+    evidence: "Script exit 0, L2-on-int4 RUNNABLE 5/6. L2-11 was NOT runnable with 2 files (typing-tester.html, style.css); no unresolved relative import appeared in L2-11 logs."
+  - command: "KERNELONE_LLM_CONFIG=/home/dains/Temp/factory-bench/configs/llm_local.json python scripts/factory_bench/run_factory_bench.py --project-ids L2-11 --work-dir /home/dains/Temp/factory-bench/w1a_rerun --timeout 1700"
+    result: "FAIL"
+    evidence: "Solo L2-11 rerun failed differently: 4 files landed (index.html, script.js, style.css, texts.js) but content_any:wpm|accuracy failed; logs show demand drift toward a text-editor skeleton, not W1a unresolved-import repair."
+residual_risks:
+  - "W1a is unit/adapter verified and L2 failure did not exercise the new unresolved-import path, but the L2 floor is not fully green in this run."
+  - "The next high-value fix remains the declared-missing/bootstrap write convergence wall for L2-11 style failures, separate from W1a."

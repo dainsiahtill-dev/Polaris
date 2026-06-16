@@ -7,14 +7,17 @@ produced, and whether deterministic runnability checks pass (Python compiles,
 HTML present, JS syntax, minimum file counts).
 
 Check vocabulary (mirrors ``scripts/factory_bench/projects_v1.json``):
-``py_compile`` / ``html`` / ``js_syntax`` / ``min_files:N``.
+``py_compile`` / ``html`` / ``js_syntax`` / ``min_files:N`` /
+``package_scripts``.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import py_compile
 import re
+import shlex
 import shutil
 import subprocess
 from typing import Any
@@ -44,6 +47,9 @@ _DOC_EXTENSIONS = {".md", ".rst", ".txt"}
 # which inflated code_file_count (L1-02 min_files passed on a matrix json).
 _SKIP_DIRS = {".git", ".polaris", "__pycache__", "node_modules", ".venv", "venv", "runtime"}
 _MAX_SCAN_FILES = 20000
+_SCRIPT_INTERPRETERS = {"node", "python", "python3", "bash", "sh"}
+_SCRIPT_PATH_EXTENSIONS = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
+_SHELL_OPERATORS = {"&&", "||", ";", "|"}
 
 
 def collect_workspace_inventory(workspace: str) -> dict[str, Any]:
@@ -141,6 +147,84 @@ def _check_js_syntax(workspace: str) -> tuple[bool, str]:
     return True, f"{len(js_files)} js files pass node --check"
 
 
+def _is_local_script_reference(token: str) -> bool:
+    if not token or token.startswith("-"):
+        return False
+    normalized = token.replace("\\", "/")
+    if "://" in normalized:
+        return False
+    _, ext = os.path.splitext(normalized)
+    return "/" in normalized or ext.lower() in _SCRIPT_PATH_EXTENSIONS
+
+
+def _script_reference_exists(workspace: str, token: str) -> bool:
+    normalized = token.replace("\\", "/")
+    if os.path.isabs(normalized):
+        return os.path.exists(normalized)
+    exact = os.path.join(workspace, normalized)
+    if os.path.exists(exact):
+        return True
+    base, ext = os.path.splitext(exact)
+    if ext:
+        return False
+    return any(os.path.exists(base + suffix) for suffix in _SCRIPT_PATH_EXTENSIONS)
+
+
+def _missing_package_script_entrypoints(workspace: str, script_name: str, command: str) -> list[str]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError as exc:
+        return [f"script {script_name!r} has invalid shell syntax: {exc}"]
+    missing: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = os.path.basename(tokens[index])
+        if token not in _SCRIPT_INTERPRETERS:
+            index += 1
+            continue
+        index += 1
+        while index < len(tokens):
+            candidate = tokens[index]
+            if candidate in _SHELL_OPERATORS:
+                break
+            if token == "node" and candidate in {"-e", "--eval", "-p", "--print"}:
+                index += 2
+                continue
+            if token == "node" and candidate in {"-r", "--require", "--import", "--loader"}:
+                index += 2
+                continue
+            if candidate.startswith("-"):
+                index += 1
+                continue
+            if _is_local_script_reference(candidate) and not _script_reference_exists(workspace, candidate):
+                missing.append(f"script {script_name!r} references missing local entrypoint: {candidate}")
+            break
+    return missing
+
+
+def _check_package_scripts(workspace: str) -> tuple[bool, str]:
+    package_path = os.path.join(workspace, "package.json")
+    if not os.path.exists(package_path):
+        return False, "package.json not found"
+    try:
+        with open(package_path, encoding="utf-8") as fh:
+            package = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"package.json unreadable or invalid: {exc}"
+    scripts = package.get("scripts")
+    if not isinstance(scripts, dict) or not scripts:
+        return True, "package.json has no scripts to validate"
+    failures: list[str] = []
+    for script_name, command in scripts.items():
+        if not isinstance(command, str):
+            failures.append(f"script {script_name!r} is not a string")
+            continue
+        failures.extend(_missing_package_script_entrypoints(workspace, str(script_name), command))
+    if failures:
+        return False, "; ".join(failures[:3])
+    return True, f"{len(scripts)} package scripts have valid local entrypoint references"
+
+
 def run_checks(workspace: str, checks: list[str]) -> list[dict[str, Any]]:
     """Run the project's deterministic check list; unknown kinds fail closed."""
     inventory = collect_workspace_inventory(workspace)
@@ -155,6 +239,8 @@ def run_checks(workspace: str, checks: list[str]) -> list[dict[str, Any]]:
             ok, detail = _check_html(workspace)
         elif kind == "js_syntax":
             ok, detail = _check_js_syntax(workspace)
+        elif kind == "package_scripts":
+            ok, detail = _check_package_scripts(workspace)
         elif kind == "runnable_any":
             # Shape-neutral runnability: briefs like "typing tester with live
             # highlighting" are legitimately delivered as either a Python
@@ -224,7 +310,11 @@ def build_factory_audit_record(
     layout is runner-configured, not hardcoded here).
     """
     inventory = collect_workspace_inventory(workspace)
-    checks = run_checks(workspace, list(project.get("checks") or []))
+    configured_checks = list(project.get("checks") or [])
+    supplemental_checks = []
+    if os.path.exists(os.path.join(workspace, "package.json")) and "package_scripts" not in configured_checks:
+        supplemental_checks.append("package_scripts")
+    checks = run_checks(workspace, configured_checks + supplemental_checks)
     artifacts = artifact_globs or {}
     return {
         "schema_version": FACTORY_AUDIT_SCHEMA_VERSION,
@@ -240,7 +330,7 @@ def build_factory_audit_record(
         "has_blueprint_doc": bool(artifacts.get("blueprint")),
         "has_qa_verdict": bool(artifacts.get("verdict")),
         "checks": checks,
-        "all_checks_passed": bool(checks) and all(c["ok"] for c in checks),
+        "all_checks_passed": bool(configured_checks) and all(c["ok"] for c in checks),
     }
 
 
