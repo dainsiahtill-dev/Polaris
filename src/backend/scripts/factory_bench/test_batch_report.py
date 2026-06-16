@@ -97,18 +97,21 @@ class TestBatchReport(unittest.TestCase):
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
-            d = Path(td)
-            d.mkdir()
-            self.assertEqual(main([str(d)]), 1)
+            # tempfile.TemporaryDirectory already created the dir; just point at it.
+            self.assertEqual(main([td]), 1)
 
     def test_main_human_report_on_real_data(self) -> None:
-        import contextlib, io, tempfile
+        import contextlib
+        import io
+        import tempfile
 
         with tempfile.TemporaryDirectory() as td:
             d = Path(td)
             _write_audit(d, [_record("L2-T", all_passed=True, task_market_ok=True, dur=42.0)])
             # Also write a chain.log so the root-cause tally has something to count
-            (d / "L2-T.chain.log").write_text("RuntimeError: single_batch_contract_violation: no write tool\n", encoding="utf-8")
+            (d / "L2-T.chain.log").write_text(
+                "RuntimeError: single_batch_contract_violation: no write tool\n", encoding="utf-8"
+            )
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 code = main([str(d)])
