@@ -1190,13 +1190,17 @@ class RoleContextGateway:
         that message generation is fully owned by ProjectionEngine.
         """
         # CCR producer loop closure (T1-A): mirror every offloaded original into
-        # the process CCR cache keyed by its receipt_id, so a later
-        # context_retrieve resolves the same [receipt_ref:ID] pointer the model
-        # sees. Floor-safe: capture_under is best-effort and changes no prompt
-        # text (the placeholder is unchanged), so the L2 success path is intact.
-        from polaris.kernelone.llm.toolkit.original_payload_cache import capture_under
+        # the process CCR cache so a later context_retrieve resolves the same
+        # [receipt_ref:ID] pointer the model sees. The hook is workspace-scoped
+        # (make_offload_capture) so concurrent workspaces sharing this process do
+        # NOT cross-resolve each other's payloads. Floor-safe: best-effort and
+        # changes no prompt text, so the L2 success path is intact.
+        from polaris.kernelone.llm.toolkit.original_payload_cache import make_offload_capture
 
-        receipt_store = ReceiptStore(workspace=str(self.workspace), on_offload=capture_under)
+        receipt_store = ReceiptStore(
+            workspace=str(self.workspace),
+            on_offload=make_offload_capture(str(self.workspace)),
+        )
         sources: list[str] = []
         sorted_events = ProjectionFormatter.sort_events_by_routing_priority(projection.active_window)
 

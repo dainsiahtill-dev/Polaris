@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from polaris.kernelone.llm.toolkit.original_payload_cache import (
     get_default_cache,
     strip_ref_markers,
+    workspace_scoped_ref,
 )
 
 if TYPE_CHECKING:
@@ -173,7 +174,15 @@ def _handle_context_retrieve(self: AgentAccelToolExecutor, **kwargs: Any) -> dic
         }
 
     # 1) CCR reversible cache — returns the actual original content.
-    original = get_default_cache().get(ref)
+    #    Receipt-id refs are workspace-scoped to prevent cross-workspace bleed
+    #    (concurrent director/role workers share the process-global singleton);
+    #    fall back to the bare key for content-addressed <<ref:HASH>> entries
+    #    (which are intentionally shared) and ws-less callers.
+    _ws = str(getattr(self, "workspace", "") or "").strip()
+    _cache = get_default_cache()
+    original = _cache.get(workspace_scoped_ref(_ws, ref)) if _ws else None
+    if original is None:
+        original = _cache.get(ref)
     if original is not None:
         return {
             "ok": True,

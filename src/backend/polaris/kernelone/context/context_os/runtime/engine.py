@@ -152,10 +152,20 @@ class StateFirstContextOS(_ContextOSStateMixin, _ContextOSSchedulerMixin):
             thread_name_prefix="context_os_",
         )
 
-        # Four-layer ContextOS split components
+        # Four-layer ContextOS split components.
+        # CCR producer loop closure (T1-A): wire the offload hook so every
+        # oversized original this engine pointerizes into a [receipt_ref:ID]
+        # placeholder is mirrored into the process CCR cache keyed by its
+        # receipt_id. A later context_retrieve then resolves the SAME pointer the
+        # model already sees. The hook is workspace-scoped (make_offload_capture)
+        # so concurrent workspaces sharing this process do NOT cross-resolve each
+        # other's payloads. Floor-safe: best-effort and changes no prompt text
+        # (the placeholder is unchanged). Mirrors the gateway construction site.
+        from polaris.kernelone.llm.toolkit.original_payload_cache import make_offload_capture
+
         self._truth_log = TruthLogService()
         self._working_state_manager = WorkingStateManager(workspace=self._workspace)
-        self._receipt_store = ReceiptStore(workspace=self._workspace)
+        self._receipt_store = ReceiptStore(workspace=self._workspace, on_offload=make_offload_capture(self._workspace))
         self._projection_engine = ProjectionEngine()
 
     def project_messages(self, projection: ContextOSProjection) -> list[dict[str, Any]]:

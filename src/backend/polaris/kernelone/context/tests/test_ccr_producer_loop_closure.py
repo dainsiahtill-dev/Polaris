@@ -19,6 +19,8 @@ from polaris.kernelone.llm.toolkit.original_payload_cache import (
     OriginalPayloadCache,
     capture_under,
     get_default_cache,
+    make_offload_capture,
+    workspace_scoped_ref,
 )
 
 
@@ -74,6 +76,36 @@ def test_below_threshold_does_not_offload_or_cache(tmp_path: Path) -> None:
     assert get_default_cache().get("[receipt_ref:evt-1]") is None
 
 
+def test_default_no_index_is_byte_identical_to_hooked_model_output(tmp_path: Path) -> None:
+    """CRITICAL floor-safety lock (Option R): wiring the producer hook must not
+    perturb a single byte the model sees. ``offload_content`` returns the same
+    ``(placeholder, refs)`` whether or not the ``on_offload`` index is injected,
+    so the cacheable prompt prefix on the hot projection path is provably
+    unchanged. Only the side cache differs -- which the model never reads on the
+    success path. This pins that the default (``on_offload=None``) path is
+    byte-for-byte identical to today.
+    """
+    get_default_cache().clear()
+    big = "Q" * 4000
+    placeholder = "[receipt_ref:evt-lock]"
+
+    hooked = ReceiptStore(workspace=str(tmp_path), on_offload=capture_under)
+    plain = ReceiptStore(workspace=str(tmp_path))  # exact pre-change signature
+
+    hooked_display, hooked_refs = hooked.offload_content("evt-lock", big, threshold=500, placeholder=placeholder)
+    plain_display, plain_refs = plain.offload_content("evt-lock", big, threshold=500, placeholder=placeholder)
+
+    # The model-visible return is byte-identical across both paths ...
+    assert hooked_display == plain_display == placeholder
+    assert hooked_refs == plain_refs == ("evt-lock",)
+    # ... and the placeholder string is passed straight through, never rewritten
+    # (the producer hook may not mutate the model-visible pointer text).
+    assert hooked_display is placeholder
+    assert hooked_display == "[receipt_ref:evt-lock]"
+    # The ONLY observable difference is the side cache: hook populated, default not.
+    assert get_default_cache().get(placeholder) == big
+
+
 def test_cross_turn_retrieval_via_process_singleton(tmp_path: Path) -> None:
     """A fresh ReceiptStore per build (the real gateway behavior) still resolves
     a prior turn's offload, because the CCR cache is a process singleton
@@ -85,3 +117,53 @@ def test_cross_turn_retrieval_via_process_singleton(tmp_path: Path) -> None:
     # later turn: a brand-new store, but the model's pointer still resolves
     _store_turn_b = ReceiptStore(workspace=str(tmp_path), on_offload=capture_under)
     assert get_default_cache().get("[receipt_ref:evt-x]") == "Z" * 3000
+
+
+def test_state_first_context_os_offload_path_is_wired(tmp_path: Path) -> None:
+    """The second live offload path (StateFirstContextOS / cognitive runtime,
+    application/cognitive_runtime/service.py -> project_messages) must also close
+    the loop. The engine builds its own long-lived ReceiptStore; wiring the
+    on_offload hook there means a payload pointerized on THIS path resolves via
+    context_retrieve too. Previously this store had no hook -> refs were inert."""
+    from polaris.kernelone.context.context_os import StateFirstContextOS
+
+    get_default_cache().clear()
+    context_os = StateFirstContextOS(workspace=str(tmp_path))
+    try:
+        receipt_store = context_os._receipt_store
+        big = "W" * 3500
+        display, refs = receipt_store.offload_content(
+            "evt-engine", big, threshold=500, placeholder="[receipt_ref:evt-engine]"
+        )
+        assert refs == ("evt-engine",)
+        assert display == "[receipt_ref:evt-engine]"
+        # loop closed on the engine path: the same pointer the model sees
+        # resolves, under this workspace's scope (context_retrieve re-applies the
+        # same scoping from self.workspace).
+        assert get_default_cache().get(workspace_scoped_ref(str(tmp_path), "evt-engine")) == big
+    finally:
+        context_os.__exit__(None, None, None)
+
+
+def test_workspace_scoping_prevents_cross_workspace_leak(tmp_path: Path) -> None:
+    """The production hook (make_offload_capture) must isolate concurrent
+    workspaces that share the process-global cache. Two workspaces offloading
+    DIFFERENT content under the SAME un-namespaced receipt_id ('idx_0', a real
+    positional collision vector) must NOT cross-resolve — otherwise project A's
+    context_retrieve could return project B's bytes (benchmark contamination)."""
+    get_default_cache().clear()
+    ws_a = str(tmp_path / "a")
+    ws_b = str(tmp_path / "b")
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    store_a = ReceiptStore(workspace=ws_a, on_offload=make_offload_capture(ws_a))
+    store_b = ReceiptStore(workspace=ws_b, on_offload=make_offload_capture(ws_b))
+    store_a.offload_content("idx_0", "A" * 3000, threshold=500, placeholder="[receipt_ref:idx_0]")
+    store_b.offload_content("idx_0", "B" * 3000, threshold=500, placeholder="[receipt_ref:idx_0]")
+    # each workspace resolves ONLY its own content
+    assert get_default_cache().get(workspace_scoped_ref(ws_a, "idx_0")) == "A" * 3000
+    assert get_default_cache().get(workspace_scoped_ref(ws_b, "idx_0")) == "B" * 3000
+    # and the bare key was never stored, so a bare lookup cannot bleed across
+    assert get_default_cache().get("idx_0") is None
+    # distinct workspaces -> distinct scoped keys (no collision)
+    assert workspace_scoped_ref(ws_a, "idx_0") != workspace_scoped_ref(ws_b, "idx_0")

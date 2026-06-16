@@ -29,6 +29,7 @@ import re
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,7 +44,9 @@ __all__ = [
     "capture_under",
     "get_default_cache",
     "hash_content",
+    "make_offload_capture",
     "strip_ref_markers",
+    "workspace_scoped_ref",
 ]
 
 # Default time-to-live for a cached original payload, in seconds.
@@ -334,13 +337,53 @@ def get_default_cache() -> OriginalPayloadCache:
 def capture_under(key: str, content: str) -> None:
     """Mirror an offloaded original into the process CCR cache under ``key``.
 
-    Intended as a ``ReceiptStore`` ``on_offload`` hook (T1-A producer loop
-    closure): it stores ``content`` under the receipt ref ``key`` so a later
-    ``context_retrieve`` resolves the same ``[receipt_ref:ID]`` pointer the model
-    already sees. Best-effort — all errors are swallowed because CCR mirroring
-    must never break the hot context-build / offload path.
+    UN-NAMESPACED: stores under the raw ``key``. The caller owns key uniqueness.
+    For production ``ReceiptStore`` wiring use :func:`make_offload_capture`, which
+    scopes the key by workspace to prevent cross-workspace content bleed; this
+    bare form is for single-workspace / test use where the key is already unique.
+    Best-effort — all errors are swallowed because CCR mirroring must never break
+    the hot context-build / offload path.
     """
     try:
         get_default_cache().put_under(key, content)
     except Exception:  # noqa: BLE001 - best-effort cache mirror, never fatal.
         logger.debug("CCR capture_under failed for key=%s", key, exc_info=True)
+
+
+def workspace_scoped_ref(workspace: str, ref: str) -> str:
+    """Namespace a receipt ref by its workspace.
+
+    The process CCR cache is a single shared singleton, but director/role workers
+    for different workspaces run as threads in ONE process (ThreadPoolExecutor).
+    Receipt ids such as ``idx_0`` (positional) or ``project_structure`` (static
+    role-signal id) are NOT globally unique, so storing them un-namespaced would
+    let workspace A's ``context_retrieve`` resolve workspace B's original bytes
+    (cross-context content leak / benchmark contamination). Scoping the key by a
+    stable digest of the workspace isolates them. An empty workspace returns the
+    ref unchanged (callers without a workspace fall back to bare keys, which are
+    only the content-addressed ``<<ref:HASH>>`` entries that are safe to share).
+    """
+    ws = str(workspace or "").strip()
+    if not ws:
+        return ref
+    return f"ws:{hash_content(ws)[:12]}:{ref}"
+
+
+def make_offload_capture(workspace: str) -> Callable[[str, str], None]:
+    """Build a workspace-scoped ``ReceiptStore.on_offload`` hook.
+
+    Stores each offloaded original under a workspace-namespaced key (see
+    :func:`workspace_scoped_ref`) so a later ``context_retrieve`` — which
+    re-applies the same scoping from its own ``self.workspace`` — resolves only
+    THIS workspace's payloads, never another concurrent workspace's. Best-effort:
+    never raises.
+    """
+    scoped_ws = str(workspace or "")
+
+    def _capture(receipt_id: str, content: str) -> None:
+        try:
+            get_default_cache().put_under(workspace_scoped_ref(scoped_ws, receipt_id), content)
+        except Exception:  # noqa: BLE001 - best-effort cache mirror, never fatal.
+            logger.debug("CCR make_offload_capture failed for key=%s", receipt_id, exc_info=True)
+
+    return _capture
