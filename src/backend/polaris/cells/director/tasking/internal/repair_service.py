@@ -49,7 +49,14 @@ class RepairContext:
 
     task_id: str
     build_round: int = 0
-    max_build_rounds: int = 4
+    # F25 (2026-06-16): raised 4 -> 8 for cross-file completeness (#54). Complex
+    # multi-file projects (L4/L5) need more repair rounds to create+wire every
+    # referenced file; the INDEPENDENT stall-detector (should_attempt_repair:
+    # is_stalled after stall_threshold no-progress rounds) bounds no-progress
+    # loops, so raising the cap only extends repairs that keep resolving files.
+    # Simple projects converge in 1-2 rounds and never reach the cap (no L2
+    # regression). Integrity-preserving: forces REAL file creation, not stubs.
+    max_build_rounds: int = 8
     stall_rounds: int = 0
     stall_threshold: int = 2
     previous_missing_targets: list[str] = field(default_factory=list)

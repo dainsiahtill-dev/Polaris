@@ -40,6 +40,29 @@ _CALL_OPEN_RE = re.compile(r"call\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*\{", re.IGNOR
 _IDENTIFIER_START_RE = re.compile(r"[A-Za-z_]")
 _IDENTIFIER_BODY_RE = re.compile(r"[A-Za-z0-9_]")
 
+# Qwen3-Coder / qwen-agent equals-style tool-call markup, e.g.::
+#
+#     <function=write_file>
+#     <parameter=file>
+#     README.md
+#     </parameter>
+#     <parameter=content>
+#     ...code...
+#     </parameter>
+#     </function>
+#
+# vLLM serving qwen3-coder variants occasionally leaves this textual form in
+# ``content`` (instead of converting it to native ``tool_calls``).  Distinct
+# from the ``name="..."`` attribute style handled by ``xml_based.XMLToolParser``.
+_QWEN3CODER_FUNCTION_OPEN_RE = re.compile(r"<function\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*>", re.IGNORECASE)
+_QWEN3CODER_FUNCTION_CLOSE_RE = re.compile(r"</function\s*>", re.IGNORECASE)
+_QWEN3CODER_PARAM_RE = re.compile(
+    r"<parameter\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*>(.*?)</parameter\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+# Counts ``<parameter=`` openers (closed or not) for the truncation guard.
+_QWEN3CODER_PARAM_OPEN_RE = re.compile(r"<parameter\s*=\s*[A-Za-z_][A-Za-z0-9_]*\s*>", re.IGNORECASE)
+
 _INT_RE = re.compile(r"-?\d+")
 _FLOAT_RE = re.compile(r"-?\d+\.\d+")
 
@@ -376,6 +399,45 @@ def _iter_marked_pythonic_calls(text: str) -> list[tuple[int, int, str, dict[str
     return results
 
 
+def _iter_qwen3coder_xml_calls(text: str) -> list[tuple[int, int, str, dict[str, Any]]]:
+    """Recover Qwen3-Coder equals-style XML tool calls from ``content``.
+
+    Parses ``<function=NAME> <parameter=KEY>VALUE</parameter> ... </function>``.
+    The function body runs to the closing ``</function>``, the next
+    ``<function=`` opener, or end-of-text (tolerating truncated output).  Only
+    calls that carry at least one closed ``<parameter>`` block are recovered; a
+    call truncated mid-value yields nothing here and is left to the forced-write
+    re-ask, so we never materialise half a file from a guess.
+    """
+    results: list[tuple[int, int, str, dict[str, Any]]] = []
+    for fn_match in _QWEN3CODER_FUNCTION_OPEN_RE.finditer(text):
+        tool_name = fn_match.group(1).strip()
+        if not tool_name:
+            continue
+        body_start = fn_match.end()
+        close_match = _QWEN3CODER_FUNCTION_CLOSE_RE.search(text, body_start)
+        next_open = _QWEN3CODER_FUNCTION_OPEN_RE.search(text, body_start)
+        boundaries = [m.start() for m in (close_match, next_open) if m is not None]
+        body_end = min(boundaries) if boundaries else len(text)
+        span_end = close_match.end() if close_match is not None and close_match.start() == body_end else body_end
+        body = text[body_start:body_end]
+        args: dict[str, Any] = {}
+        for param_match in _QWEN3CODER_PARAM_RE.finditer(body):
+            key = param_match.group(1).strip()
+            if key:
+                args[key] = param_match.group(2).strip()
+        if not args:
+            continue
+        # Truncation guard: a ``<parameter=`` opened but never closed means the
+        # output was cut off mid-value (e.g. a file body truncated at the token
+        # budget).  Recovering only the closed params would materialise a write
+        # with missing content — worse than a clean re-ask.  Skip the whole call.
+        if len(_QWEN3CODER_PARAM_OPEN_RE.findall(body)) != len(args):
+            continue
+        results.append((fn_match.start(), span_end, tool_name, args))
+    return results
+
+
 def _iter_textual_calls(text: str) -> list[tuple[int, int, str, dict[str, Any]]]:
     """Yield ``(start, end, tool_name, args)`` for each textual call found.
 
@@ -398,6 +460,7 @@ def _iter_textual_calls(text: str) -> list[tuple[int, int, str, dict[str, Any]]]
         search_from = brace_end + 1
     results.extend(_iter_lfm_calls(text))
     results.extend(_iter_marked_pythonic_calls(text))
+    results.extend(_iter_qwen3coder_xml_calls(text))
     return sorted(results, key=lambda item: item[0])
 
 
@@ -410,7 +473,9 @@ def has_textual_tool_calls(text: str | None) -> bool:
         return True
     if _iter_lfm_segments(token):
         return True
-    return _CALL_OPEN_RE.search(token) is not None
+    if _CALL_OPEN_RE.search(token) is not None:
+        return True
+    return _QWEN3CODER_FUNCTION_OPEN_RE.search(token) is not None
 
 
 def recover_textual_tool_calls(

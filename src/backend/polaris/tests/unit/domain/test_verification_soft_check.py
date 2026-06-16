@@ -74,6 +74,27 @@ class TestCheckMissingTargets:
 
             assert missing == ["src/api/v2/tasks.*"]
 
+    def test_declared_target_matches_disk_case_insensitively(self) -> None:
+        # PM/CE declared `readme.md` but the Director wrote `README.md`; a
+        # case-sensitive check would spuriously flag it missing and trigger a
+        # repair loop on an otherwise-complete product.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            open(os.path.join(tmpdir, "README.md"), "w").close()
+            assert check_missing_targets(["readme.md"], tmpdir) == []
+
+    def test_case_insensitive_match_in_subdir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sub = os.path.join(tmpdir, "docs")
+            os.makedirs(sub, exist_ok=True)
+            open(os.path.join(sub, "ReadMe.MD"), "w").close()
+            assert check_missing_targets(["docs/readme.md"], tmpdir) == []
+
+    def test_genuinely_missing_still_reported_under_case_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            open(os.path.join(tmpdir, "README.md"), "w").close()
+            # game.js has no case-variant on disk -> still missing.
+            assert check_missing_targets(["game.js"], tmpdir) == ["game.js"]
+
 
 class TestDetectUnresolvedImports:
     def test_js_import_resolved(self) -> None:

@@ -198,6 +198,90 @@ _ESCALATION_START_ATTEMPT_INDEX = 2
 _RETRY_ESCALATION_TEMPERATURE_ENV = "KERNELONE_RETRY_ESCALATION_TEMPERATURE"
 _DEFAULT_RETRY_ESCALATION_TEMPERATURE = 0.2
 
+# F24 (2026-06-16): progress-aware read-loop bound — the CORRECT version of the
+# reverted F21. F21's raw count-based ceiling regressed L2 because it could not
+# tell normal read-then-write convergence (L2: reads 3-5x, but WRITES files
+# between reads) from a pathological stall (L3-14/L4-19: reads forever, 0 new
+# files). F24 only forces the write escalation after consecutive read-only
+# bootstraps that materialise NO new bytes — normal flows change the fingerprint
+# and never trip it; a genuine stall does. Safe default: if the workspace cannot
+# be measured, never force (== original always-bootstrap behaviour, no regression).
+_MAX_STALLED_READ_BOOTSTRAPS = 2
+_READ_BOOTSTRAP_PROGRESS: dict[str, tuple[tuple[int, int] | None, int]] = {}
+_READ_BOOTSTRAP_PROGRESS_MAX_KEYS = 512
+_FINGERPRINT_SOURCE_EXTS = (
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".html",
+    ".css",
+    ".vue",
+    ".svelte",
+    ".go",
+    ".rs",
+    ".json",
+)
+_FINGERPRINT_SKIP_DIRS = frozenset(
+    {".git", ".polaris", "runtime", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".next"}
+)
+
+
+def _workspace_materialization_fingerprint(workspace: str) -> tuple[int, int] | None:
+    """Return (source_file_count, total_bytes), or None when unmeasurable.
+
+    The 'did the Director write anything new' signal. None (CWD-style ``.`` or a
+    missing dir) means the caller must NOT force — measuring the wrong tree is
+    worse than indulging another read.
+    """
+    ws = str(workspace or "").strip()
+    if not ws or ws == "." or not os.path.isdir(ws):
+        return None
+    file_count = 0
+    total_bytes = 0
+    try:
+        for current_root, dirnames, filenames in os.walk(ws):
+            dirnames[:] = [d for d in dirnames if d not in _FINGERPRINT_SKIP_DIRS and not d.startswith(".")]
+            for name in filenames:
+                if not name.endswith(_FINGERPRINT_SOURCE_EXTS):
+                    continue
+                file_count += 1
+                try:
+                    total_bytes += os.path.getsize(os.path.join(current_root, name))
+                except OSError:
+                    continue
+            if file_count > 5000:
+                break
+    except OSError:
+        return None
+    return (file_count, total_bytes)
+
+
+def _read_bootstrap_makes_no_progress(turn_id: str, workspace: str) -> bool:
+    """True when read-only bootstraps for a step have stalled (no new materialization).
+
+    Returns True only after ``_MAX_STALLED_READ_BOOTSTRAPS`` consecutive read-only
+    bootstraps with an UNCHANGED workspace fingerprint. Any new materialization
+    resets the streak, so normal read-then-write convergence never trips it.
+    Unmeasurable workspace -> always False (safe default == original behaviour).
+    """
+    fingerprint = _workspace_materialization_fingerprint(workspace)
+    if fingerprint is None:
+        return False
+    if len(_READ_BOOTSTRAP_PROGRESS) > _READ_BOOTSTRAP_PROGRESS_MAX_KEYS:
+        _READ_BOOTSTRAP_PROGRESS.clear()
+    last_fingerprint, stalled = _READ_BOOTSTRAP_PROGRESS.get(turn_id, (None, 0))
+    stalled = stalled + 1 if (last_fingerprint is not None and fingerprint == last_fingerprint) else 0
+    _READ_BOOTSTRAP_PROGRESS[turn_id] = (fingerprint, stalled)
+    return stalled >= _MAX_STALLED_READ_BOOTSTRAPS
+
+
+def _clear_read_bootstrap_progress(turn_id: str) -> None:
+    """Reset a step's read-bootstrap progress once it converges to a write."""
+    _READ_BOOTSTRAP_PROGRESS.pop(turn_id, None)
+
+
 _RETRY_OUTPUT_FLOOR_ENV = "KERNELONE_RETRY_OUTPUT_FLOOR_TOKENS"
 _DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS = 2500
 
@@ -1750,13 +1834,30 @@ class RetryOrchestrator:
         # ORIGINAL reads directly — never throw away the model's correct request.
         original_bootstrap_invocations = _extract_decision_invocations(original_decision)
         if original_bootstrap_invocations and is_safe_readonly_bootstrap_invocations(original_bootstrap_invocations):
-            logger.warning(
-                "mutation-contract violation on READ-ONLY original batch -> "
-                "bootstrapping the ORIGINAL reads (no retry re-ask): turn_id=%s tools=%s",
-                turn_id,
-                [extract_invocation_tool_name(inv) for inv in original_bootstrap_invocations],
+            # F24 (2026-06-16): progress-aware read-loop bound. Bootstrap the reads
+            # (gather evidence) UNLESS this step's read-only bootstraps have stalled
+            # — i.e. materialised no new bytes across the last few reads (L4-19: all
+            # reads, 0 files; L3-14: read-loop). Then stop indulging reads and take
+            # the forced-write escalation ladder. Unlike the reverted F21 count-based
+            # ceiling, normal read-then-write flows change the workspace fingerprint
+            # and never trip this, so the L2 floor is not regressed.
+            progress_workspace = str(
+                getattr(self.config, "workspace", "") or os.environ.get("KERNELONE_WORKSPACE", "") or "."
             )
-            candidate_bootstrap_decision = original_decision
+            if _read_bootstrap_makes_no_progress(turn_id, progress_workspace):
+                logger.warning(
+                    "mutation-contract READ-ONLY bootstrap stalled (no new materialization) "
+                    "-> forcing write escalation: turn_id=%s",
+                    turn_id,
+                )
+            else:
+                logger.warning(
+                    "mutation-contract violation on READ-ONLY original batch -> "
+                    "bootstrapping the ORIGINAL reads (no retry re-ask): turn_id=%s tools=%s",
+                    turn_id,
+                    [extract_invocation_tool_name(inv) for inv in original_bootstrap_invocations],
+                )
+                candidate_bootstrap_decision = original_decision
         for attempt_index in range(max_retry_attempts):
             if candidate_bootstrap_decision is not None:
                 break
@@ -1881,6 +1982,7 @@ class RetryOrchestrator:
                     tool_batch_count=ledger.tool_batch_count,
                     ledger=ledger,
                 )
+                _clear_read_bootstrap_progress(turn_id)
                 return attempt_result
             except RuntimeError as retry_exc:
                 # FIX-20260504: rollback batch count so failed attempts don't
@@ -2117,6 +2219,11 @@ class RetryOrchestrator:
                     # Wave-3: carry the bootstrap READ receipts in the turn's
                     # authoritative receipt so the next turn's WorkingMemory can
                     # see the file content (turn context is rebuilt from scratch).
+                    # NOTE: do NOT clear the read-only-bootstrap streak here — this
+                    # IS a read-only-bootstrap iteration. Clearing it would reset
+                    # the ceiling counter every loop (observed: count stuck at 1/2
+                    # for 7 iterations), so the ceiling never fires. The streak is
+                    # only reset on a genuine forced-write escalation success.
                     return merge_bootstrap_receipt_into_result(followup_result, bootstrap_receipt)
                 except RuntimeError as followup_exc:
                     # FIX-20260504: rollback batch count so failed attempts don't

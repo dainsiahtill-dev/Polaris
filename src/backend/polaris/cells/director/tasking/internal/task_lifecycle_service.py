@@ -91,7 +91,7 @@ else:
 
         task_id: str = ""
         build_round: int = 0
-        max_build_rounds: int = 4
+        max_build_rounds: int = 8  # F25: cross-file completeness (#54), stall-detector bounds no-progress
         stall_rounds: int = 0
 
     if _RepairContext is None:

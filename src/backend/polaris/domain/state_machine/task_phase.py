@@ -62,7 +62,7 @@ class PhaseContext:
     changed_files: list[str] = field(default_factory=list)
     verification_result: dict[str, Any] = field(default_factory=dict)
     build_round: int = 0
-    max_build_rounds: int = 4
+    max_build_rounds: int = 8  # F25: cross-file completeness (#54)
     stall_count: int = 0
     previous_missing_targets: list[str] = field(default_factory=list)
     previous_unresolved_imports: list[str] = field(default_factory=list)

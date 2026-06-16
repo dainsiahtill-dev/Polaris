@@ -176,3 +176,69 @@ class TestStripTextualToolCallMarkers:
         assert "Done." in cleaned
         assert "repo_read_head" not in cleaned
         assert "<tool_call>" not in cleaned
+
+
+# Real captured qwen3.6-27b-code outputs (equals-style markup leaked into content
+# when the vLLM tool-call-parser did not convert it to native tool_calls).
+QWEN3CODER_WRITE = (
+    "<tool_call>\n"
+    "<function=write_file>\n"
+    "<parameter=file>\n"
+    "js/bricks.js\n"
+    "</parameter>\n"
+    "<parameter=content>\n"
+    "export function makeBricks() {\n"
+    "  return [1, 2, 3];\n"
+    "}\n"
+    "</parameter>\n"
+    "</function>\n"
+    "</tool_call>"
+)
+QWEN3CODER_MULTI = (
+    "<function=read_file><parameter=path>a.js</parameter></function>"
+    "<function=write_file><parameter=file>b.js</parameter><parameter=content>const x = 1;</parameter></function>"
+)
+
+
+class TestQwen3CoderEqualsStyle:
+    def test_recovers_write_file_with_code_content(self) -> None:
+        calls = recover_textual_tool_calls(QWEN3CODER_WRITE, allowed_tool_names=["write_file", "read_file"])
+        assert len(calls) == 1
+        assert calls[0]["tool"] == "write_file"
+        assert calls[0]["arguments"]["file"] == "js/bricks.js"
+        # Internal indentation of the code body is preserved.
+        assert calls[0]["arguments"]["content"] == "export function makeBricks() {\n  return [1, 2, 3];\n}"
+
+    def test_recovers_multiple_calls_in_order(self) -> None:
+        calls = recover_textual_tool_calls(QWEN3CODER_MULTI, allowed_tool_names=["read_file", "write_file"])
+        assert [c["tool"] for c in calls] == ["read_file", "write_file"]
+        assert calls[0]["arguments"]["path"] == "a.js"
+        assert calls[1]["arguments"]["content"] == "const x = 1;"
+
+    def test_has_textual_detects_equals_style(self) -> None:
+        assert has_textual_tool_calls(QWEN3CODER_WRITE) is True
+        assert has_textual_tool_calls("<function=write_file><parameter=file>a</parameter></function>") is True
+
+    def test_allowed_filter_rejects_unlisted_tool(self) -> None:
+        prose = "Use the <function=frobnicate><parameter=x>1</parameter></function> helper."
+        assert recover_textual_tool_calls(prose, allowed_tool_names=["write_file"]) == []
+
+    def test_truncated_mid_value_is_not_recovered(self) -> None:
+        # No closed <parameter> block -> never materialise half a file from a guess.
+        assert recover_textual_tool_calls("<function=write_file><parameter=content>half a fil", ["write_file"]) == []
+
+    def test_truncated_after_first_param_is_not_recovered(self) -> None:
+        # file param closed but content param cut off mid-value (real zuoce truncation):
+        # must NOT recover write_file(file=...) with missing content.
+        truncated = "<function=write_file><parameter=file>game.js</parameter><parameter=content>(function () { var x ="
+        assert recover_textual_tool_calls(truncated, ["write_file"]) == []
+
+    def test_no_parameters_is_not_recovered(self) -> None:
+        assert recover_textual_tool_calls("<function=write_file></function>", ["write_file"]) == []
+
+    def test_strips_equals_style_span(self) -> None:
+        cleaned = strip_textual_tool_call_markers("Plan.\n" + QWEN3CODER_WRITE + "\nDone.", ["write_file"])
+        assert "Plan." in cleaned
+        assert "Done." in cleaned
+        assert "<function=" not in cleaned
+        assert "makeBricks" not in cleaned

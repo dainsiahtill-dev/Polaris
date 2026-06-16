@@ -68,7 +68,9 @@ class TestRepairContext:
         ctx = RepairContext(task_id="task-1")
         assert ctx.task_id == "task-1"
         assert ctx.build_round == 0
-        assert ctx.max_build_rounds == 4
+        # F25 (2026-06-16): raised 4 -> 8 for cross-file completeness (#54); the
+        # independent stall-detector still bounds no-progress repair loops.
+        assert ctx.max_build_rounds == 8
         assert ctx.stall_rounds == 0
         assert ctx.stall_threshold == 2
         assert ctx.previous_missing_targets == []

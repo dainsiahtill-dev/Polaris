@@ -193,6 +193,41 @@ def is_empty_write_content_violation(rel: str, content: str) -> bool:
     return any(normalized.endswith(ext) for ext in _EMPTY_WRITE_GUARD_EXTENSIONS)
 
 
+# Line-anchored insertion directives a weak model sometimes emits as the ENTIRE
+# write_file content — treating a full-file write like an incremental edit. The
+# canonical live failure (L2-08 world-clock, 2026-06-16): app.js written as
+# "// 第 70 行之后添加\n}" — a 28-byte syntactically-broken stub that the syntax
+# gate rejects but the Director kept re-emitting (6x SyntaxError, no convergence).
+_EDIT_FRAGMENT_DIRECTIVE_RE = re.compile(
+    r"第\s*\d+\s*行\s*(之后|之前|后面|前面|后|前)?\s*(添加|插入|修改|替换)"
+    r"|在\s*第?\s*\d+\s*行"
+    r"|(?:insert|add|append|replace|change|modify)\b[^\n]{0,30}\bline\s+\d+"
+    r"|after\s+line\s+\d+"
+    r"|line\s+\d+\b[^\n]{0,20}(?:添加|插入|insert|add|append)",
+    re.IGNORECASE,
+)
+
+
+def is_edit_fragment_write_violation(rel: str, content: str) -> bool:
+    """True when write_file content is an edit fragment, not a complete file.
+
+    Weak models sometimes emit a line-anchored insertion directive (e.g.
+    ``// 第 70 行之后添加\\n}``) as the ENTIRE write_file content, treating a
+    full-file write like an incremental edit — producing a broken stub. Catch
+    only the unambiguous case: short content for a code target whose body is
+    dominated by such a directive. A real file body is far longer and is not an
+    insertion instruction; a false positive is recoverable (the Director simply
+    re-emits the full content), so the guard favours catching the failure.
+    """
+    text = (content or "").strip()
+    if not text or len(text) > 400:
+        return False
+    normalized = rel.replace("\\", "/")
+    if not any(normalized.endswith(ext) for ext in _EMPTY_WRITE_GUARD_EXTENSIONS):
+        return False
+    return _EDIT_FRAGMENT_DIRECTIVE_RE.search(text) is not None
+
+
 def _destructive_shrink_error(target: str, removed_lines: int, added_lines: int, *, tool_hint: str) -> dict[str, Any]:
     return {
         "ok": False,
@@ -263,6 +298,40 @@ def _suggest_similar_paths(self: AgentAccelToolExecutor, requested: str) -> list
         elif depth <= _SUGGEST_BARE_NAME_MAX_DEPTH:
             relevant.append(rel_path)
     return relevant[:_SUGGEST_MAX_RESULTS]
+
+
+def _resolve_case_variant_rel(workspace_root: str, rel: str) -> str | None:
+    """Return an existing same-directory path that differs from ``rel`` only by case.
+
+    RC-B (2026-06-16, L3-14 React-SPA live audit): weak models conflate file
+    casing and create case-variant duplicates — e.g. write ``src/App.jsx`` while
+    ``src/app.jsx`` already exists. That forks a split-brain pair on
+    case-sensitive Linux (and is outright unrepresentable on macOS/Windows). When
+    the exact path is absent but a case-only sibling exists in the same
+    directory, callers redirect the write to the existing file instead.
+
+    Returns the existing workspace-relative path (``/`` separators), or None.
+    """
+    normalized = str(rel).replace("\\", "/").strip().strip("/")
+    if not normalized:
+        return None
+    head, _, tail = normalized.rpartition("/")
+    if not tail:
+        return None
+    parent_abs = os.path.join(workspace_root, head) if head else workspace_root
+    try:
+        entries = os.listdir(parent_abs)
+    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError):
+        return None
+    tail_lower = tail.lower()
+    for entry in entries:
+        if entry != tail and entry.lower() == tail_lower:
+            try:
+                if os.path.isfile(os.path.join(parent_abs, entry)):
+                    return f"{head}/{entry}" if head else entry
+            except OSError:
+                return None
+    return None
 
 
 def _not_found_error(self: AgentAccelToolExecutor, requested: str) -> dict[str, Any]:
@@ -647,6 +716,15 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
 
     rel = to_workspace_relative_path(self._kernel_fs, target)
 
+    # RC-B: redirect a case-variant duplicate onto the existing file so weak
+    # models cannot fork ``App.jsx`` / ``app.jsx`` split-brain pairs.
+    if not self._kernel_fs.workspace_exists(rel):
+        case_variant = _resolve_case_variant_rel(self.workspace, rel)
+        if case_variant is not None and case_variant != rel:
+            logger.warning("write_file case-variant redirect: %s -> %s", rel, case_variant)
+            rel = case_variant
+            target = resolve_workspace_path(self._kernel_fs, rel)
+
     old_content = ""
     operation = "create"
 
@@ -699,6 +777,18 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
                 f"Empty write content: write_file for {rel} received blank content. "
                 "The COMPLETE file body must go in the `content` argument — do not "
                 "narrate it in prose or reasoning. Re-emit write_file with the full file content."
+            ),
+        }
+    if is_edit_fragment_write_violation(rel, text):
+        return {
+            "ok": False,
+            "error_type": "edit_fragment_write",
+            "error": (
+                f"Edit-fragment write: write_file for {rel} received an edit fragment "
+                "(a line-anchored insertion directive such as '在第 N 行之后添加'), not the "
+                "complete file. write_file REPLACES the whole file, so its `content` must be the "
+                "ENTIRE file body. To change part of an existing file use edit_file/precision_edit; "
+                "to (re)write the file, emit write_file with the full, self-contained content."
             ),
         }
     policy_result = _validate_director_policy_for_write(

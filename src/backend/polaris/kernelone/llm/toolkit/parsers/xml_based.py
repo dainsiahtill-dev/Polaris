@@ -75,6 +75,11 @@ class XMLToolParser:
     # Param with name attribute
     PARAM_WITH_NAME_PATTERN = re.compile(r'<param\s+name=["\'](\w+)["\'][^>]*>(.*?)</param>', re.DOTALL | re.IGNORECASE)
 
+    # Qwen3-Coder equals style: <function=NAME><parameter=KEY>VALUE</parameter></function>
+    QWEN3CODER_FUNCTION_PATTERN = re.compile(r"<function\s*=\s*(\w+)\s*>(.*?)</function\s*>", re.DOTALL | re.IGNORECASE)
+    QWEN3CODER_PARAM_PATTERN = re.compile(r"<parameter\s*=\s*(\w+)\s*>(.*?)</parameter\s*>", re.DOTALL | re.IGNORECASE)
+    QWEN3CODER_PARAM_OPEN_PATTERN = re.compile(r"<parameter\s*=\s*\w+\s*>", re.IGNORECASE)
+
     @classmethod
     def parse(
         cls,
@@ -207,6 +212,34 @@ class XMLToolParser:
             tools.append(
                 ParsedToolCall(
                     id=f"xml_baichuan_{counter}",
+                    name=tool_name,
+                    arguments=arguments,
+                    raw=match.group(0),
+                )
+            )
+
+        # 8. Parse Qwen3-Coder equals format:
+        #    <function=NAME><parameter=KEY>VALUE</parameter></function>
+        for match in cls.QWEN3CODER_FUNCTION_PATTERN.finditer(text):
+            tool_name = match.group(1).lower()
+            if allowed and tool_name not in allowed:
+                continue
+            content = match.group(2)
+            arguments = {}
+            for param_match in cls.QWEN3CODER_PARAM_PATTERN.finditer(content):
+                key = param_match.group(1)
+                value = parse_value(html.unescape(param_match.group(2).strip()))
+                arguments[key] = value
+            if not arguments:
+                continue
+            # Truncation guard: an unclosed <parameter=> (cut off mid-value)
+            # means missing content — skip rather than write a partial file.
+            if len(cls.QWEN3CODER_PARAM_OPEN_PATTERN.findall(content)) != len(arguments):
+                continue
+            counter += 1
+            tools.append(
+                ParsedToolCall(
+                    id=f"xml_qwen3coder_{counter}",
                     name=tool_name,
                     arguments=arguments,
                     raw=match.group(0),

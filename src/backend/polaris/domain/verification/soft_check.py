@@ -122,7 +122,30 @@ def _target_exists(rel_path: str, workspace: str) -> bool:
     full = os.path.join(workspace, normalized) if workspace else normalized
     if _contains_glob(normalized):
         return bool(glob(full, recursive=True))
-    return os.path.exists(full)
+    if os.path.exists(full):
+        return True
+    # Case-insensitive fallback: PM/CE often declare a target with different
+    # casing than the file the Director wrote (declared ``readme.md`` vs disk
+    # ``README.md``). On a case-sensitive filesystem the strict check above
+    # would report it missing and trigger a spurious repair loop, marking an
+    # otherwise-complete, runnable product as failed. Mirrors the existence-gate
+    # case-insensitive match (ADR/F19): list the sibling dir and compare
+    # basenames case-insensitively.
+    return _case_insensitive_match_exists(full)
+
+
+def _case_insensitive_match_exists(full: str) -> bool:
+    """Return True when a sibling file matches ``full``'s basename ignoring case."""
+    parent = os.path.dirname(full) or "."
+    target = os.path.basename(full)
+    if not target:
+        return False
+    try:
+        entries = os.listdir(parent)
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        return False
+    target_lower = target.lower()
+    return any(entry.lower() == target_lower for entry in entries)
 
 
 def _contains_glob(path: str) -> bool:

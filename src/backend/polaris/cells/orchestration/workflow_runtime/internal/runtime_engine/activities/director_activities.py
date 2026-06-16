@@ -264,7 +264,7 @@ def _build_context(payload: dict[str, Any], contract: TaskContract) -> PhaseCont
         changed_files=_normalize_list(current.get("changed_files")),
         verification_result=_normalize_dict(current.get("verification_result")),
         build_round=max(0, int(current.get("build_round") or 0)),
-        max_build_rounds=max(1, int(current.get("max_build_rounds") or 4)),
+        max_build_rounds=max(1, int(current.get("max_build_rounds") or 8)),  # F25 (#54)
         stall_count=max(0, int(current.get("stall_count") or 0)),
         previous_missing_targets=_normalize_list(current.get("previous_missing_targets")),
         previous_unresolved_imports=_normalize_list(current.get("previous_unresolved_imports")),
