@@ -228,4 +228,40 @@ salvage. The lever is therefore unavoidably upstream: make the Director **emit o
 which is the message/instruction/forced-write path in `execute_method.py` (the 2A-1 single-file
 re-ask). Conclusion: **2A-1 is the sole lever; there is no floor-safe non-contended shortcut.**
 Implementation stays held on the concurrent #54 W1 commit + the mandatory L2-floor gate.
+
+---
+
+## 12) Codegraph map of the forced-write retry surface (2026-06-16) + a guard trap
+
+Codegraph (`build_retry_write_after_bootstrap_context`, `retry_tool_batch_after_contract_violation`)
+located the actual write-forcing machinery — and it is **not** in `execute_method.py`:
+
+- `retry_tool_batch_after_contract_violation` — `retry_orchestrator.py:1803`. The turn-level retry on a
+  contract violation (e.g. "no write invocation"). Runs the ADR-0090 escalation ladder
+  (`resolve_retry_escalation`, `max_retry_attempts=4`): late attempts narrow the offered tools to
+  write-only; the final attempt forces a write tool **by name** (`forced_write_tool_name`).
+- `build_retry_write_after_bootstrap_context` — `retry_orchestrator.py:930`. Builds the
+  "WRITE RETRY MODE" system prompt after a bootstrap read. Lines 1012-1015 emit:
+  *"Write targets must be selected from successfully-read files only: {A, B, C, D, E}."* — for a
+  multi-file step this **explicitly invites the mega-batch** (write all read files at once).
+
+**Why 2A-1 still can't cleanly live here (the trap codegraph exposed):**
+1. `successful_files` in that builder = files **read** during bootstrap, **not** the declared
+   **write** targets. A single-target L2 step routinely reads several files, so a naive
+   "`len(successful_files) >= 2` → write one at a time" guard would **fire on the L2 floor** and add
+   forced extra turns to steps that should write one file in one batch → silent floor regression
+   (the F21/F25 failure mode). The single-file decision **must** key on the declared/missing **write**
+   target count, which is not in this builder's signature.
+2. The ADR-0090 escalation forces a write tool **by name** but never constrains to **exactly one
+   file** — a forced `write_file` can still carry a malformed multi-file payload.
+
+**Implication for the design:** the correct, floor-safe form is one of —
+(a) keep the single-file decision in `execute_method.py`'s repair loop where the declared-target
+    count lives (the §3 plan), or
+(b) **plumb the missing-write-target count into `build_retry_write_after_bootstrap_context`** (a
+    signature change to a hot retry function) and emit "write exactly ONE of {targets}, the rest will
+    be re-prompted" only when count ≥ 2.
+Either way the L2-floor regression gate is mandatory. Codegraph's value here was negative-and-real:
+it killed the tempting "scope the retry builder by read-count" shortcut before it could regress the
+floor.
 ```

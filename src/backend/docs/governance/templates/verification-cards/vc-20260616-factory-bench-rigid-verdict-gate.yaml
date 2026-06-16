@@ -43,6 +43,8 @@ pre_mortem:
     mitigation: Preserve static_checks_passed separately and add factory_gates.
   - risk: Package-script validation could become a domain-specific scoring rule.
     mitigation: Validate only generic local interpreter entrypoints declared in package.json scripts; do not require tests or inspect business behavior.
+  - risk: Package-script validation could misclassify package binaries or package subpaths as missing local files.
+    mitigation: Cover package binaries, Node builtin test mode, and package preload subpaths as pass cases; only clearly local interpreter file references fail closed.
 verification_plan:
   - command: "PYTHONPATH=src/backend pytest src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py -q"
     expected: "Factory-bench verdict-gate tests pass."
@@ -59,9 +61,15 @@ verification_results:
   - command: "PYTHONPATH=src/backend pytest src/backend/polaris/tests/unit/kernelone/test_factory_audit.py::TestAuditRecord::test_package_script_missing_local_entrypoint_fails_record -q"
     result: "RED then PASS"
     evidence: "Before implementation the test failed because record['checks'] had no package_scripts entry; after implementation it passed."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/tests/unit/kernelone/test_factory_audit.py::TestAuditRecord::test_package_script_missing_node_preload_fails_record -q"
+    result: "RED then PASS"
+    evidence: "Before implementation the test failed because node -r ./test/setup.js was ignored; after implementation missing local preload files fail package_scripts."
+  - command: "PYTHONPATH=src/backend pytest src/backend/polaris/tests/unit/kernelone/test_factory_audit.py::TestAuditRecord::test_package_script_validation_ignores_package_binaries src/backend/polaris/tests/unit/kernelone/test_factory_audit.py::TestAuditRecord::test_package_script_validation_allows_node_builtin_test_mode src/backend/polaris/tests/unit/kernelone/test_factory_audit.py::TestAuditRecord::test_package_script_validation_allows_package_preload_subpath -q"
+    result: "PASS"
+    evidence: "3 pass; vite/eslint package binaries, node --test, and node -r dotenv/config are not misclassified as missing local files."
   - command: "PYTHONPATH=src/backend pytest src/backend/polaris/tests/unit/kernelone/test_factory_audit.py -q"
     result: "PASS"
-    evidence: "19 passed; package script entrypoint validation is covered."
+    evidence: "22 passed; package script entrypoint validation and false-positive guards are covered."
   - command: "ruff check src/backend/scripts/factory_bench/run_factory_bench.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py src/backend/polaris/kernelone/benchmark/factory_audit.py src/backend/polaris/tests/unit/kernelone/test_factory_audit.py --fix && ruff format src/backend/scripts/factory_bench/run_factory_bench.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py src/backend/polaris/kernelone/benchmark/factory_audit.py src/backend/polaris/tests/unit/kernelone/test_factory_audit.py"
     result: "PASS"
     evidence: "All checks passed; formatter left target files unchanged."

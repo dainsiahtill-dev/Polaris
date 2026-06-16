@@ -103,6 +103,63 @@ class TestAuditRecord:
         assert "test/check.js" in package_checks[0]["detail"]
         assert all(check["ok"] for check in record["checks"] if check["check"] != "package_scripts")
 
+    def test_package_script_validation_ignores_package_binaries(self, tmp_path: Path) -> None:
+        ws = _project_workspace(tmp_path)
+        (ws / "app.js").write_text("console.log('ok');\n", encoding="utf-8")
+        (ws / "package.json").write_text(
+            '{"scripts":{"dev":"vite --host 0.0.0.0","lint":"eslint src --max-warnings=0"}}\n',
+            encoding="utf-8",
+        )
+
+        results = run_checks(str(ws), ["package_scripts"])
+
+        assert results == [
+            {
+                "check": "package_scripts",
+                "ok": True,
+                "detail": "2 package scripts have valid local entrypoint references",
+            }
+        ]
+
+    def test_package_script_validation_allows_node_builtin_test_mode(self, tmp_path: Path) -> None:
+        ws = _project_workspace(tmp_path)
+        (ws / "app.js").write_text("console.log('ok');\n", encoding="utf-8")
+        (ws / "package.json").write_text(
+            '{"scripts":{"test":"node --test"}}\n',
+            encoding="utf-8",
+        )
+
+        results = run_checks(str(ws), ["package_scripts"])
+
+        assert results[0]["ok"] is True
+
+    def test_package_script_missing_node_preload_fails_record(self, tmp_path: Path) -> None:
+        ws = _project_workspace(tmp_path)
+        (ws / "test").mkdir()
+        (ws / "test" / "check.js").write_text("console.log('ok');\n", encoding="utf-8")
+        (ws / "package.json").write_text(
+            '{"scripts":{"test":"node -r ./test/setup.js test/check.js"}}\n',
+            encoding="utf-8",
+        )
+
+        results = run_checks(str(ws), ["package_scripts"])
+
+        assert results[0]["ok"] is False
+        assert "./test/setup.js" in results[0]["detail"]
+
+    def test_package_script_validation_allows_package_preload_subpath(self, tmp_path: Path) -> None:
+        ws = _project_workspace(tmp_path)
+        (ws / "test").mkdir()
+        (ws / "test" / "check.js").write_text("console.log('ok');\n", encoding="utf-8")
+        (ws / "package.json").write_text(
+            '{"scripts":{"test":"node -r dotenv/config test/check.js"}}\n',
+            encoding="utf-8",
+        )
+
+        results = run_checks(str(ws), ["package_scripts"])
+
+        assert results[0]["ok"] is True
+
     def test_aggregate_by_level(self, tmp_path: Path) -> None:
         ws = _project_workspace(tmp_path)
         good = build_factory_audit_record(project={"id": "L1-01", "level": 1, "checks": ["html"]}, workspace=str(ws))

@@ -157,6 +157,12 @@ def _is_local_script_reference(token: str) -> bool:
     return "/" in normalized or ext.lower() in _SCRIPT_PATH_EXTENSIONS
 
 
+def _is_local_script_option_reference(token: str) -> bool:
+    normalized = token.replace("\\", "/")
+    _, ext = os.path.splitext(normalized)
+    return normalized.startswith(("./", "../", "/")) or ext.lower() in _SCRIPT_PATH_EXTENSIONS
+
+
 def _script_reference_exists(workspace: str, token: str) -> bool:
     normalized = token.replace("\\", "/")
     if os.path.isabs(normalized):
@@ -191,6 +197,12 @@ def _missing_package_script_entrypoints(workspace: str, script_name: str, comman
                 index += 2
                 continue
             if token == "node" and candidate in {"-r", "--require", "--import", "--loader"}:
+                if index + 1 < len(tokens):
+                    option_value = tokens[index + 1]
+                    if _is_local_script_option_reference(option_value) and not _script_reference_exists(
+                        workspace, option_value
+                    ):
+                        missing.append(f"script {script_name!r} references missing local entrypoint: {option_value}")
                 index += 2
                 continue
             if candidate.startswith("-"):
