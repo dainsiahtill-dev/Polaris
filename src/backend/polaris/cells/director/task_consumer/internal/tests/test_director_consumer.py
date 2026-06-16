@@ -317,6 +317,11 @@ class TestDirectorExecutionConsumerPollOnce:
         )
         assert seen_context["construction_step"]["target_file"] == "index.html"
         assert seen_context["last_failure"]["error_code"] == "QA_step_verify_failed"
+        assert seen_context["task_id"] == "PM-1-S1"
+        assert seen_context["pm_task_id"] == "PM-1-S1"
+        assert seen_context["metadata"]["task_id"] == "PM-1-S1"
+        assert seen_context["metadata"]["pm_task_id"] == "PM-1-S1"
+        assert seen_context["metadata"]["task_market_task_id"] == "PM-1-S1"
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_step_target_covered_advances_to_qa(self, mock_get_svc: MagicMock) -> None:

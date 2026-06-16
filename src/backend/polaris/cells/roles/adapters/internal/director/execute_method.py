@@ -301,16 +301,24 @@ async def execute_director_task(
     selection_source = "task_id_lookup"
     selected_from_board = False
     board_snapshot_before = adapter._state_tracker.build_taskboard_observation_snapshot(adapter.task_runtime)
+    task_market_exact_claim = bool(str(input_metadata.get("task_market_task_id") or "").strip()) or str(
+        input_metadata.get("source") or ""
+    ).strip().startswith("runtime.task_market")
 
     task = adapter._get_task(target_task_id)
     if task:
         selected_from_board = True
     if not task:
-        task = adapter._select_pending_board_task()
-        if task:
+        if task_market_exact_claim:
+            selection_source = "materialized_orchestration_task"
+            task = adapter._materialize_runtime_task(requested_task_id, input_data)
             selected_from_board = True
-            resume_state = str(task.get("resume_state") or "").strip().lower()
-            selection_source = "resumable_queue_fallback" if resume_state == "resumable" else "ready_queue_fallback"
+        else:
+            task = adapter._select_pending_board_task()
+            if task:
+                selected_from_board = True
+                resume_state = str(task.get("resume_state") or "").strip().lower()
+                selection_source = "resumable_queue_fallback" if resume_state == "resumable" else "ready_queue_fallback"
     if not task:
         selection_source = "materialized_orchestration_task"
         task = adapter._materialize_runtime_task(requested_task_id, input_data)

@@ -973,9 +973,16 @@ class DirectorExecutionConsumer:
         started_at = time.monotonic()
         adapter = create_role_adapter("director", str(workspace_path))
         adapter_input = _build_director_adapter_input(task_id, payload, lease_token)
+        pm_task_id = str(adapter_input.get("pm_task_id") or task_id).strip() or task_id
         context = {
             "run_id": str(payload.get("run_id") or f"task-market-director-{task_id}"),
+            "task_id": task_id,
+            "pm_task_id": pm_task_id,
+            "target_task_id": task_id,
             "metadata": {
+                "task_id": task_id,
+                "pm_task_id": pm_task_id,
+                "target_task_id": task_id,
                 "task_market_task_id": task_id,
                 "task_market_stage": "pending_exec",
                 "task_market_worker_id": self._worker_id,
