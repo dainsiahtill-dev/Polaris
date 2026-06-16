@@ -129,7 +129,11 @@ async def _run_empty_write_content_materialization_retry(
     retry_summary = _summarize_llm_stage_result(retry_result, stage="empty_write_content_retry")
     retry_tool_results = adapter._execution.extract_kernel_tool_results(retry_result)
     retry_content = str(retry_result.get("content") or retry_result.get("response") or "")
-    if not retry_tool_results or not has_successful_write_tool(retry_tool_results):
+    if (
+        not retry_tool_results
+        or not has_successful_write_tool(retry_tool_results)
+        or _empty_write_content_retry_needed(retry_tool_results)
+    ):
         fallback_tool_results = await adapter._execution.execute_tools(
             retry_content,
             target_task_id,
@@ -5363,11 +5367,21 @@ def _build_materialization_quality_repair_message(
     # creating the missing src/styles.css (live factory-bench L2-10 r3).
     changed_line = f"{len(changed_files)} file(s) were already written and must NOT be rewritten."
     missing_block = ""
+    single_missing_block = ""
     if missing_target_files:
         missing_lines = "\n".join(f"- {item}" for item in missing_target_files[:12])
         missing_block = (
             f"MISSING TARGET FILES — create these exact paths NOW, one write_file call per path:\n{missing_lines}\n"
         )
+        if len(missing_target_files) == 1:
+            single_missing = missing_target_files[0]
+            single_missing_block = (
+                "SINGLE MISSING TARGET REPAIR:\n"
+                f"- Target path: {single_missing}\n"
+                "- Emit exactly one write_file tool call for that target path.\n"
+                "- The write_file content must be the complete non-empty file body.\n"
+                "- Do not read files first. Do not list directories. Do not explore. Do not explain.\n"
+            )
     # C7-text W3 (2026-06-16 deliberation): cross-file coherence repair. An
     # unresolved relative import means the importer references a module that
     # does not exist yet; QA detects it, but the bare "MISSING TARGET FILES"
@@ -5433,6 +5447,7 @@ def _build_materialization_quality_repair_message(
         "MATERIALIZATION QUALITY REPAIR MODE:\n"
         "The previous write reached the workspace but failed Polaris artifact quality gates.\n"
         f"{missing_block}"
+        f"{single_missing_block}"
         f"{coherence_block}"
         f"{syntax_block}"
         "Do not repeat the same package/script/test scaffold. Replace the bad artifact with concrete runnable code, "

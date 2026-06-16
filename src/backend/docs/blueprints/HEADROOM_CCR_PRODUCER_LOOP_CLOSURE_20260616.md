@@ -86,3 +86,34 @@ Floor-safe (no prompt change) ⇒ no bench gate ⇒ unblocked. This is the singl
 5. Cross-turn integration test proving the loop is closed.
 
 Coordinate with the concurrent CCR agent on `context_retrieve.py` / `original_payload_cache.py` to avoid hot-file collision; everything else (`receipt_id_index.py`, the wiring site) is non-overlapping.
+
+---
+
+## 10. 二次深度审计修订（2026-06-16，codegraph + superpowers 对抗，已重跑确认）
+
+> 本节修正本蓝图与实际提交（`27c05ae6` + `7670e903`）的分叉，并登记两个活路径缺口。证据见 `docs/research/HEADROOM_CROSS_POLLINATION_20260616.md` §4。
+
+### 10.1 实际提交 ≠ 本蓝图的 Option R（CCR-1）
+- 本蓝图 §4/§9 规定的持久模块 **`kernelone/context/receipt_id_index.py` 从未创建**（全仓 0 引用）。
+- 实际落地是**第三种 hybrid**：保留了 R 的 *placeholder 字节不变* 性质（✅ floor-safe，见 §5），但承载用 `OriginalPayloadCache` 进程内存单例 `get_default_cache()`（`original_payload_cache.py:327`，**`sqlite_path=None`**）+ `make_offload_capture(workspace)` 作 `ReceiptStore.on_offload` 钩子（`receipt_store.py:27/52-69`）。**不是** R 承诺的持久 sqlite `receipt_id→hash` 索引。
+- ⟹ 本蓝图 §2「R1 reduces to: persist the `receipt_id→hash` mapping」**未兑现**。
+
+### 10.2 耐久性缺口 OPEN（CCR-2）
+默认 CCR cache 纯内存、TTL=300s（monotonic 时钟）、4096-entry LRU。turn A 落的指针在**新进程**（后端重启 / 新 `director` CLI run）或 **>300s 后** 取回 `None`。**闭环仅在「单长寿进程 + 5 分钟窗口」成立**。
+- **决策待定（P1-doc）**：① 若 director worker 池确为单长寿进程且真实 turn 间隔 <300s → 在此节**显式文档化该 closure scope**（可接受）；② 否则给 `get_default_cache()` 接 workspace `sqlite_path`（`OriginalPayloadCache` 已支持 `sqlite_path` + `_sqlite_get` 提升，:192/:236），或回到 §4 的持久 `receipt_id_index`。两条都是 side-store/冷路径，**免 L2 bench**。
+- 顺带：考虑把 receipt-id 键的 TTL 与「读循环」时间尺度对齐——模型早期指针化、长规划绕路后再取回会静默 `not_retrievable`。
+
+### 10.3 活路径指针双形不一致（CCR-3，**最高 ROI 修复，本人重跑确认**）
+主投影路径 `projection_engine.py:539/546` 对每个被 offload 的 turn 发**模型可见 inline 占位符**：
+- `[Large output stored in receipt tool_<id>]`（tool turn，threshold=500）
+- `[Large content stored in receipt evt_<id>]`（其它 turn，threshold=2000）
+
+但 `strip_ref_markers` 的 `_MARKER_PATTERNS`（`original_payload_cache.py:65`）**只认** `[receipt_ref:ID]` / `<receipt_ref:ID>`。可解析的 `[receipt_ref:<id>]` 只出现在 `projection_engine.py:255` 另起的 refs_text 行。⟹ **同一 id（`tool_{event_id}`）两种形并存，只有不显眼的那个能取回**；弱模型复制显眼 inline 形 → `not_retrievable` → 正落读循环墙。`test_ccr_producer_loop_closure.py`（10 绿）只测 `[receipt_ref:ID]` 形，从不测 inline 形 → 绿掩盖此 bug（CCR-4）。
+
+**修复 P0（floor-safe，冷路径，免 bench）**：
+1. 给 `_MARKER_PATTERNS` **加两条 retrieve-side pattern** 把 `[Large output stored in receipt <id>]` / `[Large content stored in receipt <id>]` 解到裸 `<id>`。**只动 retrieve 解析侧，不碰任何 model-visible placeholder/前缀 → 无 prefix 变更 → 不需 L2 bench**（保持 §5 / CCR-5 的 floor-safe 不变式）。
+2. **禁止**用「改 `build_turns` 占位符为 `[receipt_ref:]` 形」来修——那会 mutate 热投影前缀（floor-unsafe，须 bench）。
+3. 加 **path-faithful 测**（CCR-4）：驱真 `ProjectionEngine.build_payload→project`，断言模型所见的**任一**指针形都能 `context_retrieve` 取回 verbatim bytes。把绿测从「形态特定」升级为「路径忠实」。
+
+### 10.4 不变项（CCR-5，第一轮做对的）
+`offload_content` 无论 `on_offload` 是否接、返回**同一 placeholder 对象**（`receipt_store.py:69`）→ 模型可见前缀字节不变 → producer 接线本身**确 floor-safe、免 bench**。workspace 隔离（`7670e903`）+ §8 verbatim-only 均 clean。**任何 CCR-3 修复必须保住此不变式**（优先冷路径/retrieve-side）。

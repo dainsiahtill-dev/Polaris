@@ -126,7 +126,16 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
                 "```\n"
             ),
             "success": True,
-            "tool_results": [],
+            "tool_results": [
+                {
+                    "tool": "write_file",
+                    "tool_name": "write_file",
+                    "status": "success",
+                    "success": True,
+                    "arguments": {"file": "src/app.py", "content": ""},
+                    "result": {"path": "src/app.py", "ok": True},
+                }
+            ],
         }
 
     async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -4790,6 +4799,24 @@ class TestQualityRepairMissingTargetContract:
         extracted = extract_target_files_from_message(message)
         assert "src/styles.css" in extracted
         assert "src/main.js" not in extracted
+
+    def test_single_missing_target_repair_forces_one_write_without_reads(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="Create app assets.",
+            artifact_quality_errors=["Artifact quality scan failed: declared target file missing 'src/styles.css'"],
+            changed_files=["index.html"],
+            missing_target_files=["src/styles.css"],
+        )
+
+        assert "SINGLE MISSING TARGET REPAIR" in message
+        assert "exactly one write_file" in message
+        assert "src/styles.css" in message
+        assert "Do not read" in message
+        assert "Do not list" in message
 
     def test_repair_message_without_missing_block_when_none(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

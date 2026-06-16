@@ -113,8 +113,57 @@
 | **T3-A** 自动写更正 | ❌ **DROP** | §8 硬红线（=embedded-business-synthesizers 同款） |
 | **T3-B** tiered scorer | ❌ **DROP** | `_score_items` 锚点不存在/name-collision |
 
-**门禁（我方未提交文件）**：ruff All checks passed / 4 files formatted / mypy Success(4 files，`--follow-imports=skip` 绕开 codex 并发 WIP 的 `execute_method.py` IndentationError——非本 campaign 代码)。我方三切片 33 测全绿。
+**门禁现状（2026-06-16，已全部提交 main）**：全部 campaign 工作已落 main（`03f4a4be`/`27c05ae6`/`7670e903`/`3320e4ac`）；工作树 clean；`execute_method.py` 现 parse-clean（旧 IndentationError 阻塞已消）。重跑：ruff All passed / mypy Success(4 files) / CCR+crushers+compaction **62 测全绿**。
 
-**未提交工作树**：`compaction_strategy.py`(M)+`test_compaction_strategy_noop_guard.py`(M)、`crushers/savings_report.py`(??)+test、本 `T2-C` 蓝图(??)——待用户确认提交。
+> ⚠️ **本 §3 的两条 "✅" 经二次深度审计修正**（见 §4）：**T1-A 实为"部分闭合"**（活路径指针双形不一致 + 仅进程内存耐久），**T2-A 实为"生产 INERT"**（否决门落在死模块）。§3 表保留为第一轮记录，权威现状以 §4 为准。
 
-**已知外部阻塞**：codex 并发在改 `execute_method.py`(IndentationError，行号 1334→1421 在动)→import-following 全量 mypy/pytest 受阻；非本 campaign 文件，未触碰，待 codex 自行收尾。
+---
+
+## 4) 二次深度审计 + 修订计划（2026-06-16，6 维 codegraph-grounded + superpowers 对抗，52 agent / 3M tok）
+
+第二轮更深审计：每维 ground[codegraph]→audit→**每 finding 由 2 名独立 skeptic 重跑证据对抗验证**（reproduce + redline/floor 双 lens）。尾部 rate-limit 致 `CCR-3`/`T2A-3/4`/`redlines-regression` 维度 verdict 缺失——**已由本人重跑补证**（fail-closed）。**核心修正：第一轮 §3 的两条 "✅" 偏乐观。**
+
+### 4.1 验证后发现（severity / 对抗 verdict / 证据）
+
+**keystone-ccr（T1-A 实为部分闭合）**
+- **CCR-1 [high · real×2]** 蓝图↔实现分叉：蓝图推荐的 floor-safe Option R 持久模块 `kernelone/context/receipt_id_index.py` **从未创建**（0 引用）。实际提交的是第三种 hybrid——保留 R 的 placeholder 字节不变（✅ floor-safe），但用**进程内存** `get_default_cache()` 单例（`original_payload_cache.py:327`，`sqlite_path=None`）承载，非 R 的持久 sqlite。蓝图 §2 的 R1 持久承诺未兑现且未在文档标注。
+- **CCR-2 [high · real×2]** 跨进程/跨 turn 耐久性 OPEN：默认 CCR cache 纯内存、TTL=300s（monotonic）、4096 entry LRU。turn A 落的指针在新进程（后端重启 / 新 `director` CLI run）取回 None；闭环仅在**单进程 + 5 分钟窗口**成立。
+- **CCR-3 [high · 本人重跑确认]** 活路径指针双形不一致：主投影路径 `projection_engine.py:539/546` 发的模型可见 inline 占位符 `[Large output stored in receipt tool_<id>]` / `[Large content stored in receipt evt_<id>]` **不被 `strip_ref_markers`（`original_payload_cache.py:65` `_MARKER_PATTERNS` 仅认 `[receipt_ref:ID]`/`<receipt_ref:ID>`）识别**；只有 `:255` 另起一行的 `[receipt_ref:<id>]` 可解析。同一 id（`tool_{event_id}`）两种形、只有不显眼的可取回 → 弱模型复制显眼 inline 形 → `not_retrievable`，正落 [[write-convergence-multimodal]] 读循环墙。
+- **CCR-4 [med]** 测试假信心：`test_ccr_producer_loop_closure.py` 10 测只测 `[receipt_ref:ID]` 形，从不测 build_turns 实发的 `[Large ... stored in receipt ID]` 形 → 绿掩盖 CCR-3。
+- **CCR-5 [low · real · good news]** producer 接线确 floor-safe：`offload_content` 无论 hook 是否接，返回同一 placeholder（`receipt_store.py:69`）→ 前缀字节不变 → producer 接线**不需 L2 bench**。workspace 隔离 + §8 verbatim-bytes 均 clean。
+
+**veto-guard（T2-A 实为生产 INERT）**
+- **T2A-3 / DROP-2 [high · real×2]** T2-A 否决门连同 6 测**落在死模块 `CompactionStrategy` 上**（零非测调用方）；活压缩路径是另一模块 `compaction.py::compact_if_needed → RoleContextCompressor`，其 LLM-summary 层**无 token-shrink 否决**。绿测跑零生产路径——与 crushers 同类 inert。
+- **T2A-1 [low · real×2]** 假绿修复本身是真的（guard True 分支确被覆盖）——但保护的是死路径。
+
+**crushers-observe（clean，但 re-anchor 计划措辞有误）**
+- **T2B-1 [low · real×2]** 比 brief 更 inert：唯一活 importer 的 `IntelligentCompressor` **生产从不实例化**（唯一构造在 docstring 里），crush_by_type 今天只被测试触达。
+- **T2B-4 [med · real×2]** re-anchor 措辞错：`apply_compression`（`compression_engine.py:58`）**不是 legacy**——它和 `emergency_truncate`（:428）都活在热 `_build_context_impl`（`gateway.py:446`）。任一处接 lossy crush 改热前缀 → 须 L2 bench；首选 `:428`（仅超预算才触发，不回归常态）。
+- **T2B-5 [med · real×2]** fail-closed 缺测：router `except Exception: return no_op`（`router.py:127-128`）零覆盖、无测强制 crusher 抛错。re-anchor 前必补（正是 campaign 在猎的假信心类）。
+- **T2B-2 [low · real×2]** savings 复用 canonical 估算器无第 6 公式（✅），但该 canonical ≠ 热路径预算估算器（`CompressionEngine.TokenEstimator`）→ 报的 savings 未必等于真预算 headroom，归入 T2-C。
+
+**dropped-relitigate**
+- **DROP-1 [med · real×2]** T1-C KEEP-DROPPED 正确（CompactionStrategy 确死）。
+- **DROP-3 [low · real×2]** T3-A STAYS DROPPED（§8；唯一邻近 learner `_AdaptiveWeights` 只存数值权重 clamp 0.05–0.6，不存内容/答案）。
+- **DROP-4 [med · real×2]** T3-B drop-reason 半陈旧 → RECONSIDER：`RoleSignalPlane._score_items` 确不存在（name-collision，真 `_score_items` 在 `intelligent_compressor.ImportanceScorer`），但 tiered-signal 想法有活锚点 `allocate_role_signals`（`role_signals.py`，写 supplemental_turns 入热前缀）。改造须 blueprint-first + L2 bench，仅 heuristic/ordering（§8-clean）。
+
+**estimator-convergence（蓝图 sound，3 处需补）**
+- **T2C-1 [high · real×2]** thesis 重现：5 互异公式、同 CJK 文本 3x 散布（C1=100/C2=150/F20=50/F21=50/F3=150）；两文件都自称 canonical 但 CJK 系数不一致（C1=1 vs C2=1.5）。
+- **T2C-2 [med · real×2]** 漏第 6 fork：`repo_intelligence/renderer.py:273`（`total_chars//4`，CJK-blind，活）。
+- **T2C-3 [high · real×2]** 收敛 blocker：`test_canonical_token_estimator.py` 硬钉 C2 的 cjk*1.5（assert==600/425/175），Stage B1 收敛 C2→C1 会 BREAK 它 → 须**同一 commit** 改写为 delegation-equivalence 断言；蓝图误归为"被动回归保护"。
+- **T2C-4/5 [low/med · real×2]** blast-radius 计数略高估（C2 实 7 文件 / 9 import）；§1 file:line 锚点漂移（F1 :341 非 :292…）；`context_assembler` 有**两个**估算器（:899 messages + :933 single-string），蓝图单 :933 会漏一个。
+
+**redlines-regression（该维度 agent 被 rate-limit 打挂，本人重跑）**：§8 新 CCR/crushers 代码无业务 token（clean）；§6.6 `context_retrieve` 只归一**参数名** `ref`、不改 raw 审计工具名（clean）；ruff All passed；mypy Success(4 files)；CCR+crushers+compaction **62 测全绿 on main**。无 blocker。
+
+### 4.2 修订后优先级队列
+
+| 优先级 | 动作 | floor | 直接打目标? |
+|---|---|---|---|
+| **P0** | **CCR-3a 修复**：给 `_MARKER_PATTERNS` 加 `[Large output stored in receipt <id>]` / `[Large content stored in receipt <id>]` 两 pattern（retrieve **冷路径**，placeholder 不变）+ CCR-4 path-faithful 测（驱真 `build_turns→project`，断言模型所见任一指针都能取回 verbatim） | **冷路径，无前缀变更，免 bench** | ✅ 读循环墙——本审计最高 ROI |
+| **P1-doc** | reconcile CCR 蓝图：记 in-memory hybrid 实情 + 显式 durability scope 决策（CCR-1/2）。若 director worker 池确为单长寿进程且 turn 间隔 <300s→文档化该 scope；否则给 `get_default_cache` 接 workspace sqlite（`OriginalPayloadCache` 已支持 `sqlite_path`+`_sqlite_get`）或建持久 `receipt_id_index` | 冷路径/side-store，免 bench | 间接（耐久性） |
+| **P1-code** | 把 token-shrink 否决移植进**活** `compaction.py::compact_if_needed` LLM 层（T2A-4/DROP-2）+ 驱生产入口的测；inert-by-default(env flag) + **L2 bench** | **改热历史前缀，须 L2 bench** | 间接（防压缩反噬） |
+| **P2** | crushers fail-closed 测（T2B-5，cheap）→ 再谈 re-anchor；修正 re-anchor 措辞（T2B-4，apply_compression 非 legacy） | 测=免 bench；re-anchor=须 bench | — |
+| **P2** | estimator 蓝图修订（T2C-2 第 6 fork / T2C-3 收敛-blocker 测 / T2C-4 计数 / T2C-5 锚点刷新 + assembler 双估算器） | 诊断=免 bench；Stage B/C=须 bench | — |
+| **standing** | **inertness gate**：每个新落 guard/veto 先 `codegraph_callers` 证生产调用方，全是测→FAIL landing。能拦下 T2-A + crushers 这类"绿测落死模块" | — | 防假信号 |
+
+> 二次审计经验：第一轮把 T2-A 当 "✅ LANDED"、把 T1-A 当 "✅ LOOP CLOSED"——都因**绿测落在零生产调用方的模块 / 未测主路径形态**。对抗验证 + `codegraph_callers` 重跑证据拦下了它。这是 [[use-codegraph-mcp-always]] + superpowers re-run-evidence 的复利；新增 standing inertness gate 把它制度化。

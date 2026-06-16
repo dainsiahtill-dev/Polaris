@@ -188,3 +188,18 @@ F20（`cjk//2`）、F21（`chinese/2`）、F3/F5/F6（`+other/2`）是独立第 
 ## 8. Self-check 门禁（执行阶段，非本蓝图）
 
 `ruff check <files> --fix && ruff format <files>`、`mypy <files>`（Success: no issues found）、`pytest <your test files> -q`（owned 切片 100% 绿）、阶段 B/C 额外 L2-floor bench 6/6 RUNNABLE + 审计干净。**本蓝图为 §4.1 第一阶段产物（计划），不含实现。**
+
+---
+
+## 9. 二次深度审计修订（2026-06-16，codegraph + superpowers 对抗 real×2）
+
+> 核心 thesis 经独立重现**成立**：5 互异公式、同 100 CJK 字符 3x 散布（C1=100 / C2=150 / F20=50 / F21=50 / F3=150），两文件都自称 canonical 但 CJK 系数不一致（C1=1 vs C2=1.5）。verdict=canonical→C1 维持。以下 4 处补正：
+
+1. **漏掉第 6 个 fork（T2C-2）**：补 `repo_intelligence/renderer.py:273` `_estimate_tokens`（`total_chars//4`，**CJK-blind**，活、经 :190 可达）入 §1.3。执行前确认 `LoIRenderResult.total_tokens` 是否流入任何预算/驱逐 gate：若仅 metadata → Stage-A 委托、免 bench；若入 gate → Stage-B + bench。`engine/utils.py:26` 是既有「委托」先例（非 fork）。
+2. **收敛 blocker 误归类（T2C-3，high）**：`test_canonical_token_estimator.py` **硬钉 C2 的 cjk*1.5**（`assert ==600 / ==425 / ==175`）。Stage B1 一旦把 C2→C1 收敛即 BREAK 它。本蓝图把它列为「被动回归保护」是错的——它是 **convergence-blocker，Stage B1 必须在同一 commit 改写**：把 exact-value 断言换成 delegation-equivalence（`canonical_estimate(text)==TokenEstimator.estimate(text)`）+ CJK=1 下的新 golden 值。新增 §4 子规则：**任何钉某 fork 字面公式的测，收敛时必须迁成 delegation-equivalence 断言，不得 break-and-ignore**。
+3. **blast-radius 计数高估（T2C-4）**：实测 C2 = **7 importer 文件 / 9 import 语句**（含 assembler 两处 + crushers re-export），非 9 文件；`Usage.estimate` ≈ 6 活 caller；gateway = 6 活 `.estimate()` + 1 delegate。**热路径/floor 门控判断不变**（gateway :594 → budget_pressure → 投影变异，B1/B2 仍须 L2 bench）；仅修计数避免执行者追幽灵调用点。
+4. **§1 锚点已漂移（T2C-5）**：执行前对每个符号跑一遍 `grep -n` 刷新（F1 在 `:341` 非 `:292`；F20 `:376`；F21 `:241`；F2 `:594`）。**`context_assembler` 有两个估算器**：`_estimate_tokens_fallback`（messages 路径，:899）+ `_estimate_text_tokens`（single-string，:933）——本蓝图单 `:933` 锚点会漏掉 :899，收敛集必须含两者。
+
+**额外门**（与 T2-B 对齐）：T2-B 的 savings 用 `_token_estimator`（canonical CJK）量，但热路径预算执行用 `CompressionEngine.TokenEstimator`。re-anchor 证明须在**预算执行所用的同一估算器**下复测 savings，否则报的 savings 未必等于真预算 headroom。
+
+**Stage A 预检**：对每个 `len//4` fork 先证它是否真流入预算/驱逐决策（vs 纯 metadata/日志）——只有「入 gate」的 fork 才需进 bench-gated 批次；`infrastructure/accel` 的 `token_estimator.py` shim **0 活 importer**，是未来 HF 注入的免费承载点、非现役风险。
