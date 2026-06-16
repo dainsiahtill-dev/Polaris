@@ -19,7 +19,7 @@ These two should be unified in a future iteration.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from polaris.kernelone.context.budget_gate import ContextBudget
@@ -35,6 +35,24 @@ from .strategy_contracts import (
 )
 
 _logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class MicroCompactorPort(Protocol):
+    """Minimal dependency the strategy needs from a context compressor.
+
+    ``CompactionStrategy`` only calls ``micro_compact`` on its compressor.
+    Typing the injection seam against this structural port (rather than the
+    concrete ``RoleContextCompressor``) lets callers supply any conforming
+    implementation -- including a test double that drives the token-shrink
+    rejection guard -- without weakening the production type. The concrete
+    ``RoleContextCompressor`` structurally satisfies this port.
+    """
+
+    def micro_compact(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Rewrite stale tool-result parts in place; return the same history."""
+        ...
+
 
 # ------------------------------------------------------------------
 # CompactionStrategy
@@ -103,6 +121,28 @@ class CompactionStrategy:
             )
         return self._compressor
 
+    @staticmethod
+    def _count_micro_compacted_parts(history: list[dict[str, Any]]) -> int:
+        """Count tool-result parts that ``micro_compact`` actually rewrote.
+
+        ``RoleContextCompressor.micro_compact`` does not drop messages -- it
+        rewrites the long ``content`` of old ``tool_result`` parts into short
+        placeholders in place, marking each rewritten part with
+        ``_compacted=True``. Measuring micro-compaction by a list-length delta
+        (``before - len(after)``) therefore always yields ``0`` and silently
+        under-reports real work. We count the rewritten parts directly so a
+        micro-only pass reports the items it changed.
+        """
+        count = 0
+        for message in history:
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if isinstance(part, dict) and part.get("_compacted") is True:
+                    count += 1
+        return count
+
     # ------------------------------------------------------------------
     # CompactionStrategyPort
     # ------------------------------------------------------------------
@@ -162,6 +202,7 @@ class CompactionStrategy:
         identity: RoleContextIdentity | None = None,
         focus: str = "",
         workspace: str = "",
+        compressor: MicroCompactorPort | None = None,
     ) -> CompactionResult:
         """Apply compaction to the history.
 
@@ -178,6 +219,12 @@ class CompactionStrategy:
             identity: Optional RoleContextIdentity for compressor.
             focus: Optional focus string for summary.
             workspace: Workspace path (required for compressor initialization).
+            compressor: Optional pre-built compressor. When supplied it takes
+                precedence over ``workspace`` lazy construction. This is a
+                dependency seam: callers that already hold a compressor (or a
+                conforming double) can inject it so the strategy's own logic --
+                including the token-shrink rejection guard -- runs against the
+                real estimator on real message data.
 
         Returns:
             CompactionResult with triggered flag, counts, and summary.
@@ -194,17 +241,19 @@ class CompactionStrategy:
         original_tokens = _estimate_history_tokens(history)
 
         # Step 1: Micro-compact
-        compressor: RoleContextCompressor | None = None
-        if workspace:
-            compressor = self._get_compressor(workspace)
+        active_compressor: MicroCompactorPort | None = compressor
+        if active_compressor is None and workspace:
+            active_compressor = self._get_compressor(workspace)
 
         compacted = list(history)
         micro_compacted_count = 0
 
-        if compressor is not None:
-            before = len(compacted)
-            compacted = compressor.micro_compact(compacted)
-            micro_compacted_count = max(0, before - len(compacted))
+        if active_compressor is not None:
+            compacted = active_compressor.micro_compact(compacted)
+            # micro_compact rewrites parts in place (same list length); measure
+            # the parts it actually rewrote rather than a length delta, which
+            # would always be zero and hide the real work.
+            micro_compacted_count = self._count_micro_compacted_parts(compacted)
 
         post_micro_tokens = _estimate_history_tokens(compacted)
 
@@ -310,4 +359,5 @@ def _estimate_history_tokens(history: list[dict[str, Any]]) -> int:
 
 __all__ = [
     "CompactionStrategy",
+    "MicroCompactorPort",
 ]

@@ -51,13 +51,17 @@ def build_commands(full: bool = False) -> List[List[str]]:
             "-m",
             "pytest",
             "-q",
-            "src/backend/tests/test_factory_run_service.py",
-            "src/backend/tests/test_factory_router.py",
-            "src/backend/tests/test_factory_contract_snapshot.py",
-            "tests/functional/test_pm_loop.py",
-            "tests/functional/test_director_flow.py",
-            "tests/test_factory_e2e_smoke_entry.py",
-            "src/backend/tests/test_history_factory_overview.py",
+            # ACGA 2.0 migration moved these from src/backend/tests + tests/ into
+            # src/backend/polaris/tests/. The stale paths made every smoke run
+            # FAIL with "file or directory not found" (no tests ran) — a harness
+            # defect that silently blocked the only factory-pipeline confirmation.
+            "src/backend/polaris/tests/test_factory_run_service.py",
+            "src/backend/polaris/tests/test_factory_router.py",
+            "src/backend/polaris/tests/test_factory_contract_snapshot.py",
+            "src/backend/polaris/tests/functional/test_pm_loop.py",
+            "src/backend/polaris/tests/functional/test_director_flow.py",
+            "src/backend/polaris/tests/test_factory_e2e_smoke_entry.py",
+            "src/backend/polaris/tests/test_history_factory_overview.py",
         ],
     ]
 

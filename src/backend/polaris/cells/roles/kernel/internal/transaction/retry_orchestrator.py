@@ -496,15 +496,7 @@ def build_contract_retry_context(
     """构建突变合约违反后的 retry 上下文。"""
     latest_user = extract_latest_user_message(context)
     latest_assistant = _extract_latest_assistant_message(context)
-    raw_target_file_tokens = [
-        token.strip()
-        for token in re.findall(
-            r"\b[\w./\\-]+\.(?:py|md|txt|json|ya?ml|js|ts|tsx|jsx|css|html)\b",
-            latest_user,
-            flags=re.IGNORECASE,
-        )
-        if token.strip()
-    ]
+    raw_target_file_tokens = extract_target_files_from_message(latest_user)
     target_file_tokens: list[str] = []
     for token in raw_target_file_tokens:
         normalized = token.replace("\\", "/")
@@ -564,7 +556,7 @@ def build_contract_retry_context(
     if target_file_tokens:
         retry_lines.append(
             "Mutation target files detected from user request: "
-            + ", ".join(target_file_tokens[:6])
+            + ", ".join(target_file_tokens)
             + ". Ensure one write call touches at least one target file."
         )
 

@@ -94,7 +94,7 @@ def extract_target_files_from_message(message: str) -> list[str]:
         return []
     # 匹配带扩展名的文件路径
     ext_tokens = re.findall(
-        r"\b[\w./\\-]+\.(?:py|md|txt|json|ya?ml|js|ts|tsx|jsx|css|html)\b",
+        r"\b[\w./\\-]+\.(?:py|md|txt|json|ya?ml|toml|js|ts|tsx|jsx|css|html)\b",
         raw,
         flags=re.IGNORECASE,
     )

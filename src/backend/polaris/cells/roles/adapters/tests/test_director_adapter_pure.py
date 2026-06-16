@@ -30,6 +30,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _director_direct_text_patch_only_enabled,
     _director_existing_scope_preflight_enabled,
     _emit_director_adapter_cognitive_receipt,
+    _empty_write_content_retry_needed,
     _finalize_claimed_execution,
     _is_overstrict_node_test_script_contract,
     _looks_like_typescript_reexport_failure,
@@ -54,6 +55,99 @@ def _make_adapter(tmp_path: Any, task_board: Any = None, task_runtime: Any = Non
     else:
         adapter = DirectorAdapter(workspace=str(tmp_path), task_board=task_board, task_runtime=task_runtime)
     return adapter
+
+
+def test_empty_write_content_retry_needed_only_for_blank_write() -> None:
+    assert (
+        _empty_write_content_retry_needed(
+            [
+                {
+                    "tool_name": "write_file",
+                    "arguments": {"file": "src/app.py", "content": ""},
+                    "status": "error",
+                }
+            ]
+        )
+        is True
+    )
+    assert (
+        _empty_write_content_retry_needed(
+            [
+                {
+                    "tool_name": "write_file",
+                    "arguments": {"file": "src/app.py", "content": "print('ok')\n"},
+                    "status": "success",
+                }
+            ]
+        )
+        is False
+    )
+    assert _empty_write_content_retry_needed([{"tool_name": "read_file", "status": "success"}]) is False
+
+
+@pytest.mark.asyncio
+async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_path: Any) -> None:
+    adapter = _make_adapter(tmp_path)
+    task = adapter.task_board.create(
+        subject="Create app module",
+        description="Create src/app.py with a runnable entry point.",
+        metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"]},
+    )
+    seen_messages: list[str] = []
+
+    async def _dialogue(message: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        seen_messages.append(message)
+        if len(seen_messages) == 1:
+            return {
+                "content": "I will create src/app.py.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "tool_name": "write_file",
+                        "status": "success",
+                        "success": True,
+                        "arguments": {"file": "src/app.py", "content": ""},
+                        "result": {"path": "src/app.py", "ok": True},
+                    }
+                ],
+            }
+        return {
+            "content": (
+                "src/app.py\n"
+                "```python\n"
+                "def main() -> str:\n"
+                "    return 'ok'\n"
+                "\n"
+                "\n"
+                "if __name__ == '__main__':\n"
+                "    print(main())\n"
+                "```\n"
+            ),
+            "success": True,
+            "tool_results": [],
+        }
+
+    async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+    adapter._invoke_role_dialogue_with_timeout = _dialogue  # type: ignore[method-assign]
+    adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+    result = await adapter.execute(
+        task_id=str(task.id),
+        input_data={"task_id": str(task.id)},
+        context={"run_id": "run-empty-write-retry"},
+    )
+
+    assert (tmp_path / "src" / "app.py").read_text(encoding="utf-8") == (
+        "def main() -> str:\n    return 'ok'\n\n\nif __name__ == '__main__':\n    print(main())\n"
+    )
+    assert len(seen_messages) == 2
+    assert "previous write tool call had blank content" in seen_messages[1]
+    assert result["error_code"] != "director_no_materialized_changes"
 
 
 def _source_tools_from_tool_results(tool_results: Any) -> list[str]:

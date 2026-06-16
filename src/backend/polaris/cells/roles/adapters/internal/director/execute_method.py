@@ -61,6 +61,90 @@ def _diag_write_results_summary(tool_results: list[dict[str, Any]]) -> list[tupl
     return summary
 
 
+def _empty_write_content_retry_needed(tool_results: list[dict[str, Any]]) -> bool:
+    """Return True only when write tools were attempted with blank content."""
+    write_summary = _diag_write_results_summary(tool_results)
+    return bool(write_summary) and all(content_len <= 0 for _, content_len in write_summary)
+
+
+def _build_empty_write_content_retry_message(
+    task: dict[str, Any],
+    *,
+    original_message: str,
+    tool_results: list[dict[str, Any]],
+) -> str:
+    target_files = _extract_task_target_path_candidates(task)
+    target_line = ""
+    if target_files:
+        target_line = "Allowed target files: " + ", ".join(target_files[:24]) + ".\n"
+    write_summary = ", ".join(
+        f"{name}:content_len={content_len}" for name, content_len in _diag_write_results_summary(tool_results)
+    )
+    return (
+        "[mode:materialize]\n"
+        "RETRY: previous write tool call had blank content and produced no files.\n"
+        f"Observed write arguments: {write_summary or '(none)'}.\n"
+        "Do not explain or plan. Emit exactly one valid write_file tool call now.\n"
+        "The write_file `content` argument must be the complete non-empty file body, never an empty string.\n"
+        "Use only task-scoped relative paths. Do not write TODO/FIXME/placeholder content.\n"
+        f"{target_line}"
+        "Original task follows:\n"
+        f"{original_message[:6000]}"
+    )
+
+
+async def _run_empty_write_content_materialization_retry(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    target_task_id: str,
+    context: dict[str, Any],
+    original_message: str,
+    tool_results: list[dict[str, Any]],
+    llm_call_timeout: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    retry_message = _build_empty_write_content_retry_message(
+        task,
+        original_message=original_message,
+        tool_results=tool_results,
+    )
+    retry_context = _pin_materialize_context_delivery_mode(dict(context), True)
+    try:
+        retry_result = await adapter._invoke_role_dialogue_with_timeout(
+            retry_message,
+            context=retry_context,
+            timeout_seconds=llm_call_timeout,
+            stage_label="empty_write_content_retry",
+        )
+    except asyncio.CancelledError:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        return [], {
+            "attempted": True,
+            "success": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "tool_results": 0,
+        }
+
+    retry_summary = _summarize_llm_stage_result(retry_result, stage="empty_write_content_retry")
+    retry_tool_results = adapter._execution.extract_kernel_tool_results(retry_result)
+    retry_content = str(retry_result.get("content") or retry_result.get("response") or "")
+    if not retry_tool_results or not has_successful_write_tool(retry_tool_results):
+        fallback_tool_results = await adapter._execution.execute_tools(
+            retry_content,
+            target_task_id,
+            adapter._update_task_progress,
+        )
+        if fallback_tool_results:
+            retry_tool_results.extend(fallback_tool_results)
+
+    retry_summary["attempted"] = True
+    retry_summary["tool_results"] = len(retry_tool_results)
+    retry_summary["write_args"] = _diag_write_results_summary(retry_tool_results)
+    retry_summary["recovered_write_tool_evidence"] = has_successful_write_tool(retry_tool_results)
+    return retry_tool_results, retry_summary
+
+
 def _finalize_claimed_execution(
     adapter: Any,
     *,
@@ -743,6 +827,7 @@ async def _execute_standard_llm_flow(
     message = _pin_materialize_delivery_mode(message, requires_fresh_materialization)
     workspace_name = Path(str(getattr(adapter, "workspace", "") or "")).resolve().name
     direct_fallback_summary: dict[str, Any] | None = None
+    empty_write_content_retry_summary: dict[str, Any] | None = None
     tool_results: list[dict[str, Any]] = []
     current_files: dict[str, str] = baseline_files
     new_files: list[str] = []
@@ -971,6 +1056,28 @@ async def _execute_standard_llm_flow(
             workspace_name=workspace_name,
         )
 
+    if not all_affected_files and _empty_write_content_retry_needed(tool_results):
+        (
+            empty_retry_tool_results,
+            empty_write_content_retry_summary,
+        ) = await _run_empty_write_content_materialization_retry(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            context=context,
+            original_message=message,
+            tool_results=tool_results,
+            llm_call_timeout=llm_call_timeout,
+        )
+        if empty_retry_tool_results:
+            tool_results.extend(empty_retry_tool_results)
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
+            task=task,
+            workspace_name=workspace_name,
+        )
+
     if not all_affected_files:
         deterministic_tool_results = _apply_deterministic_typescript_reexport_repair(
             adapter,
@@ -1132,6 +1239,8 @@ async def _execute_standard_llm_flow(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if empty_write_content_retry_summary is not None:
+            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
         cognitive_receipt = _emit_director_adapter_cognitive_receipt(
             adapter,
             task=task,
@@ -1204,6 +1313,8 @@ async def _execute_standard_llm_flow(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if empty_write_content_retry_summary is not None:
+            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
         cognitive_receipt = _emit_director_adapter_cognitive_receipt(
             adapter,
             task=task,
@@ -1287,6 +1398,8 @@ async def _execute_standard_llm_flow(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if empty_write_content_retry_summary is not None:
+            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
         cognitive_receipt = _emit_director_adapter_cognitive_receipt(
             adapter,
             task=task,
@@ -1516,6 +1629,8 @@ async def _execute_standard_llm_flow(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if empty_write_content_retry_summary is not None:
+            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
         if quality_repair_summary is not None:
             completion_metadata["adapter_result"]["quality_repair"] = quality_repair_summary
         if quality_repair_attempts:
@@ -1603,6 +1718,8 @@ async def _execute_standard_llm_flow(
             completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
         if direct_fallback_summary is not None:
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if empty_write_content_retry_summary is not None:
+            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
         cognitive_receipt = _emit_director_adapter_cognitive_receipt(
             adapter,
             task=task,
@@ -1673,6 +1790,8 @@ async def _execute_standard_llm_flow(
         completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
     if direct_fallback_summary is not None:
         completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+    if empty_write_content_retry_summary is not None:
+        completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
     if quality_repair_summary is not None:
         completion_metadata["adapter_result"]["quality_repair"] = quality_repair_summary
     if quality_repair_attempts:

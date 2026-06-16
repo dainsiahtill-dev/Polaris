@@ -8,6 +8,9 @@ analysis back with a transcribe-don't-re-explain instruction.
 from __future__ import annotations
 
 from polaris.cells.roles.kernel.internal.transaction import retry_orchestrator as _ro
+from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+    extract_target_files_from_message,
+)
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
     _MAX_STALLED_READ_BOOTSTRAPS,
     _clear_read_bootstrap_progress,
@@ -68,6 +71,38 @@ def test_retry_no_analysis_when_assistant_absent() -> None:
     out = build_contract_retry_context([{"role": "user", "content": "Fix it in a.py"}], _EDIT_TOOL_DEFS)
     system = next(m["content"] for m in out if m["role"] == "system")
     assert "ALREADY analysed" not in system
+
+
+def test_extract_target_files_includes_pyproject_toml() -> None:
+    message = "Create pyproject.toml, README.md, and infrastructure/config.py."
+
+    targets = extract_target_files_from_message(message)
+
+    assert "pyproject.toml" in targets
+    assert "README.md" in targets
+    assert "infrastructure/config.py" in targets
+
+
+def test_retry_context_lists_all_detected_target_files_for_large_repair() -> None:
+    targets = [
+        "pyproject.toml",
+        "readme.md",
+        "infrastructure/__init__.py",
+        "infrastructure/service_registry.py",
+        "infrastructure/message_queue.py",
+        "infrastructure/tracing.py",
+        "infrastructure/base_service.py",
+        "infrastructure/config.py",
+        "run_all.py",
+    ]
+    out = build_contract_retry_context(
+        [{"role": "user", "content": "Create missing files: " + ", ".join(targets)}],
+        [{"name": "write_file"}, {"name": "read_file"}],
+    )
+
+    system = next(m["content"] for m in out if m["role"] == "system")
+    for target in targets:
+        assert target in system
 
 
 # --- F24 progress-aware read-loop bound (2026-06-16) ------------------------

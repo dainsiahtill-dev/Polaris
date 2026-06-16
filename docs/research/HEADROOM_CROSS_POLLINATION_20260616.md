@@ -94,4 +94,27 @@
 4. **T2-B**（类型感知 crush，确定性、无 §8 风险，省 token 又省延迟）。
 5. 视实测：T1-B 归一 / T1-C live-zone；T2-C tokenizer；T3 诊断器。
 
-> 所有项遵守：§8 禁业务代码、UTF-8、strict/mypy、fail-closed、改 Loop/内核优先动 `cells/roles`+`kernelone`、非平凡后端先落 blueprint。本文为评估，不含代码改动。
+> 所有项遵守：§8 禁业务代码、UTF-8、strict/mypy、fail-closed、改 Loop/内核优先动 `cells/roles`+`kernelone`、非平凡后端先落 blueprint。
+
+---
+
+## 3) 落地状态（2026-06-16，多专家两波 + 与并发 codex reconcile）
+
+两波 workflow 专家组（每项 ground[codegraph]→build→verify[superpowers 对抗] 流水线）落地结果：
+
+| 项 | 状态 | 证据 |
+|---|---|---|
+| **T1-A** CCR retrieve 闭环（keystone，唯一直接打 write/read-loop 墙） | ✅ **LOOP CLOSED** | Wave1 consumer(`context_retrieve`/`OriginalPayloadCache`)+Wave2 producer 闭环（codex 并发以 **workspace-scoped** 版提交 `7670e903`，比蓝图 plain index 更强=修了跨 workspace CCR 污染）；`test_ccr_producer_loop_closure.py` 10 测绿；cross-turn resolve 经对抗验证 evidence_checks_out=true；floor-safe(placeholder 字节不变/默认 inert) |
+| **T1-B** prefix-drift 观测 | ✅ **LANDED** | Wave1 提交 `03f4a4be`，wire `gateway.py`→`_emit_prefix_drift_observation`；非变异；fail-safe |
+| **T2-A** token-shrink 否决门 | ✅ **LANDED + 假绿已修** | Wave1 实现+提交；Wave2 修掉 vacuous 测——新测经注入 `_NonShrinkingCompressor`(真 MicroCompactorPort 双)对**真估算器真 dict** 驱动 guard True 分支(300→315 token 膨胀→veto)，coverage 实证 guard body 行 284-291 BEFORE 未覆盖→AFTER 覆盖；gates_honest=true |
+| **T2-B** 类型感知 crush | ✅ **LANDED(observe 段)** | Wave1 crushers 提交+测绿；Wave2 加 savings 观测(`savings_report.py`)：聚合 7958→419 tok(ratio 0.053/saved 7539)、reject-if-not-smaller 在不可压输入成立、复用 canonical 估算器(无重复公式)、§8 clean、17 测绿。**故意不接热路径**(re-audit observe-first，热路径接 `compression_engine.py:428` 须过 L2-floor) |
+| **T2-C** tokenizer 收敛 | 📐 **BLUEPRINTED** | Wave2 `HEADROOM_TOKEN_ESTIMATOR_CONVERGENCE_20260616.md`：5 个互异公式 + blast-radius 实证(codegraph callers/impact)；HF tokenizer defer 到收敛后；先收敛再 instrument |
+| **T1-C** live-zone | ❌ **DROP** | CompactionStrategy 零活调用方=死路径，前缀压缩前提被推翻 |
+| **T3-A** 自动写更正 | ❌ **DROP** | §8 硬红线（=embedded-business-synthesizers 同款） |
+| **T3-B** tiered scorer | ❌ **DROP** | `_score_items` 锚点不存在/name-collision |
+
+**门禁（我方未提交文件）**：ruff All checks passed / 4 files formatted / mypy Success(4 files，`--follow-imports=skip` 绕开 codex 并发 WIP 的 `execute_method.py` IndentationError——非本 campaign 代码)。我方三切片 33 测全绿。
+
+**未提交工作树**：`compaction_strategy.py`(M)+`test_compaction_strategy_noop_guard.py`(M)、`crushers/savings_report.py`(??)+test、本 `T2-C` 蓝图(??)——待用户确认提交。
+
+**已知外部阻塞**：codex 并发在改 `execute_method.py`(IndentationError，行号 1334→1421 在动)→import-following 全量 mypy/pytest 受阻；非本 campaign 文件，未触碰，待 codex 自行收尾。
