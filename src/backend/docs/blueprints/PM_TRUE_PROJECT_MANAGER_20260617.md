@@ -48,11 +48,37 @@ blueprint cell (`chief_engineer/blueprint/internal/risks.py`,
 per-entry JSON under `runtime/risks/`, register/list/update_status/summarize, wired
 into handoff-blocking governance. **codex is actively editing those files.**
 
-Therefore the PM RAID log will **reuse the CE governance enums via the public
-contract** (single source of truth for the severity/status vocabulary) and follow
-the same storage pattern — it will NOT duplicate them, and it will NOT edit codex's
-CE files. The PM RAID adds the **A/I/D** entry types (Assumptions, Issues,
-Dependencies) the CE risk register does not model, owned by the PM planning cell.
+The PM RAID log follows the same storage pattern as `risks.py` and aligns its
+severity/status **vocabulary** with the CE Risk Register — and it adds the **A/I/D**
+entry types (Assumptions, Issues, Dependencies) plus a **probability** axis that the
+CE register does not model.
+
+**Boundary correction (2026-06-17, overturns the earlier "import CE enums" plan).**
+A deeper codegraph + governance-gate analysis (workflow `w6nh16mmt`, boundary expert)
+showed that importing the CE enums is *not* the right reuse mechanism here:
+- `orchestration.pm_planning/cell.yaml` `depends_on` does **not** declare
+  `chief_engineer.blueprint`. The catalog governance gate
+  (`run_catalog_governance_gate.py`) has a HIGH rule
+  `declared_cell_dependencies_match_imports` that walks **all**
+  `polaris/cells/**/*.py` — **including `tests/`** — scoping each file by *path
+  structure*, not `owned_paths`. So a `from polaris.cells.chief_engineer...` import in
+  **either** the internal module **or the test** would emit a new HIGH issue, and the
+  in-tree `test_catalog_governance_gate` (`new_issue_count == 0`) would go red.
+- PM is **upstream** of CE in the role chain (PM→Architect→CE→Director→QA), so a
+  `pm_planning → chief_engineer.blueprint` edge inverts the dependency direction and
+  couples PM-green to codex's churning CE WIP.
+
+Therefore the RAID register uses **PM-owned enums whose values are byte-identical to
+the CE vocabulary** (`RaidSeverity` = low/medium/high/critical/blocker; `RaidStatus`
+= open/mitigating/accepted/resolved/reverted), importing **nothing** from
+`chief_engineer` anywhere. Vocabulary parity is guaranteed by a **literal-parity
+test** (hardcoded expected maps, no CE import). §7 is satisfied at the vocabulary
+level: §7 protects existing *capabilities* (the Risk Register store + lifecycle
+engine), not a 5-member string enum that the RAID log materially extends. The only
+cross-package import is `resolve_logical_path` from `polaris.kernelone.storage`
+(declared via `storage.layout`, and a kernel import creates no cell edge).
+Verified: governance gate `new_issue_count == 0`, zero issue records referencing
+`pm_planning`/`raid`.
 
 ## 3. Ranked plan (high-value × missing × §8-clean × floor-safe)
 
@@ -63,12 +89,19 @@ Dependencies) the CE risk register does not model, owned by the PM planning cell
    assessed). **Bench-gated**: the deleted branches fire only on game/card3d
    contracts (e.g. L3-16 Tetris), so removal must be re-verified against the
    game-bench + L2-floor before the default flips. Blueprint-first.
-2. **RAID register + risk scoring** — new `pm_planning/internal/raid_register.py`
-   reusing CE `RiskSeverity`/`RiskStatus`; entries typed R/A/I/D with severity,
-   probability, impact, owner, mitigation, status, opened/closed iteration; atomic
-   per-entry JSON under a PM-owned `runtime/pm/raid/` path. Additive store + planning
-   prompt emission + an additive DoR rule (`KERNELONE_PM_RISK_GATE` default-off).
-   Floor-safe.
+2. **RAID register + risk scoring** — ← **LANDED** (`raid_register.py`, 48 tests).
+   `pm_planning/internal/raid_register.py`: `RaidCategory` (risk/assumption/issue/
+   dependency), PM-owned `RaidSeverity`/`RaidStatus` (CE-value-aligned, no CE import —
+   see the boundary correction in §2), PM-native `RaidProbability` (rare..almost_certain),
+   a pure `probability × impact` 5×5 `compute_risk_score`/`compute_risk_band`,
+   `RaidRecordV1` (with derived `risk_score`/`risk_band` in `to_dict`), and a
+   `RaidRegister` store (register/update_status/load/list/summarize) with atomic
+   temp+`os.replace` writes, traversal-guarded ids, and fail-closed loads, under a
+   PM-owned `runtime/pm/raid/` path. Shipped + unit-tested `KERNELONE_PM_RISK_GATE`
+   predicate (env-read, default-OFF) is wired to **nothing** this increment. Purely
+   additive / floor-safe; governance gate `new_issue_count == 0`. Designed-not-wired
+   future hooks: planning-prompt open-RAID summary + a DoR rule blocking handoff on
+   `open_critical_or_blocker > 0`, both behind the default-off gate.
 3. **Dependency graph → critical-path / level-order schedule** — extend
    `pm_planning/internal/dependency_validator.py` with `compute_schedule(tasks)`
    (CPM: forward/backward pass, earliest/latest start, slack, critical path,
