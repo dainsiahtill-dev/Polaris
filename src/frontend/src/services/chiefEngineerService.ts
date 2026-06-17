@@ -694,3 +694,41 @@ export async function updateChiefEngineerPostMortemStatus(
     'Failed to update Chief Engineer post-mortem status',
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tier-2 capstone: Release Readiness / Change-Advisory
+// ═══════════════════════════════════════════════════════════════════════
+
+export type ReleaseDecision = 'go' | 'conditional_go' | 'no_go';
+
+export interface ReleaseReadiness {
+  decision: ReleaseDecision;
+  workspace: string;
+  blocker_count: number;
+  warning_count: number;
+  blockers: string[];
+  warnings: string[];
+  signals: Record<string, unknown>;
+  assessed_at: string;
+}
+
+export interface ReleaseReadinessResponse {
+  ok: boolean;
+  workspace: string;
+  readiness: ReleaseReadiness;
+}
+
+export async function getChiefEngineerReleaseReadiness(
+  options: { blueprintIds?: string[]; libraries?: string[] } = {},
+  workspace = '',
+): Promise<ApiResult<ReleaseReadinessResponse>> {
+  const query = new URLSearchParams();
+  if (workspace) query.set('workspace', workspace);
+  if (options.blueprintIds?.length) query.set('blueprint_ids', options.blueprintIds.join(','));
+  if (options.libraries?.length) query.set('libraries', options.libraries.join(','));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return apiGet<ReleaseReadinessResponse>(
+    `/v2/chief-engineer/release-readiness${suffix}`,
+    'Failed to load Chief Engineer release readiness',
+  );
+}

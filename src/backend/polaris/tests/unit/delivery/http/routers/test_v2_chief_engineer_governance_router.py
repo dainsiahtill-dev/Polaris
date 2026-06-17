@@ -560,3 +560,51 @@ async def test_update_missing_post_mortem_is_404(client: AsyncClient, workspace:
     )
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "POST_MORTEM_NOT_FOUND"
+
+
+# ── Tier-2 capstone: Release Readiness / Change-Advisory ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_release_readiness_clean_is_go(client: AsyncClient, workspace: str) -> None:
+    resp = await client.get(
+        "/v2/chief-engineer/release-readiness",
+        params={"workspace": workspace},
+    )
+    assert resp.status_code == 200, resp.text
+    readiness = resp.json()["readiness"]
+    assert readiness["decision"] == "go"
+    assert readiness["blocker_count"] == 0
+    for key in ("risk", "quality_gate", "post_mortem", "stack_policy", "tech_debt"):
+        assert key in readiness["signals"]
+
+
+@pytest.mark.asyncio
+async def test_release_readiness_aggregates_blockers(client: AsyncClient, workspace: str) -> None:
+    # An open blocker risk + a deprecated library in scope => NO-GO with two signals.
+    await client.post(
+        "/v2/chief-engineer/risks",
+        params={"workspace": workspace},
+        json={
+            "task_id": "t1",
+            "title": "data loss",
+            "severity": "blocker",
+            "owner": "ce",
+            "mitigation": "m",
+        },
+    )
+    await client.post(
+        "/v2/chief-engineer/tech-radar",
+        params={"workspace": workspace},
+        json={"library": "jquery", "ring": "deprecated", "owner": "ce"},
+    )
+    resp = await client.get(
+        "/v2/chief-engineer/release-readiness",
+        params={"workspace": workspace, "libraries": "jQuery,react"},
+    )
+    assert resp.status_code == 200, resp.text
+    readiness = resp.json()["readiness"]
+    assert readiness["decision"] == "no_go"
+    assert readiness["blocker_count"] >= 2
+    assert readiness["signals"]["risk"]["open_critical_or_blocker"] == 1
+    assert readiness["signals"]["stack_policy"]["violations"] == 1

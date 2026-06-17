@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, RefreshCw, ShieldAlert } from 'lucide-react';
 import {
+  getChiefEngineerReleaseReadiness,
   listChiefEngineerADRs,
   listChiefEngineerPostMortems,
   listChiefEngineerRisks,
@@ -9,6 +10,8 @@ import {
   type ADRRecord,
   type IncidentSeverity,
   type PostMortemRecord,
+  type ReleaseDecision,
+  type ReleaseReadiness,
   type RiskRecord,
   type RiskSeverity,
   type TechDebtRecord,
@@ -29,7 +32,20 @@ interface GovernanceState {
   adrs: ADRRecord[];
   techRadar: TechRadarEntry[];
   postMortems: PostMortemRecord[];
+  readiness: ReleaseReadiness | null;
 }
+
+const RELEASE_DECISION_CLASS: Record<ReleaseDecision, string> = {
+  go: 'border-emerald-500/40 bg-emerald-950/50 text-emerald-200',
+  conditional_go: 'border-amber-500/40 bg-amber-950/50 text-amber-200',
+  no_go: 'border-red-500/50 bg-red-950/60 text-red-200',
+};
+
+const RELEASE_DECISION_LABEL: Record<ReleaseDecision, string> = {
+  go: 'GO',
+  conditional_go: 'CONDITIONAL',
+  no_go: 'NO-GO',
+};
 
 const RADAR_RING_CLASS: Record<TechRadarRing, string> = {
   adopt: 'bg-emerald-800/60 text-emerald-100',
@@ -86,16 +102,18 @@ export function ChiefEngineerGovernancePanel({ workspace }: ChiefEngineerGoverna
     adrs: [],
     techRadar: [],
     postMortems: [],
+    readiness: null,
   });
 
   const load = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
-    const [risksResult, debtResult, adrResult, radarResult, pmResult] = await Promise.all([
+    const [risksResult, debtResult, adrResult, radarResult, pmResult, readinessResult] = await Promise.all([
       listChiefEngineerRisks({}, workspace),
       listChiefEngineerTechDebt({}, workspace),
       listChiefEngineerADRs({}, workspace),
       listChiefEngineerTechRadar(undefined, workspace),
       listChiefEngineerPostMortems({}, workspace),
+      getChiefEngineerReleaseReadiness({}, workspace),
     ]);
 
     if (!risksResult.ok || !risksResult.data) {
@@ -147,6 +165,8 @@ export function ChiefEngineerGovernancePanel({ workspace }: ChiefEngineerGoverna
       adrs: adrResult.data.adrs,
       techRadar: radarResult.data.entries,
       postMortems: pmResult.data.post_mortems,
+      // Release readiness is advisory — a failure here must not blank the panel.
+      readiness: readinessResult.ok && readinessResult.data ? readinessResult.data.readiness : null,
     });
   }, [workspace]);
 
@@ -180,6 +200,22 @@ export function ChiefEngineerGovernancePanel({ workspace }: ChiefEngineerGoverna
         >
           <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
           {state.error}
+        </div>
+      ) : null}
+
+      {state.readiness ? (
+        <div
+          className={`flex items-center gap-2 rounded border px-2.5 py-1.5 text-[11px] ${RELEASE_DECISION_CLASS[state.readiness.decision]}`}
+          data-testid="ce-release-readiness"
+          data-decision={state.readiness.decision}
+        >
+          <span className="shrink-0 rounded bg-black/30 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+            Release {RELEASE_DECISION_LABEL[state.readiness.decision]}
+          </span>
+          <span className="min-w-0 flex-1 truncate">
+            {state.readiness.blocker_count} blocker(s), {state.readiness.warning_count} warning(s)
+            {state.readiness.blockers.length > 0 ? ` — ${state.readiness.blockers[0]}` : ''}
+          </span>
         </div>
       ) : null}
 

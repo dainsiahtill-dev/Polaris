@@ -106,6 +106,18 @@ class IncidentSeverity(str, Enum):
     SEV4 = "sev4"
 
 
+class ReleaseDecision(str, Enum):
+    """Executive release / change-advisory verdict.
+
+    ``go`` = clear; ``conditional_go`` = warnings only (ship with awareness);
+    ``no_go`` = at least one hard blocker (release must not proceed).
+    """
+
+    GO = "go"
+    CONDITIONAL_GO = "conditional_go"
+    NO_GO = "no_go"
+
+
 class PostMortemStatus(str, Enum):
     """Lifecycle status of a post-mortem / incident review."""
 
@@ -1019,6 +1031,68 @@ class PostMortemEventV1:
         object.__setattr__(self, "note", str(self.note or "").strip())
 
 
+# ---------------------------------------------------------------------------
+# Release Readiness / Change-Advisory contract (Tier-2 capstone)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReleaseReadinessV1:
+    """Executive GO / NO-GO that aggregates the whole governance surface.
+
+    A read-time synthesis (NOT a stored ledger) of the existing capabilities:
+    open blocker/critical risks, per-blueprint quality-gate blockers, open
+    sev1/sev2 incidents, stack-policy violations, and unpaid fatal/severe
+    tech debt. ``decision`` is ``no_go`` if any hard blocker is present,
+    ``conditional_go`` if only warnings, else ``go``.
+
+    Attributes:
+        decision: ``ReleaseDecision`` verdict.
+        workspace: Assessed workspace.
+        blocker_count: Number of release-blocking signals.
+        warning_count: Number of advisory signals.
+        blockers: Blocking signal messages (``"<source>: <detail>"``).
+        warnings: Advisory signal messages.
+        signals: Per-source structured counts (risk / quality_gate /
+            post_mortem / stack_policy / tech_debt).
+        assessed_at: ISO-8601 timestamp (UTC).
+    """
+
+    decision: ReleaseDecision
+    workspace: str
+    blocker_count: int
+    warning_count: int
+    blockers: tuple[str, ...] = field(default_factory=tuple)
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+    signals: dict[str, Any] = field(default_factory=dict)
+    assessed_at: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        for field_name in ("blocker_count", "warning_count"):
+            value = getattr(self, field_name)
+            if value < 0:
+                raise ValueError(f"{field_name} must be >= 0; got {value}")
+        if not isinstance(self.decision, ReleaseDecision):
+            object.__setattr__(self, "decision", ReleaseDecision(str(self.decision).strip().lower()))
+        object.__setattr__(self, "blockers", tuple(str(v) for v in self.blockers))
+        object.__setattr__(self, "warnings", tuple(str(v) for v in self.warnings))
+        if not isinstance(self.signals, dict):
+            object.__setattr__(self, "signals", dict(self.signals or {}))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision": self.decision.value,
+            "workspace": self.workspace,
+            "blocker_count": self.blocker_count,
+            "warning_count": self.warning_count,
+            "blockers": list(self.blockers),
+            "warnings": list(self.warnings),
+            "signals": dict(self.signals),
+            "assessed_at": self.assessed_at,
+        }
+
+
 @dataclass(frozen=True)
 class GovernanceSummaryV1:
     """Aggregate governance view attached to a blueprint.
@@ -1132,6 +1206,8 @@ __all__ = [
     "RegisterRiskCommandV1",
     "RegisterTechDebtCommandV1",
     "RegisterTechRadarCommandV1",
+    "ReleaseDecision",
+    "ReleaseReadinessV1",
     "RiskEventV1",
     "RiskRecordV1",
     "RiskSeverity",

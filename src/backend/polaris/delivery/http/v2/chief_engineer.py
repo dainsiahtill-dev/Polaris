@@ -38,6 +38,7 @@ from polaris.cells.chief_engineer.blueprint.public import (
     UpdateRiskStatusCommandV1,
     UpdateTechDebtStatusCommandV1,
     UpdateTechRadarRingCommandV1,
+    assess_release_readiness,
     check_stack_policy,
     evaluate_handoff_decision_for_blueprint,
     generate_task_blueprint,
@@ -1898,3 +1899,34 @@ def update_chief_engineer_post_mortem_status(
             message=str(exc),
         ) from exc
     return {"ok": True, "workspace": target_workspace, "post_mortem": record.to_dict()}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tier-2 capstone: Release Readiness / Change-Advisory
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _split_csv(value: str) -> list[str]:
+    return [token.strip() for token in str(value or "").split(",") if token.strip()]
+
+
+@router.get("/chief-engineer/release-readiness", dependencies=[Depends(require_auth)])
+def get_chief_engineer_release_readiness(
+    request: Request,
+    workspace: str = "",
+    blueprint_ids: str = "",
+    libraries: str = "",
+) -> dict[str, Any]:
+    """Executive GO / NO-GO that aggregates the whole governance surface.
+
+    Optional comma-separated ``blueprint_ids`` (release candidates, each run
+    through the Quality Gate) and ``libraries`` (checked against the Tech
+    Radar stack policy). Read-only and fail-closed.
+    """
+    target_workspace = _governance_workspace(request, workspace)
+    decision = assess_release_readiness(
+        target_workspace,
+        blueprint_ids=_split_csv(blueprint_ids) or None,
+        libraries=_split_csv(libraries) or None,
+    )
+    return {"ok": True, "workspace": target_workspace, "readiness": decision.to_dict()}

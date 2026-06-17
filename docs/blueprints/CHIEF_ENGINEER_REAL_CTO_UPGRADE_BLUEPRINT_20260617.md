@@ -21,13 +21,39 @@ incident / severity (sev1-4) / timeline / root_cause / impact / action_items
 - Frontend: 3 typed service fns + a "Post-Mortems" column in the governance panel.
 - Governance: `runtime/post_mortems/*` in `cell.yaml` + catalog (gate clean).
 
-## Lifecycle coverage (8 governance capabilities)
+## Tier-2 capstone — Release Readiness / Change-Advisory (2026-06-17)
 
-plan (blueprint) → anticipate (Risk Register) → gate (Quality Gate) →
-enforce (Handoff Decision) → execute → learn (Post-Mortem); plus ongoing
-governance: Tech-Debt Ledger, ADR Decision Log, Tech Radar / stack policy,
-and Rollback linkage. Remaining (advisory/observability, genuinely deferred):
-build-vs-buy evaluator, perf/capacity budget, realtime dashboard.
+The executive synthesis that makes the whole surface cohere. Designed after
+an expert-panel deep-design pass (the parallel workflow was transiently
+rate-limited, so the synthesis was done directly): the candidate ledgers
+(build-vs-buy, perf-budget, dependency/SBOM) each risked being *vanity
+ledgers* — isolated JSON or empty shells needing data Polaris lacks for
+target projects. The non-vanity, integrative move is a **read-time** GO /
+NO-GO that aggregates ALL existing signals into one decision.
+
+- `internal/release_readiness.py` — `build_release_readiness(workspace,
+  blueprint_ids?, libraries?)`: NOT a ledger (no storage). Reads RiskRegister,
+  per-blueprint Handoff Decision (`build_handoff_decision`), PostMortemLog,
+  TechRadarLedger (`check_stack_policy`), TechDebtLedger.
+  NO_GO = any hard blocker (open critical/blocker risk · blocked blueprint
+  gate · open SEV1 incident · stack-policy violation · unpaid FATAL debt);
+  CONDITIONAL_GO = warnings only (open HIGH risk · open SEV2 · unpaid SEVERE);
+  GO = clean. Adds NO new state_owner/effect (read-only).
+- Contract `ReleaseDecision` enum + `ReleaseReadinessV1` (decision / counts /
+  blockers / warnings / per-source `signals` dict).
+- Service `assess_release_readiness`; HTTP `GET /chief-engineer/release-readiness`
+  (comma-separated blueprint_ids / libraries); frontend service fn + a prominent
+  GO/NO-GO banner atop the governance panel (advisory — a fetch failure never
+  blanks the panel).
+
+## Lifecycle coverage (9 capabilities — surface complete)
+
+plan (blueprint) → anticipate (Risk) → gate (Quality Gate) → enforce
+(Handoff) → execute → learn (Post-Mortem) → **ship (Release Readiness
+capstone)**; plus ongoing governance: Tech-Debt, ADR Log, Tech Radar/stack
+policy, Rollback. Genuinely deferred (advisory/observability or need data
+sources Polaris lacks for target projects): build-vs-buy evaluator,
+perf/capacity budget, realtime live-update dashboard.
 
 ## Tier-2 increment #3 — Tech Radar / stack policy (2026-06-17)
 

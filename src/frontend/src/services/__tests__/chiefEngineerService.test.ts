@@ -20,6 +20,7 @@ import {
   listChiefEngineerBlueprints,
   checkChiefEngineerStackPolicy,
   getChiefEngineerHandoffDecision,
+  getChiefEngineerReleaseReadiness,
   listChiefEngineerADRs,
   listChiefEngineerPostMortems,
   listChiefEngineerTechRadar,
@@ -571,6 +572,30 @@ describe('chiefEngineerService', () => {
       '/v2/chief-engineer/post-mortems/incident%201/status?workspace=ws',
       { status: 'published', note: 'reviewed' },
       'Failed to update Chief Engineer post-mortem status',
+    );
+  });
+
+  // ── Tier-2 capstone: Release Readiness ────────────────────────────────
+
+  it('fetches release readiness with blueprint and library filters', async () => {
+    mockApiGet.mockResolvedValueOnce({ ok: true, data: { ok: true, readiness: { decision: 'go' } } });
+
+    await getChiefEngineerReleaseReadiness({ blueprintIds: ['ce_a', 'ce_b'], libraries: ['react'] }, 'ws');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/release-readiness?workspace=ws&blueprint_ids=ce_a%2Cce_b&libraries=react',
+      'Failed to load Chief Engineer release readiness',
+    );
+  });
+
+  it('fetches release readiness with no filters', async () => {
+    mockApiGet.mockResolvedValueOnce({ ok: true, data: { ok: true, readiness: { decision: 'go' } } });
+
+    await getChiefEngineerReleaseReadiness({}, 'ws');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/release-readiness?workspace=ws',
+      'Failed to load Chief Engineer release readiness',
     );
   });
 });

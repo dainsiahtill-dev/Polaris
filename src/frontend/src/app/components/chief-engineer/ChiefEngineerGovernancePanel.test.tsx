@@ -8,6 +8,7 @@ const serviceMocks = vi.hoisted(() => ({
   listChiefEngineerADRs: vi.fn(),
   listChiefEngineerTechRadar: vi.fn(),
   listChiefEngineerPostMortems: vi.fn(),
+  getChiefEngineerReleaseReadiness: vi.fn(),
 }));
 
 vi.mock('@/services/chiefEngineerService', () => serviceMocks);
@@ -133,6 +134,22 @@ describe('ChiefEngineerGovernancePanel', () => {
         summary: {},
       },
     });
+    serviceMocks.getChiefEngineerReleaseReadiness.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        readiness: {
+          decision: 'no_go',
+          workspace: '/repo',
+          blocker_count: 1,
+          warning_count: 0,
+          blockers: ['risk: 1 open critical/blocker risk(s)'],
+          warnings: [],
+          signals: {},
+          assessed_at: '2026-06-17T00:00:00Z',
+        },
+      },
+    });
 
     render(<ChiefEngineerGovernancePanel workspace="/repo" />);
 
@@ -143,11 +160,15 @@ describe('ChiefEngineerGovernancePanel', () => {
     expect(screen.getByText('adopt single transaction kernel')).toBeInTheDocument();
     expect(screen.getByText('moment.js')).toBeInTheDocument();
     expect(screen.getByText('prod outage: write amplification')).toBeInTheDocument();
+    const banner = screen.getByTestId('ce-release-readiness');
+    expect(banner).toHaveAttribute('data-decision', 'no_go');
+    expect(banner).toHaveTextContent('Release NO-GO');
     expect(serviceMocks.listChiefEngineerRisks).toHaveBeenCalledWith({}, '/repo');
     expect(serviceMocks.listChiefEngineerTechDebt).toHaveBeenCalledWith({}, '/repo');
     expect(serviceMocks.listChiefEngineerADRs).toHaveBeenCalledWith({}, '/repo');
     expect(serviceMocks.listChiefEngineerTechRadar).toHaveBeenCalledWith(undefined, '/repo');
     expect(serviceMocks.listChiefEngineerPostMortems).toHaveBeenCalledWith({}, '/repo');
+    expect(serviceMocks.getChiefEngineerReleaseReadiness).toHaveBeenCalledWith({}, '/repo');
   });
 
   it('shows empty states when there is no governance data', async () => {
@@ -171,6 +192,22 @@ describe('ChiefEngineerGovernancePanel', () => {
       ok: true,
       data: { ok: true, total: 0, post_mortems: [], summary: {} },
     });
+    serviceMocks.getChiefEngineerReleaseReadiness.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        readiness: {
+          decision: 'go',
+          workspace: '/repo',
+          blocker_count: 0,
+          warning_count: 0,
+          blockers: [],
+          warnings: [],
+          signals: {},
+          assessed_at: '2026-06-17T00:00:00Z',
+        },
+      },
+    });
 
     render(<ChiefEngineerGovernancePanel workspace="/repo" />);
 
@@ -181,6 +218,7 @@ describe('ChiefEngineerGovernancePanel', () => {
     expect(screen.getByTestId('ce-adrs-empty')).toBeInTheDocument();
     expect(screen.getByTestId('ce-tech-radar-empty')).toBeInTheDocument();
     expect(screen.getByTestId('ce-post-mortems-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('ce-release-readiness')).toHaveAttribute('data-decision', 'go');
   });
 
   it('surfaces a service error', async () => {
@@ -204,6 +242,7 @@ describe('ChiefEngineerGovernancePanel', () => {
       ok: true,
       data: { ok: true, total: 0, post_mortems: [], summary: {} },
     });
+    serviceMocks.getChiefEngineerReleaseReadiness.mockResolvedValue({ ok: false, error: 'n/a' });
 
     render(<ChiefEngineerGovernancePanel workspace="/repo" />);
 

@@ -14,6 +14,7 @@ from ..internal.chief_engineer_preflight import run_pre_dispatch_chief_engineer
 from ..internal.handoff import build_handoff_decision
 from ..internal.post_mortem import PostMortemLog, build_post_mortem_event
 from ..internal.quality_gate import evaluate_quality_gate
+from ..internal.release_readiness import build_release_readiness
 from ..internal.risks import RiskRegister, build_risk_event
 from ..internal.rollback_guard import create_rollback_guard
 from ..internal.rollback_link import build_rollback_link
@@ -37,6 +38,7 @@ from .contracts import (
     RegisterRiskCommandV1,
     RegisterTechDebtCommandV1,
     RegisterTechRadarCommandV1,
+    ReleaseReadinessV1,
     RiskRecordV1,
     StackPolicyViolationV1,
     TaskBlueprintResultV1,
@@ -627,6 +629,34 @@ def summarize_post_mortems(workspace: str) -> dict[str, Any]:
     return PostMortemLog(workspace, ensure_directory=False).summarize()
 
 
+def assess_release_readiness(
+    workspace: str,
+    *,
+    blueprint_ids: list[str] | None = None,
+    libraries: list[str] | None = None,
+) -> ReleaseReadinessV1:
+    """Synthesize an executive release GO / NO-GO from the governance surface.
+
+    The Tier-2 capstone: aggregates open blocker/critical risks, per-blueprint
+    quality-gate blockers, open sev1/sev2 incidents, stack-policy violations,
+    and unpaid fatal/severe tech debt into one decision. Read-time and
+    fail-closed (a blocking signal => ``no_go``).
+    """
+    decision = build_release_readiness(
+        workspace,
+        blueprint_ids=blueprint_ids,
+        libraries=libraries,
+    )
+    logger.info(
+        "chief_engineer.release_readiness_assessed workspace=%s decision=%s blockers=%d warnings=%d",
+        workspace,
+        decision.decision.value,
+        decision.blocker_count,
+        decision.warning_count,
+    )
+    return decision
+
+
 def get_blueprint_governance(workspace: str, blueprint_id: str) -> GovernanceSummaryV1 | None:
     """Read the governance summary for a persisted blueprint.
 
@@ -792,6 +822,7 @@ __all__ = [
     "CEConsumer",
     "ChiefEngineerAgent",
     "assert_handoff_ready",
+    "assess_release_readiness",
     "attach_governance_to_blueprint",
     "build_blueprint_governance",
     "check_stack_policy",
