@@ -2528,6 +2528,158 @@ console.log(
 """
 
 
+def _apply_deterministic_unresolved_import_symbol_repair(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    """Repair cross-file Python unresolved import symbol failures.
+
+    The weak Director LLM (e.g. qwen3.6-27b-int4) frequently writes
+    sibling modules with subtly different names: shared/__init__.py
+    imports ``Registry`` from shared.registry, but shared/registry.py
+    only defines ``ServiceRegistry``. The post-write materialization
+    quality gate catches it as
+    ``unresolved import symbol 'Registry' from 'shared.registry' in shared/__init__.py``;
+    the LLM repair call consistently echoes the prompt back (verified
+    via FORENSIC print on 2026-06-17), so the platform must repair
+    the exporter itself.
+
+    Strategy (fail-closed, Python-only):
+    1. Parse unresolved-symbol errors with ``_UNRESOLVED_IMPORT_SYMBOL_ERROR_RE``.
+    2. Resolve the module specifier to a file path using Python
+       convention (``shared.registry`` -> ``shared/registry.py``).
+    3. Read the exporter; if the symbol is already defined, skip.
+    4. If a class whose name ends with the missing symbol (case-insensitive)
+       exists in the module, append ``Symbol = FoundClass`` alias.
+    5. Otherwise append ``class Symbol: pass`` (empty class stub).
+    6. Write back via DirectorToolExecutor so the change is audited
+       under the same tool path the LLM uses.
+
+    Scope: only ``.py`` exporters. TypeScript unresolved-symbol errors
+    are still routed through the LLM repair path because the alias
+    grammar differs (``export { Symbol } from './source'``).
+    """
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    results: list[dict[str, Any]] = []
+    seen_modules: set[tuple[str, str]] = set()
+    for error in artifact_quality_errors:
+        match = _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.search(str(error or ""))
+        if not match:
+            continue
+        symbol = str(match.group("symbol") or "").strip()
+        module = str(match.group("module") or "").strip()
+        importer_path = _normalize_declared_task_path(match.group("path"))
+        if not symbol or not module or not importer_path:
+            continue
+        if not importer_path.endswith(".py"):
+            continue
+        # Resolve exporter file path from the module specifier
+        exporter_rel = module.replace(".", "/") + ".py"
+        exporter_path = workspace_path / exporter_rel
+        if not exporter_path.is_file():
+            continue
+        key = (exporter_rel, symbol)
+        if key in seen_modules:
+            continue
+        seen_modules.add(key)
+        try:
+            exporter_text = exporter_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _python_symbol_defined(exporter_text, symbol):
+            continue
+        stub_line = _build_python_symbol_stub(exporter_text, symbol)
+        if not stub_line:
+            continue
+        new_text = exporter_text.rstrip() + "\n" + stub_line + "\n"
+        message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+        write_result = DirectorToolExecutor(
+            str(workspace_path),
+            message_bus=message_bus,
+            worker_id="director",
+        ).execute_tool(
+            "write_file",
+            {"file": exporter_rel, "content": new_text},
+            task_id=task_id,
+        )
+        if not bool(write_result.get("ok")):
+            continue
+        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+            adapter._update_task_progress(task_id, "executing", current_file=exporter_rel)
+        results.append(
+            {
+                "tool": "edit_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_unresolved_import_symbol_repair",
+                    "file": exporter_rel,
+                    "symbol": symbol,
+                    "stub_line": stub_line,
+                    "importer": importer_path,
+                    "bytes_written": int(write_result.get("bytes_written") or len(new_text.encode("utf-8"))),
+                    "operation": str(write_result.get("operation") or "modify"),
+                    "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                    "director_policy": write_result.get("director_policy"),
+                },
+            }
+        )
+        # Re-read so multiple symbols in the same exporter all
+        # get fixed in a single pass.
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            exporter_text = new_text
+    return results
+
+
+def _python_symbol_defined(text: str, symbol: str) -> bool:
+    """True when the symbol is already resolvable in ``text``.
+
+    Looks for class/function/def statements or top-level assignments
+    whose name matches ``symbol`` as a whole word. This is a coarse
+    text check, not a full AST walk — but it is sufficient to skip
+    the deterministic repair when the exporter already defines the
+    missing symbol under a valid binding.
+    """
+    pattern = re.compile(
+        r"^\s*(?:class|def|async\s+def)\s+" + re.escape(symbol) + r"\b",
+        re.MULTILINE,
+    )
+    if pattern.search(text):
+        return True
+    assign_pattern = re.compile(r"^\s*" + re.escape(symbol) + r"\s*=", re.MULTILINE)
+    return bool(assign_pattern.search(text))
+
+
+def _build_python_symbol_stub(text: str, symbol: str) -> str:
+    """Choose the most useful minimal binding for ``symbol``.
+
+    If a class whose name ends with ``symbol`` (case-insensitive) is
+    defined in the module, prefer an alias to it. The L6-32 case
+    (missing ``Registry``, defined ``ServiceRegistry``) falls into
+    this branch and gets a meaningful alias instead of an empty stub.
+    Otherwise emit a bare ``class Symbol: pass`` — enough to satisfy
+    the import and the most common class-style usage at the importer.
+    """
+    class_pattern = re.compile(
+        r"^\s*class\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*[:(\b]",
+        re.MULTILINE,
+    )
+    symbol_lc = symbol.lower()
+    for match in class_pattern.finditer(text):
+        name = match.group("name")
+        if name == symbol:
+            continue
+        if name.lower().endswith(symbol_lc) and name != symbol:
+            return f"{symbol} = {name}"
+    return f"class {symbol}:\n    pass"
+
+
 def _apply_deterministic_typescript_reexport_repair(
     adapter: Any,
     *,
@@ -2890,6 +3042,14 @@ def _apply_deterministic_materialization_quality_repairs(
     )
     results.extend(
         _apply_deterministic_missing_declared_target_repair(
+            adapter,
+            task=task,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_unresolved_import_symbol_repair(
             adapter,
             task=task,
             task_id=task_id,

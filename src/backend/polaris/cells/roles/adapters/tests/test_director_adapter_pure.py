@@ -4102,6 +4102,162 @@ class TestExistingWorkspaceTaskEvidence:
         )
 
 
+class TestDeterministicPythonUnresolvedSymbolRepair:
+    """Director can repair cross-file Python unresolved import symbol failures
+    without LLM cooperation — same fail-closed posture as the TS reexport
+    repair. Live factory-bench L6-32 (2026-06-17, after multi-missing fix):
+    the weak model wrote shared/__init__.py importing Registry from
+    shared.registry, but the registry module only defined ServiceRegistry.
+    The post-write QA gate caught it; the LLM repair call echoed the
+    prompt back (tool_choice was honored, the model still didn't emit
+    a tool call). The platform must add the missing symbol itself.
+    """
+
+    def test_repairs_missing_symbol_with_similar_named_alias(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_unresolved_import_symbol_repair,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "shared").mkdir(parents=True)
+        (tmp_path / "shared" / "__init__.py").write_text(
+            "from shared.registry import Registry\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "shared" / "registry.py").write_text(
+            "class ServiceRegistry:\n    pass\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_unresolved_import_symbol_repair(
+            adapter,
+            task={"subject": "Fix Python cross-file import"},
+            task_id="task-py-1",
+            artifact_quality_errors=[
+                (
+                    "Artifact quality scan failed: unresolved import symbol "
+                    "'Registry' from 'shared.registry' in "
+                    "shared/__init__.py"
+                ),
+            ],
+        )
+
+        assert results and results[0]["success"] is True, results
+        registry_text = (tmp_path / "shared" / "registry.py").read_text(encoding="utf-8")
+        # The missing symbol is now resolvable
+        assert "Registry" in registry_text
+        # The most useful general fix is an alias to the closest-named class
+        assert "Registry = ServiceRegistry" in registry_text
+        # The importer should now import successfully
+        import sys
+        from importlib import import_module
+
+        sys.path.insert(0, str(tmp_path))
+        try:
+            mod = import_module("shared.registry")
+            assert hasattr(mod, "Registry")
+        finally:
+            sys.path.remove(str(tmp_path))
+            for cached in list(sys.modules):
+                if cached.startswith("shared"):
+                    del sys.modules[cached]
+
+    def test_repairs_missing_symbol_with_class_stub_when_no_similar(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_unresolved_import_symbol_repair,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "shared").mkdir(parents=True)
+        (tmp_path / "shared" / "__init__.py").write_text(
+            "from shared.config import SomeConfig\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "shared" / "config.py").write_text(
+            "SETTING = 1\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_unresolved_import_symbol_repair(
+            adapter,
+            task={"subject": "Fix Python import"},
+            task_id="task-py-2",
+            artifact_quality_errors=[
+                (
+                    "Artifact quality scan failed: unresolved import symbol "
+                    "'SomeConfig' from 'shared.config' in "
+                    "shared/__init__.py"
+                ),
+            ],
+        )
+
+        assert results and results[0]["success"] is True, results
+        config_text = (tmp_path / "shared" / "config.py").read_text(encoding="utf-8")
+        assert "class SomeConfig" in config_text
+
+    def test_idempotent_when_symbol_already_defined(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_unresolved_import_symbol_repair,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "shared").mkdir(parents=True)
+        (tmp_path / "shared" / "__init__.py").write_text(
+            "from shared.registry import Registry\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "shared" / "registry.py").write_text(
+            "class Registry:\n    pass\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_unresolved_import_symbol_repair(
+            adapter,
+            task={"subject": "Fix Python import"},
+            task_id="task-py-3",
+            artifact_quality_errors=[
+                (
+                    "Artifact quality scan failed: unresolved import symbol "
+                    "'Registry' from 'shared.registry' in "
+                    "shared/__init__.py"
+                ),
+            ],
+        )
+        # Symbol already present -> no changes needed
+        assert results == [], results
+        registry_text = (tmp_path / "shared" / "registry.py").read_text(encoding="utf-8")
+        # Must not duplicate the class definition
+        assert registry_text.count("class Registry") == 1
+
+    def test_skips_when_exporter_file_missing(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_unresolved_import_symbol_repair,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "shared").mkdir(parents=True)
+        (tmp_path / "shared" / "__init__.py").write_text(
+            "from shared.missing import Symbol\n",
+            encoding="utf-8",
+        )
+        # shared/missing.py does not exist
+
+        results = _apply_deterministic_unresolved_import_symbol_repair(
+            adapter,
+            task={"subject": "Fix Python import"},
+            task_id="task-py-4",
+            artifact_quality_errors=[
+                (
+                    "Artifact quality scan failed: unresolved import symbol "
+                    "'Symbol' from 'shared.missing' in "
+                    "shared/__init__.py"
+                ),
+            ],
+        )
+        # Cannot create the missing file deterministically -> return empty
+        assert results == [], results
+
+
 class TestDeterministicTypescriptReexportRepair:
     """Director can materialize a narrow TypeScript runtime re-export fix."""
 
