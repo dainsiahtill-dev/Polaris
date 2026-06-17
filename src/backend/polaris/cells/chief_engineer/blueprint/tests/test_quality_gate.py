@@ -131,6 +131,38 @@ class TestQualityGate(unittest.TestCase):
         self.assertTrue(gate.passed)
         self.assertEqual(gate.blocker_count, 0)
 
+    def test_risk_dicts_coerced_from_blueprint_risk_register(self) -> None:
+        # evaluate_quality_gate must coerce risk DICTS (not just RiskRecordV1),
+        # both from the `risks=` arg and the embedded blueprint["risk_register"].
+        gate = evaluate_quality_gate(
+            {
+                "target_files": ["a.py"],
+                "acceptance_criteria": ["a"],
+                "risk_register": [
+                    {
+                        "risk_id": "r-dict",
+                        "task_id": "t1",
+                        "title": "embedded blocker",
+                        "severity": "blocker",
+                        "owner": "ce",
+                        "mitigation": "m",
+                        "status": "open",
+                        "detected_at": "2026-06-17T00:00:00Z",
+                    }
+                ],
+            }
+        )
+        self.assertFalse(gate.passed)
+        self.assertTrue(any("r-dict" in b for b in gate.blockers))
+
+    def test_malformed_risk_dict_is_skipped_not_crash(self) -> None:
+        # A risk dict with an invalid severity must be skipped, not raise.
+        gate = evaluate_quality_gate(
+            {"target_files": ["a.py"], "acceptance_criteria": ["a"]},
+            risks=[{"severity": "bogus", "status": "open", "title": "x"}],
+        )
+        self.assertTrue(gate.passed)
+
     def test_evaluated_at_override(self) -> None:
         gate = evaluate_quality_gate(
             {"target_files": ["a"], "acceptance_criteria": ["a"]},

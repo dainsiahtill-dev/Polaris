@@ -219,7 +219,7 @@ export function ChiefEngineerGovernancePanel({ workspace }: ChiefEngineerGoverna
         </div>
       ) : null}
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <div>
           <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
             Risk Register ({state.risks.length})

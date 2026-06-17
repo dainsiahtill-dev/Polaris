@@ -1924,9 +1924,12 @@ def get_chief_engineer_release_readiness(
     Radar stack policy). Read-only and fail-closed.
     """
     target_workspace = _governance_workspace(request, workspace)
+    # Validate every blueprint id at the boundary (defense-in-depth, mirrors the
+    # handoff-decision route) so an unvalidated id can never reach the filesystem.
+    validated_ids = [_validate_blueprint_id(bid) for bid in _split_csv(blueprint_ids)] or None
     decision = assess_release_readiness(
         target_workspace,
-        blueprint_ids=_split_csv(blueprint_ids) or None,
+        blueprint_ids=validated_ids,
         libraries=_split_csv(libraries) or None,
     )
     return {"ok": True, "workspace": target_workspace, "readiness": decision.to_dict()}

@@ -580,6 +580,40 @@ async def test_release_readiness_clean_is_go(client: AsyncClient, workspace: str
 
 
 @pytest.mark.asyncio
+async def test_tech_radar_ring_unsafe_id_is_400(client: AsyncClient, workspace: str) -> None:
+    resp = await client.post(
+        "/v2/chief-engineer/tech-radar/bad%20id/ring",
+        params={"workspace": workspace},
+        json={"ring": "adopt"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "INVALID_TECH_RADAR_RING"
+
+
+@pytest.mark.asyncio
+async def test_post_mortem_status_unsafe_id_is_400(client: AsyncClient, workspace: str) -> None:
+    resp = await client.post(
+        "/v2/chief-engineer/post-mortems/bad%20id/status",
+        params={"workspace": workspace},
+        json={"status": "closed"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "INVALID_POST_MORTEM_STATUS"
+
+
+@pytest.mark.asyncio
+async def test_release_readiness_rejects_unsafe_blueprint_id(client: AsyncClient, workspace: str) -> None:
+    # A traversal-shaped blueprint_id must be rejected at the boundary (400),
+    # never reaching the filesystem.
+    resp = await client.get(
+        "/v2/chief-engineer/release-readiness",
+        params={"workspace": workspace, "blueprint_ids": "ce_ok,../../etc/passwd"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "INVALID_BLUEPRINT_ID"
+
+
+@pytest.mark.asyncio
 async def test_release_readiness_aggregates_blockers(client: AsyncClient, workspace: str) -> None:
     # An open blocker risk + a deprecated library in scope => NO-GO with two signals.
     await client.post(

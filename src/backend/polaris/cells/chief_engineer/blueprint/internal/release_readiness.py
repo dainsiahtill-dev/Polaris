@@ -30,6 +30,8 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     PostMortemStatus,
     ReleaseDecision,
     ReleaseReadinessV1,
+    RiskSeverity,
+    RiskStatus,
     TechDebtSeverity,
     TechDebtStatus,
 )
@@ -70,9 +72,11 @@ def build_release_readiness(
     risk_register = RiskRegister(workspace, ensure_directory=False)
     all_risks = risk_register.list()
     open_blocker_risks = sum(
-        1 for r in all_risks if r.status.value == "open" and r.severity.value in ("blocker", "critical")
+        1
+        for r in all_risks
+        if r.status == RiskStatus.OPEN and r.severity in (RiskSeverity.BLOCKER, RiskSeverity.CRITICAL)
     )
-    open_high = sum(1 for r in all_risks if r.status.value == "open" and r.severity.value == "high")
+    open_high = sum(1 for r in all_risks if r.status == RiskStatus.OPEN and r.severity == RiskSeverity.HIGH)
     signals["risk"] = {
         "open_critical_or_blocker": open_blocker_risks,
         "open_high": open_high,

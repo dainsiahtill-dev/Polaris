@@ -45,7 +45,9 @@ class TestRollbackLink(unittest.TestCase):
         )
         self.assertEqual(link.strategy, RollbackStrategy.FILE_SNAPSHOT)
 
-    def test_open_blocker_adds_precondition(self) -> None:
+    def test_open_blocker_omits_satisfied_precondition(self) -> None:
+        # preconditions list SATISFIED checks: an open blocker risk means
+        # "no_blocker_risks_open" is NOT satisfied, so it must be ABSENT.
         risks = [
             RiskRecordV1(
                 risk_id="r1",
@@ -64,7 +66,18 @@ class TestRollbackLink(unittest.TestCase):
             blueprint={"target_files": ["a.py"]},
             risks=risks,
         )
+        self.assertNotIn("no_blocker_risks_open", link.preconditions)
+
+    def test_no_open_blocker_lists_satisfied_precondition(self) -> None:
+        # No open blocker risk => the check holds => it IS listed.
+        link = build_rollback_link(
+            workspace=self.workspace,
+            blueprint_id="ce_ok",
+            blueprint={"target_files": ["a.py"]},
+            risks=[],
+        )
         self.assertIn("no_blocker_risks_open", link.preconditions)
+        self.assertIn("target_files_declared", link.preconditions)
 
     def test_no_targets_disables(self) -> None:
         link = build_rollback_link(
@@ -73,7 +86,8 @@ class TestRollbackLink(unittest.TestCase):
             blueprint={},
         )
         self.assertFalse(link.enabled)
-        self.assertIn("target_files_declared", link.preconditions)
+        # No declared targets => "target_files_declared" is NOT satisfied => absent.
+        self.assertNotIn("target_files_declared", link.preconditions)
 
     def test_marker_path_under_state_dir(self) -> None:
         link = build_rollback_link(

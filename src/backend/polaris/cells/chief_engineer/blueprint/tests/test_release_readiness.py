@@ -184,6 +184,53 @@ class TestReleaseReadiness(unittest.TestCase):
         self.assertEqual(decision.decision, ReleaseDecision.NO_GO)
         self.assertTrue(any("not found" in b for b in decision.blockers))
 
+    def test_conditional_go_multi_signal_aggregation(self) -> None:
+        # Three warning-level signals across different sources => CONDITIONAL_GO
+        # with warning_count == 3 and zero blockers.
+        register_risk(
+            RegisterRiskCommandV1(
+                task_id="t1",
+                title="edge case",
+                severity=RiskSeverity.HIGH,
+                owner="ce",
+                mitigation="m",
+                workspace=self.workspace,
+            )
+        )
+        register_post_mortem(
+            RegisterPostMortemCommandV1(
+                title="degraded",
+                severity=IncidentSeverity.SEV2,
+                occurred_at="t",
+                owner="ce",
+                workspace=self.workspace,
+            )
+        )
+        register_tech_debt(
+            RegisterTechDebtCommandV1(
+                title="manual escaping",
+                description="",
+                severity=TechDebtSeverity.SEVERE,
+                surface="src/db.py",
+                owner="ce",
+                workspace=self.workspace,
+            )
+        )
+        decision = assess_release_readiness(self.workspace)
+        self.assertEqual(decision.decision, ReleaseDecision.CONDITIONAL_GO)
+        self.assertEqual(decision.blocker_count, 0)
+        self.assertEqual(decision.warning_count, 3)
+        self.assertEqual(decision.signals["risk"]["open_high"], 1)
+        self.assertEqual(decision.signals["post_mortem"]["open_sev2"], 1)
+        self.assertEqual(decision.signals["tech_debt"]["unpaid_severe"], 1)
+
+    def test_missing_blueprint_signal_structure(self) -> None:
+        decision = assess_release_readiness(self.workspace, blueprint_ids=["ce_missing"])
+        self.assertEqual(decision.decision, ReleaseDecision.NO_GO)
+        self.assertEqual(decision.signals["quality_gate"]["assessed"], 1)
+        self.assertEqual(decision.signals["quality_gate"]["blocked"], 1)
+        self.assertTrue(any("not found" in b for b in decision.blockers))
+
     def test_signals_always_present(self) -> None:
         decision = assess_release_readiness(self.workspace)
         for key in ("risk", "quality_gate", "post_mortem", "stack_policy", "tech_debt"):

@@ -8,9 +8,12 @@ state:
   - ``.git`` present  -> ``git_revert``
   - otherwise         -> ``file_snapshot``
 
-Preconditions:
-  - "no_blocker_risks_open" — caller-supplied risk list is consulted
-  - "blueprint_persisted" — implicit; the blueprint JSON must be on disk
+Preconditions are SATISFIED-state checks — each is listed only when it
+currently holds, so a consumer reads the ABSENCE of a check as "not yet
+satisfied" (a gate still to clear before rollback is safe):
+  - "blueprint_persisted" — baseline; always listed.
+  - "no_blocker_risks_open" — listed only when NO open blocker/critical risk.
+  - "target_files_declared" — listed only when the blueprint declares targets.
 """
 
 from __future__ import annotations
@@ -90,16 +93,19 @@ def build_rollback_link(
     strategy = RollbackStrategy.GIT_REVERT if _has_git(workspace) else RollbackStrategy.FILE_SNAPSHOT
     marker_path = _marker_path(workspace, blueprint_id)
 
-    # Determine preconditions.
+    # Determine preconditions. ``preconditions`` lists the safe-state checks
+    # that CURRENTLY HOLD for this rollback — a condition is listed only when
+    # it is satisfied (consistent with the always-satisfied "blueprint_persisted"
+    # baseline). A consumer reads the ABSENCE of a check as "not yet satisfied".
     preconditions: list[str] = ["blueprint_persisted"]
     risk_source: Iterable[Any] = risks if risks is not None else ()
     if not risk_source and isinstance(blueprint, Mapping):
         embedded = blueprint.get("risk_register")
         if isinstance(embedded, (list, tuple)):
             risk_source = embedded
-    if _has_open_blocker(risk_source):
+    if not _has_open_blocker(risk_source):
         preconditions.append("no_blocker_risks_open")
-    if not target_files:
+    if target_files:
         preconditions.append("target_files_declared")
 
     enabled = bool(blueprint_id and workspace and target_files)

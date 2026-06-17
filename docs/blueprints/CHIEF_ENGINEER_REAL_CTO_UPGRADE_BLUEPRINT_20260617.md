@@ -46,6 +46,41 @@ NO-GO that aggregates ALL existing signals into one decision.
   GO/NO-GO banner atop the governance panel (advisory — a fetch failure never
   blanks the panel).
 
+## Whole-surface audit (2026-06-17)
+
+A 13-agent multi-dimensional workflow (correctness · security · §8 ·
+integration · coverage · frontend · efficiency) swept all 9 capabilities,
+each finding adversarially verified to filter false positives. Outcome —
+1 blocker + 10 majors + 12 minors confirmed; the actionable ones fixed:
+
+- **Fixed (blocker):** governance-panel grid was `xl:grid-cols-4` with 5
+  columns → `lg:grid-cols-3 xl:grid-cols-5`.
+- **Fixed (major, correctness):** `rollback_link` preconditions were
+  inverted — `preconditions` lists SATISFIED safe-state checks (consistent
+  with the always-listed `blueprint_persisted` baseline), so
+  `no_blocker_risks_open` / `target_files_declared` are now listed only when
+  satisfied; docstrings clarified; tests flipped.
+- **Fixed (major, security):** the release-readiness `blueprint_ids` query
+  param is now validated via `_validate_blueprint_id` at the HTTP boundary
+  (defense-in-depth; mirrors the handoff-decision route).
+- **Fixed (major, coverage):** added tests for CONDITIONAL_GO multi-signal
+  aggregation, missing-blueprint signal structure, Quality-Gate risk-dict
+  coercion (+ malformed-dict skip), handoff env-flag parsing, and
+  HTTP-boundary traversal rejection for the tech-radar and post-mortem id
+  routes + release-readiness blueprint_ids.
+- **Polish (minor):** release-readiness risk counting now uses enum
+  comparisons (codebase consistency) instead of `.value` string compares.
+
+**Accepted tradeoffs (documented, not fixed):**
+- HTTP list routes call `list_*` then `summarize_*` (two dir globs). On
+  governance dirs (tens of records) the second glob is microseconds; a
+  10-file refactor to thread records through `summarize` is over-engineering
+  per §4.2. Accepted.
+- Tech-radar list response uses `entries` while other ledgers use a domain
+  stem key — cosmetic; a generic client special-cases one key. Accepted.
+- Handoff-enforcement status is not surfaced in the diagnostics endpoint —
+  observability nicety, low value. Deferred.
+
 ## Lifecycle coverage (9 capabilities — surface complete)
 
 plan (blueprint) → anticipate (Risk) → gate (Quality Gate) → enforce

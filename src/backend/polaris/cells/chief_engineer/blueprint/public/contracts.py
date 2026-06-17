@@ -560,7 +560,10 @@ class RollbackLinkV1:
         enabled: Whether rollback is provisioned for this blueprint.
         strategy: ``RollbackStrategy`` member.
         marker_path: Path to the stash / snapshot / manifest.
-        preconditions: Required pre-state (e.g. ``"no_blocker_risks_open"``).
+        preconditions: Safe-state checks that CURRENTLY HOLD for this rollback.
+            Each is listed only when satisfied (e.g. ``"no_blocker_risks_open"``
+            appears only when no open blocker/critical risk exists); a check's
+            ABSENCE means it is not yet satisfied — a gate still to clear.
     """
 
     enabled: bool

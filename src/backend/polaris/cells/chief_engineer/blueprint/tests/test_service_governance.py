@@ -120,7 +120,9 @@ class TestServiceGovernance(unittest.TestCase):
             data = json.load(handle)
         self.assertFalse(data["handoff_ready"])
         self.assertGreaterEqual(data["governance"]["quality_gate"]["blocker_count"], 1)
-        self.assertIn(
+        # preconditions list SATISFIED checks; with an open blocker risk the
+        # "no_blocker_risks_open" check is NOT satisfied, so it must be absent.
+        self.assertNotIn(
             "no_blocker_risks_open",
             data["governance"]["rollback"]["preconditions"],
         )
@@ -252,6 +254,31 @@ class TestServiceGovernance(unittest.TestCase):
 
     def test_get_blueprint_governance_missing_returns_none(self) -> None:
         self.assertIsNone(get_blueprint_governance(self.workspace, "ce_does_not_exist"))
+
+    def test_handoff_enforcement_flag_parsing(self) -> None:
+        import os
+
+        from polaris.cells.chief_engineer.blueprint.internal.handoff import (
+            handoff_enforcement_enabled,
+        )
+
+        flag = "KERNELONE_CE_HANDOFF_ENFORCEMENT"
+        original = os.environ.get(flag)
+        try:
+            for truthy in ("1", "true", "TRUE", "yes", "on", "  On  "):
+                os.environ[flag] = truthy
+                self.assertTrue(handoff_enforcement_enabled(), truthy)
+            for falsy in ("0", "false", "no", "off", "", "maybe"):
+                os.environ[flag] = falsy
+                self.assertFalse(handoff_enforcement_enabled(), falsy)
+            # Default OFF when unset.
+            os.environ.pop(flag, None)
+            self.assertFalse(handoff_enforcement_enabled())
+        finally:
+            if original is None:
+                os.environ.pop(flag, None)
+            else:
+                os.environ[flag] = original
 
     def test_handoff_decision_allows_clean_blueprint(self) -> None:
         decision = evaluate_handoff_decision(
