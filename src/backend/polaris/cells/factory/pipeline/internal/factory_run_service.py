@@ -2303,6 +2303,44 @@ class FactoryRunService:
         payload.setdefault("event_id", f"evt_{uuid.uuid4().hex[:12]}")
         payload.setdefault("timestamp", self._now())
         await self.store.append_event(run_id, payload)
+        # Best-effort NAT JetStream fanout so the unified WebSocket pipeline
+        # (``event.factory:<run_id>`` channel) can stream these events to
+        # subscribers without the legacy factory SSE wire format. The
+        # subject is the same one the previous ``sse_jetstream_consumer``
+        # was reading from; the publish path was simply never wired up,
+        # which is why the old SSE endpoint had to fall back to JSONL
+        # polling. The factory run stays the source of truth (durable on
+        # disk); the JetStream stream is a best-effort fanout.
+        try:
+            from polaris.delivery.http.routers.sse_utils import (
+                publish_to_jetstream,
+            )
+            from polaris.infrastructure.messaging.nats.nats_types import (
+                JetStreamConstants,
+            )
+            workspace_key = self.workspace.name if self.workspace else ""
+            if not workspace_key:
+                return
+            subject = f"hp.runtime.{workspace_key}.event.factory.{run_id}"
+            envelope = {
+                "schema_version": "runtime.v2",
+                "event_id": payload.get("event_id"),
+                "workspace_key": workspace_key,
+                "run_id": run_id,
+                "channel": "event.factory",
+                "kind": str(payload.get("type") or payload.get("kind") or "factory.event"),
+                "ts": payload.get("timestamp"),
+                "cursor": 0,
+                "trace_id": None,
+                "payload": payload,
+                "meta": {"source": "factory_run_service"},
+            }
+            await publish_to_jetstream(
+                subject=subject,
+                payload=envelope,
+            )
+        except (RuntimeError, ValueError, TypeError) as exc:
+            logger.debug("factory JetStream fanout failed for run %s: %s", run_id, exc)
 
     def _trigger_archive(self, run_id: str, reason: str) -> None:
         """Trigger async archiving of factory run to history.

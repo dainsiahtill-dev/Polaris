@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from polaris.cells.factory.pipeline.internal.bench_service import (
     FactoryBenchService,
 )
@@ -1307,6 +1308,7 @@ async def _get_factory_run_audit_bundle_core(
         events_tail_limit=limit,
     )
     return FactoryRunAuditBundleResponse(**bundle)
+
 
 
 async def _control_factory_run_core(

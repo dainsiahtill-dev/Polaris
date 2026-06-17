@@ -1,5 +1,5 @@
 /**
- * Tests for useFactory hook — factory events now flow through the
+ * Tests for useFactory hook — the factory events now flow through the
  * platform's unified WebSocket + NAT JetStream pipeline (no SSE, no
  * EventSource). We mock the transport's subscribeChannels and
  * registerMessageHandler instead of the legacy connectFactoryStream.
@@ -143,7 +143,7 @@ describe('useFactory', () => {
   });
 
   it('starts a run and auto-connects the stream', async () => {
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
 
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
@@ -155,7 +155,7 @@ describe('useFactory', () => {
   });
 
   it('fetches artifacts and summary when a current run is available', async () => {
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
     });
@@ -165,13 +165,14 @@ describe('useFactory', () => {
   });
 
   it('replaces currentRun from status events and stops on done', async () => {
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
     });
     expect(result.current.currentRun?.run_id).toBe('run-1');
 
     await act(async () => {
+      // Status envelope.
       lastMessageHandler?.(
         envelope(
           { ...baseRun, progress: 50, current_stage: 'director_dispatch' },
@@ -182,6 +183,7 @@ describe('useFactory', () => {
     expect(result.current.currentRun?.progress).toBe(50);
 
     await act(async () => {
+      // Complete envelope (terminal).
       lastMessageHandler?.(
         envelope(
           { ...baseRun, status: 'completed', phase: 'completed', progress: 100 },
@@ -193,7 +195,7 @@ describe('useFactory', () => {
   });
 
   it('refreshes artifacts after stream done', async () => {
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
     });
@@ -212,7 +214,7 @@ describe('useFactory', () => {
   });
 
   it('uses stop response as the terminal snapshot', async () => {
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {
       const stopped = await result.current.stopRun('run-1');
       expect(stopped?.status).toBe('cancelled');
@@ -220,7 +222,7 @@ describe('useFactory', () => {
   });
 
   it('exposes pause, resume and retry controls through the canonical factory control API', async () => {
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.pauseRun('run-1');
     });
@@ -230,12 +232,14 @@ describe('useFactory', () => {
     });
     expect(resumeFactoryRunMock).toHaveBeenCalledWith('run-1', undefined);
     await act(async () => {
-      await result.current.retryRunFromCheckpoint('run-1');
+      await result.current.retryFromCheckpoint('run-1');
     });
     expect(retryFactoryRunFromCheckpointMock).toHaveBeenCalledWith('run-1', undefined);
   });
 
   it('falls back to fetch and reconnects after connection errors', async () => {
+    // First subscribe call throws — the hook should still resolve startRun
+    // (returning the run, not throwing), then re-attempt the subscription.
     let subscribeCalls = 0;
     transportSubscribeMock.mockImplementation(() => {
       subscribeCalls += 1;
@@ -245,11 +249,12 @@ describe('useFactory', () => {
       return () => {};
     });
 
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {
       const run = await result.current.startRun({ workspace: 'ws' });
       expect(run?.run_id).toBe('run-1');
     });
+    // Hook did not crash; first subscribe failed but it was caught.
     expect(subscribeCalls).toBeGreaterThanOrEqual(1);
   });
 
@@ -261,7 +266,7 @@ describe('useFactory', () => {
     transportSubscribeMock.mockImplementation(() => {
       throw new Error('transient');
     });
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
     });
@@ -276,7 +281,7 @@ describe('useFactory', () => {
     transportSubscribeMock.mockImplementation(() => {
       throw new Error('transient');
     });
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
     });
@@ -284,7 +289,7 @@ describe('useFactory', () => {
   });
 
   it('resumes the latest non-terminal run for the active workspace', async () => {
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await waitFor(() => {
       expect(result.current.currentRun?.run_id).toBe('run-1');
     });
@@ -296,7 +301,7 @@ describe('useFactory', () => {
       ok: true,
       data: [{ ...baseRun, status: 'cancelled', phase: 'cancelled' }],
     });
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await waitFor(() => {
       expect(result.current.currentRun?.status).toBe('cancelled');
     });
@@ -307,14 +312,14 @@ describe('useFactory', () => {
       ok: true,
       data: [{ ...baseRun, phase: 'completed', status: 'running' }],
     });
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await waitFor(() => {
       expect(result.current.currentRun?.phase).toBe('completed');
     });
   });
 
   it('disconnects and clears stale state when workspace changes', async () => {
-    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
     });
