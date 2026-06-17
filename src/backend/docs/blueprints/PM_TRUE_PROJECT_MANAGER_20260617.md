@@ -125,10 +125,23 @@ Verified: governance gate `new_issue_count == 0`, zero issue records referencing
    stamps the UTC clock into `generated_at`, calls the core, and writes `pm.status.md` +
    `pm.status.json`.
 
-Later: WSJF prioritization (consumes #3 critical-path criticality), milestones
-registry, durable decision log, change-request register, failure-driven replan,
-stakeholder-clarification tool, consolidate the unwired orchestrators, restore the
-PMRole RoleBase interface.
+5. **WSJF prioritization** — ← **LANDED** (`wsjf.py`, 85 tests). A pure, §8-clean
+   `score_tasks_wsjf(tasks, schedule, *, raid_pressure_by_task=...)` computing
+   WSJF = Cost of Delay / Job Size (SAFe): job_size reuses #3's `schedule.weights`
+   verbatim (§7); Cost of Delay = business `value` + a deterministic time-criticality
+   (optional field + inverse raw-priority + a critical-path-membership boost from #3) +
+   risk-reduction (optional field + an open-critical/blocker-RAID boost from #2, folded
+   as plain data). Ranks highest-WSJF-first with a deterministic tie-break; frozen
+   `WsjfScore` + `render_wsjf_markdown`. Fail-closed (junk RAID values coerce, never
+   raise) and overflow-clamped (WSJF stays finite + JSON-safe). Imports only stdlib +
+   `.dependency_validator`; governance gate `new_issue_count == 0`; the three live
+   raw-priority sort sites (`pipeline.py:754`, `pm_agent.py:183`,
+   `shangshuling_registry.py:166`) are untouched (deferred default-off wiring). Floor-safe.
+
+Later: milestones registry, durable decision log, change-request register,
+failure-driven replan, stakeholder-clarification tool, consolidate the unwired
+orchestrators, restore the PMRole RoleBase interface, and the gated live-path wiring of
+the five landed cores (each behind a default-off env gate + L2-floor re-verify).
 
 ## 4. Increment #3 design — `compute_schedule`
 
