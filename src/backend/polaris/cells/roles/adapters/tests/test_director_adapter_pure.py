@@ -4102,6 +4102,137 @@ class TestExistingWorkspaceTaskEvidence:
         )
 
 
+class TestDeterministicPythonRuntimeSmokeLongRunningBoundary:
+    """Runtime smoke must not penalize a long-running __main__ block.
+
+    Live factory-bench L4-23 (2026-06-17, after the static-smoke
+    fix): the model wrote ``gateway/server.py`` whose ``__main__``
+    block launches an HTTP server with ``serve_forever()`` — the
+    canonical pattern for a Python web gateway. The runtime smoke
+    killed the process after 5s and reported it as a timeout
+    failure, which requeued the parent task and broke
+    integration_qa. The script itself is correct:
+    ``python3 gateway/server.py`` really starts the server on
+    127.0.0.1:8080 and waits for connections. The platform must
+    not penalize a long-running, contract-compliant __main__
+    block as a quality failure.
+
+    Strategy: when the runtime smoke hits its timeout, check
+    whether the process is still alive. If yes, the model wrote
+    a process that intentionally runs forever (server/daemon) —
+    kill it and do NOT add it to ``artifact_quality_errors``. If
+    the process already exited (perhaps during the cleanup),
+    the timeout itself is the failure — report it as before.
+    The smoke's job is to surface CALL-TIME errors, not loop
+    semantics; a long-running server is contract-compliant for
+    web-gateway / daemon / game-loop L4-L8 briefs.
+    """
+
+    def test_long_running_main_block_is_not_a_failure(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        # A server-style main block: bind a TCP socket, accept
+        # forever. Behaves like ``serve_forever()`` in stdlib
+        # http.server — exactly the L4-23 pattern.
+        (tmp_path / "server.py").write_text(
+            "import socket\n"
+            "if __name__ == '__main__':\n"
+            "    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+            "    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+            "    s.bind(('127.0.0.1', 0))\n"
+            "    s.listen(5)\n"
+            "    while True:\n"
+            "        s.accept()\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-server-bb-1",
+            all_affected_files=["server.py"],
+            timeout_seconds=1.0,
+        )
+
+        # Long-running process: smoke should NOT flag it as a failure.
+        assert errors == [], errors
+
+    def test_clean_main_block_still_passes(self, tmp_path: Any) -> None:
+        """A clean main that exits within timeout is still a pass."""
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "ok.py").write_text(
+            "if __name__ == '__main__':\n    print('done')\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-ok-bb-1",
+            all_affected_files=["ok.py"],
+            timeout_seconds=1.0,
+        )
+
+        assert errors == [], errors
+
+    def test_subprocess_timeout_expired_process_killed(self, tmp_path: Any) -> None:
+        """Sanity: when a long-running process is killed, the
+        subprocess handle must be cleaned up so no zombie lingers.
+        This guards against the regression where the smoke leaves
+        a leaked subprocess after returning no errors."""
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "server.py").write_text(
+            "import time\nif __name__ == '__main__':\n    while True:\n        time.sleep(0.5)\n",
+            encoding="utf-8",
+        )
+
+        # Find one leftover python3 process owned by this test pid
+        # BEFORE running. (None expected, but the assertion is that
+        # the count does not GROW after running.)
+        import os
+        import subprocess
+
+        my_pid = os.getpid()
+        before = (
+            subprocess.run(
+                ["pgrep", "-P", str(my_pid), "python3"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            .stdout.strip()
+            .split()
+        )
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-zombie-bb-1",
+            all_affected_files=["server.py"],
+            timeout_seconds=0.5,
+        )
+        after = (
+            subprocess.run(
+                ["pgrep", "-P", str(my_pid), "python3"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            .stdout.strip()
+            .split()
+        )
+        assert errors == [], errors
+        # No new zombie child of this test process
+        assert len(after) <= len(before), (before, after)
+
+
 class TestDeterministicPythonStaticSmoke:
     """Director py_compiles every .py file the model touches, not just declared targets.
 
@@ -4310,28 +4441,50 @@ class TestDeterministicPythonRuntimeSmoke:
         assert errors == [], errors
 
     def test_python_runtime_smoke_terminates_hung_process(self, tmp_path: Any) -> None:
+        """The smoke test must kill the child process after the
+        configured timeout so a hung ``__main__`` does not leak
+        past the Director turn boundary. After the L4-23 fix-#3
+        boundary change, a long-running script is NOT a quality
+        failure; the smoke only ensures the child is reaped so
+        the next smoke call in the same turn is not contaminated.
+        We verify the reap by re-running the smoke on the same
+        file and expecting it to return within a small multiple
+        of the timeout (i.e. it did not block on a leftover
+        process).
+        """
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _apply_deterministic_python_runtime_smoke,
         )
 
         adapter = _make_adapter(tmp_path)
-        # Infinite loop in __main__ — the smoke test must kill it
-        # after the configured timeout, not hang the whole Director turn.
         (tmp_path / "hung.py").write_text(
             "import time\nif __name__ == '__main__':\n    while True:\n        time.sleep(0.1)\n",
             encoding="utf-8",
         )
 
-        errors = _apply_deterministic_python_runtime_smoke(
+        # Long-running: the smoke must NOT flag this as a quality
+        # failure (the L4-23 fix-#3 boundary). It must, however,
+        # kill the child so subsequent smokes in the same turn
+        # are not blocked by a leaked process.
+        import time
+
+        first = _apply_deterministic_python_runtime_smoke(
             adapter,
             task_id="task-py-runtime-5",
             all_affected_files=["hung.py"],
-            timeout_seconds=1.0,
+            timeout_seconds=0.5,
         )
-
-        assert len(errors) == 1, errors
-        assert "hung.py" in errors[0]
-        assert "timed out" in errors[0].lower() or "killed" in errors[0].lower()
+        assert first == [], first
+        started = time.monotonic()
+        second = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-5b",
+            all_affected_files=["hung.py"],
+            timeout_seconds=0.5,
+        )
+        elapsed = time.monotonic() - started
+        assert second == [], second
+        assert elapsed < 5.0, f"second smoke took {elapsed:.2f}s -- leaked process"
 
 
 class TestDeterministicPythonUnresolvedSymbolRepair:

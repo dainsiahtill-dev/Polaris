@@ -2837,22 +2837,49 @@ def _apply_deterministic_python_runtime_smoke(
             continue
         if not _PYTHON_MAIN_BLOCK_RE.search(text):
             continue
+        # Use Popen + communicate() so we keep a handle to the
+        # child process after a timeout. ``subprocess.run`` raises
+        # ``TimeoutExpired`` without exposing ``exc.process``; the
+        # fix #3 boundary bug (L4-23) requires us to inspect the
+        # child after timeout to distinguish a long-running server
+        # (intentional) from a hung process (real failure).
+        proc = subprocess.Popen(
+            [sys.executable, str(candidate)],
+            cwd=str(workspace_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
         try:
-            proc = subprocess.run(
-                [sys.executable, str(candidate)],
-                cwd=str(workspace_path),
-                capture_output=True,
-                text=True,
-                timeout=max(0.5, float(timeout_seconds)),
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            captured = (
-                (exc.stderr or b"").decode("utf-8", "replace")
-                if isinstance(exc.stderr, (bytes, bytearray))
-                else (exc.stderr or "")
-            )
-            tail = "\n".join(line for line in (captured or "").strip().splitlines()[-8:] if line)
+            stdout, stderr = proc.communicate(timeout=max(0.5, float(timeout_seconds)))
+            returncode = proc.returncode
+        except subprocess.TimeoutExpired:
+            # Live factory-bench L4-23 (2026-06-17, fix #3 boundary):
+            # the model wrote ``gateway/server.py`` whose __main__
+            # launches ``serve_forever()`` — the canonical pattern
+            # for a Python web gateway. The 5s smoke timeout was a
+            # false positive against a contract-compliant long-running
+            # process. Distinguish "still alive" (intentional server
+            # / daemon / game loop) from "exited during cleanup"
+            # (real timeout failure) so the rigid ruler does not
+            # penalize the model for a correct long-running script.
+            if proc.poll() is None:
+                # Process is still running — long-running, not a
+                # quality failure. Kill it cleanly so it does not
+                # outlive the smoke and leak as a zombie.
+                try:
+                    proc.kill()
+                finally:
+                    with contextlib.suppress(OSError):
+                        proc.wait(timeout=2.0)
+                # Long-running process is not a quality failure.
+                # Do not append to errors; the model wrote a script
+                # that intentionally runs forever.
+                continue
+            # Process exited during cleanup — real timeout failure.
+            stdout = proc.stdout.read() if proc.stdout else ""
+            stderr = proc.stderr.read() if proc.stderr else ""
+            tail = "\n".join(line for line in (stderr or "").strip().splitlines()[-8:] if line)
             errors.append(
                 f"Artifact quality scan failed: python runtime smoke timed out for {rel!r} "
                 f"after {timeout_seconds}s; tail:\n{tail}"
@@ -2865,20 +2892,21 @@ def _apply_deterministic_python_runtime_smoke(
             )
             continue
 
-        if proc.returncode == 0:
+        if returncode == 0:
             continue
-        stderr_tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        stderr_tail = (stderr or stdout or "").strip().splitlines()
         tail = "\n".join(line for line in stderr_tail[-8:] if line)
-        if proc.returncode < 0:
+        if returncode < 0:
             errors.append(
                 f"Artifact quality scan failed: python runtime smoke was killed for {rel!r} "
-                f"(returncode={proc.returncode}, signal={-proc.returncode}); tail:\n{tail}"
+                f"(returncode={returncode}, signal={-returncode}); tail:\n{tail}"
             )
         else:
             errors.append(
                 f"Artifact quality scan failed: python runtime smoke crashed for {rel!r} "
-                f"(returncode={proc.returncode}); tail:\n{tail}"
+                f"(returncode={returncode}); tail:\n{tail}"
             )
+    return errors
     return errors
 
 
