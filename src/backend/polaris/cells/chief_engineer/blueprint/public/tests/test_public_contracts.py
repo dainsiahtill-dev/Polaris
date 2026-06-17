@@ -7,6 +7,7 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     ChiefEngineerBlueprintErrorV1,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
+    HandoffDecisionV1,
     RegisterRiskCommandV1,
     RegisterTechDebtCommandV1,
     RiskRecordV1,
@@ -73,6 +74,48 @@ class TestGovernanceEnumFailClosed:
             detected_at="2026-06-17T00:00:00Z",
         )
         assert record.severity is RiskSeverity.BLOCKER
+
+
+class TestHandoffDecisionContract:
+    """Director-handoff decision contract invariants."""
+
+    def test_negative_count_raises(self) -> None:
+        with pytest.raises(ValueError):
+            HandoffDecisionV1(
+                allowed=False,
+                blueprint_id="ce_x",
+                blocker_count=-1,
+                warning_count=0,
+                open_blocker_risk_count=0,
+            )
+
+    def test_empty_blueprint_id_raises(self) -> None:
+        with pytest.raises(ValueError):
+            HandoffDecisionV1(
+                allowed=True,
+                blueprint_id="",
+                blocker_count=0,
+                warning_count=0,
+                open_blocker_risk_count=0,
+            )
+
+    def test_to_dict_round_trips(self) -> None:
+        decision = HandoffDecisionV1(
+            allowed=False,
+            blueprint_id="ce_x",
+            blocker_count=2,
+            warning_count=1,
+            open_blocker_risk_count=1,
+            task_id="t1",
+            blockers=("a", "b"),
+            reason="2 quality-gate blocker(s)",
+            evaluated_at="2026-06-17T00:00:00Z",
+        )
+        data = decision.to_dict()
+        assert data["allowed"] is False
+        assert data["blocker_count"] == 2
+        assert data["blockers"] == ["a", "b"]
+        assert data["open_blocker_risk_count"] == 1
 
 
 class TestGenerateTaskBlueprintCommandV1HappyPath:

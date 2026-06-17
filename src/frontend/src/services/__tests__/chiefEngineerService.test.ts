@@ -18,7 +18,15 @@ import {
   getChiefEngineerBlueprint,
   getChiefEngineerBlueprintStatus,
   listChiefEngineerBlueprints,
+  checkChiefEngineerStackPolicy,
+  getChiefEngineerHandoffDecision,
   listChiefEngineerADRs,
+  listChiefEngineerPostMortems,
+  listChiefEngineerTechRadar,
+  registerChiefEngineerPostMortem,
+  registerChiefEngineerTechRadar,
+  updateChiefEngineerPostMortemStatus,
+  updateChiefEngineerTechRadarRing,
   listChiefEngineerRisks,
   listChiefEngineerTechDebt,
   registerChiefEngineerADR,
@@ -455,6 +463,114 @@ describe('chiefEngineerService', () => {
       '/v2/chief-engineer/adrs/adr%201/status?workspace=ws',
       { status: 'accepted', note: 'ratified' },
       'Failed to update Chief Engineer ADR status',
+    );
+  });
+
+  // ── Tier-2 gate enforcement: Director-handoff decision ────────────────
+
+  it('fetches the handoff decision with encoded query params', async () => {
+    mockApiGet.mockResolvedValueOnce({
+      ok: true,
+      data: { ok: true, decision: { allowed: true } },
+    });
+
+    await getChiefEngineerHandoffDecision('ce id', 'ws');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/handoff-decision?blueprint_id=ce+id&workspace=ws',
+      'Failed to load Chief Engineer handoff decision',
+    );
+  });
+
+  // ── Tier-2 stack/library policy: Tech Radar ───────────────────────────
+
+  it('registers a tech radar entry', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true, entry: {} } });
+
+    await registerChiefEngineerTechRadar(
+      { library: 'moment.js', ring: 'hold', owner: 'ce', rationale: 'unmaintained' },
+      'ws',
+    );
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/tech-radar?workspace=ws',
+      { library: 'moment.js', ring: 'hold', owner: 'ce', rationale: 'unmaintained' },
+      'Failed to register Chief Engineer tech radar entry',
+    );
+  });
+
+  it('lists tech radar entries with a ring filter', async () => {
+    mockApiGet.mockResolvedValueOnce({ ok: true, data: { ok: true, total: 0, entries: [], summary: {} } });
+
+    await listChiefEngineerTechRadar('hold', 'ws');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/tech-radar?workspace=ws&ring=hold',
+      'Failed to list Chief Engineer tech radar',
+    );
+  });
+
+  it('updates a tech radar ring with an encoded id', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true, entry: {} } });
+
+    await updateChiefEngineerTechRadarRing('radar 1', 'adopt', 'proven', 'ws');
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/tech-radar/radar%201/ring?workspace=ws',
+      { ring: 'adopt', note: 'proven' },
+      'Failed to update Chief Engineer tech radar ring',
+    );
+  });
+
+  it('checks a list of libraries against the stack policy', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true, allowed: true, violations: [] } });
+
+    await checkChiefEngineerStackPolicy(['react', 'jquery'], 'ws');
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/stack-policy/check?workspace=ws',
+      { libraries: ['react', 'jquery'] },
+      'Failed to check Chief Engineer stack policy',
+    );
+  });
+
+  // ── Tier-2 incident learning: Post-Mortem ─────────────────────────────
+
+  it('records a post-mortem', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true, post_mortem: {} } });
+
+    await registerChiefEngineerPostMortem(
+      { title: 'outage', severity: 'sev1', occurred_at: 't', owner: 'ce' },
+      'ws',
+    );
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/post-mortems?workspace=ws',
+      { title: 'outage', severity: 'sev1', occurred_at: 't', owner: 'ce' },
+      'Failed to record Chief Engineer post-mortem',
+    );
+  });
+
+  it('lists post-mortems with severity and status filters', async () => {
+    mockApiGet.mockResolvedValueOnce({ ok: true, data: { ok: true, total: 0, post_mortems: [], summary: {} } });
+
+    await listChiefEngineerPostMortems({ severity: 'sev1', status: 'published' }, 'ws');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/post-mortems?workspace=ws&severity=sev1&status=published',
+      'Failed to list Chief Engineer post-mortems',
+    );
+  });
+
+  it('updates a post-mortem status with an encoded id', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true, post_mortem: {} } });
+
+    await updateChiefEngineerPostMortemStatus('incident 1', 'published', 'reviewed', 'ws');
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/post-mortems/incident%201/status?workspace=ws',
+      { status: 'published', note: 'reviewed' },
+      'Failed to update Chief Engineer post-mortem status',
     );
   });
 });

@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
+    ChiefEngineerBlueprintErrorV1,
     GenerateTaskBlueprintCommandV1,
     ListRisksQueryV1,
     ListTechDebtQueryV1,
@@ -25,8 +26,11 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     UpdateTechDebtStatusCommandV1,
 )
 from polaris.cells.chief_engineer.blueprint.public.service import (
+    assert_handoff_ready,
     attach_governance_to_blueprint,
     build_blueprint_governance,
+    evaluate_handoff_decision,
+    evaluate_handoff_decision_for_blueprint,
     generate_task_blueprint,
     get_blueprint_governance,
     get_blueprint_status,
@@ -248,6 +252,83 @@ class TestServiceGovernance(unittest.TestCase):
 
     def test_get_blueprint_governance_missing_returns_none(self) -> None:
         self.assertIsNone(get_blueprint_governance(self.workspace, "ce_does_not_exist"))
+
+    def test_handoff_decision_allows_clean_blueprint(self) -> None:
+        decision = evaluate_handoff_decision(
+            self.workspace,
+            blueprint={
+                "blueprint_id": "ce_ok",
+                "task_id": "task-ok",
+                "target_files": ["a.py"],
+                "acceptance_criteria": ["a"],
+            },
+        )
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.reason, "handoff_ready")
+        self.assertEqual(decision.blocker_count, 0)
+
+    def test_handoff_decision_blocks_on_missing_contract(self) -> None:
+        decision = evaluate_handoff_decision(
+            self.workspace,
+            blueprint={"blueprint_id": "ce_bad", "task_id": "task-bad", "target_files": []},
+        )
+        self.assertFalse(decision.allowed)
+        self.assertGreaterEqual(decision.blocker_count, 1)
+
+    def test_handoff_decision_blocks_on_open_blocker_risk(self) -> None:
+        register_risk(
+            RegisterRiskCommandV1(
+                task_id="task-risk",
+                title="data loss",
+                severity=RiskSeverity.BLOCKER,
+                owner="ce",
+                mitigation="m",
+                workspace=self.workspace,
+            )
+        )
+        decision = evaluate_handoff_decision(
+            self.workspace,
+            blueprint={
+                "blueprint_id": "ce_r",
+                "task_id": "task-risk",
+                "target_files": ["a.py"],
+                "acceptance_criteria": ["a"],
+            },
+        )
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.open_blocker_risk_count, 1)
+        # The open blocker risk is also surfaced as a quality-gate blocker.
+        self.assertGreaterEqual(decision.blocker_count, 1)
+        self.assertTrue(any("risk" in b for b in decision.blockers))
+
+    def test_assert_handoff_ready_raises_when_blocked(self) -> None:
+        with self.assertRaises(ChiefEngineerBlueprintErrorV1) as ctx:
+            assert_handoff_ready(
+                self.workspace,
+                blueprint={"blueprint_id": "ce_x", "task_id": "t", "target_files": []},
+            )
+        self.assertEqual(ctx.exception.code, "handoff_blocked")
+        self.assertIn("blocker", ctx.exception.details.get("reason", ""))
+
+    def test_evaluate_handoff_decision_for_blueprint_reads_persisted(self) -> None:
+        result = generate_task_blueprint(
+            GenerateTaskBlueprintCommandV1(
+                task_id="task-hd",
+                workspace=self.workspace,
+                objective="ship",
+                context={
+                    "task_title": "HD",
+                    "acceptance_criteria": ["a"],
+                    "execution_checklist": ["x"],
+                    "target_files": ["a.py"],
+                },
+            )
+        )
+        decision = evaluate_handoff_decision_for_blueprint(self.workspace, result.blueprint_id or "")
+        assert decision is not None
+        self.assertTrue(decision.allowed)
+        # Missing blueprint -> fail-closed None.
+        self.assertIsNone(evaluate_handoff_decision_for_blueprint(self.workspace, "ce_missing"))
 
     def test_attach_governance_writes_back(self) -> None:
         result = generate_task_blueprint(

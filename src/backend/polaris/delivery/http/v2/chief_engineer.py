@@ -15,34 +15,53 @@ from polaris.cells.chief_engineer.blueprint.public import (
     BlueprintPersistence,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
+    IncidentSeverity,
     ListADRsQueryV1,
+    ListPostMortemsQueryV1,
     ListRisksQueryV1,
     ListTechDebtQueryV1,
+    ListTechRadarQueryV1,
+    PostMortemStatus,
     RegisterADRCommandV1,
+    RegisterPostMortemCommandV1,
     RegisterRiskCommandV1,
     RegisterTechDebtCommandV1,
+    RegisterTechRadarCommandV1,
     RiskSeverity,
     RiskStatus,
     TaskBlueprintResultV1,
     TechDebtSeverity,
     TechDebtStatus,
+    TechRadarRing,
     UpdateADRStatusCommandV1,
+    UpdatePostMortemStatusCommandV1,
     UpdateRiskStatusCommandV1,
     UpdateTechDebtStatusCommandV1,
+    UpdateTechRadarRingCommandV1,
+    check_stack_policy,
+    evaluate_handoff_decision_for_blueprint,
     generate_task_blueprint,
     get_blueprint_status,
     list_adrs,
+    list_post_mortems,
     list_risks,
     list_tech_debt,
+    list_tech_radar,
     register_adr,
+    register_post_mortem,
     register_risk,
     register_tech_debt,
+    register_tech_radar,
     summarize_adrs,
+    summarize_post_mortems,
     summarize_risks,
     summarize_tech_debt,
+    summarize_tech_radar,
     update_adr_status,
+    update_post_mortem_status,
     update_risk_status,
     update_tech_debt_status,
+    update_tech_radar_ring,
 )
 from polaris.cells.roles.kernel.public.service import (
     get_global_emitter,
@@ -860,6 +879,16 @@ def _handoff_blockers(
         blockers.append("blueprint_payload_invalid")
     if blueprints.missing_task_ids:
         blockers.append("blueprint_coverage_incomplete")
+    # Tier-2 enforcement: an open critical/blocker risk in the workspace Risk
+    # Register blocks handoff at the desktop dispatch boundary. Read-only and
+    # defensive — a register read failure must never crash diagnostics.
+    if workspace.ok and workspace.workspace:
+        try:
+            risk_summary = summarize_risks(workspace.workspace)
+            if int(risk_summary.get("open_critical_or_blocker", 0) or 0) > 0:
+                blockers.append("open_blocker_risks")
+        except (OSError, RuntimeError, ValueError):
+            pass
     if not blueprints.director_handoff_ready and not blockers:
         blockers.append("blueprint_handoff_not_ready")
     return blockers
@@ -1560,3 +1589,312 @@ def update_chief_engineer_adr_status(
             message=str(exc),
         ) from exc
     return {"ok": True, "workspace": target_workspace, "adr": record.to_dict()}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tier-2 gate enforcement: Director-handoff decision
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@router.get("/chief-engineer/handoff-decision", dependencies=[Depends(require_auth)])
+def get_chief_engineer_handoff_decision(
+    request: Request,
+    blueprint_id: str,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Return the Director-handoff gate decision for a persisted blueprint.
+
+    The enforcement-consultation surface: PM / Director / desktop call this
+    before dispatch to learn whether the blueprint is cleared for handoff.
+    A missing blueprint is fail-closed: ``allowed=False``.
+    """
+    target_workspace = _governance_workspace(request, workspace)
+    safe_blueprint_id = _validate_blueprint_id(blueprint_id)
+    decision = evaluate_handoff_decision_for_blueprint(target_workspace, safe_blueprint_id)
+    if decision is None:
+        return {
+            "ok": True,
+            "workspace": target_workspace,
+            "decision": {
+                "allowed": False,
+                "blueprint_id": safe_blueprint_id,
+                "task_id": "",
+                "blocker_count": 0,
+                "warning_count": 0,
+                "open_blocker_risk_count": 0,
+                "blockers": [],
+                "reason": "blueprint_not_found",
+                "evaluated_at": "",
+            },
+        }
+    return {"ok": True, "workspace": target_workspace, "decision": decision.to_dict()}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tier-2 stack/library policy: Tech Radar
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ChiefEngineerRegisterTechRadarRequest(BaseModel):
+    """Desktop request to place a library on a Tech-Radar ring."""
+
+    library: str
+    ring: str
+    owner: str
+    rationale: str = ""
+    supersedes: str | None = None
+
+
+class ChiefEngineerUpdateTechRadarRingRequest(BaseModel):
+    """Desktop request to move a Tech-Radar entry to a new ring."""
+
+    ring: str
+    note: str = ""
+    actor: str = "chief_engineer"
+
+
+class ChiefEngineerStackPolicyCheckRequest(BaseModel):
+    """Desktop request to check libraries against the Tech Radar."""
+
+    libraries: list[str] = Field(default_factory=list)
+
+
+@router.post("/chief-engineer/tech-radar", dependencies=[Depends(require_auth)])
+def register_chief_engineer_tech_radar(
+    request: Request,
+    payload: ChiefEngineerRegisterTechRadarRequest,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Place a library on a Tech-Radar ring for the workspace."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        record = register_tech_radar(
+            RegisterTechRadarCommandV1(
+                library=payload.library,
+                ring=TechRadarRing(payload.ring.strip().lower()),
+                owner=payload.owner,
+                workspace=target_workspace,
+                rationale=payload.rationale,
+                supersedes=payload.supersedes,
+            )
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_TECH_RADAR_PAYLOAD",
+            message=str(exc),
+        ) from exc
+    return {"ok": True, "workspace": target_workspace, "entry": record.to_dict()}
+
+
+@router.get("/chief-engineer/tech-radar", dependencies=[Depends(require_auth)])
+def list_chief_engineer_tech_radar(
+    request: Request,
+    workspace: str = "",
+    ring: str = "",
+) -> dict[str, Any]:
+    """List Tech-Radar entries with an optional ring filter."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        query = ListTechRadarQueryV1(
+            workspace=target_workspace,
+            ring=TechRadarRing(ring.strip().lower()) if ring.strip() else None,
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_TECH_RADAR_QUERY",
+            message=str(exc),
+        ) from exc
+    records = list_tech_radar(query)
+    return {
+        "ok": True,
+        "workspace": target_workspace,
+        "total": len(records),
+        "entries": [record.to_dict() for record in records],
+        "summary": summarize_tech_radar(target_workspace),
+    }
+
+
+@router.post("/chief-engineer/tech-radar/{entry_id}/ring", dependencies=[Depends(require_auth)])
+def update_chief_engineer_tech_radar_ring(
+    request: Request,
+    entry_id: str,
+    payload: ChiefEngineerUpdateTechRadarRingRequest,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Move a Tech-Radar entry to a new ring."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        record = update_tech_radar_ring(
+            UpdateTechRadarRingCommandV1(
+                workspace=target_workspace,
+                entry_id=entry_id,
+                ring=TechRadarRing(payload.ring.strip().lower()),
+                note=payload.note,
+            ),
+            actor=payload.actor.strip() or "chief_engineer",
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_TECH_RADAR_RING",
+            message=str(exc),
+        ) from exc
+    except FileNotFoundError as exc:
+        raise StructuredHTTPException(
+            status_code=404,
+            code="TECH_RADAR_NOT_FOUND",
+            message=str(exc),
+        ) from exc
+    return {"ok": True, "workspace": target_workspace, "entry": record.to_dict()}
+
+
+@router.post("/chief-engineer/stack-policy/check", dependencies=[Depends(require_auth)])
+def check_chief_engineer_stack_policy(
+    request: Request,
+    payload: ChiefEngineerStackPolicyCheckRequest,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Check a list of libraries against the Tech Radar (hold/deprecated)."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    violations = check_stack_policy(target_workspace, list(payload.libraries))
+    return {
+        "ok": True,
+        "workspace": target_workspace,
+        "allowed": not violations,
+        "violations": [v.to_dict() for v in violations],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tier-2 incident learning: Post-Mortem / Incident Review
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ChiefEngineerRegisterPostMortemRequest(BaseModel):
+    """Desktop request to record a post-mortem / incident review."""
+
+    title: str
+    severity: str
+    occurred_at: str
+    owner: str
+    summary: str = ""
+    root_cause: str = ""
+    impact: str = ""
+    timeline: list[str] = Field(default_factory=list)
+    action_items: list[str] = Field(default_factory=list)
+    related_risk_ids: list[str] = Field(default_factory=list)
+
+
+class ChiefEngineerUpdatePostMortemStatusRequest(BaseModel):
+    """Desktop request to transition a post-mortem to a new status."""
+
+    status: str
+    note: str = ""
+    actor: str = "chief_engineer"
+
+
+@router.post("/chief-engineer/post-mortems", dependencies=[Depends(require_auth)])
+def register_chief_engineer_post_mortem(
+    request: Request,
+    payload: ChiefEngineerRegisterPostMortemRequest,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Record a new post-mortem / incident review for the workspace."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        record = register_post_mortem(
+            RegisterPostMortemCommandV1(
+                title=payload.title,
+                severity=IncidentSeverity(payload.severity.strip().lower()),
+                occurred_at=payload.occurred_at,
+                owner=payload.owner,
+                workspace=target_workspace,
+                summary=payload.summary,
+                root_cause=payload.root_cause,
+                impact=payload.impact,
+                timeline=tuple(payload.timeline),
+                action_items=tuple(payload.action_items),
+                related_risk_ids=tuple(payload.related_risk_ids),
+            )
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_POST_MORTEM_PAYLOAD",
+            message=str(exc),
+        ) from exc
+    return {"ok": True, "workspace": target_workspace, "post_mortem": record.to_dict()}
+
+
+@router.get("/chief-engineer/post-mortems", dependencies=[Depends(require_auth)])
+def list_chief_engineer_post_mortems(
+    request: Request,
+    workspace: str = "",
+    severity: str = "",
+    status: str = "",
+) -> dict[str, Any]:
+    """List post-mortems with optional filters."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        query = ListPostMortemsQueryV1(
+            workspace=target_workspace,
+            severity=IncidentSeverity(severity.strip().lower()) if severity.strip() else None,
+            status=PostMortemStatus(status.strip().lower()) if status.strip() else None,
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_POST_MORTEM_QUERY",
+            message=str(exc),
+        ) from exc
+    records = list_post_mortems(query)
+    return {
+        "ok": True,
+        "workspace": target_workspace,
+        "total": len(records),
+        "post_mortems": [record.to_dict() for record in records],
+        "summary": summarize_post_mortems(target_workspace),
+    }
+
+
+@router.post("/chief-engineer/post-mortems/{incident_id}/status", dependencies=[Depends(require_auth)])
+def update_chief_engineer_post_mortem_status(
+    request: Request,
+    incident_id: str,
+    payload: ChiefEngineerUpdatePostMortemStatusRequest,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Transition a post-mortem to a new status."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        record = update_post_mortem_status(
+            UpdatePostMortemStatusCommandV1(
+                workspace=target_workspace,
+                incident_id=incident_id,
+                status=PostMortemStatus(payload.status.strip().lower()),
+                note=payload.note,
+            ),
+            actor=payload.actor.strip() or "chief_engineer",
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_POST_MORTEM_STATUS",
+            message=str(exc),
+        ) from exc
+    except FileNotFoundError as exc:
+        raise StructuredHTTPException(
+            status_code=404,
+            code="POST_MORTEM_NOT_FOUND",
+            message=str(exc),
+        ) from exc
+    return {"ok": True, "workspace": target_workspace, "post_mortem": record.to_dict()}

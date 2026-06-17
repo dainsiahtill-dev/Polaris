@@ -6,6 +6,8 @@ const serviceMocks = vi.hoisted(() => ({
   listChiefEngineerRisks: vi.fn(),
   listChiefEngineerTechDebt: vi.fn(),
   listChiefEngineerADRs: vi.fn(),
+  listChiefEngineerTechRadar: vi.fn(),
+  listChiefEngineerPostMortems: vi.fn(),
 }));
 
 vi.mock('@/services/chiefEngineerService', () => serviceMocks);
@@ -85,6 +87,52 @@ describe('ChiefEngineerGovernancePanel', () => {
         summary: {},
       },
     });
+    serviceMocks.listChiefEngineerTechRadar.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        total: 1,
+        entries: [
+          {
+            entry_id: 'radar_1',
+            library: 'moment.js',
+            ring: 'hold',
+            rationale: 'unmaintained',
+            owner: 'ce',
+            decided_at: '2026-06-17T00:00:00Z',
+            supersedes: null,
+            history: [],
+          },
+        ],
+        summary: {},
+      },
+    });
+    serviceMocks.listChiefEngineerPostMortems.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: true,
+        total: 1,
+        post_mortems: [
+          {
+            incident_id: 'incident_1',
+            title: 'prod outage: write amplification',
+            severity: 'sev1',
+            summary: '',
+            root_cause: '',
+            impact: '',
+            status: 'published',
+            occurred_at: '2026-06-16T10:00:00Z',
+            owner: 'ce',
+            recorded_at: '2026-06-17T00:00:00Z',
+            timeline: [],
+            action_items: [],
+            related_risk_ids: [],
+            history: [],
+          },
+        ],
+        summary: {},
+      },
+    });
 
     render(<ChiefEngineerGovernancePanel workspace="/repo" />);
 
@@ -93,9 +141,13 @@ describe('ChiefEngineerGovernancePanel', () => {
     });
     expect(screen.getByText('manual sql escaping')).toBeInTheDocument();
     expect(screen.getByText('adopt single transaction kernel')).toBeInTheDocument();
+    expect(screen.getByText('moment.js')).toBeInTheDocument();
+    expect(screen.getByText('prod outage: write amplification')).toBeInTheDocument();
     expect(serviceMocks.listChiefEngineerRisks).toHaveBeenCalledWith({}, '/repo');
     expect(serviceMocks.listChiefEngineerTechDebt).toHaveBeenCalledWith({}, '/repo');
     expect(serviceMocks.listChiefEngineerADRs).toHaveBeenCalledWith({}, '/repo');
+    expect(serviceMocks.listChiefEngineerTechRadar).toHaveBeenCalledWith(undefined, '/repo');
+    expect(serviceMocks.listChiefEngineerPostMortems).toHaveBeenCalledWith({}, '/repo');
   });
 
   it('shows empty states when there is no governance data', async () => {
@@ -111,6 +163,14 @@ describe('ChiefEngineerGovernancePanel', () => {
       ok: true,
       data: { ok: true, total: 0, adrs: [], summary: {} },
     });
+    serviceMocks.listChiefEngineerTechRadar.mockResolvedValue({
+      ok: true,
+      data: { ok: true, total: 0, entries: [], summary: {} },
+    });
+    serviceMocks.listChiefEngineerPostMortems.mockResolvedValue({
+      ok: true,
+      data: { ok: true, total: 0, post_mortems: [], summary: {} },
+    });
 
     render(<ChiefEngineerGovernancePanel workspace="/repo" />);
 
@@ -119,6 +179,8 @@ describe('ChiefEngineerGovernancePanel', () => {
     });
     expect(screen.getByTestId('ce-tech-debt-empty')).toBeInTheDocument();
     expect(screen.getByTestId('ce-adrs-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('ce-tech-radar-empty')).toBeInTheDocument();
+    expect(screen.getByTestId('ce-post-mortems-empty')).toBeInTheDocument();
   });
 
   it('surfaces a service error', async () => {
@@ -133,6 +195,14 @@ describe('ChiefEngineerGovernancePanel', () => {
     serviceMocks.listChiefEngineerADRs.mockResolvedValue({
       ok: true,
       data: { ok: true, total: 0, adrs: [], summary: {} },
+    });
+    serviceMocks.listChiefEngineerTechRadar.mockResolvedValue({
+      ok: true,
+      data: { ok: true, total: 0, entries: [], summary: {} },
+    });
+    serviceMocks.listChiefEngineerPostMortems.mockResolvedValue({
+      ok: true,
+      data: { ok: true, total: 0, post_mortems: [], summary: {} },
     });
 
     render(<ChiefEngineerGovernancePanel workspace="/repo" />);

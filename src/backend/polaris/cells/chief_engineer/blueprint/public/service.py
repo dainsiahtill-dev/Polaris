@@ -12,36 +12,41 @@ from ..internal.ce_consumer import CEConsumer
 from ..internal.chief_engineer_agent import ChiefEngineerAgent
 from ..internal.chief_engineer_preflight import run_pre_dispatch_chief_engineer
 from ..internal.handoff import build_handoff_decision
+from ..internal.post_mortem import PostMortemLog, build_post_mortem_event
 from ..internal.quality_gate import evaluate_quality_gate
 from ..internal.risks import RiskRegister, build_risk_event
 from ..internal.rollback_guard import create_rollback_guard
 from ..internal.rollback_link import build_rollback_link
 from ..internal.tech_debt import TechDebtLedger, build_tech_debt_event
+from ..internal.tech_radar import TechRadarLedger, build_tech_radar_event
 from .contracts import (
     ADRRecordV1,
-    ChiefEngineerBlueprintError,
     ChiefEngineerBlueprintErrorV1,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
     GovernanceSummaryV1,
     HandoffDecisionV1,
     ListADRsQueryV1,
+    ListPostMortemsQueryV1,
     ListRisksQueryV1,
     ListTechDebtQueryV1,
-    QualityGateResultV1,
+    ListTechRadarQueryV1,
+    PostMortemRecordV1,
     RegisterADRCommandV1,
+    RegisterPostMortemCommandV1,
     RegisterRiskCommandV1,
     RegisterTechDebtCommandV1,
-    RiskEventV1,
+    RegisterTechRadarCommandV1,
     RiskRecordV1,
-    RollbackLinkV1,
-    TaskBlueprintGeneratedEventV1,
+    StackPolicyViolationV1,
     TaskBlueprintResultV1,
-    TechDebtEventV1,
     TechDebtRecordV1,
+    TechRadarEntryV1,
     UpdateADRStatusCommandV1,
+    UpdatePostMortemStatusCommandV1,
     UpdateRiskStatusCommandV1,
     UpdateTechDebtStatusCommandV1,
+    UpdateTechRadarRingCommandV1,
 )
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -505,6 +510,123 @@ def summarize_tech_debt(workspace: str, *, surface: str | None = None) -> dict[s
     return TechDebtLedger(workspace, ensure_directory=False).summarize(surface=surface)
 
 
+def register_tech_radar(command: RegisterTechRadarCommandV1) -> TechRadarEntryV1:
+    """Place a library on a Tech-Radar ring for the workspace."""
+
+    record = TechRadarLedger(command.workspace).register(command)
+    event = build_tech_radar_event(
+        entry_id=record.entry_id,
+        workspace=command.workspace,
+        action=f"ring:{record.ring.value}",
+        actor=command.owner,
+    )
+    logger.info(
+        "chief_engineer.tech_radar_registered entry_id=%s library=%s ring=%s event_id=%s",
+        record.entry_id,
+        record.library,
+        record.ring.value,
+        event.event_id,
+    )
+    return record
+
+
+def list_tech_radar(query: ListTechRadarQueryV1) -> list[TechRadarEntryV1]:
+    """List Tech-Radar entries for the workspace with an optional ring filter."""
+
+    return TechRadarLedger(query.workspace, ensure_directory=False).list(ring=query.ring)
+
+
+def update_tech_radar_ring(
+    command: UpdateTechRadarRingCommandV1,
+    *,
+    actor: str = "chief_engineer",
+) -> TechRadarEntryV1:
+    """Move a Tech-Radar entry to a new ring; append a history entry."""
+
+    record = TechRadarLedger(command.workspace).update_ring(command, actor)
+    event = build_tech_radar_event(
+        entry_id=record.entry_id,
+        workspace=command.workspace,
+        action=f"ring:{record.ring.value}",
+        actor=actor,
+        note=command.note,
+    )
+    logger.info(
+        "chief_engineer.tech_radar_ring_changed entry_id=%s ring=%s event_id=%s",
+        record.entry_id,
+        record.ring.value,
+        event.event_id,
+    )
+    return record
+
+
+def summarize_tech_radar(workspace: str) -> dict[str, Any]:
+    """Return aggregate counts for the workspace Tech Radar."""
+
+    return TechRadarLedger(workspace, ensure_directory=False).summarize()
+
+
+def check_stack_policy(workspace: str, libraries: list[str]) -> list[StackPolicyViolationV1]:
+    """Return a stack-policy violation for each library on a hold/deprecated ring."""
+
+    return TechRadarLedger(workspace, ensure_directory=False).check_stack_policy(libraries)
+
+
+def register_post_mortem(command: RegisterPostMortemCommandV1) -> PostMortemRecordV1:
+    """Record a new post-mortem / incident review for the workspace."""
+
+    record = PostMortemLog(command.workspace).register(command)
+    event = build_post_mortem_event(
+        incident_id=record.incident_id,
+        workspace=command.workspace,
+        action="recorded",
+        actor=command.owner,
+    )
+    logger.info(
+        "chief_engineer.post_mortem_recorded incident_id=%s severity=%s event_id=%s",
+        record.incident_id,
+        record.severity.value,
+        event.event_id,
+    )
+    return record
+
+
+def list_post_mortems(query: ListPostMortemsQueryV1) -> list[PostMortemRecordV1]:
+    """List post-mortems for the workspace with optional filters."""
+
+    return PostMortemLog(query.workspace, ensure_directory=False).list_for_query(query)
+
+
+def update_post_mortem_status(
+    command: UpdatePostMortemStatusCommandV1,
+    *,
+    actor: str = "chief_engineer",
+) -> PostMortemRecordV1:
+    """Transition a post-mortem to a new status; append a history entry."""
+
+    record = PostMortemLog(command.workspace).update_status(command, actor)
+    event = build_post_mortem_event(
+        incident_id=record.incident_id,
+        workspace=command.workspace,
+        action=f"status:{record.status.value}",
+        actor=actor,
+        note=command.note,
+    )
+    logger.info(
+        "chief_engineer.post_mortem_status_changed incident_id=%s status=%s event_id=%s",
+        record.incident_id,
+        record.status.value,
+        event.event_id,
+    )
+    return record
+
+
+def summarize_post_mortems(workspace: str) -> dict[str, Any]:
+    """Return aggregate counts for the workspace post-mortem log."""
+
+    return PostMortemLog(workspace, ensure_directory=False).summarize()
+
+
 def get_blueprint_governance(workspace: str, blueprint_id: str) -> GovernanceSummaryV1 | None:
     """Read the governance summary for a persisted blueprint.
 
@@ -662,31 +784,17 @@ import logging  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+# Contract types (dataclasses, enums, errors) are owned by contracts.py and
+# re-exported through public/__init__.py from there — they are intentionally
+# NOT listed here. service.__all__ exposes only service functions and the
+# re-exported agent/consumer classes, uniformly across all ledgers.
 __all__ = [
     "CEConsumer",
     "ChiefEngineerAgent",
-    "ChiefEngineerBlueprintError",
-    "ChiefEngineerBlueprintErrorV1",
-    "GenerateTaskBlueprintCommandV1",
-    "GetBlueprintStatusQueryV1",
-    "GovernanceSummaryV1",
-    "ListRisksQueryV1",
-    "ListTechDebtQueryV1",
-    "QualityGateResultV1",
-    "RegisterRiskCommandV1",
-    "RegisterTechDebtCommandV1",
-    "RiskEventV1",
-    "RiskRecordV1",
-    "RollbackLinkV1",
-    "TaskBlueprintGeneratedEventV1",
-    "TaskBlueprintResultV1",
-    "TechDebtEventV1",
-    "TechDebtRecordV1",
-    "UpdateRiskStatusCommandV1",
-    "UpdateTechDebtStatusCommandV1",
     "assert_handoff_ready",
     "attach_governance_to_blueprint",
     "build_blueprint_governance",
+    "check_stack_policy",
     "create_rollback_guard",
     "evaluate_handoff_decision",
     "evaluate_handoff_decision_for_blueprint",
@@ -694,16 +802,24 @@ __all__ = [
     "get_blueprint_governance",
     "get_blueprint_status",
     "list_adrs",
+    "list_post_mortems",
     "list_risks",
     "list_tech_debt",
+    "list_tech_radar",
     "register_adr",
+    "register_post_mortem",
     "register_risk",
     "register_tech_debt",
+    "register_tech_radar",
     "run_pre_dispatch_chief_engineer",
     "summarize_adrs",
+    "summarize_post_mortems",
     "summarize_risks",
     "summarize_tech_debt",
+    "summarize_tech_radar",
     "update_adr_status",
+    "update_post_mortem_status",
     "update_risk_status",
     "update_tech_debt_status",
+    "update_tech_radar_ring",
 ]

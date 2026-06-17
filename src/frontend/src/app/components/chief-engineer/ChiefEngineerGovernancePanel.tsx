@@ -2,13 +2,19 @@ import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, RefreshCw, ShieldAlert } from 'lucide-react';
 import {
   listChiefEngineerADRs,
+  listChiefEngineerPostMortems,
   listChiefEngineerRisks,
   listChiefEngineerTechDebt,
+  listChiefEngineerTechRadar,
   type ADRRecord,
+  type IncidentSeverity,
+  type PostMortemRecord,
   type RiskRecord,
   type RiskSeverity,
   type TechDebtRecord,
   type TechDebtSeverity,
+  type TechRadarEntry,
+  type TechRadarRing,
 } from '@/services/chiefEngineerService';
 
 interface ChiefEngineerGovernancePanelProps {
@@ -21,7 +27,23 @@ interface GovernanceState {
   risks: RiskRecord[];
   techDebt: TechDebtRecord[];
   adrs: ADRRecord[];
+  techRadar: TechRadarEntry[];
+  postMortems: PostMortemRecord[];
 }
+
+const RADAR_RING_CLASS: Record<TechRadarRing, string> = {
+  adopt: 'bg-emerald-800/60 text-emerald-100',
+  trial: 'bg-sky-800/60 text-sky-100',
+  hold: 'bg-amber-800/60 text-amber-100',
+  deprecated: 'bg-red-900/80 text-red-50',
+};
+
+const INCIDENT_SEVERITY_CLASS: Record<IncidentSeverity, string> = {
+  sev1: 'bg-red-900/80 text-red-50',
+  sev2: 'bg-orange-700/60 text-orange-100',
+  sev3: 'bg-amber-700/50 text-amber-100',
+  sev4: 'bg-slate-700/60 text-slate-200',
+};
 
 const RISK_SEVERITY_CLASS: Record<RiskSeverity, string> = {
   low: 'bg-slate-700/60 text-slate-200',
@@ -62,14 +84,18 @@ export function ChiefEngineerGovernancePanel({ workspace }: ChiefEngineerGoverna
     risks: [],
     techDebt: [],
     adrs: [],
+    techRadar: [],
+    postMortems: [],
   });
 
   const load = useCallback(async () => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
-    const [risksResult, debtResult, adrResult] = await Promise.all([
+    const [risksResult, debtResult, adrResult, radarResult, pmResult] = await Promise.all([
       listChiefEngineerRisks({}, workspace),
       listChiefEngineerTechDebt({}, workspace),
       listChiefEngineerADRs({}, workspace),
+      listChiefEngineerTechRadar(undefined, workspace),
+      listChiefEngineerPostMortems({}, workspace),
     ]);
 
     if (!risksResult.ok || !risksResult.data) {
@@ -96,6 +122,22 @@ export function ChiefEngineerGovernancePanel({ workspace }: ChiefEngineerGoverna
       }));
       return;
     }
+    if (!radarResult.ok || !radarResult.data) {
+      setState((prev) => ({
+        ...prev,
+        loading: false,
+        error: radarResult.error ?? 'Failed to load Chief Engineer tech radar',
+      }));
+      return;
+    }
+    if (!pmResult.ok || !pmResult.data) {
+      setState((prev) => ({
+        ...prev,
+        loading: false,
+        error: pmResult.error ?? 'Failed to load Chief Engineer post-mortems',
+      }));
+      return;
+    }
 
     setState({
       loading: false,
@@ -103,6 +145,8 @@ export function ChiefEngineerGovernancePanel({ workspace }: ChiefEngineerGoverna
       risks: risksResult.data.risks,
       techDebt: debtResult.data.tech_debt,
       adrs: adrResult.data.adrs,
+      techRadar: radarResult.data.entries,
+      postMortems: pmResult.data.post_mortems,
     });
   }, [workspace]);
 
@@ -139,7 +183,7 @@ export function ChiefEngineerGovernancePanel({ workspace }: ChiefEngineerGoverna
         </div>
       ) : null}
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <div>
           <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
             Risk Register ({state.risks.length})
@@ -211,6 +255,57 @@ export function ChiefEngineerGovernancePanel({ workspace }: ChiefEngineerGoverna
                     {adr.title}
                   </span>
                   <span className="shrink-0 text-[10px] text-slate-400">{adr.status}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+            Tech Radar ({state.techRadar.length})
+          </div>
+          {state.techRadar.length === 0 && !state.loading ? (
+            <div className="text-[11px] text-slate-500" data-testid="ce-tech-radar-empty">
+              No tech radar entries.
+            </div>
+          ) : (
+            <ul className="flex flex-col gap-1" data-testid="ce-tech-radar-list">
+              {state.techRadar.map((entry) => (
+                <li
+                  key={entry.entry_id}
+                  className="flex items-start gap-1.5 rounded bg-slate-900/60 px-1.5 py-1 text-[11px] text-slate-200"
+                >
+                  <SeverityBadge label={entry.ring} className={RADAR_RING_CLASS[entry.ring]} />
+                  <span className="min-w-0 flex-1 truncate" title={entry.library}>
+                    {entry.library}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+            Post-Mortems ({state.postMortems.length})
+          </div>
+          {state.postMortems.length === 0 && !state.loading ? (
+            <div className="text-[11px] text-slate-500" data-testid="ce-post-mortems-empty">
+              No post-mortems recorded.
+            </div>
+          ) : (
+            <ul className="flex flex-col gap-1" data-testid="ce-post-mortems-list">
+              {state.postMortems.map((pm) => (
+                <li
+                  key={pm.incident_id}
+                  className="flex items-start gap-1.5 rounded bg-slate-900/60 px-1.5 py-1 text-[11px] text-slate-200"
+                >
+                  <SeverityBadge label={pm.severity} className={INCIDENT_SEVERITY_CLASS[pm.severity]} />
+                  <span className="min-w-0 flex-1 truncate" title={pm.title}>
+                    {pm.title}
+                  </span>
+                  <span className="shrink-0 text-[10px] text-slate-400">{pm.status}</span>
                 </li>
               ))}
             </ul>

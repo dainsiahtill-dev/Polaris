@@ -464,3 +464,233 @@ export async function updateChiefEngineerADRStatus(
     'Failed to update Chief Engineer ADR status',
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tier-2 gate enforcement: Director-handoff decision
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface HandoffDecision {
+  allowed: boolean;
+  blueprint_id: string;
+  task_id: string;
+  blocker_count: number;
+  warning_count: number;
+  open_blocker_risk_count: number;
+  blockers: string[];
+  reason: string;
+  evaluated_at: string;
+}
+
+export interface HandoffDecisionResponse {
+  ok: boolean;
+  workspace: string;
+  decision: HandoffDecision;
+}
+
+export async function getChiefEngineerHandoffDecision(
+  blueprintId: string,
+  workspace = '',
+): Promise<ApiResult<HandoffDecisionResponse>> {
+  const query = new URLSearchParams({ blueprint_id: blueprintId });
+  if (workspace) query.set('workspace', workspace);
+  return apiGet<HandoffDecisionResponse>(
+    `/v2/chief-engineer/handoff-decision?${query.toString()}`,
+    'Failed to load Chief Engineer handoff decision',
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tier-2 stack/library policy: Tech Radar
+// ═══════════════════════════════════════════════════════════════════════
+
+export type TechRadarRing = 'adopt' | 'trial' | 'hold' | 'deprecated';
+
+export interface TechRadarEntry {
+  entry_id: string;
+  library: string;
+  ring: TechRadarRing;
+  rationale: string;
+  owner: string;
+  decided_at: string;
+  supersedes: string | null;
+  history: Record<string, string>[];
+}
+
+export interface RegisterTechRadarPayload {
+  library: string;
+  ring: TechRadarRing;
+  owner: string;
+  rationale?: string;
+  supersedes?: string | null;
+}
+
+export interface TechRadarEntryResponse {
+  ok: boolean;
+  workspace: string;
+  entry: TechRadarEntry;
+}
+
+export interface TechRadarListResponse {
+  ok: boolean;
+  workspace: string;
+  total: number;
+  entries: TechRadarEntry[];
+  summary: Record<string, unknown>;
+}
+
+export interface StackPolicyViolation {
+  library: string;
+  ring: TechRadarRing;
+  rationale: string;
+}
+
+export interface StackPolicyCheckResponse {
+  ok: boolean;
+  workspace: string;
+  allowed: boolean;
+  violations: StackPolicyViolation[];
+}
+
+export async function registerChiefEngineerTechRadar(
+  payload: RegisterTechRadarPayload,
+  workspace = '',
+): Promise<ApiResult<TechRadarEntryResponse>> {
+  return apiPost<TechRadarEntryResponse>(
+    `/v2/chief-engineer/tech-radar${workspaceQuerySuffix(workspace)}`,
+    payload,
+    'Failed to register Chief Engineer tech radar entry',
+  );
+}
+
+export async function listChiefEngineerTechRadar(
+  ring?: TechRadarRing,
+  workspace = '',
+): Promise<ApiResult<TechRadarListResponse>> {
+  const query = new URLSearchParams();
+  if (workspace) query.set('workspace', workspace);
+  if (ring) query.set('ring', ring);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return apiGet<TechRadarListResponse>(
+    `/v2/chief-engineer/tech-radar${suffix}`,
+    'Failed to list Chief Engineer tech radar',
+  );
+}
+
+export async function updateChiefEngineerTechRadarRing(
+  entryId: string,
+  ring: TechRadarRing,
+  note = '',
+  workspace = '',
+): Promise<ApiResult<TechRadarEntryResponse>> {
+  return apiPost<TechRadarEntryResponse>(
+    appendWorkspaceQuery(`/v2/chief-engineer/tech-radar/${encodeURIComponent(entryId)}/ring`, workspace),
+    { ring, note },
+    'Failed to update Chief Engineer tech radar ring',
+  );
+}
+
+export async function checkChiefEngineerStackPolicy(
+  libraries: string[],
+  workspace = '',
+): Promise<ApiResult<StackPolicyCheckResponse>> {
+  return apiPost<StackPolicyCheckResponse>(
+    `/v2/chief-engineer/stack-policy/check${workspaceQuerySuffix(workspace)}`,
+    { libraries },
+    'Failed to check Chief Engineer stack policy',
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tier-2 incident learning: Post-Mortem / Incident Review
+// ═══════════════════════════════════════════════════════════════════════
+
+export type IncidentSeverity = 'sev1' | 'sev2' | 'sev3' | 'sev4';
+export type PostMortemStatus = 'draft' | 'reviewing' | 'published' | 'actions_open' | 'closed';
+
+export interface PostMortemRecord {
+  incident_id: string;
+  title: string;
+  severity: IncidentSeverity;
+  summary: string;
+  root_cause: string;
+  impact: string;
+  status: PostMortemStatus;
+  occurred_at: string;
+  owner: string;
+  recorded_at: string;
+  timeline: string[];
+  action_items: string[];
+  related_risk_ids: string[];
+  history: Record<string, string>[];
+}
+
+export interface RegisterPostMortemPayload {
+  title: string;
+  severity: IncidentSeverity;
+  occurred_at: string;
+  owner: string;
+  summary?: string;
+  root_cause?: string;
+  impact?: string;
+  timeline?: string[];
+  action_items?: string[];
+  related_risk_ids?: string[];
+}
+
+export interface PostMortemRecordResponse {
+  ok: boolean;
+  workspace: string;
+  post_mortem: PostMortemRecord;
+}
+
+export interface PostMortemListResponse {
+  ok: boolean;
+  workspace: string;
+  total: number;
+  post_mortems: PostMortemRecord[];
+  summary: Record<string, unknown>;
+}
+
+export interface PostMortemFilters {
+  severity?: IncidentSeverity;
+  status?: PostMortemStatus;
+}
+
+export async function registerChiefEngineerPostMortem(
+  payload: RegisterPostMortemPayload,
+  workspace = '',
+): Promise<ApiResult<PostMortemRecordResponse>> {
+  return apiPost<PostMortemRecordResponse>(
+    `/v2/chief-engineer/post-mortems${workspaceQuerySuffix(workspace)}`,
+    payload,
+    'Failed to record Chief Engineer post-mortem',
+  );
+}
+
+export async function listChiefEngineerPostMortems(
+  filters: PostMortemFilters = {},
+  workspace = '',
+): Promise<ApiResult<PostMortemListResponse>> {
+  const query = new URLSearchParams();
+  if (workspace) query.set('workspace', workspace);
+  if (filters.severity) query.set('severity', filters.severity);
+  if (filters.status) query.set('status', filters.status);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return apiGet<PostMortemListResponse>(
+    `/v2/chief-engineer/post-mortems${suffix}`,
+    'Failed to list Chief Engineer post-mortems',
+  );
+}
+
+export async function updateChiefEngineerPostMortemStatus(
+  incidentId: string,
+  status: PostMortemStatus,
+  note = '',
+  workspace = '',
+): Promise<ApiResult<PostMortemRecordResponse>> {
+  return apiPost<PostMortemRecordResponse>(
+    appendWorkspaceQuery(`/v2/chief-engineer/post-mortems/${encodeURIComponent(incidentId)}/status`, workspace),
+    { status, note },
+    'Failed to update Chief Engineer post-mortem status',
+  );
+}

@@ -119,6 +119,84 @@ class TestCEConsumerTaskMarketHandoffIntegration:
         mock_svc.acknowledge_task_stage.assert_called_once()
 
 
+class TestCEConsumerHandoffGate:
+    """Tier-2: the Director-handoff quality gate is advisory by default and
+    only requeues when KERNELONE_CE_HANDOFF_ENFORCEMENT is opted in."""
+
+    @staticmethod
+    def _wire_blocked_claim(mock_get_svc: MagicMock) -> MagicMock:
+        # A payload with no acceptance_criteria -> the quality gate blocks.
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        claim = MagicMock()
+        claim.ok = True
+        claim.task_id = "task-blk"
+        claim.lease_token = "lease-blk"
+        claim.payload = {"title": "blocked task", "scope_paths": ["/src/main.py"]}
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim, no_claim]
+        ack = MagicMock()
+        ack.ok = True
+        ack.status = "pending_exec"
+        mock_svc.acknowledge_task_stage.return_value = ack
+        return mock_svc
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.run_pre_dispatch_chief_engineer_ctx")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.ADRStore")
+    def test_flag_off_is_advisory_still_acks(
+        self,
+        mock_adr_store_cls: MagicMock,
+        mock_run_preflight: MagicMock,
+        mock_get_svc: MagicMock,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.delenv("KERNELONE_CE_HANDOFF_ENFORCEMENT", raising=False)
+        mock_svc = self._wire_blocked_claim(mock_get_svc)
+        mock_run_preflight.return_value = {"blueprint_id": "bp-blk"}
+        mock_adr_store_cls.return_value = MagicMock()
+
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        results = consumer.poll_once()
+
+        # Advisory: the task still advances to the Director...
+        assert results[0]["ok"] is True
+        assert results[0]["status"] == "pending_exec"
+        mock_svc.fail_task_stage.assert_not_called()
+        mock_svc.acknowledge_task_stage.assert_called_once()
+        # ...but the (blocking) decision is surfaced on the ack metadata.
+        meta = mock_svc.acknowledge_task_stage.call_args[0][0].metadata
+        assert meta["handoff_decision"]["allowed"] is False
+        assert meta["handoff_decision"]["blocker_count"] >= 1
+
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.run_pre_dispatch_chief_engineer_ctx")
+    @patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.ADRStore")
+    def test_flag_on_requeues_blocked_handoff(
+        self,
+        mock_adr_store_cls: MagicMock,
+        mock_run_preflight: MagicMock,
+        mock_get_svc: MagicMock,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_CE_HANDOFF_ENFORCEMENT", "1")
+        mock_svc = self._wire_blocked_claim(mock_get_svc)
+        mock_run_preflight.return_value = {"blueprint_id": "bp-blk"}
+        mock_adr_store_cls.return_value = MagicMock()
+
+        consumer = CEConsumer(workspace="/test", worker_id="w1")
+        results = consumer.poll_once()
+
+        # Enforced: the blocked task is requeued, never handed to the Director.
+        assert results[0]["ok"] is False
+        assert results[0]["reason"] == "CE_quality_gate_blocked"
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_cmd = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_cmd.error_code == "CE_quality_gate_blocked"
+        assert fail_cmd.requeue_stage == "pending_design"
+
+
 class TestCEConsumerStepFission:
     """Three-tier E1: CE fissions a PM task into leaf step tasks on the market."""
 

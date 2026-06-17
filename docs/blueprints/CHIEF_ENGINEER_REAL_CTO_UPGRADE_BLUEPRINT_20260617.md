@@ -1,7 +1,80 @@
 # Chief Engineer — Real CTO Upgrade Blueprint
 
 Date: 2026-06-17
-Status: Tier-1 LANDED + Tier-2 ADR LANDED (backend + HTTP + frontend), gate-verified
+Status: Tier-1 + Tier-2 (ADR, handoff-enforcement, Tech Radar, Post-Mortem) LANDED — 8 governance capabilities, gate-verified
+
+## Tier-2 increment #4 — Post-Mortem / Incident Review (2026-06-17)
+
+Closes the failure-learning loop (Risk Register anticipates failure; the
+post-mortem log learns from it). A blameless incident-review record:
+incident / severity (sev1-4) / timeline / root_cause / impact / action_items
+/ status, mirroring the hardened ledger pattern under `runtime/post_mortems/*`.
+
+- `internal/post_mortem.py` — `PostMortemLog` (traversal guard, uuid nonce,
+  tolerant loader, atomic UTF-8) + `summarize()` with an `open_action_items`
+  count (action items on non-closed incidents).
+- Contracts: `IncidentSeverity`, `PostMortemStatus`, `PostMortemRecordV1`,
+  register/list/update commands+queries, event.
+- Service: `register_post_mortem` / `list_post_mortems` /
+  `update_post_mortem_status` / `summarize_post_mortems`.
+- HTTP: `POST`/`GET /chief-engineer/post-mortems`, `POST .../{id}/status`.
+- Frontend: 3 typed service fns + a "Post-Mortems" column in the governance panel.
+- Governance: `runtime/post_mortems/*` in `cell.yaml` + catalog (gate clean).
+
+## Lifecycle coverage (8 governance capabilities)
+
+plan (blueprint) → anticipate (Risk Register) → gate (Quality Gate) →
+enforce (Handoff Decision) → execute → learn (Post-Mortem); plus ongoing
+governance: Tech-Debt Ledger, ADR Decision Log, Tech Radar / stack policy,
+and Rollback linkage. Remaining (advisory/observability, genuinely deferred):
+build-vs-buy evaluator, perf/capacity budget, realtime dashboard.
+
+## Tier-2 increment #3 — Tech Radar / stack policy (2026-06-17)
+
+A 技术总监 owns the tech radar (approved/trial/hold/deprecated libraries).
+
+- `internal/tech_radar.py` — `TechRadarLedger` (mirrors the hardened risks
+  pattern: traversal guard, uuid nonce, tolerant loader, atomic UTF-8) +
+  `check_stack_policy(libraries)` which flags any requested library whose
+  latest ring is `hold`/`deprecated` (case-insensitive, latest-decided wins).
+- Contracts: `TechRadarRing` (adopt/trial/hold/deprecated), `TechRadarEntryV1`,
+  `StackPolicyViolationV1`, register/list/update commands+queries, event.
+- Service: `register_tech_radar` / `list_tech_radar` / `update_tech_radar_ring`
+  / `summarize_tech_radar` / `check_stack_policy`.
+- HTTP: `POST`/`GET /chief-engineer/tech-radar`, `POST .../{id}/ring`,
+  `POST /chief-engineer/stack-policy/check`.
+- Frontend: 4 typed service fns + a "Tech Radar" column in the governance panel.
+- Governance: `runtime/tech_radar/*` added to `cell.yaml` + catalog (gate clean).
+
+## Tier-2 increment #2 — Director-handoff gate enforcement (2026-06-17)
+
+Closes the quality-gate loop: the gate now *blocks* handoff, not just records.
+
+- `internal/handoff.py` — single source of truth (`build_handoff_decision`,
+  `handoff_enforcement_enabled`), imported by both `service` and
+  `ce_consumer` (no public↔internal cycle). A handoff is blocked when the
+  deterministic quality gate has blockers OR the workspace Risk Register has
+  open critical/blocker risks for the task. Fail-closed: malformed → blocked.
+- Contract `HandoffDecisionV1` (allowed / blocker_count / warning_count /
+  open_blocker_risk_count / blockers / reason).
+- Service: `evaluate_handoff_decision`, `evaluate_handoff_decision_for_blueprint`
+  (fail-closed None on missing), `assert_handoff_ready` (raises
+  `ChiefEngineerBlueprintErrorV1` code `handoff_blocked`).
+- **CE-consumer enforcement** (`ce_consumer._claim_and_process_one`): the
+  decision is always surfaced on the ack metadata; when
+  `KERNELONE_CE_HANDOFF_ENFORCEMENT` is opted in (default OFF), a blocked
+  decision requeues the task to `pending_design` instead of acking it to the
+  Director. Default-OFF keeps live pipeline behavior unchanged (proven: the
+  8 existing ce_consumer tests still pass).
+- HTTP: `GET /chief-engineer/handoff-decision?blueprint_id=` (the
+  PM/Director/desktop consultation surface; fail-closed on missing).
+- Diagnostics: `_handoff_blockers` now adds `open_blocker_risks` so the
+  desktop `can_handoff` honors the gate at the dispatch boundary (read-only,
+  defensive — a register read failure never crashes diagnostics).
+- Frontend: `getChiefEngineerHandoffDecision` service fn + `HandoffDecision` type.
+
+Rollout: pipeline enforcement is env-gated default-OFF (per the gated-rollout
+discipline); the decision/HTTP/diagnostics surfaces are live immediately.
 
 ## Tier-2 increment #1 — Architecture Decision Log (2026-06-17)
 

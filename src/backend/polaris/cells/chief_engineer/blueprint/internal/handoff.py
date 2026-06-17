@@ -49,14 +49,14 @@ def build_handoff_decision(
     risks = risk_register.list(task_id=resolved_task_id) if resolved_task_id else risk_register.list()
     gate = evaluate_quality_gate(blueprint, risks=risks)
     risk_summary = risk_register.summarize(task_id=resolved_task_id or None)
+    # open_blocker_risk_count is informational telemetry (how many blockers are
+    # risk-derived). It is NOT re-applied to ``allowed``: evaluate_quality_gate
+    # already folds open blocker/critical risks into gate.blockers, so
+    # gate.passed is the single allow/block authority and a separate risk
+    # subtraction here would be redundant.
     open_blocker_risks = int(risk_summary.get("open_critical_or_blocker", 0) or 0)
-    allowed = gate.passed and open_blocker_risks == 0
-    if allowed:
-        reason = "handoff_ready"
-    elif gate.blocker_count:
-        reason = f"{gate.blocker_count} quality-gate blocker(s)"
-    else:
-        reason = f"{open_blocker_risks} open critical/blocker risk(s)"
+    allowed = gate.passed
+    reason = "handoff_ready" if allowed else f"{gate.blocker_count} quality-gate blocker(s)"
     return HandoffDecisionV1(
         allowed=allowed,
         blueprint_id=resolved_blueprint_id,

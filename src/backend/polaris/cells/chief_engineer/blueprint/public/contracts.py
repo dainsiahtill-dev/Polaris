@@ -84,6 +84,38 @@ class ADRStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class TechRadarRing(str, Enum):
+    """ThoughtWorks-style Tech-Radar ring for a library / technology.
+
+    ``adopt`` and ``trial`` are permitted; ``hold`` and ``deprecated`` are
+    stack-policy violations when a blueprint depends on them.
+    """
+
+    ADOPT = "adopt"
+    TRIAL = "trial"
+    HOLD = "hold"
+    DEPRECATED = "deprecated"
+
+
+class IncidentSeverity(str, Enum):
+    """Incident severity ladder for a post-mortem (sev1 = most severe)."""
+
+    SEV1 = "sev1"
+    SEV2 = "sev2"
+    SEV3 = "sev3"
+    SEV4 = "sev4"
+
+
+class PostMortemStatus(str, Enum):
+    """Lifecycle status of a post-mortem / incident review."""
+
+    DRAFT = "draft"
+    REVIEWING = "reviewing"
+    PUBLISHED = "published"
+    ACTIONS_OPEN = "actions_open"
+    CLOSED = "closed"
+
+
 @dataclass(frozen=True)
 class GenerateTaskBlueprintCommandV1:
     task_id: str
@@ -701,6 +733,292 @@ class ADREventV1:
         object.__setattr__(self, "note", str(self.note or "").strip())
 
 
+# ---------------------------------------------------------------------------
+# Tech Radar contracts (Tier-2 stack/library policy)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TechRadarEntryV1:
+    """A single Tech-Radar entry (a library/technology placed on a ring)."""
+
+    entry_id: str
+    library: str
+    ring: TechRadarRing
+    rationale: str
+    owner: str
+    decided_at: str
+    supersedes: str | None = None
+    history: tuple[dict[str, str], ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "entry_id", _require_non_empty("entry_id", self.entry_id))
+        object.__setattr__(self, "library", _require_non_empty("library", self.library))
+        object.__setattr__(self, "rationale", str(self.rationale or "").strip())
+        object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
+        object.__setattr__(self, "decided_at", _require_non_empty("decided_at", self.decided_at))
+        if not isinstance(self.ring, TechRadarRing):
+            object.__setattr__(self, "ring", TechRadarRing(str(self.ring).strip().lower()))
+        object.__setattr__(
+            self,
+            "history",
+            tuple(dict(item) for item in self.history if isinstance(item, Mapping)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "entry_id": self.entry_id,
+            "library": self.library,
+            "ring": self.ring.value,
+            "rationale": self.rationale,
+            "owner": self.owner,
+            "decided_at": self.decided_at,
+            "supersedes": self.supersedes,
+            "history": [dict(item) for item in self.history],
+        }
+
+
+@dataclass(frozen=True)
+class RegisterTechRadarCommandV1:
+    """Place a library on a Tech-Radar ring."""
+
+    library: str
+    ring: TechRadarRing
+    owner: str
+    workspace: str
+    rationale: str = ""
+    supersedes: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "library", _require_non_empty("library", self.library))
+        object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "rationale", str(self.rationale or "").strip())
+        if not isinstance(self.ring, TechRadarRing):
+            object.__setattr__(self, "ring", TechRadarRing(str(self.ring).strip().lower()))
+
+
+@dataclass(frozen=True)
+class ListTechRadarQueryV1:
+    """Filter Tech-Radar entries."""
+
+    workspace: str
+    ring: TechRadarRing | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        if self.ring is not None and not isinstance(self.ring, TechRadarRing):
+            object.__setattr__(self, "ring", TechRadarRing(str(self.ring).strip().lower()))
+
+
+@dataclass(frozen=True)
+class UpdateTechRadarRingCommandV1:
+    """Move a Tech-Radar entry to a new ring."""
+
+    workspace: str
+    entry_id: str
+    ring: TechRadarRing
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "entry_id", _require_non_empty("entry_id", self.entry_id))
+        object.__setattr__(self, "note", str(self.note or "").strip())
+        if not isinstance(self.ring, TechRadarRing):
+            object.__setattr__(self, "ring", TechRadarRing(str(self.ring).strip().lower()))
+
+
+@dataclass(frozen=True)
+class StackPolicyViolationV1:
+    """A blueprint dependency that violates the Tech Radar (hold/deprecated)."""
+
+    library: str
+    ring: TechRadarRing
+    rationale: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "library", _require_non_empty("library", self.library))
+        object.__setattr__(self, "rationale", str(self.rationale or "").strip())
+        if not isinstance(self.ring, TechRadarRing):
+            object.__setattr__(self, "ring", TechRadarRing(str(self.ring).strip().lower()))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"library": self.library, "ring": self.ring.value, "rationale": self.rationale}
+
+
+@dataclass(frozen=True)
+class TechRadarEventV1:
+    """Audit event emitted on Tech-Radar state change."""
+
+    event_id: str
+    entry_id: str
+    workspace: str
+    action: str
+    actor: str
+    at: str
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "event_id", _require_non_empty("event_id", self.event_id))
+        object.__setattr__(self, "entry_id", _require_non_empty("entry_id", self.entry_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "action", _require_non_empty("action", self.action))
+        object.__setattr__(self, "actor", _require_non_empty("actor", self.actor))
+        object.__setattr__(self, "at", _require_non_empty("at", self.at))
+        object.__setattr__(self, "note", str(self.note or "").strip())
+
+
+# ---------------------------------------------------------------------------
+# Post-Mortem / Incident Review contracts (Tier-2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PostMortemRecordV1:
+    """A single post-mortem / incident review (blameless, learning-oriented)."""
+
+    incident_id: str
+    title: str
+    severity: IncidentSeverity
+    summary: str
+    root_cause: str
+    impact: str
+    status: PostMortemStatus
+    occurred_at: str
+    owner: str
+    recorded_at: str
+    timeline: tuple[str, ...] = field(default_factory=tuple)
+    action_items: tuple[str, ...] = field(default_factory=tuple)
+    related_risk_ids: tuple[str, ...] = field(default_factory=tuple)
+    history: tuple[dict[str, str], ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "incident_id", _require_non_empty("incident_id", self.incident_id))
+        object.__setattr__(self, "title", _require_non_empty("title", self.title))
+        object.__setattr__(self, "summary", str(self.summary or "").strip())
+        object.__setattr__(self, "root_cause", str(self.root_cause or "").strip())
+        object.__setattr__(self, "impact", str(self.impact or "").strip())
+        object.__setattr__(self, "occurred_at", _require_non_empty("occurred_at", self.occurred_at))
+        object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
+        object.__setattr__(self, "recorded_at", _require_non_empty("recorded_at", self.recorded_at))
+        if not isinstance(self.severity, IncidentSeverity):
+            object.__setattr__(self, "severity", IncidentSeverity(str(self.severity).strip().lower()))
+        if not isinstance(self.status, PostMortemStatus):
+            object.__setattr__(self, "status", PostMortemStatus(str(self.status).strip().lower()))
+        object.__setattr__(self, "timeline", tuple(str(v) for v in self.timeline))
+        object.__setattr__(self, "action_items", tuple(str(v) for v in self.action_items))
+        object.__setattr__(self, "related_risk_ids", tuple(str(v) for v in self.related_risk_ids))
+        object.__setattr__(
+            self,
+            "history",
+            tuple(dict(item) for item in self.history if isinstance(item, Mapping)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "incident_id": self.incident_id,
+            "title": self.title,
+            "severity": self.severity.value,
+            "summary": self.summary,
+            "root_cause": self.root_cause,
+            "impact": self.impact,
+            "status": self.status.value,
+            "occurred_at": self.occurred_at,
+            "owner": self.owner,
+            "recorded_at": self.recorded_at,
+            "timeline": list(self.timeline),
+            "action_items": list(self.action_items),
+            "related_risk_ids": list(self.related_risk_ids),
+            "history": [dict(item) for item in self.history],
+        }
+
+
+@dataclass(frozen=True)
+class RegisterPostMortemCommandV1:
+    """Record a new post-mortem / incident review."""
+
+    title: str
+    severity: IncidentSeverity
+    occurred_at: str
+    owner: str
+    workspace: str
+    summary: str = ""
+    root_cause: str = ""
+    impact: str = ""
+    timeline: tuple[str, ...] = field(default_factory=tuple)
+    action_items: tuple[str, ...] = field(default_factory=tuple)
+    related_risk_ids: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "title", _require_non_empty("title", self.title))
+        object.__setattr__(self, "occurred_at", _require_non_empty("occurred_at", self.occurred_at))
+        object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "summary", str(self.summary or "").strip())
+        object.__setattr__(self, "root_cause", str(self.root_cause or "").strip())
+        object.__setattr__(self, "impact", str(self.impact or "").strip())
+        if not isinstance(self.severity, IncidentSeverity):
+            object.__setattr__(self, "severity", IncidentSeverity(str(self.severity).strip().lower()))
+        object.__setattr__(self, "timeline", tuple(str(v) for v in self.timeline))
+        object.__setattr__(self, "action_items", tuple(str(v) for v in self.action_items))
+        object.__setattr__(self, "related_risk_ids", tuple(str(v) for v in self.related_risk_ids))
+
+
+@dataclass(frozen=True)
+class ListPostMortemsQueryV1:
+    """Filter post-mortems."""
+
+    workspace: str
+    severity: IncidentSeverity | None = None
+    status: PostMortemStatus | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        if self.severity is not None and not isinstance(self.severity, IncidentSeverity):
+            object.__setattr__(self, "severity", IncidentSeverity(str(self.severity).strip().lower()))
+        if self.status is not None and not isinstance(self.status, PostMortemStatus):
+            object.__setattr__(self, "status", PostMortemStatus(str(self.status).strip().lower()))
+
+
+@dataclass(frozen=True)
+class UpdatePostMortemStatusCommandV1:
+    """Transition a post-mortem to a new status."""
+
+    workspace: str
+    incident_id: str
+    status: PostMortemStatus
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "incident_id", _require_non_empty("incident_id", self.incident_id))
+        object.__setattr__(self, "note", str(self.note or "").strip())
+        if not isinstance(self.status, PostMortemStatus):
+            object.__setattr__(self, "status", PostMortemStatus(str(self.status).strip().lower()))
+
+
+@dataclass(frozen=True)
+class PostMortemEventV1:
+    """Audit event emitted on post-mortem state change."""
+
+    event_id: str
+    incident_id: str
+    workspace: str
+    action: str
+    actor: str
+    at: str
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "event_id", _require_non_empty("event_id", self.event_id))
+        object.__setattr__(self, "incident_id", _require_non_empty("incident_id", self.incident_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "action", _require_non_empty("action", self.action))
+        object.__setattr__(self, "actor", _require_non_empty("actor", self.actor))
+        object.__setattr__(self, "at", _require_non_empty("at", self.at))
+        object.__setattr__(self, "note", str(self.note or "").strip())
+
+
 @dataclass(frozen=True)
 class GovernanceSummaryV1:
     """Aggregate governance view attached to a blueprint.
@@ -799,26 +1117,40 @@ __all__ = [
     "GetBlueprintStatusQueryV1",
     "GovernanceSummaryV1",
     "HandoffDecisionV1",
+    "IncidentSeverity",
     "ListADRsQueryV1",
+    "ListPostMortemsQueryV1",
     "ListRisksQueryV1",
     "ListTechDebtQueryV1",
+    "ListTechRadarQueryV1",
+    "PostMortemEventV1",
+    "PostMortemRecordV1",
+    "PostMortemStatus",
     "QualityGateResultV1",
     "RegisterADRCommandV1",
+    "RegisterPostMortemCommandV1",
     "RegisterRiskCommandV1",
     "RegisterTechDebtCommandV1",
+    "RegisterTechRadarCommandV1",
     "RiskEventV1",
     "RiskRecordV1",
     "RiskSeverity",
     "RiskStatus",
     "RollbackLinkV1",
     "RollbackStrategy",
+    "StackPolicyViolationV1",
     "TaskBlueprintGeneratedEventV1",
     "TaskBlueprintResultV1",
     "TechDebtEventV1",
     "TechDebtRecordV1",
     "TechDebtSeverity",
     "TechDebtStatus",
+    "TechRadarEntryV1",
+    "TechRadarEventV1",
+    "TechRadarRing",
     "UpdateADRStatusCommandV1",
+    "UpdatePostMortemStatusCommandV1",
     "UpdateRiskStatusCommandV1",
     "UpdateTechDebtStatusCommandV1",
+    "UpdateTechRadarRingCommandV1",
 ]

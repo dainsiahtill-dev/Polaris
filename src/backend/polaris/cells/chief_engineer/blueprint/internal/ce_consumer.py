@@ -460,6 +460,10 @@ class CEConsumer:
             )
             ack_payload["handoff_decision"] = handoff_decision.to_dict()
             if handoff_enforcement_enabled() and not handoff_decision.allowed:
+                # Requeue to pending_design. CE_quality_gate_blocked is a
+                # consuming requeue (not in _NON_CONSUMING_REQUEUE_ERROR_CODES),
+                # so a blueprint that stays blocked eventually dead-letters
+                # rather than looping forever — intentional fail-closed terminus.
                 self._svc.fail_task_stage(
                     FailTaskStageCommandV1(
                         workspace=self._workspace,
