@@ -245,6 +245,8 @@ class TestBuildNativeToolSchemas:
         assert "file" in properties
         assert "n" in properties
         # Compatibility aliases remain explicit in schema for model-side argument shaping.
+        assert "path" in properties
+        assert "target_file" in properties
         assert "limit" in properties
 
     def test_context_retrieve_offering_is_flag_gated(self, monkeypatch) -> None:
@@ -519,6 +521,10 @@ class TestClassifyError:
     def test_network_classification(self) -> None:
         assert classify_error("Connection refused") == "network"
         assert classify_error("Network error: DNS failure") == "network"
+        assert (
+            classify_error("500 Server Error: Internal Server Error url: http://localhost:8189/v1/chat/completions")
+            == "network"
+        )
 
     def test_auth_classification(self) -> None:
         assert classify_error("Auth failed: Invalid API key") == "auth"

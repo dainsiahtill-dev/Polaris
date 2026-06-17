@@ -1021,29 +1021,18 @@ async def _execute_standard_llm_flow(
         )
 
     if not all_affected_files:
-        direct_message = adapter._build_director_message(task, text_patch_mode=True)
         direct_timeout = adapter._execution.resolve_direct_fallback_timeout_seconds(context, llm_call_timeout)
-        try:
-            direct_result = await asyncio.wait_for(
-                adapter._invoke_direct_runtime_provider(direct_message, timeout_seconds=direct_timeout),
-                timeout=max(0.1, direct_timeout + 1.0),
-            )
-        except asyncio.TimeoutError:
-            direct_result = {"content": "", "error": "director_direct_patch_fallback_llm_timeout"}
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            direct_result = {"content": "", "error": f"director_direct_patch_fallback_failed:{exc}"}
-        direct_content = str(direct_result.get("content") or direct_result.get("response") or "")
-        direct_tool_results = await adapter._execution.execute_tools(
-            direct_content, target_task_id, adapter._update_task_progress
-        )
+        direct_content = ""
+        direct_tool_results: list[dict[str, Any]] = []
         direct_fallback_summary = {
             "timeout_seconds": direct_timeout,
             "content_length": len(direct_content),
-            "error": str(direct_result.get("error") or "").strip(),
+            "error": "",
+            "skipped_reason": "direct_runtime_provider_removed",
             "tool_results": len(direct_tool_results),
-            "provider": str(direct_result.get("provider") or "").strip(),
-            "model": str(direct_result.get("model") or "").strip(),
-            "success": bool(direct_result.get("success")),
+            "provider": "",
+            "model": "",
+            "success": False,
         }
         adapter._state_tracker.append_debug_event(
             target_task_id,

@@ -84,6 +84,16 @@ _JSON_ARGUMENT_WRAPPER_KEYS = frozenset(
         "function_args",
     }
 )
+_TOOL_ENVELOPE_NAME_KEYS = frozenset(
+    {
+        "name",
+        "tool",
+        "tool_name",
+        "toolName",
+        "function_name",
+        "functionName",
+    }
+)
 
 
 def _single_object_array(value: Any) -> dict[str, Any] | None:
@@ -135,6 +145,43 @@ def _object_keys_belong_to_tool(tool_name: str, payload: Mapping[str, Any]) -> b
     return bool(namespace) and set(payload).issubset(namespace)
 
 
+def _extract_same_tool_envelope_arguments(tool_name: str, payload: Mapping[str, Any]) -> dict[str, Any] | None:
+    envelope_tool_name: str | None = None
+    for key in _TOOL_ENVELOPE_NAME_KEYS:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            envelope_tool_name = value.strip()
+            break
+    if envelope_tool_name is None:
+        return None
+
+    if normalize_tool_name(envelope_tool_name) != tool_name:
+        return None
+
+    for key in _JSON_ARGUMENT_WRAPPER_KEYS:
+        if key not in payload:
+            continue
+        value = payload[key]
+        if isinstance(value, Mapping):
+            if _object_keys_belong_to_tool(tool_name, value):
+                return dict(value)
+            unwrapped = _unwrap_json_wrapped_arguments(tool_name, value)
+            if unwrapped != value:
+                return unwrapped
+            return None
+        if isinstance(value, str):
+            parsed = _parse_json_object(value)
+            if parsed is None:
+                return None
+            if _object_keys_belong_to_tool(tool_name, parsed):
+                return dict(parsed)
+            unwrapped = _unwrap_json_wrapped_arguments(tool_name, parsed)
+            if unwrapped != parsed:
+                return unwrapped
+            return None
+    return None
+
+
 def _unwrap_json_wrapped_arguments(tool_name: str, tool_args: Any) -> dict[str, Any]:
     if isinstance(tool_args, str):
         parsed = _parse_json_object(tool_args)
@@ -159,6 +206,10 @@ def _unwrap_json_wrapped_arguments(tool_name: str, tool_args: Any) -> dict[str, 
         return {}
 
     normalized = dict(tool_args)
+    enveloped = _extract_same_tool_envelope_arguments(tool_name, normalized)
+    if enveloped is not None:
+        return enveloped
+
     if len(normalized) != 1:
         return normalized
 

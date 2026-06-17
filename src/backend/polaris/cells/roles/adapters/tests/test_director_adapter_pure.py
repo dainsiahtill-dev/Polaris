@@ -2864,12 +2864,12 @@ export function summary() {
                 "tool_results": [],
             }
 
-        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
-            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+            raise AssertionError("direct runtime provider bypass must not be called")
 
         adapter._invoke_role_dialogue_with_timeout = _empty_dialogue  # type: ignore[method-assign]
-        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
             task_id=str(task.id),
@@ -3065,12 +3065,12 @@ export function summary() {
             del args, kwargs
             return {"content": "", "success": False, "error": "role_model_not_configured"}
 
-        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
-            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+            raise AssertionError("direct runtime provider bypass must not be called")
 
         adapter._invoke_role_dialogue_with_timeout = _empty_dialogue  # type: ignore[method-assign]
-        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
             task_id=str(task.id),
@@ -3091,7 +3091,7 @@ export function summary() {
         assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
         assert adapter_result.get("new_files") == []
         assert adapter_result.get("primary_llm", {}).get("error") == "role_model_not_configured"
-        assert adapter_result.get("direct_fallback", {}).get("error") == "runtime_provider_unavailable"
+        assert adapter_result.get("direct_fallback", {}).get("skipped_reason") == "direct_runtime_provider_removed"
 
     @pytest.mark.asyncio
     async def test_execute_accepts_existing_scope_after_read_only_mutation_guard(self, tmp_path: Any) -> None:
@@ -3141,12 +3141,12 @@ export function summary() {
                 ),
             }
 
-        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
-            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+            raise AssertionError("direct runtime provider bypass must not be called")
 
         adapter._invoke_role_dialogue_with_timeout = _read_only_contract_violation  # type: ignore[method-assign]
-        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
             task_id=str(task.id),
@@ -3165,7 +3165,7 @@ export function summary() {
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("existing_contract_evidence", {}).get("ok") is True
         assert adapter_result.get("primary_llm", {}).get("error", "").startswith("TransactionKernel execution failed")
-        assert adapter_result.get("direct_fallback", {}).get("error") == "runtime_provider_unavailable"
+        assert adapter_result.get("direct_fallback", {}).get("skipped_reason") == "direct_runtime_provider_removed"
 
     @pytest.mark.asyncio
     async def test_execute_accepts_existing_scope_after_read_write_batch_violation(self, tmp_path: Any) -> None:

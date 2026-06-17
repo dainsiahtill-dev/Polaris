@@ -89,8 +89,19 @@ class TestOutputParserJSONFallbackNormal:
         result = parser.parse_execution_tool_calls(content=content)
 
         assert len(result) == 1
-        assert result[0].tool == "write"
-        assert result[0].args == {"path": "out.txt", "content": "hello"}
+        assert result[0].tool == "write_file"
+        assert result[0].args == {"file": "out.txt", "content": "hello"}
+
+    def test_json_with_camel_case_tool_envelope(self) -> None:
+        """Provider/model dialects may emit toolName/toolInput wrappers."""
+        parser = OutputParser()
+        content = '{"toolName": "write", "toolInput": {"targetPath": "out.txt", "sourceCode": "hello"}}'
+
+        result = parser.parse_execution_tool_calls(content=content)
+
+        assert len(result) == 1
+        assert result[0].tool == "write_file"
+        assert result[0].args == {"file": "out.txt", "content": "hello"}
 
     def test_json_with_tool_key(self) -> None:
         """JSON tool call using 'tool' key should be parsed."""
@@ -116,11 +127,11 @@ class TestOutputParserJSONFallbackNormal:
 
         assert len(result) == 3
         tools = {call.tool for call in result}
-        assert tools == {"read", "write", "delete"}
+        assert tools == {"read", "write_file", "delete"}
 
         # Verify arguments
-        write_call = next(c for c in result if c.tool == "write")
-        assert write_call.args == {"path": "b.txt", "content": "data"}
+        write_call = next(c for c in result if c.tool == "write_file")
+        assert write_call.args == {"file": "b.txt", "content": "data"}
 
 
 class TestOutputParserJSONFallbackBoundary:
@@ -338,7 +349,7 @@ class TestOutputParserJSONFallbackAllowedTools:
 
         assert len(result) == 2
         tools = {call.tool for call in result}
-        assert tools == {"read", "write"}
+        assert tools == {"read", "write_file"}
         assert "delete" not in tools
 
     def test_single_allowed_tool(self) -> None:
@@ -477,7 +488,7 @@ class TestOutputParserJSONFallbackIntegration:
 
         assert len(result) == 3
         tools = {call.tool for call in result}
-        assert tools == {"read_file", "ripgrep", "write"}
+        assert tools == {"read_file", "ripgrep", "write_file"}
 
     def test_json_with_params_and_parameters_keys(self) -> None:
         """JSON with 'params' and 'parameters' keys should also work."""
@@ -523,7 +534,7 @@ class TestOutputParserJSONFallbackIntegration:
         result = parser.parse_execution_tool_calls(content=content)
 
         assert len(result) == 1
-        assert result[0].args["path"] == "中文文件.txt"
+        assert result[0].args["file"] == "中文文件.txt"
         assert result[0].args["content"] == "Hello 世界"
 
 

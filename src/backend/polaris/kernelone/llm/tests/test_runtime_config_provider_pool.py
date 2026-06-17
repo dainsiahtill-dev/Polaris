@@ -20,6 +20,7 @@ from polaris.kernelone.llm.runtime_config import (
     get_role_concurrency,
     get_role_model,
     get_role_provider_pool,
+    mark_role_binding_unhealthy,
     reset_runtime_config_manager,
     resolve_role_worker_plan,
     set_role_binding_override,
@@ -321,6 +322,50 @@ class TestModuleHelpers:
         assert get_role_provider_pool("director") == ("prov-local", "prov-lan")
         assert get_role_concurrency("director") == 2
         assert len(get_role_binding_slots("director")) == 2
+
+    def test_cooling_one_binding_preserves_worker_count_on_healthy_binding(self, tmp_path: Path) -> None:
+        mgr = _manager_with_config(
+            tmp_path,
+            {
+                "schema_version": 2,
+                "providers": {
+                    "prov-local": {
+                        "type": "openai_compat",
+                        "base_url": "http://localhost:8189",
+                        "model": "qwen",
+                        "max_concurrency": 4,
+                    },
+                    "prov-lan": {
+                        "type": "openai_compat",
+                        "base_url": "http://192.168.1.50:8189",
+                        "model": "qwen",
+                        "max_concurrency": 4,
+                    },
+                },
+                "roles": {
+                    "director": {
+                        "max_concurrency": 4,
+                        "bindings": [
+                            {"provider_id": "prov-local", "model": "qwen"},
+                            {"provider_id": "prov-lan", "model": "qwen"},
+                        ],
+                    }
+                },
+            },
+        )
+        set_runtime_config_manager(mgr)
+
+        mark_role_binding_unhealthy(
+            "director",
+            provider_id="prov-local",
+            model="qwen",
+            cooldown_seconds=60,
+        )
+
+        plan = resolve_role_worker_plan("director")
+        assert len(plan) == 4
+        assert {slot.provider_id for slot in plan} == {"prov-lan"}
+        assert get_role_model("director") == ("prov-lan", "qwen")
 
     def test_helpers_safe_when_unbound(self, tmp_path: Path) -> None:
         mgr = _manager(tmp_path, {"model": "qwen"})  # no provider_id -> unbound

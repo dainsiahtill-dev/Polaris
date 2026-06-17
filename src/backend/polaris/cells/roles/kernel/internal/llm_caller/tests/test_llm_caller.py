@@ -6,6 +6,8 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     LLMResponse,
@@ -13,6 +15,18 @@ from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     PreparedLLMRequest,
     StructuredLLMResponse,
 )
+
+
+def test_invoker_module_import_is_stdout_silent(capsys: pytest.CaptureFixture[str]) -> None:
+    """F15: worker daemons must not keep raw stdout writes alive at shutdown."""
+    import polaris.cells.roles.kernel.internal.llm_caller.invoker as invoker
+
+    capsys.readouterr()
+    importlib.reload(invoker)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 class TestLLMResponse:

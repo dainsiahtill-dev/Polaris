@@ -18,6 +18,7 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     TechDebtStatus,
     UpdateTechDebtStatusCommandV1,
 )
+from polaris.kernelone.storage import resolve_logical_path
 
 
 class TestTechDebtLedger(unittest.TestCase):
@@ -44,7 +45,7 @@ class TestTechDebtLedger(unittest.TestCase):
         self.assertTrue(record.debt_id.startswith("debt_"))
         self.assertEqual(record.status, TechDebtStatus.REGISTERED)
         self.assertEqual(len(record.history), 1)
-        path = Path(self.workspace) / "runtime" / "tech_debt" / f"{record.debt_id}.json"
+        path = Path(resolve_logical_path(self.workspace, "runtime/tech_debt")) / f"{record.debt_id}.json"
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
         self.assertEqual(data["severity"], "severe")

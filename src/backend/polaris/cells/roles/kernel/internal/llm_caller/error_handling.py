@@ -44,10 +44,29 @@ def classify_error(error_str: str) -> str:
     if "timeout" in error_lower or "timed out" in error_lower:
         return ERROR_CATEGORY_TIMEOUT
 
-    if "rate limit" in error_lower or "429" in error_lower or "too many requests" in error_lower:
+    if (
+        "rate limit" in error_lower
+        or "429" in error_lower
+        or "too many requests" in error_lower
+        or "用量上限" in error_lower
+        or "购买积分" in error_lower
+        or "余额不足" in error_lower
+        or "quota" in error_lower
+        or "token plan" in error_lower
+    ):
         return ERROR_CATEGORY_RATE_LIMIT
 
     if "connection" in error_lower or "network" in error_lower or "dns" in error_lower:
+        return ERROR_CATEGORY_NETWORK
+    if (
+        "500 server error" in error_lower
+        or "internal server error" in error_lower
+        or "502" in error_lower
+        or "503" in error_lower
+        or "504" in error_lower
+        or "bad gateway" in error_lower
+        or "gateway timeout" in error_lower
+    ):
         return ERROR_CATEGORY_NETWORK
 
     if "auth" in error_lower or "api key" in error_lower or "unauthorized" in error_lower:

@@ -4,9 +4,10 @@ from polaris.cells.chief_engineer.blueprint.internal.blueprint_persistence impor
     BlueprintPersistence,
 )
 
-from .service import (
-    CEConsumer,
-    ChiefEngineerAgent,
+# Contract types (dataclasses, enums, errors) are owned by contracts.py.
+# Import them from there directly so the public boundary does not depend
+# on service.py re-exporting them (which a linter may strip as "unused").
+from .contracts import (
     ChiefEngineerBlueprintError,
     ChiefEngineerBlueprintErrorV1,
     GenerateTaskBlueprintCommandV1,
@@ -31,6 +32,12 @@ from .service import (
     TechDebtStatus,
     UpdateRiskStatusCommandV1,
     UpdateTechDebtStatusCommandV1,
+)
+
+# Service functions and re-exported agent/consumer classes.
+from .service import (
+    CEConsumer,
+    ChiefEngineerAgent,
     attach_governance_to_blueprint,
     build_blueprint_governance,
     generate_task_blueprint,

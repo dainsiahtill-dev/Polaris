@@ -296,6 +296,56 @@ class TestFissionExtraction:
 
         monkeypatch.setattr(runtime_service, "RoleRuntimeService", FakeRoleRuntimeService)
 
+    def test_fission_marks_headless_cognitive_blockers_auto_accepted(self, monkeypatch) -> None:
+        from unittest.mock import MagicMock, patch
+
+        import polaris.cells.roles.runtime.public.service as runtime_service
+
+        captured_commands = []
+        payload_text = (
+            '{"construction_steps": [{"step_id": "S1", "target_file": "game.js", '
+            '"est_lines": 80, "signatures": ["function loop()"], "verify": "node --check game.js"}]}'
+        )
+
+        class FakeResult:
+            ok = True
+            output = payload_text
+            thinking = None
+            role = "chief_engineer"
+            metadata: dict[str, object] = {}
+            usage: dict[str, object] = {}
+            tool_calls: list[object] = []
+            artifacts: list[object] = []
+            error_message = ""
+            error_code = ""
+
+        class FakeRoleRuntimeService:
+            async def execute_role_session(self, command):
+                captured_commands.append(command)
+                return FakeResult()
+
+        monkeypatch.setattr(runtime_service, "RoleRuntimeService", FakeRoleRuntimeService)
+        with patch(
+            "polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service",
+            return_value=MagicMock(),
+        ):
+            consumer = CEConsumer(workspace="/tmp", worker_id="w1")
+            steps, errors = consumer._run_step_fission("PM-9", {"title": "t"}, blueprint_id="bp")
+
+        assert errors == []
+        assert steps[0]["step_id"] == "PM-9-S1"
+        assert len(captured_commands) == 1
+        command = captured_commands[0]
+        assert command.context["cognitive_runtime_approval_mode"] == "auto_accept"
+        assert command.context["cognitive_runtime_approval_scope"] == "chief_engineer_step_fission_preflight"
+        assert command.metadata["cognitive_runtime_approval_mode"] == "auto_accept"
+        assert command.metadata["cognitive_runtime_approval"] == {
+            "mode": "auto_accept",
+            "source": "factory_bench_headless_ce_fission",
+            "scope": "chief_engineer_step_fission_preflight",
+            "approved_by": "ce_consumer",
+        }
+
     def test_think_wrapped_fenced_json(self, monkeypatch) -> None:
         from unittest.mock import MagicMock, patch as _patch
 

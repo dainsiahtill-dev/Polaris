@@ -25,17 +25,11 @@ class TestHollowVerifyClassifier:
     """I3-r21: an existence-only verify can 'resolve' a code step on a stub."""
 
     def test_test_f_plus_filename_grep_is_all_hollow(self) -> None:
-        assert verify_is_all_hollow(
-            "test -f main.js && grep -q 'main.js' main.js", signature_tokens=set()
-        )
+        assert verify_is_all_hollow("test -f main.js && grep -q 'main.js' main.js", signature_tokens=set())
 
     def test_node_check_is_structural(self) -> None:
-        assert not verify_is_all_hollow(
-            "test -f main.js && node --check main.js", signature_tokens=set()
-        )
-        assert verify_has_structural_clause(
-            "test -f main.js && node --check main.js", signature_tokens=set()
-        )
+        assert not verify_is_all_hollow("test -f main.js && node --check main.js", signature_tokens=set())
+        assert verify_has_structural_clause("test -f main.js && node --check main.js", signature_tokens=set())
 
     def test_grep_for_declared_signature_is_structural(self) -> None:
         assert not verify_is_all_hollow(
@@ -50,18 +44,14 @@ class TestHollowVerifyClassifier:
         )
 
     def test_wc_line_count_is_hollow(self) -> None:
-        assert verify_is_all_hollow(
-            'test -f main.js && [ "$(wc -l < main.js)" -ge 5 ]', signature_tokens=set()
-        )
+        assert verify_is_all_hollow('test -f main.js && [ "$(wc -l < main.js)" -ge 5 ]', signature_tokens=set())
 
     def test_empty_verify_is_not_hollow(self) -> None:
         # empty verify is handled separately as "missing verify", not "hollow"
         assert not verify_is_all_hollow("", signature_tokens=set())
 
     def test_unparseable_clause_fails_open_as_structural(self) -> None:
-        assert not verify_is_all_hollow(
-            "python -m pytest tests/ -k smoke", signature_tokens=set()
-        )
+        assert not verify_is_all_hollow("python -m pytest tests/ -k smoke", signature_tokens=set())
 
 
 class TestNormalize:
@@ -170,3 +160,15 @@ class TestCollectFailingClauses:
 
 def test_split_clauses() -> None:
     assert split_verify_clauses("a && b &&  c ") == ["a", "b", "c"]
+
+
+class TestNormalizeStepVerify:
+    def test_strips_trailing_natural_language_from_pytest_verify(self) -> None:
+        verify = "pytest -k test_create_app 通过，验证 Flask app 创建成功"
+
+        assert normalize_step_verify(verify) == "pytest -k test_create_app"
+
+    def test_preserves_quoted_natural_language_inside_verify_command(self) -> None:
+        verify = "python -c \"print('通过，验证')\""
+
+        assert normalize_step_verify(verify) == verify

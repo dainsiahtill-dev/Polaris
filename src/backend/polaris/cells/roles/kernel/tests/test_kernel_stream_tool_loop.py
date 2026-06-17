@@ -383,7 +383,7 @@ def test_stream_executes_normalized_tool_calls_even_with_anthropic_provider_meta
     event_types = [str(item.get("type") or "") for item in events]
 
     assert len(stream_contexts) == 1
-    assert executed_calls == [("read_file", {"path": "README.md"})]
+    assert executed_calls == [("read_file", {"file": "README.md"})]
     assert event_types.count("tool_call") == 1
     assert event_types.count("tool_result") == 1
     assert "complete" in event_types

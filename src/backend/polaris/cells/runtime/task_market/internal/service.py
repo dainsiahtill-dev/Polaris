@@ -67,6 +67,7 @@ _IN_PROGRESS_STATUSES = {"in_design", "in_execution", "in_qa"}
 _EXECUTION_STATUS_SET = {"pending_exec", "in_execution"}
 _QA_STATUS_SET = {"pending_qa", "in_qa"}
 _DESIGN_STATUS_SET = {"pending_design", "in_design"}
+_NON_CONSUMING_REQUEUE_ERROR_CODES = frozenset({"SCOPE_CONFLICT"})
 # Statuses a depends_on dependency can never recover from (subset of
 # models.TERMINAL_STATUSES minus "resolved"): dependents must cascade,
 # not strand.
@@ -1060,7 +1061,19 @@ class TaskMarketService:
                 }
 
             # Determine disposition.
-            move_to_dead_letter = bool(command.to_dead_letter) or item.attempts >= item.max_attempts
+            non_consuming_requeue = (
+                command.requeue_stage is not None
+                and not command.to_dead_letter
+                and str(command.error_code or "").strip().upper() in _NON_CONSUMING_REQUEUE_ERROR_CODES
+            )
+            if non_consuming_requeue and item.attempts > 0:
+                # claim_work_item increments attempts before consumers can inspect
+                # file-scope conflicts. A transient lock conflict should wait for
+                # the owner, not burn the task's execution retry budget.
+                item.attempts -= 1
+            move_to_dead_letter = bool(command.to_dead_letter) or (
+                not non_consuming_requeue and item.attempts >= item.max_attempts
+            )
             dead_letter_records: list[dict[str, Any]] = []
 
             if move_to_dead_letter:
@@ -3167,6 +3180,20 @@ class TaskMarketService:
             return ""
 
         item_target = _target(item)
+        if item_target:
+            current_epoch = now_epoch()
+            for other in items.values():
+                if getattr(other, "task_id", "") == item.task_id:
+                    continue
+                if _target(other) != item_target:
+                    continue
+                if (
+                    str(getattr(other, "stage", "") or "") == "pending_exec"
+                    and str(getattr(other, "status", "") or "") == "in_execution"
+                    and str(getattr(other, "lease_token", "") or "").strip()
+                    and float(getattr(other, "lease_expires_at", 0.0) or 0.0) > current_epoch
+                ):
+                    return False
         for dep_id in item.depends_on or []:
             dep = items.get(str(dep_id))
             if dep is None:

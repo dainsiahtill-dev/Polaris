@@ -20,10 +20,23 @@ import json
 import logging
 import time
 import uuid
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.engine import AIExecutor
 from polaris.kernelone.llm.engine._executor_base import coerce_required_flag
+from polaris.kernelone.llm.runtime_config import (
+    RoleBindingSlot,
+    clear_role_provider_override,
+    get_role_binding_override,
+    get_role_binding_slots,
+    get_role_provider_override,
+    is_role_binding_healthy,
+    mark_role_binding_unhealthy,
+    set_role_binding_override,
+    set_role_provider_override,
+)
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 
 from ..llm_cache import get_global_llm_cache
@@ -33,6 +46,7 @@ from .error_handling import (
     classify_error,
     is_native_tool_calling_unsupported,
     is_response_format_unsupported,
+    is_retryable_error,
 )
 from .event_emitter import LLMEventEmitter
 from .helpers import (
@@ -73,8 +87,7 @@ def _get_cognitive_runtime_receipt_deps() -> tuple[Any, Any]:
     return RecordRuntimeReceiptCommandV1, get_cognitive_runtime_public_service
 
 
-# Module loaded indicator
-print(f"[LLMInvoker] MODULE LOADED: __name__={__name__}", flush=True)
+logger.debug("LLMInvoker module loaded: __name__=%s", __name__)
 
 # Instructor integration
 try:
@@ -147,6 +160,201 @@ class LLMInvoker:
     def set_formatter(self, formatter: Any) -> None:
         """Set ProviderFormatter for lazy serialization."""
         self._formatter = formatter
+
+    @staticmethod
+    def _role_allows_binding_fallback(role_id: str) -> bool:
+        return role_id.strip().lower() in {"pm", "chief_engineer", "qa", "architect", "director"}
+
+    @staticmethod
+    def _profile_for_binding(profile: RoleProfile, slot: RoleBindingSlot) -> RoleProfile:
+        try:
+            return replace(profile, provider_id=slot.provider_id, model=slot.model)
+        except (TypeError, ValueError):
+            clone = SimpleNamespace(**vars(profile))
+            clone.provider_id = slot.provider_id
+            clone.model = slot.model
+            return clone  # type: ignore[return-value]
+
+    @staticmethod
+    def _fallback_slots_for_role(role_id: str, profile: RoleProfile) -> tuple[RoleBindingSlot, ...]:
+        if not LLMInvoker._role_allows_binding_fallback(role_id):
+            return ()
+        try:
+            slots = get_role_binding_slots(role_id)
+        except (RuntimeError, ValueError, TypeError):
+            return ()
+        current_provider = str(getattr(profile, "provider_id", "") or "").strip()
+        current_model = str(getattr(profile, "model", "") or "").strip()
+        candidates: list[RoleBindingSlot] = []
+        seen: set[tuple[str, str, str]] = set()
+        for slot in slots:
+            provider_id = str(slot.provider_id or "").strip()
+            model = str(slot.model or "").strip()
+            if not provider_id or not model:
+                continue
+            if provider_id == current_provider and model == current_model:
+                continue
+            key = (provider_id, model, str(slot.binding_id or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(slot)
+        return tuple(candidates)
+
+    @staticmethod
+    def _profile_uses_healthy_binding(role_id: str, profile: RoleProfile) -> bool:
+        binding = get_role_binding_override(role_id)
+        provider_id = str((binding or {}).get("provider_id") or getattr(profile, "provider_id", "") or "").strip()
+        model = str((binding or {}).get("model") or getattr(profile, "model", "") or "").strip()
+        binding_id = str((binding or {}).get("binding_id") or "").strip()
+        return is_role_binding_healthy(
+            role_id,
+            provider_id=provider_id,
+            model=model,
+            binding_id=binding_id,
+        )
+
+    @staticmethod
+    def _profile_for_healthy_binding(role_id: str, profile: RoleProfile) -> RoleProfile:
+        if LLMInvoker._profile_uses_healthy_binding(role_id, profile):
+            return profile
+        for slot in get_role_binding_slots(role_id):
+            if is_role_binding_healthy(
+                role_id,
+                provider_id=slot.provider_id,
+                model=slot.model,
+                binding_id=slot.binding_id,
+            ):
+                return LLMInvoker._profile_for_binding(profile, slot)
+        return profile
+
+    @staticmethod
+    def _mark_profile_binding_unhealthy(role_id: str, profile: RoleProfile) -> None:
+        binding = get_role_binding_override(role_id)
+        provider_id = str((binding or {}).get("provider_id") or getattr(profile, "provider_id", "") or "").strip()
+        model = str((binding or {}).get("model") or getattr(profile, "model", "") or "").strip()
+        binding_id = str((binding or {}).get("binding_id") or "").strip()
+        mark_role_binding_unhealthy(
+            role_id,
+            provider_id=provider_id,
+            model=model,
+            binding_id=binding_id or None,
+        )
+
+    @staticmethod
+    def _restore_role_binding_override(
+        role_id: str,
+        previous_binding: dict[str, str] | None,
+        previous_provider: str | None,
+    ) -> None:
+        if previous_binding:
+            set_role_binding_override(
+                role_id,
+                provider_id=str(previous_binding.get("provider_id") or ""),
+                model=str(previous_binding.get("model") or ""),
+                binding_id=str(previous_binding.get("binding_id") or "") or None,
+            )
+            return
+        if previous_provider:
+            set_role_provider_override(role_id, previous_provider)
+            return
+        clear_role_provider_override(role_id)
+
+    async def _try_role_binding_fallback(
+        self,
+        *,
+        caller: Any,
+        profile: RoleProfile,
+        system_prompt: str,
+        context: ContextRequest,
+        temperature: float,
+        max_tokens: int,
+        response_model: type | None,
+        platform_retry_max: int,
+        executor: Any,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        model: str,
+        call_id: str,
+        event_emitter: Any | None,
+        original_error: str,
+    ) -> tuple[RoleProfile, PreparedLLMRequest, Any, Any] | None:
+        self._mark_profile_binding_unhealthy(role_id, profile)
+        fallback_slots = self._fallback_slots_for_role(role_id, profile)
+        if not fallback_slots:
+            return None
+
+        for slot in fallback_slots:
+            previous_binding = get_role_binding_override(role_id)
+            previous_provider = get_role_provider_override(role_id)
+            set_role_binding_override(
+                role_id,
+                provider_id=slot.provider_id,
+                model=slot.model,
+                binding_id=slot.binding_id or None,
+            )
+            fallback_profile = self._profile_for_binding(profile, slot)
+            try:
+                self._emit_call_retry_event(
+                    event_emitter=event_emitter,
+                    role=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    model=model,
+                    call_id=call_id,
+                    retry_decision="role_binding_fallback",
+                    backoff_seconds=0.0,
+                    metadata={
+                        "from_provider": str(getattr(profile, "provider_id", "") or ""),
+                        "from_model": str(getattr(profile, "model", "") or ""),
+                        "to_provider": slot.provider_id,
+                        "to_model": slot.model,
+                        "binding_id": slot.binding_id,
+                        "trigger_error_category": classify_error(original_error),
+                    },
+                )
+                fallback_prepared = await caller._prepare_llm_request(
+                    profile=fallback_profile,
+                    system_prompt=system_prompt,
+                    context=context,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    stream=False,
+                    response_model=response_model,
+                    platform_retry_max=platform_retry_max,
+                )
+                fallback_response = await executor.invoke(fallback_prepared.ai_request)
+            except (RuntimeError, TypeError, ValueError) as exc:
+                fallback_error = str(exc)
+            else:
+                fallback_ok = getattr(fallback_response, "ok", True)
+                raw_error = getattr(fallback_response, "error", None)
+                fallback_error = str(raw_error or "").strip() if raw_error is not None else ""
+                if (bool(fallback_ok) if isinstance(fallback_ok, bool) else True) and not fallback_error:
+                    return (
+                        fallback_profile,
+                        fallback_prepared,
+                        fallback_prepared.ai_request,
+                        fallback_response,
+                    )
+            finally:
+                self._restore_role_binding_override(role_id, previous_binding, previous_provider)
+
+            fallback_category = classify_error(fallback_error)
+            if is_retryable_error(fallback_category):
+                mark_role_binding_unhealthy(
+                    role_id,
+                    provider_id=slot.provider_id,
+                    model=slot.model,
+                    binding_id=slot.binding_id or None,
+                )
+            else:
+                return None
+
+        return None
 
     def _get_executor(self) -> Any:
         """Get or create AIExecutor instance (lazy, respects DI injection)."""
@@ -240,10 +448,6 @@ class LLMInvoker:
         event_emitter: Any | None = None,
     ) -> LLMResponse:
         """Invoke LLM with non-streaming mode."""
-        print(
-            f"[LLMInvoker.call] ENTRY POINT REACHED: profile={getattr(profile, 'role_id', 'unknown')} run_id={run_id}",
-            flush=True,
-        )
         logger.warning("[LLMInvoker.call] ENTRY: profile=%s run_id=%s", getattr(profile, "role_id", "unknown"), run_id)
         call_id = str(uuid.uuid4())[:8]
         run_id = run_id or f"llm_{call_id}"
@@ -261,6 +465,8 @@ class LLMInvoker:
             # Import here to avoid circular dependency
             from .caller import LLMCaller
 
+            profile = self._profile_for_healthy_binding(role_id, profile)
+            model = str(getattr(profile, "model", "") or model)
             caller = LLMCaller(
                 workspace=self.workspace,
                 enable_cache=self._enable_cache,
@@ -512,6 +718,41 @@ class LLMInvoker:
                 is_response_ok = (bool(response_ok) if isinstance(response_ok, bool) else True) and not response_error
 
             if not is_response_ok:
+                classified = classify_error(response_error)
+                if is_retryable_error(classified):
+                    fallback = await self._try_role_binding_fallback(
+                        caller=caller,
+                        profile=profile,
+                        system_prompt=system_prompt,
+                        context=context,
+                        temperature=temperature,
+                        max_tokens=effective_max_tokens,
+                        response_model=response_model,
+                        platform_retry_max=platform_retry_max,
+                        executor=executor,
+                        role_id=role_id,
+                        run_id=run_id,
+                        task_id=task_id,
+                        attempt=attempt,
+                        model=model,
+                        call_id=call_id,
+                        event_emitter=event_emitter,
+                        original_error=response_error,
+                    )
+                    if fallback is not None:
+                        profile, prepared, active_request, response = fallback
+                        model = str(getattr(profile, "model", "") or model)
+                        native_tool_fallback = False
+                        native_response_fallback = False
+                        response_ok = getattr(response, "ok", True)
+                        _has_error = hasattr(response, "error")
+                        _raw_error = getattr(response, "error", None) if _has_error else None
+                        response_error = str(_raw_error or "").strip() if _raw_error is not None else ""
+                        is_response_ok = (
+                            bool(response_ok) if isinstance(response_ok, bool) else True
+                        ) and not response_error
+
+            if not is_response_ok:
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
                 classified = classify_error(response_error)
                 active_context = active_request.context if isinstance(active_request.context, dict) else {}
@@ -563,11 +804,6 @@ class LLMInvoker:
             raw_payload = response.raw if isinstance(response.raw, dict) else {}
             # DEBUG: Log raw LLM response for debugging parsing issues
             output_text = str(getattr(response, "output", "") or "")
-            print(
-                f"[LLMInvoker] RAW_RESPONSE: model={raw_payload.get('model', 'unknown')} "
-                f"output_length={len(output_text)} output_preview={output_text[:500]!r}",
-                flush=True,
-            )
             logger.debug(
                 "[LLMInvoker] Raw LLM response received: model=%s provider=%s output_length=%d output_preview=%r",
                 raw_payload.get("model", "unknown"),

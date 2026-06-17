@@ -241,6 +241,7 @@ class TurnTransactionController:
             DecodeConfig(
                 domain=self.config.domain,
                 max_tools_per_turn=self.config.handoff_threshold_tools,
+                enable_textual_fallback=True,
             )
         )
 

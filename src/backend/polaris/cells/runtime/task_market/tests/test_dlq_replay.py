@@ -58,7 +58,7 @@ class TestReplayDlqItem:
         assert result["task_id"] == "task-replay"
         assert result["target_stage"] == "pending_design"
         assert result["status"] == "pending_design"
-        mock_store.save_items.assert_called_once()
+        mock_store.save_items_and_outbox_atomic.assert_called_once()
 
     def test_replay_item_to_pending_exec(self, mock_store: MagicMock, dlq_item: TaskWorkItemRecord) -> None:
         dlq_item.status = "dead_letter"

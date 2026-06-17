@@ -157,7 +157,15 @@ def _handle_repo_read_head(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     """
     from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import _handle_read_file
 
-    file = kwargs.get("file") or kwargs.get("file_path") or kwargs.get("filepath")
+    file = (
+        kwargs.get("file")
+        or kwargs.get("path")
+        or kwargs.get("file_path")
+        or kwargs.get("filepath")
+        or kwargs.get("filename")
+        or kwargs.get("target_file")
+        or kwargs.get("target_path")
+    )
     n = (
         kwargs.get("n")
         or kwargs.get("count")
@@ -207,7 +215,15 @@ def _handle_repo_read_tail(self: AgentAccelToolExecutor, **kwargs) -> dict[str, 
     """
     from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import _handle_read_file
 
-    file = kwargs.get("file") or kwargs.get("file_path")
+    file = (
+        kwargs.get("file")
+        or kwargs.get("path")
+        or kwargs.get("file_path")
+        or kwargs.get("filepath")
+        or kwargs.get("filename")
+        or kwargs.get("target_file")
+        or kwargs.get("target_path")
+    )
     n = (
         kwargs.get("n")
         or kwargs.get("count")

@@ -58,6 +58,24 @@ class TestJSONToolParserNormal:
         assert result[0].name == "execute"
         assert result[0].arguments == {"cmd": "ls"}
 
+    def test_parse_camel_case_tool_envelope(self) -> None:
+        """Provider/model dialects may emit toolName + toolInput."""
+        text = '{"toolName": "write", "toolInput": {"targetPath": "out.txt", "sourceCode": "hello"}}'
+        result = JSONToolParser.parse(text)
+
+        assert len(result) == 1
+        assert result[0].name == "write"
+        assert result[0].arguments == {"targetPath": "out.txt", "sourceCode": "hello"}
+
+    def test_parse_camel_case_function_envelope(self) -> None:
+        """Provider/model dialects may emit functionName + functionArguments."""
+        text = '{"functionName": "read_file", "functionArguments": {"filePath": "src/app.py"}}'
+        result = JSONToolParser.parse(text)
+
+        assert len(result) == 1
+        assert result[0].name == "read_file"
+        assert result[0].arguments == {"filePath": "src/app.py"}
+
     def test_parse_with_input_key(self) -> None:
         """Normal: JSON tool call using provider-style 'input' arguments."""
         text = '{"name": "read_file", "input": {"path": "test.py", "start_line": "2"}}'

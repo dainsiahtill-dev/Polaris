@@ -759,6 +759,56 @@ def test_visibility_timeout_allows_reclaim(tmp_path: Path) -> None:
     assert second_claim.lease_token != first_claim.lease_token
 
 
+def test_claim_skips_same_file_task_while_writer_lease_active(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskMarketService()
+
+    for task_id, target, priority in (
+        ("writer", "main.js", "medium"),
+        ("same-file", "main.js", "critical"),
+        ("other-file", "style.css", "low"),
+    ):
+        service.publish_work_item(
+            PublishTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                trace_id=f"trace-{task_id}",
+                run_id="run-same-file-claim",
+                task_id=task_id,
+                stage="pending_exec",
+                source_role="pm",
+                priority=priority,
+                payload={"construction_step": {"target_file": target}},
+            )
+        )
+
+    first_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-1",
+            worker_role="director",
+            visibility_timeout_seconds=60,
+            task_id="writer",
+        )
+    )
+    assert first_claim.ok is True
+    assert first_claim.status == "in_execution"
+
+    second_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director-2",
+            worker_role="director",
+            visibility_timeout_seconds=60,
+        )
+    )
+
+    assert second_claim.ok is True
+    assert second_claim.task_id == "other-file"
+
+
 def test_fail_stage_moves_to_dead_letter_after_retry_exhaustion(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -802,6 +852,57 @@ def test_fail_stage_moves_to_dead_letter_after_retry_exhaustion(tmp_path: Path) 
     status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
     assert status.total == 1
     assert status.counts.get("dead_letter", 0) == 1
+
+
+def test_scope_conflict_requeue_does_not_consume_retry_budget(tmp_path: Path) -> None:
+    """Transient safe-parallel file scope conflicts must wait, not dead-letter."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="trace-scope-conflict",
+            run_id="run-scope-conflict",
+            task_id="task-scope-conflict",
+            stage="pending_exec",
+            source_role="pm",
+            payload={"title": "Edit shared file", "scope_paths": ["services/user/main.py"]},
+            max_attempts=3,
+        )
+    )
+
+    for _ in range(4):
+        claim = service.claim_work_item(
+            ClaimTaskWorkItemCommandV1(
+                workspace=str(workspace),
+                stage="pending_exec",
+                worker_id="director-1",
+                worker_role="director",
+                visibility_timeout_seconds=60,
+            )
+        )
+        assert claim.ok is True
+        failed = service.fail_task_stage(
+            FailTaskStageCommandV1(
+                workspace=str(workspace),
+                task_id="task-scope-conflict",
+                lease_token=claim.lease_token,
+                error_code="SCOPE_CONFLICT",
+                error_message="Scope conflict with other in-progress task",
+                requeue_stage="pending_exec",
+            )
+        )
+        assert failed.ok is True
+        assert failed.status == "pending_exec"
+
+    status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
+    by_id = {row["task_id"]: row for row in status.items}
+    row = by_id["task-scope-conflict"]
+    assert row["status"] == "pending_exec"
+    assert row["stage"] == "pending_exec"
+    assert row["attempts"] == 0
+    assert status.counts.get("dead_letter", 0) == 0
 
 
 def test_claim_with_task_id_filter_respects_stage_param(tmp_path: Path) -> None:

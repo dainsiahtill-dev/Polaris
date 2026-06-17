@@ -3,10 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping  # noqa: F401
+from typing import Any
 
 
 def _require_non_empty(name: str, value: str) -> str:

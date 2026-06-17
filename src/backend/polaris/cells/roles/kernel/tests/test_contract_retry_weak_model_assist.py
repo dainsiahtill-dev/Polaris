@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 from polaris.cells.roles.kernel.internal.transaction import retry_orchestrator as _ro
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+    expand_bootstrap_read_candidates,
     extract_target_files_from_message,
 )
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
@@ -20,6 +21,7 @@ from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
     _read_bootstrap_makes_no_progress,
     _should_bootstrap_original_read_batch,
     _workspace_materialization_fingerprint,
+    append_retry_enforcement_hint,
     build_contract_retry_context,
 )
 
@@ -74,6 +76,125 @@ def test_retry_no_analysis_when_assistant_absent() -> None:
     out = build_contract_retry_context([{"role": "user", "content": "Fix it in a.py"}], _EDIT_TOOL_DEFS)
     system = next(m["content"] for m in out if m["role"] == "system")
     assert "ALREADY analysed" not in system
+
+
+def test_forced_write_file_enforcement_mentions_non_empty_complete_content() -> None:
+    out = append_retry_enforcement_hint(
+        [{"role": "user", "content": "Create src/app.py"}],
+        allowed_tool_names={"write_file"},
+        reason="mutation batch failed on argument shape",
+        forced_write_tool_name="write_file",
+    )
+    system = out[-1]["content"]
+    assert "write_file" in system
+    assert "content" in system
+    assert "non-empty" in system
+    assert "complete file body" in system
+    assert "prose" in system
+
+
+def test_retry_enforcement_restates_target_files_not_acceptance_artifacts() -> None:
+    out = append_retry_enforcement_hint(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "[mode:materialize]\n"
+                    "范围: services/__init__.py\n"
+                    "目标文件: services/__init__.py\n"
+                    "验收标准:\n"
+                    "- pytest -k test_create_app 通过\n"
+                ),
+            }
+        ],
+        allowed_tool_names={"edit_blocks"},
+        reason="mutation batch failed on argument shape",
+        forced_write_tool_name="edit_blocks",
+    )
+
+    system = out[-1]["content"]
+    assert "services/__init__.py" in system
+    assert "Only write these target files" in system
+    assert "Acceptance" in system
+    assert "not authorization" in system
+
+
+def test_forced_edit_blocks_enforcement_includes_minimal_line_range_schema() -> None:
+    out = append_retry_enforcement_hint(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "[mode:materialize]\n目标文件: services/__init__.py\n验收标准:\n- pytest -k test_create_app 通过\n"
+                ),
+            }
+        ],
+        allowed_tool_names={"edit_blocks"},
+        reason="mutation batch failed on argument shape",
+        forced_write_tool_name="edit_blocks",
+    )
+
+    system = out[-1]["content"]
+    assert "edit_blocks" in system
+    assert "file" in system
+    assert "start" in system
+    assert "end" in system
+    assert "replace" in system
+    assert "empty" in system
+    assert "services/__init__.py" in system
+
+
+def test_edit_blocks_validation_failure_enforcement_forbids_search_retry() -> None:
+    out = append_retry_enforcement_hint(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "[mode:materialize]\n目标文件: services/__init__.py\n验收标准:\n- pytest -k test_create_app 通过\n"
+                ),
+            }
+        ],
+        allowed_tool_names={"edit_blocks"},
+        reason=(
+            "Validation failed 1 block(s). No files modified. Check that SEARCH text exactly matches file content."
+        ),
+        forced_write_tool_name="edit_blocks",
+    )
+
+    system = out[-1]["content"]
+    assert "SEARCH" in system
+    assert "Do not retry SEARCH" in system
+    assert "line-range" in system
+    assert "file" in system
+    assert "start" in system
+    assert "end" in system
+    assert "replace" in system
+
+
+def test_contract_retry_context_restates_target_files_not_acceptance_artifacts() -> None:
+    out = build_contract_retry_context(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "[mode:materialize]\n"
+                    "范围: services/__init__.py\n"
+                    "目标文件: services/__init__.py\n"
+                    "验收标准:\n"
+                    "- pytest -k test_create_app 通过\n"
+                ),
+            },
+            {"role": "assistant", "content": "I should create tests/test_services.py."},
+        ],
+        _EDIT_TOOL_DEFS,
+        forced_write_tool_name="edit_blocks",
+    )
+
+    system = next(m["content"] for m in out if m["role"] == "system")
+    assert "services/__init__.py" in system
+    assert "Only write these target files" in system
+    assert "acceptance criteria" in system
+    assert "not authorization" in system
 
 
 def test_extract_target_files_includes_pyproject_toml() -> None:
@@ -195,3 +316,8 @@ def test_fingerprint_none_for_unmeasurable() -> None:
     assert _workspace_materialization_fingerprint(".") is None
     assert _workspace_materialization_fingerprint("") is None
     assert _workspace_materialization_fingerprint("/no/such/zzz") is None
+
+
+def test_bootstrap_read_candidates_preserve_qualified_target_only() -> None:
+    assert expand_bootstrap_read_candidates("services/__init__.py") == ["services/__init__.py"]
+    assert expand_bootstrap_read_candidates("README.md") == ["README.md"]

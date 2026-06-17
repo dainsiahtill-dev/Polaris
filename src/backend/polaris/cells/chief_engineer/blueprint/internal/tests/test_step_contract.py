@@ -36,6 +36,19 @@ class TestNormalize:
         assert step["est_lines"] == 90
         assert step["parent_pm_task"] == "PM-1"
 
+    def test_normalizes_verify_before_market_publish(self) -> None:
+        step = normalize_construction_step(
+            {
+                "file": "./src/app.py",
+                "est_lines": "20",
+                "verify": "pytest -k test_create_app 通过，验证服务工厂可创建",
+            },
+            parent_pm_task="PM-1",
+            index=0,
+        )
+
+        assert step["verify"] == "pytest -k test_create_app"
+
     def test_non_dict_input_yields_empty_shape(self) -> None:
         step = normalize_construction_step("prose", parent_pm_task="PM-1", index=2)
         assert step["step_id"] == "PM-1-S3"

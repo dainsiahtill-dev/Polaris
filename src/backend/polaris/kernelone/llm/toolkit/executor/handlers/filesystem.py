@@ -845,10 +845,10 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
                 "ok": False,
                 "error": f"Code syntax validation failed:\n{error_msg}",
                 "suggestion": (
-                    "Use read_file() to copy the EXACT content from the source file, "
-                    "then modify only the specific parts you need to change. "
-                    "Pay special attention to indentation (use 4 spaces) and "
-                    "make sure keywords like 'return' are followed by a space."
+                    "Use read_file() to inspect the exact file, then call edit_blocks "
+                    "with line-range arguments: file, start, end, replace. "
+                    "Change only the syntax-error lines; keep surrounding code intact. "
+                    "Do not append new code for syntax repair."
                 ),
                 "validation_errors": [
                     {"line": e.line, "column": e.column, "message": e.message} for e in (validation_result.errors or [])
@@ -1332,7 +1332,15 @@ def _synthesize_line_range_block(
     return block, None
 
 
-_JSON_EDIT_FILE_KEYS = ("file", "path", "file_path", "filepath")
+_JSON_EDIT_FILE_KEYS = (
+    "file",
+    "path",
+    "file_path",
+    "filepath",
+    "filename",
+    "target_file",
+    "target_path",
+)
 _JSON_EDIT_REPLACE_KEYS = ("replace", "new_text", "new_content", "replacement", "code", "content")
 
 

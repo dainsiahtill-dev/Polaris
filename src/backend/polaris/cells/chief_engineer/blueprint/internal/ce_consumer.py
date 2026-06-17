@@ -520,6 +520,8 @@ class CEConsumer:
             '"est_lines"(整数,≤120), "signatures"(函数/类签名清单), '
             '"interface_names"(跨文件接口统一定名), "verify"(机器可执行判据), '
             '"depends_on"(step_id 列表), "title"}]}。\n'
+            "verify 必须只包含可直接在 POSIX shell 执行的命令本身；"
+            "禁止加入“通过/验证/说明/should/pass”等自然语言尾巴。\n"
             # 组合律 + 经济律 (live I3-r15): a strict linear chain (S2←S3←S4)
             # makes the whole parent only as strong as its weakest step — one
             # weak-executor failure cascade-kills every later step. depends_on
@@ -567,6 +569,8 @@ class CEConsumer:
                 "llm_call_timeout_seconds": 300,
                 "request_timeout_seconds": 300,
                 "timeout_seconds": 300,
+                "cognitive_runtime_approval_mode": "auto_accept",
+                "cognitive_runtime_approval_scope": "chief_engineer_step_fission_preflight",
                 # Reasoning-sized output budget so the fission JSON survives
                 # the model's thinking burn (I3-r17); clamped to the model's
                 # max_output_tokens by the engine.
@@ -584,6 +588,13 @@ class CEConsumer:
                     "source": "chief_engineer.blueprint.ce_consumer",
                     "role_runtime_required": True,
                     "cognitive_runtime_required": True,
+                    "cognitive_runtime_approval_mode": "auto_accept",
+                    "cognitive_runtime_approval": {
+                        "mode": "auto_accept",
+                        "source": "factory_bench_headless_ce_fission",
+                        "scope": "chief_engineer_step_fission_preflight",
+                        "approved_by": "ce_consumer",
+                    },
                     "context_os_expected": True,
                     "validate_output": False,
                 },

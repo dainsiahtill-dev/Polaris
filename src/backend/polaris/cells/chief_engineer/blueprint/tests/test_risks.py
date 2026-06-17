@@ -181,7 +181,7 @@ class TestRiskRegister(unittest.TestCase):
 
     def test_load_handles_corrupt_file(self) -> None:
         register = RiskRegister(self.workspace)
-        bad = Path(self.workspace) / "runtime" / "risks" / "risk_corrupt.json"
+        bad = Path(resolve_logical_path(self.workspace, "runtime/risks")) / "risk_corrupt.json"
         bad.parent.mkdir(parents=True, exist_ok=True)
         with open(bad, "w", encoding="utf-8") as handle:
             handle.write("{not valid json")

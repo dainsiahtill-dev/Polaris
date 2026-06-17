@@ -63,6 +63,21 @@ normalization could turn a benign-looking call into something the model did not 
   while preserving the gate invariant that direct single-tool calls are checked before alias
   normalization.
 
+- [LANDED 2026-06-17] Write-family normalization accepts additional same-tool weak-model
+  dialects: `put_file`/`write`/`write_to_file`/`file_write`/`write_text_file` map to
+  `write_file`; `data`/`value`/`new_text`/`new_code`/`source_code`/`payload` map to
+  `content`. `edit_blocks` now converts explicit top-level `file + search/replace`
+  synonym pairs (`old_string/new_string`, `before/after`, etc.) into canonical
+  SEARCH/REPLACE blocks, while the no-file form remains fail-closed.
+- [LANDED 2026-06-17] JSON fallback and native tool-call normalization accept
+  camelCase provider/model envelopes (`toolName`/`toolInput`,
+  `functionName`/`functionArguments`) and camelCase write-file argument aliases
+  (`filePath`, `targetFile`, `targetPath`, `sourceCode`, `fileContent`,
+  `fileContents`, `newContent`, `newText`, `newCode`). `OutputParser` allow-lists
+  compare both raw and canonical tool names, so `write` and `write_file` no longer
+  diverge across parser and authorization-adjacent checks. This is same-tool
+  normalization only; intent reclassification remains out of scope.
+
 ---
 
 ## 1) Current architecture (as-built)

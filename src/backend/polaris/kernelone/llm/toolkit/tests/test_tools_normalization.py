@@ -365,6 +365,39 @@ class TestJsonWrappedArguments:
         assert normalized["file"] == "app.js"
         assert normalized["content"] == "console.log(1);\n"
 
+    def test_same_tool_envelope_object_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "write_file",
+            {
+                "name": "create_file",
+                "arguments": {"path": "app.js", "text": "console.log(1);\n"},
+            },
+        )
+
+        assert normalized == {"file": "app.js", "content": "console.log(1);\n"}
+
+    def test_same_tool_envelope_json_string_unwraps_to_tool_arguments(self) -> None:
+        normalized = normalize_tool_arguments(
+            "write_file",
+            '{"tool_name": "save_file", "tool_input": {"target_file": "app.js", "body": "console.log(1);\\n"}}',
+        )
+
+        assert normalized == {"file": "app.js", "content": "console.log(1);\n"}
+
+    def test_cross_tool_envelope_object_is_not_unwrapped(self) -> None:
+        normalized = normalize_tool_arguments(
+            "write_file",
+            {
+                "name": "execute_command",
+                "arguments": {"command": "echo should-not-cross-tool"},
+            },
+        )
+
+        assert normalized == {
+            "name": "execute_command",
+            "arguments": {"command": "echo should-not-cross-tool"},
+        }
+
     def test_foreign_wrapper_key_with_tool_arguments_is_not_unwrapped(self) -> None:
         normalized = normalize_tool_arguments(
             "read_file",
@@ -541,6 +574,18 @@ class TestToolNameNormalization:
         assert normalize_tool_name("fs.delete_everything") == "fs.delete_everything"
 
 
+class TestRepoReadHeadNormalization:
+    """Test repo_read_head weak-model file argument aliases."""
+
+    @pytest.mark.parametrize("alias", ["path", "filename", "target_file", "target_path"])
+    def test_file_aliases_normalize_to_file(self, alias: str) -> None:
+        normalized = normalize_tool_arguments("repo_read_head", {alias: "src/app.py", "limit": 20})
+
+        assert normalized["file"] == "src/app.py"
+        assert normalized["n"] == 20
+        assert alias not in normalized
+
+
 class TestTypeCoercion:
     """Test type coercion for various parameter types."""
 
@@ -653,6 +698,18 @@ class TestWriteContentSynonyms:
         normalized = normalize_tool_arguments("write_file", {"file": "a.py", "content": "x = 1\n"})
         assert normalized.get("content") == "x = 1\n"
 
+    @pytest.mark.parametrize("synonym", ["filePath", "targetFile", "targetPath"])
+    def test_write_file_camel_case_path_synonym_maps_to_file(self, synonym: str) -> None:
+        normalized = normalize_tool_arguments("write_file", {synonym: "src/app.py", "content": "x = 1\n"})
+        assert normalized.get("file") == "src/app.py", f"{synonym!r} did not map file: {normalized}"
+
+    @pytest.mark.parametrize(
+        "synonym", ["sourceCode", "fileContent", "fileContents", "newContent", "newText", "newCode"]
+    )
+    def test_write_file_camel_case_content_synonym_maps_to_content(self, synonym: str) -> None:
+        normalized = normalize_tool_arguments("write_file", {"file": "src/app.py", synonym: "x = 1\n"})
+        assert normalized.get("content") == "x = 1\n", f"{synonym!r} did not map content: {normalized}"
+
     @pytest.mark.parametrize("synonym", ["text", "body", "append", "data", "new_content", "contents"])
     def test_append_to_file_content_synonym_maps_to_content(self, synonym: str) -> None:
         normalized = normalize_tool_arguments("append_to_file", {"file": "log.txt", synonym: "line\n"})
@@ -726,6 +783,24 @@ class TestEditFileSynonyms:
 
         assert normalized.get("replace") == "newName"
         assert "content" not in normalized
+
+
+@pytest.mark.parametrize(
+    "tool_name",
+    ["put_file", "write", "write_to_file", "file_write", "write_text_file"],
+)
+def test_write_file_tool_name_synonyms_are_canonical(tool_name: str) -> None:
+    normalized = normalize_tool_arguments(
+        tool_name,
+        {"target": "src/app.py", "source_code": "print('ok')\n"},
+    )
+    assert normalized == {"file": "src/app.py", "content": "print('ok')\n"}
+
+
+@pytest.mark.parametrize("synonym", ["data", "value", "new_text", "new_code", "source_code", "payload"])
+def test_write_file_additional_content_synonyms_map_to_content(synonym: str) -> None:
+    normalized = normalize_tool_arguments("write_file", {"file": "a.py", synonym: "x = 1\n"})
+    assert normalized.get("content") == "x = 1\n", f"{synonym!r} did not map content: {normalized}"
 
 
 if __name__ == "__main__":

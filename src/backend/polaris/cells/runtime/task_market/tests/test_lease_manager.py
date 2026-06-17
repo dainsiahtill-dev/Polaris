@@ -10,7 +10,7 @@ from polaris.cells.runtime.task_market.internal.errors import (
     TaskNotClaimableError,
 )
 from polaris.cells.runtime.task_market.internal.lease_manager import LeaseManager
-from polaris.cells.runtime.task_market.internal.models import TaskWorkItemRecord
+from polaris.cells.runtime.task_market.internal.models import TaskWorkItemRecord, now_epoch
 
 
 class TestLeaseManager:
@@ -99,14 +99,14 @@ class TestLeaseManager:
 
     def test_renew_lease_success(self, lm: LeaseManager, item: TaskWorkItemRecord) -> None:
         item.lease_token = "valid-token"
-        item.lease_expires_at = 1000.0
+        item.lease_expires_at = now_epoch() + 1000.0
         ok, expires_at = lm.renew_lease(
             item=item,
             lease_token="valid-token",
             visibility_timeout_seconds=300,
         )
         assert ok is True
-        assert expires_at > 1000.0
+        assert expires_at > now_epoch()
 
     def test_renew_lease_fails_on_mismatch(self, lm: LeaseManager, item: TaskWorkItemRecord) -> None:
         item.lease_token = "valid-token"

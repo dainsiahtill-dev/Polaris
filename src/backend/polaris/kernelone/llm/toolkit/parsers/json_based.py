@@ -149,15 +149,22 @@ class JSONToolParser:
             "input",
             "kwargs",
             "tool_input",
+            "toolinput",
             "tool_arguments",
+            "toolarguments",
             "tool_args",
+            "toolargs",
             "function_arguments",
+            "functionarguments",
             "function_args",
+            "functionargs",
         }
     )
 
     # Keys that indicate the tool name field
-    TOOL_NAME_KEYS: frozenset[str] = frozenset({"name", "tool", "function", "action", "tool_name"})
+    TOOL_NAME_KEYS: frozenset[str] = frozenset(
+        {"name", "tool", "function", "action", "tool_name", "toolname", "function_name", "functionname"}
+    )
 
     # Pattern to validate JSON structure has required fields
     _HAS_NAME_RE = re.compile(

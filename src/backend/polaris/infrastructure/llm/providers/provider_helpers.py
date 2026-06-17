@@ -805,7 +805,21 @@ def invoke_with_retry(
                     if healed:
                         overflow_heal_attempts += 1
                         continue
-            response.raise_for_status()
+                status_code = getattr(response, "status_code", None)
+                if isinstance(status_code, int) and 500 <= status_code < 600:
+                    breaker.on_failure()
+                    latency_ms = int((_clock.time() - start) * 1000)
+                    usage = estimate_usage(prompt, "")
+                    return InvokeResult(
+                        ok=False,
+                        output="",
+                        latency_ms=latency_ms,
+                        usage=usage,
+                        error=(
+                            f"{status_code} Server Error from {url}: {error_body[:500] if error_body else '(empty)'}"
+                        ),
+                    )
+                    response.raise_for_status()
             data = response.json()
             latency_ms = int((_clock.time() - start) * 1000)
             output = extract_output(data)

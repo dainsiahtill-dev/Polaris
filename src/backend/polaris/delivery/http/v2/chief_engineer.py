@@ -14,9 +14,27 @@ from polaris.cells.chief_engineer.blueprint.public import (
     BlueprintPersistence,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
+    ListRisksQueryV1,
+    ListTechDebtQueryV1,
+    RegisterRiskCommandV1,
+    RegisterTechDebtCommandV1,
+    RiskSeverity,
+    RiskStatus,
     TaskBlueprintResultV1,
+    TechDebtSeverity,
+    TechDebtStatus,
+    UpdateRiskStatusCommandV1,
+    UpdateTechDebtStatusCommandV1,
     generate_task_blueprint,
     get_blueprint_status,
+    list_risks,
+    list_tech_debt,
+    register_risk,
+    register_tech_debt,
+    summarize_risks,
+    summarize_tech_debt,
+    update_risk_status,
+    update_tech_debt_status,
 )
 from polaris.cells.roles.kernel.public.service import (
     get_global_emitter,
@@ -1152,3 +1170,260 @@ def delete_chief_engineer_blueprint(
         blueprint_id=safe_blueprint_id,
         deleted=True,
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tier-1 governance surface: Risk Register + Tech-Debt Ledger
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _governance_workspace(request: Request, workspace: str) -> str:
+    """Resolve and validate the workspace for a governance request."""
+
+    settings = _settings_for_request(request, workspace)
+    target_workspace = _workspace_value(settings)
+    if not target_workspace:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="WORKSPACE_NOT_CONFIGURED",
+            message="workspace is not configured",
+        )
+    return target_workspace
+
+
+class ChiefEngineerRegisterRiskRequest(BaseModel):
+    """Desktop request to register a Risk Register entry."""
+
+    task_id: str
+    title: str
+    severity: str
+    owner: str
+    mitigation: str = ""
+    links: list[str] = Field(default_factory=list)
+    supersedes: str | None = None
+
+
+class ChiefEngineerUpdateRiskStatusRequest(BaseModel):
+    """Desktop request to transition a risk to a new status."""
+
+    status: str
+    note: str = ""
+    actor: str = "chief_engineer"
+
+
+class ChiefEngineerRegisterTechDebtRequest(BaseModel):
+    """Desktop request to register a Tech-Debt Ledger entry."""
+
+    title: str
+    description: str = ""
+    severity: str
+    surface: str
+    owner: str
+    evidence: list[str] = Field(default_factory=list)
+
+
+class ChiefEngineerUpdateTechDebtStatusRequest(BaseModel):
+    """Desktop request to transition a tech-debt entry to a new status."""
+
+    status: str
+    note: str = ""
+    actor: str = "chief_engineer"
+
+
+@router.post("/chief-engineer/risks", dependencies=[Depends(require_auth)])
+def register_chief_engineer_risk(
+    request: Request,
+    payload: ChiefEngineerRegisterRiskRequest,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Register a new Risk Register entry for the workspace."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        record = register_risk(
+            RegisterRiskCommandV1(
+                task_id=payload.task_id,
+                title=payload.title,
+                severity=RiskSeverity(payload.severity.strip().lower()),
+                owner=payload.owner,
+                mitigation=payload.mitigation,
+                workspace=target_workspace,
+                links=tuple(payload.links),
+                supersedes=payload.supersedes,
+            )
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_RISK_PAYLOAD",
+            message=str(exc),
+        ) from exc
+    return {"ok": True, "workspace": target_workspace, "risk": record.to_dict()}
+
+
+@router.get("/chief-engineer/risks", dependencies=[Depends(require_auth)])
+def list_chief_engineer_risks(
+    request: Request,
+    workspace: str = "",
+    task_id: str = "",
+    severity: str = "",
+    status: str = "",
+) -> dict[str, Any]:
+    """List Risk Register entries for the workspace with optional filters."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        query = ListRisksQueryV1(
+            workspace=target_workspace,
+            task_id=task_id.strip() or None,
+            severity=RiskSeverity(severity.strip().lower()) if severity.strip() else None,
+            status=RiskStatus(status.strip().lower()) if status.strip() else None,
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_RISK_QUERY",
+            message=str(exc),
+        ) from exc
+    records = list_risks(query)
+    return {
+        "ok": True,
+        "workspace": target_workspace,
+        "total": len(records),
+        "risks": [record.to_dict() for record in records],
+        "summary": summarize_risks(target_workspace, task_id=task_id.strip() or None),
+    }
+
+
+@router.post("/chief-engineer/risks/{risk_id}/status", dependencies=[Depends(require_auth)])
+def update_chief_engineer_risk_status(
+    request: Request,
+    risk_id: str,
+    payload: ChiefEngineerUpdateRiskStatusRequest,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Transition a Risk Register entry to a new status."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        record = update_risk_status(
+            UpdateRiskStatusCommandV1(
+                workspace=target_workspace,
+                risk_id=risk_id,
+                status=RiskStatus(payload.status.strip().lower()),
+                note=payload.note,
+            ),
+            actor=payload.actor.strip() or "chief_engineer",
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_RISK_STATUS",
+            message=str(exc),
+        ) from exc
+    except FileNotFoundError as exc:
+        raise StructuredHTTPException(
+            status_code=404,
+            code="RISK_NOT_FOUND",
+            message=str(exc),
+        ) from exc
+    return {"ok": True, "workspace": target_workspace, "risk": record.to_dict()}
+
+
+@router.post("/chief-engineer/tech-debt", dependencies=[Depends(require_auth)])
+def register_chief_engineer_tech_debt(
+    request: Request,
+    payload: ChiefEngineerRegisterTechDebtRequest,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Register a new Tech-Debt Ledger entry for the workspace."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        record = register_tech_debt(
+            RegisterTechDebtCommandV1(
+                title=payload.title,
+                description=payload.description,
+                severity=TechDebtSeverity(payload.severity.strip().lower()),
+                surface=payload.surface,
+                owner=payload.owner,
+                workspace=target_workspace,
+                evidence=tuple(payload.evidence),
+            )
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_TECH_DEBT_PAYLOAD",
+            message=str(exc),
+        ) from exc
+    return {"ok": True, "workspace": target_workspace, "tech_debt": record.to_dict()}
+
+
+@router.get("/chief-engineer/tech-debt", dependencies=[Depends(require_auth)])
+def list_chief_engineer_tech_debt(
+    request: Request,
+    workspace: str = "",
+    severity: str = "",
+    surface: str = "",
+    status: str = "",
+) -> dict[str, Any]:
+    """List Tech-Debt Ledger entries for the workspace with optional filters."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        query = ListTechDebtQueryV1(
+            workspace=target_workspace,
+            severity=TechDebtSeverity(severity.strip().lower()) if severity.strip() else None,
+            surface=surface.strip() or None,
+            status=TechDebtStatus(status.strip().lower()) if status.strip() else None,
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_TECH_DEBT_QUERY",
+            message=str(exc),
+        ) from exc
+    records = list_tech_debt(query)
+    return {
+        "ok": True,
+        "workspace": target_workspace,
+        "total": len(records),
+        "tech_debt": [record.to_dict() for record in records],
+        "summary": summarize_tech_debt(target_workspace, surface=surface.strip() or None),
+    }
+
+
+@router.post("/chief-engineer/tech-debt/{debt_id}/status", dependencies=[Depends(require_auth)])
+def update_chief_engineer_tech_debt_status(
+    request: Request,
+    debt_id: str,
+    payload: ChiefEngineerUpdateTechDebtStatusRequest,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Transition a Tech-Debt Ledger entry to a new status."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        record = update_tech_debt_status(
+            UpdateTechDebtStatusCommandV1(
+                workspace=target_workspace,
+                debt_id=debt_id,
+                status=TechDebtStatus(payload.status.strip().lower()),
+                note=payload.note,
+            ),
+            actor=payload.actor.strip() or "chief_engineer",
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_TECH_DEBT_STATUS",
+            message=str(exc),
+        ) from exc
+    except FileNotFoundError as exc:
+        raise StructuredHTTPException(
+            status_code=404,
+            code="TECH_DEBT_NOT_FOUND",
+            message=str(exc),
+        ) from exc
+    return {"ok": True, "workspace": target_workspace, "tech_debt": record.to_dict()}

@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from polaris.kernelone.quality.step_verify import normalize_step_verify
+
 CE_BLUEPRINT_TASKS_SCHEMA_VERSION = "ce-blueprint-tasks/1"
 
 _MAX_STEP_LINES = 120
@@ -40,15 +42,7 @@ def normalize_construction_step(raw: Any, *, parent_pm_task: str, index: int) ->
         est_lines = 0
     signatures = [str(item).strip() for item in (record.get("signatures") or []) if str(item).strip()]
     interface_names = [str(item).strip() for item in (record.get("interface_names") or []) if str(item).strip()]
-    raw_verify = record.get("verify")
-    if isinstance(raw_verify, (list, tuple)):
-        # Cloud models drift between string and array verify shapes (live
-        # I3-r10: a bare str() turned the array into Python-repr garbage and
-        # poisoned every QA verify of the run). Join clauses into one
-        # machine-runnable command.
-        verify = " && ".join(str(part).strip() for part in raw_verify if str(part).strip())
-    else:
-        verify = str(raw_verify or "").strip()
+    verify = normalize_step_verify(record.get("verify"))
     # depends_on must be namespaced identically to step_id: models emit bare
     # sibling references ("S1") and prefixing only step_id manufactures
     # "unknown step" gate failures on valid output (live I3-r8).

@@ -77,6 +77,11 @@ _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS: tuple[str, ...] = (
 # write_file on them makes a weak model regenerate the entire file — observed
 # live (phase1smoke django-15213): 600s LLM timeout, dead session.
 _BOOTSTRAP_WHOLE_FILE_MAX_CHARS = 4000
+_BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_TYPES = frozenset({"new_file_via_edit_blocks"})
+_BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS: tuple[str, ...] = (
+    "whole-file write, not edit",
+    "whole-file write",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -594,7 +599,9 @@ def build_contract_retry_context(
         retry_lines.append(
             "Mutation target files detected from user request: "
             + ", ".join(target_file_tokens)
-            + ". Ensure one write call touches at least one target file."
+            + ". Ensure one write call touches at least one target file. "
+            "Only write these target files; acceptance criteria, verification commands, test names, and command "
+            "output paths are not authorization to create or modify extra files."
         )
 
     retry_mode_guard = (
@@ -632,6 +639,36 @@ def append_retry_enforcement_hint(
 ) -> list[dict]:
     """向 retry 上下文追加强制约束提示。"""
     rendered_allowed = ", ".join(sorted(allowed_tool_names)) if allowed_tool_names else "<none>"
+    forced_tool_detail = ""
+    if forced_write_tool_name == "write_file":
+        forced_tool_detail = (
+            "\nwrite_file requires args.file and args.content. "
+            "The content value must be the non-empty complete file body; "
+            "do not put code in prose, analysis, or reasoning text."
+        )
+    elif forced_write_tool_name == "edit_blocks":
+        forced_tool_detail = (
+            "\nedit_blocks requires non-empty args. Easiest valid form: "
+            '{"file": "<target file>", "start": <first line>, "end": <last line>, '
+            '"replace": "<complete replacement source lines>"}. '
+            "Do not emit empty arguments, prose, analysis, or a whole new filename plus full file body."
+        )
+    reason_text = str(reason or "")
+    reason_lower = reason_text.lower()
+    if forced_write_tool_name == "edit_blocks" and "validation failed" in reason_lower and "search" in reason_lower:
+        forced_tool_detail += (
+            " Previous SEARCH/REPLACE text did not match the current file. "
+            "Do not retry SEARCH/REPLACE blocks; use the line-range form with file/start/end/replace."
+        )
+    target_file_tokens = extract_target_files_from_message(extract_latest_user_message(retry_context))
+    target_file_detail = ""
+    if target_file_tokens:
+        target_file_detail = (
+            "\nOnly write these target files: "
+            + ", ".join(target_file_tokens)
+            + ". Acceptance criteria, verification commands, test names, and command output paths are "
+            "not authorization to create or modify extra files."
+        )
     enforcement_hint = {
         "role": "system",
         "content": (
@@ -642,6 +679,8 @@ def append_retry_enforcement_hint(
             "INVALID retry outputs: read_file-only, list_directory-only, execute_command-only.\n"
             "VALID retry output must include a write tool call.\n"
             + (f"MANDATORY write tool for this retry: {forced_write_tool_name}." if forced_write_tool_name else "")
+            + forced_tool_detail
+            + target_file_detail
         ),
     }
     return [*retry_context, enforcement_hint]
@@ -849,6 +888,47 @@ def bootstrap_receipt_contains_whole_file_replacement_marker(bootstrap_receipt: 
     return any(marker in lowered for marker in _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS)
 
 
+def bootstrap_receipt_contains_whole_file_edit_error(bootstrap_receipt: Mapping[str, Any]) -> bool:
+    """Return True when edit_blocks rejected a new-file whole-file write."""
+    for item in list(bootstrap_receipt.get("results", []) or []):
+        if not isinstance(item, Mapping):
+            continue
+        tool_name = str(item.get("tool_name") or item.get("name") or "").strip().lower()
+        payload = item.get("result")
+        error_parts: list[str] = []
+
+        if isinstance(payload, Mapping):
+            error_type = str(payload.get("error_type") or "").strip().lower()
+            if error_type in _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_TYPES:
+                return True
+            for key in ("error", "message", "stderr", "details", "reason"):
+                value = payload.get(key)
+                if isinstance(value, str) and value:
+                    error_parts.append(value)
+        elif isinstance(payload, str) and payload:
+            error_parts.append(payload)
+
+        for key in ("error", "message"):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                error_parts.append(value)
+
+        combined = "\n".join(error_parts).lower()
+        if not combined:
+            continue
+        if "whole-file write, not edit" in combined:
+            return True
+        if tool_name == "edit_blocks" and all(
+            fragment in combined for fragment in ("full file content", "not an edit")
+        ):
+            return True
+        if tool_name == "edit_blocks" and any(
+            fragment in combined for fragment in _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS
+        ):
+            return True
+    return False
+
+
 def select_bootstrap_followup_write_tool_name(
     *,
     allowed_tool_names: set[str],
@@ -858,6 +938,12 @@ def select_bootstrap_followup_write_tool_name(
 ) -> str | None:
     """Select the write tool for the post-bootstrap implementation stage."""
     if failed_bootstrap_files:
+        for creation_candidate in ("write_file", "create_file", "append_to_file"):
+            if creation_candidate in allowed_tool_names:
+                return creation_candidate
+        return default_write_tool_name
+
+    if bootstrap_receipt_contains_whole_file_edit_error(bootstrap_receipt):
         for creation_candidate in ("write_file", "create_file", "append_to_file"):
             if creation_candidate in allowed_tool_names:
                 return creation_candidate
