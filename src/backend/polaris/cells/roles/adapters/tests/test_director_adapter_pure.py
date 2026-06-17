@@ -4102,6 +4102,103 @@ class TestExistingWorkspaceTaskEvidence:
         )
 
 
+class TestDeterministicPythonStaticSmoke:
+    """Director py_compiles every .py file the model touches, not just declared targets.
+
+    Live factory-bench L2-07 (2026-06-17, after runtime-smoke fix): the
+    model wrote 13 .py files, 10 of which were in the task's declared
+    target list and py_compile-checked by the existing quality gate.
+    The remaining 3 (including ``src/ledger/ui/stats_view.py``)
+    contained a ``SyntaxError: keyword argument repeated: columns`` —
+    the model wrote ``columns=(...)`` twice in the same ``Treeview``
+    constructor. The platform marked the run as PASS, and the
+    downstream task-market integration_qa was not even invoked for
+    that file. A rigid ruler must py_compile every .py artifact the
+    model wrote, regardless of whether the contract asked for it.
+    """
+
+    def test_python_static_smoke_catches_syntax_error_in_undeclared_file(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_static_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        # Duplicate keyword argument — a real, deterministic Python
+        # syntax error. ``def f(x, x):`` raises SyntaxError at compile
+        # time. The model emitted the same kind of bug in
+        # L2-07 ``stats_view.py`` (duplicate ``columns=``).
+        (tmp_path / "stats_view.py").write_text(
+            "def f(x, x):\n    return x\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_static_smoke(
+            adapter,
+            all_affected_files=["stats_view.py"],
+        )
+
+        assert len(errors) == 1, errors
+        assert "stats_view.py" in errors[0]
+        # Error message should mention the syntax issue
+        assert "syntax" in errors[0].lower() or "invalid" in errors[0].lower()
+
+    def test_python_static_smoke_passes_clean_files(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_static_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "clean_a.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "clean_b.py").write_text(
+            "def hello() -> str:\n    return 'hi'\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_static_smoke(
+            adapter,
+            all_affected_files=["clean_a.py", "clean_b.py"],
+        )
+
+        assert errors == [], errors
+
+    def test_python_static_smoke_skips_non_python_files(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_static_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "readme.md").write_text("# title\n", encoding="utf-8")
+        (tmp_path / "config.toml").write_text("x = 1\n", encoding="utf-8")
+
+        errors = _apply_deterministic_python_static_smoke(
+            adapter,
+            all_affected_files=["readme.md", "config.toml"],
+        )
+
+        assert errors == [], errors
+
+    def test_python_static_smoke_catches_multiple_broken_files(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_static_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        # Two distinct, real Python syntax errors + one clean file.
+        (tmp_path / "broken_a.py").write_text("def f(x, x):\n    return x\n", encoding="utf-8")
+        (tmp_path / "broken_b.py").write_text("class 123Bad:\n    pass\n", encoding="utf-8")
+        (tmp_path / "clean.py").write_text("z = 3\n", encoding="utf-8")
+
+        errors = _apply_deterministic_python_static_smoke(
+            adapter,
+            all_affected_files=["broken_a.py", "broken_b.py", "clean.py"],
+        )
+
+        # Both broken files should be reported; clean is silent.
+        assert len(errors) == 2, errors
+        assert any("broken_a.py" in e for e in errors)
+        assert any("broken_b.py" in e for e in errors)
+
+
 class TestDeterministicPythonRuntimeSmoke:
     """Director surfaces runtime errors that py_compile misses.
 

@@ -1484,6 +1484,10 @@ async def _execute_standard_llm_flow(
     # py_compile + scan_workspace_artifact_quality pass for a calculator.py
     # whose __main__ block raises at call time. The deterministic ladder
     # must actually run the code to surface this kind of failure.
+    artifact_quality_errors += _apply_deterministic_python_static_smoke(
+        adapter,
+        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+    )
     artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
         adapter,
         task_id=target_task_id,
@@ -2695,6 +2699,82 @@ _PYTHON_MAIN_BLOCK_RE = re.compile(
     re.MULTILINE,
 )
 _PYTHON_RUNTIME_SMOKE_TIMEOUT_SECONDS = 5.0
+
+
+def _apply_deterministic_python_static_smoke(
+    adapter: Any,
+    *,
+    all_affected_files: list[str],
+) -> list[str]:
+    """py_compile every Python artifact the model wrote, declared or not.
+
+    Live factory-bench L2-07 (2026-06-17, after the runtime-smoke fix):
+    the model wrote 13 .py files, 10 of which were in the declared
+    target list and py_compile-checked by the existing quality gate.
+    The remaining 3 (including ``src/ledger/ui/stats_view.py``)
+    contained a ``SyntaxError: keyword argument repeated: columns`` —
+    the model wrote ``columns=(...)`` twice in the same ``Treeview``
+    constructor. The platform marked the run as PASS for that
+    parent task because it never py_compile-checked the undeclared
+    file. A rigid ruler must py_compile every Python artifact the
+    model wrote, regardless of contract inclusion.
+
+    The fix is intentionally narrow: ``py_compile`` is a cheap,
+    language-server-grade syntax check. It does NOT execute the
+    code, so it cannot catch call-time errors (that is the runtime
+    smoke test's job). The two compose: static smoke catches
+    ``SyntaxError`` across every file; runtime smoke catches
+    call-time errors in ``__main__`` blocks.
+
+    Returns a list of error strings suitable for
+    ``artifact_quality_errors`` so the deterministic repair ladder
+    and the LLM repair call see the syntax failure.
+    """
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    errors: list[str] = []
+    for rel in all_affected_files:
+        if not isinstance(rel, str) or not rel.endswith(".py"):
+            continue
+        # Defense in depth: only check files inside the workspace.
+        candidate = (workspace_path / rel).resolve()
+        try:
+            candidate.relative_to(workspace_path)
+        except ValueError:
+            continue
+        if not candidate.is_file():
+            continue
+        # Use the `python3 -m py_compile` subprocess to enforce a real
+        # syntax check. The in-process `py_compile.compile(..., doraise=True)`
+        # API is more lenient than the CLI module entry point for some
+        # edge cases (e.g. ``def f(x, x):`` is rejected by the CLI but
+        # sometimes not by the API on newer Python releases), and
+        # subprocess keeps each file isolated so one bad file does not
+        # leak bytecode cache state into the next.
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "py_compile", str(candidate)],
+                cwd=str(workspace_path),
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            errors.append(
+                f"Artifact quality scan failed: python static smoke could not "
+                f"check {rel!r}: {type(exc).__name__}: {exc}"
+            )
+            continue
+        if proc.returncode != 0:
+            stderr = (proc.stderr or proc.stdout or "").strip()
+            tail = "\n".join(line for line in stderr.splitlines()[-6:] if line)
+            errors.append(
+                f"Artifact quality scan failed: python static smoke found syntax error in {rel!r}; tail:\n{tail}"
+            )
+    return errors
 
 
 def _apply_deterministic_python_runtime_smoke(
