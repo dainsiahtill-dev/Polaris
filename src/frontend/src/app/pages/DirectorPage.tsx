@@ -7,6 +7,7 @@
 import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
 import { DirectorWorkspace } from '@/app/components/director';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
+import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
 import { Toaster } from '@/app/components/ui/sonner';
 import { getRoleLlmBlockedReason } from '@/app/hooks/useLlmRuntimeGate';
 import type { PmTask } from '@/types/task';
@@ -156,6 +157,7 @@ export function DirectorPage({
 
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
+      <BenchStatusStrip />
       <DirectorWorkspace
         workspace={workspace}
         onBackToMain={onBackToMain}

@@ -7,6 +7,7 @@
 import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
 import { PMWorkspace } from '@/app/components/pm';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
+import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
 import { Toaster } from '@/app/components/ui/sonner';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
@@ -104,6 +105,7 @@ export function PMPage({
 }: PMPageProps) {
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
+      <BenchStatusStrip />
       <PMWorkspace
         tasks={tasks}
         pmState={pmState}

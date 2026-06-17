@@ -35,6 +35,7 @@ import {
 
 import { Button } from '@/app/components/ui/button';
 import { StatusBadge } from '@/app/components/ui/badge';
+import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
 import { cn } from '@/app/components/ui/utils';
 import { workspaceLabel } from '@/app/utils/workspaceDisplay';
 import type { UsageStats } from '@/app/components/UsageHUD';
@@ -359,6 +360,7 @@ function SectionCard({ title, subtitle, icon: Icon, children, className, action 
         </div>
         {action}
       </header>
+      <BenchStatusStrip />
       <div className="min-h-0 flex-1 p-3">{children}</div>
     </section>
   );

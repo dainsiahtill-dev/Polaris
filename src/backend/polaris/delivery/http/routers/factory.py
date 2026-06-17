@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from polaris.cells.factory.pipeline.internal.bench_service import (
+    FactoryBenchService,
+)
 from polaris.cells.factory.pipeline.public import (
     TERMINAL_RUN_STATUSES,
     FactoryConfig,
@@ -52,6 +55,7 @@ from polaris.delivery.http.schemas import (
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.storage import resolve_logical_path
 from polaris.kernelone.trace import create_task_with_context
+from pydantic import BaseModel, Field
 
 from ._shared import get_state, require_auth
 
@@ -1605,3 +1609,197 @@ async def get_factory_run_artifacts(
 ) -> FactoryRunArtifactsResponse:
     # DEPRECATED
     return await _get_factory_run_artifacts_core(run_id=run_id, state=state)
+
+
+# =============================================================================
+# Factory-bench session endpoints (workspace-agnostic).
+#
+# These endpoints expose the ``FactoryBenchService`` so the
+# ``scripts/factory_bench/run_factory_bench.py`` subprocess (which runs in
+# a terminal, not in the backend process) can publish its lifecycle to the
+# Factory front-end panel in real time. The bench subprocess posts over HTTP
+# (urllib in the bench, FastAPI here) and the front-end subscribes via SSE.
+# Failures on either side are soft: missing session dir / dropped events are
+# logged, never raised into the HTTP response, so a misconfigured bench can
+# never crash the panel.
+# =============================================================================
+
+
+class FactoryBenchStartRequest(BaseModel):
+    work_dir: str = Field(..., description="factory-bench work dir (per-project subdirs)")
+    project_ids: list[str] = Field(default_factory=list)
+    total: int = Field(default=0, ge=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    session_id: str | None = Field(default=None, description="optional explicit id")
+
+
+class FactoryBenchStartResponse(BaseModel):
+    session_id: str
+    status: str
+
+
+class FactoryBenchEventRequest(BaseModel):
+    type: str = Field(..., description="event semantic type, e.g. project.started")
+    name: str | None = None
+    actor: str | None = None
+    summary: str | None = None
+    ok: bool | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class FactoryBenchCompleteRequest(BaseModel):
+    success: bool = True
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
+_bench_service = FactoryBenchService()
+
+
+@router.post("/v2/factory/bench/sessions", response_model=FactoryBenchStartResponse)
+async def start_factory_bench_session_v2(
+    payload: FactoryBenchStartRequest,
+) -> FactoryBenchStartResponse:
+    """Register a new bench session (typically called by the bench subprocess)."""
+    sid = _bench_service.register_session(
+        work_dir=payload.work_dir,
+        project_ids=payload.project_ids,
+        total=payload.total or len(payload.project_ids),
+        metadata=payload.metadata,
+        session_id=payload.session_id,
+    )
+    return FactoryBenchStartResponse(session_id=sid, status="running")
+
+
+@router.get("/v2/factory/bench/sessions")
+async def list_factory_bench_sessions_v2(
+    limit: int = 50,
+) -> dict[str, Any]:
+    """List recent bench sessions for the Factory panel UI."""
+    sessions = _bench_service.list_sessions(limit=limit)
+    return {"total": len(sessions), "sessions": sessions}
+
+
+@router.get("/v2/factory/bench/sessions/{session_id}")
+async def get_factory_bench_session_v2(session_id: str) -> dict[str, Any]:
+    """Read a bench session's status + a tail of its recent events."""
+    snapshot = _bench_service.get_session(session_id)
+    if snapshot is None:
+        raise StructuredHTTPException(
+            status_code=404,
+            code="BENCH_SESSION_NOT_FOUND",
+            message=f"bench session {session_id!r} not found",
+        )
+    return snapshot
+
+
+@router.post("/v2/factory/bench/sessions/{session_id}/events")
+async def append_factory_bench_event_v2(
+    session_id: str,
+    payload: FactoryBenchEventRequest,
+) -> dict[str, Any]:
+    """Append an event to a bench session's event log (fail-soft)."""
+    event: dict[str, Any] = {
+        "type": payload.type,
+        "name": payload.name,
+        "actor": payload.actor,
+        "summary": payload.summary,
+        "ok": payload.ok,
+        "meta": dict(payload.meta),
+    }
+    # Drop None fields so the JSONL stays compact.
+    event = {k: v for k, v in event.items() if v is not None}
+    ok = _bench_service.append_event(session_id, event)
+    if not ok:
+        # The bench may POST events before register, or against a stale id.
+        # Treat that as a soft no-op so the subprocess does not retry-storm.
+        return {"session_id": session_id, "appended": False}
+    return {"session_id": session_id, "appended": True}
+
+
+@router.post("/v2/factory/bench/sessions/{session_id}/complete")
+async def complete_factory_bench_session_v2(
+    session_id: str,
+    payload: FactoryBenchCompleteRequest,
+) -> dict[str, Any]:
+    """Mark a bench session complete (or failed)."""
+    ok = _bench_service.complete_session(
+        session_id,
+        success=payload.success,
+        summary=payload.summary,
+    )
+    return {"session_id": session_id, "updated": ok}
+
+
+async def _stream_factory_bench_session_core(session_id: str) -> StreamingResponse:
+    """SSE stream of bench session events. Polls the events.jsonl file."""
+    snapshot = _bench_service.get_session(session_id)
+    if snapshot is None:
+        raise StructuredHTTPException(
+            status_code=404,
+            code="BENCH_SESSION_NOT_FOUND",
+            message=f"bench session {session_id!r} not found",
+        )
+
+    async def event_generator() -> Any:
+        offset = 0
+        last_status_payload = ""
+        terminal = False
+        # Initial snapshot: status + tail of recent events.
+        yield f"event: status\ndata: {_json_payload(snapshot)}\n\n"
+        for ev in snapshot.get("events", []):
+            yield f"event: event\ndata: {_json_payload(ev)}\n\n"
+        # ``read_events_from`` resumed from offset 0 already returned the tail
+        # above; advance the offset to EOF so we only emit NEW events.
+        events_path = _session_events_path(session_id)
+        if events_path and events_path.is_file():
+            try:
+                offset = events_path.stat().st_size
+            except OSError:
+                offset = 0
+
+        while not terminal:
+            await asyncio.sleep(0.5)
+            current = _bench_service.get_session(session_id)
+            if current is None:
+                yield 'event: error\ndata: {"error":"session_not_found"}\n\n'
+                return
+            status_payload = _json_payload(current)
+            if status_payload != last_status_payload:
+                last_status_payload = status_payload
+                yield f"event: status\ndata: {status_payload}\n\n"
+            new_events, offset = _bench_service.read_events_from(
+                session_id,
+                start_offset=offset,
+            )
+            for ev in new_events:
+                yield f"event: event\ndata: {_json_payload(ev)}\n\n"
+            if str(current.get("status")) in {"completed", "failed"}:
+                terminal = True
+                yield f"event: complete\ndata: {status_payload}\n\n"
+                yield f"event: done\ndata: {status_payload}\n\n"
+                return
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _session_events_path(session_id: str) -> Path | None:
+    from polaris.cells.factory.pipeline.internal.bench_service import _session_dir
+
+    try:
+        return _session_dir(session_id) / "events.jsonl"
+    except ValueError:
+        return None
+
+
+@router.get("/v2/factory/bench/sessions/{session_id}/stream")
+async def stream_factory_bench_session_v2(session_id: str) -> StreamingResponse:
+    """Stream bench session events via SSE for the Factory front-end panel."""
+    return await _stream_factory_bench_session_core(session_id=session_id)

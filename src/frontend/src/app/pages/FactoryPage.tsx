@@ -6,6 +6,7 @@
 
 import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
 import { FactoryWorkspace } from '@/app/components/factory/FactoryWorkspace';
+import { BenchPanel } from '@/app/components/factory/BenchPanel';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
 import { Toaster } from '@/app/components/ui/sonner';
 import type { PmTask } from '@/types/task';
@@ -112,6 +113,7 @@ export function FactoryPage({
         onCancel={onCancel}
         isLoading={isLoading}
       />
+      <BenchPanel className="border-t border-white/10" />
       <LlmRuntimeOverlay
         activeView="factory"
         websocketLive={websocketLive}

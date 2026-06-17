@@ -7,6 +7,7 @@
 import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
 import { ChiefEngineerWorkspace } from '@/app/components/chief-engineer';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
+import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
 import { Toaster } from '@/app/components/ui/sonner';
 import { getRoleLlmBlockedReason } from '@/app/hooks/useLlmRuntimeGate';
 import type { EngineStatus } from '@/app/types/appContracts';
@@ -151,6 +152,7 @@ export function ChiefEngineerPage({
 
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
+      <BenchStatusStrip />
       <ChiefEngineerWorkspace
         workspace={workspace}
         engineStatus={engineStatus}

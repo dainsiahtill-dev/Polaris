@@ -208,6 +208,280 @@ def grade_chain_state(chain_results: dict[str, Any], exit_code: Any) -> str:
     return "fail"
 
 
+def _resolve_bench_cache_root(workspace: Path) -> str:
+    """Resolve the runtime cache_root for ``workspace`` using the same storage
+    layout the chain subprocess writes to. Returns "" if storage roots cannot
+    be resolved (e.g. workspace has no docs sentinel — bench then skips WS
+    emit and degrades to file-only)."""
+    try:
+        from polaris.kernelone.storage.io_paths import build_cache_root
+    except ImportError:
+        return ""
+    ramdisk = os.environ.get("KERNELONE_STATE_TO_RAMDISK") or "/dev/shm"
+    try:
+        return build_cache_root(ramdisk, str(workspace))
+    except (OSError, ValueError) as exc:  # pragma: no cover - defensive
+        print(f"[factory-bench] cache_root resolution failed: {exc}", file=sys.stderr, flush=True)
+        return ""
+
+
+# Module-level state populated by main() so the emit helper can also
+# forward each event to the Factory HTTP backend (Factory panel SSE stream).
+# Empty values mean "no backend wiring": the helper degrades to local JSONL
+# only and never makes a network call.
+_BENCH_BACKEND: dict[str, str] = {"backend_url": "", "session_id": "", "token": ""}
+
+
+def configure_bench_backend(backend_url: str, session_id: str, token: str = "") -> None:
+    """Set the active backend URL + session id + token (called once by main())."""
+    _BENCH_BACKEND["backend_url"] = backend_url
+    _BENCH_BACKEND["session_id"] = session_id
+    _BENCH_BACKEND["token"] = token
+
+
+def _emit_bench_event(
+    *,
+    workspace: Path,
+    project_id: str,
+    level: int,
+    name: str,
+    summary: str = "",
+    meta: dict[str, Any] | None = None,
+    cache_root: str | None = None,
+) -> bool:
+    """Append a bench-level event to the workspace's runtime.events.jsonl
+    AND forward it to the Factory HTTP backend (if wired by main()).
+
+    Local path: writes to ``<cache_root>/runs/<run_id>/events/runtime.events.jsonl``
+    (resolved via ``latest_run.json``) so the Polaris WS bridge at
+    ``/v2/ws/runtime`` can stream it to the ContextOS real-time dashboard.
+
+    Backend path: when main() registered a session, also POSTs the event to
+    ``/v2/factory/bench/sessions/{id}/events`` so the Factory front-end
+    panel can subscribe via SSE.
+
+    Returns True if at least one of the two paths succeeded; False only when
+    neither produced a record (e.g. local path has no run_id and backend
+    is not wired). All failures are non-fatal: the bench continues.
+    """
+    try:
+        from polaris.kernelone.events import emit_event
+    except ImportError:
+        return False
+
+    if not cache_root:
+        cache_root = _resolve_bench_cache_root(workspace)
+    if not cache_root:
+        return False
+
+    pointer = Path(cache_root) / "latest_run.json"
+    if not pointer.is_file():
+        return False
+    try:
+        pointer_payload = json.loads(pointer.read_text(encoding="utf-8"))
+        run_id = str(pointer_payload.get("run_id") or "").strip()
+    except (OSError, ValueError):
+        return False
+    if not run_id:
+        return False
+
+    events_path = Path(cache_root) / "runs" / run_id / "events" / "runtime.events.jsonl"
+    payload_meta: dict[str, Any] = dict(meta or {})
+    payload_meta.setdefault("project_id", str(project_id))
+    payload_meta.setdefault("level", int(level))
+    payload_meta.setdefault("source", "factory-bench")
+
+    local_ok = False
+    try:
+        emit_event(
+            str(events_path),
+            kind="event",
+            actor="factory-bench",
+            name=f"factory_bench.{name}",
+            summary=summary,
+            meta=payload_meta,
+        )
+        local_ok = True
+    except (OSError, ValueError, TypeError) as exc:
+        print(f"[factory-bench] WS emit failed: {exc}", file=sys.stderr, flush=True)
+
+    backend_ok = False
+    backend_url = _BENCH_BACKEND.get("backend_url", "")
+    backend_sid = _BENCH_BACKEND.get("session_id", "")
+    if backend_url and backend_sid:
+        # Inject project_id / level / source into the meta of the backend
+        # event too — the bench service re-derives these from meta.
+        backend_ok = _push_bench_event_to_backend(
+            backend_url=backend_url,
+            session_id=backend_sid,
+            event_type=f"factory_bench.{name}",
+            name=f"factory_bench.{name}",
+            actor="factory-bench",
+            summary=summary,
+            meta=payload_meta,
+            token=_BENCH_BACKEND.get("token", ""),
+        )
+
+    return local_ok or backend_ok
+
+
+# --- Bench subprocess -> backend HTTP client ---
+#
+# The bench runs in a terminal and posts lifecycle events to the Factory
+# HTTP backend so the Factory front-end panel can stream them in real time.
+# All helpers are fail-soft: a missing/unreachable backend must NEVER crash
+# the bench run. The bench only does local JSONL emission in that case
+# (which the WS bridge can still pick up if connected to the active
+# workspace's runtime dir).
+
+import urllib.error  # noqa: E402
+import urllib.request  # noqa: E402
+
+_DEFAULT_BACKEND_URL = "http://127.0.0.1:49977"
+_BENCH_HTTP_TIMEOUT_S = 2.0
+
+
+def _resolve_backend_url(explicit: str | None = None) -> str:
+    """Pick a backend URL from arg > env > default; return "" to disable."""
+    candidate = (
+        (explicit or "").strip()
+        or os.environ.get("KERNELONE_BACKEND_URL", "").strip()
+        or os.environ.get("FACTORY_BENCH_BACKEND_URL", "").strip()
+        or _DEFAULT_BACKEND_URL
+    )
+    return candidate.rstrip("/")
+
+
+def _resolve_backend_token(explicit: str | None = None) -> str:
+    """Pick a backend bearer token from arg > env.
+
+    The Polaris factory router requires a Bearer token in the Authorization
+    header (query tokens are intentionally rejected — see
+    ``polaris.delivery.http.dependencies.require_auth``). The bench subprocess
+    runs in a terminal and has no way to ask the Electron app for a token,
+    so the user must set ``KERNELONE_TOKEN`` (or ``FACTORY_BENCH_BACKEND_TOKEN``)
+    in the same env as the bench, matching the value the backend was started
+    with. Returns "" when no token is configured (the bench then makes
+    unauthenticated requests, which is fine for dev mode with auth disabled).
+    """
+    return (
+        (explicit or "").strip()
+        or os.environ.get("FACTORY_BENCH_BACKEND_TOKEN", "").strip()
+        or os.environ.get("KERNELONE_TOKEN", "").strip()
+    )
+
+
+def _http_post_json(
+    url: str,
+    body: dict[str, Any],
+    *,
+    timeout_s: float = _BENCH_HTTP_TIMEOUT_S,
+    token: str = "",
+) -> dict[str, Any] | None:
+    try:
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(
+            url,
+            data=data,
+            method="POST",
+            headers=headers,
+        )
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8") or "{}"
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, ValueError) as exc:
+        print(f"[factory-bench] backend POST failed: {url}: {exc}", file=sys.stderr, flush=True)
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
+
+
+def _push_bench_session_to_backend(
+    *,
+    backend_url: str,
+    work_dir: str,
+    project_ids: list[str],
+    total: int,
+    metadata: dict[str, Any] | None = None,
+    session_id: str | None = None,
+    token: str = "",
+) -> str | None:
+    """Register a bench session with the Factory backend.
+
+    Returns the assigned ``session_id`` on success, ``None`` on any failure
+    (no backend / network error / non-2xx / malformed body). The bench run
+    must continue in all cases; the only side effect of failure is that
+    the Factory panel cannot show this run.
+    """
+    payload: dict[str, Any] = {
+        "work_dir": str(work_dir),
+        "project_ids": list(project_ids),
+        "total": int(total),
+        "metadata": dict(metadata or {}),
+    }
+    if session_id:
+        payload["session_id"] = session_id
+    response = _http_post_json(f"{backend_url}/v2/factory/bench/sessions", payload, token=token)
+    if not isinstance(response, dict):
+        return None
+    sid = str(response.get("session_id") or "").strip()
+    return sid or None
+
+
+def _push_bench_event_to_backend(
+    *,
+    backend_url: str,
+    session_id: str,
+    event_type: str,
+    name: str | None = None,
+    actor: str | None = None,
+    summary: str | None = None,
+    ok: bool | None = None,
+    meta: dict[str, Any] | None = None,
+    token: str = "",
+) -> bool:
+    """Append a bench event to the active session on the Factory backend."""
+    payload: dict[str, Any] = {
+        "type": str(event_type),
+        "name": name,
+        "actor": actor,
+        "summary": summary,
+        "ok": ok,
+        "meta": dict(meta or {}),
+    }
+    response = _http_post_json(
+        f"{backend_url}/v2/factory/bench/sessions/{session_id}/events",
+        payload,
+        token=token,
+    )
+    return response is not None and bool(response.get("appended", False))
+
+
+def _push_bench_complete_to_backend(
+    *,
+    backend_url: str,
+    session_id: str,
+    success: bool = True,
+    summary: dict[str, Any] | None = None,
+    token: str = "",
+) -> bool:
+    """Mark a bench session complete (or failed) on the Factory backend."""
+    payload: dict[str, Any] = {
+        "success": bool(success),
+        "summary": dict(summary or {}),
+    }
+    response = _http_post_json(
+        f"{backend_url}/v2/factory/bench/sessions/{session_id}/complete",
+        payload,
+        token=token,
+    )
+    return response is not None and bool(response.get("updated", False))
+
+
 def _bench_gate(gate: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"gate": gate, "ok": bool(ok), "detail": detail}
 
@@ -473,6 +747,30 @@ def main() -> int:
     base.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
     failed = 0
+    bench_session_id = os.environ.get("FACTORY_BENCH_SESSION_ID") or ""
+    backend_url = _resolve_backend_url()
+    backend_token = _resolve_backend_token()
+    if backend_url and not bench_session_id:
+        bench_session_id = (
+            _push_bench_session_to_backend(
+                backend_url=backend_url,
+                work_dir=str(base),
+                project_ids=[str(p["id"]) for p in selected],
+                total=len(selected),
+                metadata={"levels": sorted({int(p.get("level") or 0) for p in selected})},
+                token=backend_token,
+            )
+            or ""
+        )
+    configure_bench_backend(backend_url, bench_session_id, backend_token)
+    _emit_bench_event(
+        workspace=base,
+        project_id="-",
+        level=0,
+        name="run.started",
+        summary=f"factory-bench session {bench_session_id or 'local'}: {len(selected)} project(s)",
+        meta={"session_id": bench_session_id, "total": len(selected), "backend_url": bool(backend_url)},
+    )
 
     for project in selected:
         pid = project["id"]
@@ -480,6 +778,14 @@ def main() -> int:
         workspace.mkdir(parents=True, exist_ok=True)
         log_path = base / f"{pid}.chain.log"
         print(f"[factory-bench] === {pid} {project['title']} ===", flush=True)
+        _emit_bench_event(
+            workspace=base,
+            project_id=pid,
+            level=int(project.get("level") or 0),
+            name="project.started",
+            summary=f"{pid} {project['title']} starting",
+            meta={"session_id": bench_session_id, "title": project.get("title") or ""},
+        )
         try:
             chain = run_chain(
                 project,
@@ -491,6 +797,19 @@ def main() -> int:
             )
         except subprocess.TimeoutExpired:
             chain = {"exit_code": -1, "duration_s": float(args.timeout), "timeout": True}
+        _emit_bench_event(
+            workspace=base,
+            project_id=pid,
+            level=int(project.get("level") or 0),
+            name="project.completed",
+            summary=f"{pid} exit={chain.get('exit_code')} dur={chain.get('duration_s')}s",
+            meta={
+                "session_id": bench_session_id,
+                "exit_code": chain.get("exit_code"),
+                "duration_s": chain.get("duration_s"),
+                "timeout": bool(chain.get("timeout")),
+            },
+        )
         runtime_dir = resolve_runtime_dir_for_workspace(workspace)
         record = build_factory_audit_record(
             project=project,
@@ -547,6 +866,20 @@ def main() -> int:
                 f"[factory-bench]   - gate:{gate['gate']}: {'ok' if gate['ok'] else 'FAIL'} ({gate['detail']})",
                 flush=True,
             )
+            _emit_bench_event(
+                workspace=base,
+                project_id=pid,
+                level=int(project.get("level") or 0),
+                name="gate.evaluated",
+                summary=f"{pid} gate:{gate['gate']}={'ok' if gate['ok'] else 'FAIL'}",
+                meta={
+                    "session_id": bench_session_id,
+                    "gate": gate["gate"],
+                    "ok": bool(gate["ok"]),
+                    "detail": gate.get("detail") or "",
+                },
+            )
+
         out_path = base / "factory_audits.json"
         out_path.write_text(
             json.dumps(
@@ -564,10 +897,39 @@ def main() -> int:
                 break
 
     agg = aggregate_factory_audits(records)
+    run_success = failed < args.max_failed and agg["all_checks_passed"] == agg["total"]
+    _emit_bench_event(
+        workspace=base,
+        project_id="-",
+        level=0,
+        name="run.completed",
+        summary=f"factory-bench {agg['all_checks_passed']}/{agg['total']} passed",
+        meta={
+            "session_id": bench_session_id,
+            "total": agg["total"],
+            "passed": agg["all_checks_passed"],
+            "failed": agg["total"] - agg["all_checks_passed"],
+            "by_level": agg["by_level"],
+        },
+    )
+    if backend_url and bench_session_id:
+        _push_bench_complete_to_backend(
+            backend_url=backend_url,
+            session_id=bench_session_id,
+            success=run_success,
+            summary={
+                "total": agg["total"],
+                "passed": agg["all_checks_passed"],
+                "failed": agg["total"] - agg["all_checks_passed"],
+                "by_level": agg["by_level"],
+            },
+            token=backend_token,
+        )
     print(
         f"\n[factory-bench] ===== {agg['all_checks_passed']}/{agg['total']} passed | by_level={agg['by_level']} =====",
         flush=True,
     )
+
     print(f"[factory-bench] audits -> {base / 'factory_audits.json'}", flush=True)
     return 0
 
