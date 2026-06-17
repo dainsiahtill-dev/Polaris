@@ -155,12 +155,24 @@ Verified: governance gate `new_issue_count == 0`, zero issue records referencing
    so the L2 floor is provably untouched; governance gate `new_issue_count == 0`; full
    `pm_planning` suite 574 green.
 
-The **milestones registry** (rank-5-adjacent) was shipped in parallel by codex
-(`cb962609`); this report reuses it. Remaining: durable decision log, change-request
-register, failure-driven replan, stakeholder-clarification tool, consolidate the unwired
-orchestrators, restore the PMRole RoleBase interface, and the **gated live-path wiring**
-that flips the report + RAID-gate + WSJF ordering into the actual planning loop (each
-behind a default-off env gate + an L2-floor re-verify bench, which is codex's lane).
+7. **Decision Register** — ← **LANDED**. `pm_planning/internal/decision_log.py`: the
+   missing third of the PM governance trio (RAID + milestones + **decisions**). A durable
+   ADR-lite governance decision register — `DecisionStatus` (proposed/accepted/rejected/
+   superseded/deferred) with a fail-closed transition guard (illegal transition raises,
+   leaving the record byte-identical), `DecisionRecordV1` (title, context, options
+   considered, decision, rationale, owner, linked task_ids + risk_ids, history), and a
+   `DecisionRegister` store mirroring the verified `raid_register.py` shape exactly
+   (atomic temp+`os.replace`, traversal-guarded ids, fail-closed loads, UTF-8) under
+   `runtime/pm/decisions/`. Distinct from the transient in-memory execution `_decisions`
+   (`pm_agent.py` untouched). §8-clean, no dead gate predicate (YAGNI), floor-safe /
+   wired to nothing; governance `new_issue_count == 0`; full `pm_planning` suite 619 green.
+
+The **milestones registry** was shipped in parallel by codex (`cb962609`); the report
+reuses it. Remaining (all coordination-gated): change-request register, failure-driven
+replan, stakeholder-clarification tool, consolidate the unwired orchestrators, restore
+the PMRole RoleBase interface, and the **gated live-path wiring** that flips the report +
+RAID-gate + WSJF ordering into the actual planning loop (each behind a default-off env
+gate + an L2-floor re-verify bench, which is codex's lane).
 
 ## 4. Increment #3 design — `compute_schedule`
 
