@@ -375,6 +375,15 @@ def run_chain(
         env.setdefault("KERNELONE_TASK_MARKET_MODE", "mainline-full")
         env.setdefault("KERNELONE_TASK_MARKET_ROLE_POOLS", "director")
         env.setdefault("KERNELONE_TASK_MARKET_ENABLE_SAFE_PARALLEL_DIRECTOR", "1")
+        # Live factory-bench L1-01 / L2-07 / L6-32 (2026-06-17): with
+        # KERNELONE_CE_STEP_FISSION off (the migration default), CE
+        # does not fanout parent tasks into leaf steps, so the market
+        # only ever has the parent task. Workers serialize on it, the
+        # second/third siblings stay in `pending_design` forever, and
+        # integration_qa never gets called. The task-market
+        # dispatch driver is a deliberate opt-in to a more parallel
+        # path, so it must also opt in to step fission.
+        env.setdefault("KERNELONE_CE_STEP_FISSION", "1")
     # Module imports come from PYTHONPATH, NOT cwd: parts of the chain key
     # role-session/storage roots off the CURRENT DIRECTORY's workspace
     # resolution (docs sentinel). Running with cwd=src/backend made every
