@@ -26,6 +26,8 @@ from polaris.domain.entities.task import TaskPriority as TBPriority
 from polaris.kernelone.fs.text_ops import write_text_atomic
 from polaris.kernelone.storage import resolve_runtime_path
 
+from ..public import service as _pm_service
+
 
 class PMTask:
     """Represents a task in PM's scope."""
@@ -367,6 +369,163 @@ class PMAgent(RoleAgent):
             parameters={"request_id": "Request ID to check"},
         )
 
+        # ----------------------------------------------------------------------
+        # True-PM governance tools (risk / commitments / decisions / report).
+        # These expose the cell's landed capability cores (§7) to the PM role
+        # at runtime so the agent can act as a real project manager: inspect
+        # risk, track commitments, record governance decisions, and publish a
+        # composed project status report. Every call is fail-closed and returns
+        # a JSON-safe dict.
+        # ----------------------------------------------------------------------
+        tb.register(
+            "risk_summary",
+            self._tool_risk_summary,
+            description="Summarize the risk register",
+            parameters={},
+        )
+        tb.register(
+            "risk_list",
+            self._tool_risk_list,
+            description="List risk register entries with optional filters",
+            parameters={
+                "category": "Filter by category (risk/assumption/issue/dependency)",
+                "status": "Filter by status (open/mitigating/accepted/resolved/reverted)",
+                "severity": "Filter by severity (low/medium/high/critical/blocker)",
+                "task_id": "Filter by linked task id (optional)",
+            },
+        )
+        tb.register(
+            "risk_register",
+            self._tool_risk_register,
+            description="Register a new risk register entry",
+            parameters={
+                "title": "Short title",
+                "category": "risk/assumption/issue/dependency",
+                "severity": "low/medium/high/critical/blocker",
+                "probability": "rare/unlikely/possible/likely/almost_certain",
+                "task_id": "Linked task id",
+                "owner": "Accountable owner (optional)",
+                "detail": "Detailed description (optional)",
+            },
+        )
+        tb.register(
+            "risk_update_status",
+            self._tool_risk_update_status,
+            description="Update the status of a risk register entry",
+            parameters={
+                "entry_id": "Risk entry id",
+                "status": "open/mitigating/accepted/resolved/reverted",
+                "actor": "Who is making the update",
+                "note": "Update note (optional)",
+            },
+        )
+
+        tb.register(
+            "commitment_summary",
+            self._tool_commitment_summary,
+            description="Summarize the commitment register",
+            parameters={},
+        )
+        tb.register(
+            "commitment_list",
+            self._tool_commitment_list,
+            description="List commitments with optional filters",
+            parameters={
+                "status": "Filter by status (planned/in_progress/achieved/missed/cancelled)",
+                "task_id": "Filter by linked task id (optional)",
+            },
+        )
+        tb.register(
+            "commitment_register",
+            self._tool_commitment_register,
+            description="Register a new commitment",
+            parameters={
+                "name": "Commitment name",
+                "description": "Description (optional)",
+                "target_iteration": "Target iteration (integer, optional)",
+                "task_ids": "Linked task ids (list, optional)",
+                "owner": "Owner (optional)",
+                "acceptance": "Acceptance criteria (optional)",
+                "actor": "Actor (optional)",
+            },
+        )
+        tb.register(
+            "commitment_update_status",
+            self._tool_commitment_update_status,
+            description="Update the status of a commitment",
+            parameters={
+                "commitment_id": "Commitment id",
+                "status": "planned/in_progress/achieved/missed/cancelled",
+                "actor": "Who is making the update",
+                "note": "Update note (optional)",
+                "current_iteration": "Current iteration (integer, optional)",
+            },
+        )
+
+        tb.register(
+            "decision_summary",
+            self._tool_decision_summary,
+            description="Summarize the decision register",
+            parameters={},
+        )
+        tb.register(
+            "decision_list",
+            self._tool_decision_list,
+            description="List governance decisions with optional filters",
+            parameters={
+                "status": "Filter by status (proposed/accepted/rejected/superseded/deferred)",
+                "task_id": "Filter by linked task id (optional)",
+            },
+        )
+        tb.register(
+            "decision_register",
+            self._tool_decision_register,
+            description="Register a governance decision",
+            parameters={
+                "title": "Decision title",
+                "context": "Decision context (optional)",
+                "options": "Options considered (list, optional)",
+                "decision": "Chosen decision (optional)",
+                "rationale": "Rationale (optional)",
+                "owner": "Owner (optional)",
+                "task_ids": "Linked task ids (list, optional)",
+                "risk_ids": "Linked risk entry ids (list, optional)",
+                "actor": "Actor (optional)",
+            },
+        )
+        tb.register(
+            "decision_update_status",
+            self._tool_decision_update_status,
+            description="Update the status of a governance decision",
+            parameters={
+                "decision_id": "Decision id",
+                "status": "proposed/accepted/rejected/superseded/deferred",
+                "actor": "Who is making the update",
+                "note": "Update note (optional)",
+            },
+        )
+
+        tb.register(
+            "project_status_report",
+            self._tool_project_status_report,
+            description="Build and publish the composed PM project status report",
+            parameters={
+                "current_iteration": "Current iteration (integer, optional)",
+            },
+        )
+        tb.register(
+            "compute_backlog_ranking",
+            self._tool_compute_backlog_ranking,
+            description="Rank backlog tasks by priority",
+            parameters={},
+        )
+        tb.register(
+            "compute_critical_path",
+            self._tool_compute_critical_path,
+            description="Compute the critical path from the current task contract",
+            parameters={},
+        )
+
     def _tool_create_task(self, **kwargs) -> dict[str, Any]:
         """Create a new task."""
         import uuid
@@ -678,6 +837,200 @@ class PMAgent(RoleAgent):
             return {"ok": False, "error": f"Request {request_id} not found"}
 
         return {"ok": True, "request_id": request_id, "status": status.value}
+
+    # --------------------------------------------------------------------------
+    # True-PM governance tools (thin wrappers over the public governance facade).
+    # --------------------------------------------------------------------------
+
+    def _tool_risk_summary(self) -> dict[str, Any]:
+        """Return a fail-closed risk register summary."""
+        return _pm_service.summarize_risks(self.workspace)
+
+    def _tool_risk_list(
+        self,
+        category: str | None = None,
+        status: str | None = None,
+        severity: str | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """List risk register entries with optional filters."""
+        return _pm_service.list_risks(
+            self.workspace,
+            category=category,
+            status=status,
+            severity=severity,
+            task_id=task_id,
+        )
+
+    def _tool_risk_register(
+        self,
+        title: str,
+        category: str,
+        severity: str,
+        probability: str,
+        task_id: str,
+        owner: str = "",
+        detail: str = "",
+    ) -> dict[str, Any]:
+        """Register a new risk register entry."""
+        return _pm_service.register_risk(
+            self.workspace,
+            title=title,
+            category=category,
+            severity=severity,
+            probability=probability,
+            task_id=task_id,
+            owner=owner,
+            detail=detail,
+        )
+
+    def _tool_risk_update_status(
+        self,
+        entry_id: str,
+        status: str,
+        actor: str,
+        note: str = "",
+    ) -> dict[str, Any]:
+        """Update the status of a risk register entry."""
+        return _pm_service.update_risk_status(
+            self.workspace,
+            entry_id=entry_id,
+            status=status,
+            actor=actor,
+            note=note,
+        )
+
+    def _tool_commitment_summary(self) -> dict[str, Any]:
+        """Return a fail-closed commitment register summary."""
+        return _pm_service.summarize_commitments(self.workspace)
+
+    def _tool_commitment_list(
+        self,
+        status: str | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """List commitments with optional filters."""
+        return _pm_service.list_commitments(
+            self.workspace,
+            status=status,
+            task_id=task_id,
+        )
+
+    def _tool_commitment_register(
+        self,
+        name: str,
+        description: str = "",
+        target_iteration: int | None = None,
+        task_ids: list[str] | None = None,
+        owner: str = "",
+        acceptance: str = "",
+        actor: str = "",
+    ) -> dict[str, Any]:
+        """Register a new commitment."""
+        return _pm_service.register_commitment(
+            self.workspace,
+            name=name,
+            description=description,
+            target_iteration=target_iteration,
+            task_ids=task_ids,
+            owner=owner,
+            acceptance=acceptance,
+            actor=actor,
+        )
+
+    def _tool_commitment_update_status(
+        self,
+        commitment_id: str,
+        status: str,
+        actor: str,
+        note: str = "",
+        current_iteration: int | None = None,
+    ) -> dict[str, Any]:
+        """Update the status of a commitment."""
+        return _pm_service.update_commitment_status(
+            self.workspace,
+            commitment_id=commitment_id,
+            status=status,
+            actor=actor,
+            note=note,
+            current_iteration=current_iteration,
+        )
+
+    def _tool_decision_summary(self) -> dict[str, Any]:
+        """Return a fail-closed decision register summary."""
+        return _pm_service.summarize_decisions(self.workspace)
+
+    def _tool_decision_list(
+        self,
+        status: str | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """List governance decisions with optional filters."""
+        return _pm_service.list_decisions(
+            self.workspace,
+            status=status,
+            task_id=task_id,
+        )
+
+    def _tool_decision_register(
+        self,
+        title: str,
+        context: str = "",
+        options: list[str] | None = None,
+        decision: str = "",
+        rationale: str = "",
+        owner: str = "",
+        task_ids: list[str] | None = None,
+        risk_ids: list[str] | None = None,
+        actor: str = "",
+    ) -> dict[str, Any]:
+        """Register a governance decision."""
+        return _pm_service.register_decision(
+            self.workspace,
+            title=title,
+            context=context,
+            options=options,
+            decision=decision,
+            rationale=rationale,
+            owner=owner,
+            task_ids=task_ids,
+            risk_ids=risk_ids,
+            actor=actor,
+        )
+
+    def _tool_decision_update_status(
+        self,
+        decision_id: str,
+        status: str,
+        actor: str,
+        note: str = "",
+    ) -> dict[str, Any]:
+        """Update the status of a governance decision."""
+        return _pm_service.update_decision_status(
+            self.workspace,
+            decision_id=decision_id,
+            status=status,
+            actor=actor,
+            note=note,
+        )
+
+    def _tool_project_status_report(
+        self,
+        current_iteration: int = 0,
+    ) -> dict[str, Any]:
+        """Build and publish the composed PM project status report."""
+        return _pm_service.build_project_status_report(
+            self.workspace,
+            current_iteration=current_iteration,
+        )
+
+    def _tool_compute_backlog_ranking(self) -> dict[str, Any]:
+        """Rank tasks by priority against the current contract."""
+        return _pm_service.compute_backlog_ranking(self.workspace)
+
+    def _tool_compute_critical_path(self) -> dict[str, Any]:
+        """Compute the critical path from the current PM task contract."""
+        return _pm_service.compute_critical_path(self.workspace)
 
     def handle_message(self, message: AgentMessage) -> AgentMessage | None:
         """Handle incoming message from Director or other agents."""

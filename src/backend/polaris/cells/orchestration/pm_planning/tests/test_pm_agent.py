@@ -7,6 +7,7 @@ that don't require external infrastructure.
 from __future__ import annotations
 
 from polaris.cells.orchestration.pm_planning.internal.pm_agent import (
+    PMAgent,
     PMTask,
     PMTaskStore,
 )
@@ -215,3 +216,85 @@ class TestPMTaskStore:
         store = PMTaskStore(str(tmp_path))
         result = store.load_task("totally-absent")
         assert result is None
+
+
+# -----------------------------------------------------------------------------
+# PMAgent governance tools
+# -----------------------------------------------------------------------------
+
+
+class TestPMAgentGovernanceTools:
+    def test_governance_tools_registered(self, tmp_path) -> None:
+        agent = PMAgent(str(tmp_path))
+        tools = agent.toolbox.list_tools()
+        expected = {
+            "risk_summary",
+            "risk_list",
+            "risk_register",
+            "risk_update_status",
+            "commitment_summary",
+            "commitment_list",
+            "commitment_register",
+            "commitment_update_status",
+            "decision_summary",
+            "decision_list",
+            "decision_register",
+            "decision_update_status",
+            "project_status_report",
+            "compute_backlog_ranking",
+            "compute_critical_path",
+        }
+        assert expected.issubset(set(tools)), f"missing: {expected - set(tools)}"
+
+    def test_risk_summary_empty_store(self, tmp_path) -> None:
+        agent = PMAgent(str(tmp_path))
+        result = agent._tool_risk_summary()
+        assert result["ok"] is True
+        assert result["summary"]["total"] == 0
+
+    def test_commitment_register_and_list(self, tmp_path) -> None:
+        agent = PMAgent(str(tmp_path))
+        reg = agent._tool_commitment_register(name="Alpha delivery", actor="PM")
+        assert reg["ok"] is True
+        assert "commitment_id" in reg
+
+        listed = agent._tool_commitment_list()
+        assert listed["ok"] is True
+        assert listed["count"] == 1
+
+    def test_decision_register_and_update(self, tmp_path) -> None:
+        agent = PMAgent(str(tmp_path))
+        reg = agent._tool_decision_register(
+            title="Use SQLite",
+            options=["SQLite", "PostgreSQL"],
+            decision="SQLite",
+            actor="PM",
+        )
+        assert reg["ok"] is True
+        decision_id = reg["decision_id"]
+
+        updated = agent._tool_decision_update_status(
+            decision_id=decision_id,
+            status="accepted",
+            actor="PM",
+        )
+        assert updated["ok"] is True
+        assert updated["decision"]["status"] == "accepted"
+
+    def test_compute_critical_path_empty_contract(self, tmp_path) -> None:
+        agent = PMAgent(str(tmp_path))
+        result = agent._tool_compute_critical_path()
+        assert result["ok"] is True
+        assert result["critical_path"] == []
+
+    def test_compute_backlog_ranking_empty_contract(self, tmp_path) -> None:
+        agent = PMAgent(str(tmp_path))
+        result = agent._tool_compute_backlog_ranking()
+        assert result["ok"] is True
+        assert result["count"] == 0
+
+    def test_project_status_report_empty_workspace(self, tmp_path) -> None:
+        agent = PMAgent(str(tmp_path))
+        result = agent._tool_project_status_report(current_iteration=0)
+        assert result["ok"] is True
+        assert result["total_tasks"] == 0
