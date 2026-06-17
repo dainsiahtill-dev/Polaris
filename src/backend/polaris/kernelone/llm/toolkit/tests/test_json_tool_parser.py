@@ -91,8 +91,18 @@ class TestJSONToolParserNormal:
         result = JSONToolParser.parse(text, allowed_tool_names=["read_file"])
 
         assert len(result) == 1
-        assert result[0].name == "readFile"
+        assert result[0].name == "read_file"
         assert result[0].arguments == {"path": "test.py", "start_line": "2"}
+
+    def test_parse_write_file_alias_returns_canonical_name(self) -> None:
+        """Regression: parser-level aliases must not leak raw names downstream."""
+        text = '{"name": "create_file", "arguments": {"path": "app.py", "text": "print(1)\\n"}}'
+        result = JSONToolParser.parse(text, allowed_tool_names=["write_file"])
+
+        assert len(result) == 1
+        assert result[0].name == "write_file"
+        assert result[0].arguments == {"path": "app.py", "text": "print(1)\n"}
+        assert '"create_file"' in result[0].raw
 
     def test_parse_multiple_calls(self) -> None:
         """Normal: Multiple JSON tool calls in text."""
@@ -279,7 +289,7 @@ class TestJSONToolParserAllowedNames:
         result = JSONToolParser.parse(text, allowed_tool_names=["read"])
 
         assert len(result) == 1
-        assert result[0].name == "Read"
+        assert result[0].name == "read"
 
     def test_allowed_names_accept_raw_and_canonical_forms(self) -> None:
         """Boundary: CamelCase folded names still match legacy raw allow-list forms."""

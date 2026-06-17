@@ -15,6 +15,10 @@ from polaris.cells.chief_engineer.blueprint.internal.chief_engineer_preflight im
     PreflightContext,
     run_pre_dispatch_chief_engineer_ctx,
 )
+from polaris.cells.chief_engineer.blueprint.internal.handoff import (
+    build_handoff_decision,
+    handoff_enforcement_enabled,
+)
 from polaris.cells.chief_engineer.blueprint.internal.step_contract import (
     build_blueprint_tasks_contract,
     normalize_construction_step,
@@ -442,6 +446,36 @@ class CEConsumer:
                 # The parent becomes a non-leaf supervision row; Director
                 # workers must claim only leaf steps (I2: leaf-only claim gate).
                 ack_payload["is_leaf"] = False
+
+            # Director-handoff gate (Tier-2): evaluate the quality gate +
+            # open blocker/critical risks for this task. The decision is
+            # always surfaced on the ack payload; enforcement (requeue
+            # instead of handoff) is opt-in via KERNELONE_CE_HANDOFF_ENFORCEMENT
+            # (default OFF — pipeline behavior is unchanged until enabled).
+            handoff_decision = build_handoff_decision(
+                self._workspace,
+                blueprint=ack_payload,
+                blueprint_id=blueprint_id,
+                task_id=task_id,
+            )
+            ack_payload["handoff_decision"] = handoff_decision.to_dict()
+            if handoff_enforcement_enabled() and not handoff_decision.allowed:
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="CE_quality_gate_blocked",
+                        error_message=handoff_decision.reason,
+                        requeue_stage="pending_design",
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "reason": "CE_quality_gate_blocked",
+                    "handoff_decision": handoff_decision.to_dict(),
+                }
 
             ack = self._svc.acknowledge_task_stage(
                 AcknowledgeTaskStageCommandV1(

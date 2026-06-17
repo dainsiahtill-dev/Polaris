@@ -10,6 +10,7 @@ from __future__ import annotations
 import builtins
 import json
 import re
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,10 +27,18 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
 from polaris.kernelone.storage import resolve_logical_path
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+_SAFE_ID_FULLMATCH = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _nonce() -> str:
+    """Build a collision-resistant nonce (microsecond UTC + random suffix)."""
+
+    stamp = _utc_now().replace(":", "").replace("-", "").replace(".", "")
+    return f"{stamp}{uuid.uuid4().hex[:8]}"
 
 
 def _safe_token(value: str) -> str:
@@ -37,16 +46,36 @@ def _safe_token(value: str) -> str:
     return token[:80] or "debt"
 
 
+def _validate_record_id(value: str) -> str:
+    """Reject ids that could escape the storage directory (path traversal).
+
+    ``debt_id`` arrives from untrusted HTTP path parameters, so it must be a
+    bare safe token: alphanumerics plus ``_ . -``, no path separators and no
+    ``..`` sequence. Fail-closed: anything else raises ``ValueError`` (the
+    HTTP layer maps that to 400).
+    """
+    token = str(value or "").strip()
+    if not token or ".." in token or not _SAFE_ID_FULLMATCH.match(token):
+        raise ValueError(f"unsafe debt_id: {value!r}")
+    return token
+
+
 def _coerce_severity(value: Any) -> TechDebtSeverity:
     if isinstance(value, TechDebtSeverity):
         return value
-    return TechDebtSeverity(str(value or "minor").strip().lower() or "minor")
+    try:
+        return TechDebtSeverity(str(value or "minor").strip().lower() or "minor")
+    except ValueError:
+        return TechDebtSeverity.MINOR
 
 
 def _coerce_status(value: Any) -> TechDebtStatus:
     if isinstance(value, TechDebtStatus):
         return value
-    return TechDebtStatus(str(value or "registered").strip().lower() or "registered")
+    try:
+        return TechDebtStatus(str(value or "registered").strip().lower() or "registered")
+    except ValueError:
+        return TechDebtStatus.REGISTERED
 
 
 def _coerce_evidence(value: Any) -> tuple[str, ...]:
@@ -71,8 +100,7 @@ class TechDebtLedger:
 
     def register(self, command: RegisterTechDebtCommandV1) -> TechDebtRecordV1:
         now = _utc_now()
-        nonce = now.replace(":", "").replace("-", "").replace(".", "")
-        debt_id = f"debt_{_safe_token(command.surface)}_{nonce}"
+        debt_id = f"debt_{_safe_token(command.surface)}_{_nonce()}"
         record = TechDebtRecordV1(
             debt_id=debt_id,
             title=command.title,
@@ -100,9 +128,10 @@ class TechDebtLedger:
         command: UpdateTechDebtStatusCommandV1,
         actor: str,
     ) -> TechDebtRecordV1:
-        current = self.load(command.debt_id)
+        safe_id = _validate_record_id(command.debt_id)
+        current = self.load(safe_id)
         if current is None:
-            raise FileNotFoundError(f"tech_debt not found: {command.debt_id}")
+            raise FileNotFoundError(f"tech_debt not found: {safe_id}")
         history = (
             *current.history,
             {
@@ -168,7 +197,8 @@ class TechDebtLedger:
         return records
 
     def load(self, debt_id: str) -> TechDebtRecordV1 | None:
-        path = self._dir / f"{debt_id}.json"
+        safe_id = _validate_record_id(debt_id)
+        path = self._dir / f"{safe_id}.json"
         if not path.exists():
             return None
         return self._load_path(path)
@@ -191,7 +221,8 @@ class TechDebtLedger:
     # ------------------------------------------------------------------
 
     def _save(self, record: TechDebtRecordV1) -> None:
-        path = self._dir / f"{record.debt_id}.json"
+        safe_id = _validate_record_id(record.debt_id)
+        path = self._dir / f"{safe_id}.json"
         tmp = path.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as handle:
             json.dump(record.to_dict(), handle, ensure_ascii=False, indent=2)
@@ -230,9 +261,8 @@ def build_tech_debt_event(
     """Build a ``TechDebtEventV1`` stamped with the current UTC time."""
 
     at = _utc_now()
-    nonce = at.replace(":", "").replace("-", "").replace(".", "")
     return TechDebtEventV1(
-        event_id=f"debtevt_{nonce}",
+        event_id=f"debtevt_{_nonce()}",
         debt_id=debt_id,
         workspace=workspace,
         action=action,

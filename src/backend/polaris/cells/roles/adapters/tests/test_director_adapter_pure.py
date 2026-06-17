@@ -4849,6 +4849,99 @@ class TestQualityRepairMissingTargetContract:
             "target_file": "services/product_service/app.py",
         }
 
+    @pytest.mark.asyncio
+    async def test_multi_missing_target_repair_forces_write_tool_choice(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """General C7 L6 gap: when multiple declared target files are missing,
+        the weak Director LLM (e.g. qwen3.6-27b-int4) is structurally prone
+        to echo the long repair prompt back as its response with zero tool
+        calls. Live factory-bench L6-32 (2026-06-17): all three repair
+        attempts echoed the prompt verbatim and the loop broke after the hard
+        cap. The single-missing path already forces tool_choice=write_file;
+        the multi-missing path must enforce the same structural constraint
+        so the model cannot sidestep the contract.
+        """
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        # Deterministic repair must NOT mask this with synthesized content;
+        # we are testing the LLM repair path contract, not the synthesizer.
+        monkeypatch.delenv("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", raising=False)
+        monkeypatch.delenv("KERNELONE_DIRECTOR_BUSINESS_CONTRACT_SYNTHESIS", raising=False)
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result) -> list:
+                return []
+
+            @staticmethod
+            async def execute_tools(content, target_task_id, update_task_progress) -> list:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *a, **k: None)
+
+            def __init__(self) -> None:
+                self.repair_context = {}
+                self.repair_message = ""
+                self.invocations = 0
+
+            async def _invoke_role_dialogue_with_timeout(self, message, *, context, timeout_seconds, stage_label):
+                del timeout_seconds, stage_label
+                self.invocations += 1
+                self.repair_message = message
+                self.repair_context = context
+                return {"content": message}
+
+        (tmp_path / "services" / "user_service").mkdir(parents=True)
+        (tmp_path / "services" / "product_service").mkdir(parents=True)
+        (tmp_path / "common").mkdir(parents=True)
+        adapter = _Adapter()
+
+        missing_targets = [
+            "services/__init__.py",
+            "services/user_service/__init__.py",
+            "services/product_service/__init__.py",
+            "common/__init__.py",
+            "scripts/run_all.py",
+        ]
+        artifact_quality_errors = [
+            f"Artifact quality scan failed: declared target file missing '{p}'" for p in missing_targets
+        ]
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": missing_targets},
+            target_task_id="PM-0001-1",
+            run_id="run-multi-missing-forced-write",
+            context={},
+            original_message="Create Python microservice skeleton with 4 services.",
+            llm_call_timeout=10,
+            artifact_quality_errors=artifact_quality_errors,
+            changed_files=["pyproject.toml"],
+        )
+
+        assert adapter.invocations == 1, summary
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "write_file"},
+        }, adapter.repair_context
+        forced_defs = adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
+        assert forced_defs and forced_defs[0]["function"]["name"] == "write_file"
+        assert forced_defs[0]["function"]["parameters"]["required"] == [
+            "file",
+            "content",
+        ]
+        for p in missing_targets:
+            assert p in adapter.repair_message, f"missing path {p} in repair message"
+        assert "MISSING TARGET FILES" in adapter.repair_message
+        assert summary["missing_target_files"] == missing_targets
+
     def test_repair_message_names_missing_targets_and_hides_changed_paths(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,

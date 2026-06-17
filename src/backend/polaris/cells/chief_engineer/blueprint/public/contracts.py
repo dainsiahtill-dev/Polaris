@@ -70,6 +70,20 @@ class RollbackStrategy(str, Enum):
     FILE_SNAPSHOT = "file_snapshot"
 
 
+class ADRStatus(str, Enum):
+    """Lifecycle status of an Architecture Decision Record (decision log).
+
+    This is the human-facing decision-log status — distinct from the
+    internal construction-plan ADR compiler in ``adr_store.py``.
+    """
+
+    PROPOSED = "proposed"
+    ACCEPTED = "accepted"
+    SUPERSEDED = "superseded"
+    DEPRECATED = "deprecated"
+    REJECTED = "rejected"
+
+
 @dataclass(frozen=True)
 class GenerateTaskBlueprintCommandV1:
     task_id: str
@@ -200,9 +214,9 @@ class RiskRecordV1:
         object.__setattr__(self, "mitigation", str(self.mitigation or "").strip())
         object.__setattr__(self, "detected_at", _require_non_empty("detected_at", self.detected_at))
         if not isinstance(self.severity, RiskSeverity):
-            object.__setattr__(self, "severity", RiskSeverity(str(self.severity).strip().lower() or "medium"))
+            object.__setattr__(self, "severity", RiskSeverity(str(self.severity).strip().lower()))
         if not isinstance(self.status, RiskStatus):
-            object.__setattr__(self, "status", RiskStatus(str(self.status).strip().lower() or "open"))
+            object.__setattr__(self, "status", RiskStatus(str(self.status).strip().lower()))
         object.__setattr__(self, "links", tuple(str(v) for v in self.links))
         object.__setattr__(
             self,
@@ -246,7 +260,7 @@ class RegisterRiskCommandV1:
         object.__setattr__(self, "mitigation", str(self.mitigation or "").strip())
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         if not isinstance(self.severity, RiskSeverity):
-            object.__setattr__(self, "severity", RiskSeverity(str(self.severity).strip().lower() or "medium"))
+            object.__setattr__(self, "severity", RiskSeverity(str(self.severity).strip().lower()))
         object.__setattr__(self, "links", tuple(str(v) for v in self.links))
 
 
@@ -283,7 +297,7 @@ class UpdateRiskStatusCommandV1:
         object.__setattr__(self, "risk_id", _require_non_empty("risk_id", self.risk_id))
         object.__setattr__(self, "note", str(self.note or "").strip())
         if not isinstance(self.status, RiskStatus):
-            object.__setattr__(self, "status", RiskStatus(str(self.status).strip().lower() or "open"))
+            object.__setattr__(self, "status", RiskStatus(str(self.status).strip().lower()))
 
 
 @dataclass(frozen=True)
@@ -337,9 +351,9 @@ class TechDebtRecordV1:
         object.__setattr__(self, "evidence", tuple(str(v) for v in self.evidence))
         object.__setattr__(self, "registered_at", _require_non_empty("registered_at", self.registered_at))
         if not isinstance(self.severity, TechDebtSeverity):
-            object.__setattr__(self, "severity", TechDebtSeverity(str(self.severity).strip().lower() or "minor"))
+            object.__setattr__(self, "severity", TechDebtSeverity(str(self.severity).strip().lower()))
         if not isinstance(self.status, TechDebtStatus):
-            object.__setattr__(self, "status", TechDebtStatus(str(self.status).strip().lower() or "registered"))
+            object.__setattr__(self, "status", TechDebtStatus(str(self.status).strip().lower()))
         object.__setattr__(
             self,
             "history",
@@ -381,7 +395,7 @@ class RegisterTechDebtCommandV1:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
         object.__setattr__(self, "evidence", tuple(str(v) for v in self.evidence))
         if not isinstance(self.severity, TechDebtSeverity):
-            object.__setattr__(self, "severity", TechDebtSeverity(str(self.severity).strip().lower() or "minor"))
+            object.__setattr__(self, "severity", TechDebtSeverity(str(self.severity).strip().lower()))
 
 
 @dataclass(frozen=True)
@@ -417,7 +431,7 @@ class UpdateTechDebtStatusCommandV1:
         object.__setattr__(self, "debt_id", _require_non_empty("debt_id", self.debt_id))
         object.__setattr__(self, "note", str(self.note or "").strip())
         if not isinstance(self.status, TechDebtStatus):
-            object.__setattr__(self, "status", TechDebtStatus(str(self.status).strip().lower() or "registered"))
+            object.__setattr__(self, "status", TechDebtStatus(str(self.status).strip().lower()))
 
 
 @dataclass(frozen=True)
@@ -516,7 +530,7 @@ class RollbackLinkV1:
             object.__setattr__(
                 self,
                 "strategy",
-                RollbackStrategy(str(self.strategy).strip().lower() or "file_snapshot"),
+                RollbackStrategy(str(self.strategy).strip().lower()),
             )
         object.__setattr__(self, "marker_path", _require_non_empty("marker_path", self.marker_path))
         object.__setattr__(self, "preconditions", tuple(str(v) for v in self.preconditions))
@@ -528,6 +542,163 @@ class RollbackLinkV1:
             "marker_path": self.marker_path,
             "preconditions": list(self.preconditions),
         }
+
+
+# ---------------------------------------------------------------------------
+# Architecture Decision Log contracts (Tier-2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ADRRecordV1:
+    """A single Architecture Decision Record (human-facing decision log).
+
+    Distinct from the internal construction-plan ADR compiler
+    (``adr_store.py``): this records *why* a technical decision was made,
+    in the canonical ADR shape (context / decision / consequences /
+    alternatives), for a real 技术总监's decision ownership.
+
+    Attributes:
+        adr_id: Unique decision id (e.g. ``adr_{slug}_{nonce}``).
+        title: Short decision title (caller-supplied — Polaris §8).
+        status: ``ADRStatus`` member.
+        context: The forces / problem that motivated the decision.
+        decision: The decision that was made.
+        consequences: Resulting trade-offs (positive and negative).
+        alternatives: Options that were considered and rejected.
+        related_task_ids: Tasks / blueprints this decision governs.
+        owner: Role or person accountable for the decision.
+        decided_at: ISO-8601 timestamp (UTC).
+        supersedes: Optional prior ADR id this one replaces.
+        history: Append-only status change log; never shrinks.
+    """
+
+    adr_id: str
+    title: str
+    status: ADRStatus
+    context: str
+    decision: str
+    consequences: str
+    owner: str
+    decided_at: str
+    alternatives: tuple[str, ...] = field(default_factory=tuple)
+    related_task_ids: tuple[str, ...] = field(default_factory=tuple)
+    supersedes: str | None = None
+    history: tuple[dict[str, str], ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "adr_id", _require_non_empty("adr_id", self.adr_id))
+        object.__setattr__(self, "title", _require_non_empty("title", self.title))
+        object.__setattr__(self, "context", str(self.context or "").strip())
+        object.__setattr__(self, "decision", _require_non_empty("decision", self.decision))
+        object.__setattr__(self, "consequences", str(self.consequences or "").strip())
+        object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
+        object.__setattr__(self, "decided_at", _require_non_empty("decided_at", self.decided_at))
+        if not isinstance(self.status, ADRStatus):
+            object.__setattr__(self, "status", ADRStatus(str(self.status).strip().lower()))
+        object.__setattr__(self, "alternatives", tuple(str(v) for v in self.alternatives))
+        object.__setattr__(self, "related_task_ids", tuple(str(v) for v in self.related_task_ids))
+        object.__setattr__(
+            self,
+            "history",
+            tuple(dict(item) for item in self.history if isinstance(item, Mapping)),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "adr_id": self.adr_id,
+            "title": self.title,
+            "status": self.status.value,
+            "context": self.context,
+            "decision": self.decision,
+            "consequences": self.consequences,
+            "owner": self.owner,
+            "decided_at": self.decided_at,
+            "alternatives": list(self.alternatives),
+            "related_task_ids": list(self.related_task_ids),
+            "supersedes": self.supersedes,
+            "history": [dict(item) for item in self.history],
+        }
+
+
+@dataclass(frozen=True)
+class RegisterADRCommandV1:
+    """Record a new Architecture Decision Record."""
+
+    title: str
+    decision: str
+    owner: str
+    workspace: str
+    context: str = ""
+    consequences: str = ""
+    alternatives: tuple[str, ...] = field(default_factory=tuple)
+    related_task_ids: tuple[str, ...] = field(default_factory=tuple)
+    supersedes: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "title", _require_non_empty("title", self.title))
+        object.__setattr__(self, "decision", _require_non_empty("decision", self.decision))
+        object.__setattr__(self, "owner", _require_non_empty("owner", self.owner))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "context", str(self.context or "").strip())
+        object.__setattr__(self, "consequences", str(self.consequences or "").strip())
+        object.__setattr__(self, "alternatives", tuple(str(v) for v in self.alternatives))
+        object.__setattr__(self, "related_task_ids", tuple(str(v) for v in self.related_task_ids))
+
+
+@dataclass(frozen=True)
+class ListADRsQueryV1:
+    """Filter Architecture Decision Records."""
+
+    workspace: str
+    status: ADRStatus | None = None
+    task_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        if self.status is not None and not isinstance(self.status, ADRStatus):
+            object.__setattr__(self, "status", ADRStatus(str(self.status).strip().lower()))
+        if self.task_id is not None:
+            object.__setattr__(self, "task_id", str(self.task_id).strip() or None)
+
+
+@dataclass(frozen=True)
+class UpdateADRStatusCommandV1:
+    """Transition an ADR to a new status."""
+
+    workspace: str
+    adr_id: str
+    status: ADRStatus
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "adr_id", _require_non_empty("adr_id", self.adr_id))
+        object.__setattr__(self, "note", str(self.note or "").strip())
+        if not isinstance(self.status, ADRStatus):
+            object.__setattr__(self, "status", ADRStatus(str(self.status).strip().lower()))
+
+
+@dataclass(frozen=True)
+class ADREventV1:
+    """Audit event emitted on ADR state change."""
+
+    event_id: str
+    adr_id: str
+    workspace: str
+    action: str
+    actor: str
+    at: str
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "event_id", _require_non_empty("event_id", self.event_id))
+        object.__setattr__(self, "adr_id", _require_non_empty("adr_id", self.adr_id))
+        object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
+        object.__setattr__(self, "action", _require_non_empty("action", self.action))
+        object.__setattr__(self, "actor", _require_non_empty("actor", self.actor))
+        object.__setattr__(self, "at", _require_non_empty("at", self.at))
+        object.__setattr__(self, "note", str(self.note or "").strip())
 
 
 @dataclass(frozen=True)
@@ -565,15 +736,74 @@ class GovernanceSummaryV1:
         }
 
 
+@dataclass(frozen=True)
+class HandoffDecisionV1:
+    """Director-handoff gate decision for a blueprint.
+
+    The enforcement primitive that closes the quality-gate loop: a real
+    技术总监 blocks handoff to the Director when the blueprint carries
+    blocking quality issues or open blocker/critical risks.
+
+    Attributes:
+        allowed: ``True`` iff the blueprint may be handed to the Director.
+        blueprint_id: Owning blueprint id.
+        task_id: Owning PM task id (best-effort).
+        blocker_count: Number of blocking quality-gate issues.
+        warning_count: Number of (non-blocking) quality-gate warnings.
+        open_blocker_risk_count: Open risks of severity critical/blocker.
+        blockers: The blocking issue messages (gate + risk-derived).
+        reason: One-line human-readable decision rationale.
+        evaluated_at: ISO-8601 timestamp (UTC).
+    """
+
+    allowed: bool
+    blueprint_id: str
+    blocker_count: int
+    warning_count: int
+    open_blocker_risk_count: int
+    task_id: str = ""
+    blockers: tuple[str, ...] = field(default_factory=tuple)
+    reason: str = ""
+    evaluated_at: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "blueprint_id", _require_non_empty("blueprint_id", self.blueprint_id))
+        for field_name in ("blocker_count", "warning_count", "open_blocker_risk_count"):
+            value = getattr(self, field_name)
+            if value < 0:
+                raise ValueError(f"{field_name} must be >= 0; got {value}")
+        object.__setattr__(self, "blockers", tuple(str(v) for v in self.blockers))
+        object.__setattr__(self, "allowed", bool(self.allowed))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "allowed": self.allowed,
+            "blueprint_id": self.blueprint_id,
+            "task_id": self.task_id,
+            "blocker_count": self.blocker_count,
+            "warning_count": self.warning_count,
+            "open_blocker_risk_count": self.open_blocker_risk_count,
+            "blockers": list(self.blockers),
+            "reason": self.reason,
+            "evaluated_at": self.evaluated_at,
+        }
+
+
 __all__ = [
+    "ADREventV1",
+    "ADRRecordV1",
+    "ADRStatus",
     "ChiefEngineerBlueprintError",
     "ChiefEngineerBlueprintErrorV1",
     "GenerateTaskBlueprintCommandV1",
     "GetBlueprintStatusQueryV1",
     "GovernanceSummaryV1",
+    "HandoffDecisionV1",
+    "ListADRsQueryV1",
     "ListRisksQueryV1",
     "ListTechDebtQueryV1",
     "QualityGateResultV1",
+    "RegisterADRCommandV1",
     "RegisterRiskCommandV1",
     "RegisterTechDebtCommandV1",
     "RiskEventV1",
@@ -588,6 +818,7 @@ __all__ = [
     "TechDebtRecordV1",
     "TechDebtSeverity",
     "TechDebtStatus",
+    "UpdateADRStatusCommandV1",
     "UpdateRiskStatusCommandV1",
     "UpdateTechDebtStatusCommandV1",
 ]

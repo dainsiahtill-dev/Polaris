@@ -188,6 +188,64 @@ class TestRiskRegister(unittest.TestCase):
         # load should return None
         self.assertIsNone(register.load("risk_corrupt"))
 
+    def test_path_traversal_id_is_rejected_on_load(self) -> None:
+        register = RiskRegister(self.workspace)
+        for evil in ("../../etc/passwd", "..\\..\\x", "a/b", "risk/../../x", ""):
+            with self.assertRaises(ValueError):
+                register.load(evil)
+
+    def test_path_traversal_id_is_rejected_on_update(self) -> None:
+        register = RiskRegister(self.workspace)
+        with self.assertRaises(ValueError):
+            register.update_status(
+                UpdateRiskStatusCommandV1(
+                    workspace=self.workspace,
+                    risk_id="../../../tmp/evil",
+                    status=RiskStatus.RESOLVED,
+                ),
+                actor="chief_engineer",
+            )
+
+    def test_generated_ids_are_unique_under_tight_loop(self) -> None:
+        register = RiskRegister(self.workspace)
+        ids = {
+            register.register(
+                RegisterRiskCommandV1(
+                    task_id="task-loop",
+                    title=f"risk {i}",
+                    severity=RiskSeverity.LOW,
+                    owner="chief_engineer",
+                    mitigation="m",
+                    workspace=self.workspace,
+                )
+            ).risk_id
+            for i in range(50)
+        }
+        # The uuid suffix guarantees no collision even within the same microsecond.
+        self.assertEqual(len(ids), 50)
+
+    def test_load_tolerates_invalid_enum_on_disk(self) -> None:
+        # A persisted record with a bogus severity must not crash list();
+        # the loader coerces to a safe default rather than raising.
+        register = RiskRegister(self.workspace)
+        record = register.register(
+            RegisterRiskCommandV1(
+                task_id="task-x",
+                title="t",
+                severity=RiskSeverity.HIGH,
+                owner="chief_engineer",
+                mitigation="m",
+                workspace=self.workspace,
+            )
+        )
+        path = Path(resolve_logical_path(self.workspace, "runtime/risks")) / f"{record.risk_id}.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["severity"] = "apocalyptic"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        listed = register.list()
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0].severity, RiskSeverity.MEDIUM)
+
     def test_build_risk_event_stamps_at(self) -> None:
         event = build_risk_event(
             risk_id="risk_x",

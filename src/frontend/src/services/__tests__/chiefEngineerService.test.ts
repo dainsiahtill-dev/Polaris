@@ -18,6 +18,15 @@ import {
   getChiefEngineerBlueprint,
   getChiefEngineerBlueprintStatus,
   listChiefEngineerBlueprints,
+  listChiefEngineerADRs,
+  listChiefEngineerRisks,
+  listChiefEngineerTechDebt,
+  registerChiefEngineerADR,
+  registerChiefEngineerRisk,
+  registerChiefEngineerTechDebt,
+  updateChiefEngineerADRStatus,
+  updateChiefEngineerRiskStatus,
+  updateChiefEngineerTechDebtStatus,
 } from '../chiefEngineerService';
 
 describe('chiefEngineerService', () => {
@@ -326,6 +335,126 @@ describe('chiefEngineerService', () => {
     expect(mockApiDelete).toHaveBeenCalledWith(
       '/v2/chief-engineer/blueprints/bp%201?workspace=C%3A%2FTemp%2FProduct',
       'Failed to delete Chief Engineer blueprint',
+    );
+  });
+
+  // ── Tier-1 governance: Risk Register ──────────────────────────────────
+
+  it('registers a risk through the v2 governance route', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true, workspace: 'ws', risk: {} } });
+
+    await registerChiefEngineerRisk(
+      { task_id: 'task-1', title: 't', severity: 'high', owner: 'ce', mitigation: 'm' },
+      'C:/Temp/Product',
+    );
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/risks?workspace=C%3A%2FTemp%2FProduct',
+      { task_id: 'task-1', title: 't', severity: 'high', owner: 'ce', mitigation: 'm' },
+      'Failed to register Chief Engineer risk',
+    );
+  });
+
+  it('lists risks with task and severity filters', async () => {
+    mockApiGet.mockResolvedValueOnce({ ok: true, data: { ok: true, total: 0, risks: [], summary: {} } });
+
+    await listChiefEngineerRisks({ taskId: 'task-1', severity: 'blocker' }, 'ws');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/risks?workspace=ws&task_id=task-1&severity=blocker',
+      'Failed to list Chief Engineer risks',
+    );
+  });
+
+  it('updates a risk status with an encoded id', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true, risk: {} } });
+
+    await updateChiefEngineerRiskStatus('risk 1', 'mitigating', 'flag staged', 'ws');
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/risks/risk%201/status?workspace=ws',
+      { status: 'mitigating', note: 'flag staged' },
+      'Failed to update Chief Engineer risk status',
+    );
+  });
+
+  // ── Tier-1 governance: Tech-Debt Ledger ───────────────────────────────
+
+  it('registers tech debt through the v2 governance route', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true, workspace: 'ws', tech_debt: {} } });
+
+    await registerChiefEngineerTechDebt(
+      { title: 't', description: 'd', severity: 'severe', surface: 'src/db.py', owner: 'ce' },
+      'ws',
+    );
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/tech-debt?workspace=ws',
+      { title: 't', description: 'd', severity: 'severe', surface: 'src/db.py', owner: 'ce' },
+      'Failed to register Chief Engineer tech debt',
+    );
+  });
+
+  it('lists tech debt with surface and status filters', async () => {
+    mockApiGet.mockResolvedValueOnce({ ok: true, data: { ok: true, total: 0, tech_debt: [], summary: {} } });
+
+    await listChiefEngineerTechDebt({ surface: 'src/db.py', status: 'scheduled' }, 'ws');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/tech-debt?workspace=ws&surface=src%2Fdb.py&status=scheduled',
+      'Failed to list Chief Engineer tech debt',
+    );
+  });
+
+  it('updates a tech debt status with an encoded id', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true, tech_debt: {} } });
+
+    await updateChiefEngineerTechDebtStatus('debt 1', 'paid', '', 'ws');
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/tech-debt/debt%201/status?workspace=ws',
+      { status: 'paid', note: '' },
+      'Failed to update Chief Engineer tech debt status',
+    );
+  });
+
+  // ── Tier-2 governance: Architecture Decision Log ──────────────────────
+
+  it('records an ADR through the v2 governance route', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true, workspace: 'ws', adr: {} } });
+
+    await registerChiefEngineerADR(
+      { title: 'adopt event sourcing', decision: 'append-only log', owner: 'ce' },
+      'ws',
+    );
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/adrs?workspace=ws',
+      { title: 'adopt event sourcing', decision: 'append-only log', owner: 'ce' },
+      'Failed to record Chief Engineer ADR',
+    );
+  });
+
+  it('lists ADRs with status and task filters', async () => {
+    mockApiGet.mockResolvedValueOnce({ ok: true, data: { ok: true, total: 0, adrs: [], summary: {} } });
+
+    await listChiefEngineerADRs({ status: 'accepted', taskId: 'task-1' }, 'ws');
+
+    expect(mockApiGet).toHaveBeenCalledWith(
+      '/v2/chief-engineer/adrs?workspace=ws&status=accepted&task_id=task-1',
+      'Failed to list Chief Engineer ADRs',
+    );
+  });
+
+  it('updates an ADR status with an encoded id', async () => {
+    mockApiPost.mockResolvedValueOnce({ ok: true, data: { ok: true, adr: {} } });
+
+    await updateChiefEngineerADRStatus('adr 1', 'accepted', 'ratified', 'ws');
+
+    expect(mockApiPost).toHaveBeenCalledWith(
+      '/v2/chief-engineer/adrs/adr%201/status?workspace=ws',
+      { status: 'accepted', note: 'ratified' },
+      'Failed to update Chief Engineer ADR status',
     );
   });
 });

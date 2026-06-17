@@ -5,6 +5,7 @@ import { AIDialoguePanel, type AIDialoguePanelProps } from '@/app/components/ai-
 import { RoleFactoryRunEvidenceStrip } from '@/app/components/common/RoleFactoryRunEvidenceStrip';
 import { RoleSessionEvidencePanel } from '@/app/components/common/RoleSessionEvidencePanel';
 import { RoleRunEvidenceStrip } from '@/app/components/common/RoleRunEvidenceStrip';
+import { ChiefEngineerGovernancePanel } from './ChiefEngineerGovernancePanel';
 import { useRoleSessionFactoryExport } from '@/app/components/common/useRoleSessionFactoryExport';
 import { devLogger } from '@/app/utils/devLogger';
 import {
@@ -468,6 +469,8 @@ export function ChiefEngineerWorkbenchPanel({
         onRefresh={handleRefreshFactoryRun}
         onCancel={() => { void handleCancelFactoryRun(); }}
       />
+
+      {workspace ? <ChiefEngineerGovernancePanel workspace={workspace} /> : null}
 
       <div className="min-h-0 flex-1">
         <AIDialoguePanel {...dialoguePanelProps} />

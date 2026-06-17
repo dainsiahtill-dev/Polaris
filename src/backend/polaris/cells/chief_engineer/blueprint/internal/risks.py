@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,10 +25,18 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
 from polaris.kernelone.storage import resolve_logical_path
 
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+_SAFE_ID_FULLMATCH = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _nonce() -> str:
+    """Build a collision-resistant nonce (microsecond UTC + random suffix)."""
+
+    stamp = _utc_now().replace(":", "").replace("-", "").replace(".", "")
+    return f"{stamp}{uuid.uuid4().hex[:8]}"
 
 
 def _safe_token(value: str) -> str:
@@ -35,16 +44,36 @@ def _safe_token(value: str) -> str:
     return token[:80] or "risk"
 
 
+def _validate_record_id(value: str) -> str:
+    """Reject ids that could escape the storage directory (path traversal).
+
+    ``risk_id`` arrives from untrusted HTTP path parameters, so it must be a
+    bare safe token: alphanumerics plus ``_ . -``, no path separators and no
+    ``..`` sequence. Fail-closed: anything else raises ``ValueError`` (the
+    HTTP layer maps that to 400).
+    """
+    token = str(value or "").strip()
+    if not token or ".." in token or not _SAFE_ID_FULLMATCH.match(token):
+        raise ValueError(f"unsafe risk_id: {value!r}")
+    return token
+
+
 def _coerce_severity(value: Any) -> RiskSeverity:
     if isinstance(value, RiskSeverity):
         return value
-    return RiskSeverity(str(value or "medium").strip().lower() or "medium")
+    try:
+        return RiskSeverity(str(value or "medium").strip().lower() or "medium")
+    except ValueError:
+        return RiskSeverity.MEDIUM
 
 
 def _coerce_status(value: Any) -> RiskStatus:
     if isinstance(value, RiskStatus):
         return value
-    return RiskStatus(str(value or "open").strip().lower() or "open")
+    try:
+        return RiskStatus(str(value or "open").strip().lower() or "open")
+    except ValueError:
+        return RiskStatus.OPEN
 
 
 def _coerce_links(value: Any) -> tuple[str, ...]:
@@ -73,8 +102,7 @@ class RiskRegister:
 
     def register(self, command: RegisterRiskCommandV1) -> RiskRecordV1:
         now = _utc_now()
-        nonce = now.replace(":", "").replace("-", "").replace(".", "")
-        risk_id = f"risk_{_safe_token(command.task_id)}_{nonce}"
+        risk_id = f"risk_{_safe_token(command.task_id)}_{_nonce()}"
         record = RiskRecordV1(
             risk_id=risk_id,
             task_id=command.task_id,
@@ -99,9 +127,10 @@ class RiskRegister:
         return record
 
     def update_status(self, command: UpdateRiskStatusCommandV1, actor: str) -> RiskRecordV1:
-        current = self.load(command.risk_id)
+        safe_id = _validate_record_id(command.risk_id)
+        current = self.load(safe_id)
         if current is None:
-            raise FileNotFoundError(f"risk not found: {command.risk_id}")
+            raise FileNotFoundError(f"risk not found: {safe_id}")
         history = (
             *current.history,
             {
@@ -153,7 +182,8 @@ class RiskRegister:
         return records
 
     def load(self, risk_id: str) -> RiskRecordV1 | None:
-        path = self._dir / f"{risk_id}.json"
+        safe_id = _validate_record_id(risk_id)
+        path = self._dir / f"{safe_id}.json"
         if not path.exists():
             return None
         return self._load_path(path)
@@ -183,7 +213,8 @@ class RiskRegister:
     # ------------------------------------------------------------------
 
     def _save(self, record: RiskRecordV1) -> None:
-        path = self._dir / f"{record.risk_id}.json"
+        safe_id = _validate_record_id(record.risk_id)
+        path = self._dir / f"{safe_id}.json"
         tmp = path.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as handle:
             json.dump(record.to_dict(), handle, ensure_ascii=False, indent=2)
@@ -223,9 +254,8 @@ def build_risk_event(
     """Build a ``RiskEventV1`` stamped with the current UTC time."""
 
     at = _utc_now()
-    nonce = at.replace(":", "").replace("-", "").replace(".", "")
     return RiskEventV1(
-        event_id=f"riskevt_{nonce}",
+        event_id=f"riskevt_{_nonce()}",
         risk_id=risk_id,
         workspace=workspace,
         action=action,

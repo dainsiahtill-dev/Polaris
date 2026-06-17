@@ -198,3 +198,269 @@ export async function deleteChiefEngineerBlueprint(
     'Failed to delete Chief Engineer blueprint',
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tier-1 governance surface: Risk Register + Tech-Debt Ledger
+// Mirrors the backend routes in delivery/http/v2/chief_engineer.py.
+// ═══════════════════════════════════════════════════════════════════════
+
+export type RiskSeverity = 'low' | 'medium' | 'high' | 'critical' | 'blocker';
+export type RiskStatus = 'open' | 'mitigating' | 'accepted' | 'resolved' | 'reverted';
+export type TechDebtSeverity = 'trivial' | 'minor' | 'major' | 'severe' | 'fatal';
+export type TechDebtStatus = 'registered' | 'acknowledged' | 'scheduled' | 'paid' | 'wontfix';
+
+export interface RiskRecord {
+  risk_id: string;
+  task_id: string;
+  title: string;
+  severity: RiskSeverity;
+  owner: string;
+  mitigation: string;
+  status: RiskStatus;
+  detected_at: string;
+  links: string[];
+  supersedes: string | null;
+  history: Record<string, string>[];
+}
+
+export interface TechDebtRecord {
+  debt_id: string;
+  title: string;
+  description: string;
+  severity: TechDebtSeverity;
+  surface: string;
+  owner: string;
+  evidence: string[];
+  status: TechDebtStatus;
+  registered_at: string;
+  history: Record<string, string>[];
+}
+
+export interface RegisterRiskPayload {
+  task_id: string;
+  title: string;
+  severity: RiskSeverity;
+  owner: string;
+  mitigation?: string;
+  links?: string[];
+  supersedes?: string | null;
+}
+
+export interface RegisterTechDebtPayload {
+  title: string;
+  description?: string;
+  severity: TechDebtSeverity;
+  surface: string;
+  owner: string;
+  evidence?: string[];
+}
+
+export interface RiskRegisterResponse {
+  ok: boolean;
+  workspace: string;
+  risk: RiskRecord;
+}
+
+export interface RiskListResponse {
+  ok: boolean;
+  workspace: string;
+  total: number;
+  risks: RiskRecord[];
+  summary: Record<string, unknown>;
+}
+
+export interface TechDebtRegisterResponse {
+  ok: boolean;
+  workspace: string;
+  tech_debt: TechDebtRecord;
+}
+
+export interface TechDebtListResponse {
+  ok: boolean;
+  workspace: string;
+  total: number;
+  tech_debt: TechDebtRecord[];
+  summary: Record<string, unknown>;
+}
+
+export interface RiskFilters {
+  taskId?: string;
+  severity?: RiskSeverity;
+  status?: RiskStatus;
+}
+
+export interface TechDebtFilters {
+  severity?: TechDebtSeverity;
+  surface?: string;
+  status?: TechDebtStatus;
+}
+
+export async function registerChiefEngineerRisk(
+  payload: RegisterRiskPayload,
+  workspace = '',
+): Promise<ApiResult<RiskRegisterResponse>> {
+  return apiPost<RiskRegisterResponse>(
+    `/v2/chief-engineer/risks${workspaceQuerySuffix(workspace)}`,
+    payload,
+    'Failed to register Chief Engineer risk',
+  );
+}
+
+export async function listChiefEngineerRisks(
+  filters: RiskFilters = {},
+  workspace = '',
+): Promise<ApiResult<RiskListResponse>> {
+  const query = new URLSearchParams();
+  if (workspace) query.set('workspace', workspace);
+  if (filters.taskId) query.set('task_id', filters.taskId);
+  if (filters.severity) query.set('severity', filters.severity);
+  if (filters.status) query.set('status', filters.status);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return apiGet<RiskListResponse>(
+    `/v2/chief-engineer/risks${suffix}`,
+    'Failed to list Chief Engineer risks',
+  );
+}
+
+export async function updateChiefEngineerRiskStatus(
+  riskId: string,
+  status: RiskStatus,
+  note = '',
+  workspace = '',
+): Promise<ApiResult<RiskRegisterResponse>> {
+  return apiPost<RiskRegisterResponse>(
+    appendWorkspaceQuery(`/v2/chief-engineer/risks/${encodeURIComponent(riskId)}/status`, workspace),
+    { status, note },
+    'Failed to update Chief Engineer risk status',
+  );
+}
+
+export async function registerChiefEngineerTechDebt(
+  payload: RegisterTechDebtPayload,
+  workspace = '',
+): Promise<ApiResult<TechDebtRegisterResponse>> {
+  return apiPost<TechDebtRegisterResponse>(
+    `/v2/chief-engineer/tech-debt${workspaceQuerySuffix(workspace)}`,
+    payload,
+    'Failed to register Chief Engineer tech debt',
+  );
+}
+
+export async function listChiefEngineerTechDebt(
+  filters: TechDebtFilters = {},
+  workspace = '',
+): Promise<ApiResult<TechDebtListResponse>> {
+  const query = new URLSearchParams();
+  if (workspace) query.set('workspace', workspace);
+  if (filters.severity) query.set('severity', filters.severity);
+  if (filters.surface) query.set('surface', filters.surface);
+  if (filters.status) query.set('status', filters.status);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return apiGet<TechDebtListResponse>(
+    `/v2/chief-engineer/tech-debt${suffix}`,
+    'Failed to list Chief Engineer tech debt',
+  );
+}
+
+export async function updateChiefEngineerTechDebtStatus(
+  debtId: string,
+  status: TechDebtStatus,
+  note = '',
+  workspace = '',
+): Promise<ApiResult<TechDebtRegisterResponse>> {
+  return apiPost<TechDebtRegisterResponse>(
+    appendWorkspaceQuery(`/v2/chief-engineer/tech-debt/${encodeURIComponent(debtId)}/status`, workspace),
+    { status, note },
+    'Failed to update Chief Engineer tech debt status',
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tier-2 governance surface: Architecture Decision Log
+// ═══════════════════════════════════════════════════════════════════════
+
+export type ADRStatus = 'proposed' | 'accepted' | 'superseded' | 'deprecated' | 'rejected';
+
+export interface ADRRecord {
+  adr_id: string;
+  title: string;
+  status: ADRStatus;
+  context: string;
+  decision: string;
+  consequences: string;
+  owner: string;
+  decided_at: string;
+  alternatives: string[];
+  related_task_ids: string[];
+  supersedes: string | null;
+  history: Record<string, string>[];
+}
+
+export interface RegisterADRPayload {
+  title: string;
+  decision: string;
+  owner: string;
+  context?: string;
+  consequences?: string;
+  alternatives?: string[];
+  related_task_ids?: string[];
+  supersedes?: string | null;
+}
+
+export interface ADRRegisterResponse {
+  ok: boolean;
+  workspace: string;
+  adr: ADRRecord;
+}
+
+export interface ADRListResponse {
+  ok: boolean;
+  workspace: string;
+  total: number;
+  adrs: ADRRecord[];
+  summary: Record<string, unknown>;
+}
+
+export interface ADRFilters {
+  status?: ADRStatus;
+  taskId?: string;
+}
+
+export async function registerChiefEngineerADR(
+  payload: RegisterADRPayload,
+  workspace = '',
+): Promise<ApiResult<ADRRegisterResponse>> {
+  return apiPost<ADRRegisterResponse>(
+    `/v2/chief-engineer/adrs${workspaceQuerySuffix(workspace)}`,
+    payload,
+    'Failed to record Chief Engineer ADR',
+  );
+}
+
+export async function listChiefEngineerADRs(
+  filters: ADRFilters = {},
+  workspace = '',
+): Promise<ApiResult<ADRListResponse>> {
+  const query = new URLSearchParams();
+  if (workspace) query.set('workspace', workspace);
+  if (filters.status) query.set('status', filters.status);
+  if (filters.taskId) query.set('task_id', filters.taskId);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return apiGet<ADRListResponse>(
+    `/v2/chief-engineer/adrs${suffix}`,
+    'Failed to list Chief Engineer ADRs',
+  );
+}
+
+export async function updateChiefEngineerADRStatus(
+  adrId: string,
+  status: ADRStatus,
+  note = '',
+  workspace = '',
+): Promise<ApiResult<ADRRegisterResponse>> {
+  return apiPost<ADRRegisterResponse>(
+    appendWorkspaceQuery(`/v2/chief-engineer/adrs/${encodeURIComponent(adrId)}/status`, workspace),
+    { status, note },
+    'Failed to update Chief Engineer ADR status',
+  );
+}

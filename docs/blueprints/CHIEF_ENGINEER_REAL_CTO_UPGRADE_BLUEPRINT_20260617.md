@@ -1,7 +1,77 @@
 # Chief Engineer — Real CTO Upgrade Blueprint
 
 Date: 2026-06-17
-Status: Tier-1 implementation in flight
+Status: Tier-1 LANDED + Tier-2 ADR LANDED (backend + HTTP + frontend), gate-verified
+
+## Tier-2 increment #1 — Architecture Decision Log (2026-06-17)
+
+ADR ownership is the most CTO-defining capability, so it landed next. Key
+architectural finding: the existing internal `adr_store.py` is **not** a
+decision log — it is a construction-plan **delta-compiler** (create_blueprint
+→ propose_adr → compile → apply deltas to `construction_steps`) used inside
+the CE→Director pipeline, sharing the `runtime/blueprints/*` key. Surfacing it
+naively would round-trip governance blueprints through `BlueprintBase` and
+**strip** `target_files`/`governance` — a data-loss clobber. So Tier-2 ships a
+**separate, lightweight Architecture Decision Log** (canonical ADR shape:
+context / decision / consequences / alternatives / status), stored under
+`runtime/adr_log/*`, mirroring the hardened risks/tech-debt pattern:
+
+- `internal/adr_log.py` (`ADRDecisionLog`): traversal-guarded ids, uuid
+  nonce, corrupt-tolerant loader, atomic UTF-8 writes, and `supersedes`
+  auto-marks the predecessor `superseded`.
+- Contracts: `ADRStatus` enum (proposed/accepted/superseded/deprecated/rejected),
+  `ADRRecordV1` + register/list/update commands+queries + `ADREventV1`
+  (fail-closed enum coercion).
+- Service: `register_adr` / `list_adrs` / `update_adr_status` / `summarize_adrs`.
+- HTTP: `POST`/`GET /chief-engineer/adrs` + `POST /chief-engineer/adrs/{id}/status`.
+- Frontend: 3 typed service fns + a "Decision Log" column in the governance panel.
+- Governance: `runtime/adr_log/*` added to `cell.yaml` + catalog (gate `new_issue_count=0`).
+
+The internal `adr_store.py` compiler is intentionally left in place and
+unsurfaced (it remains a Director-pipeline implementation detail).
+
+## Landed summary (2026-06-17)
+
+Tier-1 shipped end-to-end and is fully gate-verified:
+
+- **Contracts** (`public/contracts.py`): 5 enums + `RiskRecordV1`,
+  `TechDebtRecordV1`, `QualityGateResultV1`, `RollbackLinkV1`,
+  `GovernanceSummaryV1`, the register/list/update commands+queries, and
+  the audit event types. Enum coercion is **fail-closed** (invalid/empty
+  severity or status → `ValueError`, never a silent default).
+- **Internal**: `risks.py` (RiskRegister), `tech_debt.py`
+  (TechDebtLedger), `quality_gate.py` (pure deterministic evaluator),
+  `rollback_link.py`. Storage is atomic (temp + replace), UTF-8, and
+  **path-traversal-hardened** — `risk_id`/`debt_id` are validated as bare
+  safe tokens before any filesystem access (defense-in-depth at the
+  storage boundary, on top of the router's own path normalization). Ids
+  carry a uuid suffix so they cannot collide within a microsecond.
+  Loaders tolerate corrupt/invalid enum values on disk (coerce to a safe
+  default rather than crashing `list()`).
+- **Service** (`public/service.py`): `register_risk` / `list_risks` /
+  `update_risk_status`, the tech-debt trio, `summarize_*`,
+  `build_blueprint_governance`, `attach_governance_to_blueprint`
+  (mutates the payload in place + recomputes `handoff_ready` from the
+  gate), and `get_blueprint_governance` (the read API for the
+  PM/Director/QA loop — recomputes fresh so resolving a blocker risk
+  flips the gate without regenerating the blueprint).
+  `generate_task_blueprint` now attaches governance on every generate.
+- **HTTP** (`delivery/http/v2/chief_engineer.py`): 6 auth-gated routes
+  (`POST`/`GET /chief-engineer/risks`, `POST /chief-engineer/risks/{id}/status`,
+  and the tech-debt mirror). Invalid severity/status → 400; missing
+  record → 404; UTF-8 round-trips; traversal ids → 4xx (never processed).
+- **Frontend** (`services/chiefEngineerService.ts` +
+  `components/chief-engineer/ChiefEngineerGovernancePanel.tsx`): 6 typed
+  service functions (strict TS, no `any`) and a read-only governance
+  panel mounted in the WorkbenchPanel.
+- **Governance**: `cell.yaml` + catalog `cells.yaml` declare the new
+  `runtime/risks/*` and `runtime/tech_debt/*` state owners / effects
+  (catalog gate `new_issue_count == 0`).
+
+Verification: backend 333 tests pass (ruff + mypy clean); frontend
+typecheck + lint clean, 49 tests pass. A 4-agent adversarial review
+(workflow) surfaced — and this landing fixed — a path-traversal blocker,
+an enum fail-closed inconsistency, and an id-collision hardening gap.
 
 ## 0. Why this blueprint exists
 

@@ -7,6 +7,11 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     ChiefEngineerBlueprintErrorV1,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
+    RegisterRiskCommandV1,
+    RegisterTechDebtCommandV1,
+    RiskRecordV1,
+    RiskSeverity,
+    RiskStatus,
     TaskBlueprintGeneratedEventV1,
     TaskBlueprintResultV1,
 )
@@ -15,6 +20,59 @@ from polaris.cells.chief_engineer.blueprint.public.service import (
     generate_task_blueprint,
     get_blueprint_status,
 )
+
+
+class TestGovernanceEnumFailClosed:
+    """Tier-1 governance contracts must fail-closed on invalid enum input."""
+
+    def test_invalid_severity_string_raises(self) -> None:
+        with pytest.raises(ValueError):
+            RiskRecordV1(
+                risk_id="r1",
+                task_id="t1",
+                title="t",
+                severity="apocalyptic",  # type: ignore[arg-type]
+                owner="ce",
+                mitigation="m",
+                status=RiskStatus.OPEN,
+                detected_at="2026-06-17T00:00:00Z",
+            )
+
+    def test_empty_severity_string_raises(self) -> None:
+        # Fail-closed: an empty severity must NOT silently default to medium.
+        with pytest.raises(ValueError):
+            RegisterRiskCommandV1(
+                task_id="t1",
+                title="t",
+                severity="",  # type: ignore[arg-type]
+                owner="ce",
+                mitigation="m",
+                workspace="/repo",
+            )
+
+    def test_invalid_tech_debt_severity_raises(self) -> None:
+        with pytest.raises(ValueError):
+            RegisterTechDebtCommandV1(
+                title="t",
+                description="d",
+                severity="nuclear",  # type: ignore[arg-type]
+                surface="s",
+                owner="ce",
+                workspace="/repo",
+            )
+
+    def test_valid_severity_enum_passes(self) -> None:
+        record = RiskRecordV1(
+            risk_id="r1",
+            task_id="t1",
+            title="t",
+            severity=RiskSeverity.BLOCKER,
+            owner="ce",
+            mitigation="m",
+            status=RiskStatus.OPEN,
+            detected_at="2026-06-17T00:00:00Z",
+        )
+        assert record.severity is RiskSeverity.BLOCKER
 
 
 class TestGenerateTaskBlueprintCommandV1HappyPath:

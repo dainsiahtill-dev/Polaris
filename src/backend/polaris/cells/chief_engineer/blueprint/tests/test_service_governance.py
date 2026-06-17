@@ -28,6 +28,7 @@ from polaris.cells.chief_engineer.blueprint.public.service import (
     attach_governance_to_blueprint,
     build_blueprint_governance,
     generate_task_blueprint,
+    get_blueprint_governance,
     get_blueprint_status,
     list_risks,
     list_tech_debt,
@@ -200,6 +201,53 @@ class TestServiceGovernance(unittest.TestCase):
         self.assertTrue(summary.quality_gate.passed)
         self.assertEqual(summary.risk_summary["total"], 0)
         self.assertTrue(summary.rollback.enabled)
+
+    def test_get_blueprint_governance_reflects_resolved_risk(self) -> None:
+        # Register an open blocker risk, generate a blueprint (gate blocks),
+        # then resolve the risk and re-read governance: the gate should pass
+        # without regenerating the blueprint.
+        risk = register_risk(
+            RegisterRiskCommandV1(
+                task_id="task-9",
+                title="data loss",
+                severity=RiskSeverity.BLOCKER,
+                owner="chief_engineer",
+                mitigation="dual-write",
+                workspace=self.workspace,
+            )
+        )
+        result = generate_task_blueprint(
+            GenerateTaskBlueprintCommandV1(
+                task_id="task-9",
+                workspace=self.workspace,
+                objective="ship",
+                context={
+                    "task_title": "T9",
+                    "acceptance_criteria": ["a"],
+                    "execution_checklist": ["x"],
+                    "target_files": ["a.py"],
+                },
+            )
+        )
+        blueprint_id = result.blueprint_id or ""
+        gov_before = get_blueprint_governance(self.workspace, blueprint_id)
+        assert gov_before is not None
+        self.assertFalse(gov_before.quality_gate.passed)
+
+        update_risk_status(
+            UpdateRiskStatusCommandV1(
+                workspace=self.workspace,
+                risk_id=risk.risk_id,
+                status=RiskStatus.RESOLVED,
+                note="migrated safely",
+            )
+        )
+        gov_after = get_blueprint_governance(self.workspace, blueprint_id)
+        assert gov_after is not None
+        self.assertTrue(gov_after.quality_gate.passed)
+
+    def test_get_blueprint_governance_missing_returns_none(self) -> None:
+        self.assertIsNone(get_blueprint_governance(self.workspace, "ce_does_not_exist"))
 
     def test_attach_governance_writes_back(self) -> None:
         result = generate_task_blueprint(

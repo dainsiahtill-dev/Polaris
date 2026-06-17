@@ -5187,8 +5187,17 @@ async def _run_materialization_quality_repair_retry(
             "changed_files": changed_files[:40],
         },
     }
-    if len(missing_target_files) == 1:
-        single_target_file = missing_target_files[0]
+    # Force tool_choice=write_file whenever there are missing target files.
+    # The single-missing branch already did this (factory-bench L2-10 r3);
+    # the multi-missing branch was leaving the LLM free to echo the long
+    # repair prompt back as a no-tool-call response. Live factory-bench
+    # L6-32 (2026-06-17): all three repair attempts in one task echoed
+    # the prompt verbatim and the loop broke after the hard cap, killing
+    # the run with zero source files. Forcing the structural constraint
+    # matches the single-missing contract and prevents the model from
+    # sidestepping the write tool. The API still allows the model to call
+    # write_file multiple times in one response when the schema permits.
+    if missing_target_files:
         repair_context["_transaction_kernel_forced_tool_choice"] = {
             "type": "function",
             "function": {"name": "write_file"},
@@ -5198,7 +5207,7 @@ async def _run_materialization_quality_repair_retry(
                 "type": "function",
                 "function": {
                     "name": "write_file",
-                    "description": "Write a complete UTF-8 text file at the requested target path.",
+                    "description": ("Write a complete UTF-8 text file at the requested target path."),
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -5210,10 +5219,14 @@ async def _run_materialization_quality_repair_retry(
                 },
             }
         ]
-        repair_context["director_quality_repair"]["write_only_single_target"] = {
-            "tool": "write_file",
-            "target_file": single_target_file,
-        }
+        if len(missing_target_files) == 1:
+            # Single-missing: also name the specific target file in the
+            # context, so any downstream code that special-cases a single
+            # target can read it from director_quality_repair.
+            repair_context["director_quality_repair"]["write_only_single_target"] = {
+                "tool": "write_file",
+                "target_file": missing_target_files[0],
+            }
     try:
         result = await adapter._invoke_role_dialogue_with_timeout(
             repair_message,

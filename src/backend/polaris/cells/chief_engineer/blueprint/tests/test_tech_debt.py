@@ -153,6 +153,21 @@ class TestTechDebtLedger(unittest.TestCase):
         self.assertEqual(summary["by_severity"]["minor"], 1)
         self.assertEqual(summary["by_status"]["registered"], 2)
 
+    def test_path_traversal_debt_id_rejected(self) -> None:
+        ledger = TechDebtLedger(self.workspace)
+        for evil in ("../../etc/passwd", "a/b", "debt/../x", ".."):
+            with self.assertRaises(ValueError):
+                ledger.load(evil)
+        with self.assertRaises(ValueError):
+            ledger.update_status(
+                UpdateTechDebtStatusCommandV1(
+                    workspace=self.workspace,
+                    debt_id="../../../tmp/evil",
+                    status=TechDebtStatus.PAID,
+                ),
+                actor="chief_engineer",
+            )
+
     def test_build_tech_debt_event_stamps(self) -> None:
         event = build_tech_debt_event(
             debt_id="debt_x",

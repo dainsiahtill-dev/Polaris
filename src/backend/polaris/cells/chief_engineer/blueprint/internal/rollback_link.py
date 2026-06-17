@@ -64,11 +64,11 @@ def build_rollback_link(
     Args:
         workspace: Root workspace path.
         blueprint_id: Owning blueprint id.
-        blueprint: Blueprint payload (used to consult ``target_files`` and
-            ``risks`` if ``risks`` is not provided).
+        blueprint: Blueprint payload (used to consult ``target_files`` and,
+            when ``risks`` is not provided, the structured
+            ``blueprint["risk_register"]`` records).
         risks: Optional iterable of risk records / dicts. When omitted,
-            the function falls back to ``blueprint["risk_register"]`` and
-            ``blueprint["risks"]``.
+            the function falls back to ``blueprint["risk_register"]`` only.
 
     Returns:
         A populated :class:`RollbackLinkV1`.

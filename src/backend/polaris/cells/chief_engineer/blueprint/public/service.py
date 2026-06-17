@@ -6,24 +6,30 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from ..internal.adr_log import ADRDecisionLog, build_adr_event
 from ..internal.blueprint_persistence import BlueprintPersistence
 from ..internal.ce_consumer import CEConsumer
 from ..internal.chief_engineer_agent import ChiefEngineerAgent
 from ..internal.chief_engineer_preflight import run_pre_dispatch_chief_engineer
+from ..internal.handoff import build_handoff_decision
 from ..internal.quality_gate import evaluate_quality_gate
 from ..internal.risks import RiskRegister, build_risk_event
 from ..internal.rollback_guard import create_rollback_guard
 from ..internal.rollback_link import build_rollback_link
 from ..internal.tech_debt import TechDebtLedger, build_tech_debt_event
 from .contracts import (
+    ADRRecordV1,
     ChiefEngineerBlueprintError,
     ChiefEngineerBlueprintErrorV1,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
     GovernanceSummaryV1,
+    HandoffDecisionV1,
+    ListADRsQueryV1,
     ListRisksQueryV1,
     ListTechDebtQueryV1,
     QualityGateResultV1,
+    RegisterADRCommandV1,
     RegisterRiskCommandV1,
     RegisterTechDebtCommandV1,
     RiskEventV1,
@@ -33,6 +39,7 @@ from .contracts import (
     TaskBlueprintResultV1,
     TechDebtEventV1,
     TechDebtRecordV1,
+    UpdateADRStatusCommandV1,
     UpdateRiskStatusCommandV1,
     UpdateTechDebtStatusCommandV1,
 )
@@ -428,6 +435,64 @@ def update_tech_debt_status(
     return record
 
 
+def register_adr(command: RegisterADRCommandV1) -> ADRRecordV1:
+    """Record a new Architecture Decision Record in the workspace."""
+
+    record = ADRDecisionLog(command.workspace).register(command)
+    event = build_adr_event(
+        adr_id=record.adr_id,
+        workspace=command.workspace,
+        action="proposed",
+        actor=command.owner,
+    )
+    logger.info(
+        "chief_engineer.adr_registered adr_id=%s title=%s event_id=%s",
+        record.adr_id,
+        record.title,
+        event.event_id,
+    )
+    return record
+
+
+def list_adrs(query: ListADRsQueryV1) -> list[ADRRecordV1]:
+    """List Architecture Decision Records for the workspace with optional filters."""
+
+    return ADRDecisionLog(query.workspace, ensure_directory=False).list(
+        status=query.status,
+        task_id=query.task_id,
+    )
+
+
+def update_adr_status(
+    command: UpdateADRStatusCommandV1,
+    *,
+    actor: str = "chief_engineer",
+) -> ADRRecordV1:
+    """Transition an ADR to a new status; append a history entry."""
+
+    record = ADRDecisionLog(command.workspace).update_status(command, actor)
+    event = build_adr_event(
+        adr_id=record.adr_id,
+        workspace=command.workspace,
+        action=f"status:{record.status.value}",
+        actor=actor,
+        note=command.note,
+    )
+    logger.info(
+        "chief_engineer.adr_status_changed adr_id=%s status=%s event_id=%s",
+        record.adr_id,
+        record.status.value,
+        event.event_id,
+    )
+    return record
+
+
+def summarize_adrs(workspace: str) -> dict[str, Any]:
+    """Return aggregate counts for the workspace Architecture Decision Log."""
+
+    return ADRDecisionLog(workspace, ensure_directory=False).summarize()
+
+
 def summarize_risks(workspace: str, *, task_id: str | None = None) -> dict[str, Any]:
     """Return aggregate counts for the workspace Risk Register."""
 
@@ -438,6 +503,104 @@ def summarize_tech_debt(workspace: str, *, surface: str | None = None) -> dict[s
     """Return aggregate counts for the workspace Tech-Debt Ledger."""
 
     return TechDebtLedger(workspace, ensure_directory=False).summarize(surface=surface)
+
+
+def get_blueprint_governance(workspace: str, blueprint_id: str) -> GovernanceSummaryV1 | None:
+    """Read the governance summary for a persisted blueprint.
+
+    This is the Tier-1 consumption API for the PM / Director / QA loop:
+    given a blueprint id, return its freshly-evaluated governance summary
+    (risk + tech-debt summary, quality gate, rollback link). The summary
+    is recomputed deterministically from the on-disk payload and the
+    current Risk Register / Tech-Debt Ledger, so a caller always sees the
+    latest gate verdict (e.g. after a blocker risk was resolved) without
+    re-running blueprint generation.
+
+    Args:
+        workspace: Root workspace path.
+        blueprint_id: Persisted blueprint id.
+
+    Returns:
+        A :class:`GovernanceSummaryV1`, or ``None`` when the blueprint is
+        not found / unreadable (fail-closed: callers must treat ``None``
+        as "not handoff-ready").
+    """
+    payload = BlueprintPersistence(workspace, ensure_directory=False).load(blueprint_id)
+    if not isinstance(payload, dict):
+        return None
+    return build_blueprint_governance(workspace, blueprint_id, payload)
+
+
+def evaluate_handoff_decision(
+    workspace: str,
+    *,
+    blueprint: dict[str, Any],
+    blueprint_id: str = "",
+    task_id: str = "",
+) -> HandoffDecisionV1:
+    """Decide whether a blueprint may be handed to the Director.
+
+    The enforcement primitive that closes the quality-gate loop. A handoff
+    is blocked when the deterministic quality gate has blockers OR when the
+    workspace Risk Register has open critical/blocker risks for the task.
+
+    Args:
+        workspace: Root workspace path.
+        blueprint: Blueprint payload (must carry the construction contract
+            fields target_files / acceptance_criteria / ...).
+        blueprint_id: Owning blueprint id (falls back to ``blueprint``).
+        task_id: Owning PM task id (falls back to ``blueprint``).
+
+    Returns:
+        A :class:`HandoffDecisionV1`. Fail-closed: a malformed blueprint
+        evaluates to ``allowed=False``.
+    """
+    return build_handoff_decision(
+        workspace,
+        blueprint=blueprint,
+        blueprint_id=blueprint_id,
+        task_id=task_id,
+    )
+
+
+def evaluate_handoff_decision_for_blueprint(workspace: str, blueprint_id: str) -> HandoffDecisionV1 | None:
+    """Load a persisted blueprint and decide whether it may be handed off.
+
+    Returns ``None`` (fail-closed: caller treats as "not ready") when the
+    blueprint is missing or unreadable.
+    """
+    payload = BlueprintPersistence(workspace, ensure_directory=False).load(blueprint_id)
+    if not isinstance(payload, dict):
+        return None
+    return evaluate_handoff_decision(workspace, blueprint=payload, blueprint_id=blueprint_id)
+
+
+def assert_handoff_ready(
+    workspace: str,
+    *,
+    blueprint: dict[str, Any],
+    blueprint_id: str = "",
+    task_id: str = "",
+) -> HandoffDecisionV1:
+    """Raise when a blueprint must not be handed to the Director.
+
+    Fail-closed enforcement helper for callers that want a hard gate: on a
+    blocked decision it raises :class:`ChiefEngineerBlueprintErrorV1` with
+    code ``handoff_blocked`` and the decision in ``details``.
+    """
+    decision = evaluate_handoff_decision(
+        workspace,
+        blueprint=blueprint,
+        blueprint_id=blueprint_id,
+        task_id=task_id,
+    )
+    if not decision.allowed:
+        raise ChiefEngineerBlueprintErrorV1(
+            f"handoff blocked: {decision.reason}",
+            code="handoff_blocked",
+            details=decision.to_dict(),
+        )
+    return decision
 
 
 def build_blueprint_governance(
@@ -521,18 +684,26 @@ __all__ = [
     "TechDebtRecordV1",
     "UpdateRiskStatusCommandV1",
     "UpdateTechDebtStatusCommandV1",
+    "assert_handoff_ready",
     "attach_governance_to_blueprint",
     "build_blueprint_governance",
     "create_rollback_guard",
+    "evaluate_handoff_decision",
+    "evaluate_handoff_decision_for_blueprint",
     "generate_task_blueprint",
+    "get_blueprint_governance",
     "get_blueprint_status",
+    "list_adrs",
     "list_risks",
     "list_tech_debt",
+    "register_adr",
     "register_risk",
     "register_tech_debt",
     "run_pre_dispatch_chief_engineer",
+    "summarize_adrs",
     "summarize_risks",
     "summarize_tech_debt",
+    "update_adr_status",
     "update_risk_status",
     "update_tech_debt_status",
 ]

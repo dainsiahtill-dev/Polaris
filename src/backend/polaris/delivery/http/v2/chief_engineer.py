@@ -11,11 +11,14 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.chief_engineer.blueprint.public import (
+    ADRStatus,
     BlueprintPersistence,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
+    ListADRsQueryV1,
     ListRisksQueryV1,
     ListTechDebtQueryV1,
+    RegisterADRCommandV1,
     RegisterRiskCommandV1,
     RegisterTechDebtCommandV1,
     RiskSeverity,
@@ -23,16 +26,21 @@ from polaris.cells.chief_engineer.blueprint.public import (
     TaskBlueprintResultV1,
     TechDebtSeverity,
     TechDebtStatus,
+    UpdateADRStatusCommandV1,
     UpdateRiskStatusCommandV1,
     UpdateTechDebtStatusCommandV1,
     generate_task_blueprint,
     get_blueprint_status,
+    list_adrs,
     list_risks,
     list_tech_debt,
+    register_adr,
     register_risk,
     register_tech_debt,
+    summarize_adrs,
     summarize_risks,
     summarize_tech_debt,
+    update_adr_status,
     update_risk_status,
     update_tech_debt_status,
 )
@@ -1427,3 +1435,128 @@ def update_chief_engineer_tech_debt_status(
             message=str(exc),
         ) from exc
     return {"ok": True, "workspace": target_workspace, "tech_debt": record.to_dict()}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tier-2 governance surface: Architecture Decision Log
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class ChiefEngineerRegisterADRRequest(BaseModel):
+    """Desktop request to record an Architecture Decision Record."""
+
+    title: str
+    decision: str
+    owner: str
+    context: str = ""
+    consequences: str = ""
+    alternatives: list[str] = Field(default_factory=list)
+    related_task_ids: list[str] = Field(default_factory=list)
+    supersedes: str | None = None
+
+
+class ChiefEngineerUpdateADRStatusRequest(BaseModel):
+    """Desktop request to transition an ADR to a new status."""
+
+    status: str
+    note: str = ""
+    actor: str = "chief_engineer"
+
+
+@router.post("/chief-engineer/adrs", dependencies=[Depends(require_auth)])
+def register_chief_engineer_adr(
+    request: Request,
+    payload: ChiefEngineerRegisterADRRequest,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Record a new Architecture Decision Record for the workspace."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        record = register_adr(
+            RegisterADRCommandV1(
+                title=payload.title,
+                decision=payload.decision,
+                owner=payload.owner,
+                workspace=target_workspace,
+                context=payload.context,
+                consequences=payload.consequences,
+                alternatives=tuple(payload.alternatives),
+                related_task_ids=tuple(payload.related_task_ids),
+                supersedes=payload.supersedes,
+            )
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_ADR_PAYLOAD",
+            message=str(exc),
+        ) from exc
+    return {"ok": True, "workspace": target_workspace, "adr": record.to_dict()}
+
+
+@router.get("/chief-engineer/adrs", dependencies=[Depends(require_auth)])
+def list_chief_engineer_adrs(
+    request: Request,
+    workspace: str = "",
+    status: str = "",
+    task_id: str = "",
+) -> dict[str, Any]:
+    """List Architecture Decision Records with optional filters."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        query = ListADRsQueryV1(
+            workspace=target_workspace,
+            status=ADRStatus(status.strip().lower()) if status.strip() else None,
+            task_id=task_id.strip() or None,
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_ADR_QUERY",
+            message=str(exc),
+        ) from exc
+    records = list_adrs(query)
+    return {
+        "ok": True,
+        "workspace": target_workspace,
+        "total": len(records),
+        "adrs": [record.to_dict() for record in records],
+        "summary": summarize_adrs(target_workspace),
+    }
+
+
+@router.post("/chief-engineer/adrs/{adr_id}/status", dependencies=[Depends(require_auth)])
+def update_chief_engineer_adr_status(
+    request: Request,
+    adr_id: str,
+    payload: ChiefEngineerUpdateADRStatusRequest,
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Transition an Architecture Decision Record to a new status."""
+
+    target_workspace = _governance_workspace(request, workspace)
+    try:
+        record = update_adr_status(
+            UpdateADRStatusCommandV1(
+                workspace=target_workspace,
+                adr_id=adr_id,
+                status=ADRStatus(payload.status.strip().lower()),
+                note=payload.note,
+            ),
+            actor=payload.actor.strip() or "chief_engineer",
+        )
+    except ValueError as exc:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_ADR_STATUS",
+            message=str(exc),
+        ) from exc
+    except FileNotFoundError as exc:
+        raise StructuredHTTPException(
+            status_code=404,
+            code="ADR_NOT_FOUND",
+            message=str(exc),
+        ) from exc
+    return {"ok": True, "workspace": target_workspace, "adr": record.to_dict()}
