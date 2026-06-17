@@ -525,6 +525,14 @@ class PMAgent(RoleAgent):
             description="Compute the critical path from the current task contract",
             parameters={},
         )
+        tb.register(
+            "evaluate_definition_of_ready",
+            self._tool_evaluate_definition_of_ready,
+            description="Evaluate the PM task contract against Definition-of-Ready rules",
+            parameters={
+                "require_risk_assessment": "Require explicit risk assessment (boolean, default false)",
+            },
+        )
 
     def _tool_create_task(self, **kwargs) -> dict[str, Any]:
         """Create a new task."""
@@ -1031,6 +1039,16 @@ class PMAgent(RoleAgent):
     def _tool_compute_critical_path(self) -> dict[str, Any]:
         """Compute the critical path from the current PM task contract."""
         return _pm_service.compute_critical_path(self.workspace)
+
+    def _tool_evaluate_definition_of_ready(
+        self,
+        require_risk_assessment: bool = False,
+    ) -> dict[str, Any]:
+        """Evaluate the current PM task contract against Definition-of-Ready rules."""
+        return _pm_service.evaluate_definition_of_ready_for_workspace(
+            self.workspace,
+            require_risk_assessment=bool(require_risk_assessment),
+        )
 
     def handle_message(self, message: AgentMessage) -> AgentMessage | None:
         """Handle incoming message from Director or other agents."""

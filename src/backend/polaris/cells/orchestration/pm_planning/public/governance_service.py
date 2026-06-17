@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from ..internal.decision_log import DecisionRegister, DecisionStatus
+from ..internal.definition_of_ready import evaluate_definition_of_ready
 from ..internal.dependency_validator import DependencyCycleError, compute_schedule
 from ..internal.milestones import MilestoneRegister, MilestoneStatus
 from ..internal.project_report import _load_pm_tasks, build_pm_project_report
@@ -32,6 +33,7 @@ __all__ = [
     "build_project_status_report",
     "compute_backlog_ranking",
     "compute_critical_path",
+    "evaluate_definition_of_ready_for_workspace",
     "list_commitments",
     "list_decisions",
     "list_risks",
@@ -433,3 +435,19 @@ def compute_critical_path(workspace: str) -> dict[str, Any]:
         }
     except (OSError, ValueError, TypeError) as exc:
         return {"ok": False, "error": f"Critical path compute failed: {exc}"}
+
+
+def evaluate_definition_of_ready_for_workspace(
+    workspace: str,
+    *,
+    require_risk_assessment: bool = False,
+) -> dict[str, Any]:
+    """Evaluate the current PM task contract against Definition-of-Ready rules."""
+    try:
+        tasks = _load_pm_tasks(workspace)
+        return evaluate_definition_of_ready(
+            tasks,
+            require_risk_assessment=require_risk_assessment,
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        return {"ok": False, "error": f"Definition-of-Ready evaluation failed: {exc}"}
