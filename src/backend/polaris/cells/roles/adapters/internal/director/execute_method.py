@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -1479,6 +1480,15 @@ async def _execute_standard_llm_flow(
         context=context,
     )
     artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+    # Live factory-bench L1-01 (2026-06-17, after the symbol-coherence fix):
+    # py_compile + scan_workspace_artifact_quality pass for a calculator.py
+    # whose __main__ block raises at call time. The deterministic ladder
+    # must actually run the code to surface this kind of failure.
+    artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+        adapter,
+        task_id=target_task_id,
+        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+    )
     # Progress-aware repair budget: the base budget is 2 attempts, but while
     # an attempt makes measurable progress on EITHER dimension — fewer missing
     # declared targets OR fewer quality errors overall — the loop keeps going
@@ -2678,6 +2688,118 @@ def _build_python_symbol_stub(text: str, symbol: str) -> str:
         if name.lower().endswith(symbol_lc) and name != symbol:
             return f"{symbol} = {name}"
     return f"class {symbol}:\n    pass"
+
+
+_PYTHON_MAIN_BLOCK_RE = re.compile(
+    r'^\s*if\s+__name__\s*==\s*["\']__main__["\']\s*:',
+    re.MULTILINE,
+)
+_PYTHON_RUNTIME_SMOKE_TIMEOUT_SECONDS = 5.0
+
+
+def _apply_deterministic_python_runtime_smoke(
+    adapter: Any,
+    *,
+    task_id: str,
+    all_affected_files: list[str],
+    timeout_seconds: float = _PYTHON_RUNTIME_SMOKE_TIMEOUT_SECONDS,
+) -> list[str]:
+    """Surface runtime errors that ``py_compile`` cannot catch.
+
+    Live factory-bench L1-01 (2026-06-17, after the symbol-coherence
+    fix): qwen3.6-27b-int4 wrote ``calculator.py`` that imports
+    cleanly and ``py_compile``-passes, but the script's
+    ``__main__`` block calls ``evaluate('1+2')`` which raises
+    ``ValueError`` at call time — the model's tokenizer stores
+    ``value=float(text)`` for operator tokens. The post-write
+    materialization quality gate currently relies on ``py_compile`` +
+    ``scan_workspace_artifact_quality``; neither catches call-time
+    failures. The materialization ladder must be told the code is
+    broken so the LLM repair path (or a future deterministic fix)
+    can take over.
+
+    Strategy (fail-closed, conservative):
+    1. For each ``.py`` file that has a top-level
+       ``if __name__ == "__main__":`` block, run it in a subprocess
+       with a hard timeout.
+    2. If exit code != 0 or the process is killed, surface a
+       materialization error string.
+    3. Library files (no ``__main__`` block) are NOT executed —
+       we do not know how to safely call their public API without
+       project-specific knowledge, and ``py_compile`` + import-time
+       static checks already cover the import surface.
+    4. Timeout is enforced via ``subprocess.run``; the Director
+       turn budget cannot be spent waiting for an infinite loop.
+
+    Returns a list of error strings suitable for
+    ``artifact_quality_errors`` so the deterministic repair ladder
+    and the LLM repair call see the runtime failure.
+    """
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    errors: list[str] = []
+    for rel in all_affected_files:
+        if not isinstance(rel, str) or not rel.endswith(".py"):
+            continue
+        # Defense in depth: only run files inside the workspace.
+        candidate = (workspace_path / rel).resolve()
+        try:
+            candidate.relative_to(workspace_path)
+        except ValueError:
+            continue
+        if not candidate.is_file():
+            continue
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not _PYTHON_MAIN_BLOCK_RE.search(text):
+            continue
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(candidate)],
+                cwd=str(workspace_path),
+                capture_output=True,
+                text=True,
+                timeout=max(0.5, float(timeout_seconds)),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            captured = (
+                (exc.stderr or b"").decode("utf-8", "replace")
+                if isinstance(exc.stderr, (bytes, bytearray))
+                else (exc.stderr or "")
+            )
+            tail = "\n".join(line for line in (captured or "").strip().splitlines()[-8:] if line)
+            errors.append(
+                f"Artifact quality scan failed: python runtime smoke timed out for {rel!r} "
+                f"after {timeout_seconds}s; tail:\n{tail}"
+            )
+            continue
+        except (OSError, ValueError) as exc:
+            errors.append(
+                f"Artifact quality scan failed: python runtime smoke could not launch "
+                f"{rel!r}: {type(exc).__name__}: {exc}"
+            )
+            continue
+
+        if proc.returncode == 0:
+            continue
+        stderr_tail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        tail = "\n".join(line for line in stderr_tail[-8:] if line)
+        if proc.returncode < 0:
+            errors.append(
+                f"Artifact quality scan failed: python runtime smoke was killed for {rel!r} "
+                f"(returncode={proc.returncode}, signal={-proc.returncode}); tail:\n{tail}"
+            )
+        else:
+            errors.append(
+                f"Artifact quality scan failed: python runtime smoke crashed for {rel!r} "
+                f"(returncode={proc.returncode}); tail:\n{tail}"
+            )
+    return errors
 
 
 def _apply_deterministic_typescript_reexport_repair(

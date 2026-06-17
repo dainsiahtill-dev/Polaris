@@ -4102,6 +4102,141 @@ class TestExistingWorkspaceTaskEvidence:
         )
 
 
+class TestDeterministicPythonRuntimeSmoke:
+    """Director surfaces runtime errors that py_compile misses.
+
+    Live factory-bench L1-01 (2026-06-17, after symbol-coherence fix):
+    qwen3.6-27b-int4 wrote calculator.py that imports cleanly and
+    py_compiles, but its ``__main__`` block calls ``evaluate('1+2')``
+    which raises ``ValueError`` at call time (the model's tokenizer
+    stores ``value=float(text)`` for operator tokens — a model bug,
+    but a real one the platform should surface). The post-write
+    materialization quality gate currently relies on ``py_compile`` +
+    ``scan_workspace_artifact_quality`` — neither catches call-time
+    errors. A rigid ruler must run the code, not just parse it.
+
+    Strategy: for each ``.py`` file with a ``__main__`` block, run it
+    in a subprocess with a timeout. If exit code != 0 or the process
+    is killed by the timeout, surface a runtime error so the
+    materialization repair ladder can fix it (currently via the LLM
+    repair path; the deterministic path is intentionally conservative
+    because runtime fixes are project-specific).
+    """
+
+    def test_python_runtime_smoke_catches_call_time_error(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        # A script with __main__ that crashes. py_compile will pass;
+        # only running it surfaces the bug.
+        (tmp_path / "calculator.py").write_text(
+            "def evaluate(expr: str) -> float:\n"
+            "    raise ValueError('broken tokenizer')\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    print(evaluate('1+2'))\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-1",
+            all_affected_files=["calculator.py"],
+            timeout_seconds=10.0,
+        )
+
+        assert len(errors) == 1, errors
+        assert "calculator.py" in errors[0]
+        assert "ValueError" in errors[0] or "Traceback" in errors[0]
+
+    def test_python_runtime_smoke_passes_clean_main(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "hello.py").write_text(
+            "if __name__ == '__main__':\n    print('hello')\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-2",
+            all_affected_files=["hello.py"],
+            timeout_seconds=10.0,
+        )
+
+        assert errors == [], errors
+
+    def test_python_runtime_smoke_skips_module_without_main(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        # Library file with no __main__ block — must not be executed
+        # (calling it would hang on missing CLI args or do nothing
+        # useful). Just skip.
+        (tmp_path / "library.py").write_text(
+            "def helper() -> int:\n    return 42\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-3",
+            all_affected_files=["library.py"],
+            timeout_seconds=10.0,
+        )
+
+        assert errors == [], errors
+
+    def test_python_runtime_smoke_skips_non_python_files(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "readme.md").write_text("# title\n", encoding="utf-8")
+        (tmp_path / "config.toml").write_text("x = 1\n", encoding="utf-8")
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-4",
+            all_affected_files=["readme.md", "config.toml"],
+            timeout_seconds=10.0,
+        )
+
+        assert errors == [], errors
+
+    def test_python_runtime_smoke_terminates_hung_process(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        # Infinite loop in __main__ — the smoke test must kill it
+        # after the configured timeout, not hang the whole Director turn.
+        (tmp_path / "hung.py").write_text(
+            "import time\nif __name__ == '__main__':\n    while True:\n        time.sleep(0.1)\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-5",
+            all_affected_files=["hung.py"],
+            timeout_seconds=1.0,
+        )
+
+        assert len(errors) == 1, errors
+        assert "hung.py" in errors[0]
+        assert "timed out" in errors[0].lower() or "killed" in errors[0].lower()
+
+
 class TestDeterministicPythonUnresolvedSymbolRepair:
     """Director can repair cross-file Python unresolved import symbol failures
     without LLM cooperation — same fail-closed posture as the TS reexport
