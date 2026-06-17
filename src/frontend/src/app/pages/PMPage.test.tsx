@@ -27,6 +27,13 @@ vi.mock('@/app/components/ui/sonner', () => ({
   Toaster: () => <div data-testid="toaster" />,
 }));
 
+vi.mock('@/runtime/transport', () => ({
+  useRuntimeTransport: () => ({
+    subscribeChannels: () => () => {},
+    registerMessageHandler: () => () => {},
+  }),
+}));
+
 function renderPage(
   onOpenSettings = vi.fn(),
   overrides: Partial<Parameters<typeof PMPage>[0]> = {},

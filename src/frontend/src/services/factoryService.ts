@@ -1,7 +1,10 @@
 /**
  * Factory Run Service
  *
- * Canonical API client for Factory run lifecycle and SSE streaming.
+ * Canonical API client for Factory run lifecycle. Real-time updates for
+ * factory runs flow through the platform's unified WebSocket + NAT
+ * JetStream pipeline (no SSE, no EventSource); see ``useFactory`` and
+ * ``RuntimeTransportProvider``.
  */
 
 import { getBackendInfo } from '@/api';
@@ -22,20 +25,6 @@ export type {
   FactoryRunStatus,
   FactoryStartOptions,
 };
-
-export interface FactoryStreamHandlers {
-  onOpen?: () => void;
-  onStatus?: (run: FactoryRunStatus) => void;
-  onEvent?: (event: FactoryAuditEvent) => void;
-  onDone?: (run: FactoryRunStatus) => void;
-  onError?: (data: Record<string, unknown>) => void;
-  onConnectionError?: () => void;
-}
-
-export interface FactoryStreamConnection {
-  eventSource: EventSource;
-  close: () => void;
-}
 
 /**
  * 启动 Factory Run
@@ -128,65 +117,3 @@ export async function listFactoryRuns(
   return { ok: false, error: result.error || '获取Factory列表失败' };
 }
 
-function parseJsonPayload<T>(raw: string, fallback: T): T {
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-/**
- * 创建 Factory Run SSE 连接
- */
-export async function connectFactoryStream(
-  runId: string,
-  handlers: FactoryStreamHandlers
-): Promise<FactoryStreamConnection> {
-  const backend = await getBackendInfo();
-  const url = new URL(
-    `/v2/factory/runs/${encodeURIComponent(runId)}/stream`,
-    backend.baseUrl || window.location.origin
-  );
-  if (backend.token) {
-    url.searchParams.set('token', backend.token);
-  }
-
-  const eventSource = new EventSource(url.toString());
-
-  eventSource.onopen = () => {
-    handlers.onOpen?.();
-  };
-
-  eventSource.addEventListener('status', (event: MessageEvent) => {
-    handlers.onStatus?.(parseJsonPayload<FactoryRunStatus>(event.data, {} as FactoryRunStatus));
-  });
-
-  eventSource.addEventListener('event', (event: MessageEvent) => {
-    handlers.onEvent?.(
-      parseJsonPayload<FactoryAuditEvent>(event.data, {
-        type: 'unknown',
-        timestamp: new Date().toISOString(),
-      })
-    );
-  });
-
-  eventSource.addEventListener('done', (event: MessageEvent) => {
-    handlers.onDone?.(parseJsonPayload<FactoryRunStatus>(event.data, {} as FactoryRunStatus));
-  });
-
-  eventSource.addEventListener('error', (event: MessageEvent) => {
-    handlers.onError?.(parseJsonPayload<Record<string, unknown>>(event.data || '{}', {}));
-  });
-
-  eventSource.onerror = () => {
-    handlers.onConnectionError?.();
-  };
-
-  return {
-    eventSource,
-    close: () => {
-      eventSource.close();
-    },
-  };
-}

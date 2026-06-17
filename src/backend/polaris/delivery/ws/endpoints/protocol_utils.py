@@ -62,9 +62,25 @@ def build_v2_subscription_subjects(workspace_key: str, channels: list[str]) -> l
             # Pin a specific bench session: ``event.bench:<session_id>`` maps
             # to ``hp.runtime.bench.<session_id>`` (workspace-agnostic, since
             # the bench spans L1-L8 workspaces).
-            session_id = ch[len("event.bench:"):].strip()
+            session_id = ch[len("event.bench:") :].strip()
             if session_id and _is_safe_subject_token(session_id):
                 subjects.add(f"hp.runtime.bench.{session_id}")
+            continue
+        if ch == "event.factory:all" or ch == "event.factory":
+            # Workspace-scoped wildcard: the user's WebSocket is bound to
+            # ``workspace_key`` at connect time, so this subject only fans
+            # in factory events for the current workspace. The legacy factory
+            # SSE wire is replaced by the same NAT JetStream + WebSocket
+            # transport the rest of the platform uses.
+            subjects.add(f"hp.runtime.{workspace_key}.event.factory.>")
+            continue
+        if ch.startswith("event.factory:"):
+            # Pin a specific factory run: ``event.factory:<run_id>`` maps to
+            # the same per-workspace subject the legacy SSE consumer used to
+            # subscribe to.
+            run_id = ch[len("event.factory:") :].strip()
+            if run_id and _is_safe_subject_token(run_id):
+                subjects.add(f"hp.runtime.{workspace_key}.event.factory.{run_id}")
             continue
         subjects.add(resolve_v2_subject(workspace_key, ch))
     return list(subjects)
@@ -78,6 +94,7 @@ def _is_safe_subject_token(token: str) -> bool:
     ``event.bench:../../../foo`` to escape the ``hp.runtime.bench.`` subject.
     """
     import re
+
     return bool(re.match(r"^[A-Za-z0-9_-]{1,64}$", token))
 
 

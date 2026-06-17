@@ -194,4 +194,4 @@ class TestModuleExports:
         """Test expected export count."""
         from polaris.delivery.ws.endpoints.models import __all__
 
-        assert len(__all__) == 4
+        assert len(__all__) == 7  # JOURNAL, LEGACY_LLM, RUNTIME_EVENT_*, V2_CHANNEL_TO_SUBJECT, WebSocketSendError, is_websocket_disconnect_runtime_error

@@ -307,6 +307,59 @@ def create_sse_response(generator: AsyncGenerator[str, None]) -> StreamingRespon
 # =============================================================================
 
 
+async def publish_to_jetstream(
+    subject: str,
+    payload: dict[str, Any],
+) -> bool:
+    """Publish event to NAT JetStream.
+
+    Args:
+        subject: NAT JetStream subject.
+        payload: Event payload.
+
+    Returns:
+        True if publish succeeded.
+
+    The factory-bench subprocess and the FactoryRunService both use this
+    helper to push runtime events onto the platform's NAT JetStream bus
+    (subject ``hp.runtime.<workspace>.event.factory.<rid>`` or
+    ``hp.runtime.bench.<session_id>``). The same JetStream subject is
+    consumed by the platform's WebSocket's JetStreamConsumerManager
+    and forwarded to all subscribed clients (Factory / PM / CE /
+    Director / ContextOS panels) via the runtime.v2 envelope shape.
+
+    SECURITY:
+    - Subject is validated against the platform's pattern before publish
+      to prevent cross-workspace event injection.
+    - The stream name is read from ``JetStreamConstants`` (HP_RUNTIME),
+      not a hard-coded literal — an earlier version hard-coded
+      ``KERNELONE_RUNTIME`` and silently dropped every event.
+    """
+    if not validate_subject(subject):
+        logger.warning("Invalid subject rejected for JetStream publish: %s", subject)
+        return False
+
+    try:
+        from polaris.infrastructure.messaging import get_default_client
+        from polaris.infrastructure.messaging.nats.nats_types import (
+            JetStreamConstants,
+        )
+
+        client = await get_default_client()
+        if not client or not client.jetstream:
+            return False
+
+        await client.publish_js(
+            stream=JetStreamConstants.STREAM_NAME,
+            subject=subject,
+            payload=payload,
+        )
+        return True
+    except (RuntimeError, ValueError) as exc:
+        logger.warning("Failed to publish to JetStream: %s", exc)
+        return False
+
+
 class SSEJetStreamConsumer:
     """SSE consumer that reads from JetStream for remote event streaming.
 
@@ -547,169 +600,3 @@ class SSEJetStreamConsumer:
             return event
 
         raise StopAsyncIteration
-
-
-def create_sse_jetstream_consumer(
-    workspace_key: str,
-    subject: str,
-    last_event_id: int | None = None,
-) -> SSEJetStreamConsumer:
-    """Factory function to create SSE JetStream consumer with proper configuration.
-
-    Args:
-        workspace_key: Workspace identifier.
-        subject: JetStream subject pattern.
-        last_event_id: Last event ID from Last-Event-ID header.
-
-    Returns:
-        Configured SSEJetStreamConsumer instance.
-
-    Raises:
-        ValueError: If workspace_key or subject fails validation.
-
-    SECURITY:
-        - S5: Subject pattern validation before consumer creation
-        - S4: Workspace key validation to prevent injection
-    """
-    # Validate inputs to fail fast on invalid configurations
-    if not validate_workspace_key(workspace_key):
-        raise ValueError(f"Invalid workspace_key format: {workspace_key}")
-    if not validate_subject(subject):
-        raise ValueError(f"Invalid subject pattern: {subject}")
-
-    cursor = int(last_event_id or 0)
-    if cursor < 0:
-        raise ValueError(f"last_event_id must be non-negative, got {cursor}")
-    return SSEJetStreamConsumer(
-        workspace_key=workspace_key,
-        subject=subject,
-        last_event_id=cursor,
-    )
-
-
-async def sse_jetstream_generator(
-    consumer: SSEJetStreamConsumer,
-) -> AsyncGenerator[str, None]:
-    """Convert JetStream consumer to SSE event format.
-
-    Ensures the JetStream subscription is properly cleaned up via
-    consumer.disconnect() when the generator exits, whether through
-    normal completion, early break, or exception.
-
-    Args:
-        consumer: SSEJetStreamConsumer instance.
-
-    Yields:
-        SSE-formatted event strings.
-
-    Example:
-        >>> consumer = SSEJetStreamConsumer(workspace_key="ws", subject="events")
-        >>> async for event in sse_jetstream_generator(consumer):
-        ...     print(event)
-        # consumer.disconnect() is always called in finally block
-    """
-    primary_exc: BaseException | None = None
-    try:
-        async for event in consumer.stream():
-            event_type = event.get("type", "message")
-            if event_type == "ping":
-                yield "event: ping\ndata: {}\n\n"
-                continue
-
-            cursor = event.get("cursor", 0)
-            ts = event.get("ts")
-            payload = event.get("payload", {})
-
-            # Add metadata to payload
-            enriched = {
-                **payload,
-                "_event_id": cursor,
-                "_timestamp": ts,
-            }
-
-            yield f"id: {cursor}\ndata: {json.dumps(enriched, ensure_ascii=False)}\n\n"
-    except BaseException as e:
-        primary_exc = e
-        raise
-    finally:
-        # Disconnect but catch and log any secondary exception so it
-        # never shadows the original stream exception (B4)
-        disconnect_exc: BaseException | None = None
-        try:
-            await consumer.disconnect()
-        except (RuntimeError, ValueError) as e:
-            # Only catch expected exceptions from disconnect()
-            disconnect_exc = e
-        except BaseException as e:  # noqa: BLE001
-            # Catch any other unexpected exceptions (SystemExit, etc.)
-            disconnect_exc = e
-        if primary_exc is not None and disconnect_exc is not None:
-            raise primary_exc from disconnect_exc
-        if primary_exc is not None:
-            raise primary_exc
-
-
-def create_sse_response_from_jetstream(
-    consumer: SSEJetStreamConsumer,
-) -> StreamingResponse:
-    """Create SSE response from JetStream consumer.
-
-    Args:
-        consumer: SSEJetStreamConsumer instance.
-
-    Returns:
-        StreamingResponse with SSE events from JetStream.
-    """
-    return StreamingResponse(
-        sse_jetstream_generator(consumer),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-# =============================================================================
-# JetStream Publisher (for SSE endpoints that produce events)
-# =============================================================================
-
-
-async def publish_to_jetstream(
-    subject: str,
-    payload: dict[str, Any],
-) -> bool:
-    """Publish event to JetStream.
-
-    Args:
-        subject: JetStream subject to publish to.
-        payload: Event payload.
-
-    Returns:
-        True if publish succeeded.
-
-    SECURITY:
-        - S5: Subject pattern validation before publishing
-          to prevent cross-workspace event injection.
-    """
-    if not validate_subject(subject):
-        logger.warning("Invalid subject rejected for JetStream publish: %s", subject)
-        return False
-
-    try:
-        from polaris.infrastructure.messaging import get_default_client
-
-        client = await get_default_client()
-        if not client or not client.jetstream:
-            return False
-
-        await client.publish_js(
-            stream="KERNELONE_RUNTIME",
-            subject=subject,
-            payload=payload,
-        )
-        return True
-    except (RuntimeError, ValueError) as e:
-        logger.warning("Failed to publish to JetStream: %s", e)
-        return False

@@ -6,6 +6,12 @@ import type { UsageStats } from '@/app/components/UsageHUD';
 import type { DialogueEvent } from '@/app/components/DialoguePanel';
 import type { LogEntry } from '@/types/log';
 import type { LlmRuntimeGateState } from '@/app/hooks/useLlmRuntimeGate';
+vi.mock('@/runtime/transport', () => ({
+  useRuntimeTransport: () => ({
+    subscribeChannels: () => () => {},
+    registerMessageHandler: () => () => {},
+  }),
+}));
 
 // ContextOS 现在直接消费 useRuntime 经 WebSocket 实时推送的运行时流（props），不再轮询任何文件。
 // 这些 LogEntry 夹具取自 parseLlmStreamLine / parseRuntimeEvent 的输出形态。

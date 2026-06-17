@@ -170,7 +170,3 @@ class TestFactoryBenchRouter:
         )
         assert response.status_code == 200
         assert response.json()["updated"] is False
-
-
-
-

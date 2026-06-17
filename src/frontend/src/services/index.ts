@@ -265,10 +265,7 @@ export {
   getFactoryRun,
   getFactoryRunArtifacts,
   listFactoryRuns,
-  connectFactoryStream,
 } from './factoryService';
-
-export type { FactoryStreamConnection, FactoryStreamHandlers } from './factoryService';
 
 // ============================================================================
 // Court Service

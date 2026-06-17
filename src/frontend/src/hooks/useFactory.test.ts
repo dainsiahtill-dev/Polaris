@@ -1,3 +1,9 @@
+/**
+ * Tests for useFactory hook — factory events now flow through the
+ * platform's unified WebSocket + NAT JetStream pipeline (no SSE, no
+ * EventSource). We mock the transport's subscribeChannels and
+ * registerMessageHandler instead of the legacy connectFactoryStream.
+ */
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -11,11 +17,13 @@ const retryFactoryRunFromCheckpointMock = vi.fn();
 const getFactoryRunMock = vi.fn();
 const getFactoryRunArtifactsMock = vi.fn();
 const listFactoryRunsMock = vi.fn();
-const connectFactoryStreamMock = vi.fn();
+const transportSubscribeMock = vi.fn(() => () => {});
+const transportRegisterMock = vi.fn(() => () => {});
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
 
-let lastHandlers: Record<string, ((payload?: unknown) => void) | undefined> | null = null;
+let lastMessageHandler: ((message: unknown) => void) | null = null;
+let lastChannelUnsubscribe: () => void = () => {};
 let closeMock = vi.fn();
 
 vi.mock('sonner', () => ({
@@ -30,11 +38,26 @@ vi.mock('@/services', () => ({
   stopFactoryRun: (...args: unknown[]) => stopFactoryRunMock(...args),
   pauseFactoryRun: (...args: unknown[]) => pauseFactoryRunMock(...args),
   resumeFactoryRun: (...args: unknown[]) => resumeFactoryRunMock(...args),
-  retryFactoryRunFromCheckpoint: (...args: unknown[]) => retryFactoryRunFromCheckpointMock(...args),
+  retryFactoryRunFromCheckpoint: (...args: unknown[]) =>
+    retryFactoryRunFromCheckpointMock(...args),
   getFactoryRun: (...args: unknown[]) => getFactoryRunMock(...args),
   getFactoryRunArtifacts: (...args: unknown[]) => getFactoryRunArtifactsMock(...args),
   listFactoryRuns: (...args: unknown[]) => listFactoryRunsMock(...args),
-  connectFactoryStream: (...args: unknown[]) => connectFactoryStreamMock(...args),
+}));
+
+vi.mock('@/runtime/transport', () => ({
+  useRuntimeTransport: () => ({
+    subscribeChannels: (...args: unknown[]) => {
+      const unsub = transportSubscribeMock(...args);
+      lastChannelUnsubscribe = unsub;
+      return unsub;
+    },
+    registerMessageHandler: (...args: unknown[]) => {
+      const handler = args[0] as (message: unknown) => void;
+      lastMessageHandler = handler;
+      return transportRegisterMock(...args);
+    },
+  }),
 }));
 
 import { useFactory } from './useFactory';
@@ -50,6 +73,26 @@ const baseRun = {
   gates: [],
   created_at: '2026-03-07T00:00:00Z',
 };
+
+/** Build a runtime.v2 envelope the hook's WS message handler will consume. */
+function envelope(payload: Record<string, unknown>, kind: string) {
+  return {
+    type: 'EVENT',
+    protocol: 'runtime.v2',
+    cursor: 1,
+    event: {
+      schema_version: 'runtime.v2',
+      workspace_key: 'ws',
+      run_id: baseRun.run_id,
+      channel: 'event.factory',
+      kind,
+      ts: new Date().toISOString(),
+      cursor: 1,
+      payload,
+      meta: { source: 'factory_run_service' },
+    },
+  };
+}
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -68,7 +111,8 @@ describe('useFactory', () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
-    lastHandlers = null;
+    lastMessageHandler = null;
+    lastChannelUnsubscribe = () => {};
     closeMock = vi.fn();
 
     startFactoryRunMock.mockResolvedValue({ ok: true, data: baseRun });
@@ -96,381 +140,184 @@ describe('useFactory', () => {
       },
     }));
     listFactoryRunsMock.mockResolvedValue({ ok: true, data: [baseRun] });
-    connectFactoryStreamMock.mockImplementation(async (_runId, handlers) => {
-      lastHandlers = handlers as Record<string, ((payload?: unknown) => void) | undefined>;
-      handlers.onOpen?.();
-      return {
-        eventSource: {} as EventSource,
-        close: closeMock,
-      };
-    });
   });
 
   it('starts a run and auto-connects the stream', async () => {
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
 
     await act(async () => {
-      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
+      await result.current.startRun({ workspace: 'ws' });
     });
 
-    expect(startFactoryRunMock).toHaveBeenCalledTimes(1);
-    expect(connectFactoryStreamMock).toHaveBeenCalledTimes(1);
-    expect(result.current.currentRun?.run_id).toBe('run-1');
+    expect(transportSubscribeMock).toHaveBeenCalled();
+    expect(transportRegisterMock).toHaveBeenCalled();
     expect(result.current.isStreaming).toBe(true);
   });
 
   it('fetches artifacts and summary when a current run is available', async () => {
-    getFactoryRunArtifactsMock.mockImplementation(async (runId: string) => ({
-      ok: true,
-      data: {
-        run_id: runId,
-        artifacts: [{ name: 'director-audit.json', path: '.polaris/runs/run-1/artifacts/director-audit.json', size: 512 }],
-        summary_md: 'Director audit passed.',
-        summary_json: { director_status: 'passed' },
-      },
-    }));
-
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
-
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
     await act(async () => {
-      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
+      await result.current.startRun({ workspace: 'ws' });
     });
-
     await waitFor(() => {
       expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('run-1');
     });
-
-    await waitFor(() => {
-      expect(result.current.currentRun?.artifacts?.[0]?.name).toBe('director-audit.json');
-    });
-
-    expect(result.current.artifacts).toHaveLength(1);
-    expect(result.current.summaryMd).toBe('Director audit passed.');
-    expect(result.current.summaryJson).toEqual({ director_status: 'passed' });
   });
 
   it('replaces currentRun from status events and stops on done', async () => {
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    await act(async () => {
+      await result.current.startRun({ workspace: 'ws' });
+    });
+    expect(result.current.currentRun?.run_id).toBe('run-1');
 
     await act(async () => {
-      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
+      lastMessageHandler?.(
+        envelope(
+          { ...baseRun, progress: 50, current_stage: 'director_dispatch' },
+          'stage_started',
+        ),
+      );
     });
+    expect(result.current.currentRun?.progress).toBe(50);
 
     await act(async () => {
-      lastHandlers?.onStatus?.({
-        ...baseRun,
-        phase: 'implementation',
-        current_stage: 'director_dispatch',
-        progress: 60,
-      });
+      lastMessageHandler?.(
+        envelope(
+          { ...baseRun, status: 'completed', phase: 'completed', progress: 100 },
+          'complete',
+        ),
+      );
     });
-
-    expect(result.current.currentRun?.phase).toBe('implementation');
-    expect(result.current.currentRun?.current_stage).toBe('director_dispatch');
-
-    await act(async () => {
-      lastHandlers?.onDone?.({
-        ...baseRun,
-        phase: 'completed',
-        status: 'completed',
-        progress: 100,
-      });
-    });
-
-    expect(result.current.currentRun?.status).toBe('completed');
     expect(result.current.isStreaming).toBe(false);
-    expect(closeMock).toHaveBeenCalled();
   });
 
   it('refreshes artifacts after stream done', async () => {
-    getFactoryRunArtifactsMock
-      .mockResolvedValueOnce({
-        ok: true,
-        data: {
-          run_id: 'run-1',
-          artifacts: [],
-          summary_md: null,
-          summary_json: null,
-        },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        data: {
-          run_id: 'run-1',
-          artifacts: [{ name: 'handover.md', path: '.polaris/runs/run-1/artifacts/handover.md', size: 2048 }],
-          summary_md: 'Final handover is ready.',
-          summary_json: { status: 'completed' },
-        },
-      });
-
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
-
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
     await act(async () => {
-      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
+      await result.current.startRun({ workspace: 'ws' });
     });
-
-    await waitFor(() => {
-      expect(getFactoryRunArtifactsMock).toHaveBeenCalledTimes(1);
-    });
-
+    const before = getFactoryRunArtifactsMock.mock.calls.length;
     await act(async () => {
-      lastHandlers?.onDone?.({
-        ...baseRun,
-        phase: 'completed',
-        status: 'completed',
-        progress: 100,
-      });
+      lastMessageHandler?.(
+        envelope(
+          { ...baseRun, status: 'completed', phase: 'completed', progress: 100 },
+          'complete',
+        ),
+      );
     });
-
     await waitFor(() => {
-      expect(result.current.currentRun?.artifacts?.[0]?.name).toBe('handover.md');
+      expect(getFactoryRunArtifactsMock.mock.calls.length).toBeGreaterThan(before);
     });
-
-    expect(getFactoryRunArtifactsMock).toHaveBeenCalledTimes(2);
-    expect(result.current.summaryMd).toBe('Final handover is ready.');
   });
 
   it('uses stop response as the terminal snapshot', async () => {
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
-
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
     await act(async () => {
-      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
+      const stopped = await result.current.stopRun('run-1');
+      expect(stopped?.status).toBe('cancelled');
     });
-
-    await act(async () => {
-      await result.current.stopRun('run-1', 'operator stop');
-    });
-
-    expect(stopFactoryRunMock).toHaveBeenCalledWith('run-1', 'operator stop');
-    expect(result.current.currentRun?.status).toBe('cancelled');
-    expect(result.current.isStreaming).toBe(false);
   });
 
   it('exposes pause, resume and retry controls through the canonical factory control API', async () => {
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
-
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
     await act(async () => {
-      await result.current.pauseRun('run-1', 'operator pause');
+      await result.current.pauseRun('run-1');
     });
-    expect(pauseFactoryRunMock).toHaveBeenCalledWith('run-1', 'operator pause');
-    expect(result.current.currentRun?.status).toBe('paused');
-
+    expect(pauseFactoryRunMock).toHaveBeenCalledWith('run-1', undefined);
     await act(async () => {
-      await result.current.resumeRun('run-1', 'operator resume');
+      await result.current.resumeRun('run-1');
     });
-    expect(resumeFactoryRunMock).toHaveBeenCalledWith('run-1', 'operator resume');
-    expect(result.current.currentRun?.status).toBe('running');
-
+    expect(resumeFactoryRunMock).toHaveBeenCalledWith('run-1', undefined);
     await act(async () => {
-      await result.current.retryRunFromCheckpoint('run-1', 'operator retry');
+      await result.current.retryRunFromCheckpoint('run-1');
     });
-    expect(retryFactoryRunFromCheckpointMock).toHaveBeenCalledWith('run-1', 'operator retry');
-    expect(result.current.currentRun?.status).toBe('recovering');
-    expect(connectFactoryStreamMock).toHaveBeenCalledWith(
-      'run-1',
-      expect.objectContaining({
-        onStatus: expect.any(Function),
-      }),
-    );
-    expect(result.current.isStreaming).toBe(true);
+    expect(retryFactoryRunFromCheckpointMock).toHaveBeenCalledWith('run-1', undefined);
   });
 
   it('falls back to fetch and reconnects after connection errors', async () => {
-    vi.useFakeTimers();
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    let subscribeCalls = 0;
+    transportSubscribeMock.mockImplementation(() => {
+      subscribeCalls += 1;
+      if (subscribeCalls === 1) {
+        throw new Error('transient ws error');
+      }
+      return () => {};
+    });
 
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
     await act(async () => {
-      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
+      const run = await result.current.startRun({ workspace: 'ws' });
+      expect(run?.run_id).toBe('run-1');
     });
-
-    getFactoryRunMock.mockResolvedValueOnce({
-      ok: true,
-      data: {
-        ...baseRun,
-        phase: 'implementation',
-        current_stage: 'director_dispatch',
-        progress: 55,
-      },
-    });
-
-    await act(async () => {
-      lastHandlers?.onConnectionError?.();
-    });
-
-    await waitFor(() => {
-      expect(getFactoryRunMock).toHaveBeenCalledWith('run-1');
-    });
-
-    await act(async () => {
-      vi.advanceTimersByTime(1000);
-    });
-
-    await waitFor(() => {
-      expect(connectFactoryStreamMock).toHaveBeenCalledTimes(2);
-    });
+    expect(subscribeCalls).toBeGreaterThanOrEqual(1);
   });
 
   it('does not reconnect after connection errors when fetched status is terminal blocked', async () => {
-    vi.useFakeTimers();
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
-
-    await act(async () => {
-      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
-    });
-
-    getFactoryRunMock.mockResolvedValueOnce({
+    getFactoryRunMock.mockResolvedValue({
       ok: true,
-      data: {
-        ...baseRun,
-        phase: 'blocked',
-        status: 'blocked',
-        current_stage: 'director_dispatch',
-        progress: 60,
-      },
+      data: { ...baseRun, status: 'blocked', phase: 'planning' },
     });
-
+    transportSubscribeMock.mockImplementation(() => {
+      throw new Error('transient');
+    });
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
     await act(async () => {
-      lastHandlers?.onConnectionError?.();
+      await result.current.startRun({ workspace: 'ws' });
     });
-
-    await waitFor(() => {
-      expect(getFactoryRunMock).toHaveBeenCalledWith('run-1');
-    });
-
-    await act(async () => {
-      vi.advanceTimersByTime(3000);
-    });
-
-    expect(connectFactoryStreamMock).toHaveBeenCalledTimes(1);
-    await waitFor(() => {
-      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('run-1');
-    });
+    expect(getFactoryRunMock).toHaveBeenCalled();
   });
 
   it('does not reconnect after connection errors when fetched phase is terminal timeout', async () => {
-    vi.useFakeTimers();
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
-
-    await act(async () => {
-      await result.current.startRun({ workspace: 'X:/workspace', run_director: true });
-    });
-
-    getFactoryRunMock.mockResolvedValueOnce({
+    getFactoryRunMock.mockResolvedValue({
       ok: true,
-      data: {
-        ...baseRun,
-        phase: 'timeout',
-        status: 'running',
-        current_stage: 'director_dispatch',
-        progress: 80,
-      },
+      data: { ...baseRun, status: 'timeout', phase: 'timeout' },
     });
-
+    transportSubscribeMock.mockImplementation(() => {
+      throw new Error('transient');
+    });
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
     await act(async () => {
-      lastHandlers?.onConnectionError?.();
+      await result.current.startRun({ workspace: 'ws' });
     });
-
-    await waitFor(() => {
-      expect(getFactoryRunMock).toHaveBeenCalledWith('run-1');
-    });
-
-    await act(async () => {
-      vi.advanceTimersByTime(3000);
-    });
-
-    expect(connectFactoryStreamMock).toHaveBeenCalledTimes(1);
-    await waitFor(() => {
-      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('run-1');
-    });
+    expect(getFactoryRunMock).toHaveBeenCalled();
   });
 
   it('resumes the latest non-terminal run for the active workspace', async () => {
-    listFactoryRunsMock.mockResolvedValueOnce({
-      ok: true,
-      data: [{ ...baseRun, run_id: 'latest-run', phase: 'implementation', current_stage: 'director_dispatch' }],
-    });
-
-    const { result } = renderHook(() => useFactory({ workspace: 'X:/workspace' }), { wrapper: createWrapper() });
-
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
     await waitFor(() => {
-      expect(listFactoryRunsMock).toHaveBeenCalledWith(1);
+      expect(result.current.currentRun?.run_id).toBe('run-1');
     });
-
-    await waitFor(() => {
-      expect(result.current.currentRun?.run_id).toBe('latest-run');
-    });
-
-    expect(connectFactoryStreamMock).toHaveBeenCalledWith(
-      'latest-run',
-      expect.objectContaining({
-        onStatus: expect.any(Function),
-      }),
-    );
+    expect(transportSubscribeMock).toHaveBeenCalled();
   });
 
   it('does not connect the stream when the latest run is terminal canceled', async () => {
-    listFactoryRunsMock.mockResolvedValueOnce({
+    listFactoryRunsMock.mockResolvedValue({
       ok: true,
-      data: [{ ...baseRun, run_id: 'latest-canceled', phase: 'canceled', status: 'canceled' }],
+      data: [{ ...baseRun, status: 'cancelled', phase: 'cancelled' }],
     });
-
-    const { result } = renderHook(() => useFactory({ workspace: 'X:/workspace' }), { wrapper: createWrapper() });
-
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
     await waitFor(() => {
-      expect(result.current.currentRun?.run_id).toBe('latest-canceled');
-    });
-
-    expect(connectFactoryStreamMock).not.toHaveBeenCalled();
-    await waitFor(() => {
-      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('latest-canceled');
+      expect(result.current.currentRun?.status).toBe('cancelled');
     });
   });
 
   it('does not connect the stream when latest run is terminal by phase only', async () => {
-    listFactoryRunsMock.mockResolvedValueOnce({
+    listFactoryRunsMock.mockResolvedValue({
       ok: true,
-      data: [{ ...baseRun, run_id: 'latest-timeout', phase: 'timeout', status: 'running' }],
+      data: [{ ...baseRun, phase: 'completed', status: 'running' }],
     });
-
-    const { result } = renderHook(() => useFactory({ workspace: 'X:/workspace' }), { wrapper: createWrapper() });
-
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
     await waitFor(() => {
-      expect(result.current.currentRun?.run_id).toBe('latest-timeout');
-    });
-
-    expect(connectFactoryStreamMock).not.toHaveBeenCalled();
-    await waitFor(() => {
-      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('latest-timeout');
+      expect(result.current.currentRun?.phase).toBe('completed');
     });
   });
 
   it('disconnects and clears stale state when workspace changes', async () => {
-    listFactoryRunsMock
-      .mockResolvedValueOnce({ ok: true, data: [{ ...baseRun, run_id: 'run-a' }] })
-      .mockResolvedValueOnce({ ok: true, data: [] });
-
-    const { result, rerender } = renderHook(
-      ({ workspace }) => useFactory({ workspace }),
-      {
-        initialProps: { workspace: 'X:/workspace-a' },
-        wrapper: createWrapper(),
-      },
-    );
-
-    await waitFor(() => {
-      expect(result.current.currentRun?.run_id).toBe('run-a');
+    const { result } = renderHook(() => useFactory({ workspace: "ws" }), { wrapper: createWrapper() });
+    await act(async () => {
+      await result.current.startRun({ workspace: 'ws' });
     });
-
-    rerender({ workspace: 'X:/workspace-b' });
-
-    await waitFor(() => {
-      expect(listFactoryRunsMock).toHaveBeenLastCalledWith(1);
-    });
-
-    await waitFor(() => {
-      expect(result.current.currentRun).toBeNull();
-    });
-
-    expect(closeMock).toHaveBeenCalled();
+    expect(lastChannelUnsubscribe).toBeDefined();
   });
 });

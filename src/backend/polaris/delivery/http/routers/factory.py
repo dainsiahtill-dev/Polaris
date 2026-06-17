@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
 from polaris.cells.factory.pipeline.internal.bench_service import (
     FactoryBenchService,
 )
@@ -44,9 +43,7 @@ from polaris.cells.storage.layout.public.service import (
 )
 from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
 from polaris.delivery.http.routers.sse_utils import (
-    create_sse_jetstream_consumer,
     publish_to_jetstream,
-    sse_jetstream_generator,
 )
 from polaris.delivery.http.schemas import (
     FactoryRunArtifactsResponse,
@@ -1312,84 +1309,6 @@ async def _get_factory_run_audit_bundle_core(
     return FactoryRunAuditBundleResponse(**bundle)
 
 
-async def _stream_factory_run_events_core(
-    run_id: str,
-    state: AppState,
-) -> StreamingResponse:
-    workspace = _resolve_workspace(state)
-    workspace_key = Path(workspace).name
-
-    # Build JetStream subject for factory events
-    subject = f"hp.runtime.{workspace_key}.event.factory.{run_id}"
-
-    # Try JetStream consumer first
-    try:
-        consumer = create_sse_jetstream_consumer(
-            workspace_key=workspace_key,
-            subject=subject,
-            last_event_id=0,
-        )
-
-        if consumer.is_connected or await consumer.connect():
-            logger.info("Using JetStream consumer for factory stream: %s", subject)
-            return StreamingResponse(
-                sse_jetstream_generator(consumer),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
-            )
-    except (RuntimeError, ValueError) as e:
-        logger.warning("JetStream consumer failed, falling back to direct mode: %s", e)
-
-    # Fallback to direct polling mode (original implementation)
-    service = _get_service(workspace)
-    run = await service.get_run(run_id)
-    if run is None:
-        raise StructuredHTTPException(status_code=404, code="RUN_NOT_FOUND", message=f"Run {run_id} not found")
-
-    async def event_generator():
-        last_event_count = 0
-        last_status_payload = ""
-
-        while True:
-            current_run = await service.get_run(run_id)
-            if current_run is None:
-                yield 'event: error\ndata: {"error":"run_not_found"}\n\n'
-                return
-
-            snapshot = _map_service_run_to_contract(current_run)
-            snapshot_payload = _json_payload(snapshot)
-            if snapshot_payload != last_status_payload:
-                last_status_payload = snapshot_payload
-                yield f"event: status\ndata: {snapshot_payload}\n\n"
-
-            events = await service.get_run_events(run_id)
-            while last_event_count < len(events):
-                event = events[last_event_count]
-                yield f"event: event\ndata: {_json_payload(event)}\n\n"
-                last_event_count += 1
-
-            if current_run.status in TERMINAL_RUN_STATUSES:
-                yield f"event: complete\ndata: {snapshot_payload}\n\n"
-                yield f"event: done\ndata: {snapshot_payload}\n\n"
-                return
-
-            await asyncio.sleep(0.5)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
 async def _control_factory_run_core(
     run_id: str,
     payload: FactoryControlRequest,
@@ -1504,15 +1423,6 @@ async def get_factory_run_audit_bundle_v2(
     return await _get_factory_run_audit_bundle_core(run_id=run_id, limit=limit, state=state)
 
 
-@router.get("/v2/factory/runs/{run_id}/stream")
-async def stream_factory_run_events_v2(
-    run_id: str,
-    state: AppState = Depends(get_state),
-) -> StreamingResponse:
-    """Stream canonical factory status and audit events via SSE."""
-    return await _stream_factory_run_events_core(run_id=run_id, state=state)
-
-
 @router.post("/v2/factory/runs/{run_id}/control", response_model=FactoryRunStatusContract)
 async def control_factory_run_v2(
     run_id: str,
@@ -1582,15 +1492,6 @@ async def get_factory_run_audit_bundle(
 ) -> FactoryRunAuditBundleResponse:
     # DEPRECATED
     return await _get_factory_run_audit_bundle_core(run_id=run_id, limit=limit, state=state)
-
-
-@router.get("/factory/runs/{run_id}/stream")
-async def stream_factory_run_events(
-    run_id: str,
-    state: AppState = Depends(get_state),
-) -> StreamingResponse:
-    # DEPRECATED
-    return await _stream_factory_run_events_core(run_id=run_id, state=state)
 
 
 @router.post("/factory/runs/{run_id}/control", response_model=FactoryRunStatusContract)
@@ -1760,9 +1661,6 @@ async def append_factory_bench_event_v2(
         # JetStream fanout is best-effort; JSONL write already succeeded.
         logger.debug("bench JetStream fanout failed for %s: %s", session_id, exc)
     return {"session_id": session_id, "appended": True, "published": published}
-
-
-
 
 
 @router.post("/v2/factory/bench/sessions/{session_id}/complete")

@@ -25,6 +25,13 @@ vi.mock('@/app/components/ui/sonner', () => ({
   Toaster: () => <div data-testid="toaster" />,
 }));
 
+vi.mock('@/runtime/transport', () => ({
+  useRuntimeTransport: () => ({
+    subscribeChannels: () => () => {},
+    registerMessageHandler: () => () => {},
+  }),
+}));
+
 describe('DirectorPage', () => {
   beforeEach(() => {
     directorWorkspaceProps.mockClear();

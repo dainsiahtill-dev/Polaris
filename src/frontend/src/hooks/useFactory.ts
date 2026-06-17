@@ -11,8 +11,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { useRuntimeTransport } from '@/runtime/transport';
 import {
-  connectFactoryStream,
   getFactoryRun,
   getFactoryRunArtifacts,
   listFactoryRuns,
@@ -116,8 +116,13 @@ export function useFactory(options: UseFactoryOptions = {}) {
   const [isArtifactsLoading, setIsArtifactsLoading] = useState(false);
 
   const queryClient = useQueryClient();
+  // Unified WebSocket transport — factory events flow through NAT
+  // JetStream (subject ``hp.runtime.<ws>.event.factory.<run_id>``) via
+  // the same RuntimeTransportProvider that carries log.llm /
+  // log.process / event.bench. No SSE, no EventSource.
+  const transport = useRuntimeTransport();
 
-  const connectionRef = useRef<{ eventSource: EventSource; close: () => void } | null>(null);
+  const connectionRef = useRef<{ close: () => void } | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const latestRunIdRef = useRef<string | null>(null);
@@ -366,89 +371,95 @@ export function useFactory(options: UseFactoryOptions = {}) {
       connectionRef.current = null;
     }
 
-    try {
-      const connection = await connectFactoryStream(runId, {
-        onOpen: () => {
-          reconnectAttemptsRef.current = 0;
-          setIsStreaming(true);
-        },
-        onStatus: (run) => {
+    const channel = `event.factory:${runId}`;
+
+    // Translate the runtime.v2 envelope (channel=event.factory) into the
+    // same handler shape the old SSE wire used to deliver. Factory
+    // events are published to NAT JetStream by
+    // ``FactoryRunService._append_event``; the platform's WebSocket's
+    // JetStream consumer forwards every envelope to this handler.
+    const handler = (message: unknown): void => {
+      if (!message || typeof message !== 'object') return;
+      const m = message as Record<string, unknown>;
+      const envelope = (m.event && typeof m.event === 'object'
+        ? (m.event as Record<string, unknown>)
+        : m) as Record<string, unknown>;
+      if (envelope.channel !== 'event.factory') return;
+      const payload = (envelope.payload && typeof envelope.payload === 'object'
+        ? (envelope.payload as Record<string, unknown>)
+        : {}) as Record<string, unknown>;
+      const kind = String(envelope.kind || payload.type || '');
+
+      if (
+        kind === 'stage_started' ||
+        kind === 'stage_completed' ||
+        kind.includes('status')
+      ) {
+        const run = payload as Partial<FactoryRunStatus>;
+        if (run.run_id) {
           latestRunIdRef.current = run.run_id;
-          setCurrentRun((previous) => mergeRunEvidenceFields(run, previous));
-          // Update cache
-          queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(run.run_id), run);
-          if (isTerminalRun(run)) {
+          setCurrentRun((previous) => mergeRunEvidenceFields(run as FactoryRunStatus, previous));
+          queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(run.run_id), run as FactoryRunStatus);
+          if (isTerminalRun(run as FactoryRunStatus)) {
             void fetchRunArtifacts(run.run_id);
           }
+        }
+        return;
+      }
+      if (kind === 'event' || kind === 'audit' || kind === 'stage_event' || kind === '') {
+        const event: FactoryAuditEvent = {
+          type: String(payload.type || kind || 'unknown'),
+          timestamp: String(envelope.ts || new Date().toISOString()),
+          ...payload,
+        } as FactoryAuditEvent;
+        setEvents((previous) => [...previous, event].slice(-200));
+        return;
+      }
+      if (
+        kind === 'complete' ||
+        kind === 'done' ||
+        kind === 'run_completed' ||
+        kind === 'run_terminal'
+      ) {
+        const cached = queryClient.getQueryData<FactoryRunStatus>(
+          factoryRunKey(latestRunIdRef.current || runId),
+        );
+        const finalRun = (cached ?? ({} as FactoryRunStatus)) as FactoryRunStatus;
+        latestRunIdRef.current = finalRun.run_id || runId;
+        setCurrentRun((previous) => mergeRunEvidenceFields(finalRun, previous));
+        setIsStreaming(false);
+        queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(latestRunIdRef.current), finalRun);
+        queryClient.invalidateQueries({ queryKey: factoryRunsKey });
+        void fetchRunArtifacts(latestRunIdRef.current);
+        const status = terminalRunToken(finalRun);
+        if (status === 'completed') {
+          toast.success('Factory Run 完成');
+        } else if (FAILED_FACTORY_RUN_STATUSES.has(status)) {
+          toast.error(finalRun.failure?.detail || 'Factory Run 失败');
+        } else if (CANCELLED_FACTORY_RUN_STATUSES.has(status)) {
+          toast.success('Factory Run 已取消');
+        }
+        return;
+      }
+    };
+
+    let closed = false;
+    let messageUnregister: (() => void) | null = null;
+    let channelUnsubscribe: (() => void) | null = null;
+
+    try {
+      channelUnsubscribe = transport.subscribeChannels([{ channel, tailLines: 0 }]);
+      messageUnregister = transport.registerMessageHandler(handler);
+      reconnectAttemptsRef.current = 0;
+      setIsStreaming(true);
+      connectionRef.current = {
+        close: () => {
+          if (closed) return;
+          closed = true;
+          try { messageUnregister?.(); } catch { /* ignore */ }
+          try { channelUnsubscribe?.(); } catch { /* ignore */ }
         },
-        onEvent: (event) => {
-          setEvents((previous) => [...previous, event].slice(-200));
-        },
-        onDone: (run) => {
-          setCurrentRun((previous) => mergeRunEvidenceFields(run, previous));
-          setIsStreaming(false);
-          if (connectionRef.current) {
-            connectionRef.current.close();
-            connectionRef.current = null;
-          }
-          // Update cache
-          queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(run.run_id), run);
-          // Invalidate runs list
-          queryClient.invalidateQueries({ queryKey: factoryRunsKey });
-          void fetchRunArtifacts(run.run_id);
-
-          const status = terminalRunToken(run);
-          if (status === 'completed') {
-            toast.success('Factory Run 完成');
-          } else if (FAILED_FACTORY_RUN_STATUSES.has(status)) {
-            toast.error(run.failure?.detail || 'Factory Run 失败');
-          } else if (CANCELLED_FACTORY_RUN_STATUSES.has(status)) {
-            toast.success('Factory Run 已取消');
-          }
-        },
-        onError: (payload) => {
-          const detail = String(payload.detail || payload.error || payload.message || '').trim();
-          if (detail) {
-            toast.error(detail);
-          }
-        },
-        onConnectionError: () => {
-          if (manualDisconnectRef.current) {
-            return;
-          }
-
-          if (connectionRef.current) {
-            connectionRef.current.close();
-            connectionRef.current = null;
-          }
-          setIsStreaming(false);
-
-          const reconnectRunId = latestRunIdRef.current;
-          if (!reconnectRunId) {
-            return;
-          }
-
-          void (async () => {
-            const snapshot = await fetchRunStatus(reconnectRunId);
-            if (!snapshot || isTerminalRun(snapshot)) {
-              return;
-            }
-
-            if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
-              toast.error('Factory 实时流重连失败');
-              return;
-            }
-
-            reconnectAttemptsRef.current += 1;
-            reconnectTimerRef.current = window.setTimeout(() => {
-              reconnectTimerRef.current = null;
-              void connectStream(reconnectRunId);
-            }, RECONNECT_DELAY_MS * reconnectAttemptsRef.current);
-          })();
-        },
-      });
-
-      connectionRef.current = connection;
+      };
       return true;
     } catch (streamError) {
       const message = streamError instanceof Error ? streamError.message : '连接Factory实时流失败';
@@ -456,7 +467,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
       setIsStreaming(false);
       return false;
     }
-  }, [clearReconnectTimer, fetchRunArtifacts, fetchRunStatus, queryClient, factoryRunsKey, factoryRunKey]);
+  }, [clearReconnectTimer, fetchRunArtifacts, queryClient, factoryRunKey, factoryRunsKey, transport]);
 
   const startRun = useCallback(async (opts: FactoryStartOptions): Promise<FactoryRunStatus | null> => {
     setEvents([]);
