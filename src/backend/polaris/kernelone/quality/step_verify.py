@@ -44,6 +44,50 @@ _OP_TEXT = {"-le": "≤", "-lt": "<", "-ge": "≥", "-gt": ">", "-eq": "="}
 _MAX_DIAGNOSABLE_CLAUSES = 24
 _CLAUSE_TIMEOUT_SECONDS = 10
 _VERIFY_TIMEOUT_SECONDS = 60
+_VERIFY_COMMAND_TOKEN_RE = re.compile(
+    r"(?:^|&&|\|\|)\s*"
+    r"(?:pytest|python|python3|node|npm|pnpm|test|grep|ruff|mypy|make|bash|sh)\b"
+)
+_NATURAL_LANGUAGE_TAIL_MARKERS = (
+    " 通过",
+    " 验证",
+    "，验证",
+    "， 验证",
+    "；验证",
+    "。验证",
+)
+
+
+def _first_unquoted_marker_index(value: str, markers: tuple[str, ...]) -> int | None:
+    quote: str | None = None
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if any(value.startswith(marker, index) for marker in markers):
+            return index
+    return None
+
+
+def _strip_unquoted_natural_language_tail(value: str) -> str:
+    marker_index = _first_unquoted_marker_index(value, _NATURAL_LANGUAGE_TAIL_MARKERS)
+    if marker_index is None:
+        return value
+    candidate = value[:marker_index].strip()
+    if not candidate or not _VERIFY_COMMAND_TOKEN_RE.search(candidate):
+        return value
+    return candidate
 
 
 def normalize_step_verify(raw_verify: Any) -> str:
@@ -53,8 +97,8 @@ def normalize_step_verify(raw_verify: Any) -> str:
     str() turned the array into Python-repr garbage that bash can never pass).
     """
     if isinstance(raw_verify, (list, tuple)):
-        return " && ".join(str(part).strip() for part in raw_verify if str(part).strip())
-    return str(raw_verify or "").strip()
+        raw_verify = " && ".join(str(part).strip() for part in raw_verify if str(part).strip())
+    return _strip_unquoted_natural_language_tail(str(raw_verify or "").strip())
 
 
 def split_verify_clauses(verify: str) -> list[str]:

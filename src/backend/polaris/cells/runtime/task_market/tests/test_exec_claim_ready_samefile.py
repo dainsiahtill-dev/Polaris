@@ -7,7 +7,7 @@ predecessor would put two writers on the same file concurrently.
 
 from __future__ import annotations
 
-from polaris.cells.runtime.task_market.internal.models import TaskWorkItemRecord
+from polaris.cells.runtime.task_market.internal.models import TaskWorkItemRecord, now_epoch
 from polaris.cells.runtime.task_market.internal.service import TaskMarketService
 
 
@@ -54,6 +54,24 @@ class TestExecClaimReadySameFile:
         fill2 = _item("PM-1-S4-fill2", target="main.js", depends_on=("PM-1-S4-fill1",))
         items = {fill1.task_id: fill1, fill2.task_id: fill2}
         assert TaskMarketService._exec_claim_ready(fill2, items) is True
+
+    def test_same_file_active_writer_blocks_even_without_declared_dep(self) -> None:
+        active = _item("PM-1-S4-a", target="main.js", stage="pending_exec", status="in_execution")
+        active.lease_token = "active-lease"
+        active.lease_expires_at = now_epoch() + 60
+        pending = _item("PM-1-S4-b", target="main.js")
+        items = {active.task_id: active, pending.task_id: pending}
+
+        assert TaskMarketService._exec_claim_ready(pending, items) is False
+
+    def test_same_file_expired_writer_does_not_block_recovery(self) -> None:
+        expired = _item("PM-1-S4-a", target="main.js", stage="pending_exec", status="in_execution")
+        expired.lease_token = "expired-lease"
+        expired.lease_expires_at = now_epoch() - 60
+        pending = _item("PM-1-S4-b", target="main.js")
+        items = {expired.task_id: expired, pending.task_id: pending}
+
+        assert TaskMarketService._exec_claim_ready(pending, items) is True
 
     def test_different_file_dep_at_qa_keeps_fastpath(self) -> None:
         # A dependency on a DIFFERENT file may still satisfy at pending_qa (throughput).

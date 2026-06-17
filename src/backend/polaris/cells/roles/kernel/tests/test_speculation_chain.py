@@ -160,7 +160,7 @@ async def test_on_shadow_completed_triggers_downstream(
 
     assert len(downstream_records) == 1
     assert downstream_records[0].tool_name == "read_file"
-    assert downstream_records[0].normalized_args == {"path": "src/auth.ts"}
+    assert downstream_records[0].normalized_args == {"file": "src/auth.ts"}
     assert downstream_records[0].origin_turn_id == "t_chain"
 
     # Verify chain index

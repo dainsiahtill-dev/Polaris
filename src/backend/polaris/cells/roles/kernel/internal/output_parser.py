@@ -52,6 +52,28 @@ _TOOL_RESULT_BLOCK_RE = re.compile(
 )
 
 
+def _tool_name_match_keys(tool_name: str) -> set[str]:
+    """Return raw and canonical forms for allow-list comparisons."""
+    raw = str(tool_name or "").strip().lower()
+    if not raw:
+        return set()
+    try:
+        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+
+        canonical = str(normalize_tool_name(raw) or "").strip().lower()
+    except (ImportError, RuntimeError, ValueError):
+        canonical = raw
+    return {item for item in (raw, canonical) if item}
+
+
+def _normalize_allowed_tool_names(allowed_tool_names: Iterable[str] | None) -> set[str]:
+    """Normalize allowed tool names while retaining legacy raw aliases."""
+    allowed: set[str] = set()
+    for name in allowed_tool_names or []:
+        allowed.update(_tool_name_match_keys(str(name or "")))
+    return allowed
+
+
 @dataclass
 class ThinkingResult:
     """思考过程解析结果"""
@@ -171,7 +193,7 @@ class OutputParser:
         """
         normalized: list[ToolCallResult] = []
         seen: set[tuple[str, str, str, str]] = set()
-        allowed = {str(name).strip().lower() for name in (allowed_tool_names or []) if str(name).strip()}
+        allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         # Layer 1: Try native tool calling protocol
         native_calls = self._parse_native_tool_calls(
@@ -301,7 +323,7 @@ class OutputParser:
         name = str(tool_name or "").strip().lower()
         if not name:
             return
-        if allowed and name not in allowed:
+        if allowed and not (_tool_name_match_keys(name) & allowed):
             return
         if not isinstance(arguments, dict):
             return
@@ -453,7 +475,7 @@ class OutputParser:
         的所有兼容方言，避免此处与应用层解析规则漂移。
         """
         results: list[ToolCallResult] = []
-        allowed = {str(name).strip().lower() for name in (allowed_tool_names or []) if str(name).strip()}
+        allowed = _normalize_allowed_tool_names(allowed_tool_names)
         try:
             from polaris.cells.director.execution.public.service import (
                 EditType,
@@ -633,7 +655,7 @@ class OutputParser:
         from polaris.kernelone.editing.editblock_engine import parse_edit_blocks
 
         results: list[ToolCallResult] = []
-        allowed = {str(name).strip().lower() for name in (allowed_tool_names or []) if str(name).strip()}
+        allowed = _normalize_allowed_tool_names(allowed_tool_names)
 
         if not content or not content.strip():
             return results

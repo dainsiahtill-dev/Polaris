@@ -203,3 +203,39 @@ F20（`cjk//2`）、F21（`chinese/2`）、F3/F5/F6（`+other/2`）是独立第 
 **额外门**（与 T2-B 对齐）：T2-B 的 savings 用 `_token_estimator`（canonical CJK）量，但热路径预算执行用 `CompressionEngine.TokenEstimator`。re-anchor 证明须在**预算执行所用的同一估算器**下复测 savings，否则报的 savings 未必等于真预算 headroom。
 
 **Stage A 预检**：对每个 `len//4` fork 先证它是否真流入预算/驱逐决策（vs 纯 metadata/日志）——只有「入 gate」的 fork 才需进 bench-gated 批次；`infrastructure/accel` 的 `token_estimator.py` shim **0 活 importer**，是未来 HF 注入的免费承载点、非现役风险。
+
+---
+
+## 10) Landing (2026-06-17) — T2-C scope: blueprint-only, NOT in this landing batch
+
+> 本节是当前 LANDED 真相。**本切片（10-expert headroom team 2026-06-17）专注于 T1-A / T1-B / T2-A；T2-C 不在本批落地点。** 任何读这份文件的人请知：§1-§9 的所有 fork 仍盘上存在（grep 实证：20+ 独立实现、5 互异公式未变），本蓝图仍为**计划阶段产物**，没有任何估算器收敛代码在 working tree。
+
+### 10.1 本批 landing 范围 vs T2-C
+
+| 项 | 本批 landing | T2-C 关系 |
+|---|---|---|
+| `KERNELONE_CCR_RETRIEVE`（offering flag, default OFF） | ✅ landed | 无关（CCR 工具层，非估算器） |
+| `KERNELONE_T2A_VETO`（llm_compact 收缩否决, default OFF） | ✅ landed | **直接相关** — T2-A veto 读 `llm_compact` 返回 tokens（用 F1 `compaction_strategy._estimate_history_tokens` or 类似启发式）；若 F1 在 Stage B1 收敛到 C1（cjk=1.5→1），**veto 判定数值会变** → 本批 veto 的活判定逻辑仍用盘上原公式，未触 T2-C |
+| CCR-3a anchored regex | ✅ landed | 无关（retrieve 解析层） |
+| E2E proof + drift consumer | ✅ landed | 无关（CCR 工具/观测层） |
+
+### 10.2 T2-C 阶段 B1 实施前必做的预检（保持本蓝图 §9 警告）
+
+§9 的 4 处修订在本批**未触**，landing 时仍是审计警告：
+
+1. **T2C-2 第 6 fork**：`repo_intelligence/renderer.py:273`（`total_chars//4`，CJK-blind，活）未确认是否入 gate；执行前必查 `LoIRenderResult.total_tokens` 路径
+2. **T2C-3 收敛-blocker 测**：`test_canonical_token_estimator.py` 硬钉 C2 `cjk*1.5`（assert==600/425/175） — **本批未改**；Stage B1 实施必须在同一 commit 改写为 delegation-equivalence 断言 + CJK=1 新 golden 值（否则 break）
+3. **T2C-4 blast-radius 计数**：本批未复核（C2 实 7 文件/9 import 仍待 Stage A 预检逐点确认）
+4. **T2C-5 锚点漂移**：`compaction_strategy._estimate_history_tokens` 在 `:341` 非 `:292`（F1 漂移），`context_assembler` 有**两个**估算器（`:899` messages 路径 + `:933` single-string 路径） — 本批未触；执行前对每个符号 `grep -n` 刷新
+
+### 10.3 T2-C 与本批 landing 的耦合点（须 lead reconcile）
+
+- **T2-A veto (`KERNELONE_T2A_VETO`) × F1 公式**：当前 veto 用盘上启发式判定"未缩小"；若 F1 在 Stage B1 收敛为 C1，**veto 触发频率会变**（CJK 段估值降 ~33% → auto_compact 后 `tokens_recovered` 变 → llm_compact 入口的 recovered 假设变 → veto 判定翻不翻转需重测）。本批 veto 测 3 测（`TestT2AVetoOnLiveLlmCompact`）是当前盘上公式下绿的；F1 收敛后须**同一 commit 重测**。
+- **CCR-3a × T2-C**：无关（CCR 字节层不读 token 估算）。
+- **T1-B drift consumer × T2-C**：无关（read-only consumer）。
+
+### 10.4 Gate 状态（docs-only）
+
+- ruff/mypy 不适用（无 python 改动）
+- pytest：本切片未触 T2-C 实现 → 既有 `tests/test_token_estimator.py` + `tests/unit/kernelone/test_llm_engine_token_estimator.py` + `context/tests/test_canonical_token_estimator.py` 全部保持原状，**未跑**（不属于本切片 owned tests）
+- §8/§6.6：本切片未触代码 → 不变；T2-C 阶段 B1 实施时仍须重审 §8（无业务 token，是语言通用启发式 → clean）与 §6.6（不触工具名 → clean）

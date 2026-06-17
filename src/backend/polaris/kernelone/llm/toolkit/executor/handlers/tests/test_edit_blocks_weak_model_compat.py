@@ -351,6 +351,18 @@ def test_json_array_line_range_inside_blocks_applies(tmp_path: Path) -> None:
     assert "line_4 = 400" in content
 
 
+def test_json_array_line_range_accepts_target_file_alias(tmp_path: Path) -> None:
+    """Some LLMs use target_file instead of file inside JSON edit payloads."""
+    ex = _big_file_workspace(tmp_path, lines=30)
+    payload = '[{"start_line": 7, "end_line": 7, "target_file": "pkg/big_module.py", "replace": "line_6 = 600\\n"}]'
+
+    result = _handle_edit_blocks(ex, blocks=payload)
+
+    assert result.get("ok") is True, result
+    content = (tmp_path / "pkg" / "big_module.py").read_text(encoding="utf-8")
+    assert "line_6 = 600" in content
+
+
 def test_json_object_uses_top_level_file_fallback(tmp_path: Path) -> None:
     ex = _big_file_workspace(tmp_path, lines=30)
     payload = '{"start": 3, "end": 3, "replace": "patched = True\\n"}'
@@ -450,19 +462,20 @@ def test_yaml_label_prefixed_json_blocks_applies(tmp_path: Path) -> None:
     assert "fixed = 2" in (tmp_path / "pkg" / "big_module.py").read_text(encoding="utf-8")
 
 
-# ----- Phase-1 A5: post-write syntax gate -----
+# ----- Phase-1 A5: pre-write syntax gate -----
 
 
 def test_write_file_attaches_js_syntax_diagnostic(tmp_path: Path) -> None:
     """L2-09 live regression: a `;` where `,` belongs in an object literal
-    must come back as a syntax diagnostic on the SUCCESSFUL write result."""
+    must come back as a syntax diagnostic without landing invalid JS."""
     ex = AgentAccelToolExecutor(workspace=str(tmp_path))
     bad_js = "const head = {\n  x: 1,\n  y: 2;\n};\n"
     result = _handle_write_file(ex, file="game.js", content=bad_js)
-    assert result.get("ok") is True  # the write itself lands
-    assert result.get("syntax_check") == "failed"
-    assert "game.js" in str(result.get("syntax_error", "")) or "Unexpected" in str(result.get("syntax_error", ""))
-    assert "fix it now" in result.get("suggestion", "")
+    assert result.get("ok") is False
+    assert "Code syntax validation failed" in result.get("error", "")
+    assert "game.js" in result.get("error", "")
+    assert "Unexpected" in result.get("error", "")
+    assert not (tmp_path / "game.js").exists()
 
 
 def test_write_file_clean_python_passes_syntax(tmp_path: Path) -> None:
@@ -506,6 +519,7 @@ def test_write_file_plain_js_error_keeps_narrow_edit_suggestion(tmp_path: Path) 
     ex = AgentAccelToolExecutor(workspace=str(tmp_path))
     bad_js = "const head = {\n  x: 1,\n  y: 2;\n};\n"
     result = _handle_write_file(ex, file="game.js", content=bad_js)
-    assert result.get("syntax_check") == "failed"
+    assert result.get("ok") is False
+    assert "Code syntax validation failed" in result.get("error", "")
     assert "edit_blocks" in result.get("suggestion", "")
     assert "append_to_file" not in result.get("suggestion", "")

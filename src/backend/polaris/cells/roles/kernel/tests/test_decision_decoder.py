@@ -147,7 +147,7 @@ class TestNativeToolExecutionSource:
         invocation = decision["tool_batch"]["invocations"][0]
         assert invocation["call_id"] == "toolu_append"
         assert invocation["tool_name"] == "append_to_file"
-        assert invocation["arguments"]["path"] == "src/game.ts"
+        assert invocation["arguments"]["file"] == "src/game.ts"
 
     def test_anthropic_tool_use_string_input_executes(self) -> None:
         decoder = TurnDecisionDecoder(config=DecodeConfig(domain="code"))
@@ -172,7 +172,7 @@ class TestNativeToolExecutionSource:
         assert decision["tool_batch"] is not None
         invocation = decision["tool_batch"]["invocations"][0]
         assert invocation["tool_name"] == "write_file"
-        assert invocation["arguments"] == {"path": "package.json", "content": "{}"}
+        assert invocation["arguments"] == {"file": "package.json", "content": "{}"}
 
     def test_different_native_tools_all_execute(self) -> None:
         decoder = TurnDecisionDecoder(config=DecodeConfig(domain="document"))

@@ -6,6 +6,13 @@ import os
 import subprocess
 from typing import Any
 
+_FINGERPRINT_DEFAULT_ARGUMENTS: dict[str, dict[str, frozenset[Any]]] = {
+    "read_file": {
+        "max_bytes": frozenset({200000, 200001}),
+        "range_required": frozenset({False}),
+    }
+}
+
 
 def _normalize_value(value: Any) -> Any:
     """递归归一化单个值：仅统一换行符，列表/字典递归处理.
@@ -26,18 +33,47 @@ def _normalize_value(value: Any) -> Any:
     return value
 
 
+def _drop_default_arguments(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(args)
+    for key, default_values in _FINGERPRINT_DEFAULT_ARGUMENTS.get(tool_name, {}).items():
+        value = normalized.get(key)
+        try:
+            should_drop = value in default_values
+        except TypeError:
+            should_drop = False
+        if should_drop:
+            normalized.pop(key, None)
+    return normalized
+
+
 def normalize_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """对工具参数做 canonical 归一化.
 
     规则：
-    1. dict 按键排序（递归）——字段顺序语义无关，折叠安全。
-    2. str 仅统一换行符为 `\n`——跨平台等价，折叠安全。
+    1. 复用工具协议层的同工具别名/参数别名归一化（如 read_file path→file）。
+    2. dict 按键排序（递归）——字段顺序语义无关，折叠安全。
+    3. str 仅统一换行符为 `\n`——跨平台等价，折叠安全。
     刻意**不**对字符串值做首尾去空白：那是 false-same 碰撞方向，会导致
     wrong-adoption。详见 `_normalize_value` docstring。
     """
     if not isinstance(args, dict):
         return {}
-    return {k: _normalize_value(v) for k, v in sorted(args.items())}
+    normalized_tool_name = str(tool_name or "").strip().lower()
+    normalized_args = dict(args)
+    try:
+        from polaris.kernelone.llm.toolkit.tool_normalization import (
+            normalize_tool_arguments,
+            normalize_tool_name,
+        )
+
+        normalized_tool_name = normalize_tool_name(normalized_tool_name) or normalized_tool_name
+        normalized_args = normalize_tool_arguments(normalized_tool_name, normalized_args)
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        pass
+    normalized = _normalize_value(normalized_args)
+    if not isinstance(normalized, dict):
+        return {}
+    return _drop_default_arguments(normalized_tool_name, normalized)
 
 
 def build_spec_key(

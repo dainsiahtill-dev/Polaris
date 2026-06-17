@@ -45,6 +45,7 @@ class TestErrorClassification:
             "Rate limit exceeded: 429",
             "HTTP 429: Too many requests",
             "Rate limit hit, retry after 60s",
+            "MiniMax API Error 2056: 已达到 Token Plan 用量上限：请升级 Token Plan 套餐或购买积分补充用量。",
         ]
         for error in error_cases:
             result = classify_error(error)
@@ -215,6 +216,8 @@ class TestLLMCallerCall:
         context.sources_enabled = []
         context.policy = {}
         context.events_path = ""
+        context.context_os_snapshot = None
+        context.strategy_receipt = None
         # Return the same dict on every access (MagicMock auto-creates, so we set it once)
         context.context_override = context_override_dict
         context.budget = SimpleNamespace(max_tokens=32000, max_chars=100000, cost_class="medium")
@@ -632,6 +635,8 @@ class TestLLMTimingAudit:
         context.policy = {}
         context.context_override = context_override_dict
         context.events_path = ""
+        context.context_os_snapshot = None
+        context.strategy_receipt = None
         context.budget = SimpleNamespace(max_tokens=32000, max_chars=100000, cost_class="medium")
         return context
 

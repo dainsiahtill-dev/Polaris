@@ -2337,10 +2337,20 @@ cells:
     state_owners:
       - runtime/state/blueprints/*
       - runtime/blueprints/*
+      - runtime/risks/*
+      - runtime/tech_debt/*
+      - runtime/adr_log/*
+      - runtime/tech_radar/*
+      - runtime/post_mortems/*
     effects_allowed:
       - fs.read:workspace/**
       - fs.write:runtime/state/blueprints/*
       - fs.write:runtime/blueprints/*
+      - fs.write:runtime/risks/*
+      - fs.write:runtime/tech_debt/*
+      - fs.write:runtime/adr_log/*
+      - fs.write:runtime/tech_radar/*
+      - fs.write:runtime/post_mortems/*
       - fs.delete:runtime/blueprints/*
       - fs.write:runtime/events/runtime.events.jsonl
       - llm.invoke:chief_engineer/*
@@ -2349,6 +2359,7 @@ cells:
       tests:
         - tests/test_chief_engineer_preflight.py
         - polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_router.py
+        - polaris/tests/unit/delivery/http/routers/test_v2_chief_engineer_governance_router.py
       gaps:
         - Blueprint adapter convergence with roles adapters is not complete.
 

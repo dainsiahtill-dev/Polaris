@@ -52,7 +52,10 @@ class TestWriteToolPhases:
         assert WriteToolPhases.is_write_tool("read_file") is False
         assert WriteToolPhases.is_write_tool("repo_rg") is False
 
-    def test_build_prepare_invocation_maps_to_file_exists(self) -> None:
+    def test_build_prepare_invocation_uses_synthetic_sentinel(self) -> None:
+        """Prepare must emit a non-registered sentinel tool name (not file_exists)
+        to prevent spec_key collision with real model-emitted file_exists calls.
+        """
         invocation = ToolInvocation(
             call_id=ToolCallId("call_1"),
             tool_name="write_file",
@@ -61,7 +64,8 @@ class TestWriteToolPhases:
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         prepare = WriteToolPhases.build_prepare_invocation(invocation)
-        assert prepare.tool_name == "file_exists"
+        assert prepare.tool_name == "__prepare_shadow__"
+        assert prepare.tool_name != "file_exists"
         assert prepare.arguments.get("path") == "src/auth.ts"
         assert prepare.arguments.get("content_length") == 5
         assert prepare.execution_mode == ToolExecutionMode.READONLY_PARALLEL

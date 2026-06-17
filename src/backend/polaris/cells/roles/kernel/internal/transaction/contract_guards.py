@@ -153,6 +153,8 @@ def expand_bootstrap_read_candidates(target_file: str) -> list[str]:
     normalized = str(target_file or "").strip().replace("\\", "/")
     if not normalized:
         return []
+    if "/" in normalized:
+        return [normalized]
     candidates: list[str] = [normalized]
     basename = normalized.rsplit("/", 1)[-1].strip()
     if basename and basename not in candidates:
@@ -605,6 +607,12 @@ def is_mutation_contract_violation(exc: Exception) -> bool:
 # —— 散文塞进 blocks / SEARCH==REPLACE 空操作 / 缺必填参数 / 无有效编辑块。
 _WRITE_ARGUMENT_SHAPE_FAILURE_ANCHORS: tuple[str, ...] = (
     "Parameter validation failed",
+    "Parameter failed",
+    "Missing edit payload",
+    "line-range edit requires",
+    "missing argument",
+    "whole-file write, not edit",
+    "Validation failed",
     "prose/narration",
     "identical search and replace",
     "No valid edit blocks",

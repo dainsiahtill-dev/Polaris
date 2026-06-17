@@ -77,6 +77,11 @@ _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS: tuple[str, ...] = (
 # write_file on them makes a weak model regenerate the entire file — observed
 # live (phase1smoke django-15213): 600s LLM timeout, dead session.
 _BOOTSTRAP_WHOLE_FILE_MAX_CHARS = 4000
+_BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_TYPES = frozenset({"new_file_via_edit_blocks"})
+_BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS: tuple[str, ...] = (
+    "whole-file write, not edit",
+    "whole-file write",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +214,7 @@ _DEFAULT_RETRY_ESCALATION_TEMPERATURE = 0.2
 _MAX_STALLED_READ_BOOTSTRAPS = 2
 _READ_BOOTSTRAP_PROGRESS: dict[str, tuple[tuple[int, int] | None, int]] = {}
 _READ_BOOTSTRAP_PROGRESS_MAX_KEYS = 512
+_WRITE_ONLY_SINGLE_TARGET_REPAIR_MARKER = "[director_quality_repair:write_only_single_target]"
 _FINGERPRINT_SOURCE_EXTS = (
     ".py",
     ".js",
@@ -280,6 +286,42 @@ def _read_bootstrap_makes_no_progress(turn_id: str, workspace: str) -> bool:
 def _clear_read_bootstrap_progress(turn_id: str) -> None:
     """Reset a step's read-bootstrap progress once it converges to a write."""
     _READ_BOOTSTRAP_PROGRESS.pop(turn_id, None)
+
+
+def _requires_write_only_single_target_repair(context: list[dict]) -> bool:
+    """Return True for Director quality repair of exactly one missing target."""
+    latest_user_request = extract_latest_user_message(context).lower()
+    return _WRITE_ONLY_SINGLE_TARGET_REPAIR_MARKER in latest_user_request
+
+
+def _should_bootstrap_original_read_batch(
+    *,
+    context: list[dict],
+    turn_id: str,
+    config: Any,
+    original_bootstrap_invocations: list[Any],
+) -> bool:
+    """Decide whether an original read-only violating batch may be executed."""
+    if not original_bootstrap_invocations:
+        return False
+    if not is_safe_readonly_bootstrap_invocations(original_bootstrap_invocations):
+        return False
+    if _requires_write_only_single_target_repair(context):
+        logger.warning(
+            "mutation-contract READ-ONLY bootstrap blocked by single-target write-only repair: turn_id=%s tools=%s",
+            turn_id,
+            [extract_invocation_tool_name(inv) for inv in original_bootstrap_invocations],
+        )
+        return False
+    progress_workspace = _resolve_materialization_workspace(config)
+    if _read_bootstrap_makes_no_progress(turn_id, progress_workspace):
+        logger.warning(
+            "mutation-contract READ-ONLY bootstrap stalled (no new materialization) "
+            "-> forcing write escalation: turn_id=%s",
+            turn_id,
+        )
+        return False
+    return True
 
 
 def _resolve_materialization_workspace(config: Any) -> str:
@@ -557,7 +599,9 @@ def build_contract_retry_context(
         retry_lines.append(
             "Mutation target files detected from user request: "
             + ", ".join(target_file_tokens)
-            + ". Ensure one write call touches at least one target file."
+            + ". Ensure one write call touches at least one target file. "
+            "Only write these target files; acceptance criteria, verification commands, test names, and command "
+            "output paths are not authorization to create or modify extra files."
         )
 
     retry_mode_guard = (
@@ -595,6 +639,36 @@ def append_retry_enforcement_hint(
 ) -> list[dict]:
     """向 retry 上下文追加强制约束提示。"""
     rendered_allowed = ", ".join(sorted(allowed_tool_names)) if allowed_tool_names else "<none>"
+    forced_tool_detail = ""
+    if forced_write_tool_name == "write_file":
+        forced_tool_detail = (
+            "\nwrite_file requires args.file and args.content. "
+            "The content value must be the non-empty complete file body; "
+            "do not put code in prose, analysis, or reasoning text."
+        )
+    elif forced_write_tool_name == "edit_blocks":
+        forced_tool_detail = (
+            "\nedit_blocks requires non-empty args. Easiest valid form: "
+            '{"file": "<target file>", "start": <first line>, "end": <last line>, '
+            '"replace": "<complete replacement source lines>"}. '
+            "Do not emit empty arguments, prose, analysis, or a whole new filename plus full file body."
+        )
+    reason_text = str(reason or "")
+    reason_lower = reason_text.lower()
+    if forced_write_tool_name == "edit_blocks" and "validation failed" in reason_lower and "search" in reason_lower:
+        forced_tool_detail += (
+            " Previous SEARCH/REPLACE text did not match the current file. "
+            "Do not retry SEARCH/REPLACE blocks; use the line-range form with file/start/end/replace."
+        )
+    target_file_tokens = extract_target_files_from_message(extract_latest_user_message(retry_context))
+    target_file_detail = ""
+    if target_file_tokens:
+        target_file_detail = (
+            "\nOnly write these target files: "
+            + ", ".join(target_file_tokens)
+            + ". Acceptance criteria, verification commands, test names, and command output paths are "
+            "not authorization to create or modify extra files."
+        )
     enforcement_hint = {
         "role": "system",
         "content": (
@@ -605,6 +679,8 @@ def append_retry_enforcement_hint(
             "INVALID retry outputs: read_file-only, list_directory-only, execute_command-only.\n"
             "VALID retry output must include a write tool call.\n"
             + (f"MANDATORY write tool for this retry: {forced_write_tool_name}." if forced_write_tool_name else "")
+            + forced_tool_detail
+            + target_file_detail
         ),
     }
     return [*retry_context, enforcement_hint]
@@ -812,6 +888,47 @@ def bootstrap_receipt_contains_whole_file_replacement_marker(bootstrap_receipt: 
     return any(marker in lowered for marker in _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS)
 
 
+def bootstrap_receipt_contains_whole_file_edit_error(bootstrap_receipt: Mapping[str, Any]) -> bool:
+    """Return True when edit_blocks rejected a new-file whole-file write."""
+    for item in list(bootstrap_receipt.get("results", []) or []):
+        if not isinstance(item, Mapping):
+            continue
+        tool_name = str(item.get("tool_name") or item.get("name") or "").strip().lower()
+        payload = item.get("result")
+        error_parts: list[str] = []
+
+        if isinstance(payload, Mapping):
+            error_type = str(payload.get("error_type") or "").strip().lower()
+            if error_type in _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_TYPES:
+                return True
+            for key in ("error", "message", "stderr", "details", "reason"):
+                value = payload.get(key)
+                if isinstance(value, str) and value:
+                    error_parts.append(value)
+        elif isinstance(payload, str) and payload:
+            error_parts.append(payload)
+
+        for key in ("error", "message"):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                error_parts.append(value)
+
+        combined = "\n".join(error_parts).lower()
+        if not combined:
+            continue
+        if "whole-file write, not edit" in combined:
+            return True
+        if tool_name == "edit_blocks" and all(
+            fragment in combined for fragment in ("full file content", "not an edit")
+        ):
+            return True
+        if tool_name == "edit_blocks" and any(
+            fragment in combined for fragment in _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS
+        ):
+            return True
+    return False
+
+
 def select_bootstrap_followup_write_tool_name(
     *,
     allowed_tool_names: set[str],
@@ -821,6 +938,12 @@ def select_bootstrap_followup_write_tool_name(
 ) -> str | None:
     """Select the write tool for the post-bootstrap implementation stage."""
     if failed_bootstrap_files:
+        for creation_candidate in ("write_file", "create_file", "append_to_file"):
+            if creation_candidate in allowed_tool_names:
+                return creation_candidate
+        return default_write_tool_name
+
+    if bootstrap_receipt_contains_whole_file_edit_error(bootstrap_receipt):
         for creation_candidate in ("write_file", "create_file", "append_to_file"):
             if creation_candidate in allowed_tool_names:
                 return creation_candidate
@@ -1855,7 +1978,12 @@ class RetryOrchestrator:
         # (observed: hallucinated vue-element-admin Windows paths). Bootstrap the
         # ORIGINAL reads directly — never throw away the model's correct request.
         original_bootstrap_invocations = _extract_decision_invocations(original_decision)
-        if original_bootstrap_invocations and is_safe_readonly_bootstrap_invocations(original_bootstrap_invocations):
+        if _should_bootstrap_original_read_batch(
+            context=context,
+            turn_id=turn_id,
+            config=self.config,
+            original_bootstrap_invocations=original_bootstrap_invocations,
+        ):
             # F24 (2026-06-16): progress-aware read-loop bound. Bootstrap the reads
             # (gather evidence) UNLESS this step's read-only bootstraps have stalled
             # — i.e. materialised no new bytes across the last few reads (L4-19: all
@@ -1863,8 +1991,7 @@ class RetryOrchestrator:
             # the forced-write escalation ladder. Unlike the reverted F21 count-based
             # ceiling, normal read-then-write flows change the workspace fingerprint
             # and never trip this, so the L2 floor is not regressed.
-            progress_workspace = _resolve_materialization_workspace(self.config)
-            if _read_bootstrap_makes_no_progress(turn_id, progress_workspace):
+            if False:
                 logger.warning(
                     "mutation-contract READ-ONLY bootstrap stalled (no new materialization) "
                     "-> forcing write escalation: turn_id=%s",

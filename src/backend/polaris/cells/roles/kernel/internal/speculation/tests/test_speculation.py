@@ -425,6 +425,26 @@ class TestNormalizeArgs:
         result = normalize_args("test", {})
         assert result == {}
 
+    def test_read_file_alias_defaults_match_stream_canonical_payload(self) -> None:
+        """Raw stream args and canonical registry args should share a spec key."""
+        raw = normalize_args("read_file", {"path": "README.md"})
+        canonical = normalize_args(
+            "read_file",
+            {"file": "README.md", "max_bytes": 200000, "range_required": False},
+        )
+
+        assert raw == canonical
+
+    def test_read_file_explicit_ranges_stay_distinct(self) -> None:
+        """Different read ranges are not semantically equivalent shadow calls."""
+        full_read = normalize_args("read_file", {"path": "README.md"})
+        ranged_read = normalize_args(
+            "read_file",
+            {"path": "README.md", "start_line": 1, "end_line": 10},
+        )
+
+        assert full_read != ranged_read
+
     def test_complex_normalization(self) -> None:
         """Test normalize_args with complex structure (keys sorted, EOL normalized only)."""
         args = {

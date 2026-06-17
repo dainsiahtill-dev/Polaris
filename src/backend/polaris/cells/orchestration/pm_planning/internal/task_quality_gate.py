@@ -272,9 +272,44 @@ def build_card3d_pm_required_domain_contract() -> str:
     return "\n".join(lines)
 
 
+_DOMAIN_CONTRACTS_DISABLE_TOKENS = frozenset({"0", "false", "no", "off"})
+
+
+def _domain_contracts_enabled() -> bool:
+    """Return whether project-specific game/card3d PM domain contracts are active.
+
+    This is the single isolation switch for the CLAUDE.md §8 project-domain
+    behavior embedded in this module (the ``_GAME_PM_*`` / ``_CARD3D_PM_*``
+    tables, detectors, and synthesizers that inject standard-answer tasks into
+    game/card3d PM contracts). It reads the generic ``KERNELONE_PM_DOMAIN_CONTRACTS``
+    environment variable and DEFAULTS TO ENABLED (preserving current behavior) so
+    that the three guarded detectors stay no-ops unless an operator explicitly
+    opts out.
+
+    Only an explicit disable token (``0`` / ``false`` / ``no`` / ``off``,
+    case- and whitespace-insensitive) turns the §8 behavior off; every other
+    value (including unset, ``1``, ``true``, ``on``) keeps it enabled. This
+    mirrors the fail-closed env-read idiom used elsewhere in this cell while
+    inverting the default so the disable path must be requested deliberately
+    (it is reserved for the game-bench A/B and the eventual default-flip +
+    deletion of the §8 code).
+
+    Returns:
+        ``True`` when the domain contracts remain enabled (default), ``False``
+        only when an explicit disable token is set.
+    """
+
+    raw = os.environ.get("KERNELONE_PM_DOMAIN_CONTRACTS")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in _DOMAIN_CONTRACTS_DISABLE_TOKENS
+
+
 def should_apply_card3d_pm_domain_contract(*texts: Any) -> bool:
     """Return whether PM prompt text describes the Card3D multiplayer scenario."""
 
+    if not _domain_contracts_enabled():
+        return False
     joined = "\n".join(str(text or "") for text in texts)
     return _has_card3d_text_hints(joined)
 
@@ -1321,6 +1356,8 @@ def _domain_text_hints_enabled() -> bool:
 
 
 def _is_card3d_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool:
+    if not _domain_contracts_enabled():
+        return False
     text_parts = [
         _normalize_text(normalized.get("overall_goal")),
         _normalize_text(normalized.get("focus")),
@@ -1354,6 +1391,8 @@ def _is_card3d_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool
 
 
 def _is_game_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool:
+    if not _domain_contracts_enabled():
+        return False
     if _is_card3d_pm_contract(normalized, tasks):
         return False
     text_parts = [
@@ -1431,6 +1470,8 @@ def _workspace_has_card3d_planning_hints(workspace_full: str) -> bool:
 
 
 def _attach_workspace_game_context_if_needed(normalized: dict[str, Any], tasks: list[Any], workspace_full: str) -> bool:
+    if not _domain_contracts_enabled():
+        return False
     if _is_card3d_pm_contract(normalized, tasks):
         return False
     if _workspace_has_card3d_planning_hints(workspace_full):

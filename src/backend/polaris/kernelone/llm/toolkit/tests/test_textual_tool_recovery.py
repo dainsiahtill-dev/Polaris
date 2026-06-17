@@ -209,6 +209,20 @@ class TestQwen3CoderEqualsStyle:
         # Internal indentation of the code body is preserved.
         assert calls[0]["arguments"]["content"] == "export function makeBricks() {\n  return [1, 2, 3];\n}"
 
+    def test_recovers_write_file_alias_when_only_canonical_allowed(self) -> None:
+        text = (
+            "<function=create_file>"
+            "<parameter=path>src/app.py</parameter>"
+            "<parameter=text>print('ok')\n</parameter>"
+            "</function>"
+        )
+
+        calls = recover_textual_tool_calls(text, allowed_tool_names=["write_file"])
+
+        assert len(calls) == 1
+        assert calls[0]["tool"] == "write_file"
+        assert calls[0]["arguments"] == {"file": "src/app.py", "content": "print('ok')"}
+
     def test_recovers_multiple_calls_in_order(self) -> None:
         calls = recover_textual_tool_calls(QWEN3CODER_MULTI, allowed_tool_names=["read_file", "write_file"])
         assert [c["tool"] for c in calls] == ["read_file", "write_file"]

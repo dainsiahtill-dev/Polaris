@@ -50,12 +50,83 @@ def test_dedup_same_content_same_marker() -> None:
         ("<receipt_ref:job-42>", "job-42"),
         ("[See src/app/main.py]", "src/app/main.py"),
         ("  <<ref:  spaced  >>  ", "spaced"),
+        # Dominant active-window placeholders (projection_engine.py:539/546). The
+        # captured id is the receipt_id the CCR cache is keyed under (tool_/evt_
+        # prefix included), so context_retrieve resolves it directly.
+        ("[Large output stored in receipt tool_evt_1]", "tool_evt_1"),
+        ("[Large content stored in receipt evt_idx_3]", "evt_idx_3"),
+        ("[Large output stored in receipt tool_a.b-c_1]", "tool_a.b-c_1"),
+        # Anchored + restricted char-class => trailing prose breaks the match and
+        # the input is returned UNCHANGED (no over-match / no content corruption).
+        (
+            "[Large output stored in receipt tool_1 and other prose]",
+            "[Large output stored in receipt tool_1 and other prose]",
+        ),
+        ("the large output stored in receipt was big", "the large output stored in receipt was big"),
+        # Anchored + restricted char-class => space inside the captured id is
+        # rejected (the char-class forbids spaces). Stays UNCHANGED.
+        (
+            "[Large output stored in receipt tool_<id> with a space inside]",
+            "[Large output stored in receipt tool_<id> with a space inside]",
+        ),
+        # Case-insensitive (re.IGNORECASE) => uppercase variants must match.
+        ("[LARGE OUTPUT STORED IN RECEIPT tool_1]", "tool_1"),
+        ("[Large Output Stored In Receipt EVT_42]", "EVT_42"),
+        # Mixed case placeholder + mixed case receipt id round-trip.
+        ("[Large CONTENT stored in receipt Tool_Evt_7]", "Tool_Evt_7"),
         ("plainhash", "plainhash"),
         ("", ""),
     ],
 )
 def test_strip_ref_markers_unwraps_all_known_forms(wrapped: str, inner: str) -> None:
     assert strip_ref_markers(wrapped) == inner
+
+
+def test_strip_ref_markers_preserves_full_receipt_id_no_prefix_stripping() -> None:
+    """The captured id is the EXACT ``receipt_id`` the CCR cache is keyed under.
+
+    projection_engine.py:539/546 builds the dominant placeholder as
+    ``[Large output stored in receipt tool_<event_id>]`` / ``[Large content
+    stored in receipt evt_<event_id>]`` where ``<event_id>`` is the
+    sanitized receipt id ``offload_content`` was called with. The cache key
+    is that exact ``tool_<id>`` / ``evt_<id>`` string. The regex must capture
+    it byte-for-byte — no ``tool_`` / ``evt_`` prefix stripping, no case
+    folding, no normalization.
+    """
+    # Case A: tool_-prefixed id (role==tool path).
+    assert strip_ref_markers("[Large output stored in receipt tool_evt_1]") == "tool_evt_1"
+    assert strip_ref_markers("[Large output stored in receipt tool_a.b-c_1]") == "tool_a.b-c_1"
+    # Case B: evt_-prefixed id (non-tool path).
+    assert strip_ref_markers("[Large content stored in receipt evt_idx_3]") == "evt_idx_3"
+    assert strip_ref_markers("[Large content stored in receipt evt_42]") == "evt_42"
+    # Case C: mixed-case ids are preserved verbatim.
+    assert strip_ref_markers("[Large output stored in receipt Tool_Evt_7]") == "Tool_Evt_7"
+
+    # And the cache keys must match the captured id exactly for round-trip.
+    cache = OriginalPayloadCache()
+    for rid in ("tool_evt_1", "tool_a.b-c_1", "evt_idx_3", "evt_42", "Tool_Evt_7"):
+        cache.put_under(rid, f"body-for-{rid}")
+        placeholder = f"[Large output stored in receipt {rid}]"
+        captured = strip_ref_markers(placeholder)
+        assert captured == rid, f"captured {captured!r} must equal key {rid!r}"
+        assert cache.get(captured) == f"body-for-{rid}"
+
+
+def test_inline_receipt_placeholder_round_trips_through_cache() -> None:
+    """The dominant build_turns placeholder must resolve back to the original.
+
+    Mirrors the live loop: offload stores the original under its receipt_id, the
+    model is shown the inline ``[Large output stored in receipt <id>]`` placeholder,
+    and pasting that placeholder into ``context_retrieve`` must recover the bytes.
+    """
+    cache = OriginalPayloadCache()
+    receipt_id = "tool_evt_99"
+    original = "x" * 5000
+    cache.put_under(receipt_id, original)
+
+    placeholder = f"[Large output stored in receipt {receipt_id}]"
+    assert strip_ref_markers(placeholder) == receipt_id
+    assert cache.get(strip_ref_markers(placeholder)) == original
 
 
 def test_get_resolves_when_model_pastes_whole_marker() -> None:

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -307,6 +308,114 @@ _default_model_resolver: Callable[[], str] | None = None
 _default_model_resolver_lock = threading.RLock()
 _runtime_config_manager: RuntimeConfigManager | None = None
 _runtime_config_lock = threading.RLock()
+_role_binding_cooldowns: dict[tuple[str, str, str, str], float] = {}
+_role_binding_health_lock = threading.RLock()
+
+
+def _role_binding_health_key(
+    role_id: str,
+    provider_id: str,
+    model: str,
+    binding_id: str | None = None,
+) -> tuple[str, str, str, str]:
+    return (
+        _normalize_runtime_role_id(role_id),
+        str(provider_id or "").strip(),
+        str(model or "").strip(),
+        str(binding_id or "").strip(),
+    )
+
+
+def _role_binding_cooldown_seconds() -> float:
+    raw = str(os.environ.get("KERNELONE_ROLE_BINDING_COOLDOWN_SECONDS", "") or "").strip()
+    if not raw:
+        return 120.0
+    try:
+        value = float(raw)
+    except ValueError:
+        return 120.0
+    return max(1.0, min(3600.0, value))
+
+
+def clear_role_binding_health() -> None:
+    """Clear transient role-binding health state."""
+    with _role_binding_health_lock:
+        _role_binding_cooldowns.clear()
+
+
+def mark_role_binding_unhealthy(
+    role_id: str,
+    *,
+    provider_id: str,
+    model: str,
+    binding_id: str | None = None,
+    cooldown_seconds: float | None = None,
+) -> None:
+    """Temporarily cool a retry-failing role binding.
+
+    Fail-closed authorization remains unchanged; this only influences routing
+    among already configured bindings for the same role.
+    """
+    provider = str(provider_id or "").strip()
+    model_name = str(model or "").strip()
+    if not provider or not model_name:
+        return
+    duration = _role_binding_cooldown_seconds() if cooldown_seconds is None else float(cooldown_seconds)
+    until = time.monotonic() + max(1.0, min(3600.0, duration))
+    with _role_binding_health_lock:
+        _role_binding_cooldowns[_role_binding_health_key(role_id, provider, model_name, binding_id)] = until
+        if binding_id:
+            _role_binding_cooldowns[_role_binding_health_key(role_id, provider, model_name, None)] = until
+    logger.warning(
+        "[RuntimeConfig] cooled role binding: role=%s provider=%s model=%s binding_id=%s ttl=%.0fs",
+        _normalize_runtime_role_id(role_id),
+        provider,
+        model_name,
+        str(binding_id or ""),
+        duration,
+    )
+
+
+def is_role_binding_healthy(
+    role_id: str,
+    *,
+    provider_id: str,
+    model: str,
+    binding_id: str | None = None,
+) -> bool:
+    provider = str(provider_id or "").strip()
+    model_name = str(model or "").strip()
+    if not provider or not model_name:
+        return True
+    now = time.monotonic()
+    keys = (
+        _role_binding_health_key(role_id, provider, model_name, binding_id),
+        _role_binding_health_key(role_id, provider, model_name, None),
+    )
+    with _role_binding_health_lock:
+        for key in keys:
+            until = _role_binding_cooldowns.get(key)
+            if until is None:
+                continue
+            if until <= now:
+                _role_binding_cooldowns.pop(key, None)
+                continue
+            return False
+    return True
+
+
+def _filter_healthy_slots(slots: tuple[RoleBindingSlot, ...]) -> tuple[RoleBindingSlot, ...]:
+    healthy = tuple(
+        slot
+        for slot in slots
+        if is_role_binding_healthy(
+            slot.role_id,
+            provider_id=slot.provider_id,
+            model=slot.model,
+            binding_id=slot.binding_id,
+        )
+    )
+    return healthy or slots
 
 
 def set_default_model_resolver(resolver: Callable[[], str] | None) -> None:
@@ -688,12 +797,38 @@ def reset_runtime_config_manager() -> None:
     global _runtime_config_manager
     with _runtime_config_lock:
         _runtime_config_manager = None
+    clear_role_binding_health()
 
 
 def get_role_model(role_id: str) -> tuple[str, str]:
     """Get role provider/model tuple using lazy runtime config manager."""
-
-    return get_runtime_config_manager().get_role_model(role_id)
+    manager = get_runtime_config_manager()
+    provider_id, model = manager.get_role_model(role_id)
+    if is_role_binding_healthy(role_id, provider_id=provider_id, model=model):
+        return provider_id, model
+    try:
+        slots = manager.get_role_binding_slots(role_id)
+    except (RuntimeError, ValueError, TypeError):
+        return provider_id, model
+    for slot in slots:
+        if slot.provider_id == provider_id and slot.model == model:
+            continue
+        if is_role_binding_healthy(
+            role_id,
+            provider_id=slot.provider_id,
+            model=slot.model,
+            binding_id=slot.binding_id,
+        ):
+            logger.warning(
+                "[RuntimeConfig] skipping cooled role binding: role=%s from=%s/%s to=%s/%s",
+                _normalize_runtime_role_id(role_id),
+                provider_id,
+                model,
+                slot.provider_id,
+                slot.model,
+            )
+            return slot.provider_id, slot.model
+    return provider_id, model
 
 
 def load_role_config(role_id: str) -> RoleModelConfig | None:
@@ -721,7 +856,7 @@ def get_provider_max_concurrency(provider_id: str) -> int:
 
 def get_role_binding_slots(role_id: str) -> tuple[RoleBindingSlot, ...]:
     """Concrete role binding slots after role/provider/binding caps are applied."""
-    return get_runtime_config_manager().get_role_binding_slots(role_id)
+    return _filter_healthy_slots(get_runtime_config_manager().get_role_binding_slots(role_id))
 
 
 def resolve_role_worker_plan(role_id: str) -> list[RoleBindingSlot]:
@@ -809,6 +944,7 @@ __all__ = [
     "RoleBindingSlot",
     "RoleModelConfig",
     "RuntimeConfigManager",
+    "clear_role_binding_health",
     "get_provider_base_url",
     "get_provider_max_concurrency",
     "get_role_binding_override",
@@ -818,7 +954,9 @@ __all__ = [
     "get_role_provider_override",
     "get_role_provider_pool",
     "get_runtime_config_manager",
+    "is_role_binding_healthy",
     "load_role_config",
+    "mark_role_binding_unhealthy",
     "reset_runtime_config_manager",
     "set_default_model_resolver",
     "set_role_binding_override",

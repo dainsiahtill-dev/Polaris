@@ -183,8 +183,9 @@ def test_drift_requeue_skips_terminal_and_dead_letter(tmp_path) -> None:
     _publish(service, workspace, "task-resolved", plan_revision_id="rev-1")
     _publish(service, workspace, "task-dead", plan_revision_id="rev-1")
 
-    # Resolve task-resolved.
-    claim = service.claim_work_item(
+    # Resolve task-resolved through the legal FSM path:
+    # pending_design -> pending_exec -> pending_qa -> resolved.
+    design_claim = service.claim_work_item(
         ClaimTaskWorkItemCommandV1(
             workspace=workspace,
             stage="pending_design",
@@ -198,7 +199,45 @@ def test_drift_requeue_skips_terminal_and_dead_letter(tmp_path) -> None:
         AcknowledgeTaskStageCommandV1(
             workspace=workspace,
             task_id="task-resolved",
-            lease_token=claim.lease_token,
+            lease_token=design_claim.lease_token,
+            next_stage="pending_exec",
+            summary="design done",
+        )
+    )
+    exec_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=workspace,
+            stage="pending_exec",
+            task_id="task-resolved",
+            worker_id="director-1",
+            worker_role="director",
+            visibility_timeout_seconds=60,
+        )
+    )
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=workspace,
+            task_id="task-resolved",
+            lease_token=exec_claim.lease_token,
+            next_stage="pending_qa",
+            summary="execution done",
+        )
+    )
+    qa_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=workspace,
+            stage="pending_qa",
+            task_id="task-resolved",
+            worker_id="qa-1",
+            worker_role="qa",
+            visibility_timeout_seconds=60,
+        )
+    )
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=workspace,
+            task_id="task-resolved",
+            lease_token=qa_claim.lease_token,
             terminal_status="resolved",
             summary="done",
         )

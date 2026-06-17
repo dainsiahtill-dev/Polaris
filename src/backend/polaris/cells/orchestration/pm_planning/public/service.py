@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..internal.pm_agent import PMAgent
+from ..internal.project_report import ProjectReport, build_pm_project_report
 from ..internal.shared_quality import (
     detect_integration_verify_command,
     run_integration_verify_runner,
@@ -29,7 +30,9 @@ __all__ = [
     "PmTaskContractGeneratedEventV1",
     "PmTaskContractResultV1",
     "ProcessHandle",
+    "ProjectReport",
     "autofix_pm_contract_for_quality",
+    "build_pm_project_report",
     "detect_integration_verify_command",
     "evaluate_pm_task_quality",
     "get_pm_service",

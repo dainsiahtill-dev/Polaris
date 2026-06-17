@@ -500,6 +500,12 @@ class QualityChecker:
         calls = CanonicalToolCallParser.parse_text_calls(str(content or ""))
         normalized: list[dict[str, Any]] = []
         for item in calls:
+            # §6.6: name_raw must be the pre-normalization token (case-preserved
+            # model emission, e.g. 'create_file' or 'WRITE_FILE'). tool_raw is
+            # set by CanonicalToolCallParser.parse_text_calls; fall back to
+            # item.tool if the field is empty (defensive for older callers).
+            tool_raw_value = getattr(item, "tool_raw", "") or ""
+            raw_name = tool_raw_value if tool_raw_value else str(getattr(item, "tool", "") or "").strip()
             name = str(getattr(item, "tool", "") or "").strip().lower()
             arguments = getattr(item, "args", {})
             if not name or not isinstance(arguments, dict):
@@ -507,6 +513,7 @@ class QualityChecker:
             normalized.append(
                 {
                     "name": name,
+                    "name_raw": raw_name,
                     "arguments": arguments,
                 }
             )

@@ -186,6 +186,14 @@ class RoleToolPolicy:
     # 是否允许文件删除
     allow_file_delete: bool = False
 
+    # Whether this role explicitly opts in to the CCR context_retrieve
+    # offering gate. The KERNELONE_CCR_RETRIEVE env flag only injects
+    # context_retrieve into a role's tool schema when this flag is True.
+    # Default False (fail-closed): a role that does not opt in will not
+    # see context_retrieve even if the env flag is on. This prevents the
+    # env flag from silently overriding per-role tool policy.
+    ccr_retrieve_opt_in: bool = False
+
     # 允许的最大工具调用次数（单次请求）
     max_tool_calls_per_turn: int = 10
 

@@ -70,9 +70,45 @@ _FLOAT_RE = re.compile(r"-?\d+\.\d+")
 def _normalize_names(names: Iterable[str] | None) -> set[str] | None:
     if names is None:
         return None
-    normalized = {str(name or "").strip().lower() for name in names}
-    normalized.discard("")
+    normalized: set[str] = set()
+    for name in names:
+        raw = str(name or "").strip()
+        if not raw:
+            continue
+        normalized.add(raw.lower())
+        canonical = _canonical_tool_name(raw)
+        if canonical:
+            normalized.add(canonical.lower())
     return normalized
+
+
+def _canonical_tool_name(tool_name: str) -> str:
+    from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+
+    return str(normalize_tool_name(str(tool_name or "")) or "").strip()
+
+
+def _normalize_tool_arguments(
+    *,
+    raw_tool_name: str,
+    canonical_tool_name: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
+
+    if not canonical_tool_name:
+        return arguments
+    if str(raw_tool_name or "").strip().lower() == canonical_tool_name.lower():
+        return arguments
+    return normalize_tool_arguments(canonical_tool_name, arguments)
+
+
+def _tool_name_allowed(tool_name: str, allowed: set[str] | None) -> bool:
+    if allowed is None:
+        return True
+    raw = str(tool_name or "").strip().lower()
+    canonical = _canonical_tool_name(tool_name).lower()
+    return bool(raw and raw in allowed) or bool(canonical and canonical in allowed)
 
 
 def _find_brace_end(text: str, open_index: int) -> int:
@@ -513,9 +549,20 @@ def recover_textual_tool_calls(
     for _start, _end, tool_name, args in _iter_textual_calls(token):
         if not tool_name:
             continue
-        if allowed is not None and tool_name.lower() not in allowed:
+        if not _tool_name_allowed(tool_name, allowed):
             continue
-        recovered.append({"tool": tool_name, "arguments": args, "call_id": ""})
+        canonical_tool_name = _canonical_tool_name(tool_name)
+        recovered.append(
+            {
+                "tool": canonical_tool_name,
+                "arguments": _normalize_tool_arguments(
+                    raw_tool_name=tool_name,
+                    canonical_tool_name=canonical_tool_name,
+                    arguments=args,
+                ),
+                "call_id": "",
+            }
+        )
     return recovered
 
 
@@ -536,7 +583,7 @@ def strip_textual_tool_call_markers(
     for start, end, tool_name, _args in _iter_textual_calls(token):
         if not tool_name:
             continue
-        if allowed is not None and tool_name.lower() not in allowed:
+        if not _tool_name_allowed(tool_name, allowed):
             continue
         spans.append((start, end))
 

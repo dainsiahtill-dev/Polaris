@@ -59,6 +59,12 @@ class CanonicalToolCall:
     tool: str
     args: dict[str, Any]
     raw: str = ""
+    # §6.6: pre-normalization tool token, preserved verbatim (case + hyphens)
+    # so audit pipelines can observe weak-model aliases like 'create_file' or
+    # 'WRITE_FILE' even after normalize_tool_name folds them into the canonical
+    # form. The drift detector and QualityChecker audit rely on this field;
+    # do NOT rewrite it through canonicalization layers.
+    tool_raw: str = ""
 
 
 class CanonicalToolCallParser:
@@ -105,7 +111,10 @@ class CanonicalToolCallParser:
             decoded_calls = cls._decode_payload(payload)
             accepted_here = False
             for decoded in decoded_calls:
-                tool_name = normalize_tool_name(str(decoded.get("tool") or ""))
+                # §6.6: preserve the raw model-emitted token (case + hyphens)
+                # BEFORE normalize_tool_name folds it into canonical form.
+                raw_token = str(decoded.get("tool") or "")
+                tool_name = normalize_tool_name(raw_token)
                 if not tool_name or not _TOOL_NAME_PATTERN.fullmatch(tool_name):
                     continue
                 if allowed and tool_name not in allowed:
@@ -123,6 +132,7 @@ class CanonicalToolCallParser:
                         tool=tool_name,
                         args=args,
                         raw=str(match.group(0) or ""),
+                        tool_raw=raw_token.strip(),
                     )
                 )
                 accepted_here = True
@@ -133,7 +143,10 @@ class CanonicalToolCallParser:
         for match in _XML_TOOL_CALL_PATTERN.finditer(source):
             if cls._is_match_protected(source, match.start(), protected_spans):
                 continue
-            tool_name = normalize_tool_name(str(match.group("tool_name") or "").strip())
+            # §6.6: capture the raw XML tag before normalize_tool_name folds it
+            # into canonical form. The XML tag is the model-emitted token.
+            raw_token = str(match.group("tool_name") or "").strip()
+            tool_name = normalize_tool_name(raw_token)
             if not tool_name or not _TOOL_NAME_PATTERN.fullmatch(tool_name):
                 continue
             if allowed and tool_name not in allowed:
@@ -160,6 +173,7 @@ class CanonicalToolCallParser:
                         tool=tool_name,
                         args=expanded_args,
                         raw=expanded_raw,
+                        tool_raw=raw_token,
                     )
                 )
             accepted_ranges.append((match.start(), match.end()))

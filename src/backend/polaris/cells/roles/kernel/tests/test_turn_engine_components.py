@@ -566,7 +566,7 @@ class TestToolCallSignature:
         """基本签名格式."""
         sig = tool_call_signature("read_file", {"path": "main.py"})
         assert sig.startswith("read_file::")
-        assert "path" in sig
+        assert "file" in sig
 
     def test_none_args(self) -> None:
         """None args 应视为空 dict."""

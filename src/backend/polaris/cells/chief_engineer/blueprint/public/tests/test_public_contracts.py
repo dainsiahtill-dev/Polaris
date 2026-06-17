@@ -7,6 +7,12 @@ from polaris.cells.chief_engineer.blueprint.public.contracts import (
     ChiefEngineerBlueprintErrorV1,
     GenerateTaskBlueprintCommandV1,
     GetBlueprintStatusQueryV1,
+    HandoffDecisionV1,
+    RegisterRiskCommandV1,
+    RegisterTechDebtCommandV1,
+    RiskRecordV1,
+    RiskSeverity,
+    RiskStatus,
     TaskBlueprintGeneratedEventV1,
     TaskBlueprintResultV1,
 )
@@ -15,6 +21,101 @@ from polaris.cells.chief_engineer.blueprint.public.service import (
     generate_task_blueprint,
     get_blueprint_status,
 )
+
+
+class TestGovernanceEnumFailClosed:
+    """Tier-1 governance contracts must fail-closed on invalid enum input."""
+
+    def test_invalid_severity_string_raises(self) -> None:
+        with pytest.raises(ValueError):
+            RiskRecordV1(
+                risk_id="r1",
+                task_id="t1",
+                title="t",
+                severity="apocalyptic",  # type: ignore[arg-type]
+                owner="ce",
+                mitigation="m",
+                status=RiskStatus.OPEN,
+                detected_at="2026-06-17T00:00:00Z",
+            )
+
+    def test_empty_severity_string_raises(self) -> None:
+        # Fail-closed: an empty severity must NOT silently default to medium.
+        with pytest.raises(ValueError):
+            RegisterRiskCommandV1(
+                task_id="t1",
+                title="t",
+                severity="",  # type: ignore[arg-type]
+                owner="ce",
+                mitigation="m",
+                workspace="/repo",
+            )
+
+    def test_invalid_tech_debt_severity_raises(self) -> None:
+        with pytest.raises(ValueError):
+            RegisterTechDebtCommandV1(
+                title="t",
+                description="d",
+                severity="nuclear",  # type: ignore[arg-type]
+                surface="s",
+                owner="ce",
+                workspace="/repo",
+            )
+
+    def test_valid_severity_enum_passes(self) -> None:
+        record = RiskRecordV1(
+            risk_id="r1",
+            task_id="t1",
+            title="t",
+            severity=RiskSeverity.BLOCKER,
+            owner="ce",
+            mitigation="m",
+            status=RiskStatus.OPEN,
+            detected_at="2026-06-17T00:00:00Z",
+        )
+        assert record.severity is RiskSeverity.BLOCKER
+
+
+class TestHandoffDecisionContract:
+    """Director-handoff decision contract invariants."""
+
+    def test_negative_count_raises(self) -> None:
+        with pytest.raises(ValueError):
+            HandoffDecisionV1(
+                allowed=False,
+                blueprint_id="ce_x",
+                blocker_count=-1,
+                warning_count=0,
+                open_blocker_risk_count=0,
+            )
+
+    def test_empty_blueprint_id_raises(self) -> None:
+        with pytest.raises(ValueError):
+            HandoffDecisionV1(
+                allowed=True,
+                blueprint_id="",
+                blocker_count=0,
+                warning_count=0,
+                open_blocker_risk_count=0,
+            )
+
+    def test_to_dict_round_trips(self) -> None:
+        decision = HandoffDecisionV1(
+            allowed=False,
+            blueprint_id="ce_x",
+            blocker_count=2,
+            warning_count=1,
+            open_blocker_risk_count=1,
+            task_id="t1",
+            blockers=("a", "b"),
+            reason="2 quality-gate blocker(s)",
+            evaluated_at="2026-06-17T00:00:00Z",
+        )
+        data = decision.to_dict()
+        assert data["allowed"] is False
+        assert data["blocker_count"] == 2
+        assert data["blockers"] == ["a", "b"]
+        assert data["open_blocker_risk_count"] == 1
 
 
 class TestGenerateTaskBlueprintCommandV1HappyPath:

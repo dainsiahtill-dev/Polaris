@@ -16,11 +16,44 @@ from polaris.kernelone.llm.toolkit.parsers.utils import (
     _normalize_allowed_tool_names,
     parse_value,
 )
+from polaris.kernelone.llm.toolkit.tool_normalization import (
+    normalize_tool_arguments,
+    normalize_tool_name,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
+
+
+def _canonical_tool_name(tool_name: str) -> str:
+    return str(normalize_tool_name(str(tool_name or "")) or "").strip().lower()
+
+
+def _tool_name_allowed(tool_name: str, allowed: set[str]) -> bool:
+    if not allowed:
+        return True
+    raw = str(tool_name or "").strip().lower()
+    canonical = _canonical_tool_name(tool_name)
+    return bool(raw and raw in allowed) or bool(canonical and canonical in allowed)
+
+
+def _normalize_parsed_tool_call(call: ParsedToolCall) -> ParsedToolCall:
+    canonical_tool_name = _canonical_tool_name(call.name)
+    raw_tool_name = str(call.name or "").strip().lower()
+    arguments = call.arguments if isinstance(call.arguments, dict) else {}
+    if canonical_tool_name != raw_tool_name:
+        arguments = normalize_tool_arguments(canonical_tool_name, arguments)
+    return ParsedToolCall(
+        id=call.id,
+        name=canonical_tool_name,
+        arguments=arguments,
+        raw=call.raw,
+        source=call.source,
+        parse_error=call.parse_error,
+    )
+
 
 # Tool-arg names that are ALWAYS free text and must never be JSON-coerced by
 # parse_value(): a file body / patch / command that happens to be valid JSON
@@ -105,8 +138,11 @@ class XMLToolParser:
         r'<parameter\s+name=["\'](\w+)["\'][^>]*>(.*?)</parameter>', re.DOTALL | re.IGNORECASE
     )
 
-    # Param with name attribute
-    PARAM_WITH_NAME_PATTERN = re.compile(r'<param\s+name=["\'](\w+)["\'][^>]*>(.*?)</param>', re.DOTALL | re.IGNORECASE)
+    # Param with name attribute. Models vary between <param> and <parameter>.
+    PARAM_WITH_NAME_PATTERN = re.compile(
+        r'<(?:param|parameter)\s+name=["\'](\w+)["\'][^>]*>(.*?)</(?:param|parameter)>',
+        re.DOTALL | re.IGNORECASE,
+    )
 
     # Qwen3-Coder equals style: <function=NAME><parameter=KEY>VALUE</parameter></function>
     QWEN3CODER_FUNCTION_PATTERN = re.compile(r"<function\s*=\s*(\w+)\s*>(.*?)</function\s*>", re.DOTALL | re.IGNORECASE)
@@ -157,7 +193,7 @@ class XMLToolParser:
         # 3. Parse <tool name="...">
         for match in cls.TOOL_WITH_ATTR_PATTERN.finditer(text):
             tool_name = match.group(1).lower()
-            if allowed and tool_name not in allowed:
+            if not _tool_name_allowed(tool_name, allowed):
                 continue
             content = match.group(2)
             arguments = cls._parse_xml_params(content)
@@ -174,7 +210,7 @@ class XMLToolParser:
         # 4. Parse <function name="...">
         for match in cls.FUNCTION_PATTERN.finditer(text):
             tool_name = match.group(1).lower()
-            if allowed and tool_name not in allowed:
+            if not _tool_name_allowed(tool_name, allowed):
                 continue
             content = match.group(2)
             arguments = cls._parse_xml_params(content)
@@ -216,7 +252,7 @@ class XMLToolParser:
         # 6. Parse ChatGLM format: <tool_call name="...">...</tool_call>
         for match in cls.CHATGLM_TOOL_PATTERN.finditer(text):
             tool_name = match.group(1).lower()
-            if allowed and tool_name not in allowed:
+            if not _tool_name_allowed(tool_name, allowed):
                 continue
             content = match.group(2)
             arguments = cls._parse_xml_params(content)
@@ -233,7 +269,7 @@ class XMLToolParser:
         # 7. Parse Baichuan format: <invoke name="..."><parameter name="...">...</parameter></invoke>
         for match in cls.BAICHUAN_INVOKE_PATTERN.finditer(text):
             tool_name = match.group(1).lower()
-            if allowed and tool_name not in allowed:
+            if not _tool_name_allowed(tool_name, allowed):
                 continue
             content = match.group(2)
             arguments = {}
@@ -255,7 +291,7 @@ class XMLToolParser:
         #    <function=NAME><parameter=KEY>VALUE</parameter></function>
         for match in cls.QWEN3CODER_FUNCTION_PATTERN.finditer(text):
             tool_name = match.group(1).lower()
-            if allowed and tool_name not in allowed:
+            if not _tool_name_allowed(tool_name, allowed):
                 continue
             content = match.group(2)
             arguments = {}
@@ -291,7 +327,7 @@ class XMLToolParser:
                 )
             )
 
-        return tools
+        return [_normalize_parsed_tool_call(tool) for tool in tools]
 
     @classmethod
     def _parse_minimax_content(
@@ -308,7 +344,7 @@ class XMLToolParser:
                 tool_name = str(data.get("tool") or data.get("name") or data.get("tool_name") or "").strip().lower()
                 if not tool_name:
                     return None
-                if allowed and tool_name not in allowed:
+                if not _tool_name_allowed(tool_name, allowed):
                     return None
 
                 args: dict[str, Any] = {}
@@ -333,7 +369,7 @@ class XMLToolParser:
         func_match = cls.FUNCTION_PATTERN.search(content)
         if func_match:
             tool_name = func_match.group(1).lower()
-            if allowed and tool_name not in allowed:
+            if not _tool_name_allowed(tool_name, allowed):
                 return None
             func_content = func_match.group(2)
             arguments = cls._parse_xml_params(func_content)
@@ -367,7 +403,7 @@ class XMLToolParser:
         tool_name = tool_name_match.group(1).strip().lower()
         if not tool_name:
             return None
-        if allowed and tool_name not in allowed:
+        if not _tool_name_allowed(tool_name, allowed):
             return None
 
         # Parse arguments

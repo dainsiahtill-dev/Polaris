@@ -30,6 +30,14 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     _infer_effect_type as global_infer_effect_type,
     _infer_execution_mode as global_infer_execution_mode,
 )
+from polaris.kernelone.llm.toolkit.parsers.textual_tool_recovery import (
+    has_textual_tool_calls,
+    recover_textual_tool_calls,
+)
+from polaris.kernelone.llm.toolkit.tool_normalization import (
+    normalize_tool_arguments,
+    normalize_tool_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +231,54 @@ class TurnDecisionDecoder:
                 )
                 continue
 
+        if (
+            self.config.enable_textual_fallback
+            and not response.native_tool_calls
+            and not tools
+            and has_textual_tool_calls(response.content)
+        ):
+            for recovered in recover_textual_tool_calls(response.content):
+                try:
+                    tool = self._parse_recovered_textual_tool(recovered)
+                    call_id = str(tool["call_id"]).strip()
+                    if call_id and call_id in seen_call_ids:
+                        continue
+                    if call_id:
+                        seen_call_ids.add(call_id)
+                    tools.append(tool)
+                except (RuntimeError, ValueError, TurnDecisionDecodeError) as exc:
+                    tool_hint = str(recovered.get("tool") or "").strip()
+                    failures.append(
+                        {
+                            "tool": tool_hint,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+                    logger.warning(
+                        "textual_tool_call_decode_failed: tool=%s error=%s",
+                        tool_hint or "<unknown>",
+                        exc,
+                    )
+
         return tools, failures
+
+    def _parse_recovered_textual_tool(self, recovered: dict[str, Any]) -> ToolInvocation:
+        tool_name = str(recovered.get("tool") or "").strip()
+        if not tool_name:
+            raise TurnDecisionDecodeError("textual tool payload missing tool name")
+        arguments = recovered.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            raise TurnDecisionDecodeError("textual tool payload arguments must be object")
+
+        canonical_tool_name = normalize_tool_name(tool_name)
+        normalized_arguments = normalize_tool_arguments(canonical_tool_name, arguments)
+        return ToolInvocation(
+            call_id=ToolCallId(str(recovered.get("call_id") or self._generate_id())),
+            tool_name=canonical_tool_name,
+            arguments=normalized_arguments,
+            effect_type=self._infer_effect_type(canonical_tool_name),
+            execution_mode=self._infer_execution_mode(canonical_tool_name),
+        )
 
     @staticmethod
     def _native_tool_name_hint(native: dict[str, Any]) -> str:
@@ -236,6 +291,9 @@ class TurnDecisionDecoder:
         name = str(native.get("name", "") or "").strip()
         if name:
             return name
+        flat_name = TurnDecisionDecoder._native_tool_name_from_payload(native)
+        if flat_name:
+            return flat_name
         function_call = native.get("functionCall") or native.get("function_call")
         if isinstance(function_call, dict):
             return str(function_call.get("name", "") or "").strip()
@@ -252,30 +310,60 @@ class TurnDecisionDecoder:
         function = native.get("function", {})
         if isinstance(function, dict) and function:
             tool_name = str(function.get("name", "") or "").strip()
-            arguments = function.get("arguments", {})
-        elif str(native.get("type") or "").strip().lower() == "tool_use" or native.get("name"):
-            tool_name = str(native.get("name", "") or "").strip()
-            arguments = native.get("input", native.get("arguments", native.get("args", {})))
+            arguments = self._native_tool_arguments_payload(function)
+        elif str(native.get("type") or "").strip().lower() == "tool_use" or self._native_tool_name_from_payload(native):
+            tool_name = self._native_tool_name_from_payload(native)
+            arguments = self._native_tool_arguments_payload(native)
         else:
             function_call = native.get("functionCall") or native.get("function_call")
             if not isinstance(function_call, dict):
                 raise TurnDecisionDecodeError("native tool payload missing function/tool_use block")
             call_id = call_id or function_call.get("id")
             tool_name = str(function_call.get("name", "") or "").strip()
-            arguments = function_call.get("args", function_call.get("arguments", {}))
+            arguments = self._native_tool_arguments_payload(function_call)
 
         if not tool_name:
             raise TurnDecisionDecodeError("native tool payload missing tool name")
 
+        canonical_tool_name = normalize_tool_name(tool_name)
         parsed_arguments = self._parse_native_tool_arguments(arguments)
+        normalized_arguments = normalize_tool_arguments(canonical_tool_name, parsed_arguments)
 
         return ToolInvocation(
             call_id=ToolCallId(str(call_id or self._generate_id())),
-            tool_name=tool_name,
-            arguments=parsed_arguments,
-            effect_type=self._infer_effect_type(tool_name),
-            execution_mode=self._infer_execution_mode(tool_name),
+            tool_name=canonical_tool_name,
+            arguments=normalized_arguments,
+            effect_type=self._infer_effect_type(canonical_tool_name),
+            execution_mode=self._infer_execution_mode(canonical_tool_name),
         )
+
+    @staticmethod
+    def _native_tool_name_from_payload(payload: dict[str, Any]) -> str:
+        for key in ("name", "tool_name", "toolName", "function_name", "functionName"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    @staticmethod
+    def _native_tool_arguments_payload(payload: dict[str, Any]) -> Any:
+        for key in (
+            "arguments",
+            "args",
+            "parameters",
+            "params",
+            "input",
+            "kwargs",
+            "tool_input",
+            "toolInput",
+            "tool_arguments",
+            "toolArguments",
+            "function_arguments",
+            "functionArguments",
+        ):
+            if key in payload:
+                return payload[key]
+        return {}
 
     @staticmethod
     def _parse_native_tool_arguments(arguments: Any) -> dict[str, Any]:

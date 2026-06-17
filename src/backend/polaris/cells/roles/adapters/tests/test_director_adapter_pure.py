@@ -2864,12 +2864,12 @@ export function summary() {
                 "tool_results": [],
             }
 
-        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
-            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+            raise AssertionError("direct runtime provider bypass must not be called")
 
         adapter._invoke_role_dialogue_with_timeout = _empty_dialogue  # type: ignore[method-assign]
-        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
             task_id=str(task.id),
@@ -3065,12 +3065,12 @@ export function summary() {
             del args, kwargs
             return {"content": "", "success": False, "error": "role_model_not_configured"}
 
-        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
-            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+            raise AssertionError("direct runtime provider bypass must not be called")
 
         adapter._invoke_role_dialogue_with_timeout = _empty_dialogue  # type: ignore[method-assign]
-        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
             task_id=str(task.id),
@@ -3091,7 +3091,7 @@ export function summary() {
         assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
         assert adapter_result.get("new_files") == []
         assert adapter_result.get("primary_llm", {}).get("error") == "role_model_not_configured"
-        assert adapter_result.get("direct_fallback", {}).get("error") == "runtime_provider_unavailable"
+        assert adapter_result.get("direct_fallback", {}).get("skipped_reason") == "direct_runtime_provider_removed"
 
     @pytest.mark.asyncio
     async def test_execute_accepts_existing_scope_after_read_only_mutation_guard(self, tmp_path: Any) -> None:
@@ -3141,12 +3141,12 @@ export function summary() {
                 ),
             }
 
-        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
             del args, kwargs
-            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+            raise AssertionError("direct runtime provider bypass must not be called")
 
         adapter._invoke_role_dialogue_with_timeout = _read_only_contract_violation  # type: ignore[method-assign]
-        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
 
         result = await adapter.execute(
             task_id=str(task.id),
@@ -3165,7 +3165,7 @@ export function summary() {
         adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
         assert adapter_result.get("existing_contract_evidence", {}).get("ok") is True
         assert adapter_result.get("primary_llm", {}).get("error", "").startswith("TransactionKernel execution failed")
-        assert adapter_result.get("direct_fallback", {}).get("error") == "runtime_provider_unavailable"
+        assert adapter_result.get("direct_fallback", {}).get("skipped_reason") == "direct_runtime_provider_removed"
 
     @pytest.mark.asyncio
     async def test_execute_accepts_existing_scope_after_read_write_batch_violation(self, tmp_path: Any) -> None:
@@ -4102,6 +4102,547 @@ class TestExistingWorkspaceTaskEvidence:
         )
 
 
+class TestDeterministicPythonRuntimeSmokeLongRunningBoundary:
+    """Runtime smoke must not penalize a long-running __main__ block.
+
+    Live factory-bench L4-23 (2026-06-17, after the static-smoke
+    fix): the model wrote ``gateway/server.py`` whose ``__main__``
+    block launches an HTTP server with ``serve_forever()`` — the
+    canonical pattern for a Python web gateway. The runtime smoke
+    killed the process after 5s and reported it as a timeout
+    failure, which requeued the parent task and broke
+    integration_qa. The script itself is correct:
+    ``python3 gateway/server.py`` really starts the server on
+    127.0.0.1:8080 and waits for connections. The platform must
+    not penalize a long-running, contract-compliant __main__
+    block as a quality failure.
+
+    Strategy: when the runtime smoke hits its timeout, check
+    whether the process is still alive. If yes, the model wrote
+    a process that intentionally runs forever (server/daemon) —
+    kill it and do NOT add it to ``artifact_quality_errors``. If
+    the process already exited (perhaps during the cleanup),
+    the timeout itself is the failure — report it as before.
+    The smoke's job is to surface CALL-TIME errors, not loop
+    semantics; a long-running server is contract-compliant for
+    web-gateway / daemon / game-loop L4-L8 briefs.
+    """
+
+    def test_long_running_main_block_is_not_a_failure(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        # A server-style main block: bind a TCP socket, accept
+        # forever. Behaves like ``serve_forever()`` in stdlib
+        # http.server — exactly the L4-23 pattern.
+        (tmp_path / "server.py").write_text(
+            "import socket\n"
+            "if __name__ == '__main__':\n"
+            "    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+            "    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+            "    s.bind(('127.0.0.1', 0))\n"
+            "    s.listen(5)\n"
+            "    while True:\n"
+            "        s.accept()\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-server-bb-1",
+            all_affected_files=["server.py"],
+            timeout_seconds=1.0,
+        )
+
+        # Long-running process: smoke should NOT flag it as a failure.
+        assert errors == [], errors
+
+    def test_clean_main_block_still_passes(self, tmp_path: Any) -> None:
+        """A clean main that exits within timeout is still a pass."""
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "ok.py").write_text(
+            "if __name__ == '__main__':\n    print('done')\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-ok-bb-1",
+            all_affected_files=["ok.py"],
+            timeout_seconds=1.0,
+        )
+
+        assert errors == [], errors
+
+    def test_subprocess_timeout_expired_process_killed(self, tmp_path: Any) -> None:
+        """Sanity: when a long-running process is killed, the
+        subprocess handle must be cleaned up so no zombie lingers.
+        This guards against the regression where the smoke leaves
+        a leaked subprocess after returning no errors."""
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "server.py").write_text(
+            "import time\nif __name__ == '__main__':\n    while True:\n        time.sleep(0.5)\n",
+            encoding="utf-8",
+        )
+
+        # Find one leftover python3 process owned by this test pid
+        # BEFORE running. (None expected, but the assertion is that
+        # the count does not GROW after running.)
+        import os
+        import subprocess
+
+        my_pid = os.getpid()
+        before = (
+            subprocess.run(
+                ["pgrep", "-P", str(my_pid), "python3"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            .stdout.strip()
+            .split()
+        )
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-zombie-bb-1",
+            all_affected_files=["server.py"],
+            timeout_seconds=0.5,
+        )
+        after = (
+            subprocess.run(
+                ["pgrep", "-P", str(my_pid), "python3"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            .stdout.strip()
+            .split()
+        )
+        assert errors == [], errors
+        # No new zombie child of this test process
+        assert len(after) <= len(before), (before, after)
+
+
+class TestDeterministicPythonStaticSmoke:
+    """Director py_compiles every .py file the model touches, not just declared targets.
+
+    Live factory-bench L2-07 (2026-06-17, after runtime-smoke fix): the
+    model wrote 13 .py files, 10 of which were in the task's declared
+    target list and py_compile-checked by the existing quality gate.
+    The remaining 3 (including ``src/ledger/ui/stats_view.py``)
+    contained a ``SyntaxError: keyword argument repeated: columns`` —
+    the model wrote ``columns=(...)`` twice in the same ``Treeview``
+    constructor. The platform marked the run as PASS, and the
+    downstream task-market integration_qa was not even invoked for
+    that file. A rigid ruler must py_compile every .py artifact the
+    model wrote, regardless of whether the contract asked for it.
+    """
+
+    def test_python_static_smoke_catches_syntax_error_in_undeclared_file(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_static_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        # Duplicate keyword argument — a real, deterministic Python
+        # syntax error. ``def f(x, x):`` raises SyntaxError at compile
+        # time. The model emitted the same kind of bug in
+        # L2-07 ``stats_view.py`` (duplicate ``columns=``).
+        (tmp_path / "stats_view.py").write_text(
+            "def f(x, x):\n    return x\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_static_smoke(
+            adapter,
+            all_affected_files=["stats_view.py"],
+        )
+
+        assert len(errors) == 1, errors
+        assert "stats_view.py" in errors[0]
+        # Error message should mention the syntax issue
+        assert "syntax" in errors[0].lower() or "invalid" in errors[0].lower()
+
+    def test_python_static_smoke_passes_clean_files(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_static_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "clean_a.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "clean_b.py").write_text(
+            "def hello() -> str:\n    return 'hi'\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_static_smoke(
+            adapter,
+            all_affected_files=["clean_a.py", "clean_b.py"],
+        )
+
+        assert errors == [], errors
+
+    def test_python_static_smoke_skips_non_python_files(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_static_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "readme.md").write_text("# title\n", encoding="utf-8")
+        (tmp_path / "config.toml").write_text("x = 1\n", encoding="utf-8")
+
+        errors = _apply_deterministic_python_static_smoke(
+            adapter,
+            all_affected_files=["readme.md", "config.toml"],
+        )
+
+        assert errors == [], errors
+
+    def test_python_static_smoke_catches_multiple_broken_files(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_static_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        # Two distinct, real Python syntax errors + one clean file.
+        (tmp_path / "broken_a.py").write_text("def f(x, x):\n    return x\n", encoding="utf-8")
+        (tmp_path / "broken_b.py").write_text("class 123Bad:\n    pass\n", encoding="utf-8")
+        (tmp_path / "clean.py").write_text("z = 3\n", encoding="utf-8")
+
+        errors = _apply_deterministic_python_static_smoke(
+            adapter,
+            all_affected_files=["broken_a.py", "broken_b.py", "clean.py"],
+        )
+
+        # Both broken files should be reported; clean is silent.
+        assert len(errors) == 2, errors
+        assert any("broken_a.py" in e for e in errors)
+        assert any("broken_b.py" in e for e in errors)
+
+
+class TestDeterministicPythonRuntimeSmoke:
+    """Director surfaces runtime errors that py_compile misses.
+
+    Live factory-bench L1-01 (2026-06-17, after symbol-coherence fix):
+    qwen3.6-27b-int4 wrote calculator.py that imports cleanly and
+    py_compiles, but its ``__main__`` block calls ``evaluate('1+2')``
+    which raises ``ValueError`` at call time (the model's tokenizer
+    stores ``value=float(text)`` for operator tokens — a model bug,
+    but a real one the platform should surface). The post-write
+    materialization quality gate currently relies on ``py_compile`` +
+    ``scan_workspace_artifact_quality`` — neither catches call-time
+    errors. A rigid ruler must run the code, not just parse it.
+
+    Strategy: for each ``.py`` file with a ``__main__`` block, run it
+    in a subprocess with a timeout. If exit code != 0 or the process
+    is killed by the timeout, surface a runtime error so the
+    materialization repair ladder can fix it (currently via the LLM
+    repair path; the deterministic path is intentionally conservative
+    because runtime fixes are project-specific).
+    """
+
+    def test_python_runtime_smoke_catches_call_time_error(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        # A script with __main__ that crashes. py_compile will pass;
+        # only running it surfaces the bug.
+        (tmp_path / "calculator.py").write_text(
+            "def evaluate(expr: str) -> float:\n"
+            "    raise ValueError('broken tokenizer')\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    print(evaluate('1+2'))\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-1",
+            all_affected_files=["calculator.py"],
+            timeout_seconds=10.0,
+        )
+
+        assert len(errors) == 1, errors
+        assert "calculator.py" in errors[0]
+        assert "ValueError" in errors[0] or "Traceback" in errors[0]
+
+    def test_python_runtime_smoke_passes_clean_main(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "hello.py").write_text(
+            "if __name__ == '__main__':\n    print('hello')\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-2",
+            all_affected_files=["hello.py"],
+            timeout_seconds=10.0,
+        )
+
+        assert errors == [], errors
+
+    def test_python_runtime_smoke_skips_module_without_main(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        # Library file with no __main__ block — must not be executed
+        # (calling it would hang on missing CLI args or do nothing
+        # useful). Just skip.
+        (tmp_path / "library.py").write_text(
+            "def helper() -> int:\n    return 42\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-3",
+            all_affected_files=["library.py"],
+            timeout_seconds=10.0,
+        )
+
+        assert errors == [], errors
+
+    def test_python_runtime_smoke_skips_non_python_files(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "readme.md").write_text("# title\n", encoding="utf-8")
+        (tmp_path / "config.toml").write_text("x = 1\n", encoding="utf-8")
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-4",
+            all_affected_files=["readme.md", "config.toml"],
+            timeout_seconds=10.0,
+        )
+
+        assert errors == [], errors
+
+    def test_python_runtime_smoke_terminates_hung_process(self, tmp_path: Any) -> None:
+        """The smoke test must kill the child process after the
+        configured timeout so a hung ``__main__`` does not leak
+        past the Director turn boundary. After the L4-23 fix-#3
+        boundary change, a long-running script is NOT a quality
+        failure; the smoke only ensures the child is reaped so
+        the next smoke call in the same turn is not contaminated.
+        We verify the reap by re-running the smoke on the same
+        file and expecting it to return within a small multiple
+        of the timeout (i.e. it did not block on a leftover
+        process).
+        """
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "hung.py").write_text(
+            "import time\nif __name__ == '__main__':\n    while True:\n        time.sleep(0.1)\n",
+            encoding="utf-8",
+        )
+
+        # Long-running: the smoke must NOT flag this as a quality
+        # failure (the L4-23 fix-#3 boundary). It must, however,
+        # kill the child so subsequent smokes in the same turn
+        # are not blocked by a leaked process.
+        import time
+
+        first = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-5",
+            all_affected_files=["hung.py"],
+            timeout_seconds=0.5,
+        )
+        assert first == [], first
+        started = time.monotonic()
+        second = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-5b",
+            all_affected_files=["hung.py"],
+            timeout_seconds=0.5,
+        )
+        elapsed = time.monotonic() - started
+        assert second == [], second
+        assert elapsed < 5.0, f"second smoke took {elapsed:.2f}s -- leaked process"
+
+
+class TestDeterministicPythonUnresolvedSymbolRepair:
+    """Director can repair cross-file Python unresolved import symbol failures
+    without LLM cooperation — same fail-closed posture as the TS reexport
+    repair. Live factory-bench L6-32 (2026-06-17, after multi-missing fix):
+    the weak model wrote shared/__init__.py importing Registry from
+    shared.registry, but the registry module only defined ServiceRegistry.
+    The post-write QA gate caught it; the LLM repair call echoed the
+    prompt back (tool_choice was honored, the model still didn't emit
+    a tool call). The platform must add the missing symbol itself.
+    """
+
+    def test_repairs_missing_symbol_with_similar_named_alias(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_unresolved_import_symbol_repair,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "shared").mkdir(parents=True)
+        (tmp_path / "shared" / "__init__.py").write_text(
+            "from shared.registry import Registry\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "shared" / "registry.py").write_text(
+            "class ServiceRegistry:\n    pass\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_unresolved_import_symbol_repair(
+            adapter,
+            task={"subject": "Fix Python cross-file import"},
+            task_id="task-py-1",
+            artifact_quality_errors=[
+                (
+                    "Artifact quality scan failed: unresolved import symbol "
+                    "'Registry' from 'shared.registry' in "
+                    "shared/__init__.py"
+                ),
+            ],
+        )
+
+        assert results and results[0]["success"] is True, results
+        registry_text = (tmp_path / "shared" / "registry.py").read_text(encoding="utf-8")
+        # The missing symbol is now resolvable
+        assert "Registry" in registry_text
+        # The most useful general fix is an alias to the closest-named class
+        assert "Registry = ServiceRegistry" in registry_text
+        # The importer should now import successfully
+        import sys
+        from importlib import import_module
+
+        sys.path.insert(0, str(tmp_path))
+        try:
+            mod = import_module("shared.registry")
+            assert hasattr(mod, "Registry")
+        finally:
+            sys.path.remove(str(tmp_path))
+            for cached in list(sys.modules):
+                if cached.startswith("shared"):
+                    del sys.modules[cached]
+
+    def test_repairs_missing_symbol_with_class_stub_when_no_similar(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_unresolved_import_symbol_repair,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "shared").mkdir(parents=True)
+        (tmp_path / "shared" / "__init__.py").write_text(
+            "from shared.config import SomeConfig\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "shared" / "config.py").write_text(
+            "SETTING = 1\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_unresolved_import_symbol_repair(
+            adapter,
+            task={"subject": "Fix Python import"},
+            task_id="task-py-2",
+            artifact_quality_errors=[
+                (
+                    "Artifact quality scan failed: unresolved import symbol "
+                    "'SomeConfig' from 'shared.config' in "
+                    "shared/__init__.py"
+                ),
+            ],
+        )
+
+        assert results and results[0]["success"] is True, results
+        config_text = (tmp_path / "shared" / "config.py").read_text(encoding="utf-8")
+        assert "class SomeConfig" in config_text
+
+    def test_idempotent_when_symbol_already_defined(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_unresolved_import_symbol_repair,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "shared").mkdir(parents=True)
+        (tmp_path / "shared" / "__init__.py").write_text(
+            "from shared.registry import Registry\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "shared" / "registry.py").write_text(
+            "class Registry:\n    pass\n",
+            encoding="utf-8",
+        )
+
+        results = _apply_deterministic_unresolved_import_symbol_repair(
+            adapter,
+            task={"subject": "Fix Python import"},
+            task_id="task-py-3",
+            artifact_quality_errors=[
+                (
+                    "Artifact quality scan failed: unresolved import symbol "
+                    "'Registry' from 'shared.registry' in "
+                    "shared/__init__.py"
+                ),
+            ],
+        )
+        # Symbol already present -> no changes needed
+        assert results == [], results
+        registry_text = (tmp_path / "shared" / "registry.py").read_text(encoding="utf-8")
+        # Must not duplicate the class definition
+        assert registry_text.count("class Registry") == 1
+
+    def test_skips_when_exporter_file_missing(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_unresolved_import_symbol_repair,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "shared").mkdir(parents=True)
+        (tmp_path / "shared" / "__init__.py").write_text(
+            "from shared.missing import Symbol\n",
+            encoding="utf-8",
+        )
+        # shared/missing.py does not exist
+
+        results = _apply_deterministic_unresolved_import_symbol_repair(
+            adapter,
+            task={"subject": "Fix Python import"},
+            task_id="task-py-4",
+            artifact_quality_errors=[
+                (
+                    "Artifact quality scan failed: unresolved import symbol "
+                    "'Symbol' from 'shared.missing' in "
+                    "shared/__init__.py"
+                ),
+            ],
+        )
+        # Cannot create the missing file deterministically -> return empty
+        assert results == [], results
+
+
 class TestDeterministicTypescriptReexportRepair:
     """Director can materialize a narrow TypeScript runtime re-export fix."""
 
@@ -4776,6 +5317,172 @@ class TestQualityRepairMissingTargetContract:
 
         assert missing == []
 
+    @pytest.mark.asyncio
+    async def test_single_missing_target_repair_sets_forced_write_context(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self.repair_context: dict[str, Any] = {}
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, timeout_seconds, stage_label
+                self.repair_context = context
+                return {"content": ""}
+
+        (tmp_path / "services" / "product_service").mkdir(parents=True)
+        adapter = _Adapter()
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["services/product_service/app.py"]},
+            target_task_id="PM-0001-1",
+            run_id="run-single-missing-write-only",
+            context={},
+            original_message="Create the missing product service file.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: declared target file missing 'services/product_service/app.py'"
+            ],
+            changed_files=["services/product_service/__init__.py"],
+        )
+
+        assert summary["missing_target_files"] == ["services/product_service/app.py"]
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "write_file"},
+        }
+        assert (
+            adapter.repair_context["_transaction_kernel_forced_tool_definitions"][0]["function"]["name"] == "write_file"
+        )
+        assert adapter.repair_context["_transaction_kernel_forced_tool_definitions"][0]["function"]["parameters"][
+            "required"
+        ] == ["file", "content"]
+        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
+            "tool": "write_file",
+            "target_file": "services/product_service/app.py",
+        }
+
+    @pytest.mark.asyncio
+    async def test_multi_missing_target_repair_forces_write_tool_choice(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """General C7 L6 gap: when multiple declared target files are missing,
+        the weak Director LLM (e.g. qwen3.6-27b-int4) is structurally prone
+        to echo the long repair prompt back as its response with zero tool
+        calls. Live factory-bench L6-32 (2026-06-17): all three repair
+        attempts echoed the prompt verbatim and the loop broke after the hard
+        cap. The single-missing path already forces tool_choice=write_file;
+        the multi-missing path must enforce the same structural constraint
+        so the model cannot sidestep the contract.
+        """
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        # Deterministic repair must NOT mask this with synthesized content;
+        # we are testing the LLM repair path contract, not the synthesizer.
+        monkeypatch.delenv("KERNELONE_DIRECTOR_SCAFFOLD_SYNTHESIS", raising=False)
+        monkeypatch.delenv("KERNELONE_DIRECTOR_BUSINESS_CONTRACT_SYNTHESIS", raising=False)
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result) -> list:
+                return []
+
+            @staticmethod
+            async def execute_tools(content, target_task_id, update_task_progress) -> list:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *a, **k: None)
+
+            def __init__(self) -> None:
+                self.repair_context = {}
+                self.repair_message = ""
+                self.invocations = 0
+
+            async def _invoke_role_dialogue_with_timeout(self, message, *, context, timeout_seconds, stage_label):
+                del timeout_seconds, stage_label
+                self.invocations += 1
+                self.repair_message = message
+                self.repair_context = context
+                return {"content": message}
+
+        (tmp_path / "services" / "user_service").mkdir(parents=True)
+        (tmp_path / "services" / "product_service").mkdir(parents=True)
+        (tmp_path / "common").mkdir(parents=True)
+        adapter = _Adapter()
+
+        missing_targets = [
+            "services/__init__.py",
+            "services/user_service/__init__.py",
+            "services/product_service/__init__.py",
+            "common/__init__.py",
+            "scripts/run_all.py",
+        ]
+        artifact_quality_errors = [
+            f"Artifact quality scan failed: declared target file missing '{p}'" for p in missing_targets
+        ]
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": missing_targets},
+            target_task_id="PM-0001-1",
+            run_id="run-multi-missing-forced-write",
+            context={},
+            original_message="Create Python microservice skeleton with 4 services.",
+            llm_call_timeout=10,
+            artifact_quality_errors=artifact_quality_errors,
+            changed_files=["pyproject.toml"],
+        )
+
+        assert adapter.invocations == 1, summary
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "write_file"},
+        }, adapter.repair_context
+        forced_defs = adapter.repair_context["_transaction_kernel_forced_tool_definitions"]
+        assert forced_defs and forced_defs[0]["function"]["name"] == "write_file"
+        assert forced_defs[0]["function"]["parameters"]["required"] == [
+            "file",
+            "content",
+        ]
+        for p in missing_targets:
+            assert p in adapter.repair_message, f"missing path {p} in repair message"
+        assert "MISSING TARGET FILES" in adapter.repair_message
+        assert summary["missing_target_files"] == missing_targets
+
     def test_repair_message_names_missing_targets_and_hides_changed_paths(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,
@@ -4791,6 +5498,7 @@ class TestQualityRepairMissingTargetContract:
             missing_target_files=["src/styles.css"],
         )
         assert "MISSING TARGET FILES" in message
+        assert "[director_quality_repair:write_only_single_target]" in message
         assert "src/styles.css" in message
         # Changed files appear only as a count — path-shaped tokens seed the
         # retry target extractor with wrong targets.

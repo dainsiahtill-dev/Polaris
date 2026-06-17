@@ -207,6 +207,16 @@ class TestToolCallSignature:
         sig2 = tool_call_signature("search", {"query": "test"})
         assert sig1 == sig2
 
+    def test_canonicalizes_stream_tool_argument_aliases(self) -> None:
+        """Equivalent LLM spellings should dedupe to one streamed tool call."""
+        raw_sig = tool_call_signature("read_file", {"path": "README.md"})
+        normalized_sig = tool_call_signature(
+            "read_file",
+            {"file": "README.md", "max_bytes": 200001, "range_required": False},
+        )
+
+        assert raw_sig == normalized_sig
+
     def test_none_args(self) -> None:
         """Test tool_call_signature with None args."""
         sig = tool_call_signature("search", None)

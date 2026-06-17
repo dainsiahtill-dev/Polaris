@@ -145,6 +145,96 @@ _DIRECT_READ_TOOLS = {
 }
 
 
+_LINE_RANGE_REPLACEMENT_KEYS = ("replace", "new_text", "new_content", "replacement", "code")
+_FILE_ARGUMENT_KEYS = ("file", "path", "filepath", "file_path", "target_file", "target_path")
+
+
+def _canonical_single_target_file(target_files: tuple[str, ...] | list[str]) -> str | None:
+    normalized: dict[str, str] = {}
+    for raw in target_files:
+        token = str(raw or "").strip().replace("\\", "/")
+        if not token:
+            continue
+        while token.startswith("./"):
+            token = token[2:]
+        if (
+            not token
+            or token.startswith("/")
+            or token.startswith("~")
+            or any(part == ".." for part in token.split("/"))
+            or any(ch in token for ch in ("*", "?", "[", "]", ",", " ", "\t", "\n"))
+        ):
+            return None
+        normalized.setdefault(token.lower(), token)
+    if len(normalized) != 1:
+        return None
+    return next(iter(normalized.values()))
+
+
+def _invocation_arguments(invocation: Any) -> dict[str, Any] | None:
+    arguments: Any
+    if isinstance(invocation, Mapping) or hasattr(invocation, "get"):
+        arguments = invocation.get("arguments")
+    else:
+        arguments = getattr(invocation, "arguments", None)
+    return arguments if isinstance(arguments, dict) else None
+
+
+def _with_invocation_arguments(invocation: Any, arguments: dict[str, Any]) -> Any:
+    if isinstance(invocation, dict):
+        new_invocation = dict(invocation)
+        new_invocation["arguments"] = arguments
+        return new_invocation
+    model_copy = getattr(invocation, "model_copy", None)
+    if callable(model_copy):
+        return model_copy(update={"arguments": arguments})
+    to_dict = getattr(invocation, "to_dict", None)
+    if callable(to_dict):
+        new_invocation = dict(to_dict())
+        new_invocation["arguments"] = arguments
+        return new_invocation
+    if isinstance(invocation, Mapping):
+        new_invocation = dict(invocation)
+        new_invocation["arguments"] = arguments
+        return new_invocation
+    return invocation
+
+
+def fill_single_target_line_range_edit_blocks(
+    invocations: list[Any],
+    *,
+    target_files: tuple[str, ...] | list[str],
+) -> list[Any]:
+    """Fill omitted ``file`` for unambiguous single-target edit_blocks calls.
+
+    Weak models sometimes satisfy the narrowed line-range schema with
+    ``start``/``end``/``replace`` but omit ``file``. Only repair this when the
+    task contract declares exactly one safe target file; multi-target steps stay
+    fail-closed.
+    """
+
+    target_file = _canonical_single_target_file(target_files)
+    if not target_file:
+        return invocations
+    filled: list[Any] = []
+    for invocation in invocations:
+        tool_name = extract_invocation_tool_name(invocation)
+        arguments = _invocation_arguments(invocation)
+        if tool_name != "edit_blocks" or arguments is None:
+            filled.append(invocation)
+            continue
+        has_file = any(str(arguments.get(key) or "").strip() for key in _FILE_ARGUMENT_KEYS)
+        has_line_range = arguments.get("start") is not None and arguments.get("end") is not None
+        has_replacement = any(str(arguments.get(key) or "").strip() for key in _LINE_RANGE_REPLACEMENT_KEYS)
+        if has_file or not (has_line_range and has_replacement):
+            filled.append(invocation)
+            continue
+        new_arguments = dict(arguments)
+        new_arguments["file"] = target_file
+        filled.append(_with_invocation_arguments(invocation, new_arguments))
+    return filled
+
+
 def _normalize_file_reference_path(raw_path: str) -> str:
     """规范化工具调用中的文件路径字符串。
 
@@ -576,6 +666,16 @@ class ToolBatchExecutor:
                 )
 
         latest_user_request = extract_latest_user_message(context)
+        single_target_candidates = extract_target_files_from_message(latest_user_request)
+        modification_contract = getattr(ledger, "modification_contract", None)
+        if modification_contract is not None:
+            contract_targets = getattr(modification_contract, "target_files", None)
+            if isinstance(contract_targets, (list, tuple)):
+                single_target_candidates.extend(str(item) for item in contract_targets)
+        invocations = fill_single_target_line_range_edit_blocks(
+            invocations,
+            target_files=tuple(single_target_candidates),
+        )
         invocations, dropped_out_of_scope_writes = filter_out_of_scope_write_invocations(
             latest_user_request,
             invocations,

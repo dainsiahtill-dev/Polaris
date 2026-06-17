@@ -144,6 +144,34 @@ class TestExtractToolCalls:
         calls = checker._extract_tool_calls("")
         assert calls == []
 
+    def test_preserves_raw_tool_name(self) -> None:
+        """§6.6: name_raw must be the model's emitted token, verbatim case.
+
+        A model that emits 'create_file' (a weak-model alias for write_file)
+        must surface in the audit dict as name_raw='create_file' so the
+        canonical-gate drift detector can see the alias usage. name stays
+        canonical-lower for routing.
+        """
+        checker = QualityChecker()
+        content = '[tool_calls][{"tool": "create_file", "args": {"path": "a.py"}}][/tool_calls]'
+        calls = checker._extract_tool_calls(content)
+        # Find the create_file / write_file call (filter out wrapper phantoms)
+        real_calls = [c for c in calls if c["name"] == "write_file"]
+        assert len(real_calls) == 1
+        assert real_calls[0]["name_raw"] == "create_file"
+        assert real_calls[0]["name"] == "write_file"  # canonical-lower routing form
+        assert real_calls[0]["arguments"] == {"file": "a.py"}
+
+    def test_uppercase_tool_name_preserved_in_raw(self) -> None:
+        """§6.6: case in the raw observed name must NOT be erased by .lower()."""
+        checker = QualityChecker()
+        content = '[tool_calls][{"tool": "WRITE_FILE", "args": {"path": "a.py"}}][/tool_calls]'
+        calls = checker._extract_tool_calls(content)
+        real_calls = [c for c in calls if c["name"] == "write_file"]
+        assert len(real_calls) == 1
+        assert real_calls[0]["name_raw"] == "WRITE_FILE"
+        assert real_calls[0]["name"] == "write_file"
+
 
 class TestValidateArchitectOutput:
     """_validate_architect_output checks required sections."""

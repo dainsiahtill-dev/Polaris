@@ -53,8 +53,14 @@ class TestIsWriteTool:
 class TestBuildPrepareInvocation:
     """Tests for build_prepare_invocation() — Prepare phase."""
 
-    def test_prepare_uses_file_exists(self) -> None:
-        """Prepare should map write tools to file_exists for readonly validation."""
+    def test_prepare_uses_synthetic_shadow_tool(self) -> None:
+        """Prepare should emit a non-registered sentinel tool name (not file_exists).
+
+        Using a real registered tool name here would let a model-emitted
+        file_exists collide in the spec_key hash and either satisfy the prepare
+        shadow or block a legitimate read. Sentinel naming is the §6.6-equivalent
+        guard for the speculation registry seam.
+        """
         invocation = ToolInvocation(
             call_id=ToolCallId("call_write"),
             tool_name="write_file",
@@ -63,9 +69,31 @@ class TestBuildPrepareInvocation:
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         prepare = WriteToolPhases.build_prepare_invocation(invocation)
-        assert prepare.tool_name == "file_exists"
+        assert prepare.tool_name == "__prepare_shadow__"
+        assert prepare.tool_name != "file_exists", (
+            "Prepare must NOT use a registered tool name; real file_exists calls would collide in the spec_key hash."
+        )
         assert prepare.effect_type == ToolEffectType.READ
         assert prepare.execution_mode == ToolExecutionMode.READONLY_PARALLEL
+
+    def test_prepare_tool_name_does_not_collide_with_file_exists(self) -> None:
+        """Adversarial: a model-emitted file_exists must not be mistaken for a
+        prepare shadow in the spec_key. Assert the prepare tool name is structurally
+        distinct (not just case-different) from any registered read tool.
+        """
+        invocation = ToolInvocation(
+            call_id=ToolCallId("call_x"),
+            tool_name="write_file",
+            arguments={"path": "a.py"},
+            effect_type=ToolEffectType.WRITE,
+            execution_mode=ToolExecutionMode.WRITE_SERIAL,
+        )
+        prepare = WriteToolPhases.build_prepare_invocation(invocation)
+        # Sentinel must be a non-registered identifier
+        assert prepare.tool_name not in {"file_exists", "read_file", "glob", "repo_rg"}
+        # And the sentinel must be stable (deterministic)
+        prepare2 = WriteToolPhases.build_prepare_invocation(invocation)
+        assert prepare.tool_name == prepare2.tool_name
 
     def test_prepare_id_prefix(self) -> None:
         """Prepare call_id should be prefixed with 'prepare_'."""
@@ -132,8 +160,10 @@ class TestBuildPrepareInvocation:
 class TestBuildValidateInvocation:
     """Tests for build_validate_invocation() — Validate phase."""
 
-    def test_validate_uses_file_exists(self) -> None:
-        """Validate should also map to file_exists for schema checking."""
+    def test_validate_uses_synthetic_shadow_tool(self) -> None:
+        """Validate should emit a non-registered sentinel tool name distinct from
+        the prepare sentinel (so prepare/validate spec_keys cannot collide).
+        """
         invocation = ToolInvocation(
             call_id=ToolCallId("call_validate"),
             tool_name="write_file",
@@ -142,7 +172,13 @@ class TestBuildValidateInvocation:
             execution_mode=ToolExecutionMode.WRITE_SERIAL,
         )
         validate = WriteToolPhases.build_validate_invocation(invocation)
-        assert validate.tool_name == "file_exists"
+        assert validate.tool_name == "__validate_shadow__"
+        assert validate.tool_name != "__prepare_shadow__", (
+            "Validate must use a distinct sentinel from Prepare to prevent cross-phase spec_key collisions."
+        )
+        assert validate.tool_name != "file_exists", (
+            "Validate must NOT use a registered tool name; real file_exists calls would collide in the spec_key hash."
+        )
         assert validate.effect_type == ToolEffectType.READ
         assert validate.execution_mode == ToolExecutionMode.READONLY_PARALLEL
 

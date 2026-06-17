@@ -57,11 +57,7 @@ class TestQwen3CoderTruncationGuardFalsePositive:
     def test_genuine_mid_value_truncation_still_skipped(self) -> None:
         # content param opened but never closed (cut at token budget) -> skip,
         # so we never materialise a file with missing content.
-        text = (
-            "<function=write_file>"
-            "<parameter=file>a.py</parameter>"
-            "<parameter=content>partial body never closed"
-        )
+        text = "<function=write_file><parameter=file>a.py</parameter><parameter=content>partial body never closed"
         assert recover_textual_tool_calls(text, allowed_tool_names=["write_file"]) == []
         assert XMLToolParser.parse(text, allowed_tool_names=["write_file"]) == []
 
@@ -92,6 +88,20 @@ class TestJsonDeepNestingFirstCall:
 class TestXmlParamValueCoercion:
     """H1-F3: string-typed param values keep raw text; scalars still coerce."""
 
+    def test_tool_name_alias_matches_canonical_allowed_name(self) -> None:
+        text = (
+            '<function name="create_file">'
+            '<parameter name="path">src/app.py</parameter>'
+            '<parameter name="text">print("ok")\n</parameter>'
+            "</function>"
+        )
+
+        calls = XMLToolParser.parse(text, allowed_tool_names=["write_file"])
+
+        assert len(calls) == 1
+        assert calls[0].name == "write_file"
+        assert calls[0].arguments == {"file": "src/app.py", "content": 'print("ok")'}
+
     def test_json_array_content_kept_as_string(self) -> None:
         text = (
             "<function=write_file>"
@@ -106,12 +116,7 @@ class TestXmlParamValueCoercion:
         assert content == "[1, 2, 3]"
 
     def test_scalar_param_still_coerced(self) -> None:
-        text = (
-            "<function=read_file>"
-            "<parameter=path>a.py</parameter>"
-            "<parameter=limit>50</parameter>"
-            "</function>"
-        )
+        text = "<function=read_file><parameter=path>a.py</parameter><parameter=limit>50</parameter></function>"
         calls = XMLToolParser.parse(text, allowed_tool_names=["read_file"])
         assert len(calls) == 1
         assert calls[0].arguments["path"] == "a.py"

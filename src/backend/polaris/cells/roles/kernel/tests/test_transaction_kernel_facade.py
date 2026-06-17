@@ -28,6 +28,7 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
     extract_allowed_tool_names_from_definitions,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
+    fill_single_target_line_range_edit_blocks,
     rewrite_existing_file_paths_in_invocations,
 )
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
@@ -195,6 +196,35 @@ def test_bootstrap_followup_prefers_write_file_for_deterministic_scaffold() -> N
     }
 
     assert bootstrap_receipt_contains_whole_file_replacement_marker(receipt) is True
+    selected = select_bootstrap_followup_write_tool_name(
+        allowed_tool_names={"read_file", "edit_blocks", "write_file", "edit_file"},
+        default_write_tool_name="edit_blocks",
+        bootstrap_receipt=receipt,
+        failed_bootstrap_files=[],
+    )
+
+    assert selected == "write_file"
+
+
+def test_bootstrap_followup_switches_whole_file_edit_blocks_error_to_write_file() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "edit_blocks",
+                "status": "error",
+                "result": {
+                    "ok": False,
+                    "error_type": "new_file_via_edit_blocks",
+                    "error": (
+                        "edit_blocks received a filename plus full file content for "
+                        "services/order_service/__init__.py. That is a whole-file write, "
+                        "not an edit."
+                    ),
+                },
+            }
+        ]
+    }
+
     selected = select_bootstrap_followup_write_tool_name(
         allowed_tool_names={"read_file", "edit_blocks", "write_file", "edit_file"},
         default_write_tool_name="edit_blocks",
@@ -469,6 +499,71 @@ def test_rewrite_existing_file_paths_in_invocations_drops_nonexistent_prefix(tmp
     assert isinstance(first, dict)
     # 路径不存在时不应回退到根目录同名文件
     assert first["arguments"]["file"] == "snake_game/index.html"
+
+
+def test_fill_single_target_line_range_edit_blocks_adds_missing_file() -> None:
+    invocations = [
+        {
+            "tool_name": "edit_blocks",
+            "arguments": {
+                "start": 2,
+                "end": 4,
+                "replace": "def create_app():\n    return app\n",
+            },
+        }
+    ]
+
+    filled = fill_single_target_line_range_edit_blocks(
+        invocations,
+        target_files=("services/__init__.py",),
+    )
+
+    assert filled[0]["arguments"] == {
+        "file": "services/__init__.py",
+        "start": 2,
+        "end": 4,
+        "replace": "def create_app():\n    return app\n",
+    }
+
+
+def test_fill_single_target_line_range_edit_blocks_handles_tool_invocation_model() -> None:
+    invocation = ToolInvocation(
+        call_id=ToolCallId("call_edit"),
+        tool_name="edit_blocks",
+        arguments={"start": 1, "end": 3, "replace": "value = 1\n"},
+        effect_type=ToolEffectType.WRITE,
+        execution_mode=ToolExecutionMode.WRITE_SERIAL,
+    )
+
+    filled = fill_single_target_line_range_edit_blocks(
+        [invocation],
+        target_files=("services/__init__.py",),
+    )
+
+    assert isinstance(filled[0], ToolInvocation)
+    assert filled[0].arguments == {
+        "file": "services/__init__.py",
+        "start": 1,
+        "end": 3,
+        "replace": "value = 1\n",
+    }
+    assert invocation.arguments == {"start": 1, "end": 3, "replace": "value = 1\n"}
+
+
+def test_fill_single_target_line_range_edit_blocks_refuses_multi_target() -> None:
+    invocations = [
+        {
+            "tool_name": "edit_blocks",
+            "arguments": {"start": 1, "end": 1, "replace": "x = 1\n"},
+        }
+    ]
+
+    filled = fill_single_target_line_range_edit_blocks(
+        invocations,
+        target_files=("a.py", "b.py"),
+    )
+
+    assert filled == invocations
 
 
 def test_resolve_retry_model_override_uses_env_sequence(monkeypatch) -> None:
@@ -2148,6 +2243,107 @@ class TestWriteArgumentShapeFailureGuard:
                 ),
             ]
         )
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is True
+
+    def test_line_range_missing_file_triggers_shape_retry(self) -> None:
+        """L6-32: edit_blocks line-range form omitted file and bypassed shape retry."""
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = self._receipt(
+            [
+                (
+                    "edit_blocks",
+                    "error",
+                    {"ok": False, "error": "line-range edit requires a 'file' argument."},
+                ),
+            ]
+        )
+
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is True
+
+    def test_missing_edit_payload_triggers_shape_retry(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = self._receipt(
+            [
+                (
+                    "edit_blocks",
+                    "error",
+                    {
+                        "ok": False,
+                        "error": "Missing edit payload. EASIEST: call edit_blocks with file + start + end + replace.",
+                    },
+                ),
+            ]
+        )
+
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is True
+
+    def test_missing_blocks_start_argument_triggers_shape_retry(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = self._receipt(
+            [
+                (
+                    "edit_blocks",
+                    "error",
+                    {"ok": False, "error": "Parameter failed: edit_blocks: missing argument: blocks start."},
+                ),
+            ]
+        )
+
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is True
+
+    def test_whole_file_write_not_edit_triggers_shape_retry(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = self._receipt(
+            [
+                (
+                    "edit_blocks",
+                    "error",
+                    {
+                        "ok": False,
+                        "error": (
+                            "edit_blocks received filename plus full file content tests/test_services.py. "
+                            "whole-file write, not edit."
+                        ),
+                    },
+                ),
+            ]
+        )
+
+        assert batch_write_results_all_failed_on_argument_shape(receipt) is True
+
+    def test_edit_block_validation_failed_triggers_shape_retry(self) -> None:
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            batch_write_results_all_failed_on_argument_shape,
+        )
+
+        receipt = self._receipt(
+            [
+                (
+                    "edit_blocks",
+                    "error",
+                    {
+                        "ok": False,
+                        "error": (
+                            "Validation failed 1 block(s). No files modified. "
+                            "Check that SEARCH text exactly matches file content."
+                        ),
+                    },
+                ),
+            ]
+        )
+
         assert batch_write_results_all_failed_on_argument_shape(receipt) is True
 
     def test_pre_write_syntax_block_triggers(self) -> None:

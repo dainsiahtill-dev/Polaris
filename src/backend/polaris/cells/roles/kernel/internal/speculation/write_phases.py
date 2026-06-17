@@ -7,6 +7,15 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     ToolInvocation,
 )
 
+# Sentinel tool names for the synthetic prepare/validate invocations. These are
+# NOT in any registered tool_spec — the resolver uses them only to key the
+# speculation shadow registry. Using a registered tool name (e.g. "file_exists")
+# here would let a real model-emitted file_exists call collide in the spec_key
+# hash and either satisfy the prepare shadow or block a legitimate read.
+# The double-underscore prefix marks them as internal-synthetic.
+_PREPARE_SHADOW_TOOL = "__prepare_shadow__"
+_VALIDATE_SHADOW_TOOL = "__validate_shadow__"
+
 
 class WriteToolPhases:
     """写工具三阶段语义：Prepare -> Validate -> Commit.
@@ -27,11 +36,12 @@ class WriteToolPhases:
     def build_prepare_invocation(cls, invocation: ToolInvocation) -> ToolInvocation:
         """从原始写工具调用构建 Prepare 阶段的只读校验调用.
 
-        当前实现：将 write_file/apply_patch 等映射为只读的 file_exists + content_schema 校验。
-        如果工具原生支持 dry_run，优先使用 dry_run=True 模式(未来扩展点)。
+        当前实现：构造一个非注册 sentinel 工具 (__prepare_shadow__) 的只读调用,
+        携带 path/content_length 用于校验。sentinel 命名确保 spec_key 不会与
+        真实 model-emitted 工具 (例如 file_exists) 冲突 — 见 §6.6 同等约束。
+        如果工具原生支持 dry_run, 优先使用 dry_run=True 模式(未来扩展点)。
         """
         args = dict(invocation.arguments)
-        # 使用 read_file 作为路径存在性和上下文的只读校验
         # 保留原始调用中的 path 参数用于校验
         prepare_args: dict[str, object] = {}
         if "path" in args:
@@ -43,7 +53,7 @@ class WriteToolPhases:
 
         return ToolInvocation(
             call_id=ToolCallId(f"prepare_{invocation.call_id}"),
-            tool_name="file_exists",
+            tool_name=_PREPARE_SHADOW_TOOL,
             arguments=prepare_args,
             effect_type=ToolEffectType.READ,
             execution_mode=ToolExecutionMode.READONLY_PARALLEL,
@@ -54,6 +64,7 @@ class WriteToolPhases:
         """构建 Validate 阶段的只读校验调用.
 
         Validate 是可选阶段，用于检查 prepare 输出中的语法/schema 错误。
+        使用独立的 sentinel 工具名 __validate_shadow__, 与 prepare 隔离.
         """
         args = dict(invocation.arguments)
         validate_args: dict[str, object] = {}
@@ -66,7 +77,7 @@ class WriteToolPhases:
 
         return ToolInvocation(
             call_id=ToolCallId(f"validate_{invocation.call_id}"),
-            tool_name="file_exists",
+            tool_name=_VALIDATE_SHADOW_TOOL,
             arguments=validate_args,
             effect_type=ToolEffectType.READ,
             execution_mode=ToolExecutionMode.READONLY_PARALLEL,

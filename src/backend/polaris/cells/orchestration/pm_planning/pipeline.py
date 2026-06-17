@@ -12,6 +12,9 @@ import os
 import re
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.orchestration.pm_planning.internal.live_wiring import (
+    reorder_tasks_by_wsjf,
+)
 from polaris.cells.orchestration.pm_planning.internal.pipeline_ports import (
     _looks_like_tool_call_output,
     _migrate_tasks_in_place,
@@ -753,6 +756,7 @@ def run_pm_planning_iteration(
             [task for task in normalized_tasks if isinstance(task, dict)],
             key=lambda task: normalize_priority(task.get("priority"), fallback=9999),
         )
+        normalized_tasks = reorder_tasks_by_wsjf(normalized_tasks, workspace_full)
         for task in normalized_tasks:
             task.setdefault("doc_id", run_id)
             task.setdefault("blueprint_id", None)

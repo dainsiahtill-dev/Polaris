@@ -245,7 +245,166 @@ class TestBuildNativeToolSchemas:
         assert "file" in properties
         assert "n" in properties
         # Compatibility aliases remain explicit in schema for model-side argument shaping.
+        assert "path" in properties
+        assert "target_file" in properties
         assert "limit" in properties
+
+    def test_context_retrieve_offering_is_flag_gated(self, monkeypatch) -> None:
+        """T1-A: context_retrieve is offered to the model ONLY when KERNELONE_CCR_RETRIEVE is on
+        AND the role's tool policy has ccr_retrieve_opt_in=True.
+
+        Default-off keeps the emitted native tool set byte-identical (floor-inert);
+        the flag-on path closes the CCR consumer loop by offering the retrieve tool.
+        This is the "tool reaches the wire" guard the prior audit passes lacked — a
+        green component test never caught that the tool was never offered.
+
+        Policy-respect: the env flag MUST NOT silently override a role's tool policy.
+        A role that did not opt in will not see context_retrieve even with the flag on.
+        """
+        profile = MockProfile(role_id="director")
+        profile.tool_policy = SimpleNamespace(whitelist=["read_file"], ccr_retrieve_opt_in=True)
+
+        # Flag OFF (default): context_retrieve must NOT be offered.
+        monkeypatch.delenv("KERNELONE_CCR_RETRIEVE", raising=False)
+        off = build_native_tool_schemas(cast("RoleProfile", profile))
+        off_names = {str((it.get("function") or {}).get("name") or "") for it in off if isinstance(it, dict)}
+        assert "context_retrieve" not in off_names
+
+        # Flag ON + opt-in: context_retrieve IS offered (consumer loop closed).
+        monkeypatch.setenv("KERNELONE_CCR_RETRIEVE", "1")
+        on = build_native_tool_schemas(cast("RoleProfile", profile))
+        on_names = {str((it.get("function") or {}).get("name") or "") for it in on if isinstance(it, dict)}
+        assert "context_retrieve" in on_names
+
+        # Floor-inertness: enabling adds EXACTLY the one tool, perturbing nothing else.
+        assert on_names - off_names == {"context_retrieve"}
+
+    def test_flag_on_without_opt_in_does_not_offer(self, monkeypatch) -> None:
+        """Adversarial: env flag ON but role did NOT opt in → context_retrieve is
+        NOT offered. This is the policy-respect guard for the §6.6/§8 audit
+        finding (silent policy override). The flag is not a back-door.
+        """
+        profile = MockProfile(role_id="director")
+        profile.tool_policy = SimpleNamespace(whitelist=["read_file"], ccr_retrieve_opt_in=False)
+        monkeypatch.setenv("KERNELONE_CCR_RETRIEVE", "1")
+        schemas = build_native_tool_schemas(cast("RoleProfile", profile))
+        names = {str((it.get("function") or {}).get("name") or "") for it in schemas if isinstance(it, dict)}
+        assert "context_retrieve" not in names, (
+            "KERNELONE_CCR_RETRIEVE must NOT override per-role tool policy. "
+            "A role that did not opt in must not see context_retrieve."
+        )
+
+    # ----- Slice #2 adversarial tightening: env-flag gate semantics -----
+
+    def test_flag_off_empty_whitelist_returns_empty(self, monkeypatch) -> None:
+        """Defensive: empty whitelist + flag-OFF must yield [] (no offering path runs)."""
+        monkeypatch.delenv("KERNELONE_CCR_RETRIEVE", raising=False)
+        profile = MockProfile(role_id="director")
+        profile.tool_policy = SimpleNamespace(whitelist=[])
+        assert build_native_tool_schemas(cast("RoleProfile", profile)) == []
+
+    def test_flag_off_byte_identical_to_historical(self, monkeypatch) -> None:
+        """Floor: with flag OFF (default), the emitted schema list is byte-identical
+        to historical behaviour — no offering path, no spec lookup, no side effects.
+        This is the L2-floor bench invariant: enabling is opt-in.
+        """
+        monkeypatch.delenv("KERNELONE_CCR_RETRIEVE", raising=False)
+        profile = MockProfile(role_id="director")
+        # Mirror a realistic Director whitelist.
+        profile.tool_policy = SimpleNamespace(
+            whitelist=["read_file", "write_file", "edit_blocks", "execute_command", "repo_rg"]
+        )
+        schemas = build_native_tool_schemas(cast("RoleProfile", profile))
+        names = {str((it.get("function") or {}).get("name") or "") for it in schemas if isinstance(it, dict)}
+        # The CCR tool is not in the whitelist → must NOT appear in the emitted set.
+        assert "context_retrieve" not in names
+
+    def test_flag_on_with_weird_casing_normalizes_to_lower(self, monkeypatch) -> None:
+        """Robustness: KERNELONE_CCR_RETRIEVE='Yes'/'TRUE'/'On' all enable (when opt-in)."""
+        profile = MockProfile(role_id="director")
+        profile.tool_policy = SimpleNamespace(whitelist=["read_file"], ccr_retrieve_opt_in=True)
+        for token in ("Yes", "TRUE", "On", "1", "true", "yes", "on"):
+            monkeypatch.setenv("KERNELONE_CCR_RETRIEVE", token)
+            schemas = build_native_tool_schemas(cast("RoleProfile", profile))
+            names = {str((it.get("function") or {}).get("name") or "") for it in schemas if isinstance(it, dict)}
+            assert "context_retrieve" in names, f"token={token!r} should enable CCR offering"
+
+    def test_flag_on_with_garbage_value_does_not_enable(self, monkeypatch) -> None:
+        """Floor: garbage values must NOT enable the offering (default-off discipline)."""
+        profile = MockProfile(role_id="director")
+        profile.tool_policy = SimpleNamespace(whitelist=["read_file"], ccr_retrieve_opt_in=True)
+        for token in ("maybe", "enable", " ", "", "2", "0", "off", "false", "disabled", "none"):
+            monkeypatch.setenv("KERNELONE_CCR_RETRIEVE", token)
+            schemas = build_native_tool_schemas(cast("RoleProfile", profile))
+            names = {str((it.get("function") or {}).get("name") or "") for it in schemas if isinstance(it, dict)}
+            assert "context_retrieve" not in names, f"token={token!r} should NOT enable CCR offering"
+
+    def test_flag_on_but_spec_registration_raises_returns_original_tools(self, monkeypatch) -> None:
+        """Defensive: when spec registration raises ImportError/RuntimeError/ValueError,
+        the function degrades gracefully — it must still return the ORIGINAL tools
+        (read_file, write_file, etc.), not crash the turn.
+        """
+        profile = MockProfile(role_id="director")
+        profile.tool_policy = SimpleNamespace(whitelist=["read_file"], ccr_retrieve_opt_in=True)
+        monkeypatch.setenv("KERNELONE_CCR_RETRIEVE", "1")
+
+        # Force the spec registration to raise (simulates a broken import path /
+        # future registry signature change / removed module).
+        import builtins as _builtins
+
+        real_import = _builtins.__import__
+
+        def _boom(name, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if name == "polaris.kernelone.llm.toolkit.executor.handlers.context_retrieve":
+                raise ImportError("simulated: handler module relocated")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(_builtins, "__import__", _boom)
+
+        # Should NOT raise; the offering path's try/except must absorb the failure.
+        schemas = build_native_tool_schemas(cast("RoleProfile", profile))
+        names = {str((it.get("function") or {}).get("name") or "") for it in schemas if isinstance(it, dict)}
+        # Original whitelist tool still present.
+        assert "read_file" in names
+        # context_retrieve was NOT appended (registration failed before whitelist.append).
+        assert "context_retrieve" not in names
+
+    def test_flag_on_does_not_duplicate_when_already_in_whitelist(self, monkeypatch) -> None:
+        """Floor: if context_retrieve is already in the whitelist, enabling the flag
+        must NOT duplicate it. At most one schema entry, regardless of source.
+
+        Note: when the whitelist ALREADY contains context_retrieve, the policy is
+        implicitly opting in (it listed the tool by name), so the flag-on path is
+        not even reached — the dedup check runs against the existing list.
+        """
+        profile = MockProfile(role_id="director")
+        profile.tool_policy = SimpleNamespace(whitelist=["read_file", "context_retrieve"])
+        monkeypatch.setenv("KERNELONE_CCR_RETRIEVE", "1")
+
+        schemas = build_native_tool_schemas(cast("RoleProfile", profile))
+        names = [str((it.get("function") or {}).get("name") or "") for it in schemas if isinstance(it, dict)]
+
+        # At most one entry for context_retrieve — no duplicate.
+        assert names.count("context_retrieve") <= 1
+        # And the original read_file is still there.
+        assert "read_file" in names
+
+    def test_flag_on_for_opted_in_role_offered(self, monkeypatch) -> None:
+        """Floor: a role that explicitly opted in via ccr_retrieve_opt_in=True
+        receives the CCR tool when the flag is on, regardless of role_id
+        (spec registration is idempotent, so multiple roles calling concurrently
+        cannot race).
+        """
+        for role_id in ("director", "qa", "pm", "architect", "chief_engineer"):
+            profile = MockProfile(role_id=role_id)
+            profile.tool_policy = SimpleNamespace(whitelist=["read_file"], ccr_retrieve_opt_in=True)
+            monkeypatch.setenv("KERNELONE_CCR_RETRIEVE", "1")
+            schemas = build_native_tool_schemas(cast("RoleProfile", profile))
+            names = {str((it.get("function") or {}).get("name") or "") for it in schemas if isinstance(it, dict)}
+            assert "context_retrieve" in names, (
+                f"role={role_id} should receive the CCR tool when flag is on and opted in"
+            )
+            monkeypatch.delenv("KERNELONE_CCR_RETRIEVE", raising=False)
 
 
 class TestExtractNativeToolCalls:
@@ -362,6 +521,10 @@ class TestClassifyError:
     def test_network_classification(self) -> None:
         assert classify_error("Connection refused") == "network"
         assert classify_error("Network error: DNS failure") == "network"
+        assert (
+            classify_error("500 Server Error: Internal Server Error url: http://localhost:8189/v1/chat/completions")
+            == "network"
+        )
 
     def test_auth_classification(self) -> None:
         assert classify_error("Auth failed: Invalid API key") == "auth"

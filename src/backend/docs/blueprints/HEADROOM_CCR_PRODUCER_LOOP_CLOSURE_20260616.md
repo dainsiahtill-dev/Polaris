@@ -138,3 +138,46 @@ director run 是**单长寿 asyncio 进程**（`cli_thin.py:213`）+ 线程 work
 
 ### 11.3 线程安全 + §8/§6.6 实证 CLEAN
 CCR 单例在真并发（threading.Thread/RLock，24线程×4000op stress 零损坏）下线程安全；唯一 latent hazard=lock 跨 sqlite IO 持有，但 live 单例 sqlite_path=None 故该分支 DEAD（若将来上持久 sqlite 须把 IO 移出锁）。§8：cache 严格进程内 verbatim、无跨 run 答案记忆，execute_method 合成器若其工具结果被 pointerize 也是 verbatim 且随进程蒸发。workspace 48-bit 命名空间安全到 ~20M。§6.6 clean。**这些是"实际没问题"的实证结论，非待办。**
+
+---
+
+## 12) Landing (2026-06-17) — reality vs the three-pass audit
+
+> 本节是当前 LANDED 真相。任何读这份文件的人请以本节为准；§10/§11 是三轮审计轨迹（保留不删）。
+> 总览：本蓝图 §1 的 keystone（"T1-A producer 活 / consumer 死"）的**唯一真阻断**——工具供给层 inert（§11.1 OFFER-1 blocker real）——已 CODE-LEVEL RESOLVED 但 ENV-FLAG-GATED 等 L2 bench；其余审计 finding 按 floor 纪律拆 cold-path live / hot-path gated。
+
+### 12.1 审计 finding × 落地状态对照
+
+| Finding | 审计来源 | 当前状态 | 落地位置 | 证据 |
+|---|---|---|---|---|
+| **CCR-1** in-memory hybrid 偏离蓝图 R 承诺 | §10.1 | **DECIDED-DOCUMENTED**（非"未兑现"） | `get_default_cache()` 单例在 `polaris/kernelone/kernelone/llm/toolkit/original_payload_cache.py:327` 加 docstring + `dispatch_pipeline.py:1142` 加 tripwire 注释（"CCR 正确性依赖 worker 是单进程内线程；改 ProcessPool 会静默打断内存 CCR"）；可选 TTL 300→600s | §11.2 |
+| **CCR-2** 跨进程耐久性 OPEN | §10.2 | **DECIDED-DOCUMENTED** | 同上；director run 实证单长寿 asyncio 进程 + 线程 worker（`cli_thin.py:213` + `dispatch_pipeline.py:1142`），单例 id() 跨线程不变；offload↔retrieve 实证共享同一 cache | §11.2 |
+| **CCR-3** 活路径指针双形 | §10.3 | **CODE-LEVEL RESOLVED**（锚定+精确字符类 regex） | `polaris/kernelone/llm/toolkit/original_payload_cache.py:65` `_MARKER_PATTERNS` 加 `^\[\s*Large (output\|content) stored in receipt\s+(?P<ref>[A-Za-z0-9_.\-]+)\s*\]$`（retrieve 冷路径、不动 placeholder → floor-safe） | `polaris/kernelone/llm/toolkit/tests/test_original_payload_cache.py` 32 passed |
+| **CCR-4** 测试假信心（不测 inline 形） | §10.3 / CCR-3 | **CODE-LEVEL RESOLVED**（path-faithful E2E 测落地） | `polaris/kernelone/context/tests/test_ccr_end_to_end_proof.py`：`test_ccr_end_to_end_offload_then_retrieve_recovers_verbatim` 驱真 build_turns→offload→retrieve→assert verbatim bytes 命中（不仅锁 regex 模式、还锁 E2E 闭环） | 该文件 + workspace 隔离测 `test_ccr_end_to_end_wrong_workspace_does_not_leak` |
+| **CCR-5** producer 接线 floor-safe | §10.4 | **CONFIRMED + 加 §8 tripwire** | `dispatch_pipeline.py:1142` 注释 + §8 verbatim-bytes 实证（cache 严格进程内、无跨 run 答案记忆） | §11.3 |
+| **OFFER-1** context_retrieve 不在 role whitelist | §11.1 | **CODE-LEVEL RESOLVED, ENV-FLAG-GATED** | `polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py:297-331`：`KERNELONE_CCR_RETRIEVE` env flag default OFF；on 时把 `context_retrieve` 追加到 whitelist + `ensure_context_retrieve_spec_registered()` | `polaris/cells/roles/kernel/tests/test_llm_caller.py::TestBuildNativeToolSchemas::test_context_retrieve_offering_is_flag_gated` ✅ |
+| **OFFER-2** spec 不在 `_BUILTIN_REGISTRY`（warm-context 已 refute "Unknown tool 不可派发"） | §11.1 | **PARTIAL — handler import 时 ContextVar self-register 已够**（refuted over-strong）；floor-free 把 spec 移进 `_BUILTIN_REGISTRY` 是 follow-up | current | §11.1 skeptic verdict |
+| **OFFER-3** 系统提示无 retrieve 字 | §11.1 | **DEFERRED → 默认走工具 description 自我描述**（=描述文本是模型面唯一提及） | `polaris/kernelone/llm/toolkit/executor/handlers/context_retrieve.py` 工具描述 | grep 实证 |
+| **T1-B SINK-1** drift 观测零消费者 | §5.1 | **CODE-LEVEL RESOLVED**（read-only consumer 落地） | `polaris/kernelone/context/cache_stability/drift_detector.py:280/301` 新增 `DriftSummary` + `summarize_drift_events`；re-exported via `cache_stability/__init__.py:26/36/40/50` | `polaris/cells/roles/kernel/internal/context_gateway/tests/test_prefix_drift_emission.py::TestDriftEventConsumer` ✅ |
+| **T2A-3 / DROP-2** 否决门在死模块 | §4.1 | **CODE-LEVEL RESOLVED on live path, ENV-FLAG-GATED** | `polaris/kernelone/context/compaction.py:31` (`_T2A_VETO_ENV`); `llm_compact`（`compaction.py:525`）末**非 verbatim port** — 加 `noshrink_snapshot` + revert-to-input messages；`auto_compact`（`compaction.py:760`）已 self-veto 不动 | `polaris/cells/roles/kernel/tests/test_context_compressor.py::TestT2AVetoOnLiveLlmCompact` 3 passed ✅ |
+
+### 12.2 "CODE-LEVEL RESOLVED" vs "ENV-FLAG-GATED" 区分
+
+- **CODE-LEVEL RESOLVED + LIVE**：纯冷路径 / 测 / 只读 sink — **改字节不改热前缀/活消息列表**，落地即生效，default ON。
+  - CCR-3a regex（retrieve-side 解析）
+  - E2E proof test
+  - drift consumer（read-only）
+
+- **CODE-LEVEL RESOLVED + ENV-FLAG-GATED**：**改热前缀 / 活消息列表 / 工具 schema**，落地但 default OFF（不 perturb L2 静默态路径）。
+  - `KERNELONE_CCR_RETRIEVE` — 让 `context_retrieve` 进 director whitelist（即入 native schema 前缀）
+  - `KERNELONE_T2A_VETO` — `llm_compact` 在非缩小时回退 messages + 发 noshrink snapshot（改活返回 messages）
+
+- **DECIDED-DOCUMENTED**：pass-2/3 假设的"必须改"被实证推翻，**文档化当前 closure scope 即可，不改代码**。
+  - CCR-1/2 持久化 — director run 单长寿 asyncio 进程 → in-process CCR 闭环成立，tripwire 防误改
+
+### 12.3 Gate 状态（本切片为 docs-only）
+
+- ruff/mypy 不适用（slice #7 持 13 文件 python 变更；本切片为 3 文件 .md）
+- pytest（lead 实证，9+32 = 41 测全绿，4 个新文件 / 3 个 amended）
+- 5 路 evidence re-run：`codegraph_callers` 实证 veto 入口有 1+ 非测 caller（`compact_if_needed:849`）、consumer `summarize_drift_events` 有 `TestDriftEventConsumer` 驱动消费、offering 入口 `_ccr_retrieve_offering_enabled` 由 `build_native_tool_schemas` 调用
+- 4 个跨切 follow-up（lead reconcile）：详见 `docs/research/HEADROOM_CROSS_POLLINATION_20260616.md §6.5`

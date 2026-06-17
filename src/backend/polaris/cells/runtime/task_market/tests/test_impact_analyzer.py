@@ -80,8 +80,8 @@ def test_impact_analyzer_resolved_needs_revalidation(tmp_path) -> None:
     )
     _publish_and_claim(service, workspace, "task-1")
 
-    # Claim and resolve.
-    claim = service.claim_work_item(
+    # Claim and resolve through the legal FSM path.
+    design_claim = service.claim_work_item(
         ClaimTaskWorkItemCommandV1(
             workspace=workspace,
             stage="pending_design",
@@ -94,7 +94,43 @@ def test_impact_analyzer_resolved_needs_revalidation(tmp_path) -> None:
         AcknowledgeTaskStageCommandV1(
             workspace=workspace,
             task_id="task-1",
-            lease_token=claim.lease_token,
+            lease_token=design_claim.lease_token,
+            next_stage="pending_exec",
+            summary="design done",
+        )
+    )
+    exec_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=workspace,
+            stage="pending_exec",
+            worker_id="director-1",
+            worker_role="director",
+            visibility_timeout_seconds=60,
+        )
+    )
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=workspace,
+            task_id="task-1",
+            lease_token=exec_claim.lease_token,
+            next_stage="pending_qa",
+            summary="execution done",
+        )
+    )
+    qa_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=workspace,
+            stage="pending_qa",
+            worker_id="qa-1",
+            worker_role="qa",
+            visibility_timeout_seconds=60,
+        )
+    )
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=workspace,
+            task_id="task-1",
+            lease_token=qa_claim.lease_token,
             terminal_status="resolved",
             summary="done",
         )

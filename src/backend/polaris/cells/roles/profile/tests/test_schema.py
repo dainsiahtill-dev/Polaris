@@ -333,6 +333,41 @@ class TestProfileToDict:
         assert restored.display_name == original.display_name
         assert restored.tool_policy.whitelist == original.tool_policy.whitelist
 
+    def test_ccr_retrieve_opt_in_plumbed_through_profile_from_dict(self) -> None:
+        """Regression: a yaml/json profile with tool_policy.ccr_retrieve_opt_in=True
+        must end up with the field set on the constructed RoleToolPolicy. This
+        guards the splat-construction plumbing in profile_from_dict (which uses
+        RoleToolPolicy(**data.get('tool_policy', {}))) — a future refactor that
+        moves to explicit kwargs could silently drop the field.
+        """
+        data = {
+            "role_id": "director",
+            "display_name": "Director",
+            "prompt_policy": {"core_template_id": "director"},
+            "data_policy": {"data_subdir": "director"},
+            "tool_policy": {
+                "whitelist": ["read_file", "write_file"],
+                "ccr_retrieve_opt_in": True,
+            },
+        }
+        rp = profile_from_dict(data)
+        assert rp.tool_policy.ccr_retrieve_opt_in is True
+
+    def test_ccr_retrieve_opt_in_defaults_to_false_when_absent(self) -> None:
+        """Fail-closed default: when the field is absent from the source dict,
+        the loaded policy must default to ccr_retrieve_opt_in=False (not raise
+        TypeError on missing kwarg, and not silently coerce to True).
+        """
+        data = {
+            "role_id": "pm",
+            "display_name": "PM",
+            "prompt_policy": {"core_template_id": "pm"},
+            "data_policy": {"data_subdir": "pm"},
+            "tool_policy": {"whitelist": ["read_file"]},
+        }
+        rp = profile_from_dict(data)
+        assert rp.tool_policy.ccr_retrieve_opt_in is False
+
     def test_includes_all_policy_fields(self) -> None:
         rp = RoleProfile(
             role_id="qa",

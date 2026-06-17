@@ -101,6 +101,11 @@ def _normalize_allowed_tool_names_for_matching(
     return names
 
 
+def _raw_allowed_tool_names(allowed_tool_names: Iterable[str] | None) -> set[str]:
+    """Return caller-provided allow-list names in normalized raw form."""
+    return {str(item or "").strip().lower() for item in allowed_tool_names or [] if str(item or "").strip()}
+
+
 def _tool_argument_namespace(tool_name: str) -> set[str]:
     """Return canonical and alias argument names for a registered tool."""
     from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
@@ -149,15 +154,22 @@ class JSONToolParser:
             "input",
             "kwargs",
             "tool_input",
+            "toolinput",
             "tool_arguments",
+            "toolarguments",
             "tool_args",
+            "toolargs",
             "function_arguments",
+            "functionarguments",
             "function_args",
+            "functionargs",
         }
     )
 
     # Keys that indicate the tool name field
-    TOOL_NAME_KEYS: frozenset[str] = frozenset({"name", "tool", "function", "action", "tool_name"})
+    TOOL_NAME_KEYS: frozenset[str] = frozenset(
+        {"name", "tool", "function", "action", "tool_name", "toolname", "function_name", "functionname"}
+    )
 
     # Pattern to validate JSON structure has required fields
     _HAS_NAME_RE = re.compile(
@@ -182,6 +194,7 @@ class JSONToolParser:
             allowed_tool_names: Optional whitelist of allowed tool names.
                                If provided, only these tools will be parsed.
         """
+        self._raw_allowed_names = _raw_allowed_tool_names(allowed_tool_names)
         self._allowed_names = _normalize_allowed_tool_names_for_matching(allowed_tool_names)
 
     @classmethod
@@ -285,12 +298,25 @@ class JSONToolParser:
 
         import uuid
 
+        raw_tool_name = str(tool_name or "").strip()
+        raw_tool_name_lower = raw_tool_name.lower()
+        if self._allowed_names:
+            if canonical_tool_name in self._raw_allowed_names:
+                output_tool_name = canonical_tool_name
+            elif raw_tool_name_lower in self._raw_allowed_names:
+                output_tool_name = raw_tool_name_lower
+            else:
+                output_tool_name = canonical_tool_name
+        else:
+            output_tool_name = raw_tool_name
+
         return [
             ParsedToolCall(
                 id=str(uuid.uuid4()),
-                name=tool_name,
+                name=output_tool_name,
                 arguments=arguments,
                 source="json_parser",
+                raw=json.dumps(data, ensure_ascii=False),
             )
         ]
 
@@ -389,11 +415,9 @@ class JSONToolParser:
         results: list[ParsedToolCall] = []
 
         for call in calls:
-            # Filter by allowed names if specified
-            if self._allowed_names and not (_tool_name_match_keys(call.name) & self._allowed_names):
-                continue
-
-            # Deduplicate by name + arguments hash
+            # Deduplicate by name + arguments hash. Allow-list filtering happens
+            # during extraction so raw/canonical alias matches are evaluated before
+            # the returned ToolCall name is canonicalized.
             key = f"{call.name}::{json.dumps(call.arguments, sort_keys=True)}"
             if key not in seen:
                 seen.add(key)

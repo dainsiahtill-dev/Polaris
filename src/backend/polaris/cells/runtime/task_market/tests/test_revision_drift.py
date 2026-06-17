@@ -191,13 +191,13 @@ def test_detect_revision_drift_skips_terminal(tmp_path) -> None:
             payload={"initial_status": "resolved", "title": "test"},
         )
     )
-    # Manually set to resolved.
+    # Move to resolved through the legal FSM path.
     from polaris.cells.runtime.task_market.public.contracts import (
         AcknowledgeTaskStageCommandV1,
         ClaimTaskWorkItemCommandV1,
     )
 
-    claim = service.claim_work_item(
+    design_claim = service.claim_work_item(
         ClaimTaskWorkItemCommandV1(
             workspace=workspace,
             stage="pending_design",
@@ -210,7 +210,43 @@ def test_detect_revision_drift_skips_terminal(tmp_path) -> None:
         AcknowledgeTaskStageCommandV1(
             workspace=workspace,
             task_id="task-resolved",
-            lease_token=claim.lease_token,
+            lease_token=design_claim.lease_token,
+            next_stage="pending_exec",
+            summary="design done",
+        )
+    )
+    exec_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=workspace,
+            stage="pending_exec",
+            worker_id="director-1",
+            worker_role="director",
+            visibility_timeout_seconds=60,
+        )
+    )
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=workspace,
+            task_id="task-resolved",
+            lease_token=exec_claim.lease_token,
+            next_stage="pending_qa",
+            summary="execution done",
+        )
+    )
+    qa_claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=workspace,
+            stage="pending_qa",
+            worker_id="qa-1",
+            worker_role="qa",
+            visibility_timeout_seconds=60,
+        )
+    )
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=workspace,
+            task_id="task-resolved",
+            lease_token=qa_claim.lease_token,
             terminal_status="resolved",
             summary="done",
         )

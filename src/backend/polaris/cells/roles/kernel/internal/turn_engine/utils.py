@@ -29,6 +29,48 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_TOOL_SIGNATURE_DEFAULT_ARGUMENTS: dict[str, dict[str, frozenset[Any]]] = {
+    "read_file": {
+        "max_bytes": frozenset({200000, 200001}),
+        "range_required": frozenset({False}),
+    }
+}
+
+
+def _canonical_tool_signature_parts(
+    tool: str,
+    args: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any]]:
+    tool_name = str(tool or "").strip()
+    safe_args = args if isinstance(args, dict) else {}
+    try:
+        from polaris.kernelone.llm.toolkit.tool_normalization import (
+            normalize_tool_arguments,
+            normalize_tool_name,
+        )
+
+        raw_tool = tool_name.lower()
+        resolved_tool = normalize_tool_name(tool_name) or raw_tool
+        if resolved_tool != raw_tool:
+            return raw_tool, dict(safe_args)
+        canonical_tool = resolved_tool
+        canonical_args = normalize_tool_arguments(canonical_tool, safe_args)
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        canonical_tool = tool_name.lower()
+        canonical_args = dict(safe_args)
+
+    signature_args = dict(canonical_args)
+    for key, default_values in _TOOL_SIGNATURE_DEFAULT_ARGUMENTS.get(canonical_tool, {}).items():
+        value = signature_args.get(key)
+        try:
+            should_drop = value in default_values
+        except TypeError:
+            should_drop = False
+        if should_drop:
+            signature_args.pop(key, None)
+    return canonical_tool, signature_args
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 工具调用签名与去重
 # ─────────────────────────────────────────────────────────────────────────────
@@ -59,7 +101,7 @@ def tool_call_signature_from_parsed(call: Any) -> str:
     tool = ""
     for candidate in tool_candidates:
         if isinstance(candidate, str) and candidate.strip():
-            tool = candidate.strip().lower()
+            tool = candidate.strip()
             break
 
     args: dict[str, Any] = {}
@@ -68,6 +110,7 @@ def tool_call_signature_from_parsed(call: Any) -> str:
             args = candidate
             break
 
+    tool, args = _canonical_tool_signature_parts(tool, args)
     try:
         args_token = json.dumps(args, ensure_ascii=False, sort_keys=True)
     except (TypeError, ValueError):
@@ -301,8 +344,7 @@ def tool_call_signature(tool: str, args: dict[str, Any] | None) -> str:
     Returns:
         Stable signature string.
     """
-    tool_name = str(tool or "").strip().lower()
-    safe_args = args if isinstance(args, dict) else {}
+    tool_name, safe_args = _canonical_tool_signature_parts(tool, args)
     try:
         args_token = json.dumps(safe_args, ensure_ascii=False, sort_keys=True)
     except (RuntimeError, ValueError):
