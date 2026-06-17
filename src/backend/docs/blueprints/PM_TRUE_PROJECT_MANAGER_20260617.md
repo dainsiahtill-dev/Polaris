@@ -109,11 +109,21 @@ Verified: governance gate `new_issue_count == 0`, zero issue records referencing
    deterministic, fully unit-tested. **Purely additive** (nothing on the live path
    calls it yet → zero floor risk); later consumed by prioritization + status ETA
    behind `KERNELONE_PM_CRITICAL_PATH` default-off.  ← **THIS INCREMENT**
-4. **Project status rollup** — `build_pm_status_rollup()` in
-   `delivery/cli/pm/report_utils.py`: %-complete (TaskBoard terminal/total),
-   requirements coverage, RAG health (PMStats), ETA (remaining estimate ÷ velocity,
-   using the schedule from #3), open-RAID (#2). Writes `pm.status.md` + `pm.status.json`.
-   Pure read+format over existing stores; additive artifact.
+4. **Project status rollup** — ← **PURE CORE LANDED** (`status_rollup.py`, 51 tests).
+   `pm_planning/internal/status_rollup.py`: a pure, deterministic, clock-free,
+   §8-clean core — `compute_status_rollup(...)` builds a frozen `PmStatusRollup`
+   (%-complete, RAG health, ETA, `remaining_effort`, makespan + critical path read
+   verbatim from #3's `Schedule` (§7), open-RAID from #2's `summarize()`, requirements
+   coverage as a 0..1 ratio with `None` = untracked) from **plain-data inputs** — plus
+   a byte-stable `render_status_markdown`. Fail-closed/total (never raises; ETA never
+   fabricated — `None` unless velocity is finite > 0). Imports only stdlib +
+   `.dependency_validator`; no delivery import, no new cross-cell edge; governance gate
+   `new_issue_count == 0`; wired to nothing (floor-safe/additive). **Deferred delivery
+   glue** (designed, not built): a `delivery/cli/pm` `build_pm_status_rollup(workspace,
+   tasks)` gathers live inputs (TaskBoard counts, `requirements_tracker.get_coverage_report()`
+   — dividing its 0..100 percent by 100 — `RaidRegister.summarize()`, `compute_schedule()`),
+   stamps the UTC clock into `generated_at`, calls the core, and writes `pm.status.md` +
+   `pm.status.json`.
 
 Later: WSJF prioritization (consumes #3 critical-path criticality), milestones
 registry, durable decision log, change-request register, failure-driven replan,
