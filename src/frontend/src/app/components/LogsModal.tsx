@@ -1,6 +1,7 @@
 import { RefreshCw, X, FileText, Activity, AlertTriangle, TerminalSquare, Wrench } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiFetch, connectWebSocket } from '@/api';
+import { apiFetch } from '@/api';
+import { useRuntimeTransport } from '@/runtime/transport';
 import { CodexCliStreamParser, parseCodexCliLines, stripLlmTags, type LogEvent } from '@/app/components/logs/CodexCliStreamParser';
 import { LlmEventCard } from '@/app/components/logs/LlmEventCard';
 import { parseLlmEventLine, parseLlmEventLines, type LlmEvent } from '@/app/components/logs/LlmEventTypes';
@@ -357,8 +358,7 @@ export function LogsModal({
   const [viewMode, setViewMode] = useState<'raw' | 'smart' | 'json'>('smart');
   const [filter, setFilter] = useState<'all' | 'error' | 'exec' | 'tool'>('all');
   const [query, setQuery] = useState('');
-  const socketRef = useRef<WebSocket | null>(null);
-  const [streamEvents, setStreamEvents] = useState<LogEvent[]>([]);
+    const [streamEvents, setStreamEvents] = useState<LogEvent[]>([]);
   const parserRef = useRef<CodexCliStreamParser | null>(null);
 
   const activeSource = useMemo(
@@ -420,92 +420,79 @@ export function LogsModal({
     }
   }, [isOpen, active]);
 
+  const { connected: transportConnected, subscribeChannels, registerMessageHandler } = useRuntimeTransport();
+
   useEffect(() => {
     if (!isOpen) return;
-    let activeSocket: WebSocket | null = null;
-    let alive = true;
+    const channels = [activeSource.channel];
+    if (llmChannel) channels.push(llmChannel);
 
-    const connect = async () => {
-      try {
-        activeSocket = await connectWebSocket();
-      } catch {
-        if (alive) setLive(false);
-        return;
+    if (!transportConnected) {
+      setLive(false);
+      return;
+    }
+    setLive(true);
+    const unsubscribe = subscribeChannels(
+      channels.map((channel) => ({ channel, tailLines: 200 })),
+    );
+
+    const unregister = registerMessageHandler((raw) => {
+      if (!raw || typeof raw !== 'object') return;
+      const ev = raw as Record<string, unknown>;
+      const ch = String(ev.channel || '').trim();
+      const kind = String(ev.kind || ev.type || '').trim().toLowerCase();
+      const payload = (ev.payload && typeof ev.payload === 'object'
+        ? (ev.payload as Record<string, unknown>)
+        : null);
+      const line = typeof ev.line === 'string' ? ev.line : null;
+      const text = line
+        || (payload && typeof payload.line === 'string' ? (payload.line as string) : '')
+        || (payload ? JSON.stringify(payload) : '');
+
+      if (ch === activeSource.channel) {
+        if (kind === 'snapshot' && payload && Array.isArray((payload as { lines?: unknown }).lines)) {
+          setLines((payload as { lines: string[] }).lines);
+          const parser = new CodexCliStreamParser();
+          (payload as { lines: string[] }).lines.forEach((line: string) => parser.feedLine(line));
+          parserRef.current = parser;
+          setStreamEvents([...parser.events]);
+        } else if (
+          (kind === 'line'
+            || kind === 'process_stream'
+            || kind === 'runtime_event'
+            || kind === 'dialogue_event'
+            || kind === 'process_line')
+          && text
+        ) {
+          setLines((prev) => [...prev, text].slice(-1000));
+          if (!parserRef.current) parserRef.current = new CodexCliStreamParser();
+          parserRef.current.feedLine(text);
+          setStreamEvents([...parserRef.current.events]);
+        }
       }
 
-      socketRef.current = activeSocket;
-      if (!alive) return;
-
-      activeSocket.onopen = () => {
-        setLive(true);
-        const channels = [activeSource.channel];
-        if (llmChannel) channels.push(llmChannel);
-        activeSocket?.send(JSON.stringify({ type: 'subscribe', channels, tail_lines: 200 }));
-      };
-
-      activeSocket.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          const ch = String(payload.channel || '').trim();
-          const msgType = String(payload.type || '').trim().toLowerCase();
-          const eventText = payload.event && typeof payload.event === 'object' ? JSON.stringify(payload.event) : '';
-          const lineText = typeof payload.line === 'string' ? payload.line : '';
-          const text = eventText || lineText || (typeof payload.text === 'string' ? payload.text : '');
-
-          if (ch === activeSource.channel) {
-            if (msgType === 'snapshot' && Array.isArray(payload.lines)) {
-              setLines(payload.lines);
-              const parser = new CodexCliStreamParser();
-              payload.lines.forEach((line: string) => parser.feedLine(line));
-              parserRef.current = parser;
-              setStreamEvents([...parser.events]);
-            } else if ((msgType === 'line' || msgType === 'process_stream' || msgType === 'runtime_event' || msgType === 'dialogue_event') && text) {
-              setLines((prev) => [...prev, text].slice(-1000));
-              if (!parserRef.current) parserRef.current = new CodexCliStreamParser();
-              parserRef.current.feedLine(text);
-              setStreamEvents([...parserRef.current.events]);
-            }
+      if (ch === llmChannel) {
+        if (kind === 'snapshot' && payload && Array.isArray((payload as { lines?: unknown }).lines)) {
+          const parsed = parseLlmEventLines((payload as { lines: string[] }).lines);
+          const ids = new Set<string>();
+          for (const ev2 of parsed) ids.add(ev2.event_id);
+          llmSeenIds.current = ids;
+          setLlmEvents(parsed);
+        } else if ((kind === 'line' || kind === 'llm_stream') && text) {
+          const ev2 = parseLlmEventLine(text);
+          if (ev2 && !llmSeenIds.current.has(ev2.event_id)) {
+            llmSeenIds.current.add(ev2.event_id);
+            setLlmEvents((prev) => [...prev, ev2].slice(-500));
           }
-
-          if (ch === llmChannel) {
-            if (msgType === 'snapshot' && Array.isArray(payload.lines)) {
-              const parsed = parseLlmEventLines(payload.lines);
-              const ids = new Set<string>();
-              for (const ev of parsed) ids.add(ev.event_id);
-              llmSeenIds.current = ids;
-              setLlmEvents(parsed);
-            } else if ((msgType === 'line' || msgType === 'llm_stream') && text) {
-              const ev = parseLlmEventLine(text);
-              if (ev && !llmSeenIds.current.has(ev.event_id)) {
-                llmSeenIds.current.add(ev.event_id);
-                setLlmEvents(prev => [...prev, ev].slice(-500));
-              }
-            }
-          }
-        } catch {
-          // ignore malformed payloads
         }
-      };
-
-      activeSocket.onclose = () => {
-        if (alive) setLive(false);
-      };
-
-      activeSocket.onerror = () => {
-        if (alive) setLive(false);
-      };
-    };
-
-    connect();
+      }
+    });
 
     return () => {
-      alive = false;
-      if (socketRef.current) {
-        socketRef.current.close();
-        socketRef.current = null;
-      }
+      try { unsubscribe(); } catch { /* noop */ }
+      try { unregister(); } catch { /* noop */ }
     };
-  }, [isOpen, activeSource.channel, llmChannel]);
+  }, [isOpen, activeSource.channel, llmChannel, transportConnected, subscribeChannels, registerMessageHandler]);
 
   const isCodexSmart = !hasLlmChannel && (active === 'pm-subprocess' || active === 'director');
   const smartEvents = useMemo(() => {

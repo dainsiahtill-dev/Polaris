@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import type React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { LogsModal } from './LogsModal';
+import { RuntimeTransportProvider } from '@/runtime/transport';
 
 // Mock API fetch
 const mockApiFetch = vi.fn();
@@ -60,7 +61,7 @@ const defaultProps = {
 async function renderOpenLogsModal(
   props: Partial<React.ComponentProps<typeof LogsModal>> = {}
 ) {
-  const result = render(<LogsModal {...defaultProps} {...props} />);
+  const result = render(<RuntimeTransportProvider><LogsModal {...defaultProps} {...props} /></RuntimeTransportProvider>);
   await waitFor(() => {
     expect(mockApiFetch).toHaveBeenCalled();
   });
@@ -102,7 +103,7 @@ describe('LogsModal', () => {
     });
 
     it('returns null when isOpen is false', () => {
-      const { container } = render(<LogsModal {...defaultProps} isOpen={false} />);
+      const { container } = render(<RuntimeTransportProvider><LogsModal {...defaultProps} isOpen={false} /></RuntimeTransportProvider>);
       expect(container.firstChild).toBeNull();
     });
   });

@@ -17,7 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { connectWebSocket } from '@/api';
+import { useRuntimeTransport } from '@/runtime/transport';
 import { devLogger } from '@/app/utils/devLogger';
 import {
   CHANNEL_METADATA,
@@ -283,102 +283,48 @@ export function UnifiedLogsView({
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const [severityFilter, setSeverityFilter] = useState<LogSeverity | null>(null);
 
-  // WebSocket connection
-  const [ws, setWs] = useState<WebSocket | null>(null);
+  // Unify onto the runtime transport: the legacy path opened its own
+  // WebSocket and sent ``type: 'event'`` without ``protocol: 'runtime.v2'``;
+  // the runtime.v2 backend rejects those with RUNTIME_V2_REQUIRED, so we
+  // now route queries through ``sendCommand`` and include the v2 protocol
+  // marker explicitly.
+  const { connected: transportConnected, sendCommand, registerMessageHandler } = useRuntimeTransport();
 
-  // Query events via WebSocket
   const queryEvents = useCallback(
     (params: LogQueryParams) => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-      const message: LogEventMessage = {
+      const message = {
         type: 'event',
         action: 'query',
+        protocol: 'runtime.v2',
         ...params,
       };
-
-      ws.send(JSON.stringify(message));
+      sendCommand(message);
     },
-    [ws]
+    [sendCommand]
   );
 
-  // Initial load and WebSocket setup
   useEffect(() => {
     if (!isOpen) return;
-    let alive = true;
-    let websocket: WebSocket | null = null;
-    setError(null);
-
-    const handleMessage = (event: MessageEvent) => {
-      try {
-        const msg = JSON.parse(event.data);
-
-        // Handle event responses
-        if (msg.type === 'event' && msg.action === 'query_result') {
-          const response = msg as LogEventResponse;
-          setEvents(response.events);
-          setCursor(response.next_cursor);
-          setHasMore(response.has_more);
-          setLoading(false);
-        }
-      } catch (e) {
-        devLogger.error('Failed to parse WebSocket message:', e);
-      }
-    };
-
-    const connect = async () => {
-      setLoading(true);
-      try {
-        websocket = await connectWebSocket();
-      } catch {
-        if (alive) {
-          setError('WebSocket 连接错误');
-          setLoading(false);
-        }
-        return;
-      }
-      if (!alive || !websocket) {
-        websocket?.close();
-        return;
-      }
-
-      websocket.onopen = () => {
-        if (!alive || !websocket) {
-          return;
-        }
-        setWs(websocket);
-      };
-
-      websocket.onmessage = handleMessage;
-
-      websocket.onerror = () => {
-        if (!alive) {
-          return;
-        }
-        setError('WebSocket 连接错误');
+    if (!transportConnected) return;
+    const unregister = registerMessageHandler((raw) => {
+      if (!raw || typeof raw !== 'object') return;
+      const msg = raw as Record<string, unknown>;
+      if (msg.action === 'query_result') {
+        const response = msg as unknown as LogEventResponse;
+        setEvents(response.events);
+        setCursor(response.next_cursor);
+        setHasMore(response.has_more);
         setLoading(false);
-      };
-
-      websocket.onclose = () => {
-        if (!alive) {
-          return;
-        }
-        setWs(null);
-      };
-    };
-
-    void connect();
-
+      }
+    });
     return () => {
-      alive = false;
-      websocket?.close();
-      setWs(null);
+      try { unregister(); } catch { /* noop */ }
     };
-  }, [isOpen]);
+  }, [isOpen, transportConnected, registerMessageHandler]);
 
   // Re-query when filters change
   useEffect(() => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!transportConnected) return;
 
     setLoading(true);
     queryEvents({
@@ -388,7 +334,7 @@ export function UnifiedLogsView({
       high_signal_only: highSignalOnly,
       severity: severityFilter || undefined,
     });
-  }, [activeChannel, highSignalOnly, severityFilter, runId, ws, queryEvents]);
+  }, [activeChannel, highSignalOnly, severityFilter, runId, transportConnected, queryEvents]);
 
   // Toggle event expansion
   const toggleEventExpanded = useCallback((eventId: string) => {
@@ -405,7 +351,7 @@ export function UnifiedLogsView({
 
   // Load more events
   const loadMore = useCallback(() => {
-    if (!ws || !cursor) return;
+    if (!cursor) return;
 
     setLoading(true);
     queryEvents({
@@ -416,7 +362,7 @@ export function UnifiedLogsView({
       high_signal_only: highSignalOnly,
       severity: severityFilter || undefined,
     });
-  }, [ws, cursor, activeChannel, runId, highSignalOnly, severityFilter, queryEvents]);
+  }, [cursor, activeChannel, runId, highSignalOnly, severityFilter, queryEvents]);
 
   // Filtered events (for high signal mode)
   const displayEvents = useMemo(() => {

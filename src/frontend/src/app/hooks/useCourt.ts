@@ -355,12 +355,5 @@ export function useCourtWebSocket() {
     return () => unregister();
   }, [registerMessageHandler]);
 
-  // Send subscribe command when connected
-  useEffect(() => {
-    if (connected) {
-      sendCommand({ type: 'subscribe', channels: ['status'] });
-    }
-  }, [connected, sendCommand]);
-
   return { state, connected };
 }

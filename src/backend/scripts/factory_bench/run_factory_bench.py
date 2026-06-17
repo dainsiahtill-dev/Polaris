@@ -346,7 +346,7 @@ import urllib.error  # noqa: E402
 import urllib.request  # noqa: E402
 
 _DEFAULT_BACKEND_URL = "http://127.0.0.1:49977"
-_BENCH_HTTP_TIMEOUT_S = 2.0
+_BENCH_HTTP_TIMEOUT_S = 10.0  # bumped from 2.0: cold-start 49977 can exceed 2s
 
 
 def _resolve_backend_url(explicit: str | None = None) -> str:

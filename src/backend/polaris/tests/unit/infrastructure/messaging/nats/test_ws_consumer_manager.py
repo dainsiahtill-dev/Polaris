@@ -39,6 +39,8 @@ class _FakeJetStream:
 
     async def add_stream(self, config: Any) -> object:
         self.streams_added.append(str(config.name))
+        # Simulate real NATS: once the stream exists, stream_info succeeds.
+        self.stream_info_error = None
         return {"name": config.name}
 
     async def delete_consumer(self, stream_name: str, durable_name: str) -> None:

@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
 from polaris.cells.factory.pipeline.internal.bench_service import (
     FactoryBenchService,
 )
@@ -1310,7 +1309,6 @@ async def _get_factory_run_audit_bundle_core(
     return FactoryRunAuditBundleResponse(**bundle)
 
 
-
 async def _control_factory_run_core(
     run_id: str,
     payload: FactoryControlRequest,
@@ -1650,14 +1648,20 @@ async def append_factory_bench_event_v2(
         envelope = create_runtime_event(
             workspace_key="bench",
             run_id=session_id,
-            channel="event.bench",
+            # The front-end subscribes to ``event.bench:<sid>`` (see
+            # useFactoryBench: ``const channel = `event.bench:${sid}`;``).
+            # The WS filter does exact-string channel match, so we have
+            # to publish on the same per-session channel.
+            channel=f"event.bench:{session_id}",
             kind=str(event.get("type") or "bench.event"),
             payload=event,
             meta={"source": "factory_bench_subprocess"},
         )
+        # ``publish_to_jetstream`` -> ``client.publish_js`` JSON-serializes
+        # the payload (nats-py has no dataclass hook). Hand it a dict.
         published = await publish_to_jetstream(
             subject=f"hp.runtime.bench.{session_id}",
-            payload=envelope,
+            payload=envelope.to_dict(),
         )
     except (RuntimeError, ValueError, TypeError) as exc:
         # JetStream fanout is best-effort; JSONL write already succeeded.

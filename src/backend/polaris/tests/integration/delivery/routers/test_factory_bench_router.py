@@ -99,6 +99,82 @@ class TestFactoryBenchRouter:
         snapshot = self.client.get(f"/v2/factory/bench/sessions/{sid}").json()
         assert any(e["type"] == "project.started" for e in snapshot["events"])
 
+    def test_append_event_publishes_to_jetstream(self) -> None:
+        """Lock the real-time push contract: publish_to_jetstream must
+        receive a JSON-serializable payload (a ``dict``, NOT a
+        ``RuntimeEventEnvelope`` dataclass) so the front-end actually
+        sees the events. A previous bug passed the dataclass straight
+        to ``publish_to_jetstream``; ``client.publish_js`` calls
+        ``json.dumps(payload)`` which raised ``TypeError``, the
+        call-site ``except (RuntimeError, ValueError, TypeError)``
+        silently swallowed it, and the response reported
+        ``published: false`` while the JSONL was still written — the
+        front-end therefore never received a single event despite a
+        perfectly normal-looking bench run. ``publish_to_jetstream``
+        is mocked here to dodge the platform's default NATS client's
+        5-second connect-timeout race that flakes the test in the
+        full-file run; the production code path is exercised by
+        ``tests/integration/scripts/factory_bench/test_e2e_unified_ws.py``.
+        """
+        from dataclasses import is_dataclass
+
+        from polaris.delivery.http.routers import factory as factory_router
+
+        captured: dict[str, object] = {}
+
+        async def fake_publish(subject: str, payload):
+            captured["subject"] = subject
+            captured["payload"] = payload
+            return True
+
+        with patch.object(factory_router, "publish_to_jetstream", fake_publish):
+            sid = self.client.post(
+                "/v2/factory/bench/sessions",
+                json={"work_dir": "/tmp/ws", "project_ids": ["L1-02"], "total": 1},
+            ).json()["session_id"]
+            resp = self.client.post(
+                f"/v2/factory/bench/sessions/{sid}/events",
+                json={
+                    "type": "project.started",
+                    "name": "L1-02",
+                    "actor": "factory-bench",
+                    "summary": "L1-02 starting",
+                    "meta": {"level": 1},
+                },
+            )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["appended"] is True, body
+        assert body.get("published") is True, (
+            f"expected published=True, got {body!r}. The bench "
+            "subprocess -> backend -> NATS contract is broken: events "
+            "are being durably written to JSONL but never make it onto "
+            "the JetStream subject ``hp.runtime.bench.<session_id>``."
+        )
+        # The contract: payload must be a dict, not a dataclass, so
+        # ``client.publish_js`` -> ``json.dumps`` actually works.
+        assert captured["subject"] == f"hp.runtime.bench.{sid}"
+        assert isinstance(captured["payload"], dict), (
+            f"publish_to_jetstream must receive a dict for JSON "
+            f"serialization, got {type(captured['payload']).__name__}. "
+            f"value={captured['payload']!r}"
+        )
+        # Belt and braces: even if a future refactor re-introduces the
+        # dataclass, fail loud and clear.
+        assert not is_dataclass(captured["payload"]), (
+            "publish_to_jetstream must NOT receive a "
+            "RuntimeEventEnvelope dataclass — it would fail to JSON-"
+            "serialize downstream and the call-site's broad except "
+            "would silently swallow the TypeError."
+        )
+        # Sanity: the envelope carries the canonical shape.
+        envelope = captured["payload"]
+        assert envelope["schema_version"] == "runtime.v2"
+        assert envelope["channel"] == f"event.bench:{sid}", envelope["channel"]
+        assert envelope["kind"] == "project.started"
+        assert envelope["workspace_key"] == "bench"
+        assert envelope["run_id"] == sid
+
     def test_append_event_to_unknown_session_returns_appended_false(self) -> None:
         ok = self.client.post(
             "/v2/factory/bench/sessions/bench-missing-xyz/events",

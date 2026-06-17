@@ -121,16 +121,53 @@ class JetStreamConsumerManager:
                     )
                 )
 
-            # Subscribe a single wildcard subject for workspace; channels are filtered per payload.
-            subject = f"hp.runtime.{self.workspace_key}.>"
+            # Subscribe to the full ``hp.runtime.>`` so workspace-agnostic
+            # channels (e.g. ``hp.runtime.bench.<session_id>`` from the
+            # Factory bench) flow through too. Per-payload channel
+            # filtering still runs in ``_consume_messages_loop``, so
+            # messages the client didn't subscribe to are acked and
+            # dropped; the stream already covers the full prefix.
+            subject = "hp.runtime.>"
 
             # Ensure stale consumer from previous reconnect/subscription cycle is removed.
             await self._delete_consumer_best_effort()
 
+            # Honor the tail argument: a brand-new client subscribing
+            # with cursor=0 and tail=N should not have to wait for the
+            # consumer to drain the entire stream history before new
+            # events flow. Compute the start sequence from the
+            # stream's current tail so we only replay the requested
+            # window — otherwise the bench event the user is waiting
+            # for sits in the queue behind dozens of history messages.
+            opt_start_seq = 1
+            if self.current_cursor > 0:
+                opt_start_seq = self.current_cursor + 1
+            elif self.tail and self.tail > 0 and self._jetstream is not None:
+                try:
+                    stream_info = await self._jetstream.stream_info(
+                        JetStreamConstants.STREAM_NAME,
+                    )
+                    # Real NATS returns a stream-info object with
+                    # ``.state.last_seq``; test mocks sometimes return
+                    # a dict. Accept both.
+                    state = getattr(stream_info, "state", None)
+                    if state is None and isinstance(stream_info, dict):
+                        state = stream_info.get("state", {})
+                    last_seq = int(
+                        getattr(state, "last_seq", 0) or (state.get("last_seq", 0) if isinstance(state, dict) else 0)
+                    )
+                    opt_start_seq = max(1, last_seq - self.tail + 1)
+                except (RuntimeError, ValueError, AttributeError) as exc:
+                    logger.debug(
+                        "tail-based start_seq lookup failed for %s: %s",
+                        self.client_id,
+                        exc,
+                    )
+
             consumer_config = ConsumerConfig(
                 durable_name=self._durable_name,
                 deliver_policy=DeliverPolicy.BY_START_SEQUENCE,
-                opt_start_seq=self.current_cursor + 1 if self.current_cursor > 0 else 1,
+                opt_start_seq=opt_start_seq,
                 ack_policy=AckPolicy.EXPLICIT,
                 ack_wait=JetStreamConstants.CONSUMER_ACK_WAIT_SECONDS,
                 max_deliver=JetStreamConstants.CONSUMER_MAX_DELIVER,
