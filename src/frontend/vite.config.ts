@@ -156,6 +156,10 @@ export default defineConfig({
         target: backendWsTarget,
         ws: true,
       },
+      "/v2": {
+        target: backendHttpTarget,
+        changeOrigin: true,
+      },
     },
   },
 });

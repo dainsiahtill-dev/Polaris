@@ -194,6 +194,48 @@ class TestBenchToBackendIntegration(unittest.TestCase):
         local_events_file = self.cache_root / "runs" / self.run_id / "events" / "runtime.events.jsonl"
         self.assertTrue(local_events_file.is_file())
 
+    def test_emit_pushes_to_backend_when_workspace_lacks_cache_root(self) -> None:
+        """Real bench runtime: work_dir is a plain parent dir, not a Polaris
+        workspace, so cache_root resolution fails. The backend push must
+        still happen — otherwise the Factory panel sees zero events even
+        though the chain ran. The local JSONL is a best-effort side
+        channel; the Factory HTTP path is the canonical real-time one.
+        """
+        # Plain empty workspace — no .polaris, no docs/, no cache_root.
+        plain_ws = Path(self._tmp.name) / "plain-parent"
+        plain_ws.mkdir(parents=True, exist_ok=True)
+        sid = _push_bench_session_to_backend(
+            backend_url=self.backend_url,
+            work_dir=str(plain_ws),
+            project_ids=["L1-01"],
+            total=1,
+        )
+        self.assertEqual(sid, "bench-test-001")
+        configure_bench_backend(self.backend_url, sid)
+        # DO NOT pass cache_root: this is the real bench runtime path.
+        ok = _emit_bench_event(
+            workspace=plain_ws,
+            project_id="L1-01",
+            level=1,
+            name="project.started",
+            summary="L1-01 starting (no cache_root)",
+        )
+        self.assertTrue(
+            ok,
+            "_emit_bench_event must succeed on the backend path even when the workspace has no Polaris cache_root",
+        )
+        # The backend must have received the event.
+        event_calls = [p for p, _ in _RecordingBackend.received if p.endswith("/events")]
+        self.assertEqual(
+            len(event_calls),
+            1,
+            f"expected exactly one /events POST, got: {_RecordingBackend.received!r}",
+        )
+        # The event must carry the canonical name the Factory panel renders.
+        event_body = next(body for path, body in _RecordingBackend.received if path.endswith("/events"))
+        self.assertEqual(event_body.get("type"), "factory_bench.project.started")
+        self.assertEqual(event_body.get("meta", {}).get("project_id"), "L1-01")
+
 
 if __name__ == "__main__":
     unittest.main()

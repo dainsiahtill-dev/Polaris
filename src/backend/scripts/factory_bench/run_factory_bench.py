@@ -267,50 +267,58 @@ def _emit_bench_event(
     try:
         from polaris.kernelone.events import emit_event
     except ImportError:
-        return False
+        # If we cannot import the local emitter, we can still push to the
+        # Factory HTTP backend below — do NOT bail out before that.
+        emit_event = None  # type: ignore[assignment]
 
-    if not cache_root:
-        cache_root = _resolve_bench_cache_root(workspace)
-    if not cache_root:
-        return False
-
-    pointer = Path(cache_root) / "latest_run.json"
-    if not pointer.is_file():
-        return False
-    try:
-        pointer_payload = json.loads(pointer.read_text(encoding="utf-8"))
-        run_id = str(pointer_payload.get("run_id") or "").strip()
-    except (OSError, ValueError):
-        return False
-    if not run_id:
-        return False
-
-    events_path = Path(cache_root) / "runs" / run_id / "events" / "runtime.events.jsonl"
     payload_meta: dict[str, Any] = dict(meta or {})
     payload_meta.setdefault("project_id", str(project_id))
     payload_meta.setdefault("level", int(level))
     payload_meta.setdefault("source", "factory-bench")
 
+    # --- Local JSONL (WS-bridge side channel): best-effort, requires
+    # a Polaris cache_root + latest_run.json. The real bench runtime
+    # uses a plain parent work_dir (no .polaris), so this path often
+    # legitimately has nothing to write into. The Factory HTTP push
+    # below is the canonical real-time path and must run regardless.
     local_ok = False
-    try:
-        emit_event(
-            str(events_path),
-            kind="event",
-            actor="factory-bench",
-            name=f"factory_bench.{name}",
-            summary=summary,
-            meta=payload_meta,
-        )
-        local_ok = True
-    except (OSError, ValueError, TypeError) as exc:
-        print(f"[factory-bench] WS emit failed: {exc}", file=sys.stderr, flush=True)
+    if not cache_root:
+        cache_root = _resolve_bench_cache_root(workspace)
+    if cache_root:
+        pointer = Path(cache_root) / "latest_run.json"
+        if pointer.is_file():
+            try:
+                pointer_payload = json.loads(pointer.read_text(encoding="utf-8"))
+                run_id = str(pointer_payload.get("run_id") or "").strip()
+            except (OSError, ValueError):
+                run_id = ""
+            if run_id:
+                events_path = Path(cache_root) / "runs" / run_id / "events" / "runtime.events.jsonl"
+                if emit_event is not None:
+                    try:
+                        emit_event(
+                            str(events_path),
+                            kind="event",
+                            actor="factory-bench",
+                            name=f"factory_bench.{name}",
+                            summary=summary,
+                            meta=payload_meta,
+                        )
+                        local_ok = True
+                    except (OSError, ValueError, TypeError) as exc:
+                        print(
+                            f"[factory-bench] WS emit failed: {exc}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
 
+    # --- Factory HTTP backend push: canonical real-time path. Runs
+    # independently of cache_root so the Factory panel sees every event
+    # even when the bench is run against a plain parent work_dir.
     backend_ok = False
     backend_url = _BENCH_BACKEND.get("backend_url", "")
     backend_sid = _BENCH_BACKEND.get("session_id", "")
     if backend_url and backend_sid:
-        # Inject project_id / level / source into the meta of the backend
-        # event too — the bench service re-derives these from meta.
         backend_ok = _push_bench_event_to_backend(
             backend_url=backend_url,
             session_id=backend_sid,
