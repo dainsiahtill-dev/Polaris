@@ -278,7 +278,10 @@ def compute_schedule(tasks: list[dict[str, Any]]) -> Schedule:
         latest_finish[task_id] = min((latest_start[s] for s in dependents), default=makespan)
         latest_start[task_id] = latest_finish[task_id] - weights[task_id]
 
-    slack = {task_id: latest_start[task_id] - earliest_start[task_id] for task_id in known_ids}
+    # Round the exposed slack so float-subtraction noise (e.g. a 1.3-unit estimate)
+    # cannot leak: a consumer testing slack == 0 must still see exact zero for a
+    # critical task. The critical_path itself is selected with _SLACK_TOLERANCE.
+    slack = {task_id: round(latest_start[task_id] - earliest_start[task_id], 6) for task_id in known_ids}
     critical_path = tuple(task_id for task_id in order if abs(slack[task_id]) <= _SLACK_TOLERANCE)
 
     return Schedule(

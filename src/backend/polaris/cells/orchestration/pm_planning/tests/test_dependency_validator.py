@@ -156,3 +156,21 @@ def test_compute_schedule_ignores_malformed_entries() -> None:
     schedule = compute_schedule(tasks)  # type: ignore[arg-type]
     assert schedule.order == ("a",)
     assert schedule.makespan == 1.0
+
+
+def test_compute_schedule_slack_has_no_float_noise() -> None:
+    # Non-binary-exact weights must not leak float noise into the slack dict;
+    # a critical task must still test == 0.0 exactly.
+    tasks = [
+        {"id": "a", "estimated_effort": 1.3},
+        {"id": "b", "depends_on": ["a"], "estimated_effort": 1.3},
+        {"id": "c", "depends_on": ["a"], "estimated_effort": 0.7},
+        {"id": "d", "depends_on": ["b", "c"], "estimated_effort": 1.3},
+    ]
+    schedule = compute_schedule(tasks)
+    assert schedule.slack["a"] == 0.0
+    assert schedule.slack["b"] == 0.0
+    assert schedule.slack["d"] == 0.0
+    assert schedule.critical_path == ("a", "b", "d")
+    # c has real positive slack (b is heavier than c), reported cleanly rounded
+    assert schedule.slack["c"] == 0.6
