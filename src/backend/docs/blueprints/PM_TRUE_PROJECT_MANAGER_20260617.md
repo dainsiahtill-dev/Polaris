@@ -138,10 +138,29 @@ Verified: governance gate `new_issue_count == 0`, zero issue records referencing
    raw-priority sort sites (`pipeline.py:754`, `pm_agent.py:183`,
    `shangshuling_registry.py:166`) are untouched (deferred default-off wiring). Floor-safe.
 
-Later: milestones registry, durable decision log, change-request register,
-failure-driven replan, stakeholder-clarification tool, consolidate the unwired
-orchestrators, restore the PMRole RoleBase interface, and the gated live-path wiring of
-the five landed cores (each behind a default-off env gate + L2-floor re-verify).
+6. **Composed project status report** — ← **LANDED** (integration capstone).
+   `pm_planning/internal/project_report.py`: a pure `compose_project_report(...)` +
+   byte-stable `render_project_markdown(...)` that fold the five cores (status rollup
+   health/%-complete/ETA, schedule critical-path/makespan, top-N WSJF priorities, open
+   RAID, milestone summary + per-milestone health) into one `ProjectReport`; plus a
+   single defensive `build_pm_project_report(workspace)` gather-and-write entry that
+   reads the live PM task contract + the sibling RAID/milestone stores and writes
+   `runtime/pm/pm.status.md` + `pm.status.json`. This is the integration that makes the
+   cores *real* — a callable PM-publishable artefact, exposed additively via the cell
+   public contract (`build_pm_project_report` + `ProjectReport`). Pure core is
+   clock-free/§8-clean/never-raises; the gather is fail-closed (missing/corrupt contract
+   → empty report, never raises into the caller). Reuses all five cores (§7), imports no
+   delivery, leaves codex's `milestones.py` byte-untouched. **Floor-safe**: an on-demand
+   read-only artefact — nothing on the live planning/dispatch *decision* path calls it,
+   so the L2 floor is provably untouched; governance gate `new_issue_count == 0`; full
+   `pm_planning` suite 574 green.
+
+The **milestones registry** (rank-5-adjacent) was shipped in parallel by codex
+(`cb962609`); this report reuses it. Remaining: durable decision log, change-request
+register, failure-driven replan, stakeholder-clarification tool, consolidate the unwired
+orchestrators, restore the PMRole RoleBase interface, and the **gated live-path wiring**
+that flips the report + RAID-gate + WSJF ordering into the actual planning loop (each
+behind a default-off env gate + an L2-floor re-verify bench, which is codex's lane).
 
 ## 4. Increment #3 design — `compute_schedule`
 
