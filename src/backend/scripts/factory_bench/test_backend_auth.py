@@ -164,3 +164,71 @@ class TestBenchAuth(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBenchProgressPush(unittest.TestCase):
+    """Covers the live-counter push that powers BenchStatusStrip's ``X/Y``."""
+
+    def setUp(self) -> None:
+        self._server = HTTPServer(("127.0.0.1", 0), _AuthMockBackend)
+        self._port = self._server.server_address[1]
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        _AuthMockBackend.received_auth.clear()
+        _AuthMockBackend.received_paths.clear()
+        _AuthMockBackend.expected_token = ""
+        _AuthMockBackend.response_status = 200
+        _AuthMockBackend.response_body = b'{"updated": true}'
+        self.backend_url = f"http://127.0.0.1:{self._port}"
+        self.addCleanup(self._server.shutdown)
+        self.addCleanup(self._server.server_close)
+        self.addCleanup(self._thread.join, 1.0)
+
+    def test_progress_push_sends_completed_and_failed(self) -> None:
+        from scripts.factory_bench.run_factory_bench import (
+            _push_bench_progress_to_backend,
+        )
+
+        ok = _push_bench_progress_to_backend(
+            backend_url=self.backend_url,
+            session_id="bench-progress-1",
+            completed=3,
+            failed=1,
+            token="secret",
+        )
+        self.assertTrue(ok)
+        self.assertEqual(_AuthMockBackend.received_auth, ["Bearer secret"])
+        self.assertEqual(
+            _AuthMockBackend.received_paths,
+            ["/v2/factory/bench/sessions/bench-progress-1/progress"],
+        )
+
+    def test_progress_push_without_token_returns_false(self) -> None:
+        from scripts.factory_bench.run_factory_bench import (
+            _push_bench_progress_to_backend,
+        )
+
+        _AuthMockBackend.expected_token = "expected"
+        ok = _push_bench_progress_to_backend(
+            backend_url=self.backend_url,
+            session_id="bench-progress-1",
+            completed=1,
+            failed=0,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(_AuthMockBackend.received_auth, [None])
+
+    def test_progress_push_with_wrong_token_returns_false(self) -> None:
+        from scripts.factory_bench.run_factory_bench import (
+            _push_bench_progress_to_backend,
+        )
+
+        _AuthMockBackend.expected_token = "expected"
+        ok = _push_bench_progress_to_backend(
+            backend_url=self.backend_url,
+            session_id="bench-progress-1",
+            completed=1,
+            failed=0,
+            token="WRONG",
+        )
+        self.assertFalse(ok)

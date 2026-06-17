@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from polaris.delivery.http.error_handlers import setup_exception_handlers
 from polaris.delivery.http.routers import docs as docs_router
 from polaris.delivery.http.routers._shared import require_auth
-from polaris.delivery.http.error_handlers import setup_exception_handlers
 
 
 def _build_client() -> TestClient:

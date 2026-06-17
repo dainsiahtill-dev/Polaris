@@ -134,6 +134,36 @@ class TestFactoryBenchService(unittest.TestCase):
         self.assertEqual([e["type"] for e in events3], ["event.5", "event.6"])
         self.assertEqual(offset3, events_path.stat().st_size)
 
+    def test_update_progress_sets_completed_and_failed(self) -> None:
+        sid = self.svc.register_session(work_dir="/tmp/ws", project_ids=["L1-01", "L2-07"], total=2)
+        ok = self.svc.update_progress(sid, completed=1, failed=0)
+        self.assertTrue(ok)
+        snapshot = self.svc.get_session(sid)
+        self.assertEqual(snapshot["completed"], 1)
+        self.assertEqual(snapshot["failed"], 0)
+
+    def test_update_progress_partial(self) -> None:
+        sid = self.svc.register_session(work_dir="/tmp/ws", project_ids=["L1-01"], total=1)
+        ok = self.svc.update_progress(sid, failed=1)
+        self.assertTrue(ok)
+        snapshot = self.svc.get_session(sid)
+        self.assertEqual(snapshot["completed"], 0)
+        self.assertEqual(snapshot["failed"], 1)
+
+    def test_update_progress_rejects_unknown_session(self) -> None:
+        ok = self.svc.update_progress("bench-missing-xyz", completed=1)
+        self.assertFalse(ok)
+
+    def test_complete_session_honours_summary_counters(self) -> None:
+        sid = self.svc.register_session(work_dir="/tmp/ws", project_ids=["L1-01", "L2-07"], total=2)
+        self.svc.update_progress(sid, completed=1, failed=1)
+        self.svc.complete_session(sid, success=False, summary={"completed": 1, "failed": 1, "total": 2})
+        snapshot = self.svc.get_session(sid)
+        self.assertEqual(snapshot["status"], "failed")
+        self.assertEqual(snapshot["completed"], 1)
+        self.assertEqual(snapshot["failed"], 1)
+        self.assertEqual(snapshot["metadata"]["total"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

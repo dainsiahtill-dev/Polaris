@@ -102,3 +102,47 @@ describe('BenchStatusStrip', () => {
     expect(strip.getAttribute('data-bench-status')).toBe('completed');
   });
 });
+
+  it('reflects live per-project counters in progress percentage', () => {
+    mockHookValue.sessions = [
+      {
+        session_id: 'bench-progress',
+        work_dir: '/tmp/ws',
+        project_ids: ['L1-01', 'L2-07', 'L3-15', 'L4-23'],
+        total: 4,
+        completed: 2,
+        failed: 1,
+        status: 'running',
+        created_at: '2026-06-17T10:00:00Z',
+        updated_at: '2026-06-17T10:05:00Z',
+        metadata: {},
+      },
+    ];
+    mockHookValue.currentSession = mockHookValue.sessions[0];
+    render(<BenchStatusStrip />);
+    const progress = screen.getByTestId('bench-strip-progress');
+    // (2 completed + 1 failed) / 4 total = 75%.
+    expect(progress.getAttribute('data-progress')).toBe('75');
+  });
+
+  it('falls back to project_ids length when total is missing', () => {
+    mockHookValue.sessions = [
+      {
+        session_id: 'bench-no-total',
+        work_dir: '/tmp/ws',
+        project_ids: ['L1-01', 'L2-07'],
+        // total is 0/undefined; should fall back to project_ids.length.
+        total: 0,
+        completed: 1,
+        failed: 0,
+        status: 'running',
+        created_at: '2026-06-17T10:00:00Z',
+        updated_at: '2026-06-17T10:05:00Z',
+        metadata: {},
+      },
+    ];
+    mockHookValue.currentSession = mockHookValue.sessions[0];
+    render(<BenchStatusStrip />);
+    const progress = screen.getByTestId('bench-strip-progress');
+    expect(progress.getAttribute('data-progress')).toBe('50');
+  });

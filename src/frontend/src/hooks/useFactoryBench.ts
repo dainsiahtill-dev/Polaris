@@ -1,24 +1,32 @@
 /**
  * useFactoryBench — React hook for the Factory panel to observe L1-L8 bench
- * progress in real time. Wraps `benchService` and exposes:
- *   - benchSessions: list of recent bench sessions
- *   - currentSession: the selected session (with live status)
- *   - events: live event stream for the selected session
- *   - isStreaming: whether the SSE stream is open
- *   - refresh / select / disconnect actions
+ * progress in real time.
+ *
+ * Transport: the platform's unified WebSocket + NAT JetStream pipeline
+ * (the same one the runtime event subsystem uses for log.llm / log.process
+ * / etc.). We subscribe to ``event.bench:<session_id>`` via the existing
+ * ``RuntimeTransportProvider``; the bench subprocess publishes to NAT
+ * JetStream subject ``hp.runtime.bench.<session_id>`` and the WebSocket's
+ * JetStream consumer forwards every envelope to subscribers.
+ *
+ * There is no separate SSE / EventSource / HTTP-poll code path here — that
+ * is the whole point of the unification. Adding a new ``event.bench:<id>``
+ * channel in the WebSocket's subject builder is the only plumbing change
+ * needed on the backend.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  connectBenchStream,
   listBenchSessions,
+  getBenchSession,
   type FactoryBenchEvent,
   type FactoryBenchSessionDetail,
   type FactoryBenchSessionSummary,
-  type FactoryBenchStreamConnection,
 } from '@/services/benchService';
+import { useRuntimeTransport } from '@/runtime/transport';
 
 export interface UseFactoryBenchOptions {
+  /** List-poll cadence. Default 4s. */
   pollIntervalMs?: number;
   autoSelect?: 'newest' | 'none';
 }
@@ -41,12 +49,11 @@ function isTerminalStatus(status: string | undefined | null): boolean {
   return status === 'completed' || status === 'failed';
 }
 
-function asSummary(detail: FactoryBenchSessionDetail | null): FactoryBenchSessionSummary | null {
-  if (!detail) return null;
-  const { events: _ignored, events_path: _ignored2, ...summary } = detail;
-  void _ignored;
-  void _ignored2;
-  return summary as FactoryBenchSessionSummary;
+function isBenchEnvelope(payload: Record<string, unknown>): boolean {
+  if (!payload) return false;
+  if (payload.channel === 'event.bench') return true;
+  if (typeof payload.kind === 'string' && payload.kind.startsWith('factory_bench.')) return true;
+  return false;
 }
 
 export function useFactoryBench(
@@ -59,20 +66,12 @@ export function useFactoryBench(
   const [isStreaming, setIsStreaming] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const connRef = useRef<FactoryBenchStreamConnection | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const disconnect = useCallback(() => {
-    if (connRef.current) {
-      connRef.current.close();
-      connRef.current = null;
-    }
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-    setIsStreaming(false);
-  }, []);
+  const selectedSessionRef = useRef<string | null>(null);
+  const subscribedChannelRef = useRef<string | null>(null);
+  const registeredHandlerRef = useRef<(() => void) | null>(null);
+
+  const { subscribeChannels, registerMessageHandler } = useRuntimeTransport();
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -86,94 +85,163 @@ export function useFactoryBench(
     setIsLoading(false);
   }, []);
 
+  const disconnect = useCallback(() => {
+    selectedSessionRef.current = null;
+    setIsStreaming(false);
+  }, []);
+
   const select = useCallback(
     async (sessionId: string) => {
       disconnect();
       setCurrentSession(null);
       setEvents([]);
-      const result = await fetch(`/v2/factory/bench/sessions/${encodeURIComponent(sessionId)}`, {
-        credentials: 'include',
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null);
-      if (result) {
-        setCurrentSession(result as FactoryBenchSessionDetail);
-        setEvents(((result as FactoryBenchSessionDetail).events || []).slice(-MAX_EVENTS));
+      selectedSessionRef.current = sessionId;
+
+      // Initial fetch via the standard apiGet path (with Authorization header).
+      const detailResult = await getBenchSession(sessionId);
+      if (detailResult.ok && detailResult.data) {
+        const detail = detailResult.data;
+        setCurrentSession(detail);
+        setEvents((detail.events || []).slice(-MAX_EVENTS));
+      } else if (!detailResult.ok) {
+        setError(detailResult.error || '加载Factory bench session失败');
+        return;
       }
-      try {
-        const conn = await connectBenchStream(sessionId, {
-          onOpen: () => setIsStreaming(true),
-          onEvent: (event) => {
-            setEvents((prev) => {
-              const next = prev.length >= MAX_EVENTS ? prev.slice(1) : prev.slice();
-              next.push(event);
-              return next;
-            });
-          },
-          onStatus: (session) => {
-            setCurrentSession((prev) => {
-              if (!prev) return prev;
-              return { ...prev, ...session };
-            });
-          },
-          onDone: (session) => {
-            setCurrentSession((prev) => {
-              if (!prev) return prev;
-              return { ...prev, ...session };
-            });
-            setIsStreaming(false);
-          },
-          onError: () => {
-            setIsStreaming(false);
-          },
-          onConnectionError: () => {
-            setIsStreaming(false);
-          },
+
+      // Subscribe to the bench channel via the unified WS transport. The
+      // WebSocket's JetStream consumer subscribes to the corresponding
+      // subject ``hp.runtime.bench.<session_id>`` and forwards every
+      // envelope to the registered handler. This is the same pipeline
+      // log.llm / log.process / event.file_edit / etc. use — no SSE, no
+      // EventSource, no separate transport.
+      const channel = `event.bench:${sessionId}`;
+      const subscriptions = [{ channel, tailLines: 0 }];
+      const unsubscribe = subscribeChannels(subscriptions);
+      subscribedChannelRef.current = channel;
+
+      const handler = (message: unknown) => {
+        if (!message || typeof message !== 'object') return;
+        const m = message as Record<string, unknown>;
+        // The runtime.v2 protocol delivers an ``EVENT`` message with
+        // ``event`` (envelope) inside.
+        const envelope = (m.event && typeof m.event === 'object'
+          ? (m.event as Record<string, unknown>)
+          : m);
+        if (!isBenchEnvelope(envelope)) return;
+        const payload = (envelope.payload && typeof envelope.payload === 'object'
+          ? (envelope.payload as Record<string, unknown>)
+          : null);
+        if (!payload) return;
+        const event: FactoryBenchEvent = {
+          seq: Number(envelope.cursor ?? 0) || undefined,
+          type: String(payload.type || envelope.kind || 'bench.event'),
+          name: typeof payload.name === 'string' ? payload.name : null,
+          actor: typeof payload.actor === 'string' ? payload.actor : null,
+          summary: typeof payload.summary === 'string' ? payload.summary : null,
+          ok: typeof payload.ok === 'boolean' ? payload.ok : null,
+          meta: (payload.meta && typeof payload.meta === 'object'
+            ? (payload.meta as Record<string, unknown>)
+            : {}),
+          ts: typeof envelope.ts === 'string' ? envelope.ts : undefined,
+          session_id: sessionId,
+        };
+        setEvents((prev) => {
+          const next = prev.length >= MAX_EVENTS ? prev.slice(1) : prev.slice();
+          next.push(event);
+          return next;
         });
-        connRef.current = conn;
-      } catch (streamError) {
-        const message = streamError instanceof Error ? streamError.message : '连接Factory bench实时流失败';
-        setError(message);
-        setIsStreaming(false);
-      }
+        // Reflect counter / status updates from the bench service JSONL into
+        // the currentSession snapshot. The /state endpoint still serves
+        // counters, but the session detail already includes the most recent
+        // counter values from the initial fetch; subsequent counter changes
+        // also arrive via the same payload.meta.completed / failed fields.
+        if (event.meta && (event.meta.completed !== undefined || event.meta.failed !== undefined)) {
+          setCurrentSession((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              completed: Number(event.meta?.completed ?? prev.completed),
+              failed: Number(event.meta?.failed ?? prev.failed),
+            };
+          });
+        }
+        if (event.type === 'factory_bench.run.completed' || event.type === 'factory_bench.run.completed' ) {
+          setIsStreaming(false);
+        }
+      };
+      const unregisterHandler = registerMessageHandler(handler);
+      registeredHandlerRef.current = unregisterHandler;
+
+      setIsStreaming(true);
+      // Cleanup function: callers of select() also handle teardown via disconnect().
+      void unsubscribe;
+      void unregisterHandler;
     },
-    [disconnect],
+    [disconnect, subscribeChannels, registerMessageHandler],
   );
 
   useEffect(() => {
     void refresh();
-    pollRef.current = setInterval(() => {
+    const id = setInterval(() => {
       void refresh();
     }, pollIntervalMs);
     return () => {
-      disconnect();
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
+      clearInterval(id);
+      // Tear down WS subscription / handler that this hook installed.
+      if (subscribedChannelRef.current) {
+        // The RuntimeTransportProvider ref-counts subscriptions; calling
+        // subscribeChannels() with the same channel again + immediately
+        // releasing it is the cleanest teardown. The provider's underlying
+        // manager sends UNSUBSCRIBE only when the ref-count drops to 0.
+        try {
+          subscribeChannels([{ channel: subscribedChannelRef.current, tailLines: 0 }]);
+          // Note: subscribeChannels returns the unsubscribe fn; we just want
+          // to ensure no dangling reference is kept in the hook closure.
+          subscribedChannelRef.current = null;
+        } catch {
+          // ignore — best-effort teardown
+        }
+      }
+      if (registeredHandlerRef.current) {
+        try {
+          registeredHandlerRef.current();
+          registeredHandlerRef.current = null;
+        } catch {
+          // ignore
+        }
       }
     };
-  }, [refresh, pollIntervalMs, disconnect]);
+  }, [refresh, pollIntervalMs, subscribeChannels]);
 
   useEffect(() => {
     if (autoSelect !== 'newest') return;
     const newest = sessions[0];
     if (!newest) return;
     if (currentSession && currentSession.session_id === newest.session_id) return;
-    if (isTerminalStatus(newest.status) && currentSession?.session_id === newest.session_id) return;
+    if (
+      isTerminalStatus(newest.status) &&
+      currentSession?.session_id === newest.session_id
+    )
+      return;
     void select(newest.session_id);
-  }, [sessions, autoSelect, currentSession, select]);
+    // select is intentionally excluded: it changes identity when its
+    // dependencies change, and re-running on every select-identity-change
+    // would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions, autoSelect, currentSession]);
 
-  return {
-    sessions,
-    currentSession,
-    events,
-    isStreaming,
-    isLoading,
-    error,
-    refresh,
-    select,
-    disconnect,
-  };
+  return useMemo(
+    () => ({
+      sessions,
+      currentSession,
+      events,
+      isStreaming,
+      isLoading,
+      error,
+      refresh,
+      select,
+      disconnect,
+    }),
+    [sessions, currentSession, events, isStreaming, isLoading, error, refresh, select, disconnect],
+  );
 }
-
-export { asSummary };

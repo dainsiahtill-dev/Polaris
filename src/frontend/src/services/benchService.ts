@@ -2,8 +2,15 @@
  * Factory-bench service — drives L1-L8 batch progress from the bench
  * subprocess into the Factory front-end panel.
  *
- * Mirrors `factoryService.ts` patterns: HTTP REST + SSE streaming. The bench
- * subprocess is what produces the events; the Factory panel just observes.
+ * Transport: HTTP polling on /v2/factory/bench/sessions/{id}/state. The
+ * previous SSE wire format is gone; this service uses the same fetch() +
+ * apiGet() pattern as the rest of the platform (no EventSource, no SSE).
+ *
+ * Backend pipeline (matched to the platform's runtime event subsystem):
+ *   bench subprocess → POST /events  (durable JSONL + NAT JetStream fanout)
+ *   bench subprocess → POST /progress / POST /complete  (status updates)
+ *   front-end        → GET  /state?since_seq=N  (poll-friendly snapshot)
+ *   NAT JetStream    → hp.runtime.bench.{session_id}  (cross-tab fanout)
  */
 
 import { getBackendInfo } from '@/api';
@@ -25,6 +32,8 @@ export interface FactoryBenchSessionSummary {
 }
 
 export interface FactoryBenchEvent {
+  /** Per-session monotonic sequence number set by the backend on append. */
+  seq?: number;
   type: string;
   name?: string | null;
   actor?: string | null;
@@ -38,28 +47,6 @@ export interface FactoryBenchEvent {
 export interface FactoryBenchSessionDetail extends FactoryBenchSessionSummary {
   events_path: string;
   events: FactoryBenchEvent[];
-}
-
-export interface FactoryBenchStreamHandlers {
-  onOpen?: () => void;
-  onStatus?: (session: FactoryBenchSessionSummary) => void;
-  onEvent?: (event: FactoryBenchEvent) => void;
-  onDone?: (session: FactoryBenchSessionSummary) => void;
-  onError?: (data: Record<string, unknown>) => void;
-  onConnectionError?: () => void;
-}
-
-export interface FactoryBenchStreamConnection {
-  eventSource: EventSource;
-  close: () => void;
-}
-
-function parseJsonPayload<T>(raw: string, fallback: T): T {
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
 }
 
 /** Register a new bench session (typically called by the bench subprocess). */
@@ -77,7 +64,7 @@ export async function startBenchSession(payload: {
   );
 }
 
-/** Append a bench event to an existing session. */
+/** Append a bench event to an existing session (durable + JetStream fanout). */
 export async function appendBenchEvent(
   sessionId: string,
   payload: {
@@ -88,8 +75,8 @@ export async function appendBenchEvent(
     ok?: boolean;
     meta?: Record<string, unknown>;
   },
-): Promise<ApiResult<{ session_id: string; appended: boolean }>> {
-  return apiPost<{ session_id: string; appended: boolean }>(
+): Promise<ApiResult<{ session_id: string; appended: boolean; published: boolean }>> {
+  return apiPost<{ session_id: string; appended: boolean; published: boolean }>(
     `/v2/factory/bench/sessions/${encodeURIComponent(sessionId)}/events`,
     payload,
     '推送Factory bench event失败',
@@ -105,6 +92,18 @@ export async function completeBenchSession(
     `/v2/factory/bench/sessions/${encodeURIComponent(sessionId)}/complete`,
     payload,
     '结束Factory bench session失败',
+  );
+}
+
+/** Update per-project counters so the UI sees live ``X/Y 通过``. */
+export async function updateBenchProgress(
+  sessionId: string,
+  payload: { completed?: number; failed?: number },
+): Promise<ApiResult<{ session_id: string; updated: boolean }>> {
+  return apiPost<{ session_id: string; updated: boolean }>(
+    `/v2/factory/bench/sessions/${encodeURIComponent(sessionId)}/progress`,
+    payload,
+    '更新Factory bench progress失败',
   );
 }
 
@@ -132,42 +131,3 @@ export async function getBenchSession(
   );
 }
 
-/** Open an SSE stream for live bench events. */
-export async function connectBenchStream(
-  sessionId: string,
-  handlers: FactoryBenchStreamHandlers,
-): Promise<FactoryBenchStreamConnection> {
-  const backend = await getBackendInfo();
-  const url = new URL(
-    `/v2/factory/bench/sessions/${encodeURIComponent(sessionId)}/stream`,
-    backend.baseUrl || window.location.origin,
-  );
-  if (backend.token) {
-    url.searchParams.set('token', backend.token);
-  }
-  const eventSource = new EventSource(url.toString());
-  eventSource.onopen = () => handlers.onOpen?.();
-  eventSource.addEventListener('status', (event: MessageEvent) => {
-    const payload = parseJsonPayload<FactoryBenchSessionSummary>(event.data, {} as FactoryBenchSessionSummary);
-    handlers.onStatus?.(payload);
-  });
-  eventSource.addEventListener('event', (event: MessageEvent) => {
-    const payload = parseJsonPayload<FactoryBenchEvent>(event.data, {
-      type: 'unknown',
-      ts: new Date().toISOString(),
-    });
-    handlers.onEvent?.(payload);
-  });
-  eventSource.addEventListener('done', (event: MessageEvent) => {
-    const payload = parseJsonPayload<FactoryBenchSessionSummary>(event.data, {} as FactoryBenchSessionSummary);
-    handlers.onDone?.(payload);
-  });
-  eventSource.addEventListener('error', (event: MessageEvent) => {
-    handlers.onError?.(parseJsonPayload<Record<string, unknown>>(event.data || '{}', {}));
-  });
-  eventSource.onerror = () => handlers.onConnectionError?.();
-  return {
-    eventSource,
-    close: () => eventSource.close(),
-  };
-}

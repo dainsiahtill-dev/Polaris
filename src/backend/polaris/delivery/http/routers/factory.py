@@ -45,6 +45,7 @@ from polaris.cells.storage.layout.public.service import (
 from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
 from polaris.delivery.http.routers.sse_utils import (
     create_sse_jetstream_consumer,
+    publish_to_jetstream,
     sse_jetstream_generator,
 )
 from polaris.delivery.http.schemas import (
@@ -1652,6 +1653,11 @@ class FactoryBenchCompleteRequest(BaseModel):
     summary: dict[str, Any] = Field(default_factory=dict)
 
 
+class FactoryBenchProgressRequest(BaseModel):
+    completed: int | None = None
+    failed: int | None = None
+
+
 _bench_service = FactoryBenchService()
 
 
@@ -1697,7 +1703,21 @@ async def append_factory_bench_event_v2(
     session_id: str,
     payload: FactoryBenchEventRequest,
 ) -> dict[str, Any]:
-    """Append an event to a bench session's event log (fail-soft)."""
+    """Append an event to a bench session's event log + fanout via NAT JetStream.
+
+    Two-write path mirroring the platform's runtime event subsystem:
+      1. **JSONL** (durable on disk) via ``FactoryBenchService.append_event``,
+         so the audit trail survives JetStream outages and the front-end can
+         replay the full event history via the standard get-session
+         endpoint (``GET /v2/factory/bench/sessions/{id}``).
+      2. **NAT JetStream** (best-effort fanout) via ``publish_to_jetstream``,
+         with the canonical subject ``hp.runtime.bench.<session_id>``. This
+         is the **only** real-time push path — the platform's existing
+         ``JetStreamConsumerManager`` / WebSocket pipeline subscribes to
+         ``event.bench:<session_id>`` and forwards every envelope to the
+         client, the same way it already carries ``log.llm`` /
+         ``log.process`` / etc.
+    """
     event: dict[str, Any] = {
         "type": payload.type,
         "name": payload.name,
@@ -1711,9 +1731,38 @@ async def append_factory_bench_event_v2(
     ok = _bench_service.append_event(session_id, event)
     if not ok:
         # The bench may POST events before register, or against a stale id.
-        # Treat that as a soft no-op so the subprocess does not retry-storm.
-        return {"session_id": session_id, "appended": False}
-    return {"session_id": session_id, "appended": True}
+        return {"session_id": session_id, "appended": False, "published": False}
+
+    # Best-effort JetStream fanout. The platform's RuntimeEventEnvelope is
+    # what every existing consumer already knows how to filter on (channel,
+    # kind, workspace_key, run_id); wrapping the bench event in that shape
+    # means a front-end subscribing to ``event.bench`` gets the same shape
+    # it already gets for ``log.llm`` etc.
+    published = False
+    try:
+        from polaris.infrastructure.messaging.nats.nats_types import (
+            create_runtime_event,
+        )
+
+        envelope = create_runtime_event(
+            workspace_key="bench",
+            run_id=session_id,
+            channel="event.bench",
+            kind=str(event.get("type") or "bench.event"),
+            payload=event,
+            meta={"source": "factory_bench_subprocess"},
+        )
+        published = await publish_to_jetstream(
+            subject=f"hp.runtime.bench.{session_id}",
+            payload=envelope,
+        )
+    except (RuntimeError, ValueError, TypeError) as exc:
+        # JetStream fanout is best-effort; JSONL write already succeeded.
+        logger.debug("bench JetStream fanout failed for %s: %s", session_id, exc)
+    return {"session_id": session_id, "appended": True, "published": published}
+
+
+
 
 
 @router.post("/v2/factory/bench/sessions/{session_id}/complete")
@@ -1730,76 +1779,15 @@ async def complete_factory_bench_session_v2(
     return {"session_id": session_id, "updated": ok}
 
 
-async def _stream_factory_bench_session_core(session_id: str) -> StreamingResponse:
-    """SSE stream of bench session events. Polls the events.jsonl file."""
-    snapshot = _bench_service.get_session(session_id)
-    if snapshot is None:
-        raise StructuredHTTPException(
-            status_code=404,
-            code="BENCH_SESSION_NOT_FOUND",
-            message=f"bench session {session_id!r} not found",
-        )
-
-    async def event_generator() -> Any:
-        offset = 0
-        last_status_payload = ""
-        terminal = False
-        # Initial snapshot: status + tail of recent events.
-        yield f"event: status\ndata: {_json_payload(snapshot)}\n\n"
-        for ev in snapshot.get("events", []):
-            yield f"event: event\ndata: {_json_payload(ev)}\n\n"
-        # ``read_events_from`` resumed from offset 0 already returned the tail
-        # above; advance the offset to EOF so we only emit NEW events.
-        events_path = _session_events_path(session_id)
-        if events_path and events_path.is_file():
-            try:
-                offset = events_path.stat().st_size
-            except OSError:
-                offset = 0
-
-        while not terminal:
-            await asyncio.sleep(0.5)
-            current = _bench_service.get_session(session_id)
-            if current is None:
-                yield 'event: error\ndata: {"error":"session_not_found"}\n\n'
-                return
-            status_payload = _json_payload(current)
-            if status_payload != last_status_payload:
-                last_status_payload = status_payload
-                yield f"event: status\ndata: {status_payload}\n\n"
-            new_events, offset = _bench_service.read_events_from(
-                session_id,
-                start_offset=offset,
-            )
-            for ev in new_events:
-                yield f"event: event\ndata: {_json_payload(ev)}\n\n"
-            if str(current.get("status")) in {"completed", "failed"}:
-                terminal = True
-                yield f"event: complete\ndata: {status_payload}\n\n"
-                yield f"event: done\ndata: {status_payload}\n\n"
-                return
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+@router.post("/v2/factory/bench/sessions/{session_id}/progress")
+async def update_factory_bench_progress_v2(
+    session_id: str,
+    payload: FactoryBenchProgressRequest,
+) -> dict[str, Any]:
+    """Update per-project counters so the front-end sees live ``X/Y 通过``."""
+    ok = _bench_service.update_progress(
+        session_id,
+        completed=payload.completed,
+        failed=payload.failed,
     )
-
-
-def _session_events_path(session_id: str) -> Path | None:
-    from polaris.cells.factory.pipeline.internal.bench_service import _session_dir
-
-    try:
-        return _session_dir(session_id) / "events.jsonl"
-    except ValueError:
-        return None
-
-
-@router.get("/v2/factory/bench/sessions/{session_id}/stream")
-async def stream_factory_bench_session_v2(session_id: str) -> StreamingResponse:
-    """Stream bench session events via SSE for the Factory front-end panel."""
-    return await _stream_factory_bench_session_core(session_id=session_id)
+    return {"session_id": session_id, "updated": ok}

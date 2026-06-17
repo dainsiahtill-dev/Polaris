@@ -482,6 +482,34 @@ def _push_bench_complete_to_backend(
     return response is not None and bool(response.get("updated", False))
 
 
+def _push_bench_progress_to_backend(
+    *,
+    backend_url: str,
+    session_id: str,
+    completed: int,
+    failed: int,
+    token: str = "",
+) -> bool:
+    """Push live per-project counters so the front-end sees real-time progress.
+
+    Without this, ``session.completed`` / ``session.failed`` stay at the
+    zero they had at registration time and the bench UI shows ``0/Y 通过``
+    for the whole run. The bench subprocess must call this after every
+    project so each project.finished (success or fail) increments the
+    right counter and the SSE snapshot reflects it on the next tick.
+    """
+    payload: dict[str, Any] = {
+        "completed": int(completed),
+        "failed": int(failed),
+    }
+    response = _http_post_json(
+        f"{backend_url}/v2/factory/bench/sessions/{session_id}/progress",
+        payload,
+        token=token,
+    )
+    return response is not None and bool(response.get("updated", False))
+
+
 def _bench_gate(gate: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"gate": gate, "ok": bool(ok), "detail": detail}
 
@@ -878,6 +906,16 @@ def main() -> int:
                     "ok": bool(gate["ok"]),
                     "detail": gate.get("detail") or "",
                 },
+            )
+        # Push live counters so the front-end sees ``X/Y 通过`` update
+        # immediately, not only at run.completed.
+        if backend_url and bench_session_id:
+            _push_bench_progress_to_backend(
+                backend_url=backend_url,
+                session_id=bench_session_id,
+                completed=sum(1 for r in records if r.get("all_checks_passed")),
+                failed=sum(1 for r in records if not r.get("all_checks_passed")),
+                token=backend_token,
             )
 
         out_path = base / "factory_audits.json"

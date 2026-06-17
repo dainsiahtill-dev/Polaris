@@ -70,6 +70,12 @@ class FactoryBenchService:
 
     def __init__(self, root: Path | None = None) -> None:
         self._root = root or _sessions_root()
+        # In-memory per-session event sequence counter. Used by the /state
+        # polling endpoint to filter events strictly greater than ``since_seq``.
+        # Reset on process restart (durable cursor in JSONL not needed — the
+        # last appended line's position can be replayed if a client wants
+        # to resume from a specific point).
+        self._seq_by_session: dict[str, int] = {}
 
     @property
     def root(self) -> Path:
@@ -116,13 +122,51 @@ class FactoryBenchService:
         payload = dict(event)
         payload.setdefault("ts", _now_iso())
         payload.setdefault("session_id", session_id)
+        # Per-session monotonic seq so polling clients can resume with
+        # ``since_seq``. Stored in the JSONL line itself (durable) and also
+        # cached in-memory for cursor comparison.
+        next_seq = self._seq_by_session.get(session_id, 0) + 1
+        self._seq_by_session[session_id] = next_seq
+        payload["seq"] = next_seq
         try:
             with events_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
         except OSError as exc:
             logger.warning("bench append_event: write failed for %s: %s", session_id, exc)
+            # Roll back the in-memory counter so a retry produces a
+            # contiguous sequence instead of a gap.
+            self._seq_by_session[session_id] = next_seq - 1
             return False
         self._touch_status(session_id)
+        return True
+
+    def update_progress(
+        self,
+        session_id: str,
+        *,
+        completed: int | None = None,
+        failed: int | None = None,
+    ) -> bool:
+        """Update the per-project counters in the session status.
+
+        Called by the bench subprocess after each project finishes so the
+        front-end can see real-time ``X/Y 通过`` progress, not just a stale
+        "0/Y" until the run terminates.
+        """
+        sdir = _session_dir(session_id)
+        status_path = sdir / "status.json"
+        if not status_path.is_file():
+            return False
+        try:
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        if completed is not None:
+            status["completed"] = max(0, int(completed))
+        if failed is not None:
+            status["failed"] = max(0, int(failed))
+        status["updated_at"] = _now_iso()
+        _atomic_write_json(status_path, status)
         return True
 
     def complete_session(
@@ -145,6 +189,12 @@ class FactoryBenchService:
         status["completed_at"] = _now_iso()
         if summary:
             status.setdefault("metadata", {}).update(summary)
+            # The summary may carry the final counter snapshot; honour it so
+            # the terminal payload matches what the front-end expects.
+            if "completed" in summary:
+                status["completed"] = int(summary["completed"])
+            if "failed" in summary:
+                status["failed"] = int(summary["failed"])
         _atomic_write_json(status_path, status)
         return True
 

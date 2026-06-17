@@ -49,9 +49,36 @@ def build_v2_subscription_subjects(workspace_key: str, channels: list[str]) -> l
         if ch in {"*", "all"}:
             # Subscribe to all channels for this workspace
             subjects.add(f"hp.runtime.{workspace_key}.>")
-        else:
-            subjects.add(resolve_v2_subject(workspace_key, ch))
+            continue
+        if ch == "event.bench:all" or ch == "event.bench":
+            # Workspace-agnostic bench stream. The factory-bench subprocess
+            # publishes to ``hp.runtime.bench.<session_id>`` regardless of
+            # workspace, so a single subscription here lets the front-end
+            # observe every active bench session through the same WebSocket
+            # that already carries log.llm / log.process / etc.
+            subjects.add("hp.runtime.bench.>")
+            continue
+        if ch.startswith("event.bench:"):
+            # Pin a specific bench session: ``event.bench:<session_id>`` maps
+            # to ``hp.runtime.bench.<session_id>`` (workspace-agnostic, since
+            # the bench spans L1-L8 workspaces).
+            session_id = ch[len("event.bench:"):].strip()
+            if session_id and _is_safe_subject_token(session_id):
+                subjects.add(f"hp.runtime.bench.{session_id}")
+            continue
+        subjects.add(resolve_v2_subject(workspace_key, ch))
     return list(subjects)
+
+
+def _is_safe_subject_token(token: str) -> bool:
+    """Allow only the same character class V2 subjects use (defence in depth).
+
+    Bench session ids are produced server-side via ``f"bench-{int(time.time())}-{uuid.uuid4().hex[:6]}"``,
+    so this filter is belt-and-braces against a malicious client crafting
+    ``event.bench:../../../foo`` to escape the ``hp.runtime.bench.`` subject.
+    """
+    import re
+    return bool(re.match(r"^[A-Za-z0-9_-]{1,64}$", token))
 
 
 def resolve_runtime_v2_workspace_key(

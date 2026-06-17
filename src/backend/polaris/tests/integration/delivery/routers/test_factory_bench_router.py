@@ -9,7 +9,6 @@ lifecycle events, and the Factory front-end panel can subscribe via SSE.
 
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from types import SimpleNamespace
@@ -126,44 +125,52 @@ class TestFactoryBenchRouter:
         response = self.client.get("/v2/factory/bench/sessions/bench-missing-xyz")
         assert response.status_code == 404
 
-    def test_stream_emits_initial_status_and_events_then_done(self) -> None:
+    def test_progress_endpoint_updates_counters(self) -> None:
+        sid = self.client.post(
+            "/v2/factory/bench/sessions",
+            json={"work_dir": "/tmp/ws", "project_ids": ["L1-01", "L2-07"], "total": 2},
+        ).json()["session_id"]
+        # 1 passed, 0 failed.
+        response = self.client.post(
+            f"/v2/factory/bench/sessions/{sid}/progress",
+            json={"completed": 1, "failed": 0},
+        )
+        assert response.status_code == 200
+        assert response.json()["updated"] is True
+        snapshot = self.client.get(f"/v2/factory/bench/sessions/{sid}").json()
+        assert snapshot["completed"] == 1
+        assert snapshot["failed"] == 0
+        # Update again with both counters.
+        self.client.post(
+            f"/v2/factory/bench/sessions/{sid}/progress",
+            json={"completed": 1, "failed": 1},
+        )
+        snapshot = self.client.get(f"/v2/factory/bench/sessions/{sid}").json()
+        assert snapshot["completed"] == 1
+        assert snapshot["failed"] == 1
+
+    def test_progress_endpoint_partial_update(self) -> None:
         sid = self.client.post(
             "/v2/factory/bench/sessions",
             json={"work_dir": "/tmp/ws", "project_ids": ["L1-01"], "total": 1},
         ).json()["session_id"]
-        # Append two events + complete BEFORE the stream starts so the SSE
-        # generator walks through status -> events -> done within its first
-        # poll cycle.
+        # Update only failed, leave completed untouched.
         self.client.post(
-            f"/v2/factory/bench/sessions/{sid}/events",
-            json={"type": "project.started", "name": "L1-01", "actor": "factory-bench"},
+            f"/v2/factory/bench/sessions/{sid}/progress",
+            json={"failed": 1},
         )
-        self.client.post(
-            f"/v2/factory/bench/sessions/{sid}/events",
-            json={"type": "project.completed", "name": "L1-01", "actor": "factory-bench", "ok": True},
-        )
-        self.client.post(
-            f"/v2/factory/bench/sessions/{sid}/complete",
-            json={"success": True},
-        )
+        snapshot = self.client.get(f"/v2/factory/bench/sessions/{sid}").json()
+        assert snapshot["completed"] == 0
+        assert snapshot["failed"] == 1
 
-        with self.client.stream("GET", f"/v2/factory/bench/sessions/{sid}/stream") as response:
-            assert response.status_code == 200
-            seen: list[tuple[str, dict[str, Any]]] = []
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                if line.startswith("event: "):
-                    name = line[len("event: ") :].strip()
-                elif line.startswith("data: "):
-                    data = json.loads(line[len("data: ") :])
-                    seen.append((name, data))
-                if len(seen) >= 4 and any(n == "done" for n, _ in seen):
-                    break
-        names = [n for n, _ in seen]
-        assert "status" in names
-        assert "event" in names
-        assert "done" in names
-        event_types = [d.get("type") for n, d in seen if n == "event"]
-        assert "project.started" in event_types
-        assert "project.completed" in event_types
+    def test_progress_endpoint_unknown_session(self) -> None:
+        response = self.client.post(
+            "/v2/factory/bench/sessions/bench-missing-xyz/progress",
+            json={"completed": 1, "failed": 0},
+        )
+        assert response.status_code == 200
+        assert response.json()["updated"] is False
+
+
+
+
