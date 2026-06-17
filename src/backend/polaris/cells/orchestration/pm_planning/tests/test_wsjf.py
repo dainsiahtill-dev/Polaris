@@ -612,22 +612,36 @@ def test_module_no_os_environ_or_clock() -> None:
 
 
 # --------------------------------------------------------------------------------------
-# Floor-safety: the three raw-priority sort sites stay byte-untouched (no wiring this increment).
+# Floor-safety: WSJF reaches the live path ONLY through the gated reorder seam.
 # --------------------------------------------------------------------------------------
 
 
 def test_no_live_path_references_wsjf() -> None:
-    sites = [
-        PM_PLANNING_ROOT / "pipeline.py",
+    # The two still-unwired raw-priority sort sites must stay fully WSJF-free.
+    unwired_sites = [
         PM_PLANNING_ROOT / "internal" / "pm_agent.py",
         PM_DISPATCH_REGISTRY,
     ]
-    for site in sites:
+    for site in unwired_sites:
         # Assert the path exists (do NOT skip-if-absent) so a repo move cannot false-green.
         assert site.exists(), f"expected live sort site missing: {site}"
         text = site.read_text(encoding="utf-8")
         for token in ("wsjf", "WsjfScore", "score_tasks_wsjf"):
             assert token not in text, f"premature wiring: {token} found in {site}"
+
+    # pipeline.py IS wired this increment, but ONLY through the default-OFF gated
+    # seam ``reorder_tasks_by_wsjf``. It must NOT touch the raw scorer directly:
+    # the gate (and the byte-identity off path) lives entirely inside live_wiring.
+    pipeline_path = PM_PLANNING_ROOT / "pipeline.py"
+    assert pipeline_path.exists(), f"expected live sort site missing: {pipeline_path}"
+    pipeline_text = pipeline_path.read_text(encoding="utf-8")
+    assert "reorder_tasks_by_wsjf" in pipeline_text, "expected the gated WSJF reorder seam"
+    for token in ("WsjfScore", "score_tasks_wsjf"):
+        assert token not in pipeline_text, f"pipeline must not call the raw scorer directly: {token}"
+    # The only WSJF vocabulary allowed in pipeline.py is the gated seam name.
+    assert pipeline_text.count("wsjf") == pipeline_text.count("reorder_tasks_by_wsjf"), (
+        "pipeline.py references WSJF outside the gated reorder_tasks_by_wsjf seam"
+    )
 
 
 # --------------------------------------------------------------------------------------
