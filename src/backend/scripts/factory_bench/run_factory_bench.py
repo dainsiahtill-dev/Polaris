@@ -522,6 +522,58 @@ def _bench_gate(gate: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"gate": gate, "ok": bool(ok), "detail": detail}
 
 
+def map_factory_run_to_chain_results(
+    run_status: dict[str, Any],
+    audit_bundle: dict[str, Any],
+) -> dict[str, Any]:
+    """Translate /v2/factory/runs status + audit-bundle into the dict shape
+    previously produced by read_chain_results()."""
+    summary_json = audit_bundle.get("summary_json") or {}
+    if isinstance(summary_json, str):
+        try:
+            summary_json = json.loads(summary_json)
+        except ValueError:
+            summary_json = {}
+
+    gates = audit_bundle.get("gates") or run_status.get("gates") or []
+    qa_gate: dict[str, Any] = next((g for g in gates if g.get("gate_name") == "quality_gate"), {})
+    qa_passed = bool(qa_gate.get("passed"))
+    qa_ran = bool(qa_gate)
+
+    status = str(run_status.get("status") or "").lower()
+    phase = str(run_status.get("phase") or "").lower()
+
+    exit_class = "hard_failed"
+    if status == "completed" and qa_passed:
+        exit_class = "clean"
+    elif status == "failed" and phase == "qa_gate":
+        exit_class = "qa_failed"
+    elif status == "failed":
+        exit_class = "director_partial"
+
+    director = summary_json.get("director") if isinstance(summary_json, dict) else {}
+    if not director:
+        events_tail = audit_bundle.get("events_tail") or []
+        for evt in reversed(events_tail):
+            if evt.get("stage") == "director_dispatch" and isinstance(evt.get("result"), dict):
+                director = evt["result"]
+                break
+
+    return {
+        "qa_ran": qa_ran,
+        "qa_passed": qa_passed,
+        "qa_reason": qa_gate.get("message") or "",
+        "director": {
+            "total": director.get("total") if isinstance(director, dict) else None,
+            "successes": director.get("successes") if isinstance(director, dict) else None,
+            "failures": director.get("failures") if isinstance(director, dict) else None,
+            "blocked": director.get("blocked") if isinstance(director, dict) else None,
+        },
+        "contract_goal": "",
+        "exit_class": exit_class,
+    }
+
+
 def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> list[dict[str, Any]]:
     """Build fail-closed full-chain gates for the factory-bench verdict.
 

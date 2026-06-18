@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from scripts.factory_bench import run_factory_bench as bench
-from scripts.factory_bench.run_factory_bench import apply_factory_bench_gates
+from scripts.factory_bench.run_factory_bench import (
+    apply_factory_bench_gates,
+    map_factory_run_to_chain_results,
+)
 
 
 def _record(**overrides: Any) -> dict[str, Any]:
@@ -61,6 +64,124 @@ def test_clean_chain_preserves_static_pass() -> None:
     assert record["static_checks_passed"] is True
     assert record["all_checks_passed"] is True
     assert all(gate["ok"] for gate in record["factory_gates"])
+
+
+# --- map_factory_run_to_chain_results ---
+
+
+def test_map_completed_qa_passed_is_clean() -> None:
+    run_status = {"status": "completed", "phase": "qa_gate"}
+    audit_bundle: dict[str, Any] = {
+        "gates": [{"gate_name": "quality_gate", "passed": True, "message": "all good"}],
+        "summary_json": {"director": {"total": 10, "successes": 8, "failures": 1, "blocked": 1}},
+    }
+    result = map_factory_run_to_chain_results(run_status, audit_bundle)
+    assert result["exit_class"] == "clean"
+    assert result["qa_ran"] is True
+    assert result["qa_passed"] is True
+    assert result["qa_reason"] == "all good"
+    assert result["director"] == {"total": 10, "successes": 8, "failures": 1, "blocked": 1}
+
+
+def test_map_completed_qa_failed_is_hard_failed() -> None:
+    run_status = {"status": "completed", "phase": "qa_gate"}
+    audit_bundle = {
+        "gates": [{"gate_name": "quality_gate", "passed": False, "message": "lint errors"}],
+    }
+    result = map_factory_run_to_chain_results(run_status, audit_bundle)
+    assert result["exit_class"] == "hard_failed"
+    assert result["qa_ran"] is True
+    assert result["qa_passed"] is False
+    assert result["qa_reason"] == "lint errors"
+
+
+def test_map_failed_qa_gate_phase_is_qa_failed() -> None:
+    run_status = {"status": "failed", "phase": "qa_gate"}
+    audit_bundle = {
+        "gates": [{"gate_name": "quality_gate", "passed": False, "message": "tests failed"}],
+    }
+    result = map_factory_run_to_chain_results(run_status, audit_bundle)
+    assert result["exit_class"] == "qa_failed"
+    assert result["qa_ran"] is True
+    assert result["qa_passed"] is False
+
+
+def test_map_failed_non_qa_phase_is_director_partial() -> None:
+    run_status = {"status": "failed", "phase": "director_dispatch"}
+    audit_bundle: dict[str, Any] = {
+        "gates": [],
+        "summary_json": {"director": {"total": 5, "successes": 2, "failures": 3, "blocked": 0}},
+    }
+    result = map_factory_run_to_chain_results(run_status, audit_bundle)
+    assert result["exit_class"] == "director_partial"
+    assert result["qa_ran"] is False
+    assert result["qa_passed"] is False
+    assert result["director"] == {"total": 5, "successes": 2, "failures": 3, "blocked": 0}
+
+
+def test_map_falls_back_to_run_status_gates() -> None:
+    run_status: dict[str, Any] = {
+        "status": "completed",
+        "phase": "",
+        "gates": [{"gate_name": "quality_gate", "passed": True, "message": "ok"}],
+    }
+    audit_bundle: dict[str, Any] = {}
+    result = map_factory_run_to_chain_results(run_status, audit_bundle)
+    assert result["exit_class"] == "clean"
+    assert result["qa_ran"] is True
+    assert result["qa_passed"] is True
+    assert result["qa_reason"] == "ok"
+
+
+def test_map_falls_back_to_events_tail_for_director() -> None:
+    run_status = {"status": "failed", "phase": "director_dispatch"}
+    audit_bundle: dict[str, Any] = {
+        "gates": [],
+        "events_tail": [
+            {"stage": "other", "result": {"total": 99}},
+            {"stage": "director_dispatch", "result": {"total": 7, "successes": 3, "failures": 4}},
+        ],
+    }
+    result = map_factory_run_to_chain_results(run_status, audit_bundle)
+    assert result["exit_class"] == "director_partial"
+    assert result["director"] == {"total": 7, "successes": 3, "failures": 4, "blocked": None}
+
+
+def test_map_summary_json_string_parsing() -> None:
+    run_status = {"status": "completed", "phase": "qa_gate"}
+    audit_bundle: dict[str, Any] = {
+        "gates": [{"gate_name": "quality_gate", "passed": True}],
+        "summary_json": '{"director": {"total": 3, "successes": 3}}',
+    }
+    result = map_factory_run_to_chain_results(run_status, audit_bundle)
+    assert result["director"] == {"total": 3, "successes": 3, "failures": None, "blocked": None}
+
+
+def test_map_summary_json_invalid_string_defaults() -> None:
+    run_status = {"status": "completed", "phase": "qa_gate"}
+    audit_bundle: dict[str, Any] = {
+        "gates": [{"gate_name": "quality_gate", "passed": True}],
+        "summary_json": "not-json",
+    }
+    result = map_factory_run_to_chain_results(run_status, audit_bundle)
+    assert result["director"] == {"total": None, "successes": None, "failures": None, "blocked": None}
+
+
+def test_map_no_qa_gate_defaults() -> None:
+    run_status = {"status": "failed", "phase": "build"}
+    audit_bundle: dict[str, Any] = {}
+    result = map_factory_run_to_chain_results(run_status, audit_bundle)
+    assert result["exit_class"] == "director_partial"
+    assert result["qa_ran"] is False
+    assert result["qa_passed"] is False
+    assert result["qa_reason"] == ""
+
+
+def test_map_contract_goal_always_empty() -> None:
+    run_status = {"status": "completed", "phase": "qa_gate"}
+    audit_bundle: dict[str, Any] = {"gates": [{"gate_name": "quality_gate", "passed": True}]}
+    result = map_factory_run_to_chain_results(run_status, audit_bundle)
+    assert result["contract_goal"] == ""
 
 
 def _capture_run_chain_command(
