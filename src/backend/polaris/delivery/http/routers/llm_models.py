@@ -11,6 +11,7 @@ class LlmTestPayload(BaseModel):
     role: str | None = None
     provider_id: str | None = None
     model: str | None = None
+    test_run_id: str | None = None
     suites: list[str] | None = None
     test_level: str = "quick"
     evaluation_mode: str | None = None

@@ -25,6 +25,8 @@ async def test_cell_ai_executor_passes_workspace_to_kernel_llm_stream(
             task_type: str,
             role: str,
             prompt: str,
+            provider_id: str | None,
+            model: str | None,
             options: dict[str, Any],
             context: dict[str, Any],
         ) -> Any:
@@ -32,6 +34,8 @@ async def test_cell_ai_executor_passes_workspace_to_kernel_llm_stream(
                 "task_type": task_type,
                 "role": role,
                 "prompt": prompt,
+                "provider_id": provider_id,
+                "model": model,
                 "options": options,
                 "context": context,
             }
@@ -47,6 +51,8 @@ async def test_cell_ai_executor_passes_workspace_to_kernel_llm_stream(
             CellAIRequest(
                 task_type=TaskType.GENERATION,
                 role="architect",
+                provider_id="provider-1",
+                model="model-1",
                 input="prompt",
                 options={"max_tokens": 10},
             )
@@ -54,6 +60,8 @@ async def test_cell_ai_executor_passes_workspace_to_kernel_llm_stream(
     ]
 
     assert captured["call"]["context"]["workspace"] == str(tmp_path)
+    assert captured["call"]["provider_id"] == "provider-1"
+    assert captured["call"]["model"] == "model-1"
     assert events == [
         {"type": "chunk", "chunk": "hello"},
         {"type": "complete", "meta": {"output": "hello"}},
@@ -75,9 +83,13 @@ async def test_cell_ai_executor_preserves_kernel_llm_failure(
             task_type: str,
             role: str,
             prompt: str,
+            provider_id: str | None,
+            model: str | None,
             options: dict[str, Any],
             context: dict[str, Any],
         ) -> dict[str, Any]:
+            assert provider_id is None
+            assert model is None
             return {"ok": False, "output": "", "error": "provider failed"}
 
     monkeypatch.setattr("polaris.kernelone.llm.KernelLLM", _FakeKernelLLM)

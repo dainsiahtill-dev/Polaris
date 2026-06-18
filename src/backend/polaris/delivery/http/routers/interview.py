@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -20,14 +22,18 @@ from polaris.delivery.http.schemas import (
     InterviewSaveResponse,
 )
 from polaris.delivery.http.workspace import active_workspace_value
+from polaris.infrastructure.messaging.nats.nats_types import create_runtime_event
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.llm.model_identity import model_identity_equal
 from polaris.kernelone.storage.io_paths import build_cache_root
 
 from .llm_models import InterviewAskPayload, InterviewCancelPayload, InterviewSavePayload
-from .sse_utils import create_sse_response, sse_event_generator
+from .sse_utils import create_sse_response, publish_to_jetstream, sse_event_generator
 
 logger = logging.getLogger(__name__)
+_create_internal_task = asyncio.create_task
+_BACKGROUND_JETSTREAM_TASKS: set[asyncio.Task[None]] = set()
+_SAFE_EVENT_ID_PATTERN = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
 # 适配器函数，保持与旧接口的兼容性
@@ -90,6 +96,8 @@ async def run_interactive_interview_question(settings, role, provider_id, model,
         workspace=workspace,
         settings=settings,
         role=role,
+        provider_id=provider_id,
+        model=model,
         question=question,
         context=kwargs.get("context"),
         criteria=kwargs.get("criteria"),
@@ -142,6 +150,8 @@ async def run_interactive_interview_streaming(
         workspace=workspace,
         settings=settings,
         role=role,
+        provider_id=provider_id,
+        model=model,
         question=question,
         output_queue=output_queue,
         context=kwargs.get("context"),
@@ -155,6 +165,122 @@ def cancel_interactive_interview_stream(session_id: str) -> dict:
 
 
 router = APIRouter()
+
+
+def _safe_event_id(raw_value: str | None, prefix: str) -> str:
+    raw = str(raw_value or "").strip() or f"{prefix}-{uuid4().hex}"
+    safe = _SAFE_EVENT_ID_PATTERN.sub("-", raw).strip(".-_")
+    return safe[:96] or f"{prefix}-{uuid4().hex}"
+
+
+def _track_jetstream_task(task: asyncio.Task[None]) -> None:
+    _BACKGROUND_JETSTREAM_TASKS.add(task)
+
+    def _discard(done: asyncio.Task[None]) -> None:
+        _BACKGROUND_JETSTREAM_TASKS.discard(done)
+        try:
+            done.result()
+        except asyncio.CancelledError:
+            return
+        except (RuntimeError, ValueError, OSError, ConnectionError, TimeoutError) as exc:
+            logger.warning("interview jetstream task failed: %s", exc)
+
+    task.add_done_callback(_discard)
+
+
+async def _publish_interview_chunk(*, session_id: str, chunk: dict[str, Any], seq: int) -> bool:
+    envelope = create_runtime_event(
+        workspace_key="llm",
+        run_id=session_id,
+        channel=f"llm-interview:{session_id}",
+        kind="llm.interview.chunk",
+        payload={
+            "type": str(chunk.get("type") or "message"),
+            "data": dict(chunk.get("data") or {}),
+            "seq": int(seq),
+        },
+        meta={"source": "llm_interview_jetstream"},
+    )
+    return await publish_to_jetstream(
+        subject=f"hp.runtime.llm.interview.{session_id}",
+        payload=envelope.to_dict(),
+    )
+
+
+async def _run_interview_jetstream(
+    *,
+    settings: Any,
+    payload: InterviewAskPayload,
+    session_id: str,
+) -> None:
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=50)
+    seq = 0
+    await _publish_interview_chunk(
+        session_id=session_id,
+        chunk={
+            "type": "start",
+            "data": {
+                "session_id": session_id,
+                "role": payload.role,
+                "provider_id": payload.provider_id,
+                "model": payload.model,
+            },
+        },
+        seq=seq,
+    )
+    seq += 1
+
+    terminal_seen = False
+    producer = _create_internal_task(
+        run_interactive_interview_streaming(
+            settings,
+            payload.role,
+            payload.provider_id,
+            payload.model,
+            payload.question,
+            session_id=session_id,
+            context=payload.context,
+            expects_thinking=payload.expects_thinking,
+            criteria=payload.criteria,
+            api_key=payload.api_key,
+            extra_headers=payload.headers,
+            env_overrides=payload.env_overrides,
+            output_queue=queue,
+        )
+    )
+    try:
+        while True:
+            if producer.done() and queue.empty():
+                break
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+            await _publish_interview_chunk(session_id=session_id, chunk=chunk, seq=seq)
+            seq += 1
+            if str(chunk.get("type") or "") in {"complete", "error"}:
+                terminal_seen = True
+                break
+        await producer
+    except (RuntimeError, ValueError, OSError, ConnectionError, TimeoutError) as exc:
+        logger.warning("interview jetstream execution failed: %s", exc)
+        await _publish_interview_chunk(
+            session_id=session_id,
+            chunk={"type": "error", "data": {"error": str(exc) or type(exc).__name__}},
+            seq=seq,
+        )
+        terminal_seen = True
+    finally:
+        if not producer.done():
+            producer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await producer
+        if not terminal_seen:
+            await _publish_interview_chunk(
+                session_id=session_id,
+                chunk={"type": "error", "data": {"error": "stream completed without a terminal event"}},
+                seq=seq,
+            )
 
 
 @router.post(
@@ -242,6 +368,29 @@ def v2_llm_interview_cancel(payload: InterviewCancelPayload) -> dict[str, Any]:
     """Best-effort cancellation of an interview stream."""
     # Best-effort cancellation (primarily for Codex CLI streaming subprocess).
     return cancel_interactive_interview_stream(payload.session_id)
+
+
+@router.post("/v2/llm/interview/jetstream", dependencies=[Depends(require_auth)])
+async def v2_llm_interview_jetstream(request: Request, payload: InterviewAskPayload) -> dict[str, Any]:
+    """Start an interview run and publish chunks through runtime Nat-JetStream."""
+    state = get_state(request)
+    session_id = _safe_event_id(payload.session_id, "interactive")
+    task = asyncio.create_task(
+        _run_interview_jetstream(
+            settings=state.settings,
+            payload=payload,
+            session_id=session_id,
+        )
+    )
+    _track_jetstream_task(task)
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "status": "started",
+        "channel": f"llm-interview:{session_id}",
+        "subject": f"hp.runtime.llm.interview.{session_id}",
+        "transport": "nat-jetstream",
+    }
 
 
 @router.post("/llm/interview/stream", dependencies=[Depends(require_auth)])  # DEPRECATED

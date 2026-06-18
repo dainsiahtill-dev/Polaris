@@ -57,6 +57,8 @@ class KernelLLM:
         task_type: str,
         role: str,
         prompt: str,
+        provider_id: str | None = None,
+        model: str | None = None,
         options: Mapping[str, Any] | None = None,
         context: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -75,6 +77,8 @@ class KernelLLM:
             task_type=task_type,
             role=role,
             prompt=prompt,
+            provider_id=provider_id,
+            model=model,
             options=options,
             context=request_context,
         )
@@ -88,6 +92,8 @@ class KernelLLM:
         task_type: str,
         role: str,
         prompt: str,
+        provider_id: str | None = None,
+        model: str | None = None,
         options: Mapping[str, Any] | None = None,
         context: Mapping[str, Any] | None = None,
     ) -> AsyncGenerator[Any, None]:
@@ -99,6 +105,8 @@ class KernelLLM:
             task_type=task_type,
             role=role,
             prompt=prompt,
+            provider_id=provider_id,
+            model=model,
             options=options,
             context=request_context,
         )
@@ -124,6 +132,8 @@ def _build_ai_request(
     task_type: str,
     role: str,
     prompt: str,
+    provider_id: str | None,
+    model: str | None,
     options: Mapping[str, Any] | None,
     context: Mapping[str, Any],
 ) -> Any:
@@ -137,6 +147,8 @@ def _build_ai_request(
     return AIRequest(
         task_type=normalized_task_type,
         role=str(role or ""),
+        provider_id=str(provider_id or "") or None,
+        model=str(model or "") or None,
         input=str(prompt or ""),
         options=dict(options or {}),
         context=dict(context),

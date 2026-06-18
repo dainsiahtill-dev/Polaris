@@ -68,6 +68,21 @@ export interface TestStreamPayload {
   timeout?: number;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function parseStreamEvent(line: string): TestStreamEvent | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const parsed = JSON.parse(trimmed) as Partial<TestStreamEvent>;
+  if (typeof parsed.type !== 'string') return null;
+  return {
+    type: parsed.type,
+    data: asRecord(parsed.data),
+  };
+}
+
 export function useTestStream(options: UseTestStreamOptions = {}) {
   const { onEvent, onSuiteStart, onSuiteComplete, onComplete, onError } = options;
   const [isStreaming, setIsStreaming] = useState(false);
@@ -159,6 +174,105 @@ export function useTestStream(options: UseTestStreamOptions = {}) {
       const decoder = new TextDecoder();
       let buffer = '';
 
+      const handleStreamEvent = (streamEvent: TestStreamEvent) => {
+        const { type, data } = streamEvent;
+        devLogger.debug('[useTestStream] Event:', type, data);
+
+        switch (type) {
+          case 'start':
+            {
+              const runId =
+                typeof data.test_run_id === 'string' && data.test_run_id.trim()
+                  ? data.test_run_id.trim()
+                  : typeof data.run_id === 'string' && data.run_id.trim()
+                    ? data.run_id.trim()
+                    : '';
+              onEvent?.({
+                type: 'stdout',
+                timestamp: new Date().toISOString(),
+                content: runId ? `Test started: ${runId}` : 'Test started',
+                details: data,
+              });
+            }
+            break;
+
+          case 'suite_start':
+            if (typeof data.suite === 'string') {
+              onSuiteStart?.(data.suite);
+              onEvent?.({
+                type: 'command',
+                timestamp: new Date().toISOString(),
+                content: `Starting suite: ${data.suite}`,
+                details: data,
+              });
+            }
+            break;
+
+          case 'suite_result':
+          case 'suite_complete':
+            if (typeof data.suite === 'string' && data.result && typeof data.result === 'object') {
+              const result = data.result as { ok?: boolean };
+              onSuiteComplete?.(data.suite, { ok: result.ok === true });
+              onEvent?.({
+                type: result.ok === true ? 'result' : 'error',
+                timestamp: new Date().toISOString(),
+                content: `Suite ${data.suite}: ${result.ok === true ? 'PASS' : 'FAIL'}`,
+                details: data,
+              });
+            }
+            break;
+
+          case 'suite_error':
+            onEvent?.({
+              type: 'error',
+              timestamp: new Date().toISOString(),
+              content: `Suite error: ${String(data.error || 'Unknown error')}`,
+              details: data,
+            });
+            break;
+
+          case 'complete':
+            onComplete?.(data as unknown as TestCompleteEvent);
+            onEvent?.({
+              type: 'result',
+              timestamp: new Date().toISOString(),
+              content: `Test completed: ${String(asRecord(data.final).grade || 'UNKNOWN')}`,
+              details: data,
+            });
+            break;
+
+          case 'error':
+            onEvent?.({
+              type: 'error',
+              timestamp: new Date().toISOString(),
+              content: String(data.error || 'Unknown error'),
+            });
+            onError?.(String(data.error || 'Unknown error'));
+            break;
+
+          case 'debug':
+            if (typeof data.message === 'string') {
+              onEvent?.({
+                type: 'stdout',
+                timestamp: new Date().toISOString(),
+                content: `[DEBUG] ${data.message}`,
+                details: data.details,
+              });
+            }
+            break;
+
+          case 'ping':
+            break;
+
+          default:
+            onEvent?.({
+              type: 'stdout',
+              timestamp: new Date().toISOString(),
+              content: `[${type}] ${JSON.stringify(data)}`,
+            });
+        }
+      };
+
       while (true) {
         const { done, value } = await reader.read();
 
@@ -174,117 +288,22 @@ export function useTestStream(options: UseTestStreamOptions = {}) {
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || '';
 
-        let currentEvent: string | null = null;
-        let currentData = '';
-
         for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7);
-          } else if (line.startsWith('data: ')) {
-            currentData = line.slice(6);
-          } else if (line === '' && currentEvent) {
-            try {
-              const data = JSON.parse(currentData);
-              devLogger.debug('[useTestStream] Event:', currentEvent, data);
-
-              switch (currentEvent) {
-                case 'start':
-                  {
-                    const runId =
-                      typeof data.test_run_id === 'string' && data.test_run_id.trim()
-                        ? data.test_run_id.trim()
-                        : typeof data.run_id === 'string' && data.run_id.trim()
-                          ? data.run_id.trim()
-                          : '';
-                  onEvent?.({
-                    type: 'stdout',
-                    timestamp: new Date().toISOString(),
-                      content: runId ? `Test started: ${runId}` : 'Test started',
-                    details: data,
-                  });
-                  }
-                  break;
-
-                case 'suite_start':
-                  if (data.suite) {
-                    onSuiteStart?.(data.suite);
-                    onEvent?.({
-                      type: 'command',
-                      timestamp: new Date().toISOString(),
-                      content: `Starting suite: ${data.suite}`,
-                      details: data,
-                    });
-                  }
-                  break;
-
-                case 'suite_complete':
-                  if (data.suite && data.result) {
-                    onSuiteComplete?.(data.suite, data.result);
-                    onEvent?.({
-                      type: data.result.ok ? 'result' : 'error',
-                      timestamp: new Date().toISOString(),
-                      content: `Suite ${data.suite}: ${data.result.ok ? 'PASS' : 'FAIL'}`,
-                      details: data,
-                    });
-                  }
-                  break;
-
-                case 'suite_error':
-                  onEvent?.({
-                    type: 'error',
-                    timestamp: new Date().toISOString(),
-                    content: `Suite error: ${data.error || 'Unknown error'}`,
-                    details: data,
-                  });
-                  break;
-
-                case 'complete':
-                  onComplete?.(data as TestCompleteEvent);
-                  onEvent?.({
-                    type: 'result',
-                    timestamp: new Date().toISOString(),
-                    content: `Test completed: ${data.final?.grade || 'UNKNOWN'}`,
-                    details: data,
-                  });
-                  break;
-
-                case 'error':
-                  onEvent?.({
-                    type: 'error',
-                    timestamp: new Date().toISOString(),
-                    content: data.error || 'Unknown error',
-                  });
-                  onError?.(data.error || 'Unknown error');
-                  break;
-
-                case 'debug':
-                  if (data.message) {
-                    onEvent?.({
-                      type: 'stdout',
-                      timestamp: new Date().toISOString(),
-                      content: `[DEBUG] ${data.message}`,
-                      details: data.details,
-                    });
-                  }
-                  break;
-
-                case 'ping':
-                  break;
-
-                default:
-                  onEvent?.({
-                    type: 'stdout',
-                    timestamp: new Date().toISOString(),
-                    content: `[${currentEvent}] ${JSON.stringify(data)}`,
-                  });
-              }
-            } catch (parseError) {
-              devLogger.debug('[useTestStream] Parse error:', parseError);
-            }
-
-            currentEvent = null;
-            currentData = '';
+          try {
+            const streamEvent = parseStreamEvent(line);
+            if (streamEvent) handleStreamEvent(streamEvent);
+          } catch (parseError) {
+            devLogger.debug('[useTestStream] Parse error:', parseError);
           }
+        }
+      }
+
+      if (buffer.trim()) {
+        try {
+          const streamEvent = parseStreamEvent(buffer);
+          if (streamEvent) handleStreamEvent(streamEvent);
+        } catch (parseError) {
+          devLogger.debug('[useTestStream] trailing parse error:', parseError);
         }
       }
     } catch (error) {

@@ -3,9 +3,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAIDialogue } from '../useAIDialogue';
 
 const apiFetchMock = vi.hoisted(() => vi.fn());
+const runtimeTransportMock = vi.hoisted(() => ({
+  connected: true,
+  reconnecting: false,
+  error: null as string | null,
+  attemptCount: 0,
+  subscribeChannels: vi.fn(() => vi.fn()),
+  sendCommand: vi.fn(() => true),
+  getLastCursor: vi.fn(() => 0),
+  reconnect: vi.fn(),
+  registerMessageHandler: vi.fn(() => vi.fn()),
+}));
 
 vi.mock('@/api', () => ({
   apiFetch: apiFetchMock,
+}));
+
+vi.mock('@/runtime/transport', () => ({
+  useRuntimeTransport: () => runtimeTransportMock,
 }));
 
 vi.mock('@/app/utils/devLogger', () => ({
@@ -21,30 +36,10 @@ function jsonResponse(payload: unknown, ok = true): Response {
     ok,
     status: ok ? 200 : 500,
     statusText: ok ? 'OK' : 'Error',
+    headers: new Headers({ 'content-type': 'application/json' }),
     json: async () => payload,
     text: async () => JSON.stringify(payload),
   } as Response;
-}
-
-function streamResponse(text: string): Response {
-  const encoder = new TextEncoder();
-  let consumed = false;
-  return {
-    ok: true,
-    status: 200,
-    statusText: 'OK',
-    body: {
-      getReader: () => ({
-        read: async () => {
-          if (consumed) {
-            return { done: true, value: undefined };
-          }
-          consumed = true;
-          return { done: false, value: encoder.encode(text) };
-        },
-      }),
-    },
-  } as unknown as Response;
 }
 
 function findApiCall(path: string): [string, RequestInit | undefined] {
@@ -55,16 +50,29 @@ function findApiCall(path: string): [string, RequestInit | undefined] {
 
 const productWorkspaceQuery = 'workspace=C%3A%2FTemp%2FProduct';
 const directorStatusPath = `/v2/role/director/chat/status?${productWorkspaceQuery}`;
-const directorStreamPath = `/v2/role/director/chat/stream?${productWorkspaceQuery}`;
+const directorJetstreamPath = `/v2/role/director/chat/jetstream?${productWorkspaceQuery}`;
 const pmStatusPath = `/v2/role/pm/chat/status?${productWorkspaceQuery}`;
-const pmStreamPath = `/v2/role/pm/chat/stream?${productWorkspaceQuery}`;
+const pmJetstreamPath = `/v2/role/pm/chat/jetstream?${productWorkspaceQuery}`;
+const pmLegacyStreamPath = `/v2/role/pm/chat/stream?${productWorkspaceQuery}`;
+
+function emitChatChunk(channel: string, type: string, data: Record<string, unknown>) {
+  const handler = runtimeTransportMock.registerMessageHandler.mock.calls.at(-1)?.[0];
+  expect(handler).toBeTypeOf('function');
+  act(() => {
+    handler?.({
+      channel,
+      payload: { type, data, seq: 0 },
+    });
+  });
+}
 
 describe('useAIDialogue RoleSession bridge', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    runtimeTransportMock.connected = true;
   });
 
-  it('creates, attaches, and streams through a RoleSession when desktop task context exists', async () => {
+  it('creates, attaches, and streams through a RoleSession Nat-JetStream channel when desktop task context exists', async () => {
     apiFetchMock.mockImplementation((path: string) => {
       if (path === directorStatusPath) {
         return Promise.resolve(jsonResponse({ ready: true, configured: true, role: 'director' }));
@@ -75,8 +83,15 @@ describe('useAIDialogue RoleSession bridge', () => {
       if (path === '/v2/roles/sessions/session-1/actions/attach') {
         return Promise.resolve(jsonResponse({ ok: true, attachment: { id: 'attach-1' } }));
       }
-      if (path === '/v2/roles/sessions/session-1/messages/stream') {
-        return Promise.resolve(streamResponse('event: complete\ndata: {"content":"session answer"}\n\n'));
+      if (path === '/v2/roles/sessions/session-1/messages/jetstream') {
+        return Promise.resolve(jsonResponse({
+          ok: true,
+          session_id: 'session-1',
+          status: 'started',
+          channel: 'chat:session-1',
+          subject: 'hp.runtime.chat.session-1',
+          transport: 'nat-jetstream',
+        }));
       }
       return Promise.resolve(jsonResponse({ ok: true }));
     });
@@ -122,7 +137,7 @@ describe('useAIDialogue RoleSession bridge', () => {
       await result.current.handleSend();
     });
 
-    const [, streamInit] = findApiCall('/v2/roles/sessions/session-1/messages/stream');
+    const [, streamInit] = findApiCall('/v2/roles/sessions/session-1/messages/jetstream');
     expect(JSON.parse(String(streamInit?.body))).toMatchObject({
       role: 'user',
       content: 'Implement the selected task',
@@ -132,20 +147,40 @@ describe('useAIDialogue RoleSession bridge', () => {
         },
       },
     });
+    expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledWith([
+      { channel: 'chat:session-1', tailLines: 0 },
+    ]);
     expect(apiFetchMock).not.toHaveBeenCalledWith(
-      directorStreamPath,
+      directorJetstreamPath,
       expect.anything(),
     );
-    expect(result.current.messages.some((message) => message.content === 'session answer')).toBe(true);
+    expect(apiFetchMock).not.toHaveBeenCalledWith(
+      '/v2/roles/sessions/session-1/messages/stream',
+      expect.anything(),
+    );
+
+    emitChatChunk('chat:session-1', 'complete', { content: 'session answer' });
+
+    await waitFor(() => {
+      expect(result.current.messages.some((message) => message.content === 'session answer')).toBe(true);
+      expect(result.current.isLoading).toBe(false);
+    });
   });
 
-  it('falls back to legacy role chat streaming before a RoleSession exists', async () => {
+  it('uses role chat Nat-JetStream before a RoleSession exists', async () => {
     apiFetchMock.mockImplementation((path: string) => {
       if (path === pmStatusPath) {
         return Promise.resolve(jsonResponse({ ready: true, configured: true, role: 'pm' }));
       }
-      if (path === pmStreamPath) {
-        return Promise.resolve(streamResponse('event: complete\ndata: {"content":"pm answer"}\n\n'));
+      if (path === pmJetstreamPath) {
+        return Promise.resolve(jsonResponse({
+          ok: true,
+          session_id: 'pm-chat-session',
+          status: 'started',
+          channel: 'chat:pm-chat-session',
+          subject: 'hp.runtime.chat.pm-chat-session',
+          transport: 'nat-jetstream',
+        }));
       }
       return Promise.resolve(jsonResponse({ ok: true }));
     });
@@ -168,13 +203,26 @@ describe('useAIDialogue RoleSession bridge', () => {
       await result.current.handleSend();
     });
 
-    const [, streamInit] = findApiCall(pmStreamPath);
+    const [, streamInit] = findApiCall(pmJetstreamPath);
     const payload = JSON.parse(String(streamInit?.body));
     expect(payload).toMatchObject({
       message: 'Plan the work',
     });
     expect(payload.context).toMatchObject({ workspace: 'C:/Temp/Product', history: [] });
     expect(payload.context).toHaveProperty('conversation_id', null);
-    expect(result.current.messages.some((message) => message.content === 'pm answer')).toBe(true);
+    expect(apiFetchMock).not.toHaveBeenCalledWith(
+      pmLegacyStreamPath,
+      expect.anything(),
+    );
+    expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledWith([
+      { channel: 'chat:pm-chat-session', tailLines: 0 },
+    ]);
+
+    emitChatChunk('chat:pm-chat-session', 'complete', { content: 'pm answer' });
+
+    await waitFor(() => {
+      expect(result.current.messages.some((message) => message.content === 'pm answer')).toBe(true);
+      expect(result.current.isLoading).toBe(false);
+    });
   });
 });

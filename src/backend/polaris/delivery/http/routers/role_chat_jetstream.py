@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any
 from uuid import uuid4
 
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
@@ -31,6 +32,8 @@ from .role_runtime_chat import (
 )
 
 logger = logging.getLogger(__name__)
+
+ChatChunkCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 def _new_chat_session_id(role: str) -> str:
@@ -93,6 +96,7 @@ async def execute_role_chat_jetstream(
     run_id: str | None = None,
     task_id: str | None = None,
     history: tuple[tuple[str, str], ...] | list[tuple[str, str]] | None = None,
+    on_chunk: ChatChunkCallback | None = None,
 ) -> str:
     """Run the role chat LLM and publish every chunk to NAT JetStream.
 
@@ -123,6 +127,8 @@ async def execute_role_chat_jetstream(
         async for event in RoleRuntimeService().stream_chat_turn(command):
             chunk = _queue_event_from_runtime_event(event)
             event_type = str(chunk.get("type") or "")
+            if on_chunk is not None:
+                await on_chunk(chunk)
             ok = await _publish_chat_chunk(
                 session_id=resolved_session_id,
                 chunk=chunk,
@@ -137,9 +143,12 @@ async def execute_role_chat_jetstream(
                 break
     except (RuntimeError, ValueError, asyncio.CancelledError) as exc:
         logger.warning("chat-jetstream stream failed for %s: %s", resolved_session_id, exc)
+        error_chunk = {"type": "error", "data": {"error": str(exc) or "role_runtime_stream_failed"}}
+        if on_chunk is not None:
+            await on_chunk(error_chunk)
         await _publish_chat_chunk(
             session_id=resolved_session_id,
-            chunk={"type": "error", "data": {"error": str(exc) or "role_runtime_stream_failed"}},
+            chunk=error_chunk,
             seq=seq,
         )
         return resolved_session_id
@@ -147,12 +156,15 @@ async def execute_role_chat_jetstream(
     if not saw_terminal:
         # Mirror the SSE path: synthesise a terminal complete chunk so the
         # front-end always sees a clean close over WS.
+        complete_chunk = {
+            "type": "complete",
+            "data": _stream_complete_payload({"result": None}),
+        }
+        if on_chunk is not None:
+            await on_chunk(complete_chunk)
         await _publish_chat_chunk(
             session_id=resolved_session_id,
-            chunk={
-                "type": "complete",
-                "data": _stream_complete_payload({"result": None}),
-            },
+            chunk=complete_chunk,
             seq=seq,
         )
     return resolved_session_id

@@ -145,7 +145,7 @@ def _provider_role_compatible(role: str, provider_test_info: dict[str, Any] | No
     if not isinstance(provider_test_info, dict):
         return False
     tested_role = _role_key(provider_test_info.get("role"))
-    return not tested_role or tested_role == _role_key(role)
+    return not tested_role or tested_role == "connectivity" or tested_role == _role_key(role)
 
 
 def _dedupe_index_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:

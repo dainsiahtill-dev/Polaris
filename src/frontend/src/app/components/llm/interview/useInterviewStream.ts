@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getBackendInfo } from '@/api';
+import { useRuntimeTransport } from '@/runtime/transport';
 import type { TestEvent } from '../test/types';
 
 export interface StreamEvent {
@@ -57,6 +58,45 @@ export interface UseInterviewStreamOptions {
   onError?: (error: string) => void;
   onThinkingEvent?: (event: RealtimeThinkingEvent) => void;
   onTagEvent?: (event: StreamingTagEvent) => void;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+interface JetstreamStartResponse {
+  ok?: boolean;
+  session_id?: string;
+  status?: string;
+  channel?: string;
+  subject?: string;
+  transport?: string;
+}
+
+function createClientRunId(prefix: string): string {
+  const randomId =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2, 12);
+  return `${prefix}-${randomId}`;
+}
+
+function normalizeStreamId(value: string | null | undefined, prefix: string): string {
+  const raw = String(value || '').trim() || createClientRunId(prefix);
+  const safe = raw.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^[._-]+|[._-]+$/g, '');
+  return safe.slice(0, 96) || createClientRunId(prefix);
+}
+
+function streamEventFromRuntimeMessage(message: unknown): StreamEvent | null {
+  const msg = asRecord(message);
+  const event = msg.type === 'EVENT' ? asRecord(msg.event) : msg;
+  const payload = asRecord(event.payload);
+  const eventType = typeof payload.type === 'string' ? payload.type : '';
+  if (!eventType) return null;
+  return {
+    type: eventType,
+    data: asRecord(payload.data),
+  };
 }
 
 type StreamTagName = 'thinking' | 'answer';
@@ -212,17 +252,26 @@ export const createContentTagParser = () => {
 
 export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
   const { onEvent, onStart, onComplete, onError, onThinkingEvent, onTagEvent } = options;
+  const transport = useRuntimeTransport();
   const [isStreaming, setIsStreaming] = useState(false);
-  const eventSourceRef = useRef<EventSource | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
+  const unsubscribeStreamRef = useRef<(() => void) | null>(null);
+  const unregisterHandlerRef = useRef<(() => void) | null>(null);
+
+  const cleanupActiveStream = useCallback(() => {
+    unregisterHandlerRef.current?.();
+    unregisterHandlerRef.current = null;
+    unsubscribeStreamRef.current?.();
+    unsubscribeStreamRef.current = null;
+  }, []);
 
   const requestCancel = useCallback(async (sessionId: string) => {
     try {
       const backendInfo = await getBackendInfo();
       if (!backendInfo.baseUrl) return;
 
-      await fetch(`${backendInfo.baseUrl}/llm/interview/cancel`, {
+      await fetch(`${backendInfo.baseUrl}/v2/llm/interview/cancel`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -247,25 +296,187 @@ export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
     envOverrides?: Record<string, string>;
   }) => {
     if (isStreaming) return;
-    
+
+    cleanupActiveStream();
+    const streamSessionId = normalizeStreamId(payload.sessionId, 'interactive');
+    const channel = `llm-interview:${streamSessionId}`;
+    const abortController = new AbortController();
+    let finalResult: InterviewStreamResult | null = null;
+    let streamError: string | null = null;
+    let resolveDone: (() => void) | null = null;
+    const streamDone = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
+    const finishStream = () => {
+      resolveDone?.();
+      resolveDone = null;
+    };
+
     setIsStreaming(true);
-    activeSessionIdRef.current = payload.sessionId ? String(payload.sessionId) : null;
-    
-    // Close any existing connection
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
-    
-    // Use fetch with ReadableStream for POST request
-    // EventSource doesn't support POST, so we use fetch + ReadableStream
-    abortControllerRef.current = new AbortController();
-    
+    activeSessionIdRef.current = streamSessionId;
+    abortControllerRef.current = abortController;
+
     try {
       const backendInfo = await getBackendInfo();
       if (!backendInfo.baseUrl) {
         throw new Error('Backend baseUrl missing.');
       }
-      const response = await fetch(`${backendInfo.baseUrl}/llm/interview/stream`, {
+
+      const contentTagParser = createContentTagParser();
+
+      const handleStreamEvent = (eventType: string, data: Record<string, unknown>) => {
+        switch (eventType) {
+          case 'start':
+            if (typeof data.session_id === 'string' && data.session_id) {
+              activeSessionIdRef.current = data.session_id;
+              onStart?.(data.session_id);
+            }
+            onEvent?.({
+              type: 'stdout',
+              timestamp: new Date().toISOString(),
+              content: `Stream started: ${String(data.session_id || '')}`,
+              details: { kind: 'start', ...data },
+            });
+            break;
+
+          case 'command':
+            onEvent?.({
+              type: 'command',
+              timestamp: new Date().toISOString(),
+              content: `${String(data.command || '')} ${Array.isArray(data.args) ? data.args.join(' ') : ''}`,
+              details: data,
+            });
+            break;
+
+          case 'stdout':
+            onEvent?.({
+              type: 'stdout',
+              timestamp: new Date().toISOString(),
+              content: String(data.line || ''),
+            });
+            break;
+
+          case 'stderr':
+            onEvent?.({
+              type: 'stderr',
+              timestamp: new Date().toISOString(),
+              content: String(data.line || ''),
+            });
+            break;
+
+          case 'content_chunk': {
+            const content = typeof data.content === 'string' ? data.content : '';
+            const timestamp = typeof data.timestamp === 'string' ? data.timestamp : new Date().toISOString();
+            onEvent?.({
+              type: 'stdout',
+              timestamp,
+              content: `[content_chunk] ${JSON.stringify(data)}`,
+            });
+            contentTagParser.consume(content, timestamp, onTagEvent);
+            break;
+          }
+
+          case 'thinking':
+          case 'command_execution':
+          case 'agent_message': {
+            const itemId =
+              typeof data.item_id === 'string' || typeof data.item_id === 'number'
+                ? String(data.item_id)
+                : '';
+            const event: RealtimeThinkingEvent = {
+              id: itemId || `${eventType}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              kind:
+                eventType === 'thinking'
+                  ? 'reasoning'
+                  : (eventType as RealtimeThinkingKind),
+              timestamp: typeof data.timestamp === 'string' ? data.timestamp : new Date().toISOString(),
+              text: typeof data.text === 'string' ? data.text : undefined,
+              command: typeof data.command === 'string' ? data.command : undefined,
+              output: typeof data.output === 'string' ? data.output : undefined,
+              status: typeof data.status === 'string' ? data.status : undefined,
+              exitCode:
+                typeof data.exit_code === 'number'
+                  ? data.exit_code
+                  : typeof data.exit_code === 'string'
+                    ? Number(data.exit_code)
+                    : undefined,
+              thinking: typeof data.thinking === 'string' ? data.thinking : undefined,
+              answer: typeof data.answer === 'string' ? data.answer : undefined,
+              raw: typeof data.raw === 'string' ? data.raw : undefined,
+            };
+            onThinkingEvent?.(event);
+            break;
+          }
+
+          case 'complete':
+            finalResult = {
+              ...(data as unknown as InterviewStreamResult),
+              sessionId:
+                typeof data.sessionId === 'string'
+                  ? data.sessionId
+                  : typeof data.session_id === 'string'
+                    ? data.session_id
+                    : streamSessionId,
+            };
+            break;
+
+          case 'error':
+            streamError = String(data.error || 'Unknown error');
+            onEvent?.({
+              type: 'error',
+              timestamp: new Date().toISOString(),
+              content: streamError,
+            });
+            onError?.(streamError);
+            break;
+
+          case 'ping':
+            break;
+
+          case 'thinking_start':
+          case 'thinking_chunk':
+          case 'thinking_end':
+          case 'answer_start':
+          case 'answer_chunk':
+          case 'answer_end':
+            onTagEvent?.({
+              type: eventType as StreamingTagEventType,
+              data: {
+                content: typeof data.content === 'string' ? data.content : undefined,
+                timestamp: typeof data.timestamp === 'string' ? data.timestamp : new Date().toISOString(),
+                isComplete: typeof data.is_complete === 'boolean' ? data.is_complete : undefined,
+              },
+            });
+            break;
+
+          default:
+            onEvent?.({
+              type: 'stdout',
+              timestamp: new Date().toISOString(),
+              content: `[${eventType}] ${JSON.stringify(data)}`,
+            });
+        }
+      };
+
+      const abortHandler = () => finishStream();
+      abortController.signal.addEventListener('abort', abortHandler, { once: true });
+
+      unregisterHandlerRef.current = transport.registerMessageHandler((message) => {
+        const streamEvent = streamEventFromRuntimeMessage(message);
+        if (!streamEvent) return;
+        handleStreamEvent(streamEvent.type, streamEvent.data);
+        if (streamEvent.type === 'complete' || streamEvent.type === 'error') {
+          finishStream();
+        }
+      }, channel);
+      unsubscribeStreamRef.current = transport.subscribeChannels([
+        { channel, tailLines: 0 },
+      ]);
+      if (!transport.connected) {
+        transport.reconnect();
+      }
+
+      const response = await fetch(`${backendInfo.baseUrl}/v2/llm/interview/jetstream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -278,189 +489,30 @@ export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
           question: payload.question,
           criteria: payload.expectedCriteria,
           expects_thinking: payload.expectsThinking,
-          session_id: payload.sessionId,
+          session_id: streamSessionId,
           context: payload.context,
           env_overrides: payload.envOverrides,
         }),
-        signal: abortControllerRef.current.signal,
+        signal: abortController.signal,
       });
-      
+
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(errorText || `HTTP ${response.status}`);
       }
-      
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No response body');
+
+      const startResponse = (await response.json()) as JetstreamStartResponse;
+      if (startResponse.ok === false) {
+        throw new Error('Failed to start interview stream.');
       }
-      
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let finalResult: InterviewStreamResult | null = null;
-      const contentTagParser = createContentTagParser();
-      let currentEvent: string | null = null;
-      let currentData = '';
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) break;
-        
-        buffer += decoder.decode(value, { stream: true });
-        
-        // Process SSE messages
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
-        for (const rawLine of lines) {
-          const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7);
-          } else if (line.startsWith('data: ')) {
-            currentData = currentData ? `${currentData}\n${line.slice(6)}` : line.slice(6);
-          } else if (line === '' && currentEvent) {
-            // End of event, process it
-            try {
-              const data = JSON.parse(currentData);
-              
-              switch (currentEvent) {
-                case 'start':
-                  if (typeof data.session_id === 'string' && data.session_id) {
-                    activeSessionIdRef.current = data.session_id;
-                    onStart?.(data.session_id);
-                  }
-                  onEvent?.({
-                    type: 'stdout',
-                    timestamp: new Date().toISOString(),
-                    content: `Stream started: ${data.session_id}`,
-                    details: { kind: 'start', ...data },
-                  });
-                  break;
-                  
-                case 'command':
-                  onEvent?.({
-                    type: 'command',
-                    timestamp: new Date().toISOString(),
-                    content: `${data.command} ${data.args?.join(' ') || ''}`,
-                    details: data,
-                  });
-                  break;
-                  
-                case 'stdout':
-                  onEvent?.({
-                    type: 'stdout',
-                    timestamp: new Date().toISOString(),
-                    content: data.line || '',
-                  });
-                  break;
-                  
-                case 'stderr':
-                  onEvent?.({
-                    type: 'stderr',
-                    timestamp: new Date().toISOString(),
-                    content: data.line || '',
-                  });
-                  break;
+      await streamDone;
+      abortController.signal.removeEventListener('abort', abortHandler);
 
-                case 'content_chunk': {
-                  const content = typeof data.content === 'string' ? data.content : '';
-                  const timestamp = typeof data.timestamp === 'string' ? data.timestamp : new Date().toISOString();
-                  onEvent?.({
-                    type: 'stdout',
-                    timestamp,
-                    content: `[content_chunk] ${JSON.stringify(data)}`,
-                  });
-                  contentTagParser.consume(content, timestamp, onTagEvent);
-                  break;
-                }
-                  
-                case 'thinking':
-                case 'command_execution':
-                case 'agent_message': {
-                  const itemId =
-                    typeof data.item_id === 'string' || typeof data.item_id === 'number'
-                      ? String(data.item_id)
-                      : '';
-                  const event: RealtimeThinkingEvent = {
-                    id: itemId || `${currentEvent}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                    kind:
-                      currentEvent === 'thinking'
-                        ? 'reasoning'
-                        : (currentEvent as RealtimeThinkingKind),
-                    timestamp: typeof data.timestamp === 'string' ? data.timestamp : new Date().toISOString(),
-                    text: typeof data.text === 'string' ? data.text : undefined,
-                    command: typeof data.command === 'string' ? data.command : undefined,
-                    output: typeof data.output === 'string' ? data.output : undefined,
-                    status: typeof data.status === 'string' ? data.status : undefined,
-                    exitCode:
-                      typeof data.exit_code === 'number'
-                        ? data.exit_code
-                        : typeof data.exit_code === 'string'
-                          ? Number(data.exit_code)
-                          : undefined,
-                    thinking: typeof data.thinking === 'string' ? data.thinking : undefined,
-                    answer: typeof data.answer === 'string' ? data.answer : undefined,
-                    raw: typeof data.raw === 'string' ? data.raw : undefined,
-                  };
-                  onThinkingEvent?.(event);
-                  break;
-                }
-                  
-                case 'complete':
-                  finalResult = data as InterviewStreamResult;
-                  break;
-                  
-                case 'error':
-                  onEvent?.({
-                    type: 'error',
-                    timestamp: new Date().toISOString(),
-                    content: data.error || 'Unknown error',
-                  });
-                  onError?.(data.error || 'Unknown error');
-                  break;
-                  
-                case 'ping':
-                  // Heartbeat, ignore
-                  break;
-
-                case 'thinking_start':
-                case 'thinking_chunk':
-                case 'thinking_end':
-                case 'answer_start':
-                case 'answer_chunk':
-                case 'answer_end':
-                  onTagEvent?.({
-                    type: currentEvent as StreamingTagEventType,
-                    data: {
-                      content: typeof data.content === 'string' ? data.content : undefined,
-                      timestamp: typeof data.timestamp === 'string' ? data.timestamp : new Date().toISOString(),
-                      isComplete: typeof data.is_complete === 'boolean' ? data.is_complete : undefined,
-                    },
-                  });
-                  break;
-
-                default:
-                  onEvent?.({
-                    type: 'stdout',
-                    timestamp: new Date().toISOString(),
-                    content: `[${currentEvent}] ${JSON.stringify(data)}`,
-                  });
-              }
-            } catch (e) {
-              // Invalid JSON, ignore
-            }
-            
-            currentEvent = null;
-            currentData = '';
-          }
-        }
-      }
-      
-      if (finalResult) {
+      if (finalResult && !streamError && !abortController.signal.aborted) {
         onComplete?.(finalResult);
       }
-      
+
     } catch (error) {
       if (error instanceof Error && error.name !== 'AbortError') {
         onEvent?.({
@@ -471,39 +523,48 @@ export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
         onError?.(error.message);
       }
     } finally {
+      cleanupActiveStream();
       setIsStreaming(false);
       abortControllerRef.current = null;
-      eventSourceRef.current = null;
       activeSessionIdRef.current = null;
     }
-  }, [isStreaming, onEvent, onStart, onComplete, onError, onThinkingEvent, onTagEvent]);
+  }, [
+    cleanupActiveStream,
+    isStreaming,
+    onEvent,
+    onStart,
+    onComplete,
+    onError,
+    onThinkingEvent,
+    onTagEvent,
+    transport,
+  ]);
 
   const stopStream = useCallback((sessionIdOverride?: string | null) => {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
-    eventSourceRef.current?.close();
-    eventSourceRef.current = null;
+    cleanupActiveStream();
     const sessionId = sessionIdOverride ?? activeSessionIdRef.current;
     activeSessionIdRef.current = null;
     if (sessionId) {
       void requestCancel(sessionId);
     }
     setIsStreaming(false);
-  }, [requestCancel]);
+  }, [cleanupActiveStream, requestCancel]);
 
   // 组件卸载时清理资源
   useEffect(() => {
     return () => {
       // 强制停止所有进行中的流
       abortControllerRef.current?.abort();
-      eventSourceRef.current?.close();
+      cleanupActiveStream();
       // 如果有活跃会话，通知后端取消
       const sessionId = activeSessionIdRef.current;
       if (sessionId) {
         void requestCancel(sessionId);
       }
     };
-  }, [requestCancel]);
+  }, [cleanupActiveStream, requestCancel]);
 
   return {
     isStreaming,

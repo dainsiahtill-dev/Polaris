@@ -19,7 +19,7 @@ interface TestPanelProps {
   onCancel?: () => void;
   // 测试完成回调（包含结果）
   onTestComplete?: (result: { success: boolean; events: TestEvent[] }) => void;
-  // 用于 SSE 流式测试的配置
+  // 用于后端流式测试的配置
   role?: string;
   apiKey?: string | null;
   testLevel?: string;
@@ -111,7 +111,7 @@ export function TestPanel({
   const suites = runConfig?.suites ?? suitesProp;
   const role = runConfig?.role ?? roleProp;
   const model = runConfig?.model ?? provider.modelId;
-  // 内部事件状态 - 用于 SSE 流式输出
+  // 内部事件状态 - 用于后端流式输出
   const [events, setEvents] = useState<TestEvent[]>(externalEvents);
   const [internalStatus, setInternalStatus] = useState<PanelStatus>('idle');
 
@@ -141,7 +141,7 @@ export function TestPanel({
   const statusLabelMap = statusText || (panelMode === 'event-viewer' ? STREAM_VIEW_STATUS_TEXT : DEFAULT_STATUS_TEXT);
   const statusLabel = statusLabelMap[status] || DEFAULT_STATUS_TEXT[status];
   
-  // SSE 流式测试回调 - 使用 useCallback 保持稳定引用
+  // 流式测试回调 - 使用 useCallback 保持稳定引用
   const handleEvent = useCallback((event: TestEvent) => {
     if (panelMode !== 'stream-runner') return;
     devLogger.debug('[TestPanel] handleEvent:', event);
@@ -171,7 +171,7 @@ export function TestPanel({
     onTestComplete?.({ success: false, events });
   }, [events, onTestComplete, panelMode]);
   
-  // SSE 流式测试 Hook
+  // 后端流式测试 Hook
   const { startStream, stopStream } = useTestStream({
     onEvent: handleEvent,
     onSuiteStart: handleSuiteStart,
@@ -203,7 +203,7 @@ export function TestPanel({
       },
     ]);
     
-    // 启动 SSE 流式测试（使用 useTestStream hook 处理所有事件）
+    // 启动后端流式测试（使用 useTestStream hook 处理所有事件）
     devLogger.debug('[TestPanel] Calling startStream');
     
     // Extract connection info for HTTP providers (Scheme B support)

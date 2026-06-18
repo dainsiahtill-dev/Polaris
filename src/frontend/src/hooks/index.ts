@@ -11,8 +11,6 @@ export { useGeneralSettingsForm, mapSettingsToForm } from './useGeneralSettingsF
 export { useLlmConfig } from './useLlmConfig';
 export { useTerminal } from './useTerminal';
 export { useNDJSONStream } from './useNDJSONStream';
-/** @deprecated Use useNDJSONStream instead */
-export { useSSEStream } from './useSSEStream';
 
 // 新增：即时反馈 Hooks
 export { useInstantFeedback, useActionFeedback, useConfirmAction } from './useInstantFeedback';

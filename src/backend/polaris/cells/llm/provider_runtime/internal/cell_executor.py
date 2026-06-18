@@ -34,6 +34,8 @@ class CellAIRequest:
 
     task_type: TaskType = TaskType.DIALOGUE
     role: str = ""
+    provider_id: str | None = None
+    model: str | None = None
     input: str = ""
     options: dict[str, Any] = field(default_factory=dict)
     context: dict[str, Any] = field(default_factory=dict)
@@ -75,6 +77,8 @@ class CellAIExecutor:
                 task_type=request.task_type.value,
                 role=request.role,
                 prompt=request.input,
+                provider_id=request.provider_id,
+                model=request.model,
                 options=request.options,
                 context=self._build_context(request),
             )
@@ -103,6 +107,8 @@ class CellAIExecutor:
                 task_type=request.task_type.value,
                 role=request.role,
                 prompt=request.input,
+                provider_id=request.provider_id,
+                model=request.model,
                 options=request.options,
                 context=self._build_context(request),
             ):

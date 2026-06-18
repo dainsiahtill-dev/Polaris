@@ -122,8 +122,9 @@ export function useChatStreamWS(options: UseChatStreamWSOptions): UseChatStreamW
         // by channel. We accept any message and check the channel field
         // ourselves to be safe across v1/v2 message shapes.
         const msg = raw as Record<string, unknown>;
-        if (msg?.type !== 'EVENT') return;
-        const event = msg.event as Record<string, unknown> | undefined;
+        const event = msg?.type === 'EVENT'
+          ? msg.event as Record<string, unknown> | undefined
+          : msg;
         if (!event) return;
         if (event.channel !== channel) return;
         const p = (event.payload as Record<string, unknown>) || {};

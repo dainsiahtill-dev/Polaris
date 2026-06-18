@@ -36,6 +36,97 @@ class TestLlmTestsRouter:
         )
         assert response.status_code == 422
 
+    def test_v2_llm_test_jetstream_starts_nat_channel_and_publishes_events(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """POST /v2/llm/test/jetstream should publish test events through runtime JetStream."""
+        client = _build_client()
+        scheduled: list[object] = []
+        published: list[tuple[str, dict[str, object]]] = []
+
+        async def _fake_run_llm_tests(**kwargs):
+            assert kwargs["provider_id"] == "provider-1"
+            assert kwargs["model"] == "model-1"
+            assert kwargs["role"] == "connectivity"
+            return {
+                "schema_version": 1,
+                "test_run_id": "report-run-1",
+                "target": {
+                    "role": "connectivity",
+                    "provider_id": "provider-1",
+                    "model": "model-1",
+                },
+                "suites": {"connectivity": {"ok": True}},
+                "final": {"ready": True, "grade": "PASS"},
+            }
+
+        async def _fake_publish_to_jetstream(*, subject: str, payload: dict[str, object]) -> bool:
+            published.append((subject, payload))
+            return True
+
+        class _CapturedTask:
+            def __init__(self, coro: object) -> None:
+                self.coro = coro
+
+            def add_done_callback(self, callback) -> None:
+                self.callback = callback
+
+        def _capture_create_task(coro):
+            scheduled.append(coro)
+            return _CapturedTask(coro)
+
+        monkeypatch.setattr(tests_router, "run_llm_tests", _fake_run_llm_tests)
+        monkeypatch.setattr(tests_router, "publish_to_jetstream", _fake_publish_to_jetstream)
+        monkeypatch.setattr(tests_router.asyncio, "create_task", _capture_create_task)
+
+        with patch(
+            "polaris.delivery.http.routers.tests.resolve_llm_test_execution_context",
+            return_value=SimpleNamespace(
+                role="connectivity",
+                effective_provider_id="provider-1",
+                model="model-1",
+                suites=["connectivity"],
+                use_direct_config=False,
+                provider_cfg=None,
+            ),
+        ):
+            response = client.post(
+                "/v2/llm/test/jetstream",
+                json={
+                    "role": "connectivity",
+                    "provider_id": "provider-1",
+                    "model": "model-1",
+                    "suites": ["connectivity"],
+                    "test_run_id": "run-1",
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "ok": True,
+            "test_run_id": "run-1",
+            "status": "started",
+            "channel": "llm-test:run-1",
+            "subject": "hp.runtime.llm.test.run-1",
+            "transport": "nat-jetstream",
+        }
+        assert len(scheduled) == 1
+
+        import anyio
+
+        anyio.run(lambda: scheduled[0])
+
+        assert [payload["payload"]["type"] for _, payload in published] == [
+            "start",
+            "suite_start",
+            "suite_result",
+            "suite_complete",
+            "complete",
+        ]
+        assert {payload["channel"] for _, payload in published} == {"llm-test:run-1"}
+        assert {subject for subject, _ in published} == {"hp.runtime.llm.test.run-1"}
+
 
 class TestLlmTestReport:
     """Tests for GET /llm/test/{test_run_id} endpoint."""

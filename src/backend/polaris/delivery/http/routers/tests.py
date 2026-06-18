@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import re
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.evaluation.public.service import run_readiness_tests as run_llm_tests
@@ -19,18 +21,19 @@ from polaris.cells.llm.provider_config.public.contracts import (
 from polaris.cells.llm.provider_config.public.service import resolve_llm_test_execution_context
 from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.schemas.common import LlmTestReportResponse, LlmTestTranscriptResponse
+from polaris.infrastructure.messaging.nats.nats_types import create_runtime_event
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
 from .llm_models import LlmTestPayload
-from .sse_utils import create_sse_response, sse_event_generator
+from .sse_utils import create_sse_response, publish_to_jetstream, sse_event_generator
 
 if TYPE_CHECKING:
-    import asyncio
-
     from polaris.bootstrap.config import Settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+_BACKGROUND_JETSTREAM_TASKS: set[asyncio.Task[None]] = set()
+_SAFE_EVENT_ID_PATTERN = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
 def _map_provider_config_error(exc: LlmProviderConfigError) -> StructuredHTTPException:
@@ -48,6 +51,46 @@ def _map_provider_config_error(exc: LlmProviderConfigError) -> StructuredHTTPExc
         )
     logger.error("Provider config error: %s", exc)
     return StructuredHTTPException(status_code=400, code="PROVIDER_CONFIG_ERROR", message="internal error")
+
+
+def _safe_event_id(raw_value: str | None, prefix: str) -> str:
+    raw = str(raw_value or "").strip() or f"{prefix}-{uuid4().hex}"
+    safe = _SAFE_EVENT_ID_PATTERN.sub("-", raw).strip(".-_")
+    return safe[:96] or f"{prefix}-{uuid4().hex}"
+
+
+def _track_jetstream_task(task: asyncio.Task[None]) -> None:
+    _BACKGROUND_JETSTREAM_TASKS.add(task)
+
+    def _discard(done: asyncio.Task[None]) -> None:
+        _BACKGROUND_JETSTREAM_TASKS.discard(done)
+        try:
+            done.result()
+        except asyncio.CancelledError:
+            return
+        except (RuntimeError, ValueError, OSError, ConnectionError, TimeoutError) as exc:
+            logger.warning("llm test jetstream task failed: %s", exc)
+
+    task.add_done_callback(_discard)
+
+
+async def _publish_test_chunk(*, run_id: str, chunk: dict[str, Any], seq: int) -> bool:
+    envelope = create_runtime_event(
+        workspace_key="llm",
+        run_id=run_id,
+        channel=f"llm-test:{run_id}",
+        kind="llm.test.chunk",
+        payload={
+            "type": str(chunk.get("type") or "message"),
+            "data": dict(chunk.get("data") or {}),
+            "seq": int(seq),
+        },
+        meta={"source": "llm_test_jetstream"},
+    )
+    return await publish_to_jetstream(
+        subject=f"hp.runtime.llm.test.{run_id}",
+        payload=envelope.to_dict(),
+    )
 
 
 @router.post("/llm/test", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])  # DEPRECATED
@@ -196,10 +239,117 @@ async def llm_test_transcript(request: Request, test_run_id: str) -> dict[str, A
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+async def _run_llm_test_jetstream(
+    *,
+    settings: Settings,
+    workspace: str,
+    payload: LlmTestPayload,
+    test_context: Any,
+    run_id: str,
+) -> None:
+    role = test_context.role or "connectivity"
+    suites = list(test_context.suites)
+    seq = 0
+    try:
+        await _publish_test_chunk(
+            run_id=run_id,
+            chunk={
+                "type": "start",
+                "data": {
+                    "run_id": run_id,
+                    "role": role,
+                    "provider_id": test_context.effective_provider_id,
+                    "model": test_context.model,
+                    "suites": suites,
+                },
+            },
+            seq=seq,
+        )
+        seq += 1
+        report = await run_llm_tests(
+            workspace=workspace,
+            settings=settings,
+            provider_id=test_context.effective_provider_id,
+            model=test_context.model,
+            role=role,
+            suites=suites,
+            evaluation_mode=payload.evaluation_mode,
+            api_key=payload.api_key,
+            extra_headers=payload.headers,
+            env_overrides=payload.env_overrides,
+            prompt_override=payload.prompt_override,
+            provider_cfg=test_context.provider_cfg if test_context.use_direct_config else None,
+            skip_persistence=False,
+        )
+        suites_dict = report.get("suites")
+        suites_payload = suites_dict if isinstance(suites_dict, dict) else {}
+        for suite_name, suite_result in suites_payload.items():
+            await _publish_test_chunk(
+                run_id=run_id,
+                chunk={"type": "suite_start", "data": {"suite": suite_name}},
+                seq=seq,
+            )
+            seq += 1
+            await _publish_test_chunk(
+                run_id=run_id,
+                chunk={"type": "suite_result", "data": {"suite": suite_name, "result": suite_result}},
+                seq=seq,
+            )
+            seq += 1
+            await _publish_test_chunk(
+                run_id=run_id,
+                chunk={"type": "suite_complete", "data": {"suite": suite_name, "result": suite_result}},
+                seq=seq,
+            )
+            seq += 1
+        await _publish_test_chunk(run_id=run_id, chunk={"type": "complete", "data": report}, seq=seq)
+    except (RuntimeError, ValueError, OSError, ConnectionError, TimeoutError) as exc:
+        logger.warning("llm test jetstream execution failed: %s", exc)
+        await _publish_test_chunk(
+            run_id=run_id,
+            chunk={"type": "error", "data": {"error": str(exc) or type(exc).__name__}},
+            seq=seq,
+        )
+
+
 @router.post("/v2/llm/test", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])
 async def v2_llm_test(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
     """Run LLM readiness tests and return a report."""
     return await llm_test(request, payload)
+
+
+@router.post("/v2/llm/test/jetstream", dependencies=[Depends(require_auth)])
+async def v2_llm_test_jetstream(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
+    """Start LLM readiness tests and publish progress through runtime Nat-JetStream."""
+    state = get_state(request)
+    workspace_raw = state.settings.workspace
+    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
+    cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace)
+
+    try:
+        test_context = resolve_llm_test_execution_context(workspace, cache_root, payload.model_dump())
+    except LlmProviderConfigError as exc:
+        raise _map_provider_config_error(exc) from exc
+
+    run_id = _safe_event_id(payload.test_run_id, "llm-test")
+    task = asyncio.create_task(
+        _run_llm_test_jetstream(
+            settings=state.settings,
+            workspace=workspace,
+            payload=payload,
+            test_context=test_context,
+            run_id=run_id,
+        )
+    )
+    _track_jetstream_task(task)
+    return {
+        "ok": True,
+        "test_run_id": run_id,
+        "status": "started",
+        "channel": f"llm-test:{run_id}",
+        "subject": f"hp.runtime.llm.test.{run_id}",
+        "transport": "nat-jetstream",
+    }
 
 
 @router.post("/v2/llm/test/stream", dependencies=[Depends(require_auth)])

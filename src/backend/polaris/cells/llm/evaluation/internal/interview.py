@@ -462,6 +462,8 @@ async def generate_interview_answer(
     context: list[dict[str, Any]] | None = None,
     criteria: list[str] | None = None,
     project_path: str | None = None,
+    provider_id: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any] | None:
     """生成面试答案（非流式）"""
     executor = CellAIExecutor(workspace=workspace)
@@ -478,6 +480,8 @@ async def generate_interview_answer(
     request = CellAIRequest(
         task_type=TaskType.INTERVIEW,
         role=role,
+        provider_id=provider_id,
+        model=model,
         input=prompt,
         options={"temperature": 0.3, "max_tokens": 2000},
     )
@@ -523,6 +527,8 @@ async def generate_interview_answer_streaming(
     context: list[dict[str, Any]] | None = None,
     criteria: list[str] | None = None,
     project_path: str | None = None,
+    provider_id: str | None = None,
+    model: str | None = None,
 ) -> None:
     """生成面试答案（流式）"""
     executor = CellAIExecutor(workspace=workspace)
@@ -539,6 +545,8 @@ async def generate_interview_answer_streaming(
     request = CellAIRequest(
         task_type=TaskType.INTERVIEW,
         role=role,
+        provider_id=provider_id,
+        model=model,
         input=prompt,
         options={"temperature": 0.3, "max_tokens": 2000},
     )

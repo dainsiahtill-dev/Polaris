@@ -1,10 +1,12 @@
 import { getBackendInfo } from '../../../../api';
+import { runtimeSocketManager } from '@/runtime/transport';
 import type { TestEvent } from '../test/types';
 
 interface StreamTestOptions {
   role?: string | null;
   providerId: string;
   model: string;
+  testRunId?: string;
   suites?: string[];
   testLevel?: string;
   evaluationMode?: string;
@@ -48,11 +50,56 @@ interface TestReport {
   [key: string]: unknown;
 }
 
+interface StreamProtocolEvent {
+  type: string;
+  data: Record<string, unknown>;
+}
+
+interface JetstreamTestStartResponse {
+  ok?: boolean;
+  test_run_id?: string;
+  status?: string;
+  channel?: string;
+  subject?: string;
+  transport?: string;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
+
+function createClientRunId(prefix: string): string {
+  const randomId =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2, 12);
+  return `${prefix}-${randomId}`;
+}
+
+function normalizeRunId(value: string | null | undefined, prefix: string): string {
+  const raw = String(value || '').trim() || createClientRunId(prefix);
+  const safe = raw.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^[._-]+|[._-]+$/g, '');
+  return safe.slice(0, 96) || createClientRunId(prefix);
+}
+
+function streamEventFromRuntimeMessage(message: unknown): StreamProtocolEvent | null {
+  const msg = asRecord(message);
+  const event = msg.type === 'EVENT' ? asRecord(msg.event) : msg;
+  const payload = asRecord(event.payload);
+  const eventType = typeof payload.type === 'string' ? payload.type : '';
+  if (!eventType) return null;
+  return {
+    type: eventType,
+    data: asRecord(payload.data),
+  };
+}
+
 export async function runStreamingTest(options: StreamTestOptions): Promise<TestReport | null> {
   const {
     role,
     providerId,
     model,
+    testRunId,
     suites = ['connectivity', 'response'],
     testLevel = 'quick',
     evaluationMode = 'provider',
@@ -76,18 +123,136 @@ export async function runStreamingTest(options: StreamTestOptions): Promise<Test
   };
 
   emitEvent('command', `Starting test for ${providerId}`);
+  const runId = normalizeRunId(testRunId, 'llm-test');
+  const channel = `llm-test:${runId}`;
+  let unsubscribeListener: (() => void) | null = null;
+  let settled = false;
+
+  const cleanup = () => {
+    unsubscribeListener?.();
+    unsubscribeListener = null;
+    runtimeSocketManager.unsubscribeChannels([channel]);
+  };
 
   try {
+    if (signal?.aborted) {
+      emitEvent('error', '测试已取消');
+      return null;
+    }
+
     const backendInfo = await getBackendInfo();
     if (!backendInfo.baseUrl) {
       throw new Error('Backend baseUrl missing');
     }
+
+    const resultPromise = new Promise<TestReport | null>((resolve) => {
+      const finish = (result: TestReport | null) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      };
+
+      const handleStreamEvent = (streamEvent: StreamProtocolEvent): TestReport | null | undefined => {
+        const { type, data } = streamEvent;
+
+        switch (type) {
+          case 'start':
+            {
+              const activeRunId =
+                typeof data.test_run_id === 'string' && data.test_run_id.trim()
+                  ? data.test_run_id.trim()
+                  : typeof data.run_id === 'string' && data.run_id.trim()
+                    ? data.run_id.trim()
+                    : '';
+              emitEvent('stdout', activeRunId ? `测试开始: ${activeRunId}` : '测试开始', data);
+            }
+            break;
+
+          case 'suite_start':
+            if (typeof data.suite === 'string') {
+              onSuiteStart?.(data.suite);
+              emitEvent('stdout', `开始测试套件: ${data.suite}`);
+            }
+            break;
+
+          case 'suite_result':
+          case 'suite_complete':
+            if (typeof data.suite === 'string' && data.result && typeof data.result === 'object') {
+              const result = data.result as { ok?: boolean | string; cases?: Array<{ ok: boolean; reason?: string; id?: string }>; error?: unknown };
+              const ok = result.ok === true || result.ok === 'true';
+              onSuiteComplete?.(data.suite, ok);
+              emitEvent(ok ? 'result' : 'error', `测试套件 ${data.suite}: ${ok ? '通过' : '失败'}`, data);
+
+              if (!ok) {
+                if (Array.isArray(result.cases)) {
+                  const failures = result.cases.filter((c) => !c.ok);
+                  failures.forEach((f) => {
+                    emitEvent('stderr', `  [${f.id}] ${f.reason || 'Verification failed'}`);
+                  });
+                } else if (result.error !== undefined) {
+                  emitEvent('stderr', `  Reason: ${String(result.error)}`);
+                }
+              }
+            }
+            break;
+
+          case 'suite_error':
+            emitEvent('error', `测试套件错误: ${String(data.error || '未知错误')}`, data);
+            break;
+
+          case 'complete':
+            emitEvent('stdout', '测试完成');
+            onComplete?.(data as unknown as TestReport);
+            return data as unknown as TestReport;
+
+          case 'error':
+            emitEvent('error', String(data.error || '未知错误'));
+            onError?.(String(data.error || 'Unknown error'));
+            return null;
+
+          case 'ping':
+            break;
+
+          default:
+            emitEvent('stdout', `[${type}] ${JSON.stringify(data)}`);
+        }
+        return undefined;
+      };
+
+      unsubscribeListener = runtimeSocketManager.registerMessageListener({
+        id: `llm-test-${runId}`,
+        channel,
+        handler: (message) => {
+          const streamEvent = streamEventFromRuntimeMessage(message);
+          if (!streamEvent) return;
+          const result = handleStreamEvent(streamEvent);
+          if (result !== undefined) {
+            finish(result);
+          }
+        },
+      });
+      runtimeSocketManager.subscribeChannels([{ channel, tailLines: 0 }]);
+      if (!runtimeSocketManager.getState().connected) {
+        runtimeSocketManager.start();
+        runtimeSocketManager.reconnect();
+      }
+      signal?.addEventListener(
+        'abort',
+        () => {
+          emitEvent('error', '测试已取消');
+          finish(null);
+        },
+        { once: true },
+      );
+    });
 
     // Build request body
     const requestBody: Record<string, unknown> = {
       role: role || 'connectivity',
       provider_id: providerId,
       model,
+      test_run_id: runId,
       suites,
       test_level: testLevel,
       evaluation_mode: evaluationMode,
@@ -110,7 +275,7 @@ export async function runStreamingTest(options: StreamTestOptions): Promise<Test
       requestBody.timeout = timeout;
     }
 
-    const response = await fetch(`${backendInfo.baseUrl}/v2/llm/test/stream`, {
+    const response = await fetch(`${backendInfo.baseUrl}/v2/llm/test/jetstream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -125,110 +290,15 @@ export async function runStreamingTest(options: StreamTestOptions): Promise<Test
       throw new Error(errorText || `HTTP ${response.status}`);
     }
 
-    if (!response.body) {
-      throw new Error('No response body');
+    const startResponse = (await response.json()) as JetstreamTestStartResponse;
+    if (startResponse.ok === false) {
+      throw new Error('Failed to start LLM test stream');
     }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
 
     emitEvent('stdout', '发送测试请求...');
-
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      let currentEvent: string | null = null;
-      let currentData = '';
-
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          currentEvent = line.slice(7);
-        } else if (line.startsWith('data: ')) {
-          currentData = line.slice(6);
-        } else if (line === '' && currentEvent) {
-          try {
-            const data = JSON.parse(currentData);
-
-            switch (currentEvent) {
-              case 'start':
-                {
-                  const runId =
-                    typeof data.test_run_id === 'string' && data.test_run_id.trim()
-                      ? data.test_run_id.trim()
-                      : typeof data.run_id === 'string' && data.run_id.trim()
-                        ? data.run_id.trim()
-                        : '';
-                  emitEvent('stdout', runId ? `测试开始: ${runId}` : '测试开始', data);
-                }
-                break;
-
-              case 'suite_start':
-                if (data.suite) {
-                  onSuiteStart?.(data.suite);
-                  emitEvent('stdout', `开始测试套件: ${data.suite}`);
-                }
-                break;
-
-              case 'suite_result':
-                if (data.suite && data.result) {
-                  const ok = data.result.ok === true || data.result.ok === 'true';
-                  onSuiteComplete?.(data.suite, ok);
-                  emitEvent(ok ? 'result' : 'error', `测试套件 ${data.suite}: ${ok ? '通过' : '失败'}`, data);
-                  
-                  if (!ok && data.result) {
-                    const result = data.result as { cases?: Array<{ ok: boolean; reason?: string; id?: string }> };
-                    if (Array.isArray(result.cases)) {
-                      const failures = result.cases.filter(c => !c.ok);
-                      failures.forEach(f => {
-                        emitEvent('stderr', `  [${f.id}] ${f.reason || 'Verification failed'}`);
-                      });
-                    } else if (typeof data.result === 'object' && data.result !== null && 'error' in data.result) {
-                         emitEvent('stderr', `  Reason: ${String((data.result as { error?: unknown }).error)}`);
-                    }
-                  }
-                }
-                break;
-
-              case 'suite_error':
-                emitEvent('error', `测试套件错误: ${data.error || '未知错误'}`, data);
-                break;
-
-              case 'complete':
-                emitEvent('stdout', '测试完成');
-                onComplete?.(data as TestReport);
-                return data as TestReport;
-
-              case 'error':
-                emitEvent('error', data.error || '未知错误');
-                onError?.(data.error || 'Unknown error');
-                return null;
-
-              case 'ping':
-                break;
-
-              default:
-                emitEvent('stdout', `[${currentEvent}] ${JSON.stringify(data)}`);
-            }
-          } catch {
-            // Ignore invalid JSON
-          }
-
-          currentEvent = null;
-          currentData = '';
-        }
-      }
-    }
-
-    return null;
+    return await resultPromise;
   } catch (error) {
+    cleanup();
     if (error instanceof Error && error.name === 'AbortError') {
       emitEvent('error', '测试已取消');
       return null;

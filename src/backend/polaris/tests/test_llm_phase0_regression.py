@@ -652,6 +652,70 @@ class TestRoleRuntimeSupportConsistency:
         assert response["blocked_roles"] == []
         assert response["state"] == "READY"
 
+    def test_llm_status_allows_connectivity_provider_readiness_for_role(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        config_payload = {
+            "schema_version": 1,
+            "providers": {
+                "deepseek-main": {"type": "anthropic_compat", "name": "DeepSeek Main"},
+            },
+            "roles": {
+                "chief_engineer": {"provider_id": "deepseek-main", "model": "deepseek-v4-pro"},
+            },
+            "policies": {
+                "required_ready_roles": ["chief_engineer"],
+            },
+        }
+        index_payload = {
+            "roles": {},
+            "providers": {
+                "deepseek-main": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "deepseek-main",
+                    "model": "deepseek-v4-pro",
+                    "role": "connectivity",
+                    "timestamp": "2000-01-01T00:00:00+00:00",
+                    "suites": {"connectivity": {"ok": True}},
+                },
+            },
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        chief_engineer = response["roles"]["chief_engineer"]
+        assert chief_engineer["ready"] is True
+        assert chief_engineer["readiness_issue"] == ""
+        assert chief_engineer["readiness_source"] == "provider_index"
+        assert chief_engineer["tested_provider_id"] == "deepseek-main"
+        assert chief_engineer["tested_model"] == "deepseek-v4-pro"
+        assert response["blocked_roles"] == []
+        assert response["state"] == "READY"
+
     def test_llm_status_reports_failed_role_readiness_with_provider_model_and_timestamp(self):
         from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
 
@@ -1347,6 +1411,38 @@ class TestRoleRuntimeSupportConsistency:
             patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
         ):
             _ensure_llm_ready(mock_state, "pm")
+
+    def test_pm_gate_allows_connectivity_provider_readiness_when_role_index_is_missing(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import _ensure_llm_ready
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_state = AppState(settings=mock_settings)
+
+        index_payload = {
+            "roles": {},
+            "providers": {
+                "deepseek-main": {
+                    "ready": True,
+                    "provider_id": "deepseek-main",
+                    "model": "deepseek-v4-pro",
+                    "role": "connectivity",
+                },
+            },
+        }
+        config_payload = {
+            "providers": {"deepseek-main": {"type": "anthropic_compat"}},
+            "roles": {"chief_engineer": {"provider_id": "deepseek-main", "model": "deepseek-v4-pro"}},
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+        ):
+            _ensure_llm_ready(mock_state, "chief_engineer")
 
     def test_pm_gate_allows_old_successful_readiness_timestamp(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState

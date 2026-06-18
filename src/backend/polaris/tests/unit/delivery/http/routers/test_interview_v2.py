@@ -513,6 +513,83 @@ async def test_v2_llm_interview_cancel_success(client: AsyncClient) -> None:
     assert data["cancelled"] is True
 
 
+@pytest.mark.asyncio
+async def test_v2_llm_interview_jetstream_starts_nat_channel_and_publishes_events(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POST /v2/llm/interview/jetstream should publish interview events through runtime JetStream."""
+    from polaris.delivery.http.routers import interview
+
+    scheduled: list[object] = []
+    published: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_run_interview_streaming(settings, role, provider_id, model, question, output_queue, **kwargs):
+        assert role == "pm"
+        assert provider_id == "provider-1"
+        assert model == "model-1"
+        assert kwargs["session_id"] == "interactive-1"
+        await output_queue.put({"type": "content_chunk", "data": {"content": "计划"}})
+        await output_queue.put(
+            {
+                "type": "complete",
+                "data": {"sessionId": "interactive-1", "answer": "计划", "ok": True},
+            }
+        )
+
+    async def _fake_publish_to_jetstream(*, subject: str, payload: dict[str, object]) -> bool:
+        published.append((subject, payload))
+        return True
+
+    class _CapturedTask:
+        def __init__(self, coro: object) -> None:
+            self.coro = coro
+
+        def add_done_callback(self, callback) -> None:
+            self.callback = callback
+
+    def _capture_create_task(coro):
+        scheduled.append(coro)
+        return _CapturedTask(coro)
+
+    monkeypatch.setattr(interview, "run_interactive_interview_streaming", _fake_run_interview_streaming)
+    monkeypatch.setattr(interview, "publish_to_jetstream", _fake_publish_to_jetstream)
+    monkeypatch.setattr(interview.asyncio, "create_task", _capture_create_task)
+
+    response = await client.post(
+        "/v2/llm/interview/jetstream",
+        json={
+            "role": "pm",
+            "provider_id": "provider-1",
+            "model": "model-1",
+            "question": "请制定计划",
+            "session_id": "interactive-1",
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data == {
+        "ok": True,
+        "session_id": "interactive-1",
+        "status": "started",
+        "channel": "llm-interview:interactive-1",
+        "subject": "hp.runtime.llm.interview.interactive-1",
+        "transport": "nat-jetstream",
+    }
+    assert len(scheduled) == 1
+
+    await scheduled[0]
+
+    assert [payload["payload"]["type"] for _, payload in published] == [
+        "start",
+        "content_chunk",
+        "complete",
+    ]
+    assert {payload["channel"] for _, payload in published} == {"llm-interview:interactive-1"}
+    assert {subject for subject, _ in published} == {"hp.runtime.llm.interview.interactive-1"}
+
+
 # ---------------------------------------------------------------------------
 # POST /v2/llm/interview/stream
 # ---------------------------------------------------------------------------

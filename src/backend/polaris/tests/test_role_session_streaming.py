@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Literal
 
@@ -116,12 +117,77 @@ async def test_send_message_stream_snapshots_session_data_before_service_closes(
 
     body = "".join(chunks)
 
-    assert "event: content_chunk" in body
-    assert 'data: {"content": "done"}' in body
-    assert "event: complete" in body
+    events = [json.loads(line) for line in body.splitlines() if line.strip()]
+    assert events[0] == {"type": "content_chunk", "data": {"content": "done"}}
+    assert events[1] == {"type": "complete", "data": {"content": "done", "thinking": ""}}
     assert captured_invocation["role"] == "qa"
     assert captured_invocation["session_id"] == "session-1"
     assert captured_invocation["history"] == ()
     assert captured_invocation["context"] == {}
     assert _FakeRoleSessionService.add_calls[0]["role"] == "user"
     assert _FakeRoleSessionService.add_calls[-1]["role"] == "assistant"
+
+
+@pytest.mark.asyncio
+async def test_send_message_jetstream_starts_nat_channel_and_persists_messages(monkeypatch, tmp_path) -> None:
+    request = _make_request(str(tmp_path))
+    payload = role_session.SendMessageRequest(role="user", content="inspect workspace")
+    _FakeRoleSessionService.add_calls = []
+    captured_invocation: dict[str, object] = {}
+    scheduled: list[object] = []
+
+    async def _fake_execute_role_chat_jetstream(**kwargs):
+        captured_invocation.update(kwargs)
+        on_chunk = kwargs["on_chunk"]
+        await on_chunk({"type": "content_chunk", "data": {"content": "done"}})
+        await on_chunk(
+            {
+                "type": "complete",
+                "data": {"content": "done", "thinking": "thoughts"},
+            }
+        )
+        return kwargs["session_id"]
+
+    class _CapturedTask:
+        def __init__(self, coro: object) -> None:
+            self.coro = coro
+
+        def add_done_callback(self, callback) -> None:
+            self.callback = callback
+
+    def _capture_create_task(coro):
+        scheduled.append(coro)
+        return _CapturedTask(coro)
+
+    monkeypatch.setattr(role_session, "RoleSessionService", _FakeRoleSessionService)
+    monkeypatch.setattr(
+        role_session,
+        "execute_role_chat_jetstream",
+        _fake_execute_role_chat_jetstream,
+    )
+    monkeypatch.setattr(role_session.asyncio, "create_task", _capture_create_task)
+
+    data = await role_session.send_message_jetstream(request, "session-1", payload)
+
+    assert data == {
+        "ok": True,
+        "session_id": "session-1",
+        "status": "started",
+        "channel": "chat:session-1",
+        "subject": "hp.runtime.chat.session-1",
+        "transport": "nat-jetstream",
+    }
+    assert len(scheduled) == 1
+    await scheduled[0]
+
+    assert captured_invocation["role"] == "qa"
+    assert captured_invocation["session_id"] == "session-1"
+    assert captured_invocation["history"] == ()
+    assert captured_invocation["context"] == {}
+    assert _FakeRoleSessionService.add_calls[0]["role"] == "user"
+    assert _FakeRoleSessionService.add_calls[-1] == {
+        "session_id": "session-1",
+        "role": "assistant",
+        "content": "done",
+        "thinking": "thoughts",
+    }

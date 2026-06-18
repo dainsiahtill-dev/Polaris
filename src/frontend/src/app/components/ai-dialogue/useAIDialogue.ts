@@ -6,6 +6,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { apiFetch } from '@/api';
+import { useRuntimeTransport } from '@/runtime/transport';
 import { devLogger } from '@/app/utils/devLogger';
 import {
   getConversation,
@@ -62,6 +63,14 @@ interface ChatStatus extends DialogueChatStatus {
   provider_type?: string;
   supports_streaming?: boolean;
   debug?: Record<string, unknown>;
+}
+
+interface JetstreamChatStartResponse {
+  session_id?: string;
+  status?: string;
+  channel?: string;
+  subject?: string;
+  transport?: string;
 }
 
 function appendWorkspaceQuery(path: string, workspace?: string): string {
@@ -289,17 +298,33 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
   const [isRestoring, setIsRestoring] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const transport = useRuntimeTransport();
 
   // 防抖定时器
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const messagesRef = useRef(messages);
   const lastAttachmentKeyRef = useRef('');
   const detachedAttachmentKeyRef = useRef('');
+  const streamUnsubscribeRef = useRef<(() => void) | null>(null);
+  const streamHandlerUnregisterRef = useRef<(() => void) | null>(null);
+
+  const cleanupActiveStream = useCallback(() => {
+    if (streamUnsubscribeRef.current) {
+      try { streamUnsubscribeRef.current(); } catch { /* noop */ }
+      streamUnsubscribeRef.current = null;
+    }
+    if (streamHandlerUnregisterRef.current) {
+      try { streamHandlerUnregisterRef.current(); } catch { /* noop */ }
+      streamHandlerUnregisterRef.current = null;
+    }
+  }, []);
 
   // 保持 messages 引用更新
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => () => cleanupActiveStream(), [cleanupActiveStream]);
 
   useEffect(() => {
     setWorkflowExportStatus({ kind: 'idle', message: '' });
@@ -650,9 +675,16 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
         .map((m) => ({ role: m.role, content: m.content }));
 
       const runtimeContext = { ...context, workspace: dialogueWorkspace || context?.workspace, history, conversation_id: conversationId };
+      cleanupActiveStream();
+
+      if (!transport.connected) {
+        transport.reconnect();
+        throw new Error('runtime transport not connected');
+      }
+
       const streamPath = sessionId
-        ? `/v2/roles/sessions/${encodeURIComponent(sessionId)}/messages/stream`
-        : appendWorkspaceQuery(`/v2/role/${role}/chat/stream`, dialogueWorkspace);
+        ? `/v2/roles/sessions/${encodeURIComponent(sessionId)}/messages/jetstream`
+        : appendWorkspaceQuery(`/v2/role/${role}/chat/jetstream`, dialogueWorkspace);
       const requestBody: Record<string, unknown> = sessionId
         ? {
           role: 'user',
@@ -666,18 +698,7 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
           message: userMessage.content,
           context: runtimeContext,
         };
-
-      const res = await apiFetch(streamPath, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let aiMessage: AIMessage = {
+      const aiMessage: AIMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: '',
@@ -689,39 +710,38 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
 
       setMessages((prev) => [...prev, aiMessage]);
 
-      if (reader) {
-        let buffer = '';
-        let currentEventType = 'message';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+      const res = await apiFetch(streamPath, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              currentEventType = line.slice(7).trim();
-            } else if (line.startsWith('data: ')) {
-              const data = line.slice(6);
-              if (data === '[DONE]') continue;
-              try {
-                const eventData = JSON.parse(data);
-                handleStreamEvent(currentEventType, eventData, aiMessage.id, setMessages);
-              } catch {
-                setMessages((prev) => prev.map((m) =>
-                  m.id === aiMessage.id ? { ...m, content: m.content + data } : m
-                ));
-              }
-            }
-          }
-        }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const startPayload = (await res.json()) as JetstreamChatStartResponse;
+      const channel = typeof startPayload.channel === 'string' ? startPayload.channel : '';
+      if (!channel) {
+        throw new Error('missing JetStream channel');
       }
 
-      setMessages((prev) => prev.map((m) =>
-        m.id === aiMessage.id ? { ...m, isStreaming: false } : m
-      ));
+      streamUnsubscribeRef.current = transport.subscribeChannels([{ channel, tailLines: 0 }]);
+      streamHandlerUnregisterRef.current = transport.registerMessageHandler((raw: unknown) => {
+        const msg = raw as Record<string, unknown>;
+        const event = msg?.type === 'EVENT'
+          ? msg.event as Record<string, unknown> | undefined
+          : msg;
+        if (!event || event.channel !== channel) return;
+        const payload = event.payload as Record<string, unknown> | undefined;
+        const eventType = String(payload?.type || 'message');
+        const eventData = payload?.data && typeof payload.data === 'object'
+          ? payload.data as Record<string, unknown>
+          : {};
+
+        handleStreamEvent(eventType, eventData, aiMessage.id, setMessages);
+        if (eventType === 'complete' || eventType === 'error') {
+          cleanupActiveStream();
+          setIsLoading(false);
+        }
+      });
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -733,10 +753,9 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
           error: true,
         },
       ]);
-    } finally {
       setIsLoading(false);
     }
-  }, [inputValue, isLoading, isChatReady, isExplicitlyUnconfigured, chatStatus?.error, roleName, role, sessionId, context, conversationId, dialogueWorkspace, handleStreamEvent]);
+  }, [inputValue, isLoading, isChatReady, isExplicitlyUnconfigured, chatStatus?.error, roleName, role, sessionId, context, conversationId, dialogueWorkspace, transport, cleanupActiveStream, handleStreamEvent]);
 
   // 键盘事件
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
