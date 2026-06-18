@@ -1199,19 +1199,34 @@ async def _execute_standard_llm_flow(
         and not can_accept_existing_scope
         and (requires_fresh_materialization or not bool(existing_contract_evidence.get("ok")))
     ):
-        error = "director_no_materialized_changes"
+        out_of_scope_diff = _collect_workspace_out_of_scope_diff(
+            task=task,
+            baseline_files=baseline_files,
+            current_files=current_files,
+            workspace_name=workspace_name,
+        )
+        out_of_scope_files = list(out_of_scope_diff.get("affected_files") or [])
+        if out_of_scope_files:
+            error = "director_materialized_out_of_scope"
+            materialization_mode = "materialized_out_of_scope"
+        else:
+            error = "director_no_materialized_changes"
+            materialization_mode = "no_materialized_changes"
         # Wall 2 diagnostic (F16 follow-up): the forced write emitted but the
         # workspace diff is empty. Surface the discriminating signals so a single
         # solo rerun reveals whether the write content ARG was empty (prose lands
         # in reasoning, structured `content` stays blank) or the write was
         # non-authoritative — directs the Wall 2 fix without guessing.
         logger.warning(
-            "director_no_materialized_changes DIAGNOSTIC: write_tool_evidence=%s tools_executed=%s "
-            "new_files=%s modified_files=%s requires_fresh=%s write_args(name,content_len)=%s",
+            "%s DIAGNOSTIC: write_tool_evidence=%s tools_executed=%s "
+            "new_files=%s modified_files=%s out_of_scope_files=%s requires_fresh=%s "
+            "write_args(name,content_len)=%s",
+            error,
             write_tool_evidence,
             len(tool_results),
             len(new_files),
             len(modified_files),
+            out_of_scope_files[:20],
             requires_fresh_materialization,
             _diag_write_results_summary(tool_results),
         )
@@ -1226,6 +1241,10 @@ async def _execute_standard_llm_flow(
                 "modified_files": modified_files[:20],
                 "modified_file_count": len(modified_files),
                 "materialization_error": error,
+                "materialization_mode": materialization_mode,
+                "out_of_scope_files": out_of_scope_files[:20],
+                "out_of_scope_file_count": len(out_of_scope_files),
+                "out_of_scope_diff": out_of_scope_diff,
                 "existing_contract_evidence": existing_contract_evidence,
             }
         }
@@ -1245,8 +1264,9 @@ async def _execute_standard_llm_flow(
             payload={
                 "status": "failed",
                 "error": error,
-                "materialization_mode": "no_materialized_changes",
-                "changed_files": [],
+                "materialization_mode": materialization_mode,
+                "changed_files": out_of_scope_files if out_of_scope_files else [],
+                "out_of_scope_files": out_of_scope_files[:20],
                 "tools_executed": len(tool_results),
                 "write_tool_evidence": write_tool_evidence,
             },
@@ -1703,7 +1723,72 @@ async def _execute_standard_llm_flow(
             "quality_repair_attempts": quality_repair_attempts,
         }
 
+    semantic_quality_repair_summary: dict[str, Any] | None = None
+    semantic_quality_repair_attempts: list[dict[str, Any]] = []
     semantic_quality_error = adapter._execution.validate_generated_output(task, all_affected_files)
+    for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
+        missing_declared_targets = _missing_declared_target_files(task, _adapter_workspace)
+        if not semantic_quality_error and not missing_declared_targets:
+            break
+        semantic_repair_errors: list[str] = []
+        if semantic_quality_error:
+            semantic_repair_errors.append(semantic_quality_error)
+        semantic_repair_errors.extend(
+            f"Artifact quality scan failed: declared target file missing '{path}'"
+            for path in missing_declared_targets
+        )
+        if not semantic_repair_errors:
+            break
+        repair_tool_results, semantic_quality_repair_summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            original_message=message,
+            llm_call_timeout=llm_call_timeout,
+            artifact_quality_errors=semantic_repair_errors,
+            changed_files=all_affected_files,
+            repair_attempt=repair_attempt,
+        )
+        semantic_quality_repair_attempts.append(semantic_quality_repair_summary)
+        if not repair_tool_results:
+            break
+        tool_results.extend(repair_tool_results)
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
+            task=task,
+            workspace_name=workspace_name,
+        )
+        all_affected_files = _merge_successful_write_paths(
+            all_affected_files,
+            _extract_successful_write_paths(repair_tool_results),
+        )
+        artifact_quality_errors = _collect_materialization_quality_errors(
+            adapter,
+            task=task,
+            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            workspace_name=workspace_name,
+            context=context,
+        )
+        artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+        artifact_quality_errors += _apply_deterministic_python_static_smoke(
+            adapter,
+            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+        )
+        artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id=target_task_id,
+            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+        )
+        if artifact_quality_errors:
+            semantic_quality_error = (
+                "Director output quality gate failed after semantic repair: "
+                + "; ".join(artifact_quality_errors[:6])
+            )
+            break
+        semantic_quality_error = adapter._execution.validate_generated_output(task, all_affected_files)
     if semantic_quality_error:
         error = "director_materialization_semantic_quality_failed"
         completion_metadata = {
@@ -1727,6 +1812,10 @@ async def _execute_standard_llm_flow(
             completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
         if empty_write_content_retry_summary is not None:
             completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
+        if semantic_quality_repair_summary is not None:
+            completion_metadata["adapter_result"]["semantic_quality_repair"] = semantic_quality_repair_summary
+        if semantic_quality_repair_attempts:
+            completion_metadata["adapter_result"]["semantic_quality_repair_attempts"] = semantic_quality_repair_attempts
         cognitive_receipt = _emit_director_adapter_cognitive_receipt(
             adapter,
             task=task,
@@ -1744,6 +1833,8 @@ async def _execute_standard_llm_flow(
                 "tools_executed": len(tool_results),
                 "write_tool_evidence": write_tool_evidence,
                 "semantic_quality_error": semantic_quality_error,
+                "semantic_quality_repair": semantic_quality_repair_summary or {},
+                "semantic_quality_repair_attempts": semantic_quality_repair_attempts,
             },
         )
         completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
@@ -1777,6 +1868,7 @@ async def _execute_standard_llm_flow(
             "artifacts": [],
             "materialization_mode": materialization_mode,
             "semantic_quality_error": semantic_quality_error,
+            "semantic_quality_repair_attempts": semantic_quality_repair_attempts,
         }
 
     # 返回结果
@@ -1803,6 +1895,10 @@ async def _execute_standard_llm_flow(
         completion_metadata["adapter_result"]["quality_repair"] = quality_repair_summary
     if quality_repair_attempts:
         completion_metadata["adapter_result"]["quality_repair_attempts"] = quality_repair_attempts
+    if semantic_quality_repair_summary is not None:
+        completion_metadata["adapter_result"]["semantic_quality_repair"] = semantic_quality_repair_summary
+    if semantic_quality_repair_attempts:
+        completion_metadata["adapter_result"]["semantic_quality_repair_attempts"] = semantic_quality_repair_attempts
     cognitive_receipt = _emit_director_adapter_cognitive_receipt(
         adapter,
         task=task,
@@ -1889,6 +1985,41 @@ def _collect_workspace_code_diff(
         )
     all_affected_files = sorted(set(new_files + modified_files))
     return current_files, new_files, modified_files, all_affected_files
+
+
+def _collect_workspace_out_of_scope_diff(
+    *,
+    task: dict[str, Any],
+    baseline_files: dict[str, str],
+    current_files: dict[str, str],
+    workspace_name: str = "",
+) -> dict[str, Any]:
+    """Return real workspace changes that were filtered out by task path scope."""
+
+    raw_new_files = sorted(set(current_files.keys()) - set(baseline_files.keys()))
+    raw_modified_files = sorted(
+        rel_path
+        for rel_path, fingerprint in current_files.items()
+        if rel_path in baseline_files and baseline_files[rel_path] != fingerprint
+    )
+    if not raw_new_files and not raw_modified_files:
+        return {"new_files": [], "modified_files": [], "affected_files": []}
+
+    scoped_new_files, scoped_modified_files = _filter_diff_to_task_declared_paths(
+        task=task,
+        new_files=raw_new_files,
+        modified_files=raw_modified_files,
+        workspace_name=workspace_name,
+    )
+    scoped_new = set(scoped_new_files)
+    scoped_modified = set(scoped_modified_files)
+    out_of_scope_new = [path for path in raw_new_files if path not in scoped_new]
+    out_of_scope_modified = [path for path in raw_modified_files if path not in scoped_modified]
+    return {
+        "new_files": out_of_scope_new,
+        "modified_files": out_of_scope_modified,
+        "affected_files": sorted(set(out_of_scope_new + out_of_scope_modified)),
+    }
 
 
 def _summarize_llm_stage_result(result: dict[str, Any], *, stage: str) -> dict[str, Any]:

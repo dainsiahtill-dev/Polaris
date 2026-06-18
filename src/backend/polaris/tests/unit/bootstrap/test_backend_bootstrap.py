@@ -139,6 +139,14 @@ class TestBackendBootstrapperPortSelection:
         assert isinstance(result, int)
         assert result > 0
 
+    def test_select_port_strict_preferred_unavailable_fails(self) -> None:
+        """Explicit CLI ports must not silently drift to a random port."""
+        bootstrapper = BackendBootstrapper()
+        bootstrapper._is_port_available = MagicMock(return_value=False)  # type: ignore[method-assign]
+
+        with pytest.raises(BootstrapError, match="Explicit port 49977 is unavailable"):
+            bootstrapper._select_port(49977, strict=True)
+
     def test_select_port_zero_auto_select(self) -> None:
         """Should auto-select port when 0 is passed."""
         bootstrapper = BackendBootstrapper()
@@ -195,7 +203,7 @@ class TestBackendBootstrapperBootstrap:
         assert actual_port in bootstrapper._running_servers
         assert selected_port not in bootstrapper._running_servers
         assert emitted_events == [(actual_port, True, "")]
-        bootstrapper._select_port.assert_called_once_with(selected_port, host="127.0.0.1")
+        bootstrapper._select_port.assert_called_once_with(selected_port, host="127.0.0.1", strict=True)
 
     @pytest.mark.asyncio
     async def test_create_server_allows_heavy_app_startup(
@@ -236,6 +244,44 @@ class TestBackendBootstrapperBootstrap:
 
         assert handle.port == 58123
         assert startup_timeouts == [30.0]
+
+    @pytest.mark.asyncio
+    async def test_create_server_strict_port_does_not_retry_random_port(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """A failed bind on an explicit port must fail instead of changing the API port."""
+        attempted_ports: list[int] = []
+
+        class FailingUvicornServerHandle:
+            def __init__(
+                self,
+                *,
+                app: object,
+                host: str,
+                port: int,
+                log_level: str,
+            ) -> None:
+                attempted_ports.append(port)
+
+            async def start(self, startup_timeout: float = 10.0) -> None:
+                raise OSError("address already in use")
+
+        monkeypatch.setattr(
+            "polaris.bootstrap.uvicorn_server.UvicornServerHandle",
+            FailingUvicornServerHandle,
+        )
+
+        with pytest.raises(BootstrapError, match="Port bind failed"):
+            await BackendBootstrapper()._create_server(
+                app=object(),
+                request=BackendLaunchRequest(host="127.0.0.1", port=49977, workspace=tmp_path),
+                port=49977,
+                strict_port=True,
+            )
+
+        assert attempted_ports == [49977]
 
 
 class TestBootstrapError:

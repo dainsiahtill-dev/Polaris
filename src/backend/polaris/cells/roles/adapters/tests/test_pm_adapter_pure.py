@@ -270,6 +270,41 @@ Failed to parse action: 你是 Polaris PM，需要产出可执行任务合同。
 
         assert adapter._extract_task_contracts(response, directive="实现命令行猜数字游戏") == []
 
+    def test_json_dependency_chain_task_is_not_promoted_to_contract(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        response = json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "title": "实现需求分析与项目骨架搭建",
+                        "target_files": ["requirements.md"],
+                    },
+                    {
+                        "id": "TASK-2",
+                        "title": "核心计算引擎实现",
+                        "target_files": ["calculator.py"],
+                    },
+                    {
+                        "id": "TASK-3",
+                        "title": "实现验证、文档与 QA 闭环",
+                        "target_files": ["README.md"],
+                    },
+                    {
+                        "id": "TASK-4",
+                        "title": "实现(骨架) → TASK-2 (引擎) → TASK-3 (验证+文档)",
+                        "target_files": ["src/task-2", "tests"],
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+        result = adapter._extract_task_contracts(response, directive="CLI 科学计算器")
+
+        assert [item["id"] for item in result] == ["TASK-1", "TASK-2", "TASK-3"]
+        assert all("→" not in item["title"] for item in result)
+
 
 # ---------------------------------------------------------------------------
 # Task extraction from payload
@@ -354,6 +389,19 @@ acceptance:
         assert "命令行猜数字游戏" in result[0]["title"]
         assert result[0]["title"] != "实现Task 1"
 
+    def test_task_preamble_is_not_promoted_to_section_task(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        text = """
+任务已拆解，风险点已标注，计划如下
+- **目标**：确立项目结构
+- **范围**：创建 calculator.py 和 README.md
+- **验收标准**：python calculator.py 不报错
+""".strip()
+
+        result = adapter._extract_tasks_from_sections(text, directive="CLI 科学计算器")
+
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # Task extraction from bullets
@@ -381,6 +429,31 @@ class TestExtractTasksFromBullets:
         result = adapter._extract_tasks_from_bullets(text, directive="do")
         assert result[0]["title"] == "实现Fix login"
         assert result[0]["description"] == "auth bug"
+
+    def test_markdown_task_label_uses_meaningful_title(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        text = "- **TASK-1: 需求解析与架构设计** — 明确解析策略和交付边界\n"
+
+        result = adapter._extract_tasks_from_bullets(text, directive="实现 CLI 科学计算器")
+
+        assert result[0]["title"] == "需求解析与架构设计"
+        assert "TASK-1" not in result[0]["title"]
+        assert "**" not in result[0]["title"]
+
+    def test_detail_bullets_are_not_promoted_to_tasks(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        text = """
+- **目标**：确立项目结构
+- **范围**：创建 calculator.py 和 README.md
+- **验收标准**：python calculator.py 不报错
+- **依赖链**：TASK-1 (requirements) → TASK-2 (implementation) → TASK-3 (verification)
+- **全局风险**：解析器边界条件需覆盖
+- TASK-1 (骨架) → TASK-2 (引擎) → TASK-3 (验证+QA)
+""".strip()
+
+        result = adapter._extract_tasks_from_bullets(text, directive="CLI 科学计算器")
+
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +529,57 @@ class TestNormalizeTaskContract:
         result = adapter._normalize_task_contract(raw, 1, "")
 
         assert result["scope_paths"] == ["src/store", "src/spec/generationSpec.ts", "package.json"]
+
+    def test_inline_target_files_are_preferred_over_title_inference(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        raw = {
+            "title": "README 编写与端到端验证",
+            "description": (
+                '- **goal**: 交付运行说明文档，执行端到端测试。 '
+                '- **scope_paths**: [".", "tests"] '
+                '- **target_files**: ["README.md", "tests/test_calculator.py"] '
+                '- **steps**: 编写 README 与测试。'
+            ),
+        }
+
+        result = adapter._normalize_task_contract(raw, 3, "")
+
+        assert result["scope_paths"] == ["README.md", "tests/test_calculator.py"]
+        assert result["target_files"] == ["README.md", "tests/test_calculator.py"]
+
+    def test_inline_target_files_accept_backticked_array(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        raw = {
+            "title": "实现需求解析与工程骨架搭建",
+            "description": (
+                '- **target_files**: `["calculator.py", "README.md"]` '
+                "- **steps**: 创建实现与说明文档。"
+            ),
+        }
+
+        result = adapter._normalize_task_contract(raw, 1, "")
+
+        assert result["target_files"] == ["calculator.py", "README.md"]
+
+    def test_fallback_goal_does_not_echo_prompt_directive(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        raw = {"title": "**TASK-1"}
+        directive = "请基于 Architect 阶段产物生成 PM 执行任务合同。# Product Requirements — CLI 科学计算器\n"
+
+        result = adapter._normalize_task_contract(raw, 1, directive)
+
+        assert result["title"] == "实现CLI 科学计算器"
+        assert "请基于" not in result["goal"]
+        assert "Architect 阶段产物" not in result["goal"]
+        assert "CLI 科学计算器" in result["goal"]
+
+    def test_trailing_task_label_is_removed_from_title(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        raw = {"title": "需求锁定与工程骨架搭建（TASK-1）"}
+
+        result = adapter._normalize_task_contract(raw, 1, "")
+
+        assert result["title"] == "实现需求锁定与工程骨架搭建"
 
 
 # ---------------------------------------------------------------------------

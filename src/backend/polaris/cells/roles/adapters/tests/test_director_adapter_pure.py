@@ -117,8 +117,11 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
             "content": (
                 "src/app.py\n"
                 "```python\n"
+                "APP_STATUS = 'ok'\n"
+                "\n"
+                "\n"
                 "def main() -> str:\n"
-                "    return 'ok'\n"
+                "    return APP_STATUS\n"
                 "\n"
                 "\n"
                 "if __name__ == '__main__':\n"
@@ -152,11 +155,12 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
     )
 
     assert (tmp_path / "src" / "app.py").read_text(encoding="utf-8") == (
-        "def main() -> str:\n    return 'ok'\n\n\nif __name__ == '__main__':\n    print(main())\n"
+        "APP_STATUS = 'ok'\n\n\ndef main() -> str:\n    return APP_STATUS\n\n\n"
+        "if __name__ == '__main__':\n    print(main())\n"
     )
     assert len(seen_messages) == 2
     assert "previous write tool call had blank content" in seen_messages[1]
-    assert result["error_code"] != "director_no_materialized_changes"
+    assert result.get("error_code") != "director_no_materialized_changes"
 
 
 def _source_tools_from_tool_results(tool_results: Any) -> list[str]:
@@ -819,7 +823,7 @@ class TestDirectorFailureClosure:
         )
 
         assert result["success"] is False
-        assert result["error_code"] == "director_no_materialized_changes"
+        assert result["error_code"] == "director_materialized_out_of_scope"
         updated = adapter.task_board.get_task(str(task.id))
         assert updated is not None
         raw_metadata = updated.get("metadata")
@@ -3048,6 +3052,94 @@ export function summary() {
         assert adapter_result.get("materialization_error") == "director_materialization_semantic_quality_failed"
 
     @pytest.mark.asyncio
+    async def test_execute_repairs_semantic_quality_failure_before_final_fail(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        target = tmp_path / "src" / "fish" / "arena.ts"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        task = adapter.task_board.create(
+            subject="Implement fish predator prey multiplayer arena",
+            description="Build fish arena movement and predator prey scoring for the online game.",
+            metadata={
+                "target_files": ["src/fish/arena.ts"],
+                "scope_paths": ["src/fish/arena.ts"],
+                "steps": ["Implement fish arena gameplay"],
+                "acceptance": ["Arena code contains fish domain behavior"],
+            },
+        )
+        stages: list[str] = []
+        repair_contexts: list[dict[str, Any]] = []
+
+        async def _repairing_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args
+            stage_label = str(kwargs.get("stage_label") or "primary")
+            stages.append(stage_label)
+            raw_context = kwargs.get("context")
+            context: dict[str, Any] = raw_context if isinstance(raw_context, dict) else {}
+            if stage_label.startswith("quality_repair"):
+                repair_contexts.append(context)
+                target.write_text(
+                    "export function renderFishArena(predators: number, prey: number): string {\n"
+                    "  const balance = prey - predators;\n"
+                    "  return `fish arena predator prey balance ${balance}`;\n"
+                    "}\n",
+                    encoding="utf-8",
+                )
+                return {
+                    "content": "Rewrote arena implementation.",
+                    "success": True,
+                    "tool_results": [
+                        {
+                            "tool": "write_file",
+                            "success": True,
+                            "result": {"path": "src/fish/arena.ts", "file": "src/fish/arena.ts"},
+                        }
+                    ],
+                }
+
+            target.write_text(
+                "export function calculateInvoiceTotal(values: number[]): number {\n"
+                "  return values.reduce((total, value) => total + value, 0);\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote an implementation.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "src/fish/arena.ts", "file": "src/fish/arena.ts"},
+                    }
+                ],
+            }
+
+        async def _unexpected_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            raise AssertionError("direct fallback should not run after workspace diff evidence")
+
+        adapter._invoke_role_dialogue_with_timeout = _repairing_dialogue  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _unexpected_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-semantic-quality-repair"},
+        )
+
+        assert result["success"] is True
+        assert stages.count("quality_repair") == 1
+        assert "fish arena predator prey" in target.read_text(encoding="utf-8")
+        assert repair_contexts[0]["director_quality_repair"]["artifact_quality_errors"]
+        updated = adapter.task_board.get_task(str(task.id))
+        assert updated is not None
+        raw_metadata = updated.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        assert len(adapter_result.get("semantic_quality_repair_attempts") or []) == 1
+
+    @pytest.mark.asyncio
     async def test_execute_fails_autofix_declared_scope_without_real_materialization(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         task = adapter.task_board.create(
@@ -5093,6 +5185,36 @@ class TestDeclaredPathCaseInsensitiveMatching:
         )
         assert new_files == []
         assert modified_files == []
+
+    def test_out_of_scope_diff_reports_filtered_real_output(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _collect_workspace_out_of_scope_diff,
+        )
+
+        diff = _collect_workspace_out_of_scope_diff(
+            task={"scope": ["src/python"], "target_files": ["src/python/guess_number.py"]},
+            baseline_files={},
+            current_files={"guess_number.py": "fingerprint"},
+        )
+
+        assert diff["affected_files"] == ["guess_number.py"]
+        assert diff["new_files"] == ["guess_number.py"]
+        assert diff["modified_files"] == []
+
+    def test_out_of_scope_diff_ignores_declared_output(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _collect_workspace_out_of_scope_diff,
+        )
+
+        diff = _collect_workspace_out_of_scope_diff(
+            task={"scope": ["src/python"], "target_files": ["src/python/guess_number.py"]},
+            baseline_files={},
+            current_files={"src/python/guess_number.py": "fingerprint"},
+        )
+
+        assert diff["affected_files"] == []
+        assert diff["new_files"] == []
+        assert diff["modified_files"] == []
 
     def test_directory_candidate_matches_case_insensitively(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

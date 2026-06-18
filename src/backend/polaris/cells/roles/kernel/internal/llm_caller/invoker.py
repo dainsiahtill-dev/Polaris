@@ -427,9 +427,15 @@ class LLMInvoker:
         text = str(value or "").strip()
         return text or None
 
-    # ========================================================================
-    # Non-streaming call (migrated from call_sync.py)
-    # ========================================================================
+    @staticmethod
+    def _extract_context_snapshot_ref(request: Any) -> str | None:
+        """Extract context_snapshot_ref from an AIRequest's context dict, if present."""
+        ctx = getattr(request, "context", None)
+        if isinstance(ctx, dict):
+            ref = ctx.get("context_snapshot_ref")
+            if isinstance(ref, str) and ref.strip():
+                return ref.strip()
+        return None
 
     async def call(
         self,
@@ -510,6 +516,7 @@ class LLMInvoker:
                         "response_format_mode": prepared.response_format_mode,
                         "compression_applied": context_result.compression_applied if context_result else False,
                         "turn_round": turn_round,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
                     },
                     prepared,
                 ),
@@ -571,6 +578,7 @@ class LLMInvoker:
                         {
                             "native_tool_mode": prepared.native_tool_mode,
                             "response_format_mode": prepared.response_format_mode,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
                         },
                         prepared,
                     ),
@@ -626,6 +634,7 @@ class LLMInvoker:
                                 "source": "cache",
                                 "compression_applied": context_result.compression_applied if context_result else False,
                                 "turn_round": turn_round,
+                                "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
                             },
                             prepared,
                         ),
@@ -778,6 +787,7 @@ class LLMInvoker:
                                 active_context.get("response_format_mode") or prepared.response_format_mode
                             ),
                             "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
                         },
                         prepared,
                     ),
@@ -871,6 +881,7 @@ class LLMInvoker:
                         if prepared.context_result
                         else False,
                         "turn_round": turn_round,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
                     },
                     prepared,
                 ),
@@ -1059,6 +1070,7 @@ class LLMInvoker:
                         "response_format_mode": prepared.response_format_mode,
                         "compression_applied": context_result.compression_applied if context_result else False,
                         "turn_round": turn_round,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
                     },
                     prepared,
                 ),
@@ -1102,6 +1114,7 @@ class LLMInvoker:
                                     if prepared.context_result
                                     else False,
                                     "turn_round": turn_round,
+                                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
                                 },
                                 prepared,
                             ),
@@ -1171,6 +1184,7 @@ class LLMInvoker:
                                 if prepared.context_result
                                 else False,
                                 "turn_round": turn_round,
+                                "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
                             },
                             prepared,
                         ),
@@ -1225,7 +1239,11 @@ class LLMInvoker:
                     call_id=call_id,
                     elapsed_ms=elapsed_ms,
                     metadata=_with_context_os_audit(
-                        {"structured": True, "response_format_mode": response_format_mode},
+                        {
+                            "structured": True,
+                            "response_format_mode": response_format_mode,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
+                        },
                         prepared,
                     ),
                 )
@@ -1282,6 +1300,7 @@ class LLMInvoker:
                             if prepared.context_result
                             else False,
                             "turn_round": turn_round,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
                         },
                         prepared,
                     ),
@@ -1317,7 +1336,10 @@ class LLMInvoker:
                     error_message=error_msg,
                     call_id=call_id,
                     elapsed_ms=elapsed_ms,
-                    metadata=_with_context_os_audit({"structured": True}, prepared),
+                    metadata=_with_context_os_audit(
+                        {"structured": True, "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request)},
+                        prepared,
+                    ),
                 )
                 return StructuredLLMResponse(
                     data={},
@@ -1351,7 +1373,13 @@ class LLMInvoker:
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
                 metadata=_with_context_os_audit(
-                    {"structured": True, "error_type": "CancelledError"},
+                    {
+                        "structured": True,
+                        "error_type": "CancelledError",
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
+                        if prepared
+                        else None,
+                    },
                     prepared,
                 ),
             )
@@ -1371,7 +1399,15 @@ class LLMInvoker:
                 error_message=str(e),
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
-                metadata=_with_context_os_audit({"structured": True}, prepared),
+                metadata=_with_context_os_audit(
+                    {
+                        "structured": True,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
+                        if prepared
+                        else None,
+                    },
+                    prepared,
+                ),
             )
             return StructuredLLMResponse(
                 data={},

@@ -93,4 +93,25 @@ describe('useFactoryBench', () => {
     expect(result.current.currentSession?.completed_at).toBe('2026-06-18T07:10:45Z');
     expect(result.current.isStreaming).toBe(false);
   });
+
+  it('tears down the Nat-JetStream bench subscription on unmount', async () => {
+    const unsubscribe = vi.fn();
+    const unregisterHandler = vi.fn();
+    runtimeTransportMock.subscribeChannels.mockReturnValue(unsubscribe);
+    runtimeTransportMock.registerMessageHandler.mockReturnValue(unregisterHandler);
+
+    const { result, unmount } = renderHook(() => useFactoryBench({ pollIntervalMs: 60_000 }));
+
+    await waitFor(() => expect(result.current.currentSession?.session_id).toBe('bench-terminal'));
+    expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledTimes(1);
+    expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledWith([
+      { channel: 'event.bench:bench-terminal', tailLines: 0 },
+    ]);
+
+    unmount();
+
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(unregisterHandler).toHaveBeenCalledTimes(1);
+    expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledTimes(1);
+  });
 });

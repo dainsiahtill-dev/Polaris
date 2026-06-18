@@ -83,10 +83,8 @@ describe('ContextOSWorkspace', () => {
     for (const id of ['request', 'truthlog', 'working_mem', 'projection', 'role_signal', 'budget', 'prompt', 'llm']) {
       expect(screen.getByTestId(`contextos-stage-${id}`)).toBeTruthy();
     }
-    // 7 component-health cards
-    for (const id of ['truthlog', 'working_mem', 'projection', 'role_signal', 'budget', 'prompt', 'telemetry']) {
-      expect(screen.getByTestId(`contextos-component-${id}`)).toBeTruthy();
-    }
+    // Bench strip should not pollute the ContextOS view.
+    expect(screen.queryByTestId('bench-status-strip')).toBeNull();
     // 5 role cards (pm/architect/chief_engineer/director/qa — the real 5-role system)
     for (const id of ['pm', 'architect', 'chief_engineer', 'director', 'qa']) {
       expect(screen.getByTestId(`contextos-role-${id}`)).toBeTruthy();
@@ -137,8 +135,11 @@ describe('ContextOSWorkspace', () => {
     // Real-time freshness badge flips to live telemetry (events are timestamped "now").
     expect(screen.getByTestId('contextos-telemetry-freshness').textContent).toContain('实时遥测');
 
-    // The realtime activity chip reflects the live call count + latency.
-    expect(screen.getByTestId('contextos-activity-chip').textContent).toContain('2400ms');
+    // The consolidated resource chip reflects the live call count + tokens + latency.
+    const resourceChip = screen.getByTestId('contextos-resource-chip');
+    expect(resourceChip.textContent).toContain('2400ms');
+    expect(resourceChip.textContent).toContain('3,386');
+    expect(resourceChip.textContent).toContain('调用');
 
     // Real per-call tokens (journal llm channel raw.data) are surfaced as realtime, not degraded.
     expect(screen.getAllByText('3,386').length).toBeGreaterThan(0);

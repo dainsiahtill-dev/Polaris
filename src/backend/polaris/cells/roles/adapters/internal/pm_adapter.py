@@ -57,8 +57,20 @@ _STOPWORDS = {
 }
 _ACTION_MARKERS = ("implement", "build", "define", "design", "create", "实现", "构建", "设计", "编写", "定义")
 _TASK_LINE_PREFIX = re.compile(r"^(?:[-*]\s+|\d+[.)]\s+|[（(]?\d+[）)]\s+)")
+_PM_TASK_LABEL_PREFIX = re.compile(
+    r"^\s*(?:task|任务|pm[-_ ]*task)\s*[-_#]*\s*\d+\s*(?:[:：.\-—–]\s*)?",
+    re.IGNORECASE,
+)
+_PM_TASK_LABEL_SUFFIX = re.compile(
+    r"\s*[（(]\s*(?:task|任务|pm[-_ ]*task)\s*[-_#]*\s*\d+\s*[）)]\s*$",
+    re.IGNORECASE,
+)
+_PM_DETAIL_BULLET_PREFIX = re.compile(
+    r"^\s*(?:目标|范围|验收标准|验收|依赖|依赖链|风险点|全局风险|当前状态|说明|description|goal|scope|acceptance|dependencies)\s*[:：]",
+    re.IGNORECASE,
+)
 _TASK_SECTION_HEADING = re.compile(
-    r"^\s*(?:#{1,6}\s*)?(?:task|任务)\s*[-_ ]*(\d+)?\s*[:：.\-]?\s*(.*?)\s*$",
+    r"^\s*(?:#{1,6}\s*)?(?:task|任务)(?:\s*[-_ ]*(\d+)\s*(?:[:：.\-]\s*)?|\s*[:：]\s*)(.*?)\s*$",
     re.IGNORECASE,
 )
 _PM_SCOPE_PATH_ROOTS = {
@@ -138,6 +150,78 @@ def _pm_text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _pm_strip_markdown_title_noise(value: Any) -> str:
+    text = _pm_text(value)
+    if not text:
+        return ""
+    text = re.sub(r"[*_`]{2,}", "", text)
+    text = text.strip(" \t\r\n*_`")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _pm_strip_task_label_prefix(value: Any) -> str:
+    text = _pm_strip_markdown_title_noise(value)
+    if not text:
+        return ""
+    return _pm_strip_markdown_title_noise(_PM_TASK_LABEL_PREFIX.sub("", text, count=1))
+
+
+def _pm_title_fragment(value: Any) -> str:
+    text = _pm_strip_task_label_prefix(value)
+    if not text:
+        return ""
+    fragment = re.split(r"\s+[—–-]\s+|[。.;；\n]", text, maxsplit=1)[0]
+    fragment = _PM_TASK_LABEL_SUFFIX.sub("", fragment)
+    return _pm_strip_markdown_title_noise(fragment)
+
+
+def _pm_extract_inline_list_field(text: str, field_name: str) -> list[str]:
+    source = str(text or "")
+    if not source:
+        return []
+    field = re.escape(field_name)
+    pattern = re.compile(
+        rf"(?:^|\s+-\s+)\s*[-*]?\s*\*\*{field}\*\*\s*[:：]\s*(?P<value>.*?)(?=\s+-\s+\*\*[A-Za-z_\u4e00-\u9fff ]+\*\*\s*[:：]|\s+---|$)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    match = pattern.search(source)
+    if not match:
+        return []
+    value = str(match.group("value") or "").strip()
+    if not value:
+        return []
+    value = value.strip("`").strip()
+    if value.startswith("["):
+        end = value.find("]")
+        if end >= 0:
+            value = value[: end + 1]
+        try:
+            parsed = json.loads(value)
+        except (RuntimeError, ValueError):
+            try:
+                parsed = ast.literal_eval(value)
+            except (RuntimeError, SyntaxError, ValueError):
+                parsed = None
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    return [item.strip() for item in re.split(r"[,\n]", value) if item.strip()]
+
+
+def _pm_is_dependency_chain_text(value: Any) -> bool:
+    text = _pm_strip_markdown_title_noise(value)
+    if not text:
+        return False
+    task_refs = re.findall(r"\bTASK\s*[-_#]?\s*\d+\b", text, flags=re.IGNORECASE)
+    return len(task_refs) >= 2 and ("→" in text or "->" in text or "=>" in text)
+
+
+def _pm_raw_task_is_dependency_chain(raw: dict[str, Any]) -> bool:
+    return any(
+        _pm_is_dependency_chain_text(raw.get(key))
+        for key in ("title", "subject", "goal", "description", "backlog_ref")
+    )
+
+
 def _pm_is_prompt_echo_response(text: str) -> bool:
     normalized = str(text or "")
     if not normalized.strip():
@@ -151,10 +235,13 @@ def _pm_is_prompt_echo_response(text: str) -> bool:
 
 
 def _pm_is_placeholder_task_title(value: Any) -> bool:
-    text = _pm_text(value)
+    text = _pm_strip_markdown_title_noise(value)
     if not text:
         return True
     normalized = re.sub(r"\s+", " ", text).strip()
+    without_task_label = _pm_strip_task_label_prefix(normalized)
+    if not without_task_label and _PM_TASK_LABEL_PREFIX.match(normalized):
+        return True
     lower = normalized.lower()
     if lower in _PM_SCHEMA_PLACEHOLDER_VALUES:
         return True
@@ -179,9 +266,9 @@ def _pm_extract_requirement_subject(directive: str) -> str:
         return ""
 
     title_match = re.search(
-        r"^\s*#\s*(?:Product\s+Requirements|需求|需求文档)\s*[—\-:：]\s*(.+?)\s*$",
+        r"#\s*(?:Product\s+Requirements|需求|需求文档)\s*[—\-:：]\s*(.+?)\s*(?:\n|$)",
         text,
-        flags=re.IGNORECASE | re.MULTILINE,
+        flags=re.IGNORECASE,
     )
     if title_match:
         candidate = _pm_strip_action_prefix(str(title_match.group(1) or ""))
@@ -863,11 +950,13 @@ class PMAdapter(BaseRoleAdapter):
         raw_tasks: list[Any] = self._extract_tasks_from_payload(payload)
 
         if raw_tasks:
-            contracts = [
-                self._normalize_task_contract(item, idx + 1, directive)
-                for idx, item in enumerate(raw_tasks)
-                if isinstance(item, dict)
-            ]
+            contracts: list[dict[str, Any]] = []
+            for item in raw_tasks:
+                if not isinstance(item, dict):
+                    continue
+                if _pm_raw_task_is_dependency_chain(item):
+                    continue
+                contracts.append(self._normalize_task_contract(item, len(contracts) + 1, directive))
             return self._apply_projection_contract_hint(
                 [item for item in contracts if item],
                 projection_hint=projection_hint,
@@ -1099,10 +1188,19 @@ class PMAdapter(BaseRoleAdapter):
             payload = re.sub(r"^\*\*(.*?)\*\*$", r"\1", payload).strip()
             payload = re.sub(r"^`(.*?)`$", r"\1", payload).strip()
             payload = payload.lstrip("- ").strip()
+            payload_without_label = _pm_strip_task_label_prefix(payload)
+            if payload_without_label:
+                payload = payload_without_label
+            if _PM_DETAIL_BULLET_PREFIX.match(_pm_strip_markdown_title_noise(payload)):
+                continue
+            if _pm_is_dependency_chain_text(payload):
+                continue
             if not payload:
                 continue
             if ":" in payload or "：" in payload:
                 title, desc = re.split(r"[:：]", payload, maxsplit=1)
+            elif re.search(r"\s+[—–-]\s+", payload):
+                title, desc = re.split(r"\s+[—–-]\s+", payload, maxsplit=1)
             else:
                 title, desc = payload, ""
             contracts.append(
@@ -1123,10 +1221,10 @@ class PMAdapter(BaseRoleAdapter):
         index: int,
         directive: str,
     ) -> dict[str, Any]:
-        title = str(raw.get("title") or raw.get("subject") or "").strip()
+        title = _pm_title_fragment(raw.get("title") or raw.get("subject") or "")
         if _pm_is_placeholder_task_title(title):
             for candidate in (raw.get("goal"), raw.get("description"), raw.get("backlog_ref")):
-                candidate_text = _pm_text(candidate)
+                candidate_text = _pm_title_fragment(candidate)
                 if candidate_text and not _pm_is_placeholder_task_title(candidate_text):
                     title = re.split(r"[:：。.;；\n]", candidate_text, maxsplit=1)[0].strip()
                     break
@@ -1140,12 +1238,24 @@ class PMAdapter(BaseRoleAdapter):
         goal = str(raw.get("goal") or "").strip()
         if not goal:
             goal = description or f"完成任务: {title}"
-            if directive:
-                goal = f"{goal}；满足需求: {directive[:120]}"
+            requirement_subject = _pm_extract_requirement_subject(directive)
+            if requirement_subject and requirement_subject not in goal:
+                goal = f"{goal}；满足需求: {requirement_subject}"
 
-        scope_values = raw.get("scope")
+        inline_field_source = "\n".join(
+            item
+            for item in (
+                str(raw.get("description") or ""),
+                str(raw.get("goal") or ""),
+                str(raw.get("scope") or ""),
+            )
+            if item.strip()
+        )
+        inline_target_files = _pm_extract_inline_list_field(inline_field_source, "target_files")
+        inline_scope_paths = _pm_extract_inline_list_field(inline_field_source, "scope_paths")
+        scope_values = raw.get("target_files") or inline_target_files
         if not scope_values:
-            scope_values = raw.get("scope_paths") or raw.get("target_files")
+            scope_values = raw.get("scope_paths") or inline_scope_paths or raw.get("scope")
         scope_items = self._normalize_list(scope_values)
         scope_items = self._normalize_scope_path_list(scope_items)
         if not scope_items:

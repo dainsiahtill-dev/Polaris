@@ -155,11 +155,12 @@ class BackendBootstrapper:
             config_port = config.get_typed("server.port", int, 0) or 0
             effective_port = request.port if request.port > 0 else config_port
             effective_host = request.host or config.get_typed("server.host", str, "127.0.0.1") or "127.0.0.1"
-            port = self._select_port(effective_port, host=effective_host)
+            explicit_request_port = request.port > 0
+            port = self._select_port(effective_port, host=effective_host, strict=explicit_request_port)
 
             # Stage 8: Create server handle
             stage = "server_creation"
-            server_handle = await self._create_server(app, request, port)
+            server_handle = await self._create_server(app, request, port, strict_port=explicit_request_port)
             actual_port = int(getattr(server_handle, "port", port) or port)
 
             # Stage 9: Run startup hooks
@@ -504,17 +505,24 @@ class BackendBootstrapper:
                 stage="app_creation",
             ) from e
 
-    def _select_port(self, preferred_port: int = 0, *, host: str = "127.0.0.1") -> int:
+    def _select_port(self, preferred_port: int = 0, *, host: str = "127.0.0.1", strict: bool = False) -> int:
         """Select an available port.
 
         Args:
             preferred_port: Preferred port (0 for auto-selection)
+            host: Bind host used for availability checks.
+            strict: When True, fail if the preferred port is unavailable.
 
         Returns:
             Available port number
         """
         if preferred_port and preferred_port > 0 and self._is_port_available(preferred_port, host=host):
             return preferred_port
+        if strict and preferred_port and preferred_port > 0:
+            raise BootstrapError(
+                f"Explicit port {preferred_port} is unavailable on {host or '127.0.0.1'}",
+                stage="port_selection",
+            )
 
         # Auto-select port
         return self._find_free_port()
@@ -550,6 +558,7 @@ class BackendBootstrapper:
         app: Any,
         request: BackendLaunchRequest,
         port: int,
+        strict_port: bool = False,
     ) -> Any:
         """Create the server handle.
 
@@ -572,8 +581,9 @@ class BackendBootstrapper:
         # may be taken by the time uvicorn actually binds.  Retry with a newly
         # selected free port up to 3 times before propagating the error.
         last_error: Exception | None = None
-        for attempt in range(3):
-            current_port = port if attempt == 0 else self._find_free_port()
+        attempts = 1 if strict_port else 3
+        for attempt in range(attempts):
+            current_port = port if strict_port or attempt == 0 else self._find_free_port()
             try:
                 handle = UvicornServerHandle(
                     app=app,

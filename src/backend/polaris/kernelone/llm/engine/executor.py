@@ -10,6 +10,7 @@ import atexit
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -433,6 +434,19 @@ class AIExecutor:
             clamp_prompt_text=clamp_prompt_text,
         )
 
+        # ContextOS full-context viewer: store post-compression messages by hash
+        context_store_hash: str | None = None
+        if effective_chat_messages:
+            context_store_hash = self._store_context_messages(
+                workspace=self.workspace,
+                messages=effective_chat_messages,
+                trace_id=trace_id,
+                call_id=request.context.get("call_id") if isinstance(request.context, dict) else None,
+            )
+        # Inject hash into request context so upstream emit_llm_event can include it
+        if isinstance(request.context, dict) and context_store_hash:
+            request.context["context_snapshot_ref"] = context_store_hash
+
         # Acquire semaphore for concurrency control
         semaphore = await _get_global_semaphore()
         async with semaphore:
@@ -627,6 +641,7 @@ class AIExecutor:
                 "input_sha256": input_sha256,
                 "effective_prompt_sha256": effective_prompt_sha256,
                 "tool_schema_sha256": tool_schema_sha256,
+                "context_snapshot_ref": self._non_empty_str(context.get("context_snapshot_ref")),
             },
             "trace_refs": build_final_request_trace_refs(
                 trace_id=trace_id,
@@ -681,6 +696,49 @@ class AIExecutor:
         safe_text = safe_observability_payload(text)
         text = str(safe_text or "").strip()
         return text or None
+
+    @staticmethod
+    def _store_context_messages(
+        workspace: str | None,
+        messages: list[Any],
+        trace_id: str,
+        call_id: str | None = None,
+    ) -> str:
+        """Store compressed chat messages to runtime/contexts/ by SHA-256 hash.
+
+        Returns the 24-char truncated hash used as the reference key.
+        """
+        from datetime import datetime, timezone
+
+        from polaris.kernelone.storage import StorageLayout
+        from polaris.kernelone.storage.io_paths import build_cache_root
+
+        payload = {
+            "schema_version": 1,
+            "trace_id": trace_id,
+            "call_id": call_id,
+            "messages": messages,
+            "stored_at": datetime.now(timezone.utc).isoformat(),
+        }
+        content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        full_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        hash_key = full_hash[:24]
+
+        ws = workspace or "."
+        cache_root = build_cache_root("", ws)
+        layout = StorageLayout(workspace=ws, runtime_base=cache_root)
+        # Shard to avoid directory explosion: runtime/contexts/ab/abcdef...
+        shard = hash_key[:2]
+        dir_path = layout.get_path("runtime", f"contexts/{shard}")
+        os.makedirs(dir_path, exist_ok=True)
+        file_path = os.path.join(dir_path, hash_key)
+
+        # Atomic write-then-rename to avoid partial reads
+        tmp_path = file_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp_path, file_path)
+        return hash_key
 
     @staticmethod
     def _traceability_metadata(value: Any) -> dict[str, Any]:

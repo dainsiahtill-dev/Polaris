@@ -77,6 +77,7 @@ export function useFactoryBench(
 
   const selectedSessionRef = useRef<string | null>(null);
   const subscribedChannelRef = useRef<string | null>(null);
+  const unsubscribeChannelRef = useRef<(() => void) | null>(null);
   const registeredHandlerRef = useRef<(() => void) | null>(null);
 
   const { subscribeChannels, registerMessageHandler } = useRuntimeTransport();
@@ -102,10 +103,38 @@ export function useFactoryBench(
     setIsLoading(false);
   }, []);
 
+  const cleanupRealtimeSubscription = useCallback(() => {
+    if (unsubscribeChannelRef.current) {
+      try {
+        unsubscribeChannelRef.current();
+      } catch {
+        // ignore — best-effort teardown
+      }
+      unsubscribeChannelRef.current = null;
+    }
+    subscribedChannelRef.current = null;
+
+    if (registeredHandlerRef.current) {
+      try {
+        registeredHandlerRef.current();
+      } catch {
+        // ignore — best-effort teardown
+      }
+      registeredHandlerRef.current = null;
+    }
+  }, []);
+
   const disconnect = useCallback(() => {
     selectedSessionRef.current = null;
+    cleanupRealtimeSubscription();
     setIsStreaming(false);
-  }, []);
+  }, [cleanupRealtimeSubscription]);
+
+  const disconnectRef = useRef(disconnect);
+
+  useEffect(() => {
+    disconnectRef.current = disconnect;
+  }, [disconnect]);
 
   const select = useCallback(
     async (sessionId: string) => {
@@ -134,6 +163,7 @@ export function useFactoryBench(
       const subscriptions = [{ channel, tailLines: 0 }];
       const unsubscribe = subscribeChannels(subscriptions);
       subscribedChannelRef.current = channel;
+      unsubscribeChannelRef.current = unsubscribe;
 
       const handler = (message: unknown) => {
         if (!message || typeof message !== 'object') return;
@@ -202,9 +232,6 @@ export function useFactoryBench(
       registeredHandlerRef.current = unregisterHandler;
 
       setIsStreaming(true);
-      // Cleanup function: callers of select() also handle teardown via disconnect().
-      void unsubscribe;
-      void unregisterHandler;
     },
     [disconnect, subscribeChannels, registerMessageHandler],
   );
@@ -216,31 +243,9 @@ export function useFactoryBench(
     }, pollIntervalMs);
     return () => {
       clearInterval(id);
-      // Tear down WS subscription / handler that this hook installed.
-      if (subscribedChannelRef.current) {
-        // The RuntimeTransportProvider ref-counts subscriptions; calling
-        // subscribeChannels() with the same channel again + immediately
-        // releasing it is the cleanest teardown. The provider's underlying
-        // manager sends UNSUBSCRIBE only when the ref-count drops to 0.
-        try {
-          subscribeChannels([{ channel: subscribedChannelRef.current, tailLines: 0 }]);
-          // Note: subscribeChannels returns the unsubscribe fn; we just want
-          // to ensure no dangling reference is kept in the hook closure.
-          subscribedChannelRef.current = null;
-        } catch {
-          // ignore — best-effort teardown
-        }
-      }
-      if (registeredHandlerRef.current) {
-        try {
-          registeredHandlerRef.current();
-          registeredHandlerRef.current = null;
-        } catch {
-          // ignore
-        }
-      }
+      disconnectRef.current();
     };
-  }, [refresh, pollIntervalMs, subscribeChannels]);
+  }, [refresh, pollIntervalMs]);
 
   useEffect(() => {
     if (autoSelect !== 'newest') return;
