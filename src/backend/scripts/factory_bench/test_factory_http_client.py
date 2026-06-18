@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, "/home/dains/Documents/polaris/src/backend/scripts/factory_bench")
 
 from factory_http_client import (
     _http_get_json,
@@ -186,7 +189,7 @@ class TestHelpers(unittest.TestCase):
             result = get_audit_bundle("http://localhost:49977", "run-42", token="t")
         self.assertEqual(result, {"audit": "data"})
         req = mock_urlopen.call_args[0][0]
-        self.assertEqual(req.full_url, "http://localhost:49977/v2/factory/runs/run-42/audit")
+        self.assertEqual(req.full_url, "http://localhost:49977/v2/factory/runs/run-42/audit-bundle")
 
     def test_get_run_artifacts(self) -> None:
         fake_resp = FakeHTTPResponse(json.dumps({"artifacts": []}).encode("utf-8"))

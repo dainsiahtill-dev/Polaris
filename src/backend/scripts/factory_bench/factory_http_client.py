@@ -77,7 +77,7 @@ def get_audit_bundle(
     run_id: str,
     token: str = "",
 ) -> dict[str, Any] | None:
-    return _http_get_json(f"{backend_url}/v2/factory/runs/{run_id}/audit", token=token)
+    return _http_get_json(f"{backend_url}/v2/factory/runs/{run_id}/audit-bundle", token=token)
 
 
 def get_run_artifacts(

@@ -5,7 +5,7 @@ then drives ``run_factory_chain`` from the bench and asserts that:
 
   * the mock backend receives the correct POST /v2/factory/runs payload,
   * polling hits GET /v2/factory/runs/{run_id} until terminal,
-  * the audit-bundle is fetched via GET /v2/factory/runs/{run_id}/audit,
+  * the audit-bundle is fetched via GET /v2/factory/runs/{run_id}/audit-bundle,
   * ``chain_results`` carries ``qa_ran``, ``qa_passed``, ``exit_class``,
   * ``exit_code`` is 0 for completed+passed, 1 for failed.
 
@@ -46,6 +46,9 @@ class _MockFactoryRunsBackend(BaseHTTPRequestHandler):
     # run_id -> target terminal status for auto-transition (default: "completed")
     transition_targets: dict[str, str] = {}
 
+    # Class-level counter for unique run_ids across tests
+    _run_id_counter: int = 0
+
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         body_raw = self.rfile.read(length).decode("utf-8") if length else ""
@@ -58,7 +61,8 @@ class _MockFactoryRunsBackend(BaseHTTPRequestHandler):
 
         response_body: bytes
         if path == "/v2/factory/runs":
-            run_id = body.get("run_id", "factory-run-001")
+            _MockFactoryRunsBackend._run_id_counter += 1
+            run_id = body.get("run_id", f"factory-run-{_MockFactoryRunsBackend._run_id_counter:03d}")
             self.run_states[run_id] = {
                 "run_id": run_id,
                 "status": "running",
@@ -80,7 +84,7 @@ class _MockFactoryRunsBackend(BaseHTTPRequestHandler):
         self.received.append(("GET", path, {}))
 
         response_body: bytes
-        if path.startswith("/v2/factory/runs/") and path.endswith("/audit"):
+        if path.startswith("/v2/factory/runs/") and path.endswith("/audit-bundle"):
             run_id = path.split("/")[4]
             bundle = self.audit_bundles.get(run_id, {})
             response_body = json.dumps(bundle).encode("utf-8")
@@ -96,7 +100,7 @@ class _MockFactoryRunsBackend(BaseHTTPRequestHandler):
             target = self.transition_targets.get(run_id, "completed")
             if self.poll_counts.get(run_id, 0) >= 2 and current_status == "running":
                 state["status"] = target
-                if target == "completed" or target == "failed":
+                if target in ("completed", "failed"):
                     state["phase"] = "qa_gate"
             response_body = json.dumps(state).encode("utf-8")
         else:
@@ -130,15 +134,29 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         _MockFactoryRunsBackend.audit_bundles.clear()
         _MockFactoryRunsBackend.poll_counts.clear()
         _MockFactoryRunsBackend.transition_targets.clear()
+        _MockFactoryRunsBackend._run_id_counter = 0
 
         self.addCleanup(self._server.shutdown)
         self.addCleanup(self._server.server_close)
         self.addCleanup(self._thread.join, 1.0)
 
-    def _setup_audit_bundle(self, run_id: str, *, qa_passed: bool = True) -> None:
+    def _expected_run_id(self) -> str:
+        """Return the run_id the mock will assign on the next POST.
+
+        The counter is reset to 0 in setUp; the first POST increments it to 1.
+        """
+        return "factory-run-001"
+
+    def _setup_audit_bundle(
+        self,
+        run_id: str,
+        *,
+        qa_passed: bool = True,
+        status: str = "completed",
+    ) -> None:
         """Pre-seed the audit bundle the mock will return for a run."""
         _MockFactoryRunsBackend.audit_bundles[run_id] = {
-            "status": "completed",
+            "status": status,
             "gates": [
                 {
                     "gate_name": "quality_gate",
@@ -164,7 +182,7 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         Asserts:
           - POST /v2/factory/runs is called with the workspace and directive.
           - GET /v2/factory/runs/{run_id} is polled until terminal.
-          - GET /v2/factory/runs/{run_id}/audit is fetched.
+          - GET /v2/factory/runs/{run_id}/audit-bundle is fetched.
           - chain_results has qa_ran=True, qa_passed=True, exit_class="clean".
           - exit_code is 0.
         """
@@ -176,9 +194,8 @@ class TestFactoryRunsIntegration(unittest.TestCase):
             "test_focus": "basic output",
         }
         log_path = Path(self._tmp.name) / "chain.log"
-
-        # Pre-seed the audit bundle so the mock returns a completed+passed state.
-        self._setup_audit_bundle("factory-run-001", qa_passed=True)
+        run_id = self._expected_run_id()
+        self._setup_audit_bundle(run_id, qa_passed=True)
 
         result = run_factory_chain(
             project,
@@ -190,20 +207,28 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         )
 
         # --- backend contract assertions ---
-        post_calls = [
-            p for method, p, _ in _MockFactoryRunsBackend.received if method == "POST" and p == "/v2/factory/runs"
+        post_records = [
+            (method, p, body)
+            for method, p, body in _MockFactoryRunsBackend.received
+            if method == "POST" and p == "/v2/factory/runs"
         ]
-        self.assertEqual(len(post_calls), 1, "expected exactly one POST /v2/factory/runs")
+        self.assertEqual(len(post_records), 1, "expected exactly one POST /v2/factory/runs")
+        post_body = post_records[0][2]
+        self.assertEqual(post_body.get("workspace"), str(self.workspace))
+        self.assertEqual(post_body.get("run_director"), True)
+        self.assertIn("directive", post_body)
+        self.assertEqual(post_body.get("start_from"), "pm")
+        self.assertEqual(post_body.get("loop"), False)
 
         get_status_calls = [
             p
             for method, p, _ in _MockFactoryRunsBackend.received
-            if method == "GET" and p.startswith("/v2/factory/runs/") and not p.endswith("/audit")
+            if method == "GET" and p.startswith("/v2/factory/runs/") and not p.endswith("/audit-bundle")
         ]
         self.assertGreaterEqual(len(get_status_calls), 2, "expected at least 2 status polls")
 
         get_audit_calls = [
-            p for method, p, _ in _MockFactoryRunsBackend.received if method == "GET" and p.endswith("/audit")
+            p for method, p, _ in _MockFactoryRunsBackend.received if method == "GET" and p.endswith("/audit-bundle")
         ]
         self.assertEqual(len(get_audit_calls), 1, "expected exactly one audit-bundle GET")
 
@@ -214,7 +239,7 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self.assertEqual(chain_results.get("qa_passed"), True)
         self.assertEqual(chain_results.get("exit_class"), "clean")
         self.assertEqual(result.get("exit_code"), 0)
-        self.assertEqual(result.get("run_id"), "factory-run-001")
+        self.assertEqual(result.get("run_id"), run_id)
 
     def test_run_factory_chain_failed_qa(self) -> None:
         """Mock returns a failed QA state; assert exit_code=1 and exit_class=qa_failed."""
@@ -226,18 +251,9 @@ class TestFactoryRunsIntegration(unittest.TestCase):
             "test_focus": "failure path",
         }
         log_path = Path(self._tmp.name) / "chain.log"
-
-        # The mock POST handler defaults to run_id "factory-run-001" when no
-        # run_id is in the payload. Pre-seed that ID with a failed state.
-        self._setup_audit_bundle("factory-run-001", qa_passed=False)
-        # Tell the mock to transition to "failed" instead of "completed".
-        _MockFactoryRunsBackend.transition_targets["factory-run-001"] = "failed"
-        # Override the run state to start from running.
-        _MockFactoryRunsBackend.run_states["factory-run-001"] = {
-            "run_id": "factory-run-001",
-            "status": "running",
-            "phase": "director_dispatch",
-        }
+        run_id = self._expected_run_id()
+        self._setup_audit_bundle(run_id, qa_passed=False)
+        _MockFactoryRunsBackend.transition_targets[run_id] = "failed"
 
         result = run_factory_chain(
             project,
@@ -292,6 +308,56 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         )
         self.assertEqual(result.get("exit_code"), -1)
         self.assertEqual(result.get("error"), "start_failed")
+        # No audit-bundle GET should have been attempted when start fails
+        audit_calls = [
+            p for method, p, _ in _MockFactoryRunsBackend.received if method == "GET" and p.endswith("/audit-bundle")
+        ]
+        self.assertEqual(len(audit_calls), 0, "no audit-bundle GET expected when start fails")
+
+    def test_map_factory_run_to_chain_results_completed_qa_failed(self) -> None:
+        """When status is completed but qa_passed=False, exit_class=qa_failed."""
+        run_status = {"status": "completed", "phase": "qa_gate"}
+        audit_bundle = {
+            "gates": [
+                {"gate_name": "quality_gate", "passed": False, "message": "QA failed"},
+            ],
+            "events_tail": [],
+            "summary_json": {},
+        }
+        chain_results = map_factory_run_to_chain_results(run_status, audit_bundle)
+        self.assertEqual(chain_results["qa_ran"], True)
+        self.assertEqual(chain_results["qa_passed"], False)
+        self.assertEqual(chain_results["exit_class"], "qa_failed")
+
+    def test_run_factory_chain_poll_timeout_non_terminal(self) -> None:
+        """When the backend never reaches a terminal state, poll times out."""
+        project = {
+            "id": "L1-04",
+            "title": "Never Ends",
+            "brief": "A project that stays running forever",
+            "level": 1,
+            "test_focus": "timeout path",
+        }
+        log_path = Path(self._tmp.name) / "chain.log"
+        run_id = self._expected_run_id()
+        _MockFactoryRunsBackend.transition_targets[run_id] = "running"
+
+        result = run_factory_chain(
+            project,
+            self.workspace,
+            backend_url=self.backend_url,
+            backend_token="",
+            timeout_s=0,
+            log_path=log_path,
+        )
+
+        self.assertEqual(result.get("exit_code"), -1)
+        self.assertEqual(result.get("error"), "poll_timeout")
+        # No audit-bundle GET should have been attempted when poll times out
+        audit_calls = [
+            p for method, p, _ in _MockFactoryRunsBackend.received if method == "GET" and p.endswith("/audit-bundle")
+        ]
+        self.assertEqual(len(audit_calls), 0, "no audit-bundle GET expected when poll times out")
 
 
 if __name__ == "__main__":

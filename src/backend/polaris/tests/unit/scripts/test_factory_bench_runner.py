@@ -84,13 +84,13 @@ def test_map_completed_qa_passed_is_clean() -> None:
     assert result["director"] == {"total": 10, "successes": 8, "failures": 1, "blocked": 1}
 
 
-def test_map_completed_qa_failed_is_hard_failed() -> None:
+def test_map_completed_qa_failed_is_qa_failed() -> None:
     run_status = {"status": "completed", "phase": "qa_gate"}
     audit_bundle = {
         "gates": [{"gate_name": "quality_gate", "passed": False, "message": "lint errors"}],
     }
     result = map_factory_run_to_chain_results(run_status, audit_bundle)
-    assert result["exit_class"] == "hard_failed"
+    assert result["exit_class"] == "qa_failed"
     assert result["qa_ran"] is True
     assert result["qa_passed"] is False
     assert result["qa_reason"] == "lint errors"

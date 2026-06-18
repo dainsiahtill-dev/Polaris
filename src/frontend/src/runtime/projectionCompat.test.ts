@@ -271,6 +271,42 @@ describe('Runtime Projection Compatibility', () => {
         'engine_status',
       ]));
     });
+
+    it('should normalize backend director service status metrics from runtime websocket status', () => {
+      const websocketPayload = {
+        director_status: {
+          running: false,
+          mode: 'v2_service',
+          status: {
+            state: 'RUNNING',
+            run_id: 'factory-run-1',
+            workspace: '/tmp/factory/L1-01',
+            metrics: {
+              tasks_submitted: 8,
+              tasks_completed: 3,
+              tasks_failed: 1,
+            },
+          },
+        },
+      };
+
+      const result = toCanonicalProjection(websocketPayload);
+
+      expect(result.director).toEqual({
+        running: true,
+        active_tasks: 4,
+        completed_tasks: 3,
+        failed_tasks: 1,
+        phase: 'running',
+        current_run_id: 'factory-run-1',
+        queue_depth: 4,
+        last_updated: expect.any(String),
+      });
+      expect(result.snapshot_compat).toEqual(expect.objectContaining({
+        director_status: 'running',
+        director_active: 4,
+      }));
+    });
   });
 
   describe('createEmptyProjection', () => {

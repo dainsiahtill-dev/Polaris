@@ -551,7 +551,7 @@ def map_factory_run_to_chain_results(
     exit_class = "hard_failed"
     if status == "completed" and qa_passed:
         exit_class = "clean"
-    elif status == "failed" and phase == "qa_gate":
+    elif (status == "completed" and qa_ran and not qa_passed) or (status == "failed" and phase == "qa_gate"):
         exit_class = "qa_failed"
     elif status == "failed":
         exit_class = "director_partial"
