@@ -431,7 +431,43 @@ export function buildTelemetryFromStream(
   return aggregateEvents(events, windowed);
 }
 
-/** 角色 id → 观测 actor 的匹配别名（用于把真实事件归并到 6 个角色卡）。 */
+export function parseJournalLines(content: string): LogEntry[] {
+  const lines = content.split('\n');
+  const events: LogEntry[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    try {
+      const data = JSON.parse(line) as Record<string, unknown>;
+      const timestamp = String(data.ts || data.timestamp || new Date().toISOString());
+      const event: LogEntry = {
+        id: String(data.event_id || data.id || `journal-${events.length}`),
+        timestamp,
+        source: String(data.actor || data.source || 'System'),
+        level: 'info',
+        message: String(data.message || ''),
+        details: typeof data.details === 'string' ? data.details : undefined,
+        meta: data.meta && typeof data.meta === 'object' ? (data.meta as Record<string, unknown>) : data,
+      };
+      events.push(event);
+    } catch {
+      // Skip malformed lines
+    }
+  }
+  return events;
+}
+
+export function mergeTelemetry(
+  wsTelemetry: ContextOSTelemetry,
+  fileTelemetry: ContextOSTelemetry,
+): ContextOSTelemetry {
+  // Prefer live WebSocket when active and fresh.
+  const wsActive = wsTelemetry.hasData && wsTelemetry.events.length > 0;
+  if (wsActive) {
+    return wsTelemetry;
+  }
+  return fileTelemetry;
+}
 const ACTOR_ROLE_ALIASES: Record<string, string[]> = {
   pm: ['pm'],
   architect: ['architect'],
