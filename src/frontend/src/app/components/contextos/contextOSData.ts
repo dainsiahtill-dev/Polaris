@@ -214,8 +214,8 @@ export const ROLE_DECISION_ALIASES: Record<string, string[]> = {
 };
 
 /**
- * ContextOS 角色信号面对应的 6 个角色（与后端 `ROLE_PROMPT_TEMPLATES` /
- * 统一角色对话 API「所有 5 个角色」一致）。scout 为只读辅助 sub-agent。
+ * ContextOS 角色信号面对应的 6 个角色定义：5 个主角色（与后端 `ROLE_PROMPT_TEMPLATES` /
+ * 统一角色对话 API「所有 5 个角色」一致）+ 1 个只读辅助角色 scout。
  */
 export const ROLE_DEFINITIONS: ReadonlyArray<{ id: string; key: string; courtTitle: string; title: string; readOnly?: boolean }> = [
   { id: 'pm', key: 'pm', courtTitle: '尚书令', title: 'PM' },
@@ -244,7 +244,7 @@ export function buildRoleContextModel(roleId: string, model: ContextOSModel): Ro
   const aliases = ROLE_DECISION_ALIASES[roleId] ?? [roleId];
 
   const roleEvents = model.telemetryActive && model.telemetry
-    ? model.telemetry.events.filter((event) =>
+    ? (model as ContextOSModel & { telemetryActive: true; telemetry: ContextOSTelemetry }).telemetry.events.filter((event) =>
         aliases.some((alias) => event.actor.toLowerCase().includes(alias.toLowerCase())),
       )
     : [];
@@ -272,7 +272,7 @@ export function buildRoleContextModel(roleId: string, model: ContextOSModel): Ro
   }
 
   const lastEvent = roleEvents[0] ?? null;
-  const lastEventAt = lastEvent ? lastEvent.epoch || null : null;
+  const lastEventAt = lastEvent ? (lastEvent.epoch ?? null) : null;
 
   // Find current task binding from snapshot if available
   let currentTaskId: string | null = null;
@@ -282,11 +282,13 @@ export function buildRoleContextModel(roleId: string, model: ContextOSModel): Ro
     if (!task || typeof task !== 'object') return false;
     const t = task as Record<string, unknown>;
     const assignee = String(t.assignee || '').toLowerCase();
-    return assignee === roleId || assignee === title.toLowerCase();
+    return aliases.some((alias) => assignee.includes(alias.toLowerCase()));
   });
   if (matchingTask && typeof matchingTask === 'object') {
-    currentTaskId = String((matchingTask as Record<string, unknown>).id || '');
-    currentTaskTitle = String((matchingTask as Record<string, unknown>).title || '');
+    const rawId = (matchingTask as Record<string, unknown>).id;
+    currentTaskId = rawId != null ? String(rawId) : null;
+    const rawTitle = (matchingTask as Record<string, unknown>).title;
+    currentTaskTitle = rawTitle != null ? String(rawTitle) : null;
   }
 
   const roleCard = model.roles.find((r) => r.id === roleId);
