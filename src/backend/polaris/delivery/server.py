@@ -19,6 +19,20 @@ import asyncio
 import sys
 from pathlib import Path
 
+# ─── Preload stdlib ``http`` before polaris.delivery.http shadows it.
+# ``polaris/delivery/http/__init__.py`` is a Python package whose name
+# collides with the stdlib ``http`` module.  Third-party libraries
+# (starlette, fastapi, urllib3) do ``from http import cookies`` or
+# ``from http.client import IncompleteRead``.  If stdlib ``http`` has
+# not been loaded yet, Python finds ``polaris/delivery/http/`` instead
+# and the import fails with ``ModuleNotFoundError`` or circular-import
+# ``ImportError``.  Preloading the stdlib modules here – before any
+# polaris import – pins the correct module objects in ``sys.modules``
+# so subsequent ``from http import ...`` resolves to the stdlib.
+import http as _stdlib_http  # noqa: F401 – preload stdlib
+import http.client  # noqa: F401 – preload stdlib
+import http.cookies  # noqa: F401 – preload stdlib
+
 # ─── Early env-var normalization (must run before any polaris.kernelone import)
 from polaris._env_compat import normalize_env_prefix
 

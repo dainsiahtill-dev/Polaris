@@ -265,10 +265,96 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(buildContextOSModel(baseInput({ telemetry: telemetryOf([], bigExec) })).telemetryWindowed).toBe(true);
   });
 
-  it('falls back to proxy derivation when telemetry is empty', () => {
-    const model = buildContextOSModel(baseInput());
-    expect(model.telemetryActive).toBe(false);
-    expect(model.decisions).toHaveLength(0);
+  it('populates RoleInternalContext per role from live WS telemetry', () => {
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf() }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+    const director = model.roles.find((r) => r.id === 'director');
+    const qa = model.roles.find((r) => r.id === 'qa');
+
+    expect(pm?.internalContext).toBeDefined();
+    expect(pm?.internalContext.eventCount).toBe(2); // llm_completed + prompt_context
+    expect(pm?.internalContext.calls).toBe(1);
+    expect(pm?.internalContext.totalTokens).toBe(3386);
+    expect(pm?.internalContext.promptTokens).toBe(1932);
+    expect(pm?.internalContext.completionTokens).toBe(1454);
+    expect(pm?.internalContext.state).toBe('active');
+    expect(pm?.internalContext.events).toHaveLength(2);
+    expect(pm?.internalContext.lastEventAt).toBeGreaterThan(0);
+    expect(pm?.internalContext.currentTaskId).toBeNull();
+    expect(pm?.internalContext.currentTaskTitle).toBeNull();
+    // EXECUTION fixture 的 context.build 没有 items_count / total_tokens → 诚实为 null。
+    expect(pm?.internalContext.contextItemsCount).toBeNull();
+    expect(pm?.internalContext.contextTokensLatest).toBeNull();
+
+    expect(director?.internalContext.eventCount).toBe(1);
+    expect(director?.internalContext.totalTokens).toBe(1000);
+
+    expect(qa?.internalContext.eventCount).toBe(0);
+    expect(qa?.internalContext.state).toBe('idle');
+  });
+
+  it('keeps RoleInternalContext.state consistent with RoleCard.state when a role is running but has no events', () => {
+    const model = buildContextOSModel(baseInput({ pmRunning: true, telemetry: telemetryOf() }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+    expect(pm?.state).toBe('active');
+    expect(pm?.internalContext.state).toBe('active');
+  });
+
+  it('reports per-role context items / tokens when context.build carries structured signals', () => {
+    const build = wsLog({
+      id: 'b1',
+      timestamp: '2026-06-15T10:00:00Z',
+      source: 'PM',
+      message: 'ContextPack built',
+      meta: { channel: 'runtime_events', items_count: 5, total_tokens: 3200 },
+    });
+    const snap = wsLog({
+      id: 's1',
+      timestamp: '2026-06-15T10:00:01Z',
+      source: 'PM',
+      message: 'Context snapshot stored',
+      meta: { channel: 'runtime_events', snapshot_hash: 'sh1' },
+    });
+    const telemetry = telemetryOf([], [build, snap]);
+    const model = buildContextOSModel(baseInput({ telemetry }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+
+    expect(pm?.internalContext.projectionCount).toBe(1); // items_count signature
+    expect(pm?.internalContext.receiptCount).toBe(1); // snapshot_hash signature
+    expect(pm?.internalContext.contextItemsCount).toBe(5);
+    expect(pm?.internalContext.contextTokensLatest).toBe(3200);
+  });
+
+  it('truncates RoleInternalContext.events to MAX_ROLE_EVENTS while preserving newest-first order', () => {
+    const manyPmEvents: LogEntry[] = Array.from({ length: 12 }, (_, i) =>
+      wsLog({
+        id: `pm-${i}`,
+        timestamp: `2026-06-15T10:00:${10 + i}Z`,
+        source: 'PM',
+        message: `pm event ${i}`,
+        meta: { channel: 'llm', streamEvent: 'tool_call', role: 'PM' },
+      }),
+    );
+    const telemetry = telemetryOf(manyPmEvents, []);
+    const model = buildContextOSModel(baseInput({ telemetry }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+
+    expect(pm?.internalContext.eventCount).toBe(12);
+    expect(pm?.internalContext.events).toHaveLength(8);
+    // 最新的事件 timestamp 最大，应排在首位。
+    expect(pm?.internalContext.events[0].id).toBe('pm-11');
+  });
+
+  it('marks blocked role internal context as blocked', () => {
+    const blockedLlm: LlmRuntimeGateState = {
+      state: 'BLOCKED',
+      blockedRoles: ['director'],
+      requiredRoles: ['director'],
+      lastUpdated: null,
+    };
+    const model = buildContextOSModel(baseInput({ llmRuntimeState: blockedLlm, telemetry: telemetryOf() }));
+    const director = model.roles.find((r) => r.id === 'director');
+    expect(director?.internalContext.state).toBe('blocked');
   });
 });
 

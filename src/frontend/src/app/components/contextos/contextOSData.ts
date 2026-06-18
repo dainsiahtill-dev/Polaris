@@ -16,6 +16,8 @@ import type { LlmRuntimeGateState } from '@/app/hooks/useLlmRuntimeGate';
 import type { SnapshotPayload } from '@/app/types/appContracts';
 import {
   EMPTY_TELEMETRY,
+  filterEventsForRole,
+  telemetryRoleCalls,
   telemetryRoleEvents,
   telemetryRoleHasUsageChannel,
   telemetryRoleTokens,
@@ -646,6 +648,81 @@ export function buildContextOSModel(input: {
     return 0;
   };
 
+  /** 每个角色内部 ContextOS 面板展示的最大事件数。 */
+  const MAX_ROLE_EVENTS = 8;
+
+  function buildRoleInternalContext(
+    role: { id: string; key: string; courtTitle: string; title: string },
+  ): RoleInternalContext {
+    const roleEvents = telemetryActive ? filterEventsForRole(telemetry.events, role.key) : [];
+    // 与 RoleCard.state 保持一致：运行中 / 有事件 → active；blocked 优先；否则 idle。
+    const state: PipelineState = roleState(role.key);
+
+    let projectionCount = 0;
+    let receiptCount = 0;
+    let totalTokens = 0;
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let errorCount = 0;
+    let latencySum = 0;
+    let latencyCount = 0;
+
+    for (const event of roleEvents) {
+      if (event.isProjection) projectionCount += 1;
+      if (event.hasReceipt) receiptCount += 1;
+      if (event.category === 'error') errorCount += 1;
+      totalTokens += event.totalTokens;
+      promptTokens += event.promptTokens;
+      completionTokens += event.completionTokens;
+      if (event.durationMs !== null) {
+        latencySum += event.durationMs;
+        latencyCount += 1;
+      }
+    }
+
+    // 离散调用次数复用 telemetry 层聚合，避免与 aggregateEvents 的判定口径分歧。
+    const calls = telemetryActive ? telemetryRoleCalls(telemetry, role.key) : 0;
+
+    // 最近一次 context.build 的 items_count / total_tokens 来自该角色自身的事件子集。
+    const lastContextBuild = roleEvents.find((event) => event.contextItems !== null);
+    const lastContextSize = roleEvents.find((event) => event.contextTokens !== null);
+
+    // 当前任务：ContextOSEvent 目前未携带 refs，先诚实留空；后续可在 logEntryToEvent 中扩展
+    // refs/task_id 字段后再精确填充。
+    const currentTaskId: string | null = null;
+    const currentTaskTitle: string | null = null;
+
+    // epoch <= 0 表示不可解析时间戳，按「无有效时间」处理；否则保留真实 epoch。
+    const lastEventAt = roleEvents.length > 0 ? (roleEvents[0].epoch > 0 ? roleEvents[0].epoch : null) : null;
+
+    const detail = telemetryActive && telemetryRoleHasUsageChannel(telemetry, role.key) && totalTokens > 0
+      ? `${formatTokens(totalTokens)} tok`
+      : roleEvents.length > 0
+        ? `${roleEvents.length} 事件`
+        : '待命';
+
+    return {
+      roleId: role.id,
+      title: role.title,
+      courtTitle: role.courtTitle,
+      state,
+      events: roleEvents.slice(0, MAX_ROLE_EVENTS),
+      eventCount: roleEvents.length,
+      projectionCount,
+      receiptCount,
+      contextItemsCount: lastContextBuild ? lastContextBuild.contextItems : null,
+      contextTokensLatest: lastContextSize ? lastContextSize.contextTokens : null,
+      totalTokens,
+      promptTokens,
+      completionTokens,
+      calls,
+      lastEventAt,
+      currentTaskId,
+      currentTaskTitle,
+      detail,
+    };
+  }
+
   const roles: RoleCard[] = ROLE_DEFINITIONS.map((role) => {
     const tokens = roleTokens(role.key);
     const telemetryEvents = telemetryActive ? telemetryRoleEvents(telemetry, role.key) : 0;
@@ -660,6 +737,7 @@ export function buildContextOSModel(input: {
         : speeches > 0
           ? `${speeches} 次发言`
           : '待命';
+    const internalContext = buildRoleInternalContext(role);
     return {
       id: role.id,
       title: role.title,
@@ -668,6 +746,11 @@ export function buildContextOSModel(input: {
       state: roleState(role.key),
       detail,
       tokensReal,
+      lastEventAt: internalContext.lastEventAt,
+      projectionCount: internalContext.projectionCount,
+      contextItemsCount: internalContext.contextItemsCount,
+      receiptCount: internalContext.receiptCount,
+      internalContext,
     };
   });
 

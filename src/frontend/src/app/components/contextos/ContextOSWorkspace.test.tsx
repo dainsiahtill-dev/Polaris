@@ -150,18 +150,71 @@ describe('ContextOSWorkspace', () => {
     expect(screen.getByText('pm planning call returned')).toBeTruthy();
   });
 
-  it('cross-filters the decision stream when a role tab is selected', () => {
-    const dialogueEvents: DialogueEvent[] = [
-      { speaker: 'PM', content: 'pm decision', timestamp: '2026-06-15T10:00:00Z', type: 'message' },
-      { speaker: 'Director', content: 'director decision', timestamp: '2026-06-15T10:00:05Z', type: 'message' },
+  it('opens the per-role internal ContextOS panel when a role card is selected', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmStreamEvents={LLM_STREAM}
+        executionLogs={EXECUTION_STREAM}
+      />,
+    );
+
+    // PM role card exists.
+    const pmCard = screen.getByTestId('contextos-role-pm');
+    expect(pmCard).toBeTruthy();
+
+    // Internal panel is not rendered before selection.
+    expect(screen.queryByTestId('contextos-role-panel-pm')).toBeNull();
+
+    // Select PM.
+    fireEvent.click(pmCard);
+    const panel = screen.getByTestId('contextos-role-panel-pm');
+    expect(panel).toBeTruthy();
+    expect(panel.textContent).toContain('TruthLog');
+    expect(panel.textContent).toContain('ProjectionEngine');
+    expect(panel.textContent).toContain('ReceiptStore');
+
+    // The internal pipeline stages carry data-state and reflect derived metrics.
+    const truthlogStage = screen.getByTestId('contextos-role-panel-stage-pm-truthlog');
+    expect(truthlogStage).toHaveAttribute('data-state', 'active');
+    expect(truthlogStage.textContent).toContain('1 事件');
+
+    // Token / duration badges appear on the PM llm_completed event row.
+    expect(panel.textContent).toContain('3,386');
+    expect(panel.textContent).toContain('2400ms');
+
+    // Token header chip appears for the PM role (totalTokens > 0).
+    expect(screen.getByTestId('contextos-role-panel-tokens-pm')).toBeTruthy();
+
+    // Toggle off.
+    fireEvent.click(pmCard);
+    expect(screen.queryByTestId('contextos-role-panel-pm')).toBeNull();
+  });
+
+  it('does not show a token header for a role with zero tokens', () => {
+    const tokenlessStream: LogEntry[] = [
+      {
+        id: 'c-no-usage',
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        source: 'Director',
+        message: 'director call returned',
+        details: 'model=local 1200ms',
+        meta: { channel: 'llm', streamEvent: 'llm_failed', role: 'Director', durationMs: 1200 },
+        tags: ['llm_failed'],
+      },
     ];
-    render(<ContextOSWorkspace {...baseProps()} dialogueEvents={dialogueEvents} />);
-    // Before filter: both decisions visible.
-    expect(screen.getByText('pm decision')).toBeTruthy();
-    expect(screen.getByText('director decision')).toBeTruthy();
-    // Filter to PM.
-    fireEvent.click(screen.getByTestId('contextos-roletab-pm'));
-    expect(screen.getByText('pm decision')).toBeTruthy();
-    expect(screen.queryByText('director decision')).toBeNull();
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmStreamEvents={tokenlessStream}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('contextos-role-director'));
+    const panel = screen.getByTestId('contextos-role-panel-director');
+    expect(panel).toBeTruthy();
+    // No token chip since totalTokens === 0.
+    expect(screen.queryByTestId('contextos-role-panel-tokens-director')).toBeNull();
   });
 });

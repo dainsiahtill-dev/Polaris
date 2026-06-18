@@ -432,7 +432,7 @@ export function buildTelemetryFromStream(
 }
 
 /** 角色 id → 观测 actor 的匹配别名（用于把真实事件归并到 5 个角色卡）。 */
-const ACTOR_ROLE_ALIASES: Record<string, string[]> = {
+export const ACTOR_ROLE_ALIASES: Record<string, string[]> = {
   pm: ['pm'],
   architect: ['architect'],
   chief_engineer: ['chief', 'engineer'],
@@ -464,6 +464,32 @@ export function telemetryRoleEvents(telemetry: ContextOSTelemetry, roleId: strin
     }
   }
   return total;
+}
+
+/** 汇总某角色在真实遥测里的离散 LLM 调用次数（按 actor 别名匹配）。 */
+export function telemetryRoleCalls(telemetry: ContextOSTelemetry, roleId: string): number {
+  const aliases = ACTOR_ROLE_ALIASES[roleId] ?? [roleId];
+  let total = 0;
+  for (const [actor, agg] of Object.entries(telemetry.byActor)) {
+    const lowered = actor.toLowerCase();
+    if (aliases.some((alias) => lowered.includes(alias))) {
+      total += agg.calls;
+    }
+  }
+  return total;
+}
+
+/**
+ * 过滤出属于某角色的事件流（按 actor 别名匹配，结果保持原有倒序）。
+ *
+ * 用于构建每个角色自己的 ContextOS 内部视图：事件、投影、回执、调用等都从该子集再聚合。
+ */
+export function filterEventsForRole(events: readonly ContextOSEvent[], roleId: string): ContextOSEvent[] {
+  const aliases = ACTOR_ROLE_ALIASES[roleId] ?? [roleId];
+  return events.filter((event) => {
+    const lowered = event.actor.toLowerCase();
+    return aliases.some((alias) => lowered.includes(alias));
+  });
 }
 
 /**

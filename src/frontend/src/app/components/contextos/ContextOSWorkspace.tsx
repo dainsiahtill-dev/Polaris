@@ -56,8 +56,9 @@ import {
   type PipelineStage,
   type PipelineState,
   type RoleCard,
+  type RoleInternalContext,
 } from './contextOSData';
-import { buildTelemetryFromStream } from './contextOSTelemetry';
+import { buildTelemetryFromStream, type ContextOSEvent } from './contextOSTelemetry';
 
 export interface ContextOSWorkspaceProps {
   workspace: string;
@@ -231,7 +232,7 @@ function RoleHex({ role, selected, onSelect }: { role: RoleCard; selected: boole
       data-selected={selected}
       aria-pressed={selected}
       onClick={onSelect}
-      title={`按角色过滤决策流 — ${role.title} ${role.courtTitle}`}
+      title={`查看 ${role.title} ${role.courtTitle} 的内部 ContextOS 状态`}
       className={cn(
         'flex flex-col items-center gap-1 rounded-xl border px-3 py-3 text-center transition-all duration-500 hover:border-accent-secondary/40',
         style.ring,
@@ -244,7 +245,164 @@ function RoleHex({ role, selected, onSelect }: { role: RoleCard; selected: boole
       <div className="text-xs font-semibold text-text-main">{role.title}</div>
       <div className="text-[10px] text-text-dim">{role.courtTitle}</div>
       <div className={cn('mt-0.5 font-mono text-[11px]', style.text)}>{role.detail}</div>
+      {role.lastEventAt !== null && (
+        <div className="mt-0.5 font-mono text-[9px] text-text-dim">{formatFreshness(role.lastEventAt)}</div>
+      )}
     </button>
+  );
+}
+
+function RoleInternalStat({ label, value, unit, highlight = false }: { label: string; value: string | number; unit?: string; highlight?: boolean }) {
+  return (
+    <div className="flex flex-col rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2">
+      <span className="text-[9px] uppercase tracking-wider text-text-dim">{label}</span>
+      <div className="mt-0.5 flex items-baseline gap-1">
+        <span className={cn('font-mono text-sm font-bold', highlight ? 'text-accent-secondary' : 'text-text-main')}>{value}</span>
+        {unit && <span className="text-[9px] text-text-dim">{unit}</span>}
+      </div>
+    </div>
+  );
+}
+
+function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
+  const tone: PipelineState = event.category === 'error' ? 'blocked' : event.isProjection || event.hasReceipt ? 'active' : 'idle';
+  const summaryText = event.summary || event.kind || '事件';
+  return (
+    <div
+      className="flex items-start gap-2 rounded-md px-2 py-1.5 text-[11px] hover:bg-white/[0.03]"
+      aria-label={`${event.category === 'error' ? '错误事件' : '事件'} ${event.kind} ${summaryText}`}
+    >
+      <span className={cn('mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full', STATE_STYLES[tone].dot)} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[10px] text-text-dim">{contextOSFormat.clock(event.ts)}</span>
+          <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-dim">{event.kind}</span>
+        </div>
+        <div className="truncate text-text-muted" title={summaryText}>{summaryText}</div>
+        {(event.hasUsage || event.durationMs !== null || event.hasReceipt) && (
+          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+            {event.hasUsage && event.totalTokens > 0 && (
+              <span className="rounded bg-accent-secondary/10 px-1 font-mono text-[9px] text-accent-secondary">
+                {contextOSFormat.tokens(event.totalTokens)} tok
+              </span>
+            )}
+            {event.durationMs !== null && event.durationMs > 0 && (
+              <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-muted">{event.durationMs}ms</span>
+            )}
+            {event.hasReceipt && (
+              <span className="rounded bg-gold/10 px-1 font-mono text-[9px] text-gold">快照</span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RoleInternalPanel({ role }: { role: RoleCard }) {
+  const ctx = role.internalContext;
+  const style = STATE_STYLES[ctx.state];
+
+  const pipeline: PipelineStage[] = [
+    { id: 'truthlog', label: 'TruthLog', component: '事件真值流', hint: '角色专属事件流', state: ctx.eventCount > 0 ? 'active' : 'idle', metric: `${ctx.eventCount} 事件` },
+    { id: 'working_mem', label: 'WorkingMem', component: '活动窗口', hint: '在窗上下文项', state: (ctx.contextItemsCount ?? 0) > 0 ? 'active' : 'idle', metric: ctx.contextItemsCount !== null ? `${ctx.contextItemsCount} 项` : '—' },
+    { id: 'projection', label: 'ProjectionEngine', component: '投影装配', hint: '上下文装配次数', state: ctx.projectionCount > 0 ? 'active' : 'idle', metric: `${ctx.projectionCount} 投影` },
+    { id: 'receipt', label: 'ReceiptStore', component: '快照回执', hint: '落盘回执数', state: ctx.receiptCount > 0 ? 'active' : 'idle', metric: `${ctx.receiptCount} 回执` },
+  ];
+
+  const displayedEvents = ctx.events.length;
+  const hasTruncation = ctx.eventCount > displayedEvents;
+
+  return (
+    <div
+      data-testid={`contextos-role-panel-${role.id}`}
+      className={cn(
+        'mt-3 rounded-xl border bg-bg-panel/40 p-3 backdrop-blur-sm transition-all duration-500',
+        style.ring,
+      )}
+    >
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className={cn('flex h-9 w-9 items-center justify-center rounded-lg bg-black/30 font-heading text-sm font-bold', style.text)}>
+            {role.courtTitle.slice(0, 1)}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-text-main">{role.title}</span>
+              <span className="text-[10px] text-text-dim">{role.courtTitle}</span>
+              <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-medium', style.ring, style.text)}>{style.label}</span>
+            </div>
+            <div className="text-[10px] text-text-dim">
+              {ctx.lastEventAt !== null ? `最近活动 ${formatFreshness(ctx.lastEventAt)}` : '暂无观测事件'}
+            </div>
+          </div>
+        </div>
+        {ctx.totalTokens > 0 && (
+          <div
+            data-testid={`contextos-role-panel-tokens-${role.id}`}
+            className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/30 px-2 py-1"
+          >
+            <Coins className="h-3.5 w-3.5 text-gold" />
+            <span className="font-mono text-[11px] font-bold text-text-main">{ctx.totalTokens.toLocaleString()}</span>
+            <span className="text-[9px] text-gold/70">tok</span>
+          </div>
+        )}
+      </div>
+
+      {/* 该角色的内部 ContextOS 管线 */}
+      <div className="relative mb-3">
+        <div className="flex items-center gap-1 overflow-x-auto pb-2">
+          {pipeline.map((stage, index) => (
+            <div key={stage.id} className="flex items-center gap-1">
+              {index > 0 && <ArrowRight className="h-3 w-3 shrink-0 text-text-dim/40" />}
+              <div
+                data-testid={`contextos-role-panel-stage-${role.id}-${stage.id}`}
+                data-state={stage.state}
+                className="flex w-[92px] shrink-0 flex-col items-center gap-1 rounded-lg border border-white/[0.06] bg-white/[0.02] px-1.5 py-2 text-center"
+              >
+                <span className="text-[10px] font-semibold text-text-main">{stage.label}</span>
+                <span className="text-[9px] text-text-dim">{stage.component}</span>
+                <span className={cn('mt-0.5 rounded-full bg-black/30 px-1.5 py-0.5 font-mono text-[9px]', STATE_STYLES[stage.state].text)}>{stage.metric}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-bg-panel/70 to-transparent xl:hidden" aria-hidden />
+      </div>
+
+      {/* 统计卡 */}
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+        <RoleInternalStat label="事件" value={ctx.eventCount} />
+        <RoleInternalStat label="投影" value={ctx.projectionCount} />
+        <RoleInternalStat label="回执" value={ctx.receiptCount} />
+        <RoleInternalStat label="调用" value={ctx.calls} />
+        <RoleInternalStat label="提示 tok" value={contextOSFormat.tokens(ctx.promptTokens)} highlight={ctx.promptTokens > 0} />
+        <RoleInternalStat label="输出 tok" value={contextOSFormat.tokens(ctx.completionTokens)} highlight={ctx.completionTokens > 0} />
+      </div>
+
+      {/* 最近事件 */}
+      <div>
+        <div className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-wider text-text-dim">
+          <span>最近事件</span>
+          {hasTruncation && (
+            <span className="font-mono normal-case text-text-dim">
+              展示最近 {displayedEvents} 条 · 共 {ctx.eventCount} 条
+            </span>
+          )}
+        </div>
+        {ctx.events.length > 0 ? (
+          <div className="space-y-1" aria-live="polite" aria-atomic="false">
+            {ctx.events.map((event) => (
+              <RoleInternalEventRow key={event.id} event={event} />
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-[11px] text-text-dim">
+            该角色暂无实时观测事件
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -669,7 +827,7 @@ export function ContextOSWorkspace({
               title="角色信号面"
               subtitle={`RoleSignalPlane · ${model.roles.length} 主角色`}
               icon={Boxes}
-              action={<span className="text-[10px] text-text-dim">点击按角色过滤决策流</span>}
+              action={<span className="text-[10px] text-text-dim">点击角色查看内部 ContextOS 状态</span>}
             >
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
                 {model.roles.map((role) => (
@@ -681,8 +839,11 @@ export function ContextOSWorkspace({
                   />
                 ))}
               </div>
+              {activeRole && (
+                <RoleInternalPanel role={model.roles.find((r) => r.id === activeRole)!} />
+              )}
               <p className="mt-2.5 text-[9px] leading-relaxed text-text-dim">
-                角色卡按 WebSocket 实时事件量呈现活跃度；产生过带 usage 调用的角色（journal llm 通道）以真实 token 归因，其余以事件数呈现。
+                角色卡按 WebSocket 实时事件量呈现活跃度；点击角色展开其内部 ContextOS 视图（TruthLog / WorkingMem / ProjectionEngine / ReceiptStore）。产生过带 usage 调用的角色（journal llm 通道）以真实 token 归因，其余以事件数呈现。
               </p>
             </SectionCard>
 
