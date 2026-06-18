@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { getRoleChatStatus, sendRoleChatMessage, parseSSEData } from '@/services';
-import type { ChatStatus, ChatMessageRequest } from '@/services';
+import { apiFetch } from '@/api';
+import { useRuntimeTransport } from '@/runtime/transport';
+import { getRoleChatStatus } from '@/services/llmService';
+import type { ChatStatus } from '@/services/llmService';
 import type { RoleChatRole } from '@/services/api.types';
 
 export type DialogueRole = RoleChatRole;
@@ -32,6 +34,57 @@ export interface UseRoleChatReturn {
   clearMessages: () => void;
   checkStatus: () => Promise<void>;
   handleKeyDown: (e: React.KeyboardEvent) => void;
+}
+
+interface ChatStreamEvent {
+  type: 'thinking_chunk' | 'content_chunk' | 'complete' | 'error';
+  data?: {
+    content?: string;
+    response?: string;
+    message?: string;
+    complete?: string;
+    error?: string;
+  };
+}
+
+interface JetstreamChatStartResponse {
+  session_id?: string;
+  status?: string;
+  channel?: string;
+  subject?: string;
+  transport?: string;
+}
+
+function appendWorkspaceQuery(path: string, workspace?: string): string {
+  const value = String(workspace || '').trim();
+  if (!value) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}workspace=${encodeURIComponent(value)}`;
+}
+
+function runtimeChatEvent(raw: unknown, channel: string): ChatStreamEvent | null {
+  const message = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const event = message.type === 'EVENT' && message.event && typeof message.event === 'object'
+    ? message.event as Record<string, unknown>
+    : message;
+  if (event.channel !== channel) return null;
+
+  const payload = event.payload && typeof event.payload === 'object'
+    ? event.payload as Record<string, unknown>
+    : {};
+  const type = typeof payload.type === 'string' ? payload.type : '';
+  if (
+    type !== 'thinking_chunk'
+    && type !== 'content_chunk'
+    && type !== 'complete'
+    && type !== 'error'
+  ) {
+    return null;
+  }
+  const data = payload.data && typeof payload.data === 'object'
+    ? payload.data as ChatStreamEvent['data']
+    : {};
+  return { type, data };
 }
 
 /**

@@ -4,7 +4,7 @@
  * 处理对话状态、消息、流式事件等核心逻辑
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { apiFetch } from '@/api';
 import { useRuntimeTransport } from '@/runtime/transport';
 import { devLogger } from '@/app/utils/devLogger';
@@ -103,6 +103,17 @@ export interface RoleSessionDetachStatus {
   message: string;
 }
 
+function normalizeAttachmentId(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'bigint') return String(value);
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return normalizeAttachmentId(record.id ?? record.task_id);
+  }
+  return '';
+}
+
 export interface UseAIDialogueOptions {
   /** 角色 */
   role: string;
@@ -125,7 +136,7 @@ export interface UseAIDialogueOptions {
   /** 附着的工作流 Run ID */
   attachedRunId?: string;
   /** 附着的任务 ID */
-  attachedTaskId?: string;
+  attachedTaskId?: unknown;
   /** 能力配置 */
   capabilityProfile?: Record<string, unknown> | string[];
   /** 显式导出到工作流的目标 */
@@ -227,6 +238,7 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
     onSessionChange,
     onConversationChange,
   } = options;
+  const normalizedAttachedTaskId = useMemo(() => normalizeAttachmentId(attachedTaskId), [attachedTaskId]);
 
   // RoleSession 状态
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId ?? null);
@@ -272,11 +284,11 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
     nextSessionId || '',
     attachmentMode,
     attachedRunId || '',
-    attachedTaskId || '',
-  ].join('|'), [sessionId, attachmentMode, attachedRunId, attachedTaskId]);
+    normalizedAttachedTaskId,
+  ].join('|'), [sessionId, attachmentMode, attachedRunId, normalizedAttachedTaskId]);
   const getDefaultMemoryQuery = useCallback(() => String(
-    attachedTaskId || attachedRunId || roleName || role,
-  ).trim(), [attachedTaskId, attachedRunId, roleName, role]);
+    normalizedAttachedTaskId || attachedRunId || roleName || role,
+  ).trim(), [normalizedAttachedTaskId, attachedRunId, roleName, role]);
   const dialogueWorkspace = String(workspace || (typeof context?.workspace === 'string' ? context.workspace : '') || '').trim();
 
   // 消息状态
@@ -499,7 +511,7 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
   // 将桌面对话会话附着到当前工作流/任务上下文。
   useEffect(() => {
     if (!sessionId || attachmentMode === 'isolated') return;
-    if (!attachedRunId && !attachedTaskId) return;
+    if (!attachedRunId && !normalizedAttachedTaskId) return;
 
     const attachmentKey = makeAttachmentKey(sessionId);
     if (detachedAttachmentKeyRef.current === attachmentKey) return;
@@ -510,7 +522,7 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
       try {
         const result = await attachRoleSession(sessionId, {
           run_id: attachedRunId || null,
-          task_id: attachedTaskId || null,
+          task_id: normalizedAttachedTaskId || null,
           mode: attachmentMode,
           note: `${roleName} desktop dialogue attachment`,
         });
@@ -525,7 +537,7 @@ export function useAIDialogue(options: UseAIDialogueOptions): UseAIDialogueRetur
     };
 
     void attachSession();
-  }, [sessionId, attachmentMode, attachedRunId, attachedTaskId, roleName, makeAttachmentKey]);
+  }, [sessionId, attachmentMode, attachedRunId, normalizedAttachedTaskId, roleName, makeAttachmentKey]);
 
   // 从已有对话恢复
   useEffect(() => {

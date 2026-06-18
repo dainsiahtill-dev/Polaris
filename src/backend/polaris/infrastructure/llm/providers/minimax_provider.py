@@ -993,6 +993,8 @@ class MiniMaxProvider(BaseProvider):
 
                 # Flush any remaining buffered content
                 for kind, text in think_parser.flush():
+                    if not text:
+                        continue
                     if kind == "thinking":
                         # 如果已检测到过原生 reasoning，跳过 flush 中的 thinking
                         if not has_seen_native_reasoning:

@@ -109,6 +109,128 @@ class ReasoningSummary:
     content: str
 
 
+def _flatten_stream_text(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            out.extend(_flatten_stream_text(item))
+        return out
+    if isinstance(value, dict):
+        out_dict: list[str] = []
+        for key in ("text", "content", "value", "delta"):
+            nested = value.get(key)
+            if isinstance(nested, str) and nested:
+                out_dict.append(nested)
+            elif isinstance(nested, (list, dict)):
+                out_dict.extend(_flatten_stream_text(nested))
+        return out_dict
+    text = str(value or "")
+    return [text] if text else []
+
+
+def decode_common_stream_transcript_items(raw_event: Any) -> list[Any]:
+    """Normalize common provider stream text deltas into transcript items.
+
+    This is intentionally narrow: it only accepts well-known text/reasoning
+    delta shapes emitted by OpenAI-compatible, Responses API, Gemini-like, and
+    Anthropic-compatible gateways. Unknown objects remain undecoded.
+    """
+
+    if not isinstance(raw_event, dict):
+        return []
+
+    event_type = str(raw_event.get("type") or raw_event.get("event") or "").strip().lower()
+    if event_type in {
+        "ping",
+        "done",
+        "session.complete",
+        "message_stop",
+        "content_block_stop",
+        "response.completed",
+        "response.done",
+    }:
+        return []
+
+    items: list[Any] = []
+    seen: set[tuple[str, str]] = set()
+
+    def append_text(kind: str, value: Any) -> None:
+        for text in _flatten_stream_text(value):
+            if not text:
+                continue
+            key = (kind, text)
+            if key in seen:
+                continue
+            seen.add(key)
+            if kind == "reasoning":
+                items.append(ReasoningSummary(content=text))
+            else:
+                items.append(AssistantMessage(content=text))
+
+    for key in ("reasoning_content", "reasoning", "thinking"):
+        append_text("reasoning", raw_event.get(key))
+
+    if event_type in {"content_chunk", "text_delta", "message_delta", "output_text_delta"}:
+        append_text("assistant", raw_event.get("content") or raw_event.get("text") or raw_event.get("delta"))
+    elif event_type in {
+        "thinking_delta",
+        "reasoning_delta",
+        "response.reasoning_text.delta",
+        "response.reasoning.delta",
+        "response.reasoning_summary_text.delta",
+    }:
+        append_text(
+            "reasoning",
+            raw_event.get("thinking")
+            or raw_event.get("reasoning")
+            or raw_event.get("text")
+            or raw_event.get("content")
+            or raw_event.get("delta"),
+        )
+    elif event_type in {"response.output_text.delta", "response.content_part.delta"}:
+        append_text("assistant", raw_event.get("delta") or raw_event.get("text") or raw_event.get("content"))
+
+    delta = raw_event.get("delta")
+    if isinstance(delta, dict):
+        delta_type = str(delta.get("type") or "").strip().lower()
+        if "reason" in delta_type or "think" in delta_type:
+            append_text("reasoning", delta.get("thinking") or delta.get("reasoning") or delta.get("text"))
+        else:
+            append_text("assistant", delta.get("content") or delta.get("text"))
+        for key in ("reasoning_content", "reasoning", "thinking"):
+            append_text("reasoning", delta.get(key))
+
+    message = raw_event.get("message")
+    if isinstance(message, dict):
+        append_text("assistant", message.get("content") or message.get("text"))
+
+    # Some gateways emit bare {"content": "..."} / {"text": "..."} chunks.
+    if "content" in raw_event:
+        append_text("assistant", raw_event.get("content"))
+    elif "text" in raw_event and "reason" not in event_type and "think" not in event_type:
+        append_text("assistant", raw_event.get("text"))
+
+    candidates = raw_event.get("candidates")
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            content = candidate.get("content")
+            if not isinstance(content, dict):
+                continue
+            parts = content.get("parts")
+            if isinstance(parts, list):
+                for part in parts:
+                    if isinstance(part, dict):
+                        append_text("assistant", part.get("text") or part.get("content"))
+
+    return items
+
+
 class ConversationStateLike(Protocol):
     """Minimal state shape required by provider adapters."""
 

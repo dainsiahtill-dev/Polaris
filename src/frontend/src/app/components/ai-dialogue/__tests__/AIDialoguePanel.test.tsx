@@ -3,9 +3,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AIDialoguePanel } from '../AIDialoguePanel';
 
 const apiFetchMock = vi.hoisted(() => vi.fn());
+const runtimeTransportMock = vi.hoisted(() => ({
+  connected: true,
+  reconnecting: false,
+  error: null as string | null,
+  attemptCount: 0,
+  subscribeChannels: vi.fn(() => vi.fn()),
+  sendCommand: vi.fn(() => true),
+  getLastCursor: vi.fn(() => 0),
+  reconnect: vi.fn(),
+  registerMessageHandler: vi.fn(() => vi.fn()),
+}));
 
 vi.mock('@/api', () => ({
   apiFetch: apiFetchMock,
+}));
+
+vi.mock('@/runtime/transport', () => ({
+  useRuntimeTransport: () => runtimeTransportMock,
 }));
 
 vi.mock('@/app/utils/devLogger', () => ({
@@ -37,6 +52,7 @@ const productWorkspaceQuery = 'workspace=C%3A%2FTemp%2FProduct';
 describe('AIDialoguePanel RoleSession visibility', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    runtimeTransportMock.connected = true;
     let sessionIndex = 0;
     apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
       if (path === `/v2/role/pm/chat/status?${productWorkspaceQuery}`) {

@@ -4,8 +4,19 @@ interface PMAIDialoguePanelProps {
   pmRunning: boolean;
   workspace?: string;
   taskCount?: number;
-  selectedTaskId?: string | null;
+  selectedTaskId?: string | number | null;
   interactionBlockedReason?: string;
+}
+
+function normalizeTaskId(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'bigint') return String(value);
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return normalizeTaskId(record.id ?? record.task_id);
+  }
+  return '';
 }
 
 /**
@@ -22,6 +33,7 @@ export function PMAIDialoguePanel({
   interactionBlockedReason = '',
 }: PMAIDialoguePanelProps) {
   const blockedReason = String(interactionBlockedReason || '').trim();
+  const normalizedSelectedTaskId = normalizeTaskId(selectedTaskId);
   const welcomeMessage = blockedReason
     ? `PM 当前不可用：${blockedReason}`
     : 'PM 系统已就绪。您可以询问任务状态、请求生成新任务，或讨论项目规划。';
@@ -39,13 +51,13 @@ export function PMAIDialoguePanel({
       context={{
         workspace,
         task_count: taskCount,
-        selected_task_id: selectedTaskId || null,
+        selected_task_id: normalizedSelectedTaskId || null,
         pm_running: pmRunning,
         blocked_reason: blockedReason,
       }}
       workspace={workspace}
-      attachmentMode={selectedTaskId ? 'attached_readonly' : 'isolated'}
-      attachedTaskId={selectedTaskId || undefined}
+      attachmentMode={normalizedSelectedTaskId ? 'attached_readonly' : 'isolated'}
+      attachedTaskId={normalizedSelectedTaskId || undefined}
       workflowExportTarget="pm"
       workflowExportLabel="导出PM"
       interactionBlockedReason={blockedReason}

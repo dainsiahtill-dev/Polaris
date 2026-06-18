@@ -17,6 +17,21 @@ const toDisplayText = (value: unknown): string => {
     return '';
 };
 
+const isReadableTaskTitle = (value: unknown): boolean => {
+    const text = toDisplayText(value);
+    if (!text) return false;
+    return !/^\d+$/.test(text);
+};
+
+const pickTaskTitle = (task: PmTask, fallback: string): string => {
+    const record = task as PmTask & Record<string, unknown>;
+    const candidates = [record.subject, task.title, task.goal, record.summary, record.description];
+    for (const candidate of candidates) {
+        if (isReadableTaskTitle(candidate)) return toDisplayText(candidate);
+    }
+    return fallback;
+};
+
 function TaskListComponent({
     tasks,
     completedSet,
@@ -47,7 +62,7 @@ function TaskListComponent({
                     const isCompleted = completedSet.has(key) || isTaskDone(task);
                     const isCurrent = currentTaskKey === key;
                     const idText = toDisplayText(task.id);
-                    const title = toDisplayText(task.title) || toDisplayText(task.goal) || idText || `Task ${index + 1}`;
+                    const title = pickTaskTitle(task, idText || `Task ${index + 1}`);
                     const goalText = toDisplayText(task.goal);
                     const goal = goalText && goalText !== title ? goalText : '';
                     const acceptance = Array.isArray(task.acceptance)

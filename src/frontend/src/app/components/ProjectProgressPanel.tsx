@@ -46,6 +46,22 @@ const toText = (value: unknown): string => {
   return '';
 };
 
+const isReadableTaskText = (value: unknown): boolean => {
+  const text = toText(value);
+  if (!text) return false;
+  return !/^\d+$/.test(text);
+};
+
+const readTaskDisplayText = (task: PmTask | null | undefined, keys: string[]): string => {
+  if (!task) return '';
+  const record = task as PmTask & Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (isReadableTaskText(value)) return toText(value);
+  }
+  return '';
+};
+
 const clampText = (value: unknown, maxLen: number): string => {
   const text = toText(value);
   if (!text || text.length <= maxLen) return text;
@@ -65,9 +81,35 @@ const isTaskActive = (task: PmTask): boolean => {
   return ['in_progress', 'running', 'executing'].some((key) => status.includes(key));
 };
 
-const taskKey = (task: PmTask): string => toText(task.id) || toText(task.title) || toText(task.goal);
+const taskKey = (task: PmTask): string => toText(task.id) || readTaskDisplayText(task, ['subject', 'title', 'goal']);
 
-const pickTaskSummary = (task: PmTask): string => toText(task.summary) || toText(task.title) || toText(task.goal);
+const pickTaskSummary = (task: PmTask): string => readTaskDisplayText(task, ['summary', 'subject', 'title', 'goal']);
+
+type EngineRoleSnapshot = NonNullable<EngineStatus['roles']>[string];
+
+function normalizeRoleKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function readEngineRole(engineStatus: EngineStatus | null | undefined, aliases: string[]): EngineRoleSnapshot | null {
+  const roles = engineStatus?.roles;
+  if (!roles) return null;
+  const normalizedAliases = new Set(aliases.map(normalizeRoleKey));
+  for (const [key, value] of Object.entries(roles)) {
+    if (normalizedAliases.has(normalizeRoleKey(key))) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function rolePipelineStatus(role: EngineRoleSnapshot | null, fallback: string): string {
+  return toText(role?.status || (role?.running ? 'running' : '')) || fallback;
+}
+
+function rolePipelineTask(role: EngineRoleSnapshot | null, fallback: string): string {
+  return toText(role?.task_title) || toText(role?.task_id) || fallback;
+}
 
 type QaEvidenceGrade =
   | 'real_command_passed'
@@ -241,11 +283,21 @@ export function ProjectProgressPanel({
         ? Number(iterationRaw)
         : null;
 
+  const pmRole = readEngineRole(engineStatus, ['PM', 'pm']);
+  const chiefEngineerRole = readEngineRole(engineStatus, [
+    'ChiefEngineer',
+    'Chief Engineer',
+    'chief_engineer',
+    'chief-engineer',
+    'ce',
+  ]);
+  const directorRole = readEngineRole(engineStatus, ['Director', 'director']);
+
   // 从 Engine 状态获取 Director 当前任务（实时来源优先）
-  const engineDirectorTaskId = engineStatus?.roles?.Director?.task_id;
-  const engineDirectorTaskTitle = engineStatus?.roles?.Director?.task_title;
-  const engineDirectorStatus = engineStatus?.roles?.Director?.status;
-  const engineDirectorDetail = engineStatus?.roles?.Director?.detail;
+  const engineDirectorTaskId = directorRole?.task_id;
+  const engineDirectorTaskTitle = directorRole?.task_title;
+  const engineDirectorStatus = directorRole?.status;
+  const engineDirectorDetail = directorRole?.detail;
 
   // PM 当前任务高亮策略：Engine task_id/title 命中 > nextPending 推断 > lastTaskId/Title 回退
   let highlightedTask: PmTask | undefined;
@@ -254,7 +306,7 @@ export function ProjectProgressPanel({
   if ((engineDirectorTaskId || engineDirectorTaskTitle) && normalizedTasks.length > 0) {
     // 策略1：Engine 的 Director task_id/title 命中 PM 任务
     const engineTaskIndex = normalizedTasks.findIndex(
-      (task) => task.id === engineDirectorTaskId || task.title === engineDirectorTaskTitle
+      (task) => taskKey(task) === toText(engineDirectorTaskId) || pickTaskSummary(task) === toText(engineDirectorTaskTitle)
     );
     if (engineTaskIndex >= 0) {
       highlightedTask = normalizedTasks[engineTaskIndex];
@@ -278,7 +330,7 @@ export function ProjectProgressPanel({
   if (!highlightedTask) {
     // 策略3：lastTaskId/Title 回退
     currentIndex = normalizedTasks.findIndex(
-      (task) => (lastTaskId && task.id === lastTaskId) || (lastTaskTitle && task.title === lastTaskTitle),
+      (task) => (lastTaskId && taskKey(task) === lastTaskId) || (lastTaskTitle && pickTaskSummary(task) === lastTaskTitle),
     );
     if (currentIndex >= 0) {
       highlightedTask = normalizedTasks[currentIndex];
@@ -288,8 +340,7 @@ export function ProjectProgressPanel({
   const liveDirectorTask = normalizedDirectorTasks.find((task) => isTaskActive(task))
     ?? normalizedDirectorTasks.find((task) => !isTaskDone(task));
   const directorCompletedCount = normalizedDirectorTasks.filter((task) => isTaskDone(task)).length;
-  const directorTaskLabel = liveDirectorTask?.title
-    || liveDirectorTask?.goal
+  const directorTaskLabel = pickTaskSummary(liveDirectorTask as PmTask)
     || engineDirectorTaskTitle
     || lastTaskTitle;
   const positionIndex = currentIndex >= 0 ? currentIndex : totalTasks > 0 ? 0 : -1;
@@ -339,6 +390,29 @@ export function ProjectProgressPanel({
         : 'Director live queue 已断开'
       : 'Director queue 待同步';
   const qaEvidence = extractLatestQaEvidence(executionLogs, dialogueEvents);
+  const pipelineRoles = [
+    {
+      id: 'pm',
+      label: 'PM',
+      detail: `${totalTasks} contracts · ${completedCount}/${totalTasks || 0} done`,
+      status: rolePipelineStatus(pmRole, pmRunning ? 'running' : totalTasks > 0 ? 'ready' : 'waiting'),
+      task: rolePipelineTask(pmRole, highlightedTask ? pickTaskSummary(highlightedTask) : '等待任务合同'),
+    },
+    {
+      id: 'chief-engineer',
+      label: 'Chief Engineer',
+      detail: 'blueprint / handoff gate',
+      status: rolePipelineStatus(chiefEngineerRole, currentPhase === 'chief_engineer' ? 'running' : 'waiting'),
+      task: rolePipelineTask(chiefEngineerRole, highlightedTask ? `蓝图审查：${pickTaskSummary(highlightedTask)}` : '等待 PM 合同'),
+    },
+    {
+      id: 'director',
+      label: 'Director',
+      detail: directorQueueHint,
+      status: rolePipelineStatus(directorRole, effectiveStatus || (liveDirectorTask ? 'running' : 'waiting')),
+      task: rolePipelineTask(directorRole, currentSummary || '等待 CE 交接'),
+    },
+  ];
 
   return (
     <div
@@ -541,13 +615,49 @@ export function ProjectProgressPanel({
       </div>
 
       <div className="mt-4 flex min-h-0 flex-1 flex-col">
-        <div className="mb-2 flex items-center justify-between text-xs text-text-muted">
-          <div className="flex items-center gap-2">
-            <ListChecks className="size-4 text-text-dim" />
-            <span className="font-medium uppercase tracking-wide">任务队列（PM → Director）</span>
+        <section className="mb-3 rounded-2xl border border-white/10 bg-white/[0.045] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted">
+            <div className="flex items-center gap-2">
+              <ListChecks className="size-4 text-text-dim" />
+              <span data-testid="project-chain-heading" className="font-medium tracking-wide">
+                全链路任务流（PM → Chief Engineer → Director）
+              </span>
+            </div>
+            <span className="font-mono">{totalTasks ? `${totalTasks} \u9879` : '\u6682\u65e0\u4efb\u52a1'}</span>
           </div>
-          <span className="font-mono">{totalTasks ? `${totalTasks} \u9879` : '\u6682\u65e0\u4efb\u52a1'}</span>
-        </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-3">
+            {pipelineRoles.map((role, index) => (
+              <div
+                key={role.id}
+                data-testid={`project-chain-role-${role.id}`}
+                className="min-w-0 rounded-xl border border-white/10 bg-bg-surface/40 p-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-text-main">
+                      <span className="font-mono text-text-dim">{index + 1}</span>
+                      <span>{role.label}</span>
+                    </div>
+                    <div className="mt-1 truncate text-[11px] text-text-muted">{role.detail}</div>
+                  </div>
+                  <StatusBadge
+                    color={
+                      role.status === 'completed' || role.status === 'success' ? 'success'
+                      : role.status === 'running' || role.status === 'in_progress' ? 'accent'
+                      : role.status === 'failed' || role.status === 'error' ? 'error'
+                      : 'default'
+                    }
+                    variant="outlined"
+                    className="shrink-0 font-mono uppercase"
+                  >
+                    {role.status}
+                  </StatusBadge>
+                </div>
+                <div className="mt-2 line-clamp-2 text-xs leading-5 text-text-muted">{role.task}</div>
+              </div>
+            ))}
+          </div>
+        </section>
         <TaskList
           tasks={normalizedTasks}
           completedSet={completedSet}
@@ -560,4 +670,3 @@ export function ProjectProgressPanel({
     </div>
   );
 }
-

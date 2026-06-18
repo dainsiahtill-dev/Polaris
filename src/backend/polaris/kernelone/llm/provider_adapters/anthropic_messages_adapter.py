@@ -39,6 +39,7 @@ from polaris.kernelone.llm.provider_adapters.base import (
     DecodedProviderOutput,
     ProviderAdapter,
     ReasoningSummary,
+    decode_common_stream_transcript_items,
     serialize_input_payload,
     serialize_transcript_for_prompt,
 )
@@ -392,7 +393,9 @@ class AnthropicMessagesAdapter(ProviderAdapter):
             pass
 
         if not transcript_items and not tool_calls_out:
-            return None
+            transcript_items = decode_common_stream_transcript_items(raw_event)
+            if not transcript_items:
+                return None
 
         return DecodedProviderOutput(
             transcript_items=transcript_items,

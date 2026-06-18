@@ -81,4 +81,38 @@ describe('ProjectProgressPanel QA evidence', () => {
     expect(evidence).toHaveTextContent('real command passed');
     expect(evidence).toHaveTextContent('integration_qa_passed');
   });
+
+  it('renders the PM to Chief Engineer to Director chain and ignores numeric task titles', () => {
+    render(
+      <ProjectProgressPanel
+        tasks={[
+          {
+            id: 1 as unknown as string,
+            title: 1 as unknown as string,
+            subject: '实现账户服务 API',
+            goal: '交付可运行的账户服务',
+            priority: 1,
+            status: 'in_progress',
+            acceptance: [{ description: '账户服务测试通过' }],
+          },
+        ]}
+        pmRunning={false}
+        engineStatus={{
+          roles: {
+            PM: { status: 'completed', task_id: '1', task_title: '实现账户服务 API' },
+            ChiefEngineer: { status: 'running', task_id: '1', task_title: '蓝图审查' },
+            Director: { status: 'waiting', task_id: '1', task_title: '等待实现' },
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId('project-chain-heading')).toHaveTextContent('PM → Chief Engineer → Director');
+    expect(screen.getByTestId('project-chain-role-pm')).toHaveTextContent('PM');
+    expect(screen.getByTestId('project-chain-role-chief-engineer')).toHaveTextContent('Chief Engineer');
+    expect(screen.getByTestId('project-chain-role-director')).toHaveTextContent('Director');
+    expect(screen.getByTestId('project-task-title')).toHaveTextContent('实现账户服务 API');
+    expect(screen.getByTestId('project-task-title')).not.toHaveTextContent(/^1$/);
+    expect(screen.queryByText('任务队列（PM → Director）')).not.toBeInTheDocument();
+  });
 });

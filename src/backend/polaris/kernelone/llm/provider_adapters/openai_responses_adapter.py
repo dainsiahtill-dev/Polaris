@@ -31,6 +31,7 @@ from polaris.kernelone.llm.provider_adapters.base import (
     DecodedProviderOutput,
     ProviderAdapter,
     ReasoningSummary,
+    decode_common_stream_transcript_items,
     serialize_input_payload,
     serialize_transcript_for_prompt,
 )
@@ -344,16 +345,37 @@ class OpenAIResponsesAdapter(ProviderAdapter):
 
         choices = raw_event.get("choices")
         if not isinstance(choices, list) or not choices:
+            common_items = decode_common_stream_transcript_items(raw_event)
+            if not common_items:
+                return None
+            return DecodedProviderOutput(
+                transcript_items=common_items,
+                tool_calls=[],
+                usage={},
+                raw=raw_event,
+            )
+
+        if not isinstance(choices[0], dict):
             return None
 
         delta = choices[0].get("delta", {})
         if not isinstance(delta, dict):
-            return None
+            common_items = decode_common_stream_transcript_items(raw_event)
+            if not common_items:
+                return None
+            return DecodedProviderOutput(
+                transcript_items=common_items,
+                tool_calls=[],
+                usage={},
+                raw=raw_event,
+            )
 
         transcript_items: list[Any] = []
         tool_calls_out: list[dict[str, Any]] = []
 
         transcript_items, tool_calls_out = _extract_content_items(delta)
+        if not transcript_items and not tool_calls_out:
+            transcript_items = decode_common_stream_transcript_items(raw_event)
 
         if not transcript_items and not tool_calls_out:
             return None

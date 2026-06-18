@@ -167,9 +167,14 @@ const findCloseTag = (value: string, tag: StreamTagName) => {
   return best;
 };
 
-export const createContentTagParser = () => {
+interface ContentTagParserOptions {
+  emitUntaggedAsAnswer?: boolean;
+}
+
+export const createContentTagParser = (options: ContentTagParserOptions = {}) => {
   let buffer = '';
   let activeTag: StreamTagName | null = null;
+  let untaggedAnswerOpen = false;
 
   const emit = (
     type: StreamingTagEventType,
@@ -185,6 +190,19 @@ export const createContentTagParser = () => {
         isComplete: type.endsWith('_end') ? true : undefined,
       },
     });
+  };
+
+  const emitUntaggedAnswer = (
+    text: string,
+    timestamp: string,
+    onTagEvent?: (event: StreamingTagEvent) => void
+  ) => {
+    if (!options.emitUntaggedAsAnswer || !text) return;
+    if (!untaggedAnswerOpen) {
+      emit('answer_start', undefined, timestamp, onTagEvent);
+      untaggedAnswerOpen = true;
+    }
+    emit('answer_chunk', text, timestamp, onTagEvent);
   };
 
   const consume = (
@@ -221,10 +239,16 @@ export const createContentTagParser = () => {
 
       const tagStart = buffer.indexOf('<');
       if (tagStart < 0) {
-        buffer = buffer.slice(Math.max(0, buffer.length - 16));
+        if (options.emitUntaggedAsAnswer) {
+          emitUntaggedAnswer(buffer, timestamp, onTagEvent);
+          buffer = '';
+        } else {
+          buffer = buffer.slice(Math.max(0, buffer.length - 16));
+        }
         break;
       }
       if (tagStart > 0) {
+        emitUntaggedAnswer(buffer.slice(0, tagStart), timestamp, onTagEvent);
         buffer = buffer.slice(tagStart);
       }
 
@@ -241,13 +265,35 @@ export const createContentTagParser = () => {
 
       const nextTag = normalizeTagName(rawTag);
       if (nextTag) {
+        if (untaggedAnswerOpen) {
+          emit('answer_end', undefined, timestamp, onTagEvent);
+          untaggedAnswerOpen = false;
+        }
         activeTag = nextTag;
         emit(START_EVENT_BY_TAG[nextTag], undefined, timestamp, onTagEvent);
       }
     }
   };
 
-  return { consume };
+  const flush = (timestamp: string, onTagEvent?: (event: StreamingTagEvent) => void) => {
+    if (activeTag) {
+      if (buffer) {
+        emit(CHUNK_EVENT_BY_TAG[activeTag], buffer, timestamp, onTagEvent);
+      }
+      emit(END_EVENT_BY_TAG[activeTag], undefined, timestamp, onTagEvent);
+      activeTag = null;
+      buffer = '';
+    } else if (options.emitUntaggedAsAnswer && buffer) {
+      emitUntaggedAnswer(buffer, timestamp, onTagEvent);
+      buffer = '';
+    }
+    if (untaggedAnswerOpen) {
+      emit('answer_end', undefined, timestamp, onTagEvent);
+      untaggedAnswerOpen = false;
+    }
+  };
+
+  return { consume, flush };
 };
 
 export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
@@ -322,7 +368,7 @@ export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
         throw new Error('Backend baseUrl missing.');
       }
 
-      const contentTagParser = createContentTagParser();
+      const contentTagParser = createContentTagParser({ emitUntaggedAsAnswer: true });
 
       const handleStreamEvent = (eventType: string, data: Record<string, unknown>) => {
         switch (eventType) {
@@ -409,6 +455,10 @@ export function useInterviewStream(options: UseInterviewStreamOptions = {}) {
           }
 
           case 'complete':
+            contentTagParser.flush(
+              typeof data.timestamp === 'string' ? data.timestamp : new Date().toISOString(),
+              onTagEvent
+            );
             finalResult = {
               ...(data as unknown as InterviewStreamResult),
               sessionId:

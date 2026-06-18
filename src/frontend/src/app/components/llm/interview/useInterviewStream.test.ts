@@ -177,4 +177,68 @@ describe('useInterviewStream', () => {
     expect(onTagEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'answer_end' }));
     await waitFor(() => expect(result.current.isStreaming).toBe(false));
   });
+
+  it('emits untagged content_chunk text as live answer chunks', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({
+      ok: true,
+      session_id: 'interactive-plain',
+      status: 'started',
+      channel: 'llm-interview:interactive-plain',
+      subject: 'hp.runtime.llm.interview.interactive-plain',
+      transport: 'nat-jetstream',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const onComplete = vi.fn();
+    const onTagEvent = vi.fn();
+    const { result } = renderHook(() =>
+      useInterviewStream({
+        onComplete,
+        onTagEvent,
+      })
+    );
+
+    let startPromise: Promise<void> | undefined;
+    act(() => {
+      startPromise = result.current.startStream({
+        roleId: 'pm',
+        providerId: 'anthropic_compat-1771249789301',
+        model: 'kimi-for-coding',
+        question: '请分析这个项目需求并制定实施计划。',
+        sessionId: 'interactive-plain',
+      });
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    emitInterviewChunk('llm-interview:interactive-plain', 'content_chunk', {
+      content: ' This',
+      timestamp: '2026-06-18T00:00:00.000Z',
+    });
+    emitInterviewChunk('llm-interview:interactive-plain', 'content_chunk', {
+      content: ' allows',
+      timestamp: '2026-06-18T00:00:01.000Z',
+    });
+    emitInterviewChunk('llm-interview:interactive-plain', 'complete', {
+      sessionId: 'interactive-plain',
+      answer: ' This allows',
+      ok: true,
+    });
+
+    await act(async () => {
+      await startPromise;
+    });
+
+    expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'interactive-plain' }));
+    expect(onTagEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'answer_start' }));
+    expect(onTagEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'answer_chunk',
+      data: expect.objectContaining({ content: ' This' }),
+    }));
+    expect(onTagEvent).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'answer_chunk',
+      data: expect.objectContaining({ content: ' allows' }),
+    }));
+    expect(onTagEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'answer_end' }));
+  });
 });

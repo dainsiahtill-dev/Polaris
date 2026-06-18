@@ -153,6 +153,32 @@ describe('PMTaskPanel', () => {
     expect(screen.getByTestId('pm-task-detail-provenance')).toHaveTextContent('BP-BACKEND-DETAIL');
   });
 
+  it('normalizes numeric selected task ids before loading backend task evidence', async () => {
+    getPmTaskMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        id: '123',
+        title: '数字 ID 任务详情',
+        status: 'pending',
+        priority: 1,
+      },
+    });
+
+    render(
+      <PMTaskPanel
+        tasks={[makeTask({ id: 123 as unknown as string, title: '数字 ID 任务' })]}
+        selectedTaskId={123 as unknown as string}
+        onTaskSelect={() => undefined}
+        pmRunning={false}
+        workspace="C:/Temp/Product"
+      />,
+    );
+
+    await waitFor(() => expect(getPmTaskMock).toHaveBeenCalledWith('123', 'C:/Temp/Product'));
+    expect(listPmTaskAssignmentsMock).toHaveBeenCalledWith('123', 100, 'C:/Temp/Product');
+    expect(screen.getByText('数字 ID 任务')).toBeInTheDocument();
+  });
+
   it('renders PM task assignment history from the backend assignment route', async () => {
     listPmTaskAssignmentsMock.mockResolvedValueOnce({
       ok: true,

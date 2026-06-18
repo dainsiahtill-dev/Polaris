@@ -36,7 +36,7 @@ import { TaskTraceTimeline } from '../common/TaskTraceTimeline';
 
 interface PMTaskPanelProps {
   tasks: PmTask[];
-  selectedTaskId: string | null;
+  selectedTaskId: string | number | null;
   onTaskSelect: (taskId: string | null) => void;
   onTaskCreated?: (task: PmTask) => void;
   pmRunning: boolean;
@@ -92,6 +92,17 @@ function EndpointBadge({
 
 function taskRecord(task: PmTask): PmTask & Record<string, unknown> {
   return task as PmTask & Record<string, unknown>;
+}
+
+function normalizeTaskId(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'bigint') return String(value);
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return normalizeTaskId(record.id ?? record.task_id);
+  }
+  return '';
 }
 
 function metadataOf(task: PmTask): Record<string, unknown> {
@@ -156,7 +167,7 @@ function readAcceptanceCriteria(task: PmTask): string[] {
 
 function readTaskSearchId(result: PmTaskSearchResult): string {
   const id = result.id ?? result.task_id;
-  return typeof id === 'string' ? id.trim() : '';
+  return normalizeTaskId(id);
 }
 
 function readTaskSearchMetadata(result: PmTaskSearchResult): Record<string, unknown> {
@@ -362,20 +373,21 @@ export function PMTaskPanel({
     error: null,
     task: null,
   });
+  const normalizedSelectedTaskId = normalizeTaskId(selectedTaskId);
   const selectedTaskProjection = useMemo(
-    () => tasks.find((task) => task.id === selectedTaskId) ??
-      (backendSelectedTask?.id === selectedTaskId ? backendSelectedTask : null),
-    [backendSelectedTask, tasks, selectedTaskId],
+    () => tasks.find((task) => normalizeTaskId(task.id) === normalizedSelectedTaskId) ??
+      (normalizeTaskId(backendSelectedTask?.id) === normalizedSelectedTaskId ? backendSelectedTask : null),
+    [backendSelectedTask, normalizedSelectedTaskId, tasks],
   );
   const selectedTask = useMemo(
     () => {
-      const backendDetail = taskDetailEvidence.taskId === selectedTaskId ? taskDetailEvidence.task : null;
+      const backendDetail = taskDetailEvidence.taskId === normalizedSelectedTaskId ? taskDetailEvidence.task : null;
       if (selectedTaskProjection && backendDetail) {
         return mergePmTaskDetailProjection(selectedTaskProjection, backendDetail);
       }
       return selectedTaskProjection ?? backendDetail;
     },
-    [selectedTaskId, selectedTaskProjection, taskDetailEvidence],
+    [normalizedSelectedTaskId, selectedTaskProjection, taskDetailEvidence],
   );
   const normalizedCreateDisabledReason = createDisabledReason.trim();
   const createTaskDisabled = normalizedCreateDisabledReason.length > 0;
@@ -420,7 +432,7 @@ export function PMTaskPanel({
   }, [searchQuery, workspace]);
 
   useEffect(() => {
-    const taskId = selectedTaskId?.trim();
+    const taskId = normalizedSelectedTaskId;
     if (!taskId) {
       setTaskDetailEvidence({
         taskId: '',
@@ -472,10 +484,10 @@ export function PMTaskPanel({
     return () => {
       isCurrent = false;
     };
-  }, [selectedTaskId, workspace]);
+  }, [normalizedSelectedTaskId, workspace]);
 
   useEffect(() => {
-    const taskId = selectedTaskId?.trim();
+    const taskId = normalizedSelectedTaskId;
     if (!taskId) {
       setAssignmentEvidence({
         taskId: '',
@@ -532,7 +544,7 @@ export function PMTaskPanel({
     return () => {
       isCurrent = false;
     };
-  }, [selectedTaskId, workspace]);
+  }, [normalizedSelectedTaskId, workspace]);
 
   const filteredTasks = useMemo(() => {
     let result = [...tasks];
@@ -555,7 +567,7 @@ export function PMTaskPanel({
       result = result.filter(
         (task) =>
           task.title?.toLowerCase().includes(query) ||
-          task.id?.toLowerCase().includes(query) ||
+          normalizeTaskId(task.id).toLowerCase().includes(query) ||
           task.summary?.toLowerCase().includes(query)
       );
     }
@@ -595,7 +607,7 @@ export function PMTaskPanel({
 
   const handleTaskClick = (task: PmTask) => {
     setBackendSelectedTask(null);
-    onTaskSelect(task.id);
+    onTaskSelect(normalizeTaskId(task.id) || null);
   };
 
   const handleTaskSearchResultClick = (result: PmTaskSearchResult) => {

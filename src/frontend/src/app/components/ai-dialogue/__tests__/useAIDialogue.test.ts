@@ -167,6 +167,39 @@ describe('useAIDialogue RoleSession bridge', () => {
     });
   });
 
+  it('normalizes attached task ids before sending RoleSession attach requests', async () => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === pmStatusPath) {
+        return Promise.resolve(jsonResponse({ ready: true, configured: true, role: 'pm' }));
+      }
+      if (path === '/v2/roles/sessions') {
+        return Promise.resolve(jsonResponse({ ok: true, session: { id: 'session-numeric' } }));
+      }
+      if (path === '/v2/roles/sessions/session-numeric/actions/attach') {
+        return Promise.resolve(jsonResponse({ ok: true, attachment: { id: 'attach-numeric' } }));
+      }
+      return Promise.resolve(jsonResponse({ ok: true }));
+    });
+
+    renderHook(() => useAIDialogue({
+      role: 'pm',
+      roleName: 'PM',
+      welcomeMessage: 'ready',
+      workspace: 'C:/Temp/Product',
+      context: { selected_task_id: 123 },
+      attachmentMode: 'attached_readonly',
+      attachedTaskId: 123 as unknown as string,
+    }));
+
+    await waitFor(() => findApiCall('/v2/roles/sessions/session-numeric/actions/attach'));
+
+    const [, attachInit] = findApiCall('/v2/roles/sessions/session-numeric/actions/attach');
+    expect(JSON.parse(String(attachInit?.body))).toMatchObject({
+      task_id: '123',
+      mode: 'attached_readonly',
+    });
+  });
+
   it('uses role chat Nat-JetStream before a RoleSession exists', async () => {
     apiFetchMock.mockImplementation((path: string) => {
       if (path === pmStatusPath) {

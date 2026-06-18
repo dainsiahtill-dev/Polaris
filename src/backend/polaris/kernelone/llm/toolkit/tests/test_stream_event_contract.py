@@ -7,6 +7,9 @@ from typing import Any
 import pytest
 from polaris.kernelone.llm.engine.contracts import AIRequest, AIStreamEvent, StreamEventType, TaskType
 from polaris.kernelone.llm.engine.stream_executor import StreamExecutor, _safe_text_length
+from polaris.kernelone.llm.provider_adapters.anthropic_messages_adapter import AnthropicMessagesAdapter
+from polaris.kernelone.llm.provider_adapters.base import AssistantMessage, ReasoningSummary
+from polaris.kernelone.llm.provider_adapters.openai_responses_adapter import OpenAIResponsesAdapter
 
 
 def test_ai_stream_event_defaults_do_not_leak_callable_defaults() -> None:
@@ -43,6 +46,68 @@ def test_safe_text_length_ignores_callable_values() -> None:
     assert _safe_text_length("abc") == 3
     assert _safe_text_length(probe.marker) == 0
     assert _safe_text_length(None) == 0
+
+
+@pytest.mark.parametrize(
+    ("raw_event", "expected_text", "expected_item_type"),
+    [
+        ({"choices": [{"delta": {"content": " This"}}]}, " This", AssistantMessage),
+        ({"type": "content_chunk", "content": " allows"}, " allows", AssistantMessage),
+        ({"content": " me"}, " me", AssistantMessage),
+        ({"delta": {"content": " to"}}, " to", AssistantMessage),
+        ({"message": {"content": " demonstrate"}}, " demonstrate", AssistantMessage),
+        ({"type": "response.output_text.delta", "delta": " comprehensive"}, " comprehensive", AssistantMessage),
+        ({"type": "response.reasoning_text.delta", "delta": " think"}, " think", ReasoningSummary),
+        (
+            {"candidates": [{"content": {"parts": [{"text": " PM"}]}}]},
+            " PM",
+            AssistantMessage,
+        ),
+    ],
+)
+def test_openai_adapter_decodes_common_provider_stream_shapes(
+    raw_event: dict[str, Any],
+    expected_text: str,
+    expected_item_type: type,
+) -> None:
+    """OpenAI-compatible adapter should normalize common LLM streaming deltas."""
+
+    decoded = OpenAIResponsesAdapter().decode_stream_event(raw_event)
+
+    assert decoded is not None
+    assert len(decoded.transcript_items) == 1
+    item = decoded.transcript_items[0]
+    assert isinstance(item, expected_item_type)
+    assert item.content == expected_text
+
+
+@pytest.mark.parametrize(
+    ("raw_event", "expected_text", "expected_item_type"),
+    [
+        (
+            {"type": "content_block_delta", "delta": {"type": "text_delta", "text": " across"}},
+            " across",
+            AssistantMessage,
+        ),
+        ({"type": "content_chunk", "content": " all"}, " all", AssistantMessage),
+        ({"delta": {"content": " evaluation"}}, " evaluation", AssistantMessage),
+        ({"type": "thinking_delta", "thinking": " risk"}, " risk", ReasoningSummary),
+    ],
+)
+def test_anthropic_adapter_decodes_common_compat_stream_shapes(
+    raw_event: dict[str, Any],
+    expected_text: str,
+    expected_item_type: type,
+) -> None:
+    """Anthropic-compatible adapter should normalize common Kimi/Claude-style deltas."""
+
+    decoded = AnthropicMessagesAdapter().decode_stream_event(raw_event)
+
+    assert decoded is not None
+    assert len(decoded.transcript_items) == 1
+    item = decoded.transcript_items[0]
+    assert isinstance(item, expected_item_type)
+    assert item.content == expected_text
 
 
 @pytest.mark.asyncio

@@ -76,7 +76,10 @@ class TestMiniMaxStreaming:
             "timeout": 30,
         }
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch(
+            "polaris.infrastructure.llm.providers.minimax_provider.get_stream_session",
+            AsyncMock(return_value=mock_session),
+        ):
             tokens = []
             async for token in provider.invoke_stream("Hi", "MiniMax-M2.1", config):
                 tokens.append(token)
@@ -105,7 +108,10 @@ class TestMiniMaxStreaming:
             "base_url": "https://api.test.com",
         }
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch(
+            "polaris.infrastructure.llm.providers.minimax_provider.get_stream_session",
+            AsyncMock(return_value=mock_session),
+        ):
             tokens = []
             async for token in provider.invoke_stream("Hi", "MiniMax-M2.1", config):
                 tokens.append(token)
@@ -131,7 +137,10 @@ class TestMiniMaxStreaming:
             "base_url": "https://api.test.com",
         }
 
-        with patch("aiohttp.ClientSession", return_value=mock_session):
+        with patch(
+            "polaris.infrastructure.llm.providers.minimax_provider.get_stream_session",
+            AsyncMock(return_value=mock_session),
+        ):
             tokens = []
             async for token in provider.invoke_stream("Hi", "MiniMax-M2.1", config):
                 tokens.append(token)

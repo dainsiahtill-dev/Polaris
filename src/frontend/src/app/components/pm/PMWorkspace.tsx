@@ -821,6 +821,20 @@ function PMBackendEvidenceStrip({
 
 type PMActiveView = 'tasks' | 'activity' | 'documents' | 'requirements' | 'history' | 'analytics' | 'workbench';
 
+function normalizeSelectedTaskId(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'bigint') return String(value);
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return normalizeSelectedTaskId(record.id ?? record.task_id);
+  }
+  return null;
+}
+
 export function PMWorkspace({
   tasks,
   pmState,
@@ -1042,9 +1056,9 @@ export function PMWorkspace({
     setActiveView(view);
   }, []);
 
-  const handleTaskSelect = useCallback((taskId: string | null) => {
+  const handleTaskSelect = useCallback((taskId: unknown) => {
     userSwitchedViewRef.current = true;
-    setSelectedTaskId(taskId);
+    setSelectedTaskId(normalizeSelectedTaskId(taskId));
     setActiveView('tasks');
   }, []);
 
