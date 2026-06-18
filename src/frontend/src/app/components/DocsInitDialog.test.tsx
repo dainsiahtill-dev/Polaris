@@ -2,8 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { DocsInitDialog } from './DocsInitDialog';
 
-vi.mock('@/hooks/useSSEStream', () => ({
-  useSSEStream: (options: {
+vi.mock("@/hooks/useNDJSONStream", () => ({
+  useNDJSONStream: (options: {
     onComplete?: (data: Record<string, unknown>) => void;
   } = {}) => ({
     isStreaming: false,

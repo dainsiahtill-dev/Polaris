@@ -3,7 +3,7 @@ import { RiAiGenerate2 } from 'react-icons/ri';
 import { Landmark, ScrollText, Stamp, Brain, ChevronLeft, Loader2, X, FileText, CheckCircle2 } from 'lucide-react';
 import { apiFetch } from '@/api';
 import { toast } from 'sonner';
-import { useSSEStream, type SSERawEvent } from '@/hooks/useSSEStream';
+import { useNDJSONStream, type NDJSONEvent } from '@/hooks/useNDJSONStream';
 import {
   normalizeDocsInitPreviewPayload,
   type DocsInitPreview,
@@ -172,7 +172,7 @@ export function DocsInitDialog({
 
   const streamingIndexRef = useRef<number>(-1);
 
-  const onRawEvent = useCallback((event: SSERawEvent) => {
+  const onRawEvent = useCallback((event: NDJSONEvent) => {
     if (event.type === 'reasoning_chunk') {
       const content = String(event.data.content || '');
       setDialogueTurns((prev) => {
@@ -197,7 +197,7 @@ export function DocsInitDialog({
   }, []);
 
   // Preview 流式进度事件处理
-  const onPreviewRawEvent = useCallback((event: SSERawEvent) => {
+  const onPreviewRawEvent = useCallback((event: NDJSONEvent) => {
     if (event.type === 'stage') {
       const data = event.data as { stage: string; message: string; progress: number; fields?: Record<string, string[]> };
       setPreviewProgress((prev) => ({
@@ -243,7 +243,7 @@ export function DocsInitDialog({
   }, []);
 
   const { isStreaming: isPreviewStreaming, startStream: startPreviewStream, stopStream: stopPreviewStream } =
-    useSSEStream({ onRawEvent: onPreviewRawEvent, onComplete: onPreviewComplete, onError: onPreviewError });
+    useNDJSONStream({ onEvent: onPreviewRawEvent, onComplete: onPreviewComplete, onError: onPreviewError });
 
   const onComplete = useCallback(
     (data: Record<string, unknown>) => {
@@ -315,7 +315,7 @@ export function DocsInitDialog({
     setDialoguing(false);
   }, []);
 
-  const { isStreaming, startStream, stopStream } = useSSEStream({ onRawEvent, onComplete, onError });
+  const { isStreaming, startStream, stopStream } = useNDJSONStream({ onEvent: onRawEvent, onComplete, onError });
 
   const runDialogue = async () => {
     const message = tingyiMessage.trim() || goal.trim();

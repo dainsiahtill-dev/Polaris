@@ -227,7 +227,10 @@ class TestSseEventGenerator:
             events.append(event)
 
         assert len(events) == 2
-        assert "data:" in events[0]
+        import json
+        parsed = json.loads(events[0])
+        assert parsed["type"] == "message"
+        assert parsed["data"]["text"] == "hello"
         assert "complete" in events[1]
         assert cleanup_called is True
 
@@ -304,8 +307,10 @@ class TestSseEventGeneratorTerminalErrors:
             events.append(event)
 
         assert len(events) == 1
-        assert events[0].startswith("event: error")
-        assert "provider stream failed" in events[0]
+        import json
+        parsed = json.loads(events[0])
+        assert parsed["type"] == "error"
+        assert "provider stream failed" in parsed["data"]["error"]
 
     @pytest.mark.asyncio
     async def test_task_completion_without_terminal_event_emits_error(self) -> None:
@@ -317,8 +322,10 @@ class TestSseEventGeneratorTerminalErrors:
             events.append(event)
 
         assert len(events) == 1
-        assert events[0].startswith("event: error")
-        assert "without a terminal event" in events[0]
+        import json
+        parsed = json.loads(events[0])
+        assert parsed["type"] == "error"
+        assert "without a terminal event" in parsed["data"]["error"]
 
     @pytest.mark.asyncio
     async def test_task_completion_without_terminal_event_does_not_wait_for_ping_timeout(self) -> None:
@@ -334,8 +341,10 @@ class TestSseEventGeneratorTerminalErrors:
         events = await asyncio.wait_for(collect_events(), timeout=0.5)
 
         assert len(events) == 1
-        assert events[0].startswith("event: error")
-        assert "without a terminal event" in events[0]
+        import json
+        parsed = json.loads(events[0])
+        assert parsed["type"] == "error"
+        assert "without a terminal event" in parsed["data"]["error"]
 
 
 # -----------------------------------------------------------------------------
@@ -351,10 +360,10 @@ class TestCreateSseResponse:
         """Verify SSE response has correct content-type and headers."""
 
         async def gen() -> AsyncGenerator[str, None]:
-            yield "event: message\ndata: {}\n\n"
+            yield '{"type": "message", "data": {}}\n'
 
         response = create_sse_response(gen())
 
-        assert response.media_type == "text/event-stream"
+        assert response.media_type == "application/x-ndjson"
         assert response.headers["Cache-Control"] == "no-cache"
         assert response.headers["Connection"] == "keep-alive"

@@ -10,6 +10,8 @@ export { useAgentsReview } from './useAgentsReview';
 export { useGeneralSettingsForm, mapSettingsToForm } from './useGeneralSettingsForm';
 export { useLlmConfig } from './useLlmConfig';
 export { useTerminal } from './useTerminal';
+export { useNDJSONStream } from './useNDJSONStream';
+/** @deprecated Use useNDJSONStream instead */
 export { useSSEStream } from './useSSEStream';
 
 // 新增：即时反馈 Hooks

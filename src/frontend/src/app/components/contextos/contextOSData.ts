@@ -68,6 +68,27 @@ export interface EventTypeSlice {
   colorClass: string;
 }
 
+export interface RoleInternalContext {
+  roleId: string;
+  title: string;
+  courtTitle: string;
+  state: PipelineState;
+  events: ContextOSEvent[];
+  eventCount: number;
+  projectionCount: number;
+  receiptCount: number;
+  contextItemsCount: number | null;
+  contextTokensLatest: number | null;
+  totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  calls: number;
+  lastEventAt: number | null;
+  currentTaskId: string | null;
+  currentTaskTitle: string | null;
+  detail: string;
+}
+
 export interface RoleCard {
   id: string;
   title: string;
@@ -82,6 +103,13 @@ export interface RoleCard {
    * 其余角色无 usage 通道，detail 以事件数/无观测呈现，不冒充 token 归因。
    */
   tokensReal: boolean;
+  /** 是否为只读辅助角色 */
+  readOnly?: boolean;
+  lastEventAt: number | null;
+  projectionCount: number;
+  contextItemsCount: number | null;
+  receiptCount: number;
+  internalContext: RoleInternalContext;
 }
 
 export interface DecisionRow {

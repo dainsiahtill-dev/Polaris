@@ -195,12 +195,12 @@ def verify_event_signature(
     return hmac.compare_digest(expected, signature)
 
 
-async def stream_event_generator(
+async def sse_event_generator(
     task_fn: Callable[[asyncio.Queue], Awaitable[None]],
     timeout: float = 180.0,
     cleanup_fn: Callable[[], Awaitable[None]] | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Run *task_fn* in a background ``asyncio.Task`` and yield NDJSON lines.
+    """Run *task_fn* in a background ``asyncio.Task`` and yield SSE frames.
 
     Parameters
     ----------
@@ -215,10 +215,6 @@ async def stream_event_generator(
     cleanup_fn:
         Optional async callable invoked in the ``finally`` block (e.g.
         to cancel a subprocess or release resources).
-
-    Wire format: one JSON object per line (NDJSON).  Each line is
-    ``{"type": "<event_type>", "data": {…}}``.  Terminal events have
-    ``type`` equal to ``"complete"`` or ``"error"``.
     """
     queue: asyncio.Queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAX_SIZE)
 
@@ -252,17 +248,17 @@ async def stream_event_generator(
                 event_data = event.get("data", {})
 
                 if event_type == _SSE_TASK_DONE_EVENT:
-                    yield json.dumps({"type": "error", "data": {"error": "stream completed without a terminal event"}}, ensure_ascii=False) + "\n"
+                    yield ('event: error\ndata: {"error": "SSE task completed without a terminal event"}\n\n')
                     break
                 elif event_type == "complete":
-                    yield json.dumps({"type": "complete", "data": event_data}, ensure_ascii=False) + "\n"
+                    yield f"event: complete\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
                     break
                 elif event_type == "error":
-                    yield json.dumps({"type": "error", "data": event_data}, ensure_ascii=False) + "\n"
+                    yield f"event: error\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
                     break
                 else:
-                    yield json.dumps({"type": event_type, "data": event_data}, ensure_ascii=False) + "\n"
-                    # Force flush to ensure immediate delivery
+                    yield f"event: {event_type}\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                    # Force flush to ensure immediate delivery (P0: SSE yield blocking fix)
                     await asyncio.sleep(0)
 
             except asyncio.TimeoutError:
@@ -273,11 +269,11 @@ async def stream_event_generator(
                         task_exception = None
                     if task_exception is not None:
                         error_text = str(task_exception) or type(task_exception).__name__
-                        yield json.dumps({"type": "error", "data": {"error": error_text}}, ensure_ascii=False) + "\n"
+                        yield f"event: error\ndata: {json.dumps({'error': error_text}, ensure_ascii=False)}\n\n"
                     else:
-                        yield json.dumps({"type": "error", "data": {"error": "stream completed without a terminal event"}}, ensure_ascii=False) + "\n"
+                        yield ('event: error\ndata: {"error": "SSE task completed without a terminal event"}\n\n')
                     break
-                yield json.dumps({"type": "ping", "data": {}}, ensure_ascii=False) + "\n"
+                yield "event: ping\ndata: {}\n\n"
                 # Force flush to ensure immediate delivery
                 await asyncio.sleep(0)
 
@@ -293,11 +289,11 @@ async def stream_event_generator(
                 logger.debug("[FIX] sse_utils.py silent exception: %s", exc)
 
 
-def create_streaming_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
-    """Wrap an NDJSON async generator into a properly-configured ``StreamingResponse``."""
+def create_sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
+    """Wrap an SSE async generator into a properly-configured ``StreamingResponse``."""
     return StreamingResponse(
         generator,
-        media_type="application/x-ndjson",
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
@@ -306,9 +302,6 @@ def create_streaming_response(generator: AsyncGenerator[str, None]) -> Streaming
     )
 
 
-# Backward-compatible aliases
-sse_event_generator = stream_event_generator
-create_sse_response = create_streaming_response
 # =============================================================================
 # JetStream SSE Consumer (for v2 protocol SSE endpoints)
 # =============================================================================
@@ -365,3 +358,245 @@ async def publish_to_jetstream(
     except (RuntimeError, ValueError) as exc:
         logger.warning("Failed to publish to JetStream: %s", exc)
         return False
+
+
+class SSEJetStreamConsumer:
+    """SSE consumer that reads from JetStream for remote event streaming.
+
+    This class provides a unified interface for SSE endpoints to consume events
+    from JetStream instead of direct push. Supports:
+    - Cursor-based resume with Last-Event-ID
+    - Ephemeral consumer per connection
+    - Graceful cleanup on disconnect
+
+    Example:
+        >>> consumer = SSEJetStreamConsumer(
+        ...     workspace_key="my-workspace",
+        ...     subject="hp.runtime.my-workspace.event.factory",
+        ...     last_event_id=0
+        ... )
+        >>> async for event in consumer.stream():
+        ...     yield format_sse_event(event)
+    """
+
+    def __init__(
+        self,
+        workspace_key: str,
+        subject: str,
+        last_event_id: int = 0,
+        timeout: float = 30.0,
+        consumer_name: str | None = None,
+    ) -> None:
+        """Initialize SSE JetStream consumer.
+
+        Args:
+            workspace_key: Workspace identifier for subject resolution.
+            subject: JetStream subject to subscribe to.
+            last_event_id: Last event ID for cursor-based resume.
+            timeout: Timeout for waiting on messages.
+            consumer_name: Optional consumer name (auto-generated if not provided).
+
+        SECURITY:
+            - Consumer names are cryptographically random to prevent
+              predictable ephemeral consumer collision attacks
+            - Workspace key is validated against injection patterns
+            - Subject is validated before connection
+        """
+        # SECURITY S4: Validate workspace key format
+        if not validate_workspace_key(workspace_key):
+            raise ValueError(f"Invalid workspace_key format: {workspace_key}")
+
+        # SECURITY S5: Validate subject pattern
+        if not validate_subject(subject):
+            raise ValueError(f"Invalid subject pattern: {subject}")
+
+        self.workspace_key = workspace_key
+        self.subject = subject
+        self.last_event_id = last_event_id
+        self.timeout = timeout
+        # SECURITY S4: Use cryptographically random suffix instead of predictable id(self)
+        self.consumer_name = consumer_name or f"sse-{workspace_key[:32]}-{secrets.token_hex(8)}"
+        self._consumer: Any = None
+        self._subscription: Any = None
+        self._jetstream: Any = None
+        self._closed = False
+        self._stream_iter: AsyncGenerator[dict[str, Any], None] | None = None
+        # SECURITY S3: Track processed event IDs for replay detection
+        self._processed_event_ids: set[str] = set()
+
+    @property
+    def is_connected(self) -> bool:
+        """Check if consumer is connected."""
+        return self._jetstream is not None and not self._closed
+
+    async def connect(self) -> bool:
+        """Connect to JetStream and create ephemeral consumer.
+
+        Returns:
+            True if connection succeeded.
+        """
+        try:
+            from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy
+            from polaris.infrastructure.messaging import JetStreamConstants, get_default_client
+
+            nats_client = await get_default_client()
+            self._jetstream = nats_client.jetstream
+
+            if not self._jetstream:
+                logger.warning("JetStream not available for SSE consumer")
+                return False
+
+            # Create ephemeral consumer with cursor-based delivery
+            consumer_config = ConsumerConfig(
+                durable_name=self.consumer_name,
+                deliver_policy=DeliverPolicy.BY_START_SEQUENCE,
+                opt_start_seq=self.last_event_id + 1 if self.last_event_id > 0 else 1,
+                ack_policy=AckPolicy.EXPLICIT,
+                ack_wait=JetStreamConstants.CONSUMER_ACK_WAIT_SECONDS,
+                max_deliver=JetStreamConstants.CONSUMER_MAX_DELIVER,
+                max_ack_pending=JetStreamConstants.CONSUMER_MAX_ACK_PENDING,
+            )
+
+            # Subscribe to subject
+            self._subscription = await self._jetstream.subscribe(
+                self.subject,
+                config=consumer_config,
+            )
+
+            logger.info(
+                f"SSE JetStream consumer created: {self.consumer_name} "
+                f"on {self.subject}, starting from cursor {self.last_event_id}"
+            )
+            return True
+
+        except (RuntimeError, ValueError) as e:
+            logger.error(f"Failed to connect SSE JetStream consumer: {e}")
+            return False
+
+    async def disconnect(self) -> None:
+        """Disconnect and cleanup consumer."""
+        self._closed = True
+
+        # Clean up cached stream iterator if exists
+        if self._stream_iter is not None:
+            self._stream_iter = None
+
+        if self._subscription:
+            try:
+                await self._subscription.unsubscribe()
+            except (RuntimeError, ValueError) as exc:
+                logger.debug("[FIX] sse_utils.py silent exception: %s", exc)
+        self._subscription = None
+        self._jetstream = None
+        logger.info(f"SSE JetStream consumer disconnected: {self.consumer_name}")
+
+    async def stream(self) -> AsyncGenerator[dict[str, Any], None]:
+        """Stream events from JetStream with security validations.
+
+        Yields:
+            Event dictionaries with cursor, timestamp, and payload.
+
+        SECURITY:
+            - S1: Payload size limits enforced
+            - S2: Schema validation for expected event structure
+            - S3: Timestamp freshness validation (replay attack protection)
+            - S3: Event ID deduplication (replay detection)
+        """
+        if not self._subscription and not await self.connect():
+            return
+
+        # Type narrowing: after the above check, _subscription is guaranteed to be non-None
+        assert self._subscription is not None
+
+        while not self._closed:
+            try:
+                msg = await asyncio.wait_for(
+                    self._subscription.next_msg(),
+                    timeout=self.timeout,
+                )
+                if msg:
+                    try:
+                        raw_data = msg.data
+                        # S2: Payload size validation (defense in depth with JetStream limits)
+                        if len(raw_data) > MAX_PAYLOAD_SIZE:
+                            logger.warning(
+                                f"Oversized message rejected: {len(raw_data)} bytes (max: {MAX_PAYLOAD_SIZE})"
+                            )
+                            await msg.ack()
+                            continue
+
+                        # S1: Parse with validation
+                        data = json.loads(raw_data.decode("utf-8", errors="replace"))
+
+                        # Extract event metadata for validation
+                        event_id = data.get("event_id", "")
+                        timestamp = data.get("ts") or data.get("_published_at")
+                        payload = data.get("payload", data)  # Fallback to entire message
+
+                        # S3: Timestamp freshness validation
+                        if not validate_event_timestamp(timestamp):
+                            logger.warning(
+                                f"Stale event rejected (replay attack prevention): event_id={event_id}, ts={timestamp}"
+                            )
+                            await msg.ack()
+                            continue
+
+                        # S3: Event ID deduplication (in-memory replay detection)
+                        if event_id and event_id in self._processed_event_ids:
+                            logger.debug(f"Duplicate event rejected: {event_id}")
+                            await msg.ack()
+                            continue
+                        if event_id:
+                            self._processed_event_ids.add(event_id)
+                            # Limit memory growth from replay tracking
+                            if len(self._processed_event_ids) > 10000:
+                                self._processed_event_ids = set(list(self._processed_event_ids)[-5000:])
+
+                        # Enrich with cursor and metadata
+                        event = {
+                            "cursor": self.last_event_id + 1,
+                            "ts": timestamp,
+                            "event_id": event_id,
+                            "payload": payload,
+                        }
+                        self.last_event_id += 1
+                        await msg.ack()
+                        yield event
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Invalid JSON in SSE message: {e}")
+                        await msg.ack()
+                    except (RuntimeError, ValueError) as e:
+                        logger.warning(f"SSE message processing error: {e}")
+                        await msg.ack()
+            except asyncio.TimeoutError:
+                # Yield keep-alive ping
+                yield {"type": "ping", "cursor": self.last_event_id}
+            except (RuntimeError, ValueError) as e:
+                if not self._closed:
+                    logger.warning(f"SSE stream error: {e}")
+                break
+
+    def __aiter__(self) -> SSEJetStreamConsumer:
+        """Return async iterator."""
+        return self
+
+    async def __anext__(self) -> dict[str, Any]:
+        """Get next event from the cached stream iterator.
+
+        Uses a cached generator to preserve stream state across calls,
+        ensuring events are not lost and cursor position is maintained.
+
+        Raises:
+            StopAsyncIteration: When stream is exhausted or closed.
+        """
+        # Initialize cached iterator on first call
+        if self._stream_iter is None:
+            self._stream_iter = self.stream()
+
+        # Get next non-ping event from the cached generator
+        async for event in self._stream_iter:
+            if event.get("type") == "ping":
+                continue
+            return event
+
+        raise StopAsyncIteration
