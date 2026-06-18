@@ -1,14 +1,16 @@
-"""End-to-end integration test for bench -> Factory backend.
+"""End-to-end integration test for bench -> Factory backend via /v2/factory/runs API.
 
-Runs a tiny in-process HTTP server that mimics the factory bench endpoints,
-then drives ``_emit_bench_event`` from the bench subprocess and asserts that:
+Runs a tiny in-process HTTP server that mimics the new Factory runs endpoints,
+then drives ``run_factory_chain`` from the bench and asserts that:
 
-  * the local JSONL in the workspace is written, AND
-  * the backend HTTP endpoint receives the same event.
+  * the mock backend receives the correct POST /v2/factory/runs payload,
+  * polling hits GET /v2/factory/runs/{run_id} until terminal,
+  * the audit-bundle is fetched via GET /v2/factory/runs/{run_id}/audit,
+  * ``chain_results`` carries ``qa_ran``, ``qa_passed``, ``exit_class``,
+  * ``exit_code`` is 0 for completed+passed, 1 for failed.
 
-This locks down the contract that the Factory panel can stream bench
-progress for any L1-L8 run, while the WS bridge still gets the local
-``runtime.events.jsonl`` copy.
+This locks down the contract that the new HTTP API flow replaces the legacy
+subprocess chain while keeping the same result shape.
 """
 
 from __future__ import annotations
@@ -26,15 +28,23 @@ from urllib.parse import urlparse
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
 from scripts.factory_bench.run_factory_bench import (
-    _emit_bench_event,
-    _push_bench_complete_to_backend,
-    _push_bench_session_to_backend,
-    configure_bench_backend,
+    map_factory_run_to_chain_results,
+    run_factory_chain,
 )
 
 
-class _RecordingBackend(BaseHTTPRequestHandler):
-    received: list[tuple[str, dict[str, Any]]] = []
+class _MockFactoryRunsBackend(BaseHTTPRequestHandler):
+    """Tiny HTTP server that mimics /v2/factory/runs endpoints."""
+
+    received: list[tuple[str, str, dict[str, Any]]] = []
+    # run_id -> status dict
+    run_states: dict[str, dict[str, Any]] = {}
+    # run_id -> audit bundle dict
+    audit_bundles: dict[str, dict[str, Any]] = {}
+    # run_id -> number of status polls received
+    poll_counts: dict[str, int] = {}
+    # run_id -> target terminal status for auto-transition (default: "completed")
+    transition_targets: dict[str, str] = {}
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
@@ -44,197 +54,244 @@ class _RecordingBackend(BaseHTTPRequestHandler):
         except ValueError:
             body = {"_raw": body_raw}
         path = urlparse(self.path).path
-        # Simulate the real factory router responses.
-        if path == "/v2/factory/bench/sessions":
-            response = json.dumps({"session_id": "bench-test-001", "status": "running"}).encode("utf-8")
-        elif path.endswith("/events"):
-            response = json.dumps({"appended": True}).encode("utf-8")
-        elif path.endswith("/complete"):
-            response = json.dumps({"updated": True}).encode("utf-8")
+        self.received.append(("POST", path, body))
+
+        response_body: bytes
+        if path == "/v2/factory/runs":
+            run_id = body.get("run_id", "factory-run-001")
+            self.run_states[run_id] = {
+                "run_id": run_id,
+                "status": "running",
+                "phase": "director_dispatch",
+            }
+            self.poll_counts[run_id] = 0
+            response_body = json.dumps({"run_id": run_id, "status": "running"}).encode("utf-8")
         else:
-            response = b"{}"
-        _RecordingBackend.received.append((path, body))
+            response_body = b"{}"
+
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(response)))
+        self.send_header("Content-Length", str(len(response_body)))
         self.end_headers()
-        self.wfile.write(response)
+        self.wfile.write(response_body)
+
+    def do_GET(self) -> None:
+        path = urlparse(self.path).path
+        self.received.append(("GET", path, {}))
+
+        response_body: bytes
+        if path.startswith("/v2/factory/runs/") and path.endswith("/audit"):
+            run_id = path.split("/")[4]
+            bundle = self.audit_bundles.get(run_id, {})
+            response_body = json.dumps(bundle).encode("utf-8")
+        elif path.startswith("/v2/factory/runs/"):
+            parts = path.split("/")
+            run_id = parts[4] if len(parts) >= 5 else ""
+            state = self.run_states.get(run_id, {"run_id": run_id, "status": "unknown"})
+            self.poll_counts[run_id] = self.poll_counts.get(run_id, 0) + 1
+            # Transition to the target terminal status on the second poll
+            # ONLY if the run was created by the POST handler (status="running")
+            # and not already in a terminal state.
+            current_status = state.get("status", "")
+            target = self.transition_targets.get(run_id, "completed")
+            if self.poll_counts.get(run_id, 0) >= 2 and current_status == "running":
+                state["status"] = target
+                if target == "completed" or target == "failed":
+                    state["phase"] = "qa_gate"
+            response_body = json.dumps(state).encode("utf-8")
+        else:
+            response_body = b"{}"
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
 
     def log_message(self, format: str, *args: Any) -> None:
-        return
+        return  # silence test output
 
 
-class TestBenchToBackendIntegration(unittest.TestCase):
+class TestFactoryRunsIntegration(unittest.TestCase):
     def setUp(self) -> None:
-        # Local workspace + cache_root (the WS bridge path).
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.workspace = Path(self._tmp.name) / "ws"
         self.workspace.mkdir(parents=True, exist_ok=True)
-        self.cache_root = Path(self._tmp.name) / "cache"
-        self.run_id = "factory-bench-test-run"
-        (self.cache_root / "runs" / self.run_id / "events").mkdir(parents=True)
-        (self.cache_root / "latest_run.json").write_text(json.dumps({"run_id": self.run_id}), encoding="utf-8")
-        # Tiny HTTP server that records every call.
-        self._server = HTTPServer(("127.0.0.1", 0), _RecordingBackend)
+
+        self._server = HTTPServer(("127.0.0.1", 0), _MockFactoryRunsBackend)
         self._port = self._server.server_address[1]
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         self.backend_url = f"http://127.0.0.1:{self._port}"
-        _RecordingBackend.received.clear()
+
+        _MockFactoryRunsBackend.received.clear()
+        _MockFactoryRunsBackend.run_states.clear()
+        _MockFactoryRunsBackend.audit_bundles.clear()
+        _MockFactoryRunsBackend.poll_counts.clear()
+        _MockFactoryRunsBackend.transition_targets.clear()
+
         self.addCleanup(self._server.shutdown)
         self.addCleanup(self._server.server_close)
         self.addCleanup(self._thread.join, 1.0)
 
-    def test_emit_writes_local_jsonl_and_posts_to_backend(self) -> None:
-        # Wire the bench subprocess state to our test backend.
-        sid = _push_bench_session_to_backend(
-            backend_url=self.backend_url,
-            work_dir=str(self.workspace),
-            project_ids=["L1-01", "L2-07"],
-            total=2,
-        )
-        self.assertEqual(sid, "bench-test-001")
-        configure_bench_backend(self.backend_url, sid)
-        # Drive the same helper that main() uses.
-        _emit_bench_event(
-            workspace=self.workspace,
-            project_id="L1-01",
-            level=1,
-            name="project.started",
-            summary="L1-01 starting",
-            cache_root=str(self.cache_root),
-        )
-        _emit_bench_event(
-            workspace=self.workspace,
-            project_id="L1-01",
-            level=1,
-            name="project.completed",
-            summary="L1-01 done",
-            cache_root=str(self.cache_root),
-        )
-        _emit_bench_event(
-            workspace=self.workspace,
-            project_id="L1-01",
-            level=1,
-            name="gate.evaluated",
-            summary="L1-01 chain_clean ok",
-            cache_root=str(self.cache_root),
-        )
-        # Mark the session complete (this is the main() exit step).
-        ok = _push_bench_complete_to_backend(
-            backend_url=self.backend_url,
-            session_id=sid,
-            success=True,
-            summary={"total": 2, "passed": 1, "failed": 1},
-        )
-        self.assertTrue(ok)
-        # --- local JSONL: chain subprocess path ---
-        local_events_file = self.cache_root / "runs" / self.run_id / "events" / "runtime.events.jsonl"
-        self.assertTrue(local_events_file.is_file())
-        local_lines = [json.loads(line) for line in local_events_file.read_text(encoding="utf-8").splitlines() if line]
-        local_names = [e["name"] for e in local_lines]
-        self.assertEqual(
-            local_names,
-            [
-                "factory_bench.project.started",
-                "factory_bench.project.completed",
-                "factory_bench.gate.evaluated",
+    def _setup_audit_bundle(self, run_id: str, *, qa_passed: bool = True) -> None:
+        """Pre-seed the audit bundle the mock will return for a run."""
+        _MockFactoryRunsBackend.audit_bundles[run_id] = {
+            "status": "completed",
+            "gates": [
+                {
+                    "gate_name": "quality_gate",
+                    "passed": qa_passed,
+                    "message": "QA passed" if qa_passed else "QA failed",
+                },
             ],
-        )
-        # --- backend: factory panel SSE path ---
-        backend_paths = [p for p, _ in _RecordingBackend.received]
-        self.assertIn("/v2/factory/bench/sessions", backend_paths)
-        event_calls = [p for p in backend_paths if p.endswith("/events")]
-        self.assertEqual(len(event_calls), 3)
-        self.assertTrue(any(p.endswith("/complete") for p in backend_paths))
-        # The backend events must carry the same canonical names the local
-        # JSONL emits — the Factory panel renders them by name.
-        backend_event_types = [
-            body.get("type") for path, body in _RecordingBackend.received if path.endswith("/events")
-        ]
-        self.assertEqual(
-            backend_event_types,
-            [
-                "factory_bench.project.started",
-                "factory_bench.project.completed",
-                "factory_bench.gate.evaluated",
+            "events_tail": [
+                {
+                    "stage": "director_dispatch",
+                    "result": {"total": 3, "successes": 3, "failures": 0, "blocked": 0},
+                },
             ],
-        )
+            "summary_json": {
+                "director": {"total": 3, "successes": 3, "failures": 0, "blocked": 0},
+                "integration_qa": {"ran": True, "passed": qa_passed},
+            },
+        }
 
-    def test_emit_works_when_backend_unreachable(self) -> None:
-        # No backend wiring -> local JSONL must still be written.
-        configure_bench_backend("", "")
-        ok = _emit_bench_event(
-            workspace=self.workspace,
-            project_id="L1-01",
-            level=1,
-            name="project.started",
-            summary="L1-01 starting",
-            cache_root=str(self.cache_root),
-        )
-        self.assertTrue(ok)
-        local_events_file = self.cache_root / "runs" / self.run_id / "events" / "runtime.events.jsonl"
-        self.assertTrue(local_events_file.is_file())
-        self.assertEqual(len(_RecordingBackend.received), 0)
+    def test_run_factory_chain_happy_path(self) -> None:
+        """Drive a project through run_factory_chain against the mock backend.
 
-    def test_emit_works_when_backend_fails(self) -> None:
-        # Backend pointed at a closed port -> local JSONL must still be
-        # written, the bench must NOT crash.
-        configure_bench_backend("http://127.0.0.1:1", "bench-test-001")
-        ok = _emit_bench_event(
-            workspace=self.workspace,
-            project_id="L1-01",
-            level=1,
-            name="project.started",
-            summary="L1-01 starting",
-            cache_root=str(self.cache_root),
-        )
-        self.assertTrue(ok)
-        local_events_file = self.cache_root / "runs" / self.run_id / "events" / "runtime.events.jsonl"
-        self.assertTrue(local_events_file.is_file())
-
-    def test_emit_pushes_to_backend_when_workspace_lacks_cache_root(self) -> None:
-        """Real bench runtime: work_dir is a plain parent dir, not a Polaris
-        workspace, so cache_root resolution fails. The backend push must
-        still happen — otherwise the Factory panel sees zero events even
-        though the chain ran. The local JSONL is a best-effort side
-        channel; the Factory HTTP path is the canonical real-time one.
+        Asserts:
+          - POST /v2/factory/runs is called with the workspace and directive.
+          - GET /v2/factory/runs/{run_id} is polled until terminal.
+          - GET /v2/factory/runs/{run_id}/audit is fetched.
+          - chain_results has qa_ran=True, qa_passed=True, exit_class="clean".
+          - exit_code is 0.
         """
-        # Plain empty workspace — no .polaris, no docs/, no cache_root.
-        plain_ws = Path(self._tmp.name) / "plain-parent"
-        plain_ws.mkdir(parents=True, exist_ok=True)
-        sid = _push_bench_session_to_backend(
+        project = {
+            "id": "L1-01",
+            "title": "Hello World",
+            "brief": "Print hello world",
+            "level": 1,
+            "test_focus": "basic output",
+        }
+        log_path = Path(self._tmp.name) / "chain.log"
+
+        # Pre-seed the audit bundle so the mock returns a completed+passed state.
+        self._setup_audit_bundle("factory-run-001", qa_passed=True)
+
+        result = run_factory_chain(
+            project,
+            self.workspace,
             backend_url=self.backend_url,
-            work_dir=str(plain_ws),
-            project_ids=["L1-01"],
-            total=1,
+            backend_token="",
+            timeout_s=30,
+            log_path=log_path,
         )
-        self.assertEqual(sid, "bench-test-001")
-        configure_bench_backend(self.backend_url, sid)
-        # DO NOT pass cache_root: this is the real bench runtime path.
-        ok = _emit_bench_event(
-            workspace=plain_ws,
-            project_id="L1-01",
-            level=1,
-            name="project.started",
-            summary="L1-01 starting (no cache_root)",
+
+        # --- backend contract assertions ---
+        post_calls = [
+            p for method, p, _ in _MockFactoryRunsBackend.received if method == "POST" and p == "/v2/factory/runs"
+        ]
+        self.assertEqual(len(post_calls), 1, "expected exactly one POST /v2/factory/runs")
+
+        get_status_calls = [
+            p
+            for method, p, _ in _MockFactoryRunsBackend.received
+            if method == "GET" and p.startswith("/v2/factory/runs/") and not p.endswith("/audit")
+        ]
+        self.assertGreaterEqual(len(get_status_calls), 2, "expected at least 2 status polls")
+
+        get_audit_calls = [
+            p for method, p, _ in _MockFactoryRunsBackend.received if method == "GET" and p.endswith("/audit")
+        ]
+        self.assertEqual(len(get_audit_calls), 1, "expected exactly one audit-bundle GET")
+
+        # --- result shape assertions ---
+        chain_results = result.get("chain_results")
+        self.assertIsInstance(chain_results, dict, "chain_results must be a dict")
+        self.assertEqual(chain_results.get("qa_ran"), True)
+        self.assertEqual(chain_results.get("qa_passed"), True)
+        self.assertEqual(chain_results.get("exit_class"), "clean")
+        self.assertEqual(result.get("exit_code"), 0)
+        self.assertEqual(result.get("run_id"), "factory-run-001")
+
+    def test_run_factory_chain_failed_qa(self) -> None:
+        """Mock returns a failed QA state; assert exit_code=1 and exit_class=qa_failed."""
+        project = {
+            "id": "L1-02",
+            "title": "Broken Project",
+            "brief": "A project that fails QA",
+            "level": 1,
+            "test_focus": "failure path",
+        }
+        log_path = Path(self._tmp.name) / "chain.log"
+
+        # The mock POST handler defaults to run_id "factory-run-001" when no
+        # run_id is in the payload. Pre-seed that ID with a failed state.
+        self._setup_audit_bundle("factory-run-001", qa_passed=False)
+        # Tell the mock to transition to "failed" instead of "completed".
+        _MockFactoryRunsBackend.transition_targets["factory-run-001"] = "failed"
+        # Override the run state to start from running.
+        _MockFactoryRunsBackend.run_states["factory-run-001"] = {
+            "run_id": "factory-run-001",
+            "status": "running",
+            "phase": "director_dispatch",
+        }
+
+        result = run_factory_chain(
+            project,
+            self.workspace,
+            backend_url=self.backend_url,
+            backend_token="",
+            timeout_s=30,
+            log_path=log_path,
         )
-        self.assertTrue(
-            ok,
-            "_emit_bench_event must succeed on the backend path even when the workspace has no Polaris cache_root",
+
+        chain_results = result.get("chain_results")
+        self.assertIsInstance(chain_results, dict)
+        self.assertEqual(chain_results.get("qa_ran"), True)
+        self.assertEqual(chain_results.get("qa_passed"), False)
+        self.assertEqual(chain_results.get("exit_class"), "qa_failed")
+        self.assertEqual(result.get("exit_code"), 1)
+
+    def test_map_factory_run_to_chain_results_director_partial(self) -> None:
+        """When status is failed but phase is not qa_gate, exit_class=director_partial."""
+        run_status = {"status": "failed", "phase": "director_dispatch"}
+        audit_bundle = {
+            "gates": [
+                {"gate_name": "quality_gate", "passed": False, "message": "director crashed"},
+            ],
+            "events_tail": [],
+            "summary_json": {},
+        }
+        chain_results = map_factory_run_to_chain_results(run_status, audit_bundle)
+        self.assertEqual(chain_results["qa_ran"], True)
+        self.assertEqual(chain_results["qa_passed"], False)
+        self.assertEqual(chain_results["exit_class"], "director_partial")
+
+    def test_map_factory_run_to_chain_results_hard_failed(self) -> None:
+        """When status is cancelled (not failed/completed), exit_class=hard_failed."""
+        run_status = {"status": "cancelled", "phase": "unknown"}
+        audit_bundle: dict[str, Any] = {"gates": [], "events_tail": [], "summary_json": {}}
+        chain_results = map_factory_run_to_chain_results(run_status, audit_bundle)
+        self.assertEqual(chain_results["qa_ran"], False)
+        self.assertEqual(chain_results["qa_passed"], False)
+        self.assertEqual(chain_results["exit_class"], "hard_failed")
+
+    def test_run_factory_chain_start_failure(self) -> None:
+        """When the backend returns a non-2xx on start, run_factory_chain returns exit_code=-1."""
+        # Point at a port with no server.
+        result = run_factory_chain(
+            {"id": "L1-03", "title": "Unreachable", "brief": "x", "level": 1, "test_focus": "x"},
+            self.workspace,
+            backend_url="http://127.0.0.1:1",
+            backend_token="",
+            timeout_s=5,
+            log_path=Path(self._tmp.name) / "chain.log",
         )
-        # The backend must have received the event.
-        event_calls = [p for p, _ in _RecordingBackend.received if p.endswith("/events")]
-        self.assertEqual(
-            len(event_calls),
-            1,
-            f"expected exactly one /events POST, got: {_RecordingBackend.received!r}",
-        )
-        # The event must carry the canonical name the Factory panel renders.
-        event_body = next(body for path, body in _RecordingBackend.received if path.endswith("/events"))
-        self.assertEqual(event_body.get("type"), "factory_bench.project.started")
-        self.assertEqual(event_body.get("meta", {}).get("project_id"), "L1-01")
+        self.assertEqual(result.get("exit_code"), -1)
+        self.assertEqual(result.get("error"), "start_failed")
 
 
 if __name__ == "__main__":
