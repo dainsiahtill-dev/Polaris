@@ -433,7 +433,7 @@ export function LogsModal({
     }
     setLive(true);
     const unsubscribe = subscribeChannels(
-      channels.map((channel) => ({ channel, tailLines: 200 })),
+      channels.map((channel) => ({ channel, tailLines: 0 })),
     );
 
     const unregister = registerMessageHandler((raw) => {
@@ -1125,4 +1125,3 @@ export function LogsModal({
     </div>
   );
 }
-

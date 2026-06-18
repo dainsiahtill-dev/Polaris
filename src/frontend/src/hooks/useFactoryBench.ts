@@ -9,10 +9,9 @@
  * JetStream subject ``hp.runtime.bench.<session_id>`` and the WebSocket's
  * JetStream consumer forwards every envelope to subscribers.
  *
- * There is no separate SSE / EventSource / HTTP-poll code path here — that
- * is the whole point of the unification. Adding a new ``event.bench:<id>``
- * channel in the WebSocket's subject builder is the only plumbing change
- * needed on the backend.
+ * There is one realtime path here: adding a new ``event.bench:<id>`` channel
+ * in the WebSocket's subject builder is the only plumbing change needed on
+ * the backend.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -130,8 +129,7 @@ export function useFactoryBench(
       // WebSocket's JetStream consumer subscribes to the corresponding
       // subject ``hp.runtime.bench.<session_id>`` and forwards every
       // envelope to the registered handler. This is the same pipeline
-      // log.llm / log.process / event.file_edit / etc. use — no SSE, no
-      // EventSource, no separate transport.
+      // log.llm / log.process / event.file_edit / etc. use.
       const channel = `event.bench:${sessionId}`;
       const subscriptions = [{ channel, tailLines: 0 }];
       const unsubscribe = subscribeChannels(subscriptions);

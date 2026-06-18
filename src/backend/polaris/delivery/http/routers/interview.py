@@ -394,14 +394,14 @@ async def v2_llm_interview_jetstream(request: Request, payload: InterviewAskPayl
 
 
 @router.post("/llm/interview/stream", dependencies=[Depends(require_auth)])  # DEPRECATED
-async def llm_interview_stream(request: Request, payload: InterviewAskPayload):
+async def llm_interview_stream(request: Request, payload: Any | None = None) -> None:
     """Removed SSE endpoint; use the Nat-JetStream interview endpoint."""
     del request, payload
     legacy_sse_removed("/v2/llm/interview/jetstream")
 
 
 @router.post("/v2/llm/interview/stream", dependencies=[Depends(require_auth)])
-async def v2_llm_interview_stream(request: Request, payload: InterviewAskPayload):
+async def v2_llm_interview_stream(request: Request, payload: Any | None = None) -> None:
     """Removed SSE endpoint; use the Nat-JetStream interview endpoint."""
     del request, payload
     legacy_sse_removed("/v2/llm/interview/jetstream")

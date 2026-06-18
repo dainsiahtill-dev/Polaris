@@ -791,7 +791,7 @@ async def send_agent_message_v2(
 async def send_agent_message_stream(
     request: Request,
     session_id: str,
-    payload: SessionMessageRequest,
+    payload: Any | None = None,
 ) -> None:
     """Removed SSE endpoint; use role-session Nat-JetStream."""
     del request, payload
@@ -802,7 +802,7 @@ async def send_agent_message_stream(
 async def send_agent_message_stream_v2(
     request: Request,
     session_id: str,
-    payload: SessionMessageRequest,
+    payload: Any | None = None,
 ) -> None:
     """Removed SSE endpoint; use role-session Nat-JetStream."""
     del request, payload

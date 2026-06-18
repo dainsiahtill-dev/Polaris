@@ -197,6 +197,46 @@ class TestBackendBootstrapperBootstrap:
         assert emitted_events == [(actual_port, True, "")]
         bootstrapper._select_port.assert_called_once_with(selected_port, host="127.0.0.1")
 
+    @pytest.mark.asyncio
+    async def test_create_server_allows_heavy_app_startup(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Heavy backend startup must not be killed by uvicorn's default 10s wait."""
+        startup_timeouts: list[float] = []
+
+        class FakeUvicornServerHandle:
+            def __init__(
+                self,
+                *,
+                app: object,
+                host: str,
+                port: int,
+                log_level: str,
+            ) -> None:
+                self.app = app
+                self.host = host
+                self.port = port
+                self.log_level = log_level
+
+            async def start(self, startup_timeout: float = 10.0) -> None:
+                startup_timeouts.append(startup_timeout)
+
+        monkeypatch.setattr(
+            "polaris.bootstrap.uvicorn_server.UvicornServerHandle",
+            FakeUvicornServerHandle,
+        )
+
+        handle = await BackendBootstrapper()._create_server(
+            app=object(),
+            request=BackendLaunchRequest(host="127.0.0.1", port=58123, workspace=tmp_path),
+            port=58123,
+        )
+
+        assert handle.port == 58123
+        assert startup_timeouts == [30.0]
+
 
 class TestBootstrapError:
     """Test BootstrapError exception."""

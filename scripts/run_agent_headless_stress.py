@@ -49,7 +49,6 @@ FORMAL_HTTP_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("GET", re.compile(r"^/v2/factory/runs/[^/]+$")),
     ("GET", re.compile(r"^/v2/factory/runs/[^/]+/events$")),
     ("GET", re.compile(r"^/v2/factory/runs/[^/]+/artifacts$")),
-    ("GET", re.compile(r"^/v2/factory/runs/[^/]+/stream$")),
 )
 LEAKAGE_KEYWORDS = (
     "you are",
@@ -235,7 +234,7 @@ class RoundReport:
     duration_seconds: float = 0.0
     role_readiness: dict[str, dict[str, Any]] = field(default_factory=dict)
     runtime_ws: dict[str, Any] = field(default_factory=dict)
-    factory_stream: dict[str, Any] = field(default_factory=dict)
+    factory_realtime: dict[str, Any] = field(default_factory=dict)
     snapshot_gate_passed: bool = False
     pm_quality: dict[str, Any] = field(default_factory=dict)
     director_lineage: dict[str, Any] = field(default_factory=dict)
@@ -750,67 +749,6 @@ class RuntimeWsCollector:
             self.stats["ping"] += 1
 
 
-class FactorySseCollector:
-    def __init__(self, client: httpx.AsyncClient, run_id: str) -> None:
-        self._client = client
-        self._run_id = run_id
-        self.stats: dict[str, Any] = {
-            "connected": False,
-            "status_events": 0,
-            "audit_events": 0,
-            "done_events": 0,
-            "errors": [],
-        }
-
-    async def run(self) -> None:
-        _ensure_formal_http_request_allowed(
-            "GET",
-            f"/v2/factory/runs/{self._run_id}/stream",
-        )
-        event_name = ""
-        data_lines: list[str] = []
-        try:
-            async with self._client.stream(
-                "GET",
-                f"/v2/factory/runs/{self._run_id}/stream",
-                timeout=None,
-            ) as response:
-                response.raise_for_status()
-                self.stats["connected"] = True
-                async for raw_line in response.aiter_lines():
-                    line = str(raw_line or "")
-                    if line == "":
-                        if event_name:
-                            self._record_event(event_name)
-                            if event_name == "done":
-                                return
-                        event_name = ""
-                        data_lines = []
-                        continue
-                    if line.startswith(":"):
-                        continue
-                    if line.startswith("event:"):
-                        event_name = line[len("event:") :].strip()
-                        continue
-                    if line.startswith("data:"):
-                        data_lines.append(line[len("data:") :].lstrip())
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            self.stats["errors"].append(f"{type(exc).__name__}: {exc}")
-
-    def _record_event(self, event_name: str) -> None:
-        normalized = str(event_name or "").strip().lower()
-        if normalized == "status":
-            self.stats["status_events"] += 1
-        elif normalized == "event":
-            self.stats["audit_events"] += 1
-        elif normalized == "done":
-            self.stats["done_events"] += 1
-        elif normalized:
-            self.stats["errors"].append(f"unexpected_sse_event:{normalized}")
-
-
 async def _request_json(
     client: httpx.AsyncClient,
     method: str,
@@ -938,8 +876,6 @@ async def _run_single_round(
     ws_stop = asyncio.Event()
     ws_collector = RuntimeWsCollector(base_url, token, str(workspace), DEFAULT_REQUIRED_ROLES)
     ws_task = asyncio.create_task(ws_collector.run(ws_stop))
-    sse_task: asyncio.Task[None] | None = None
-    sse_collector: FactorySseCollector | None = None
     try:
         payload = await _request_json(
             client,
@@ -963,9 +899,6 @@ async def _run_single_round(
             report.issues.append("factory_run_id_missing")
             return report
 
-        sse_collector = FactorySseCollector(client, report.run_id)
-        sse_task = asyncio.create_task(sse_collector.run())
-
         final_status = await _poll_factory_completion(
             client,
             report.run_id,
@@ -986,16 +919,15 @@ async def _run_single_round(
             ws_task.cancel()
             with suppress(Exception):
                 await ws_task
-        if sse_task is not None:
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(sse_task, timeout=5)
-            if not sse_task.done():
-                sse_task.cancel()
-                with suppress(Exception):
-                    await sse_task
 
     report.runtime_ws = dict(ws_collector.stats)
-    report.factory_stream = dict(sse_collector.stats if sse_collector is not None else {})
+    report.factory_realtime = {
+        "transport": "nat-jetstream",
+        "connected": bool(report.runtime_ws.get("connected")),
+        "total_messages": int(report.runtime_ws.get("total_messages") or 0),
+        "runtime_event": int(report.runtime_ws.get("runtime_event") or 0),
+        "errors": list(report.runtime_ws.get("errors") or []),
+    }
 
     snapshot = await _request_json(client, "GET", "/state/snapshot")
     snapshot_path = round_dir / "snapshot.json"
@@ -1070,8 +1002,6 @@ async def _run_single_round(
         report.issues.append(f"factory_status={report.factory_status or 'unknown'}")
     if int(report.runtime_ws.get("total_messages") or 0) <= 0:
         report.issues.append("runtime_ws_no_messages")
-    if int(report.factory_stream.get("done_events") or 0) <= 0:
-        report.issues.append("factory_sse_done_missing")
 
     latest_runtime_events = _find_latest_runtime_events_path(runtime_root_path) if runtime_root else ""
     if latest_runtime_events:
@@ -1255,7 +1185,7 @@ async def _run_async(args: argparse.Namespace) -> int:
                     f"project={report.project_name} factory={report.factory_status or '-'} "
                     f"qa={report.qa_result.get('reason') or '-'} "
                     f"issues={len(report.issues)} ws={report.runtime_ws.get('total_messages', 0)} "
-                    f"sse_done={report.factory_stream.get('done_events', 0)}"
+                    f"realtime={report.factory_realtime.get('transport', '-')}"
                 ),
                 flush=True,
             )

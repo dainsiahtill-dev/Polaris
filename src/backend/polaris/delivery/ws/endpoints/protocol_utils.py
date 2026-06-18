@@ -69,15 +69,15 @@ def build_v2_subscription_subjects(workspace_key: str, channels: list[str]) -> l
         if ch == "event.factory:all" or ch == "event.factory":
             # Workspace-scoped wildcard: the user's WebSocket is bound to
             # ``workspace_key`` at connect time, so this subject only fans
-            # in factory events for the current workspace. The factory SSE
-            # pattern is replaced by the same NAT JetStream + WebSocket
-            # transport the rest of the platform uses.
+            # in factory events for the current workspace through the same
+            # NAT JetStream + WebSocket transport the rest of the platform
+            # uses.
             subjects.add(f"hp.runtime.{workspace_key}.event.factory.>")
             continue
         if ch.startswith("event.factory:"):
             # Pin a specific factory run: ``event.factory:<run_id>`` maps to
-            # the same per-workspace subject the legacy SSE consumer used to
-            # subscribe to (``hp.runtime.<workspace_key>.event.factory.<run_id>``).
+            # the canonical per-workspace factory subject
+            # (``hp.runtime.<workspace_key>.event.factory.<run_id>``).
             run_id = ch[len("event.factory:") :].strip()
             if run_id and _is_safe_subject_token(run_id):
                 subjects.add(f"hp.runtime.{workspace_key}.event.factory.{run_id}")
@@ -88,8 +88,7 @@ def build_v2_subscription_subjects(workspace_key: str, channels: list[str]) -> l
             # regardless of workspace, so a single subscription here lets the
             # front-end observe every active chat session through the same
             # WebSocket that already carries log.llm / event.bench / etc.
-            # This is the chat-streaming replacement for the legacy
-            # ``/v2/role/{role}/chat/stream`` SSE endpoint.
+            # This is the canonical chat-streaming subject.
             subjects.add("hp.runtime.chat.>")
             continue
         if ch.startswith("chat:"):

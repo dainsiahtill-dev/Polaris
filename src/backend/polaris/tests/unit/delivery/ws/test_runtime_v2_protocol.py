@@ -105,6 +105,56 @@ async def test_repeated_subscribe_disconnects_previous_consumer(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
+async def test_subscribe_honors_zero_tail_for_live_only_runtime_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A runtime.v2 live-only subscription must not replay stale history."""
+    _FakeConsumerManager.instances = []
+    sent_payloads: list[dict[str, Any]] = []
+
+    async def _send_json_safe(*_args: Any, **_kwargs: Any) -> bool:
+        sent_payloads.append(_args[1])
+        return True
+
+    monkeypatch.setattr(protocol, "JetStreamConsumerManager", _FakeConsumerManager)
+    monkeypatch.setattr(protocol, "send_json_safe", _send_json_safe)
+
+    tail_ref = [200]
+    consumer_ref: list[Any] = [None]
+    client_id_ref = [""]
+    channels_ref: list[list[str]] = [[]]
+    cursor_ref = [0]
+
+    await protocol.handle_v2_message(
+        message={
+            "type": "SUBSCRIBE",
+            "protocol": "runtime.v2",
+            "client_id": "live-client",
+            "channels": ["process", "llm"],
+            "tail": 0,
+        },
+        websocket=object(),
+        status_sig="",
+        connection_id="abc123",
+        client="test-client",
+        workspace="C:/workspace",
+        cache_root="C:/runtime",
+        roles_filter=set(),
+        tail_lines_ref=tail_ref,
+        consumer_manager_ref=consumer_ref,
+        client_id_ref=client_id_ref,
+        channels_ref=channels_ref,
+        cursor_ref=cursor_ref,
+        state=object(),
+        handle_event_query_func=None,
+    )
+
+    assert consumer_ref[0].tail == 0
+    assert tail_ref[0] == 0
+    assert sent_payloads[-1]["type"] == "SUBSCRIBED"
+
+
+@pytest.mark.asyncio
 async def test_partial_unsubscribe_keeps_consumer_connected(monkeypatch: pytest.MonkeyPatch) -> None:
     """Partial channel unsubscribe should not disconnect runtime.v2 consumer."""
     _FakeConsumerManager.instances = []

@@ -99,11 +99,16 @@ async def run_main_loop(
             if realtime_task is not None:
                 wait_set.add(realtime_task)
 
-            # Add v2 consumer task if active
-            v2_poll_task = None
+            # Keep one v2 consumer task per connection. A second abandoned
+            # next_message() task can drain JetStream events before this loop
+            # gets a chance to forward them to the browser.
             if v2_consumer_manager and v2_consumer_manager.is_connected:
-                v2_poll_task = asyncio.create_task(v2_consumer_manager.next_message(timeout=0.1))
+                if v2_poll_task is None:
+                    v2_poll_task = asyncio.create_task(v2_consumer_manager.next_message(timeout=0.1))
                 wait_set.add(v2_poll_task)
+            elif v2_poll_task is not None:
+                v2_poll_task.cancel()
+                v2_poll_task = None
 
             done, _ = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
 
@@ -120,6 +125,7 @@ async def run_main_loop(
                         active = False
                         continue
                     raise
+                previous_v2_consumer_manager = v2_consumer_manager
                 (
                     status_sig,
                     tail_lines,
@@ -149,6 +155,9 @@ async def run_main_loop(
                     send_status_func=send_status_func,
                     send_all_snapshots_func=send_all_snapshots_func,
                 )
+                if previous_v2_consumer_manager is not v2_consumer_manager and v2_poll_task is not None:
+                    v2_poll_task.cancel()
+                    v2_poll_task = None
                 receive_task = asyncio.create_task(websocket.receive_text())
 
             signal_triggered = False
@@ -199,6 +208,7 @@ async def run_main_loop(
             # Handle v2 JetStream messages
             if v2_poll_task is not None and v2_poll_task in done:
                 v2_event = v2_poll_task.result()
+                v2_poll_task = None
                 if v2_event and isinstance(v2_event, RuntimeEventEnvelope):
                     event_cursor = v2_event.cursor
                     v2_sent = await send_json_safe(
@@ -269,12 +279,6 @@ async def run_main_loop(
                         client=client,
                         workspace=resolved_workspace,
                     )
-
-            # Cancel leaked v2 poll task
-            if v2_poll_task is not None and v2_poll_task not in done:
-                v2_poll_task.cancel()
-                with suppress(asyncio.CancelledError, Exception):
-                    await v2_poll_task
 
     finally:
         active = False

@@ -1,9 +1,6 @@
-"""Tests for polaris.delivery.http.routers.sse_utils module.
+"""Tests for Nat-JetStream publication safety helpers.
 
 Covers:
-- sse_jetstream_generator: normal iteration, early break, exception exit
-- SSEJetStreamConsumer: connect, disconnect, stream
-- sse_event_generator: cleanup on exit
 - Security validation functions: subject, workspace key, payload size, timestamp
 
 SECURITY TESTS:
@@ -16,26 +13,20 @@ SECURITY TESTS:
 
 from __future__ import annotations
 
-import asyncio
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
 
 import pytest
+from polaris.delivery.http.routers import sse_utils
 from polaris.delivery.http.routers.sse_utils import (
-    create_sse_response,
     generate_event_signature,
-    sse_event_generator,
+    publish_to_jetstream,
     validate_event_timestamp,
     validate_payload_size,
     validate_subject,
     validate_workspace_key,
     verify_event_signature,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
 
 # =============================================================================
 # Security Validation Tests
@@ -200,170 +191,28 @@ class TestSecurityValidation:
         assert verify_event_signature(event_id, timestamp, tampered_payload, signature) is False
 
 
-# -----------------------------------------------------------------------------
-# Tests for sse_event_generator
-# -----------------------------------------------------------------------------
-
-
-class TestSseEventGenerator:
-    """Tests for sse_event_generator utility."""
+class TestNatJetStreamPublication:
+    """Tests for the unified Nat-JetStream publication helper."""
 
     @pytest.mark.asyncio
-    async def test_normal_completion(self) -> None:
-        """Verify normal completion with complete event."""
+    async def test_invalid_subject_is_rejected_before_publish(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Subject injection attempts must not reach the messaging client."""
 
-        async def task_fn(queue: asyncio.Queue) -> None:
-            await queue.put({"type": "message", "data": {"text": "hello"}})
-            await queue.put({"type": "complete", "data": {}})
+        async def fail_if_called() -> object:
+            raise AssertionError("messaging client should not be requested for invalid subjects")
 
-        cleanup_called = False
+        monkeypatch.setattr(sse_utils, "get_default_client", fail_if_called, raising=False)
 
-        async def cleanup() -> None:
-            nonlocal cleanup_called
-            cleanup_called = True
-
-        events = []
-        async for event in sse_event_generator(task_fn, cleanup_fn=cleanup):
-            events.append(event)
-
-        assert len(events) == 2
-        import json
-        parsed = json.loads(events[0])
-        assert parsed["type"] == "message"
-        assert parsed["data"]["text"] == "hello"
-        assert "complete" in events[1]
-        assert cleanup_called is True
+        assert await publish_to_jetstream("../bad", {"event": "x"}) is False
 
     @pytest.mark.asyncio
-    async def test_error_completion(self) -> None:
-        """Verify error event triggers cleanup."""
+    async def test_missing_jetstream_client_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Publication failure is explicit when Nat-JetStream is unavailable."""
+        import polaris.infrastructure.messaging as messaging
 
-        async def task_fn(queue: asyncio.Queue) -> None:
-            await queue.put({"type": "error", "data": {"message": "failed"}})
-
-        cleanup_called = False
-
-        async def cleanup() -> None:
-            nonlocal cleanup_called
-            cleanup_called = True
-
-        events = []
-        async for event in sse_event_generator(task_fn, cleanup_fn=cleanup):
-            events.append(event)
-
-        assert len(events) == 1
-        assert "error" in events[0]
-        assert cleanup_called is True
-
-    @pytest.mark.asyncio
-    async def test_early_break(self) -> None:
-        """Verify early break triggers cleanup.
-
-        Note: Python does not automatically close async generators when
-        iteration exits early. Our finally block schedules cleanup, which
-        runs when the generator is garbage collected or explicitly closed.
-        We verify cleanup by explicitly closing the generator.
-        """
-
-        async def task_fn(queue: asyncio.Queue) -> None:
-            for i in range(100):
-                await queue.put({"type": "message", "data": {"text": str(i)}})
-
-        cleanup_called = False
-
-        async def cleanup() -> None:
-            nonlocal cleanup_called
-            cleanup_called = True
-
-        generator = sse_event_generator(task_fn, cleanup_fn=cleanup)
-        events = []
-        async for event in generator:
-            events.append(event)
-            if len(events) >= 3:
-                break
-
-        # Explicitly close the generator to trigger finally block
-        await generator.aclose()
-
-        assert len(events) == 3
-        assert cleanup_called is True
-
-
-# -----------------------------------------------------------------------------
-# Tests for SSEJetStreamConsumer
-# -----------------------------------------------------------------------------
-
-
-class TestSseEventGeneratorTerminalErrors:
-    """Regression tests for non-terminal task failures in direct SSE streams."""
-
-    @pytest.mark.asyncio
-    async def test_unexpected_task_exception_emits_terminal_error(self) -> None:
-        async def failing_task(_queue: asyncio.Queue[dict[str, Any]]) -> None:
-            raise OSError("provider stream failed")
-
-        events: list[str] = []
-        async for event in sse_event_generator(failing_task, timeout=0.01):
-            events.append(event)
-
-        assert len(events) == 1
-        import json
-        parsed = json.loads(events[0])
-        assert parsed["type"] == "error"
-        assert "provider stream failed" in parsed["data"]["error"]
-
-    @pytest.mark.asyncio
-    async def test_task_completion_without_terminal_event_emits_error(self) -> None:
-        async def no_terminal_event(_queue: asyncio.Queue[dict[str, Any]]) -> None:
+        async def no_client() -> None:
             return None
 
-        events: list[str] = []
-        async for event in sse_event_generator(no_terminal_event, timeout=0.01):
-            events.append(event)
+        monkeypatch.setattr(messaging, "get_default_client", no_client)
 
-        assert len(events) == 1
-        import json
-        parsed = json.loads(events[0])
-        assert parsed["type"] == "error"
-        assert "without a terminal event" in parsed["data"]["error"]
-
-    @pytest.mark.asyncio
-    async def test_task_completion_without_terminal_event_does_not_wait_for_ping_timeout(self) -> None:
-        async def no_terminal_event(_queue: asyncio.Queue[dict[str, Any]]) -> None:
-            return None
-
-        async def collect_events() -> list[str]:
-            events: list[str] = []
-            async for event in sse_event_generator(no_terminal_event, timeout=30.0):
-                events.append(event)
-            return events
-
-        events = await asyncio.wait_for(collect_events(), timeout=0.5)
-
-        assert len(events) == 1
-        import json
-        parsed = json.loads(events[0])
-        assert parsed["type"] == "error"
-        assert "without a terminal event" in parsed["data"]["error"]
-
-
-# -----------------------------------------------------------------------------
-# Tests for create_sse_response
-# -----------------------------------------------------------------------------
-
-
-class TestCreateSseResponse:
-    """Tests for create_sse_response utility."""
-
-    @pytest.mark.asyncio
-    async def test_response_has_correct_headers(self) -> None:
-        """Verify SSE response has correct content-type and headers."""
-
-        async def gen() -> AsyncGenerator[str, None]:
-            yield '{"type": "message", "data": {}}\n'
-
-        response = create_sse_response(gen())
-
-        assert response.media_type == "application/x-ndjson"
-        assert response.headers["Cache-Control"] == "no-cache"
-        assert response.headers["Connection"] == "keep-alive"
+        assert await publish_to_jetstream("hp.runtime.test.event", {"event": "x"}) is False

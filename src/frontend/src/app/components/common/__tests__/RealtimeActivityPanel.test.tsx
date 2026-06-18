@@ -35,4 +35,22 @@ describe('RealtimeActivityPanel', () => {
 
     expect(screen.getByText('EXEC')).toBeInTheDocument();
   });
+
+  it('auto-selects the log view when only process runtime events are available', async () => {
+    const processLogs: LogEntry[] = [
+      {
+        id: 'process-1',
+        timestamp: '2026-05-23T00:00:00Z',
+        level: 'info',
+        source: 'Process',
+        message: 'PLAYWRIGHT_NAT_JETSTREAM_MARKER visible in role workspace',
+        meta: { channel: 'process', streamKind: 'execution' },
+      },
+    ];
+
+    render(<RealtimeActivityPanel processStreamEvents={processLogs} role="chief_engineer" />);
+
+    expect(await screen.findByText('PLAYWRIGHT_NAT_JETSTREAM_MARKER visible in role workspace')).toBeInTheDocument();
+    expect(screen.getByText('PROC')).toBeInTheDocument();
+  });
 });

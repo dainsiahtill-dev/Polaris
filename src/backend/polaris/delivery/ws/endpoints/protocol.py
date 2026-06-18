@@ -123,8 +123,8 @@ async def handle_v2_message(
         cursor_ref[0] = int(message.get("cursor", 0) or 0)
 
         # Get tail count
-        tail_request = message.get("tail", 200)
-        if isinstance(tail_request, int) and tail_request > 0:
+        tail_request = message.get("tail", tail_lines_ref[0])
+        if isinstance(tail_request, int) and not isinstance(tail_request, bool) and tail_request >= 0:
             tail_lines_ref[0] = tail_request
 
         requested_workspace = str(message.get("workspace") or "").strip()

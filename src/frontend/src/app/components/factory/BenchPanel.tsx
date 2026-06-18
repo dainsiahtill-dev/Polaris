@@ -1,8 +1,8 @@
 /**
  * BenchPanel — a Factory sub-panel that streams L1-L8 bench progress in
  * real time. Driven by `useFactoryBench`; no polling, all events arrive
- * over SSE so the user sees the same data the WS bridge tail sees, but
- * keyed to the bench session instead of the chain subprocess workspace.
+ * over the unified Nat-JetStream/WebSocket runtime transport, keyed to the
+ * bench session instead of the chain subprocess workspace.
  */
 
 import { useMemo } from 'react';

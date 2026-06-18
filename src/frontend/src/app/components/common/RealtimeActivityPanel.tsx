@@ -108,6 +108,36 @@ function isToolStreamEvent(token: string): boolean {
   return token === 'tool_call' || token === 'tool_result';
 }
 
+function activityLogMatchesView(log: LogEntry, view: ActivityView): boolean {
+  if (view === 'files') return true;
+  const token = streamEventToken(log);
+  if (view === 'thinking') {
+    return isThinkingStreamEvent(token) || log.level === 'thinking';
+  }
+  if (view === 'tools') {
+    return isToolStreamEvent(token) || log.level === 'tool' || log.level === 'exec';
+  }
+  if (view === 'logs') {
+    if (isThinkingStreamEvent(token) || isToolStreamEvent(token)) return false;
+    return log.level === 'info' || log.level === 'warning';
+  }
+  return false;
+}
+
+function filterLogsForView(logs: LogEntry[], view: ActivityView): LogEntry[] {
+  if (view === 'files') return logs;
+  return logs.filter((log) => activityLogMatchesView(log, view));
+}
+
+function firstNonEmptyActivityView(logs: LogEntry[]): ActivityView | null {
+  for (const view of ['logs', 'tools', 'thinking'] as const) {
+    if (logs.some((log) => activityLogMatchesView(log, view))) {
+      return view;
+    }
+  }
+  return logs.length > 0 ? 'files' : null;
+}
+
 // 状态描述映射
 const PHASE_DESCRIPTIONS: Record<string, { text: string; icon: React.ReactNode; color: string }> = {
   'idle': { text: '等待指令', icon: <Clock className="w-4 h-4" />, color: 'text-slate-400' },
@@ -129,6 +159,7 @@ export function RealtimeActivityPanel({
   role = 'pm',
 }: RealtimeActivityPanelProps) {
   const [activeView, setActiveView] = useState<ActivityView>('thinking');
+  const [manualViewSelected, setManualViewSelected] = useState(false);
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
   const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -152,27 +183,21 @@ export function RealtimeActivityPanel({
 
   // 过滤日志
   const filteredLogs = useMemo(() => {
-    if (activeView === 'thinking') {
-      return allLogs.filter((l) => {
-        const token = streamEventToken(l);
-        return isThinkingStreamEvent(token) || l.level === 'thinking';
-      });
-    }
-    if (activeView === 'tools') {
-      return allLogs.filter((l) => {
-        const token = streamEventToken(l);
-        return isToolStreamEvent(token) || l.level === 'tool' || l.level === 'exec';
-      });
-    }
-    if (activeView === 'logs') {
-      return allLogs.filter((l) => {
-        const token = streamEventToken(l);
-        if (isThinkingStreamEvent(token) || isToolStreamEvent(token)) return false;
-        return l.level === 'info' || l.level === 'warning';
-      });
-    }
-    return allLogs;
+    return filterLogsForView(allLogs, activeView);
   }, [allLogs, activeView]);
+
+  useEffect(() => {
+    if (manualViewSelected || allLogs.length === 0 || filteredLogs.length > 0) return;
+    const nextView = firstNonEmptyActivityView(allLogs);
+    if (nextView && nextView !== activeView) {
+      setActiveView(nextView);
+    }
+  }, [activeView, allLogs, filteredLogs.length, manualViewSelected]);
+
+  const selectActivityView = (view: ActivityView) => {
+    setManualViewSelected(true);
+    setActiveView(view);
+  };
 
   // 获取当前状态描述
   const currentStatus = PHASE_DESCRIPTIONS[currentPhase] || PHASE_DESCRIPTIONS['idle'];
@@ -238,28 +263,28 @@ export function RealtimeActivityPanel({
             icon={<Brain className="w-3.5 h-3.5" />}
             label="思考"
             active={activeView === 'thinking'}
-            onClick={() => setActiveView('thinking')}
+            onClick={() => selectActivityView('thinking')}
             color="purple"
           />
           <ViewTab
             icon={<Wrench className="w-3.5 h-3.5" />}
             label="工具"
             active={activeView === 'tools'}
-            onClick={() => setActiveView('tools')}
+            onClick={() => selectActivityView('tools')}
             color="cyan"
           />
           <ViewTab
             icon={<ScrollText className="w-3.5 h-3.5" />}
             label="日志"
             active={activeView === 'logs'}
-            onClick={() => setActiveView('logs')}
+            onClick={() => selectActivityView('logs')}
             color="blue"
           />
           <ViewTab
             icon={<FileCode className="w-3.5 h-3.5" />}
             label="文件"
             active={activeView === 'files'}
-            onClick={() => setActiveView('files')}
+            onClick={() => selectActivityView('files')}
             color="emerald"
           />
         </div>

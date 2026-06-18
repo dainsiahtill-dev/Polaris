@@ -408,7 +408,7 @@ async def role_chat_stream(
 
 
 # ============================================================================
-# JetStream-backed Role Chat Endpoint (replaces /chat/stream SSE)
+# JetStream-backed Role Chat Endpoint (replaces removed /chat/stream route)
 # ============================================================================
 
 
@@ -425,8 +425,8 @@ async def role_chat_jetstream(
 ) -> dict[str, Any]:
     """Start a role chat turn and stream chunks via NAT JetStream WebSocket.
 
-    Replaces the legacy ``/v2/role/{role}/chat/stream`` SSE endpoint. The
-    HTTP response returns immediately with a ``session_id``; the LLM runs
+    Replaces the removed ``/v2/role/{role}/chat/stream`` route. The HTTP
+    response returns immediately with a ``session_id``; the LLM runs
     in the background and publishes every chunk (thinking_chunk /
     content_chunk / tool_call / tool_result / complete / error) to the
     JetStream subject ``hp.runtime.chat.<session_id>``.

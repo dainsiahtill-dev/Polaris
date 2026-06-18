@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -191,59 +190,3 @@ async def execute_role_chat_nonstreaming(
             "context_os_expected": True,
         },
     }
-
-
-async def execute_role_chat_streaming(
-    *,
-    role: str,
-    workspace: str,
-    message: str,
-    output_queue: asyncio.Queue[dict[str, Any]],
-    payload: Mapping[str, Any] | None,
-    default_domain: str,
-    host_kind: str,
-    context: Mapping[str, Any] | None = None,
-    session_id: str | None = None,
-    run_id: str | None = None,
-    task_id: str | None = None,
-    history: tuple[tuple[str, str], ...] | list[tuple[str, str]] | None = None,
-) -> None:
-    """Stream a role chat turn through roles.runtime into an SSE event queue."""
-    command = _build_session_command(
-        role=role,
-        workspace=workspace,
-        message=message,
-        payload=payload,
-        default_domain=default_domain,
-        host_kind=host_kind,
-        stream=True,
-        context=context,
-        session_id=session_id,
-        run_id=run_id,
-        task_id=task_id,
-        history=history,
-    )
-    saw_terminal = False
-    async for event in RoleRuntimeService().stream_chat_turn(command):
-        queued = _queue_event_from_runtime_event(event)
-        event_type = str(queued.get("type") or "")
-        await output_queue.put(queued)
-        if event_type in {"complete", "error"}:
-            saw_terminal = True
-            break
-    if not saw_terminal:
-        await output_queue.put(
-            {
-                "type": "complete",
-                "data": {
-                    "content": "",
-                    "thinking": "",
-                    "metadata": {
-                        "role_runtime_entrypoint": _RUNTIME_ENTRYPOINT_STREAM,
-                        "context_os_expected": True,
-                        "runtime_fallback_used": False,
-                        "fallback_policy": "fail_closed",
-                    },
-                },
-            }
-        )

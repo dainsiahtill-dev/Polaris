@@ -499,6 +499,7 @@ const CHIEF_HANDOFF_BLOCKER_LABELS: Record<string, string> = {
 };
 
 const CHIEF_HANDOFF_HARD_ISSUES = new Set(Object.keys(CHIEF_HANDOFF_BLOCKER_LABELS));
+const STALE_BLUEPRINT_COVERAGE_ISSUES = new Set(['blueprint_coverage_incomplete', 'blueprint_handoff_not_ready']);
 const CHIEF_GENERATE_BLOCKER_LABELS: Record<string, string> = {
   workspace_unavailable: '工作区不可用',
   llm_not_ready: 'Chief Engineer LLM 未就绪',
@@ -919,9 +920,13 @@ export function ChiefEngineerWorkspace({
     () => buildBlueprintEvidence(directorTaskEvidenceRows),
     [directorTaskEvidenceRows],
   );
+  const runtimeBlueprintEvidence = useMemo(
+    () => buildRuntimeBlueprintEvidence(runtimeBlueprints),
+    [runtimeBlueprints],
+  );
   const blueprintEvidence = useMemo(() => {
     const byKey = new Map<string, BlueprintEvidence>();
-    for (const item of buildRuntimeBlueprintEvidence(runtimeBlueprints)) {
+    for (const item of runtimeBlueprintEvidence) {
       byKey.set(item.blueprintId || item.blueprintPath || item.taskId, item);
     }
     for (const item of taskBlueprintEvidence) {
@@ -931,7 +936,7 @@ export function ChiefEngineerWorkspace({
       }
     }
     return Array.from(byKey.values());
-  }, [runtimeBlueprints, taskBlueprintEvidence]);
+  }, [runtimeBlueprintEvidence, taskBlueprintEvidence]);
   const stats = useMemo(() => {
     const rows = directorTaskEvidenceRows.map(taskStatus);
     return {
@@ -957,23 +962,29 @@ export function ChiefEngineerWorkspace({
     () => new Set((diagnostics?.blueprints.missing_task_ids ?? []).map(canonicalTaskMatchId).filter(Boolean)),
     [diagnostics],
   );
+  const blueprintEvidenceTaskIds = useMemo(
+    () => new Set(
+      blueprintEvidence
+        .map((item) => canonicalTaskMatchId(item.taskId))
+        .filter(Boolean),
+    ),
+    [blueprintEvidence],
+  );
   const missingBlueprintHandoffTasks = useMemo(
     () => {
-      const evidenceTaskIds = new Set(
-        blueprintEvidence
-          .map((item) => canonicalTaskMatchId(item.taskId))
-          .filter(Boolean),
-      );
       const seen = new Set<string>();
       return directorTaskEvidenceRows
         .filter((task) => {
           const taskId = taskHandoffId(task);
           const canonicalTaskId = canonicalTaskMatchId(taskId);
           if (!taskId || !canonicalTaskId || seen.has(canonicalTaskId)) return false;
+          if (blueprintEvidenceTaskIds.has(canonicalTaskId) || taskStatus(task) === 'completed') {
+            return false;
+          }
           const diagnosticsRequiresRegeneration = diagnosticMissingBlueprintTaskIds.has(canonicalTaskId);
           if (
             !diagnosticsRequiresRegeneration
-            && (taskHasBlueprintEvidence(task) || evidenceTaskIds.has(canonicalTaskId) || taskStatus(task) === 'completed')
+            && taskHasBlueprintEvidence(task)
           ) {
             return false;
           }
@@ -981,32 +992,71 @@ export function ChiefEngineerWorkspace({
           return true;
         })
     },
-    [blueprintEvidence, diagnosticMissingBlueprintTaskIds, directorTaskEvidenceRows],
+    [blueprintEvidenceTaskIds, diagnosticMissingBlueprintTaskIds, directorTaskEvidenceRows],
   );
   const blueprintCandidateTasks = useMemo(
     () => missingBlueprintHandoffTasks.slice(0, 4),
     [missingBlueprintHandoffTasks],
   );
-  const diagnosticsState = diagnosticsTone(diagnostics, diagnosticsError);
   const workspaceDiagnosticTone: DiagnosticTone = !diagnostics ? 'checking' : diagnostics.workspace.ok ? 'ready' : 'error';
   const blueprintDiagnosticTone: DiagnosticTone = !diagnostics
     ? 'checking'
     : diagnostics.blueprints.ok
       ? diagnostics.blueprints.status === 'empty'
-        ? 'degraded'
-        : 'ready'
-      : 'error';
-  const handoffDiagnosticTone: DiagnosticTone = !diagnostics
-    ? 'checking'
-    : diagnostics.blueprints.director_handoff_ready
-      ? 'ready'
-      : 'degraded';
+      ? 'degraded'
+      : 'ready'
+    : 'error';
   const blueprintCoveragePlanned = diagnostics?.blueprints.planned_tasks ?? 0;
   const blueprintCoverageCovered = diagnostics?.blueprints.covered_tasks ?? 0;
   const missingBlueprintTaskIds = diagnostics?.blueprints.missing_task_ids ?? [];
-  const diagnosticsHandoffBlockers = chiefHandoffBlockers(diagnostics);
+  const effectiveMissingBlueprintTaskIds = missingBlueprintTaskIds.filter((taskId) => {
+    const canonicalTaskId = canonicalTaskMatchId(taskId);
+    return !canonicalTaskId || !blueprintEvidenceTaskIds.has(canonicalTaskId);
+  });
+  const effectiveBlueprintCoverageCovered = diagnostics && blueprintCoveragePlanned > 0
+    ? Math.min(
+      blueprintCoveragePlanned,
+      Math.max(
+        blueprintCoverageCovered,
+        blueprintCoveragePlanned - effectiveMissingBlueprintTaskIds.length,
+        blueprintEvidenceTaskIds.size,
+      ),
+    )
+    : blueprintCoverageCovered;
+  const effectiveBlueprintCoverageComplete = Boolean(
+    diagnostics
+    && blueprintCoveragePlanned > 0
+    && effectiveBlueprintCoverageCovered >= blueprintCoveragePlanned,
+  );
+  const effectiveDirectorHandoffReady = Boolean(
+    diagnostics?.blueprints.director_handoff_ready || effectiveBlueprintCoverageComplete,
+  );
+  const diagnosticsHandoffBlockers = chiefHandoffBlockers(diagnostics).filter((issue) => (
+    !effectiveBlueprintCoverageComplete || !STALE_BLUEPRINT_COVERAGE_ISSUES.has(issue)
+  ));
   const diagnosticsHandoffBlocked = !directorRunning && diagnosticsHandoffBlockers.length > 0;
-  const diagnosticsHandoffBlockReason = formatChiefHandoffBlockReason(diagnostics);
+  const diagnosticsHandoffBlockReason = diagnosticsHandoffBlockers.length > 0
+    ? formatChiefHandoffBlockReason(diagnostics)
+    : '';
+  const effectiveDiagnosticIssues = (diagnostics?.issues ?? []).filter((issue) => (
+    !effectiveBlueprintCoverageComplete || !STALE_BLUEPRINT_COVERAGE_ISSUES.has(issue)
+  ));
+  const diagnosticsState = diagnosticsTone(
+    diagnostics
+      ? {
+        ...diagnostics,
+        can_handoff: effectiveDirectorHandoffReady ? true : diagnostics.can_handoff,
+        handoff_blockers: diagnosticsHandoffBlockers,
+        issues: effectiveDiagnosticIssues,
+      }
+      : null,
+    diagnosticsError,
+  );
+  const handoffDiagnosticTone: DiagnosticTone = !diagnostics
+    ? 'checking'
+    : effectiveDirectorHandoffReady
+      ? 'ready'
+      : 'degraded';
   const diagnosticsGenerateBlockers = chiefGenerateBlockers(diagnostics);
   const diagnosticsGenerateBlocked = diagnosticsGenerateBlockers.length > 0;
   const diagnosticsGenerateBlockReason = formatChiefGenerateBlockReason(diagnostics);
@@ -1057,28 +1107,28 @@ export function ChiefEngineerWorkspace({
     : diagnostics.blueprints.plan_status && diagnostics.blueprints.plan_status !== 'ready'
       ? diagnostics.blueprints.plan_status
       : blueprintCoveragePlanned > 0
-      ? `${blueprintCoverageCovered}/${blueprintCoveragePlanned}`
+      ? `${effectiveBlueprintCoverageCovered}/${blueprintCoveragePlanned}`
       : 'no PM plan';
   const blueprintCoverageTone: DiagnosticTone = !diagnostics
     ? 'checking'
     : diagnostics.blueprints.plan_status === 'ready'
       && blueprintCoveragePlanned > 0
-      && blueprintCoverageCovered === blueprintCoveragePlanned
+      && effectiveBlueprintCoverageCovered === blueprintCoveragePlanned
       ? 'ready'
       : 'degraded';
   const handoffDiagnosticValue = !diagnostics
     ? 'checking'
-    : diagnostics.blueprints.director_handoff_ready
+    : effectiveDirectorHandoffReady
       ? 'ready'
-      : missingBlueprintTaskIds.length > 0
-        ? `missing ${missingBlueprintTaskIds.length}`
+      : effectiveMissingBlueprintTaskIds.length > 0
+        ? `missing ${effectiveMissingBlueprintTaskIds.length}`
         : diagnostics.blueprints.loadable > 0
           ? 'partial'
           : 'no blueprint';
   const missingBlueprintValue = !diagnostics
     ? 'checking'
-    : missingBlueprintTaskIds.length > 0
-      ? `${missingBlueprintTaskIds.slice(0, 3).join(', ')}${missingBlueprintTaskIds.length > 3 ? '...' : ''}`
+    : effectiveMissingBlueprintTaskIds.length > 0
+      ? `${effectiveMissingBlueprintTaskIds.slice(0, 3).join(', ')}${effectiveMissingBlueprintTaskIds.length > 3 ? '...' : ''}`
       : 'none';
 
   const refreshChiefEngineerDiagnostics = async () => {
@@ -1645,7 +1695,7 @@ export function ChiefEngineerWorkspace({
               workspace={workspace}
               taskCount={tasks.length}
               blueprintCount={blueprintEvidence.length}
-              missingBlueprintCount={missingBlueprintHandoffTasks.length || missingBlueprintTaskIds.length}
+              missingBlueprintCount={missingBlueprintHandoffTasks.length || effectiveMissingBlueprintTaskIds.length}
               directorRunning={directorRunning}
               hostKind="electron_workbench"
               attachmentMode="isolated"
@@ -1943,7 +1993,7 @@ export function ChiefEngineerWorkspace({
               <DiagnosticRow
                 label="Missing PM tasks"
                 value={missingBlueprintValue}
-                tone={missingBlueprintTaskIds.length > 0 ? 'degraded' : handoffDiagnosticTone}
+                tone={effectiveMissingBlueprintTaskIds.length > 0 ? 'degraded' : handoffDiagnosticTone}
               />
             </div>
             {diagnosticsError ? (
@@ -1951,9 +2001,9 @@ export function ChiefEngineerWorkspace({
                 {diagnosticsError}
               </div>
             ) : null}
-            {diagnostics?.issues.length ? (
+            {effectiveDiagnosticIssues.length ? (
               <div data-testid="chief-engineer-diagnostics-issues" className="mt-3 rounded-md border border-amber-500/20 bg-amber-500/10 px-2 py-2 text-[11px] text-amber-100">
-                {diagnostics.issues.join(', ')}
+                {effectiveDiagnosticIssues.join(', ')}
               </div>
             ) : null}
           </section>

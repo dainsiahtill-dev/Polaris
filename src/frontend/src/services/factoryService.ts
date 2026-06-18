@@ -3,7 +3,7 @@
  *
  * Canonical API client for Factory run lifecycle. Real-time updates for
  * factory runs flow through the platform's unified WebSocket + NAT
- * JetStream pipeline (no SSE, no EventSource); see ``useFactory`` and
+ * JetStream pipeline; see ``useFactory`` and
  * ``RuntimeTransportProvider``.
  */
 
@@ -116,4 +116,3 @@ export async function listFactoryRuns(
 
   return { ok: false, error: result.error || '获取Factory列表失败' };
 }
-

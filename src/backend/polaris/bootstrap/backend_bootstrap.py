@@ -581,7 +581,7 @@ class BackendBootstrapper:
                     port=current_port,
                     log_level=log_level,
                 )
-                await handle.start()
+                await handle.start(startup_timeout=30.0)
                 # Return the handle; caller records the actual port from
                 # _select_port return value, but we expose the real port via
                 # the handle itself if UvicornServerHandle surfaces it.

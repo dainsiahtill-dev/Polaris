@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 import tempfile
 from pathlib import Path
 
@@ -82,42 +80,18 @@ def test_factory_status_response_contract_is_stable(client: TestClient, temp_wor
     }
 
 
-def test_factory_stream_event_contract_is_stable(client: TestClient, service: FactoryRunService) -> None:
-    run = asyncio.run(service.create_run(FactoryConfig(name="snapshot-run", stages=["pm_planning"])))
-    asyncio.run(service.start_run(run.id))
-    asyncio.run(service.execute_stage(run.id, "pm_planning"))
-    asyncio.run(service.complete_run(run.id, success=True))
+def test_factory_stream_route_fails_closed_to_nat_jetstream(client: TestClient) -> None:
+    response = client.get(
+        "/v2/factory/runs/snapshot-run/stream",
+        headers={"Authorization": f"Bearer {_TEST_TOKEN}"},
+    )
 
-    frames: list[str] = []
-    with client.stream(
-        "GET", f"/v2/factory/runs/{run.id}/stream", headers={"Authorization": f"Bearer {_TEST_TOKEN}"}
-    ) as response:
-        assert response.status_code == 200
-        for line in response.iter_lines():
-            frames.append(line)
-
-    event_names = [line.split(": ", 1)[1] for line in frames if line.startswith("event: ")]
-    assert "status" in event_names
-    assert "event" in event_names
-    assert event_names[-1] == "done"
-
-    done_index = frames.index("event: done")
-    done_payload_line = frames[done_index + 1]
-    assert done_payload_line.startswith("data: ")
-    done_payload = json.loads(done_payload_line[6:])
-    assert set(done_payload.keys()) == {
-        "run_id",
-        "phase",
-        "status",
-        "current_stage",
-        "last_successful_stage",
-        "progress",
-        "roles",
-        "gates",
-        "failure",
-        "created_at",
-        "started_at",
-        "updated_at",
-        "completed_at",
-        "summary_md",
+    assert response.status_code == 410
+    assert response.headers.get("content-type", "").startswith("application/json")
+    assert "text/event-stream" not in response.headers.get("content-type", "")
+    body = response.json()
+    assert body["error"]["code"] == "SSE_REMOVED"
+    assert body["error"]["details"] == {
+        "replacement": "/v2/ws/runtime",
+        "transport": "nat-jetstream",
     }

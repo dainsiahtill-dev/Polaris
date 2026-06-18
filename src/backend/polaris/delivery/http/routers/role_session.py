@@ -730,7 +730,7 @@ async def send_message(
 async def send_message_stream(
     request: Request,
     session_id: str,
-    payload: SendMessageRequest,
+    payload: Any | None = None,
 ) -> Any:
     """Removed SSE endpoint; use the Nat-JetStream role-session endpoint."""
     del request, payload

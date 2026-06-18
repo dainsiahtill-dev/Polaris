@@ -1,11 +1,10 @@
 """
 Role Chat JetStream Publisher
 
-Mirror of execute_role_chat_streaming that publishes each chunk to NAT JetStream
-instead of an in-process asyncio.Queue. The same chunk shape is preserved
-(thinking_chunk / content_chunk / tool_call / tool_result / complete / error)
-so the front-end ``useChatStreamWS`` hook can decode identical events whether
-they arrive over the legacy SSE wire or the new v2 JetStream envelope.
+Publish each role-chat chunk to NAT JetStream. The chunk shape is
+thinking_chunk / content_chunk / tool_call / tool_result / complete / error,
+which the front-end ``useChatStreamWS`` hook decodes from the v2 JetStream
+envelope.
 
 Wire format (one event per publish):
     subject = "hp.runtime.chat.<session_id>"  (workspace-agnostic, like bench)
@@ -37,7 +36,7 @@ ChatChunkCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 def _new_chat_session_id(role: str) -> str:
-    """Generate a chat session id with the same shape as the SSE host_kind prefix.
+    """Generate a compact chat session id.
 
     Returns:
         e.g. ``chat-pm-1f2c3a4b5c``
@@ -154,8 +153,8 @@ async def execute_role_chat_jetstream(
         return resolved_session_id
 
     if not saw_terminal:
-        # Mirror the SSE path: synthesise a terminal complete chunk so the
-        # front-end always sees a clean close over WS.
+        # Synthesize a terminal complete chunk so the front-end always sees
+        # a clean close over WS.
         complete_chunk = {
             "type": "complete",
             "data": _stream_complete_payload({"result": None}),

@@ -28,6 +28,7 @@ const RUNTIME_STREAM_CHANNELS = [
   'runtime_events',
   'event.file_edit',
 ] as const;
+const RUNTIME_LIVE_TAIL_LINES = 0;
 
 function normalizeRoles(
   input: RuntimeRole[]
@@ -115,7 +116,7 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
   useEffect(() => {
     const channels = [...RUNTIME_STREAM_CHANNELS];
     const unsubscribe = subscribeChannels(
-      channels.map(channel => ({ channel, tailLines: 100 })),
+      channels.map(channel => ({ channel, tailLines: RUNTIME_LIVE_TAIL_LINES })),
       rolesRef.current
     );
     return () => {
@@ -159,7 +160,7 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
         type: 'SUBSCRIBE',
         protocol: 'runtime.v2',
         roles: normalizedNextRoles,
-        tail: 100,
+        tail: RUNTIME_LIVE_TAIL_LINES,
         channels: [...RUNTIME_STREAM_CHANNELS],
         cursor: getLastCursor(),
       });

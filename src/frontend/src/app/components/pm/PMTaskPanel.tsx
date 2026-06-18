@@ -28,8 +28,10 @@ import {
   type PmTaskAssignmentEntry,
   type PmTaskSearchResult,
 } from '@/services/pmService';
+import { listChiefEngineerBlueprints } from '@/services/chiefEngineerService';
 import { pmTaskService } from '@/services/api';
 import { TaskStatus, type PmTask } from '@/types/task';
+import type { ChiefEngineerBlueprintSummaryV1 } from '@/types/roleContracts';
 import type { TaskTraceMap } from '@/app/types/taskTrace';
 import { TaskTraceInline } from '../common/TaskTraceInline';
 import { TaskTraceTimeline } from '../common/TaskTraceTimeline';
@@ -68,6 +70,14 @@ interface PmTaskCreateEvidence {
   error: string | null;
   task: PmTask | null;
 }
+
+interface BlueprintEvidenceState {
+  loading: boolean;
+  error: string;
+  taskIds: Set<string>;
+}
+
+type StageTone = 'ready' | 'waiting' | 'running' | 'failed';
 
 function EndpointBadge({
   endpoint,
@@ -188,6 +198,135 @@ function readTaskStringList(task: PmTask, keys: string[]): string[] {
     values.push(...toStringList(metadataOf(task)[key]));
   }
   return values.filter((item, index, all) => item.length > 0 && all.indexOf(item) === index);
+}
+
+function canonicalTaskMatchId(value: unknown): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const normalized = text.toLowerCase();
+  const numericAlias = normalized.match(/^(?:task|pm-task|pm)[-_]?(\d+)$/);
+  return numericAlias ? numericAlias[1] : normalized;
+}
+
+function readRecordString(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    const text = displayText(value);
+    if (text) return text;
+  }
+  return '';
+}
+
+function blueprintTaskIdFromGeneratedId(value: unknown): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const match = text.match(/^ce_((?:task|pm)[-_]?\d+)(?:_\d{8,}.*)?$/i);
+  return match?.[1] || '';
+}
+
+function runtimeBlueprintTaskId(row: ChiefEngineerBlueprintSummaryV1): string {
+  const record = row as unknown as Record<string, unknown>;
+  const raw = row.raw && typeof row.raw === 'object' ? row.raw as Record<string, unknown> : {};
+  const nestedBlueprint = raw.blueprint && typeof raw.blueprint === 'object'
+    ? raw.blueprint as Record<string, unknown>
+    : {};
+  const keys = ['task_id', 'pm_task_id', 'taskId', 'pmTaskId'];
+  return (
+    readRecordString(record, keys)
+    || readRecordString(raw, keys)
+    || readRecordString(nestedBlueprint, keys)
+    || blueprintTaskIdFromGeneratedId(record.blueprint_id)
+  );
+}
+
+function blueprintTaskIdSet(rows: ChiefEngineerBlueprintSummaryV1[]): Set<string> {
+  const ids = new Set<string>();
+  for (const row of rows) {
+    const taskId = runtimeBlueprintTaskId(row);
+    const canonical = canonicalTaskMatchId(taskId);
+    if (canonical) ids.add(canonical);
+  }
+  return ids;
+}
+
+function taskMatchIds(task: PmTask): string[] {
+  const metadata = metadataOf(task);
+  return [
+    task.id,
+    taskRecord(task).task_id,
+    taskRecord(task).pm_task_id,
+    taskRecord(task).taskId,
+    taskRecord(task).pmTaskId,
+    taskRecord(task).backlog_ref,
+    taskRecord(task).external_task_id,
+    metadata.task_id,
+    metadata.pm_task_id,
+    metadata.taskId,
+    metadata.pmTaskId,
+    metadata.backlog_ref,
+    metadata.external_task_id,
+  ]
+    .map(canonicalTaskMatchId)
+    .filter((item, index, all) => item.length > 0 && all.indexOf(item) === index);
+}
+
+function taskHasBlueprintEvidence(task: PmTask, blueprintTaskIds: Set<string>): boolean {
+  if (readTaskString(task, ['blueprint_id', 'blueprintId', 'blueprint_path', 'blueprintPath', 'runtime_blueprint_path', 'runtimeBlueprintPath'])) {
+    return true;
+  }
+  return taskMatchIds(task).some((taskId) => blueprintTaskIds.has(taskId));
+}
+
+function nestedTaskRecord(task: PmTask, key: string): Record<string, unknown> {
+  const value = readTaskValue(task, [key]);
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function taskExecutionStatus(task: PmTask): string {
+  const runtimeExecution = nestedTaskRecord(task, 'runtime_execution');
+  return (
+    readRecordString(runtimeExecution, ['effective_status', 'raw_status', 'status', 'state'])
+    || readTaskString(task, ['status', 'state'])
+  ).toLowerCase();
+}
+
+function directorStage(task: PmTask): { value: string; tone: StageTone } {
+  const status = taskExecutionStatus(task);
+  if (task.done || task.completed || ['completed', 'done', 'success', 'passed'].includes(status)) {
+    return { value: '已交付', tone: 'ready' };
+  }
+  if (['running', 'in_progress', 'claimed', 'pending_exec'].includes(status)) {
+    return { value: '执行中', tone: 'running' };
+  }
+  if (['failed', 'failure', 'error', 'blocked'].includes(status)) {
+    return { value: '执行失败', tone: 'failed' };
+  }
+  return { value: '待执行', tone: 'waiting' };
+}
+
+function ceBlueprintStage(
+  task: PmTask,
+  blueprintEvidence: BlueprintEvidenceState,
+): { value: string; tone: StageTone } {
+  if (taskHasBlueprintEvidence(task, blueprintEvidence.taskIds)) {
+    return { value: '蓝图已生成', tone: 'ready' };
+  }
+  if (blueprintEvidence.loading) {
+    return { value: '蓝图同步中', tone: 'running' };
+  }
+  if (blueprintEvidence.error) {
+    return { value: '蓝图未知', tone: 'failed' };
+  }
+  return { value: '待蓝图', tone: 'waiting' };
+}
+
+function stageToneClass(tone: StageTone): string {
+  if (tone === 'ready') return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200';
+  if (tone === 'running') return 'border-amber-500/25 bg-amber-500/10 text-amber-200';
+  if (tone === 'failed') return 'border-red-500/25 bg-red-500/10 text-red-200';
+  return 'border-slate-700 bg-slate-900/70 text-slate-400';
 }
 
 function readAcceptanceCriteria(task: PmTask): string[] {
@@ -410,6 +549,11 @@ export function PMTaskPanel({
     error: null,
     task: null,
   });
+  const [blueprintEvidence, setBlueprintEvidence] = useState<BlueprintEvidenceState>({
+    loading: false,
+    error: '',
+    taskIds: new Set<string>(),
+  });
   const normalizedSelectedTaskId = normalizeTaskId(selectedTaskId);
   const selectedTaskProjection = useMemo(
     () => tasks.find((task) => normalizeTaskId(task.id) === normalizedSelectedTaskId) ??
@@ -434,6 +578,52 @@ export function PMTaskPanel({
       setShowCreatePanel(false);
     }
   }, [createTaskDisabled, showCreatePanel]);
+
+  useEffect(() => {
+    if (!workspace || tasks.length === 0) {
+      setBlueprintEvidence({
+        loading: false,
+        error: '',
+        taskIds: new Set<string>(),
+      });
+      return undefined;
+    }
+
+    let isCurrent = true;
+    setBlueprintEvidence((current) => ({
+      ...current,
+      loading: true,
+      error: '',
+    }));
+
+    void listChiefEngineerBlueprints(workspace).then((result) => {
+      if (!isCurrent) return;
+      if (result.ok && result.data) {
+        setBlueprintEvidence({
+          loading: false,
+          error: '',
+          taskIds: blueprintTaskIdSet(Array.isArray(result.data.blueprints) ? result.data.blueprints : []),
+        });
+        return;
+      }
+      setBlueprintEvidence({
+        loading: false,
+        error: result.error || 'Chief Engineer blueprint evidence unavailable',
+        taskIds: new Set<string>(),
+      });
+    }).catch((error: unknown) => {
+      if (!isCurrent) return;
+      setBlueprintEvidence({
+        loading: false,
+        error: error instanceof Error ? error.message : 'Chief Engineer blueprint evidence unavailable',
+        taskIds: new Set<string>(),
+      });
+    });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [tasks.length, workspace]);
 
   useEffect(() => {
     const query = searchQuery.trim();
@@ -980,6 +1170,7 @@ export function PMTaskPanel({
                   onClick={() => handleTaskClick(task)}
                   pmRunning={pmRunning}
                   taskTraceMap={taskTraceMap}
+                  blueprintEvidence={blueprintEvidence}
                 />
               ))}
             </div>
@@ -1037,15 +1228,38 @@ interface TaskListItemProps {
   onClick: () => void;
   pmRunning: boolean;
   taskTraceMap?: TaskTraceMap;
+  blueprintEvidence: BlueprintEvidenceState;
 }
 
-function TaskListItem({ task, selected, onClick, pmRunning, taskTraceMap }: TaskListItemProps) {
+function TaskStageChip({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  tone: StageTone;
+}) {
+  return (
+    <span className={cn('inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px]', stageToneClass(tone))}>
+      {icon}
+      <span className="font-medium text-slate-300">{label}</span>
+      <span className="font-mono">{value}</span>
+    </span>
+  );
+}
+
+function TaskListItem({ task, selected, onClick, pmRunning, taskTraceMap, blueprintEvidence }: TaskListItemProps) {
   const status = task.status?.toLowerCase() || 'pending';
   const isRunning = status === 'running' || status === 'in_progress';
   const isCompleted = status === 'completed' || task.done;
   const isBlocked = status === 'blocked' || status === 'failed';
   const title = taskDisplayTitle(task);
   const summary = taskDisplaySummary(task);
+  const ceStage = ceBlueprintStage(task, blueprintEvidence);
+  const executionStage = directorStage(task);
 
   return (
     <div
@@ -1108,6 +1322,28 @@ function TaskListItem({ task, selected, onClick, pmRunning, taskTraceMap }: Task
         {summary && (
           <p className="text-xs text-slate-500 truncate mt-0.5">{summary}</p>
         )}
+        <div data-testid="pm-task-flow" className="mt-2 flex flex-wrap items-center gap-1.5">
+          <TaskStageChip
+            icon={<ListChecks className="h-3 w-3" />}
+            label="PM 合同"
+            value="已生成"
+            tone="ready"
+          />
+          <span className="font-mono text-[10px] text-slate-600">→</span>
+          <TaskStageChip
+            icon={<ShieldCheck className="h-3 w-3" />}
+            label="Chief Engineer"
+            value={ceStage.value}
+            tone={ceStage.tone}
+          />
+          <span className="font-mono text-[10px] text-slate-600">→</span>
+          <TaskStageChip
+            icon={<FileCode className="h-3 w-3" />}
+            label="Director"
+            value={executionStage.value}
+            tone={executionStage.tone}
+          />
+        </div>
         {/* 最近步骤 (仅显示 1 条) */}
         {taskTraceMap?.has(task.id) && (
           <TaskTraceInline

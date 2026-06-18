@@ -17,7 +17,7 @@
  * // Or use the convenience hook for channel subscription
  * const { connected } = useChannelSubscription({
  *   channels: ['runtime', 'pm_subprocess'],
- *   tailLines: 100,
+ *   tailLines: 0,
  *   onMessage: (msg) => console.log(msg),
  * });
  * ```

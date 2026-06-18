@@ -85,6 +85,7 @@ class PMChatStatusResponse(BaseModel):
 class StreamHealthResponse(BaseModel):
     status: str
     streaming: str
+    transport: str | None = None
 
 
 class PMStatusResponse(BaseModel):

@@ -9,9 +9,9 @@
  * - guards: Type guards for runtime types
  * - dashboard: Dashboard-specific runtime utilities
  * - directorWorkspace: Director workspace utilities
- * - transport: Unified WebSocket transport layer (NEW - WS/SSE Alignment)
+ * - transport: Unified WebSocket transport layer (Nat-JetStream alignment)
  *
- * Architecture Note (WS/SSE Alignment):
+ * Architecture Note (Nat-JetStream Runtime Transport):
  * - Runtime domain uses WebSocket ONLY via RuntimeTransportProvider
  * - All runtime components must use useRuntime() or useRuntimeTransport()
  * - Direct connectWebSocket() calls are deprecated for runtime domain
@@ -72,6 +72,6 @@ export {
   type ConnectionState,
 } from './transport';
 
-// Note: Legacy hook references removed as part of WS/SSE alignment.
+// Note: Legacy hook references removed as part of Nat-JetStream alignment.
 // Use useRuntime from '@/app/hooks/useRuntime' (requires RuntimeTransportProvider)
 // or useRuntimeTransport for lower-level access.

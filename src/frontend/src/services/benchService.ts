@@ -2,9 +2,9 @@
  * Factory-bench service — drives L1-L8 batch progress from the bench
  * subprocess into the Factory front-end panel.
  *
- * Transport: HTTP polling on /v2/factory/bench/sessions/{id}/state. The
- * previous SSE wire format is gone; this service uses the same fetch() +
- * apiGet() pattern as the rest of the platform (no EventSource, no SSE).
+ * Transport: HTTP state snapshots plus Nat-JetStream/WebSocket fanout for
+ * realtime event delivery, using the same fetch() + apiGet() pattern as the
+ * rest of the platform for snapshot reads.
  *
  * Backend pipeline (matched to the platform's runtime event subsystem):
  *   bench subprocess → POST /events  (durable JSONL + NAT JetStream fanout)
@@ -130,4 +130,3 @@ export async function getBenchSession(
     '获取Factory bench session失败',
   );
 }
-

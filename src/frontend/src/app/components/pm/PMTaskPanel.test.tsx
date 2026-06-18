@@ -8,6 +8,7 @@ const searchPmTasksMock = vi.hoisted(() => vi.fn());
 const getPmTaskMock = vi.hoisted(() => vi.fn());
 const listPmTaskAssignmentsMock = vi.hoisted(() => vi.fn());
 const createPmTaskMock = vi.hoisted(() => vi.fn());
+const listChiefEngineerBlueprintsMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/pmService', () => ({
   getPmTask: getPmTaskMock,
@@ -19,6 +20,10 @@ vi.mock('@/services/api', () => ({
   pmTaskService: {
     create: createPmTaskMock,
   },
+}));
+
+vi.mock('@/services/chiefEngineerService', () => ({
+  listChiefEngineerBlueprints: listChiefEngineerBlueprintsMock,
 }));
 
 function makeTask(overrides: Partial<PmTask> = {}): PmTask {
@@ -87,6 +92,13 @@ describe('PMTaskPanel', () => {
     createPmTaskMock.mockResolvedValue({
       ok: false,
       error: 'not created',
+    });
+    listChiefEngineerBlueprintsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        blueprints: [],
+        total: 0,
+      },
     });
   });
 
@@ -202,6 +214,60 @@ describe('PMTaskPanel', () => {
     expect(within(row).getByText('实现创建语义化 HTML5 简历结构')).toBeInTheDocument();
     expect(within(row).queryByText(/^1$/)).not.toBeInTheDocument();
     expect(within(row).getByText('创建可审计的简历页面结构')).toBeInTheDocument();
+  });
+
+  it('renders the PM to Chief Engineer to Director state for each task row', async () => {
+    listChiefEngineerBlueprintsMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        total: 1,
+        blueprints: [
+          {
+            blueprint_id: 'ce_TASK-1_20260618070900420840',
+            title: '实现创建语义化 HTML5 简历结构',
+            summary: 'Chief Engineer blueprint for TASK-1',
+            status: 'ready',
+            source: 'runtime/blueprints',
+            target_files: ['src/html5', 'tests'],
+            updated_at: null,
+            raw: {
+              task_id: 'TASK-1',
+            },
+          },
+        ],
+      },
+    });
+
+    render(
+      <PMTaskPanel
+        tasks={[
+          makeTask({
+            id: 1 as unknown as string,
+            subject: '实现创建语义化 HTML5 简历结构',
+            metadata: {
+              backlog_ref: 'TASK-1',
+              runtime_execution: {
+                effective_status: 'failed',
+              },
+            },
+            status: TaskStatus.FAILED,
+          }),
+        ]}
+        selectedTaskId={null}
+        onTaskSelect={() => undefined}
+        pmRunning={false}
+        workspace="/tmp/polaris-runtime"
+      />,
+    );
+
+    await waitFor(() => expect(listChiefEngineerBlueprintsMock).toHaveBeenCalledWith('/tmp/polaris-runtime'));
+    const row = screen.getByTestId('pm-task-item');
+    expect(within(row).getByText('PM 合同')).toBeInTheDocument();
+    expect(within(row).getByText('已生成')).toBeInTheDocument();
+    expect(within(row).getByText('Chief Engineer')).toBeInTheDocument();
+    expect(within(row).getByText('蓝图已生成')).toBeInTheDocument();
+    expect(within(row).getByText('Director')).toBeInTheDocument();
+    expect(within(row).getByText('执行失败')).toBeInTheDocument();
   });
 
   it('renders PM task assignment history from the backend assignment route', async () => {

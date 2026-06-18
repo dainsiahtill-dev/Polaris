@@ -1,11 +1,11 @@
 /**
  * useFactory - Factory Run state management hook with React Query
  *
- * Single frontend source of truth for Factory lifecycle and SSE stream state.
+ * Single frontend source of truth for Factory lifecycle and runtime event state.
  * Provides:
  * - React Query caching for run status
  * - Automatic request cancellation via AbortController
- * - SSE streaming with reconnection logic
+ * - Nat-JetStream/WebSocket event subscription with reconnection logic
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -120,7 +120,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
   // Unified WebSocket transport — factory events flow through NAT
   // JetStream (subject ``hp.runtime.<ws>.event.factory.<run_id>``) via
   // the same RuntimeTransportProvider that carries log.llm /
-  // log.process / event.bench. No SSE, no EventSource.
+  // log.process / event.bench through one runtime transport.
   const transport = useRuntimeTransport();
 
   const connectionRef = useRef<{ close: () => void } | null>(null);
@@ -375,8 +375,8 @@ export function useFactory(options: UseFactoryOptions = {}) {
     const channel = `event.factory:${runId}`;
 
     // Translate the runtime.v2 envelope (channel=event.factory) into the
-    // same handler shape the old SSE wire used to deliver. Factory
-    // events are published to NAT JetStream by
+    // factory event shape consumed by this hook. Factory events are
+    // published to NAT JetStream by
     // ``FactoryRunService._append_event``; the platform's WebSocket's
     // JetStream consumer forwards every envelope to this handler.
     const handler = (message: unknown): void => {
