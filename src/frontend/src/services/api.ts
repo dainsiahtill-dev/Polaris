@@ -1494,6 +1494,12 @@ export const fileV2Service = {
     const res = await apiFetch(`/v2/files/read?path=${encodeURIComponent(path)}`);
     return handleResponse(res, 'Failed to read file');
   },
+  /** GET /v2/files/read — Read file tail (journal polling) */
+  async readTail(path: string, tailLines: number = 400): Promise<ApiResult<import('./api.types').FileReadV2Response>> {
+    const url = `/v2/files/read?path=${encodeURIComponent(path)}&tail_lines=${tailLines}`;
+    const res = await apiFetch(url);
+    return handleResponse(res, 'Failed to read file tail');
+  },
 };
 
 // ============================================================================
