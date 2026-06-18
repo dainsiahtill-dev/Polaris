@@ -52,14 +52,14 @@ export function useContextOSTelemetry(options: UseContextOSTelemetryOptions): Us
         if (abortRef.current) return;
         if (!result.ok || !result.data) {
           setError(result.error || 'Failed to read journal');
-          return;
+        } else {
+          const content = String(result.data.content || '');
+          const logs = parseJournalLines(content);
+          const telemetry = buildTelemetryFromStream(logs, [], []);
+          setFileTelemetry(telemetry);
+          setError(null);
+          setLastPollAt(Date.now());
         }
-        const content = String(result.data.content || '');
-        const logs = parseJournalLines(content);
-        const telemetry = buildTelemetryFromStream(logs, [], []);
-        setFileTelemetry(telemetry);
-        setError(null);
-        setLastPollAt(Date.now());
       } catch (err) {
         if (abortRef.current) return;
         setError(err instanceof Error ? err.message : String(err));
