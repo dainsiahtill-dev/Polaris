@@ -308,6 +308,14 @@ function taskHandoffId(task: TaskEvidenceRow): string {
   return readString(task, ['pm_task_id', 'pmTaskId', 'task_id', 'taskId', 'id']) || String(task.id || '').trim();
 }
 
+function canonicalTaskMatchId(value: unknown): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const normalized = text.toLowerCase();
+  const numericAlias = normalized.match(/^(?:task|pm-task|pm)[-_]?(\d+)$/);
+  return numericAlias ? numericAlias[1] : normalized;
+}
+
 function taskHasBlueprintEvidence(task: TaskEvidenceRow): boolean {
   return Boolean(readString(task, ['blueprint_id', 'blueprintId', 'blueprint_path', 'runtime_blueprint_path']));
 }
@@ -346,9 +354,35 @@ function buildBlueprintEvidence(tasks: TaskEvidenceRow[]): BlueprintEvidence[] {
     .filter((item): item is BlueprintEvidence => Boolean(item));
 }
 
+function readRecordString(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+function blueprintTaskIdFromGeneratedId(value: unknown): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const match = text.match(/^ce_((?:task|pm)[-_]?\d+)(?:_\d{8,}.*)?$/i);
+  return match?.[1] || '';
+}
+
 function runtimeBlueprintTaskId(row: RuntimeBlueprintSummary): string {
+  const record = row as unknown as Record<string, unknown>;
   const raw = row.raw && typeof row.raw === 'object' ? row.raw as Record<string, unknown> : {};
-  return String(raw.task_id || raw.pm_task_id || raw.taskId || '').trim();
+  const nestedBlueprint = raw.blueprint && typeof raw.blueprint === 'object'
+    ? raw.blueprint as Record<string, unknown>
+    : {};
+  const keys = ['task_id', 'pm_task_id', 'taskId', 'pmTaskId'];
+  return (
+    readRecordString(record, keys)
+    || readRecordString(raw, keys)
+    || readRecordString(nestedBlueprint, keys)
+    || blueprintTaskIdFromGeneratedId(record.blueprint_id)
+  );
 }
 
 function buildRuntimeBlueprintEvidence(rows: RuntimeBlueprintSummary[]): BlueprintEvidence[] {
@@ -920,29 +954,30 @@ export function ChiefEngineerWorkspace({
   );
   const lastDirectorStatus = String(pmState?.last_director_status || '').trim();
   const diagnosticMissingBlueprintTaskIds = useMemo(
-    () => new Set((diagnostics?.blueprints.missing_task_ids ?? []).map((taskId) => String(taskId || '').trim()).filter(Boolean)),
+    () => new Set((diagnostics?.blueprints.missing_task_ids ?? []).map(canonicalTaskMatchId).filter(Boolean)),
     [diagnostics],
   );
   const missingBlueprintHandoffTasks = useMemo(
     () => {
       const evidenceTaskIds = new Set(
         blueprintEvidence
-          .map((item) => String(item.taskId || '').trim())
+          .map((item) => canonicalTaskMatchId(item.taskId))
           .filter(Boolean),
       );
       const seen = new Set<string>();
       return directorTaskEvidenceRows
         .filter((task) => {
           const taskId = taskHandoffId(task);
-          if (!taskId || seen.has(taskId)) return false;
-          const diagnosticsRequiresRegeneration = diagnosticMissingBlueprintTaskIds.has(taskId);
+          const canonicalTaskId = canonicalTaskMatchId(taskId);
+          if (!taskId || !canonicalTaskId || seen.has(canonicalTaskId)) return false;
+          const diagnosticsRequiresRegeneration = diagnosticMissingBlueprintTaskIds.has(canonicalTaskId);
           if (
             !diagnosticsRequiresRegeneration
-            && (taskHasBlueprintEvidence(task) || evidenceTaskIds.has(taskId) || taskStatus(task) === 'completed')
+            && (taskHasBlueprintEvidence(task) || evidenceTaskIds.has(canonicalTaskId) || taskStatus(task) === 'completed')
           ) {
             return false;
           }
-          seen.add(taskId);
+          seen.add(canonicalTaskId);
           return true;
         })
     },

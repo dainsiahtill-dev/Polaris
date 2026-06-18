@@ -40,6 +40,7 @@ from ._shared import (
     StructuredHTTPException,
     ensure_required_roles_ready,
     get_state,
+    legacy_sse_removed,
     require_auth,
     require_role,
 )
@@ -47,7 +48,7 @@ from .role_chat_jetstream import (
     _new_chat_session_id,
     execute_role_chat_jetstream,
 )
-from .role_runtime_chat import execute_role_chat_nonstreaming, execute_role_chat_streaming
+from .role_runtime_chat import execute_role_chat_nonstreaming
 
 logger = logging.getLogger(__name__)
 
@@ -400,53 +401,10 @@ async def role_chat_stream(
     payload: dict[str, Any],
     workspace: str = "",
 ) -> Any:
-    """Chat with a registered LLM role (streaming SSE).
-
-    Yields:
-        thinking_chunk, content_chunk, complete, and error events.
-    """
-    from polaris.delivery.http.routers.sse_utils import (
-        create_sse_response,
-        sse_event_generator,
-    )
-
-    state = get_state(request)
-    workspace = _workspace_for_role_request(state.settings, workspace, payload)
-    scoped_state = _state_for_workspace(state, workspace)
-
+    """Removed SSE endpoint; use the Nat-JetStream role chat endpoint."""
+    del request, payload, workspace
     _validate_role(role)
-
-    message = str(payload.get("message") or "").strip()
-    if not message:
-        return create_sse_response(_error_sse_generator("message is required"))
-
-    try:
-        ensure_required_roles_ready(scoped_state, default_roles=[role])
-    except StructuredHTTPException as exc:
-        return create_sse_response(_error_sse_generator(str(exc.structured_message)))
-    except (RuntimeError, ValueError):
-        return create_sse_response(_error_sse_generator("LLM runtime error"))
-
-    async def _run_role_dialogue(queue: asyncio.Queue) -> None:
-        """运行角色对话并输出到队列"""
-        await execute_role_chat_streaming(
-            workspace=workspace,
-            role=role,
-            message=message,
-            output_queue=queue,
-            payload=payload,
-            default_domain="general",
-            host_kind="role_chat_http_stream",
-            context=payload.get("context"),
-        )
-
-    return create_sse_response(sse_event_generator(_run_role_dialogue, timeout=180.0))
-
-
-async def _error_sse_generator(message: str) -> Any:
-    """SSE 错误事件生成器"""
-    yield f"event: error\ndata: {message}\n\n"
-    yield "event: complete\ndata: {}\n\n"
+    legacy_sse_removed(f"/v2/role/{role}/chat/jetstream")
 
 
 # ============================================================================

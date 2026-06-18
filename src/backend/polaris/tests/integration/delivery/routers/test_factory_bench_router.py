@@ -4,7 +4,8 @@ These endpoints are workspace-agnostic (the bench subprocess drives
 projects across many workspaces, so its session state cannot live inside
 ``FactoryRunService``). They expose the ``FactoryBenchService`` so the
 ``scripts/factory_bench/run_factory_bench.py`` subprocess can publish
-lifecycle events, and the Factory front-end panel can subscribe via SSE.
+lifecycle events, and the Factory front-end panel can subscribe via the
+unified Nat-JetStream WebSocket transport.
 """
 
 from __future__ import annotations
@@ -196,6 +197,43 @@ class TestFactoryBenchRouter:
         snapshot = self.client.get(f"/v2/factory/bench/sessions/{sid}").json()
         assert snapshot["status"] == "completed"
         assert snapshot["metadata"]["passed"] == 1
+
+    def test_complete_session_publishes_terminal_event_to_jetstream(self) -> None:
+        from polaris.delivery.http.routers import factory as factory_router
+
+        captured: dict[str, object] = {}
+
+        async def fake_publish(subject: str, payload):
+            captured["subject"] = subject
+            captured["payload"] = payload
+            return True
+
+        sid = self.client.post(
+            "/v2/factory/bench/sessions",
+            json={"work_dir": "/tmp/ws", "project_ids": ["L1-01", "L1-02"], "total": 2},
+        ).json()["session_id"]
+
+        with patch.object(factory_router, "publish_to_jetstream", fake_publish):
+            response = self.client.post(
+                f"/v2/factory/bench/sessions/{sid}/complete",
+                json={
+                    "success": False,
+                    "summary": {"passed": 0, "failed": 2, "completed": 0},
+                },
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["updated"] is True
+        assert body["published"] is True
+        assert captured["subject"] == f"hp.runtime.bench.{sid}"
+        envelope = captured["payload"]
+        assert isinstance(envelope, dict)
+        assert envelope["channel"] == f"event.bench:{sid}"
+        assert envelope["kind"] == "factory_bench.run.failed"
+        assert envelope["payload"]["type"] == "factory_bench.run.failed"
+        assert envelope["payload"]["meta"]["status"] == "failed"
+        assert envelope["payload"]["meta"]["failed"] == 2
 
     def test_get_unknown_session_returns_404(self) -> None:
         response = self.client.get("/v2/factory/bench/sessions/bench-missing-xyz")

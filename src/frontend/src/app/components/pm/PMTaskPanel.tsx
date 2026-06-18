@@ -127,6 +127,43 @@ function readTaskString(task: PmTask, keys: string[]): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function displayText(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'bigint') return String(value);
+  return '';
+}
+
+function isReadableTaskText(value: unknown): boolean {
+  const text = displayText(value);
+  if (!text) return false;
+  return !/^\d+$/.test(text);
+}
+
+function readTaskDisplayString(task: PmTask, keys: string[]): string {
+  const direct = taskRecord(task);
+  const metadata = metadataOf(task);
+  for (const key of keys) {
+    const directValue = direct[key];
+    if (isReadableTaskText(directValue)) return displayText(directValue);
+    const metadataValue = metadata[key];
+    if (isReadableTaskText(metadataValue)) return displayText(metadataValue);
+  }
+  return '';
+}
+
+function taskDisplayTitle(task: PmTask): string {
+  return readTaskDisplayString(task, ['subject', 'title', 'name', 'goal', 'summary', 'description'])
+    || normalizeTaskId(task.id)
+    || '未命名任务';
+}
+
+function taskDisplaySummary(task: PmTask): string {
+  const title = taskDisplayTitle(task);
+  const summary = readTaskDisplayString(task, ['summary', 'goal', 'description']);
+  return summary && summary !== title ? summary : '';
+}
+
 function toStringList(value: unknown): string[] {
   if (!Array.isArray(value)) {
     const token = typeof value === 'string' ? value.trim() : '';
@@ -566,9 +603,9 @@ export function PMTaskPanel({
       const query = searchQuery.toLowerCase();
       result = result.filter(
         (task) =>
-          task.title?.toLowerCase().includes(query) ||
+          taskDisplayTitle(task).toLowerCase().includes(query) ||
           normalizeTaskId(task.id).toLowerCase().includes(query) ||
-          task.summary?.toLowerCase().includes(query)
+          taskDisplaySummary(task).toLowerCase().includes(query)
       );
     }
 
@@ -587,7 +624,7 @@ export function PMTaskPanel({
         return statusOrder[aStatus] - statusOrder[bStatus];
       }
       if (sort === 'name') {
-        return (a.title || '').localeCompare(b.title || '');
+        return taskDisplayTitle(a).localeCompare(taskDisplayTitle(b));
       }
       return 0;
     });
@@ -937,9 +974,9 @@ export function PMTaskPanel({
             >
               {filteredTasks.map((task) => (
                 <TaskListItem
-                  key={task.id}
+                  key={normalizeTaskId(task.id) || taskDisplayTitle(task)}
                   task={task}
-                  selected={selectedTaskId === task.id}
+                  selected={normalizedSelectedTaskId === normalizeTaskId(task.id)}
                   onClick={() => handleTaskClick(task)}
                   pmRunning={pmRunning}
                   taskTraceMap={taskTraceMap}
@@ -956,8 +993,8 @@ export function PMTaskPanel({
           task={selectedTask}
           onClose={() => onTaskSelect(null)}
           taskTraceMap={taskTraceMap}
-          detailEvidence={taskDetailEvidence.taskId === selectedTask.id ? taskDetailEvidence : null}
-          assignmentEvidence={assignmentEvidence.taskId === selectedTask.id ? assignmentEvidence : null}
+          detailEvidence={taskDetailEvidence.taskId === normalizeTaskId(selectedTask.id) ? taskDetailEvidence : null}
+          assignmentEvidence={assignmentEvidence.taskId === normalizeTaskId(selectedTask.id) ? assignmentEvidence : null}
         />
       )}
     </div>
@@ -974,7 +1011,7 @@ function TaskSearchResultRow({
   const task = normalizeTaskSearchResult(result);
   if (!task) return null;
 
-  const summary = task.summary || task.description || task.goal || 'PM backend returned a task match';
+  const summary = taskDisplaySummary(task) || 'PM backend returned a task match';
 
   return (
     <button
@@ -984,7 +1021,7 @@ function TaskSearchResultRow({
       data-testid="pm-task-search-result"
     >
       <div className="flex min-w-0 items-center gap-2">
-        <p className="min-w-0 flex-1 truncate text-xs font-medium text-slate-200">{task.title}</p>
+        <p className="min-w-0 flex-1 truncate text-xs font-medium text-slate-200">{taskDisplayTitle(task)}</p>
         <StatusBadge status={task.status} done={task.done} />
       </div>
       <p className="mt-1 truncate text-[11px] text-slate-400">{summary}</p>
@@ -1007,6 +1044,8 @@ function TaskListItem({ task, selected, onClick, pmRunning, taskTraceMap }: Task
   const isRunning = status === 'running' || status === 'in_progress';
   const isCompleted = status === 'completed' || task.done;
   const isBlocked = status === 'blocked' || status === 'failed';
+  const title = taskDisplayTitle(task);
+  const summary = taskDisplaySummary(task);
 
   return (
     <div
@@ -1060,14 +1099,14 @@ function TaskListItem({ task, selected, onClick, pmRunning, taskTraceMap }: Task
             'text-sm font-medium truncate',
             isCompleted ? 'text-slate-500 line-through' : 'text-slate-200'
           )}>
-            {task.title || task.id}
+            {title}
           </p>
           {task.priority !== undefined && (
             <PriorityBadge priority={task.priority} />
           )}
         </div>
-        {task.summary && (
-          <p className="text-xs text-slate-500 truncate mt-0.5">{task.summary}</p>
+        {summary && (
+          <p className="text-xs text-slate-500 truncate mt-0.5">{summary}</p>
         )}
         {/* 最近步骤 (仅显示 1 条) */}
         {taskTraceMap?.has(task.id) && (
@@ -1156,6 +1195,7 @@ function TaskDetailPanel({
   const targetFiles = readTaskStringList(task, ['target_files', 'targetFiles', 'scope_paths', 'files']);
   const dependencies = readTaskStringList(task, ['dependencies', 'blocked_by', 'blockedBy']);
   const qaContract = readTaskValue(task, ['qa_contract']);
+  const title = taskDisplayTitle(task);
   const backendDetailSource = detailEvidence?.task
     ? readTaskString(detailEvidence.task, ['source']) || 'pm_task_detail'
     : '';
@@ -1179,7 +1219,7 @@ function TaskDetailPanel({
         {/* Title */}
         <div>
           <label className="text-xs text-slate-500 uppercase tracking-wider">标题</label>
-          <p className="text-sm text-slate-200 mt-1">{task.title || task.id}</p>
+          <p className="text-sm text-slate-200 mt-1">{title}</p>
         </div>
 
         {/* Status */}

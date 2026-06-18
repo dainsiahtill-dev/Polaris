@@ -46,7 +46,16 @@ export interface UseFactoryBenchResult {
 const MAX_EVENTS = 240;
 
 function isTerminalStatus(status: string | undefined | null): boolean {
-  return status === 'completed' || status === 'failed';
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+function terminalStatusFromBenchEvent(eventType: string, meta: Record<string, unknown>): string | null {
+  const explicitStatus = typeof meta.status === 'string' ? meta.status.trim() : '';
+  if (isTerminalStatus(explicitStatus)) return explicitStatus;
+  if (eventType === 'factory_bench.run.completed') return 'completed';
+  if (eventType === 'factory_bench.run.failed') return 'failed';
+  if (eventType === 'factory_bench.run.cancelled') return 'cancelled';
+  return null;
 }
 
 function isBenchEnvelope(payload: Record<string, unknown>): boolean {
@@ -79,6 +88,15 @@ export function useFactoryBench(
     const result = await listBenchSessions(20);
     if (result.ok && result.data) {
       setSessions(result.data);
+      setCurrentSession((prev) => {
+        if (!prev) return prev;
+        const refreshed = result.data?.find((session) => session.session_id === prev.session_id);
+        if (!refreshed) return prev;
+        if (isTerminalStatus(refreshed.status)) {
+          setIsStreaming(false);
+        }
+        return { ...prev, ...refreshed };
+      });
     } else {
       setError(result.error || '加载Factory bench sessions失败');
     }
@@ -155,17 +173,30 @@ export function useFactoryBench(
         // counters, but the session detail already includes the most recent
         // counter values from the initial fetch; subsequent counter changes
         // also arrive via the same payload.meta.completed / failed fields.
-        if (event.meta && (event.meta.completed !== undefined || event.meta.failed !== undefined)) {
+        const terminalStatus = terminalStatusFromBenchEvent(event.type, event.meta || {});
+        if (
+          event.meta
+          && (
+            event.meta.completed !== undefined
+            || event.meta.failed !== undefined
+            || event.meta.status !== undefined
+            || event.meta.completed_at !== undefined
+            || terminalStatus
+          )
+        ) {
           setCurrentSession((prev) => {
             if (!prev) return prev;
             return {
               ...prev,
               completed: Number(event.meta?.completed ?? prev.completed),
               failed: Number(event.meta?.failed ?? prev.failed),
+              status: terminalStatus ?? prev.status,
+              completed_at: typeof event.meta?.completed_at === 'string' ? event.meta.completed_at : prev.completed_at,
+              updated_at: typeof event.ts === 'string' ? event.ts : prev.updated_at,
             };
           });
         }
-        if (event.type === 'factory_bench.run.completed' || event.type === 'factory_bench.run.completed' ) {
+        if (terminalStatus) {
           setIsStreaming(false);
         }
       };
@@ -217,17 +248,13 @@ export function useFactoryBench(
     if (autoSelect !== 'newest') return;
     const newest = sessions[0];
     if (!newest) return;
-    if (currentSession && currentSession.session_id === newest.session_id) return;
     if (
       isTerminalStatus(newest.status) &&
       currentSession?.session_id === newest.session_id
     )
       return;
+    if (currentSession && currentSession.session_id === newest.session_id) return;
     void select(newest.session_id);
-    // select is intentionally excluded: it changes identity when its
-    // dependencies change, and re-running on every select-identity-change
-    // would loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions, autoSelect, currentSession]);
 
   return useMemo(

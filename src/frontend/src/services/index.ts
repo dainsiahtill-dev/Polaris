@@ -288,12 +288,7 @@ export {
   saveLLMConfig,
   getLLMStatus,
   getRoleChatStatus,
-  sendRoleChatMessage,
-  parseSSEData,
-  createStreamReader,
 } from './llmService';
-
-export type { ChatStreamEvent } from './llmService';
 
 // ============================================================================
 // File Service

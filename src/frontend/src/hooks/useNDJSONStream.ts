@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getBackendInfo } from '@/api';
-import { devLogger } from '@/app/utils/devLogger';
+import { useRuntimeTransport } from '@/runtime/transport';
 
 export interface NDJSONEvent {
   type: string;
@@ -13,21 +13,103 @@ export interface UseNDJSONStreamOptions {
   onError?: (error: string) => void;
 }
 
+interface JetstreamStartResponse {
+  ok?: boolean;
+  session_id?: string;
+  channel?: string;
+  subject?: string;
+  transport?: string;
+}
+
+function streamNameFromPath(path: string): 'dialogue' | 'preview' {
+  return path.includes('/preview/') ? 'preview' : 'dialogue';
+}
+
+function createSessionId(streamName: string): string {
+  const cryptoId = globalThis.crypto?.randomUUID?.();
+  if (cryptoId) return `docs-${streamName}-${cryptoId}`;
+  return `docs-${streamName}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function eventFromRuntimeMessage(message: unknown, channel: string): NDJSONEvent | null {
+  const raw = message as Record<string, unknown> | null;
+  const envelope = raw?.type === 'EVENT' ? (raw.event as Record<string, unknown> | undefined) : raw;
+  if (!envelope || envelope.channel !== channel) return null;
+  const payload = envelope.payload as Record<string, unknown> | undefined;
+  if (!payload) return null;
+  const data = payload.data;
+  return {
+    type: String(payload.type || 'message'),
+    data: data && typeof data === 'object' ? data as Record<string, unknown> : {},
+  };
+}
+
 /**
- * Replacement for useSSEStream: reads NDJSON (newline-delimited JSON) instead
- * of SSE wire format.  Backend returns one JSON object per line terminated
- * by a final `{type:"complete",…}` or `{type:"error",…}` line.
+ * Starts docs-init generation over Nat-JetStream and consumes the matching
+ * runtime WebSocket channel. The public callback shape remains NDJSON-like
+ * because DocsInitDialog already models events as `{ type, data }`.
  */
 export function useNDJSONStream(options: UseNDJSONStreamOptions = {}) {
   const { onEvent, onComplete, onError } = options;
+  const transport = useRuntimeTransport();
   const [isStreaming, setIsStreaming] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
+  const unregisterHandlerRef = useRef<(() => void) | null>(null);
+
+  const cleanupRuntimeSubscription = useCallback(() => {
+    unregisterHandlerRef.current?.();
+    unregisterHandlerRef.current = null;
+    unsubscribeRef.current?.();
+    unsubscribeRef.current = null;
+  }, []);
+
+  const stopStream = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    cleanupRuntimeSubscription();
+    setIsStreaming(false);
+  }, [cleanupRuntimeSubscription]);
 
   const startStream = useCallback(
     async (path: string, body: Record<string, unknown>) => {
       if (isStreaming) return;
-      setIsStreaming(true);
+
+      const streamName = streamNameFromPath(path);
+      const requestBody = { ...body };
+      const requestedSessionId =
+        typeof requestBody.session_id === 'string' && requestBody.session_id.trim()
+          ? requestBody.session_id.trim()
+          : createSessionId(streamName);
+      requestBody.session_id = requestedSessionId;
+      const channel = `docs-init-${streamName}:${requestedSessionId}`;
+
+      cleanupRuntimeSubscription();
       abortControllerRef.current = new AbortController();
+      setIsStreaming(true);
+
+      const finish = () => {
+        cleanupRuntimeSubscription();
+        abortControllerRef.current = null;
+        setIsStreaming(false);
+      };
+
+      unregisterHandlerRef.current = transport.registerMessageHandler((message) => {
+        const event = eventFromRuntimeMessage(message, channel);
+        if (!event) return;
+        onEvent?.(event);
+        if (event.type === 'complete') {
+          onComplete?.(event.data);
+          finish();
+        } else if (event.type === 'error') {
+          onError?.((event.data.error as string) || 'Unknown error');
+          finish();
+        }
+      }, channel);
+      unsubscribeRef.current = transport.subscribeChannels([{ channel, tailLines: 0 }]);
+      if (!transport.connected) {
+        transport.reconnect();
+      }
 
       try {
         const backendInfo = await getBackendInfo();
@@ -39,11 +121,9 @@ export function useNDJSONStream(options: UseNDJSONStreamOptions = {}) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(backendInfo.token
-              ? { Authorization: `Bearer ${backendInfo.token}` }
-              : {}),
+            ...(backendInfo.token ? { Authorization: `Bearer ${backendInfo.token}` } : {}),
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify(requestBody),
           signal: abortControllerRef.current.signal,
         });
 
@@ -52,74 +132,32 @@ export function useNDJSONStream(options: UseNDJSONStreamOptions = {}) {
           throw new Error(errorText || `HTTP ${response.status}`);
         }
 
-        const reader = response.body?.getReader();
-        if (!reader) {
-          throw new Error('No response body');
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          throw new Error(`Unexpected stream start response content-type: ${contentType || 'unknown'}`);
         }
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          const lines = buffer.split(/\r?\n/);
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-
-            try {
-              const parsed = JSON.parse(trimmed) as NDJSONEvent;
-              onEvent?.(parsed);
-
-              if (parsed.type === 'complete') {
-                onComplete?.(parsed.data);
-              } else if (parsed.type === 'error') {
-                onError?.((parsed.data.error as string) || 'Unknown error');
-              }
-            } catch {
-              devLogger.warn('[useNDJSONStream] Parse error for line:', trimmed.slice(0, 120));
-            }
-          }
-        }
-
-        // Process remaining buffer
-        if (buffer.trim()) {
-          try {
-            const parsed = JSON.parse(buffer.trim()) as NDJSONEvent;
-            onEvent?.(parsed);
-            if (parsed.type === 'complete') onComplete?.(parsed.data);
-            else if (parsed.type === 'error') onError?.((parsed.data.error as string) || 'Unknown error');
-          } catch { /* ignore trailing partial */ }
+        const started = await response.json() as JetstreamStartResponse;
+        if (started.ok === false) {
+          throw new Error('Docs init stream failed to start.');
         }
       } catch (error) {
         if (error instanceof Error && error.name !== 'AbortError') {
           onError?.(error.message);
         }
-      } finally {
-        setIsStreaming(false);
-        abortControllerRef.current = null;
+        finish();
       }
     },
-    [isStreaming, onEvent, onComplete, onError],
+    [
+      cleanupRuntimeSubscription,
+      isStreaming,
+      onComplete,
+      onError,
+      onEvent,
+      transport,
+    ],
   );
 
-  const stopStream = useCallback(() => {
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
-    setIsStreaming(false);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      abortControllerRef.current?.abort();
-    };
-  }, []);
+  useEffect(() => stopStream, [stopStream]);
 
   return { isStreaming, startStream, stopStream };
 }

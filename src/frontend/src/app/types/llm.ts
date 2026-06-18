@@ -116,20 +116,6 @@ export interface InterviewApiEndpoints {
   '/llm/interview/cancel': {
     session_id: string;
   };
-  '/llm/interview/stream': {
-    role: string;
-    provider_id: string;
-    model: string;
-    question: string;
-    context?: Array<Record<string, any>> | null;
-    expects_thinking?: boolean | null;
-    criteria?: string[] | null;
-    session_id?: string | null;
-    api_key?: string | null;
-    headers?: Record<string, string>;
-    env_overrides?: Record<string, string>;
-    debug?: boolean | null;
-  };
 }
 
 // ============================================================================
@@ -205,32 +191,6 @@ export const interviewValidationRules: {
       validate: (v) => (v && typeof v === 'string' && v.length > 0
         ? { valid: true }
         : { valid: false, message: 'Session ID is required' }),
-      required: true,
-    },
-  },
-  '/llm/interview/stream': {
-    role: {
-      validate: (v) => (v && typeof v === 'string' && v.length > 0
-        ? { valid: true }
-        : { valid: false, message: 'Role is required' }),
-      required: true,
-    },
-    provider_id: {
-      validate: (v) => (v && typeof v === 'string' && v.length > 0
-        ? { valid: true }
-        : { valid: false, message: 'Provider ID is required' }),
-      required: true,
-    },
-    model: {
-      validate: (v) => (v && typeof v === 'string' && v.length > 0
-        ? { valid: true }
-        : { valid: false, message: 'Model is required' }),
-      required: true,
-    },
-    question: {
-      validate: (v) => (v && typeof v === 'string' && v.length > 0
-        ? { valid: true }
-        : { valid: false, message: 'Question is required' }),
       required: true,
     },
   },

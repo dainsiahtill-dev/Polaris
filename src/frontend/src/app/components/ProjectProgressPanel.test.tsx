@@ -115,4 +115,44 @@ describe('ProjectProgressPanel QA evidence', () => {
     expect(screen.getByTestId('project-task-title')).not.toHaveTextContent(/^1$/);
     expect(screen.queryByText('任务队列（PM → Director）')).not.toBeInTheDocument();
   });
+
+  it('puts readable task titles before sequence and priority metadata in the task queue', () => {
+    render(
+      <ProjectProgressPanel
+        tasks={[
+          {
+            id: 1 as unknown as string,
+            title: 1 as unknown as string,
+            subject: '实现创建语义化 HTML5 简历结构',
+            goal: '构建个人简历的语义化 HTML5 骨架',
+            priority: 1,
+            status: 'in_progress',
+          },
+          {
+            id: 2 as unknown as string,
+            title: 2 as unknown as string,
+            subject: '实现响应式 CSS3 样式表',
+            goal: '通过 CSS Grid 和 Flexbox 适配桌面与移动端',
+            priority: 1,
+            status: 'pending',
+          },
+          {
+            id: 3 as unknown as string,
+            title: 3 as unknown as string,
+            subject: '交付验证与 README 编写',
+            goal: '完成 QA 闭环并编写运行说明',
+            priority: 1,
+            status: 'pending',
+          },
+        ]}
+        pmRunning={false}
+      />,
+    );
+
+    const rows = screen.getAllByTestId('project-task-item');
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent(/^实现创建语义化 HTML5 简历结构/);
+    expect(rows[1]).toHaveTextContent(/^实现响应式 CSS3 样式表/);
+    expect(rows[2]).toHaveTextContent(/^交付验证与 README 编写/);
+  });
 });

@@ -6,7 +6,8 @@
  * they have open. The strip auto-hides when no bench session is active.
  *
  * Drives off the same `useFactoryBench` hook as the Factory page's
- * BenchPanel, so the same SSE stream powers every surface.
+ * BenchPanel, so the same Nat-JetStream WebSocket stream powers every
+ * surface.
  */
 
 import { useMemo } from 'react';
@@ -23,6 +24,7 @@ const STATUS_COLOR: Record<string, string> = {
   running: 'text-sky-300',
   completed: 'text-emerald-300',
   failed: 'text-rose-300',
+  cancelled: 'text-amber-300',
 };
 
 function statusLabel(status: string | undefined | null): string {
@@ -30,6 +32,7 @@ function statusLabel(status: string | undefined | null): string {
   if (status === 'running') return '运行中';
   if (status === 'completed') return '已完成';
   if (status === 'failed') return '失败';
+  if (status === 'cancelled') return 'cancelled';
   return status;
 }
 
@@ -56,7 +59,11 @@ function lastBenchEvent(events: FactoryBenchEvent[]): FactoryBenchEvent | null {
 export function BenchStatusStrip({ className }: BenchStatusStripProps): JSX.Element | null {
   const { sessions, currentSession, events, isStreaming } = useFactoryBench({ autoSelect: 'newest' });
   const active = useMemo(
-    () => sessions.find((session) => session.status === 'running') || currentSession,
+    () => (
+      sessions.find((session) => session.session_id === currentSession?.session_id)
+      || currentSession
+      || sessions[0]
+    ),
     [sessions, currentSession],
   );
 

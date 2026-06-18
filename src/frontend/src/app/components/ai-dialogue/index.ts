@@ -27,13 +27,6 @@ export type {
   UseRoleChatReturn,
 } from './useRoleChat';
 
-export { useChatStream } from './useChatStream';
-export type {
-  ChatStreamMessage,
-  ChatStreamOptions,
-  ChatStreamReturn,
-} from './useChatStream';
-
 export { useAIDialogue } from './useAIDialogue';
 export type {
   UseAIDialogueOptions,

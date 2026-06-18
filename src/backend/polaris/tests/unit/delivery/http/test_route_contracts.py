@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
 from polaris.delivery.http.app_factory import create_app
 from polaris.delivery.http.schemas.common import PrimaryHealthResponse
 
@@ -50,3 +51,22 @@ def test_enhanced_system_health_is_versioned() -> None:
     route = v2_health_routes[0]
     assert route.endpoint.__module__ == "polaris.delivery.http.routers.system"
     assert route.response_model is not None
+
+
+def test_legacy_http_sse_routes_fail_closed(monkeypatch) -> None:
+    """Legacy HTTP SSE routes must not expose a second realtime transport."""
+    monkeypatch.setenv("KERNELONE_TOKEN", "test-token")
+    app = create_app()
+    client = TestClient(app)
+    response = client.post(
+        "/v2/role/pm/chat/stream",
+        headers={"Authorization": "Bearer test-token"},
+        json={"message": "hello"},
+    )
+
+    assert response.status_code == 410
+    assert response.headers.get("content-type", "").startswith("application/json")
+    assert "text/event-stream" not in response.headers.get("content-type", "")
+    body = response.json()
+    assert body["error"]["code"] == "SSE_REMOVED"
+    assert body["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"

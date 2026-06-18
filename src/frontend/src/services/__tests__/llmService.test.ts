@@ -6,18 +6,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock the apiClient
 const mockApiGet = vi.fn();
 const mockApiPost = vi.fn();
-const mockApiFetch = vi.fn();
 
 vi.mock('@/services/apiClient', () => ({
   apiGet: (...args: unknown[]) => mockApiGet(...args),
   apiPost: (...args: unknown[]) => mockApiPost(...args),
-}));
-
-vi.mock('@/api', () => ({
-  apiFetch: (...args: unknown[]) => mockApiFetch(...args),
 }));
 
 import * as llmService from '../llmService';
@@ -189,131 +183,6 @@ describe('llmService', () => {
     });
   });
 
-  describe('sendRoleChatMessage', () => {
-    it('should call apiFetch with correct parameters', async () => {
-      const request = { message: 'Hello', context: { workspace: 'test' } };
-      const mockResponse = new Response(JSON.stringify({ type: 'complete', data: { response: 'Hi' } }));
-      mockApiFetch.mockResolvedValueOnce(mockResponse);
-
-      const result = await llmService.sendRoleChatMessage('pm', request);
-
-      expect(mockApiFetch).toHaveBeenCalledWith('/v2/role/pm/chat/stream?workspace=test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
-        signal: undefined,
-      });
-      expect(result).toBe(mockResponse);
-    });
-
-    it('should pass abort signal when provided', async () => {
-      const request = { message: 'Hello' };
-      const signal = new AbortController().signal;
-      const mockResponse = new Response(JSON.stringify({ type: 'complete' }));
-      mockApiFetch.mockResolvedValueOnce(mockResponse);
-
-      await llmService.sendRoleChatMessage('architect', request, signal);
-
-      expect(mockApiFetch).toHaveBeenCalledWith('/v2/role/architect/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
-        signal,
-      });
-    });
-
-    it('should pass explicit workspace to role chat stream', async () => {
-      const request = { message: 'Hello', context: { workspace: 'stale' } };
-      const mockResponse = new Response(JSON.stringify({ type: 'complete' }));
-      mockApiFetch.mockResolvedValueOnce(mockResponse);
-
-      await llmService.sendRoleChatMessage('director', request, undefined, 'C:/Temp/Product');
-
-      expect(mockApiFetch).toHaveBeenCalledWith('/v2/role/director/chat/stream?workspace=C%3A%2FTemp%2FProduct', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
-        signal: undefined,
-      });
-    });
-
-    it('should stream chief engineer role chat messages through the generic role path', async () => {
-      const request = { message: 'Review this implementation' };
-      const mockResponse = new Response(JSON.stringify({ type: 'complete' }));
-      mockApiFetch.mockResolvedValueOnce(mockResponse);
-
-      await llmService.sendRoleChatMessage('chief_engineer', request);
-
-      expect(mockApiFetch).toHaveBeenCalledWith('/v2/role/chief_engineer/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(request),
-        signal: undefined,
-      });
-    });
-  });
-
-  describe('parseSSEData', () => {
-    it('should parse valid SSE data line', () => {
-      const result = llmService.parseSSEData('data: {"type":"content_chunk","data":{"content":"Hello"}}');
-
-      expect(result).not.toBeNull();
-      expect(result?.type).toBe('content_chunk');
-      expect(result?.data?.content).toBe('Hello');
-    });
-
-    it('should return null for non-data lines', () => {
-      const result = llmService.parseSSEData('not a data line');
-
-      expect(result).toBeNull();
-    });
-
-    it('should return null for [DONE] marker', () => {
-      const result = llmService.parseSSEData('data: [DONE]');
-
-      expect(result).toBeNull();
-    });
-
-    it('should handle non-JSON data as content chunk', () => {
-      const result = llmService.parseSSEData('data: plain text content');
-
-      expect(result).not.toBeNull();
-      expect(result?.type).toBe('content_chunk');
-      expect(result?.data?.content).toBe('plain text content');
-    });
-
-    it('should handle empty data gracefully', () => {
-      // Empty data line returns content_chunk with empty content
-      const result = llmService.parseSSEData('data: ');
-
-      // It returns a content_chunk with empty content (not null)
-      expect(result?.type).toBe('content_chunk');
-      expect(result?.data?.content).toBe('');
-    });
-  });
-
-  describe('createStreamReader', () => {
-    it('should return reader from response body', () => {
-      const mockReader = {} as ReadableStreamDefaultReader<Uint8Array>;
-      const mockBody = {
-        getReader: () => mockReader,
-      };
-      const response = { body: mockBody } as unknown as Response;
-
-      const result = llmService.createStreamReader(response);
-
-      expect(result).toBe(mockReader);
-    });
-
-    it('should return null when body is null', () => {
-      const response = { body: null } as unknown as Response;
-
-      const result = llmService.createStreamReader(response);
-
-      expect(result).toBeNull();
-    });
-  });
-
   // Note: Type exports cannot be tested at runtime in TypeScript
   // These are compile-time only and don't exist at runtime
   describe('Module exports', () => {
@@ -322,9 +191,6 @@ describe('llmService', () => {
       expect(typeof llmService.saveLLMConfig).toBe('function');
       expect(typeof llmService.getLLMStatus).toBe('function');
       expect(typeof llmService.getRoleChatStatus).toBe('function');
-      expect(typeof llmService.sendRoleChatMessage).toBe('function');
-      expect(typeof llmService.parseSSEData).toBe('function');
-      expect(typeof llmService.createStreamReader).toBe('function');
     });
   });
 });

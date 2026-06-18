@@ -12,7 +12,7 @@ vi.mock('@/app/utils/devLogger', () => ({
   },
 }));
 
-import { roleChatRolesService, roleChatService } from '../api';
+import { interviewService, roleChatRolesService, roleChatService } from '../api';
 
 describe('roleChatService', () => {
   beforeEach(() => {
@@ -45,29 +45,19 @@ describe('roleChatService', () => {
 
   it('passes workspace through generic role-chat endpoints', async () => {
     const payload = { message: 'Review handoff', context: { taskId: 'PM-1' } };
-    const streamResponse = new Response('event: complete\ndata: {}\n\n', { status: 200 });
     apiFetchMock
       .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, role: 'pm' }), { status: 200 }))
-      .mockResolvedValueOnce(streamResponse)
       .mockResolvedValueOnce(new Response(JSON.stringify({ ready: true, workspace: 'C:/Temp/Product' }), { status: 200 }));
 
     await roleChatService.chat('pm', payload, 'C:/Temp/Product');
-    const streamResult = await roleChatService.chatStream('pm', payload, undefined, 'C:/Temp/Product');
     await roleChatService.getStatus('pm', 'C:/Temp/Product');
 
-    expect(streamResult).toBe(streamResponse);
     expect(apiFetchMock).toHaveBeenNthCalledWith(1, '/v2/role/pm/chat?workspace=C%3A%2FTemp%2FProduct', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    expect(apiFetchMock).toHaveBeenNthCalledWith(2, '/v2/role/pm/chat/stream?workspace=C%3A%2FTemp%2FProduct', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: undefined,
-    });
-    expect(apiFetchMock).toHaveBeenNthCalledWith(3, '/v2/role/pm/chat/status?workspace=C%3A%2FTemp%2FProduct');
+    expect(apiFetchMock).toHaveBeenNthCalledWith(2, '/v2/role/pm/chat/status?workspace=C%3A%2FTemp%2FProduct');
   });
 
   it('loads the backend role list response shape', async () => {
@@ -87,5 +77,9 @@ describe('roleChatService', () => {
     expect(result.data?.roles).toEqual(['pm', 'architect', 'chief_engineer', 'director', 'qa']);
     expect(result.data?.count).toBe(5);
     expect(apiFetchMock).toHaveBeenCalledWith('/v2/role/chat/roles');
+  });
+
+  it('does not expose the legacy SSE interview stream endpoint', () => {
+    expect('stream' in interviewService).toBe(false);
   });
 });

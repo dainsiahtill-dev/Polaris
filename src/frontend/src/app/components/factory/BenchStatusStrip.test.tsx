@@ -101,6 +101,72 @@ describe('BenchStatusStrip', () => {
     const strip = screen.getByTestId('bench-status-strip');
     expect(strip.getAttribute('data-bench-status')).toBe('completed');
   });
+
+  it('prefers the refreshed terminal session over a stale running detail snapshot', () => {
+    mockHookValue.sessions = [
+      {
+        session_id: 'bench-cancelled',
+        work_dir: '/tmp/ws',
+        project_ids: ['L1-01', 'L1-02'],
+        total: 2,
+        completed: 0,
+        failed: 1,
+        status: 'cancelled',
+        created_at: '2026-06-18T07:08:00Z',
+        updated_at: '2026-06-18T07:10:45Z',
+        metadata: {},
+      },
+    ];
+    mockHookValue.currentSession = {
+      ...mockHookValue.sessions[0],
+      completed: 0,
+      failed: 0,
+      status: 'running',
+    };
+
+    render(<BenchStatusStrip />);
+
+    const strip = screen.getByTestId('bench-status-strip');
+    expect(strip.getAttribute('data-bench-status')).toBe('cancelled');
+    expect(strip).toHaveTextContent('cancelled');
+    expect(within(strip).getByTestId('bench-strip-progress').getAttribute('data-progress')).toBe('50');
+  });
+
+  it('does not resurrect an older running session after the newest session is terminal', () => {
+    mockHookValue.sessions = [
+      {
+        session_id: 'bench-newest-failed',
+        work_dir: '/tmp/new',
+        project_ids: ['L1-01', 'L1-02'],
+        total: 2,
+        completed: 0,
+        failed: 2,
+        status: 'failed',
+        created_at: '2026-06-18T07:05:00Z',
+        updated_at: '2026-06-18T07:10:00Z',
+        metadata: {},
+      },
+      {
+        session_id: 'bench-old-stale-running',
+        work_dir: '/tmp/old',
+        project_ids: ['L1-01'],
+        total: 1,
+        completed: 0,
+        failed: 0,
+        status: 'running',
+        created_at: '2026-06-17T07:05:00Z',
+        updated_at: '2026-06-17T07:05:00Z',
+        metadata: {},
+      },
+    ];
+    mockHookValue.currentSession = { ...mockHookValue.sessions[0] };
+
+    render(<BenchStatusStrip />);
+
+    const strip = screen.getByTestId('bench-status-strip');
+    expect(strip.getAttribute('data-bench-session')).toBe('bench-newest-failed');
+    expect(strip.getAttribute('data-bench-status')).toBe('failed');
+  });
 });
 
   it('reflects live per-project counters in progress percentage', () => {

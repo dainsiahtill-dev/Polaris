@@ -1,10 +1,12 @@
 import asyncio
+import contextlib
 import logging
 import os
+import re
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import StreamingResponse
 from polaris.cells.llm.dialogue.public.service import (
     build_default_docs_fields,
     generate_dialogue_turn as generate_docs_dialogue_turn,
@@ -24,7 +26,7 @@ from polaris.cells.workspace.integrity.public import (
     select_docs_target_root,
     workspace_has_docs,
 )
-from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, legacy_sse_removed, require_auth
 from polaris.delivery.http.schemas import (
     DocsInitApplyPayload,
     DocsInitApplyResponse,
@@ -36,12 +38,13 @@ from polaris.delivery.http.schemas import (
     DocsInitSuggestPayload,
     DocsInitSuggestResponse,
 )
+from polaris.infrastructure.messaging.nats.nats_types import create_runtime_event
 from polaris.kernelone.events import emit_event
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
-from .sse_utils import create_sse_response, sse_event_generator
+from .sse_utils import publish_to_jetstream
 
 router = APIRouter()
 log = logging.getLogger("polaris.routers.docs")
@@ -55,6 +58,9 @@ _DOCS_FIELD_KEYS = (
     "backlog",
 )
 _DOCS_PREVIEW_LLM_TIMEOUT_SECONDS = 75.0
+_create_docs_internal_task = asyncio.create_task
+_BACKGROUND_DOCS_JETSTREAM_TASKS: set[asyncio.Task[None]] = set()
+_SAFE_DOCS_EVENT_ID_PATTERN = re.compile(r"[^a-zA-Z0-9._-]+")
 _DOCS_INIT_ACTIVE_SUFFIXES = frozenset(
     {
         ".polaris.json",
@@ -69,6 +75,119 @@ _DOCS_INIT_ACTIVE_SUFFIXES = frozenset(
         "product/constraints.md",
     }
 )
+
+
+def _safe_docs_event_id(raw_value: str | None, prefix: str) -> str:
+    raw = str(raw_value or "").strip() or f"{prefix}-{uuid4().hex}"
+    safe = _SAFE_DOCS_EVENT_ID_PATTERN.sub("-", raw).strip(".-_")
+    return safe[:96] or f"{prefix}-{uuid4().hex}"
+
+
+def _track_docs_jetstream_task(task: asyncio.Task[None]) -> None:
+    _BACKGROUND_DOCS_JETSTREAM_TASKS.add(task)
+
+    def _discard(done: asyncio.Task[None]) -> None:
+        _BACKGROUND_DOCS_JETSTREAM_TASKS.discard(done)
+        try:
+            done.result()
+        except asyncio.CancelledError:
+            return
+        except (RuntimeError, ValueError, OSError, ConnectionError, TimeoutError) as exc:
+            log.warning("docs init jetstream task failed: %s", exc)
+
+    task.add_done_callback(_discard)
+
+
+def _docs_init_channel(stream_name: str, session_id: str) -> str:
+    return f"docs-init-{stream_name}:{session_id}"
+
+
+def _docs_init_subject(stream_name: str, session_id: str) -> str:
+    return f"hp.runtime.docs.init.{stream_name}.{session_id}"
+
+
+async def _publish_docs_init_chunk(
+    *,
+    stream_name: str,
+    session_id: str,
+    chunk: dict[str, Any],
+    seq: int,
+) -> bool:
+    envelope = create_runtime_event(
+        workspace_key="docs",
+        run_id=session_id,
+        channel=_docs_init_channel(stream_name, session_id),
+        kind=f"docs.init.{stream_name}.chunk",
+        payload={
+            "type": str(chunk.get("type") or "message"),
+            "data": dict(chunk.get("data") or {}),
+            "seq": int(seq),
+        },
+        meta={"source": f"docs_init_{stream_name}_jetstream"},
+    )
+    return await publish_to_jetstream(
+        subject=_docs_init_subject(stream_name, session_id),
+        payload=envelope.to_dict(),
+    )
+
+
+async def _drain_docs_init_queue_to_jetstream(
+    *,
+    stream_name: str,
+    session_id: str,
+    producer: asyncio.Task[None],
+    queue: asyncio.Queue[dict[str, Any]],
+    timeout: float = 180.0,
+) -> None:
+    seq = 0
+    terminal_seen = False
+    await _publish_docs_init_chunk(
+        stream_name=stream_name,
+        session_id=session_id,
+        chunk={"type": "start", "data": {"session_id": session_id}},
+        seq=seq,
+    )
+    seq += 1
+    try:
+        while True:
+            if producer.done() and queue.empty():
+                break
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=0.5)
+            except asyncio.TimeoutError:
+                continue
+            await _publish_docs_init_chunk(
+                stream_name=stream_name,
+                session_id=session_id,
+                chunk=chunk,
+                seq=seq,
+            )
+            seq += 1
+            if str(chunk.get("type") or "") in {"complete", "error"}:
+                terminal_seen = True
+                break
+        await asyncio.wait_for(producer, timeout=timeout)
+    except (RuntimeError, ValueError, OSError, ConnectionError, TimeoutError) as exc:
+        log.warning("docs init %s jetstream execution failed: %s", stream_name, exc)
+        await _publish_docs_init_chunk(
+            stream_name=stream_name,
+            session_id=session_id,
+            chunk={"type": "error", "data": {"error": str(exc) or type(exc).__name__}},
+            seq=seq,
+        )
+        terminal_seen = True
+    finally:
+        if not producer.done():
+            producer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await producer
+        if not terminal_seen:
+            await _publish_docs_init_chunk(
+                stream_name=stream_name,
+                session_id=session_id,
+                chunk={"type": "error", "data": {"error": "stream completed without a terminal event"}},
+                seq=seq,
+            )
 
 
 def _docs_apply_active_rel_path(rel_path: str, target_root: str) -> str:
@@ -407,38 +526,76 @@ async def docs_init_dialogue(request: Request, payload: DocsInitDialoguePayload)
     return await _docs_init_dialogue_core(request, payload)
 
 
-async def _docs_init_dialogue_stream_core(request: Request, payload: DocsInitDialoguePayload) -> StreamingResponse:
+async def _run_docs_init_dialogue_jetstream(
+    *,
+    settings: Any,
+    workspace: str,
+    fields: dict[str, str],
+    history: list[dict[str, Any]],
+    message: str,
+    session_id: str,
+) -> None:
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=50)
+    producer = _create_docs_internal_task(
+        generate_docs_dialogue_turn_streaming(
+            workspace=workspace,
+            settings=settings,
+            fields=fields,
+            history=history,
+            message=message,
+            output_queue=queue,
+        )
+    )
+    await _drain_docs_init_queue_to_jetstream(
+        stream_name="dialogue",
+        session_id=session_id,
+        producer=producer,
+        queue=queue,
+    )
+
+
+@router.post("/v2/docs/init/dialogue/jetstream", dependencies=[Depends(require_auth)])
+async def docs_init_dialogue_jetstream_v2(request: Request, payload: DocsInitDialoguePayload) -> dict[str, Any]:
+    """Start docs wizard dialogue and publish chunks through runtime Nat-JetStream."""
     state = get_state(request)
     workspace = state.settings.workspace
     workspace_str = str(workspace) if not isinstance(workspace, str) else workspace
     _bind_docs_wizard_llm_from_architect_role(state)
 
-    fields = _build_fields(payload)
-    history = _build_history(payload)
-
-    async def _run_dialogue(queue: asyncio.Queue[dict[str, Any]]) -> None:
-        await generate_docs_dialogue_turn_streaming(
-            workspace=workspace_str,
+    session_id = _safe_docs_event_id(payload.session_id, "docs-dialogue")
+    task = asyncio.create_task(
+        _run_docs_init_dialogue_jetstream(
             settings=state.settings,
-            fields=fields,
-            history=history,
+            workspace=workspace_str,
+            fields=_build_fields(payload),
+            history=_build_history(payload),
             message=str(payload.message or ""),
-            output_queue=queue,
+            session_id=session_id,
         )
-
-    return create_sse_response(sse_event_generator(_run_dialogue))
+    )
+    _track_docs_jetstream_task(task)
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "status": "started",
+        "channel": _docs_init_channel("dialogue", session_id),
+        "subject": _docs_init_subject("dialogue", session_id),
+        "transport": "nat-jetstream",
+    }
 
 
 @router.post("/v2/docs/init/dialogue/stream", dependencies=[Depends(require_auth)])
-async def docs_init_dialogue_stream_v2(request: Request, payload: DocsInitDialoguePayload) -> StreamingResponse:
-    """Interactive docs wizard dialogue turn (streaming SSE)."""
-    return await _docs_init_dialogue_stream_core(request, payload)
+async def docs_init_dialogue_stream_v2(request: Request, payload: DocsInitDialoguePayload) -> None:
+    """Removed SSE endpoint; use docs dialogue Nat-JetStream."""
+    del request, payload
+    legacy_sse_removed("/v2/docs/init/dialogue/jetstream")
 
 
 @router.post("/docs/init/dialogue/stream", dependencies=[Depends(require_auth)])
-async def docs_init_dialogue_stream(request: Request, payload: DocsInitDialoguePayload) -> StreamingResponse:
-    # DEPRECATED
-    return await _docs_init_dialogue_stream_core(request, payload)
+async def docs_init_dialogue_stream(request: Request, payload: DocsInitDialoguePayload) -> None:
+    """Removed SSE endpoint; use docs dialogue Nat-JetStream."""
+    del request, payload
+    legacy_sse_removed("/v2/docs/init/dialogue/jetstream")
 
 
 async def _docs_init_suggest_core(request: Request, payload: DocsInitSuggestPayload) -> DocsInitSuggestResponse:
@@ -548,129 +705,159 @@ async def docs_init_preview(request: Request, payload: DocsInitPreviewPayload) -
     return await _docs_init_preview_core(request, payload)
 
 
-async def _docs_init_preview_stream_core(request: Request, payload: DocsInitPreviewPayload) -> StreamingResponse:
-    """流式生成文档预览（SSE），实时显示执行进度"""
+async def _generate_docs_init_preview_events(
+    *,
+    queue: asyncio.Queue[dict[str, Any]],
+    state: AppState,
+    workspace: str,
+    payload: DocsInitPreviewPayload,
+) -> None:
+    cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace)
+    try:
+        await queue.put({"type": "stage", "data": {"stage": "init", "message": "初始化文档生成环境...", "progress": 5}})
+        _bind_docs_wizard_llm_from_architect_role(state)
+        mode = str(payload.mode or "minimal").strip().lower()
+        if mode not in ("minimal",):
+            mode = "minimal"
 
+        await queue.put({"type": "stage", "data": {"stage": "detect", "message": "检测项目配置...", "progress": 10}})
+        profile = detect_project_profile(workspace)
+        qa_commands = default_qa_commands(profile)
+
+        fields = _build_fields(payload)
+        await queue.put(
+            {"type": "stage", "data": {"stage": "llm_start", "message": "Architect正在分析需求...", "progress": 20}}
+        )
+
+        ai_fields, used_fallback = await _resolve_docs_preview_ai_fields(
+            queue=queue,
+            workspace=workspace,
+            settings=state.settings,
+            fields=fields,
+        )
+
+        await queue.put(
+            {
+                "type": "stage",
+                "data": {
+                    "stage": "llm_done",
+                    "message": "需求分析完成（降级模板）" if used_fallback else "需求分析完成",
+                    "progress": 65 if used_fallback else 60,
+                    "fields": ai_fields,
+                    "fallback": used_fallback,
+                },
+            }
+        )
+
+        await queue.put(
+            {"type": "stage", "data": {"stage": "apply_fields", "message": "整理生成结果...", "progress": 70}}
+        )
+        _merge_ai_fields(fields, ai_fields)
+
+        await queue.put(
+            {"type": "stage", "data": {"stage": "build_templates", "message": "构建文档模板...", "progress": 80}}
+        )
+        docs_map = build_docs_templates(workspace, mode, fields, qa_commands)
+        target_root = select_docs_target_root(workspace)
+
+        await queue.put(
+            {"type": "stage", "data": {"stage": "prepare_files", "message": "准备文件列表...", "progress": 90}}
+        )
+        files: list[dict[str, Any]] = []
+        for rel_path, content in docs_map.items():
+            suffix = rel_path.replace("docs/", "", 1)
+            target_path = target_root.rstrip("/") + "/" + suffix if target_root != "docs" else rel_path
+            full_path = resolve_artifact_path(workspace, cache_root, normalize_rel_path(target_path))
+            files.append(
+                {
+                    "path": target_path.replace("\\", "/"),
+                    "content": content,
+                    "exists": os.path.isfile(full_path),
+                }
+            )
+
+        await queue.put(
+            {
+                "type": "complete",
+                "data": {
+                    "ok": True,
+                    "mode": mode,
+                    "target_root": target_root,
+                    "docs_exists": workspace_has_docs(workspace),
+                    "project": profile,
+                    "files": files,
+                    "progress": 100,
+                },
+            }
+        )
+    except (RuntimeError, ValueError) as exc:
+        log.exception("Preview stream error")
+        await queue.put({"type": "error", "data": {"error": str(exc)}})
+
+
+async def _run_docs_init_preview_jetstream(
+    *,
+    state: AppState,
+    workspace: str,
+    payload: DocsInitPreviewPayload,
+    session_id: str,
+) -> None:
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=50)
+    producer = _create_docs_internal_task(
+        _generate_docs_init_preview_events(
+            queue=queue,
+            state=state,
+            workspace=workspace,
+            payload=payload,
+        )
+    )
+    await _drain_docs_init_queue_to_jetstream(
+        stream_name="preview",
+        session_id=session_id,
+        producer=producer,
+        queue=queue,
+        timeout=180.0,
+    )
+
+
+@router.post("/v2/docs/init/preview/jetstream", dependencies=[Depends(require_auth)])
+async def docs_init_preview_jetstream_v2(request: Request, payload: DocsInitPreviewPayload) -> dict[str, Any]:
+    """Start docs preview generation and publish chunks through runtime Nat-JetStream."""
     state = get_state(request)
     workspace = state.settings.workspace
     workspace_str = str(workspace) if not isinstance(workspace, str) else workspace
-    cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace_str)
-
-    async def _generate_preview_stream(queue: asyncio.Queue[dict[str, Any]]) -> None:
-        try:
-            # 阶段 1: 初始化
-            await queue.put(
-                {"type": "stage", "data": {"stage": "init", "message": "初始化文档生成环境...", "progress": 5}}
-            )
-            _bind_docs_wizard_llm_from_architect_role(state)
-            mode = str(payload.mode or "minimal").strip().lower()
-            if mode not in ("minimal",):
-                mode = "minimal"
-
-            # 阶段 2: 检测项目配置
-            await queue.put(
-                {"type": "stage", "data": {"stage": "detect", "message": "检测项目配置...", "progress": 10}}
-            )
-            profile = detect_project_profile(workspace_str)
-            qa_commands = default_qa_commands(profile)
-
-            fields = {
-                "goal": payload.goal or "",
-                "in_scope": payload.in_scope or "",
-                "out_of_scope": payload.out_of_scope or "",
-                "constraints": payload.constraints or "",
-                "definition_of_done": payload.definition_of_done or "",
-                "backlog": payload.backlog or "",
-            }
-
-            # 阶段 3: 调用 LLM 生成字段（流式，实时返回thinking）
-            await queue.put(
-                {"type": "stage", "data": {"stage": "llm_start", "message": "Architect正在分析需求...", "progress": 20}}
-            )
-
-            ai_fields, used_fallback = await _resolve_docs_preview_ai_fields(
-                queue=queue,
-                workspace=workspace_str,
-                settings=state.settings,
-                fields=fields,
-            )
-
-            # 发送 LLM 生成结果
-            await queue.put(
-                {
-                    "type": "stage",
-                    "data": {
-                        "stage": "llm_done",
-                        "message": "需求分析完成（降级模板）" if used_fallback else "需求分析完成",
-                        "progress": 65 if used_fallback else 60,
-                        "fields": ai_fields,
-                        "fallback": used_fallback,
-                    },
-                }
-            )
-
-            # 阶段 4: 应用生成的字段
-            await queue.put(
-                {"type": "stage", "data": {"stage": "apply_fields", "message": "整理生成结果...", "progress": 70}}
-            )
-            _merge_ai_fields(fields, ai_fields)
-
-            # 阶段 5: 构建文档模板
-            await queue.put(
-                {"type": "stage", "data": {"stage": "build_templates", "message": "构建文档模板...", "progress": 80}}
-            )
-            docs_map = build_docs_templates(workspace_str, mode, fields, qa_commands)
-            target_root = select_docs_target_root(workspace_str)
-
-            # 阶段 6: 准备文件列表
-            await queue.put(
-                {"type": "stage", "data": {"stage": "prepare_files", "message": "准备文件列表...", "progress": 90}}
-            )
-            files: list[dict[str, Any]] = []
-            for rel_path, content in docs_map.items():
-                suffix = rel_path.replace("docs/", "", 1)
-                target_path = target_root.rstrip("/") + "/" + suffix if target_root != "docs" else rel_path
-                full_path = resolve_artifact_path(workspace_str, cache_root, normalize_rel_path(target_path))
-                files.append(
-                    {
-                        "path": target_path.replace("\\", "/"),
-                        "content": content,
-                        "exists": os.path.isfile(full_path),
-                    }
-                )
-
-            # 完成
-            await queue.put(
-                {
-                    "type": "complete",
-                    "data": {
-                        "ok": True,
-                        "mode": mode,
-                        "target_root": target_root,
-                        "docs_exists": workspace_has_docs(workspace_str),
-                        "project": profile,
-                        "files": files,
-                        "progress": 100,
-                    },
-                }
-            )
-        except (RuntimeError, ValueError) as exc:
-            log.exception("Preview stream error")
-            await queue.put({"type": "error", "data": {"error": str(exc)}})
-
-    return create_sse_response(sse_event_generator(_generate_preview_stream, timeout=180.0))
+    session_id = _safe_docs_event_id(payload.session_id, "docs-preview")
+    task = asyncio.create_task(
+        _run_docs_init_preview_jetstream(
+            state=state,
+            workspace=workspace_str,
+            payload=payload,
+            session_id=session_id,
+        )
+    )
+    _track_docs_jetstream_task(task)
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "status": "started",
+        "channel": _docs_init_channel("preview", session_id),
+        "subject": _docs_init_subject("preview", session_id),
+        "transport": "nat-jetstream",
+    }
 
 
 @router.post("/v2/docs/init/preview/stream", dependencies=[Depends(require_auth)])
-async def docs_init_preview_stream_v2(request: Request, payload: DocsInitPreviewPayload) -> StreamingResponse:
-    """Stream docs preview generation progress via SSE."""
-    return await _docs_init_preview_stream_core(request, payload)
+async def docs_init_preview_stream_v2(request: Request, payload: DocsInitPreviewPayload) -> None:
+    """Removed SSE endpoint; use docs preview Nat-JetStream."""
+    del request, payload
+    legacy_sse_removed("/v2/docs/init/preview/jetstream")
 
 
 @router.post("/docs/init/preview/stream", dependencies=[Depends(require_auth)])
-async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPayload) -> StreamingResponse:
-    # DEPRECATED
-    return await _docs_init_preview_stream_core(request, payload)
+async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPayload) -> None:
+    """Removed SSE endpoint; use docs preview Nat-JetStream."""
+    del request, payload
+    legacy_sse_removed("/v2/docs/init/preview/jetstream")
 
 
 def _docs_init_apply_core(request: Request, payload: DocsInitApplyPayload) -> DocsInitApplyResponse:

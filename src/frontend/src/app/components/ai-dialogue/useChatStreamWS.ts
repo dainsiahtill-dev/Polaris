@@ -1,26 +1,20 @@
 /**
  * Chat Stream Hook (WebSocket / NAT-JetStream)
  *
- * 替代 useChatStream 的 SSE 版本：
  *   1. POST /v2/role/{role}/chat/jetstream 立即返回 session_id
  *   2. 通过 runtime transport 订阅 chat:<session_id> 通道
  *   3. 解析 RuntimeEventEnvelope.kind=chat.chunk 事件，更新对话 UI
  *   4. complete / error 时自动取消订阅
- *
- * Wire 协议：和 useChatStream 的 SSE 版本完全兼容（thinking_chunk /
- * content_chunk / tool_call / tool_result / fingerprint / complete / error），
- * 只是底层从 EventSource / ReadableStream 换成了 NAT-JetStream WebSocket。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiFetch } from '@/api';
+import { useRuntimeTransport } from '@/runtime/transport';
 
 function appendWorkspaceQuery(path: string, workspace?: string): string {
   if (!workspace) return path;
   const sep = path.includes('?') ? '&' : '?';
   return `${path}${sep}workspace=${encodeURIComponent(workspace)}`;
 }
-import { useRuntimeTransport } from '@/runtime/transport';
-import type { ChatStreamMessage } from './useChatStream';
 
 export interface UseChatStreamWSOptions {
   role: string;
@@ -95,11 +89,11 @@ export function useChatStreamWS(options: UseChatStreamWSOptions): UseChatStreamW
         const text = await response.text();
         return { ok: false, error: `HTTP ${response.status}: ${text.slice(0, 200)}` };
       }
-      const ct = response.headers.get('content-type') || '';
-      if (ct.includes('text/event-stream')) {
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
         return {
           ok: false,
-          error: 'server returned SSE; chat/jetstream must return application/json',
+          error: `unexpected chat start response content-type: ${contentType || 'unknown'}`,
         };
       }
       const payload = (await response.json()) as JetstreamChatStartResponse;

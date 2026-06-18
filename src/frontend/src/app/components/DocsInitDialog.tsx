@@ -342,7 +342,7 @@ export function DocsInitDialog({
       return next;
     });
 
-    startStream('/docs/init/dialogue/stream', {
+    startStream('/docs/init/dialogue/jetstream', {
       message,
       goal,
       in_scope: inScope,
@@ -359,7 +359,7 @@ export function DocsInitDialog({
     setError(null);
     setPreviewProgress({ open: true, stage: 'init', message: '初始化文档生成环境...', progress: 5 });
 
-    startPreviewStream('/docs/init/preview/stream', {
+    startPreviewStream('/docs/init/preview/jetstream', {
       mode: WIZARD_MODE,
       goal,
       in_scope: inScope,

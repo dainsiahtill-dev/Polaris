@@ -37,7 +37,6 @@ const VALIDATED_ENDPOINTS = [
   '/llm/interview/ask',
   '/llm/interview/save',
   '/llm/interview/cancel',
-  '/llm/interview/stream',
 ] as const;
 
 type ValidatedEndpoint = typeof VALIDATED_ENDPOINTS[number];

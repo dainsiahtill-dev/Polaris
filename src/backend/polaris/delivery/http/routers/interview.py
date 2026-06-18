@@ -15,7 +15,7 @@ from polaris.cells.llm.evaluation.public.service import (
     generate_interview_answer_streaming,
     save_interview_report,
 )
-from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, legacy_sse_removed, require_auth
 from polaris.delivery.http.schemas import (
     InterviewAskResponse,
     InterviewCancelResponse,
@@ -28,7 +28,7 @@ from polaris.kernelone.llm.model_identity import model_identity_equal
 from polaris.kernelone.storage.io_paths import build_cache_root
 
 from .llm_models import InterviewAskPayload, InterviewCancelPayload, InterviewSavePayload
-from .sse_utils import create_sse_response, publish_to_jetstream, sse_event_generator
+from .sse_utils import publish_to_jetstream
 
 logger = logging.getLogger(__name__)
 _create_internal_task = asyncio.create_task
@@ -395,65 +395,13 @@ async def v2_llm_interview_jetstream(request: Request, payload: InterviewAskPayl
 
 @router.post("/llm/interview/stream", dependencies=[Depends(require_auth)])  # DEPRECATED
 async def llm_interview_stream(request: Request, payload: InterviewAskPayload):
-    """Stream interview responses using Server-Sent Events (SSE)
-
-    This endpoint provides real-time output from the LLM as it executes,
-    allowing the client to see progress before the final result is ready.
-    """
-    state = get_state(request)
-    run_id = payload.session_id or f"interactive-{uuid4().hex}"
-
-    async def _run_interview(queue: asyncio.Queue) -> None:
-        await run_interactive_interview_streaming(
-            state.settings,
-            payload.role,
-            payload.provider_id,
-            payload.model,
-            payload.question,
-            session_id=run_id,
-            context=payload.context,
-            expects_thinking=payload.expects_thinking,
-            criteria=payload.criteria,
-            api_key=payload.api_key,
-            extra_headers=payload.headers,
-            env_overrides=payload.env_overrides,
-            output_queue=queue,
-        )
-
-    async def _cleanup() -> None:
-        await asyncio.to_thread(cancel_interactive_interview_stream, run_id)
-
-    return create_sse_response(sse_event_generator(_run_interview, cleanup_fn=_cleanup))
+    """Removed SSE endpoint; use the Nat-JetStream interview endpoint."""
+    del request, payload
+    legacy_sse_removed("/v2/llm/interview/jetstream")
 
 
 @router.post("/v2/llm/interview/stream", dependencies=[Depends(require_auth)])
 async def v2_llm_interview_stream(request: Request, payload: InterviewAskPayload):
-    """Stream interview responses using Server-Sent Events (SSE).
-
-    This endpoint provides real-time output from the LLM as it executes,
-    allowing the client to see progress before the final result is ready.
-    """
-    state = get_state(request)
-    run_id = payload.session_id or f"interactive-{uuid4().hex}"
-
-    async def _run_interview(queue: asyncio.Queue) -> None:
-        await run_interactive_interview_streaming(
-            state.settings,
-            payload.role,
-            payload.provider_id,
-            payload.model,
-            payload.question,
-            session_id=run_id,
-            context=payload.context,
-            expects_thinking=payload.expects_thinking,
-            criteria=payload.criteria,
-            api_key=payload.api_key,
-            extra_headers=payload.headers,
-            env_overrides=payload.env_overrides,
-            output_queue=queue,
-        )
-
-    async def _cleanup() -> None:
-        await asyncio.to_thread(cancel_interactive_interview_stream, run_id)
-
-    return create_sse_response(sse_event_generator(_run_interview, cleanup_fn=_cleanup))
+    """Removed SSE endpoint; use the Nat-JetStream interview endpoint."""
+    del request, payload
+    legacy_sse_removed("/v2/llm/interview/jetstream")

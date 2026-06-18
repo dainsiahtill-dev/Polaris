@@ -3,22 +3,17 @@
 与interview和docs_dialogue保持一致，复用平台层基础设施。
 """
 
-import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.evaluation.public.service import load_llm_test_index
-from polaris.delivery.http.routers.sse_utils import (
-    create_sse_response,
-    sse_event_generator,
-)
 from polaris.delivery.http.schemas.common import PMChatPingResponse, PMChatStatusResponse
 from polaris.delivery.http.workspace import active_workspace_value
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
 
-from ._shared import StructuredHTTPException, get_state, require_auth
-from .role_runtime_chat import execute_role_chat_nonstreaming, execute_role_chat_streaming
+from ._shared import StructuredHTTPException, get_state, legacy_sse_removed, require_auth
+from .role_runtime_chat import execute_role_chat_nonstreaming
 
 router = APIRouter()
 
@@ -73,38 +68,9 @@ async def pm_chat(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
 
 @router.post("/v2/pm/chat/stream", dependencies=[Depends(require_auth)])
 async def pm_chat_stream(request: Request, payload: dict[str, Any]):
-    """Chat with the PM role LLM (streaming SSE).
-
-    Yields:
-        thinking_chunk, content_chunk, complete, and error events.
-    """
-    state = get_state(request)
-    workspace = _workspace_value(state.settings)
-
-    message = str(payload.get("message") or "").strip()
-    if not message:
-        return create_sse_response(_error_generator("message is required"))
-
-    async def _run_pm_dialogue(queue: asyncio.Queue) -> None:
-        """运行PM对话并输出到队列"""
-        await execute_role_chat_streaming(
-            workspace=workspace,
-            role="pm",
-            message=message,
-            output_queue=queue,
-            payload=payload,
-            default_domain="document",
-            host_kind="pm_chat_http_stream",
-            context=payload.get("context"),
-        )
-
-    return create_sse_response(sse_event_generator(_run_pm_dialogue, timeout=180.0))
-
-
-async def _error_generator(message: str):
-    """错误事件生成器"""
-    yield f"event: error\ndata: {message}\n\n"
-    yield "event: complete\ndata: {}\n\n"
+    """Removed SSE endpoint; use role chat Nat-JetStream."""
+    del request, payload
+    legacy_sse_removed("/v2/role/pm/chat/jetstream")
 
 
 @router.get("/v2/pm/chat/status", response_model=PMChatStatusResponse, dependencies=[Depends(require_auth)])

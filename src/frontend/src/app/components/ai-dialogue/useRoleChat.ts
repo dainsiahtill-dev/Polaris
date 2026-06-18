@@ -125,6 +125,20 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
   const [chatStatus, setChatStatus] = useState<ChatStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const channelUnsubscribeRef = useRef<(() => void) | null>(null);
+  const messageHandlerUnregisterRef = useRef<(() => void) | null>(null);
+  const transport = useRuntimeTransport();
+
+  const cleanupActiveStream = useCallback(() => {
+    if (channelUnsubscribeRef.current) {
+      try { channelUnsubscribeRef.current(); } catch { /* noop */ }
+      channelUnsubscribeRef.current = null;
+    }
+    if (messageHandlerUnregisterRef.current) {
+      try { messageHandlerUnregisterRef.current(); } catch { /* noop */ }
+      messageHandlerUnregisterRef.current = null;
+    }
+  }, []);
 
   // 检查角色LLM状态
   const checkStatus = useCallback(async () => {
@@ -161,8 +175,9 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+      cleanupActiveStream();
     };
-  }, []);
+  }, [cleanupActiveStream]);
 
   // 发送消息
   const sendMessage = useCallback(async () => {
@@ -197,19 +212,27 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
     abortControllerRef.current = new AbortController();
 
     try {
-      const response = await sendRoleChatMessage(
-        role,
-        { message: userMessage.content, context },
-        abortControllerRef.current.signal,
-        workspace
-      );
+      const response = await apiFetch(appendWorkspaceQuery(`/v2/role/${role}/chat/jetstream`, workspace), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userMessage.content, context }),
+        signal: abortControllerRef.current.signal,
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(`unexpected role chat start response content-type: ${contentType || 'unknown'}`);
+      }
+      const payload = await response.json() as JetstreamChatStartResponse;
+      const channel = String(payload.channel || '').trim();
+      if (!channel) {
+        throw new Error('missing Nat-JetStream channel');
+      }
+
       const messageId = (Date.now() + 1).toString();
 
       // 添加AI消息占位
@@ -225,43 +248,18 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
         },
       ]);
 
-      if (reader) {
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            const event = parseSSEData(line);
-            if (event) {
-              handleStreamEvent(event, messageId, setMessages);
-            } else if (line.startsWith('data: ')) {
-              // Non-JSON data, append to content
-              const data = line.slice(6);
-              if (data !== '[DONE]') {
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === messageId
-                      ? { ...m, content: m.content + data }
-                      : m
-                  )
-                );
-              }
-            }
-          }
+      cleanupActiveStream();
+      channelUnsubscribeRef.current = transport.subscribeChannels([{ channel, tailLines: 0 }]);
+      messageHandlerUnregisterRef.current = transport.registerMessageHandler((raw: unknown) => {
+        const event = runtimeChatEvent(raw, channel);
+        if (!event) return;
+        handleStreamEvent(event, messageId, setMessages);
+        if (event.type === 'complete' || event.type === 'error') {
+          cleanupActiveStream();
+          setIsLoading(false);
+          abortControllerRef.current = null;
         }
-      }
-
-      // 标记流结束
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === messageId ? { ...m, isStreaming: false } : m
-        )
-      );
+      });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         // 用户取消，正常处理
@@ -278,11 +276,19 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
           error: true,
         },
       ]);
-    } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
     }
-  }, [inputValue, isLoading, chatStatus, role, context, workspace]);
+  }, [
+    inputValue,
+    isLoading,
+    chatStatus,
+    role,
+    context,
+    workspace,
+    cleanupActiveStream,
+    transport,
+  ]);
 
   // 清空消息
   const clearMessages = useCallback(() => {
@@ -317,9 +323,6 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
     handleKeyDown,
   };
 }
-
-// 处理流式事件
-import type { ChatStreamEvent } from '@/services';
 
 function handleStreamEvent(
   event: ChatStreamEvent,

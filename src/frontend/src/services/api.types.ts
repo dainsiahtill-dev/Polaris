@@ -1610,12 +1610,6 @@ export interface InterviewCancelResponse {
   cancelled: boolean;
 }
 
-export interface InterviewStreamRequest {
-  question: string;
-  context?: Record<string, unknown>;
-  role?: string;
-}
-
 // --- LLM Test ---
 export interface LLMTestReportResponse {
   ok: boolean;

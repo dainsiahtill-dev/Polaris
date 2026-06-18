@@ -940,6 +940,7 @@ def main() -> int:
     base = Path(args.work_dir)
     base.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
+    run_errors: list[str] = []
     failed = 0
     bench_session_id = os.environ.get("FACTORY_BENCH_SESSION_ID") or ""
     backend_url = _resolve_backend_url()
@@ -1001,6 +1002,46 @@ def main() -> int:
                 )
         except subprocess.TimeoutExpired:
             chain = {"exit_code": -1, "duration_s": float(args.timeout), "timeout": True}
+        except KeyboardInterrupt as exc:
+            reason = "interrupted"
+            _emit_bench_event(
+                workspace=base,
+                project_id="-",
+                level=0,
+                name="run.cancelled",
+                summary=f"factory-bench cancelled: {reason}",
+                meta={
+                    "session_id": bench_session_id,
+                    "total": len(selected),
+                    "passed": sum(1 for r in records if r.get("all_checks_passed")),
+                    "failed": max(1, len(selected) - sum(1 for r in records if r.get("all_checks_passed"))),
+                    "error": reason,
+                },
+            )
+            if backend_url and bench_session_id:
+                _push_bench_complete_to_backend(
+                    backend_url=backend_url,
+                    session_id=bench_session_id,
+                    success=False,
+                    summary={
+                        "total": len(selected),
+                        "passed": sum(1 for r in records if r.get("all_checks_passed")),
+                        "failed": max(1, len(selected) - sum(1 for r in records if r.get("all_checks_passed"))),
+                        "error": reason,
+                        "exception": type(exc).__name__,
+                    },
+                    token=backend_token,
+                )
+            return 130
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+            error = str(exc) or type(exc).__name__
+            run_errors.append(error)
+            chain = {
+                "exit_code": -1,
+                "duration_s": 0.0,
+                "error": error,
+                "exception": type(exc).__name__,
+            }
         _emit_bench_event(
             workspace=base,
             project_id=pid,
@@ -1132,16 +1173,19 @@ def main() -> int:
         },
     )
     if backend_url and bench_session_id:
+        complete_summary = {
+            "total": agg["total"],
+            "passed": agg["all_checks_passed"],
+            "failed": agg["total"] - agg["all_checks_passed"],
+            "by_level": agg["by_level"],
+        }
+        if run_errors:
+            complete_summary["error"] = "; ".join(run_errors)
         _push_bench_complete_to_backend(
             backend_url=backend_url,
             session_id=bench_session_id,
             success=run_success,
-            summary={
-                "total": agg["total"],
-                "passed": agg["all_checks_passed"],
-                "failed": agg["total"] - agg["all_checks_passed"],
-                "by_level": agg["by_level"],
-            },
+            summary=complete_summary,
             token=backend_token,
         )
     print(
@@ -1150,7 +1194,7 @@ def main() -> int:
     )
 
     print(f"[factory-bench] audits -> {base / 'factory_audits.json'}", flush=True)
-    return 0
+    return 0 if run_success else 1
 
 
 if __name__ == "__main__":

@@ -19,13 +19,13 @@ from polaris.cells.llm.provider_config.public.contracts import (
     RoleNotConfiguredError,
 )
 from polaris.cells.llm.provider_config.public.service import resolve_llm_test_execution_context
-from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, legacy_sse_removed, require_auth
 from polaris.delivery.http.schemas.common import LlmTestReportResponse, LlmTestTranscriptResponse
 from polaris.infrastructure.messaging.nats.nats_types import create_runtime_event
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
 from .llm_models import LlmTestPayload
-from .sse_utils import create_sse_response, publish_to_jetstream, sse_event_generator
+from .sse_utils import publish_to_jetstream
 
 if TYPE_CHECKING:
     from polaris.bootstrap.config import Settings
@@ -124,74 +124,9 @@ async def llm_test(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
 
 @router.post("/llm/test/stream", dependencies=[Depends(require_auth)])  # DEPRECATED
 async def llm_test_stream(request: Request, payload: LlmTestPayload):
-    """Stream LLM test results using Server-Sent Events (SSE)
-
-    This endpoint provides real-time output from LLM tests as they execute,
-    allowing the client to see progress for each test suite as it completes.
-    Supports connectivity-only tests without role dependency when role='connectivity'.
-
-    Scheme B: When role='connectivity' and base_url is provided, bypasses config loading
-    and skips persistence (no ramdisk dependency).
-    """
-    state = get_state(request)
-    workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
-    cache_root = build_cache_root(state.settings.ramdisk_root or "", workspace)
-
-    try:
-        test_context = resolve_llm_test_execution_context(workspace, cache_root, payload.model_dump())
-    except LlmProviderConfigError as exc:
-        raise _map_provider_config_error(exc) from exc
-
-    async def _run_tests(queue: asyncio.Queue) -> None:
-        role = test_context.role or "connectivity"
-        suites = list(test_context.suites)
-        await queue.put(
-            {
-                "type": "start",
-                "data": {
-                    "role": role,
-                    "provider_id": test_context.effective_provider_id,
-                    "model": test_context.model,
-                    "suites": suites,
-                },
-            }
-        )
-
-        report = await run_llm_tests(
-            workspace=workspace,
-            settings=state.settings,
-            provider_id=test_context.effective_provider_id,
-            model=test_context.model,
-            role=role,
-            suites=suites,
-            evaluation_mode=payload.evaluation_mode,
-            api_key=payload.api_key,
-            extra_headers=payload.headers,
-            env_overrides=payload.env_overrides,
-            prompt_override=payload.prompt_override,
-            provider_cfg=test_context.provider_cfg if test_context.use_direct_config else None,
-            skip_persistence=False,
-        )
-        suites_dict = report.get("suites")
-        suites_payload = suites_dict if isinstance(suites_dict, dict) else {}
-        for suite_name, suite_result in suites_payload.items():
-            await queue.put({"type": "suite_start", "data": {"suite": suite_name}})
-            await queue.put(
-                {
-                    "type": "suite_result",
-                    "data": {"suite": suite_name, "result": suite_result},
-                }
-            )
-            await queue.put(
-                {
-                    "type": "suite_complete",
-                    "data": {"suite": suite_name, "result": suite_result},
-                }
-            )
-        await queue.put({"type": "complete", "data": report})
-
-    return create_sse_response(sse_event_generator(_run_tests))
+    """Removed SSE endpoint; use the Nat-JetStream LLM test endpoint."""
+    del request, payload
+    legacy_sse_removed("/v2/llm/test/jetstream")
 
 
 @router.get(
@@ -354,8 +289,9 @@ async def v2_llm_test_jetstream(request: Request, payload: LlmTestPayload) -> di
 
 @router.post("/v2/llm/test/stream", dependencies=[Depends(require_auth)])
 async def v2_llm_test_stream(request: Request, payload: LlmTestPayload):
-    """Stream LLM test results using Server-Sent Events."""
-    return await llm_test_stream(request, payload)
+    """Removed SSE endpoint; use the Nat-JetStream LLM test endpoint."""
+    del request, payload
+    legacy_sse_removed("/v2/llm/test/jetstream")
 
 
 @router.get("/v2/llm/test/{test_run_id}", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])

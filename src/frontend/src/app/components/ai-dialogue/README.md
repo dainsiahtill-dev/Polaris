@@ -130,10 +130,10 @@ Content-Type: application/json
 }
 ```
 
-### 流式对话 (SSE)
+### 流式对话 (Nat-JetStream)
 
 ```http
-POST /v2/role/{role}/chat/stream
+POST /v2/role/{role}/chat/jetstream
 Content-Type: application/json
 
 {
@@ -141,6 +141,8 @@ Content-Type: application/json
   "context": { "key": "value" }
 }
 ```
+
+返回的 `channel` 通过 Runtime WebSocket 订阅，前端不再读取 HTTP streaming body。
 
 ### 获取状态
 

@@ -1,12 +1,7 @@
-"""Neural Weave SSE Stream Router - Full-Duplex Streaming Architecture
+"""Legacy Neural Weave stream router.
 
-Demonstrates the EventStreamer class for SSE serialization and multiplexing
-with StreamExecutor integration.
-
-This router provides streaming endpoints that:
-1. Convert AIStreamEvent to SSE format via EventStreamer
-2. Support multiple consumers via asyncio.Queue-based multiplexing
-3. Provide backpressure control via AsyncBackpressureBuffer
+HTTP SSE chat routes are removed. Real-time delivery must use the unified
+Nat-JetStream WebSocket runtime transport.
 """
 
 from __future__ import annotations
@@ -17,7 +12,6 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import StreamingResponse
 from polaris.delivery.http.schemas.common import StreamHealthResponse
 from polaris.kernelone.events.constants import (
     EVENT_TYPE_COMPLETE,
@@ -25,15 +19,11 @@ from polaris.kernelone.events.constants import (
     EVENT_TYPE_TOOL_CALL,
     EVENT_TYPE_TOOL_RESULT,
 )
-from polaris.kernelone.llm.engine.contracts import AIRequest, AIStreamEvent
-from polaris.kernelone.llm.engine.stream.config import StreamConfig
-from polaris.kernelone.llm.engine.stream.executor import StreamExecutor
-from polaris.kernelone.llm.shared_contracts import TaskType
+from polaris.kernelone.llm.engine.contracts import AIStreamEvent
 from polaris.kernelone.stream import EventStreamer
-from polaris.kernelone.stream.sse_streamer import AsyncBackpressureBuffer
 from pydantic import BaseModel
 
-from ._shared import get_state, require_auth
+from ._shared import legacy_sse_removed, require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -177,197 +167,20 @@ async def sse_stream_generator(
 async def stream_chat(
     request: Request,
     chat_request: StreamChatRequest,
-) -> StreamingResponse:
-    """Stream chat endpoint using EventStreamer for SSE multiplexing.
-
-    This endpoint demonstrates the Neural Weave architecture:
-    1. StreamExecutor produces AIStreamEvent via invoke_stream()
-    2. EventStreamer serializes to SSE and broadcasts to multiple consumers
-    3. FastAPI StreamingResponse delivers SSE to client
-
-    The endpoint supports:
-    - Real-time token streaming (chunk events)
-    - Thinking/reasoning progress (reasoning_chunk events)
-    - Tool call lifecycle (tool_call events with tool_start/tool_end metadata)
-    - Backpressure control via AsyncBackpressureBuffer
-
-    Args:
-        request: The FastAPI request object.
-        chat_request: The chat request with message and options.
-
-    Returns:
-        StreamingResponse with SSE events.
-    """
-    state = get_state(request)
-
-    # Create StreamExecutor
-    executor = StreamExecutor(
-        workspace=str(state.settings.workspace),
-        telemetry=None,  # Could add telemetry here
-    )
-
-    # Create EventStreamer for SSE multiplexing
-    config = StreamConfig.from_env()
-    streamer = EventStreamer(config=config, max_queue_size=50)
-
-    # Build AIRequest from chat request
-    ai_request = AIRequest(
-        task_type=TaskType.DIALOGUE,
-        role=str(chat_request.role or "user"),
-        input=chat_request.message,
-        provider_id=chat_request.provider_id,
-        model=chat_request.model,
-        context=dict(chat_request.context or {}),
-        options=dict(chat_request.options or {}),
-    )
-
-    # Background task to run the stream and broadcast events
-    async def run_stream() -> None:
-        try:
-            await streamer.broadcast(
-                executor.invoke_stream(ai_request),
-                task_name="stream-chat-broadcast",
-            )
-        except asyncio.CancelledError:
-            logger.debug("[stream-chat] stream cancelled")
-        except (RuntimeError, ValueError, OSError) as exc:
-            # Catch common streaming exceptions
-            logger.exception("[stream-chat] stream error: %s", exc)
-            await streamer.publish(AIStreamEvent.error_event(str(exc)))
-        finally:
-            await streamer.close()
-
-    # Start the broadcast task
-    stream_task = asyncio.create_task(run_stream())
-    stream_task.set_name("stream-chat-broadcast-task")
-
-    # Create SSE generator that consumes from the streamer
-    async def sse_generator() -> Any:
-        stream_task_ref: asyncio.Task[Any] | None = stream_task
-        try:
-            async for event in streamer.subscribe():
-                yield format_sse_event(event)
-                await asyncio.sleep(0)  # Force flush
-        except asyncio.CancelledError:
-            logger.debug("[stream-chat] SSE generator cancelled")
-            raise
-        finally:
-            # Cancel and wait for stream task with timeout
-            if stream_task_ref is not None:
-                await _cancel_task_with_timeout(stream_task_ref)
-
-    return StreamingResponse(
-        sse_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+) -> None:
+    """Removed SSE endpoint; use role chat or session Nat-JetStream endpoints."""
+    del request, chat_request
+    legacy_sse_removed("/v2/role/{role}/chat/jetstream")
 
 
 @router.post("/v2/stream/chat/backpressure", dependencies=[Depends(require_auth)])
 async def stream_chat_with_backpressure(
     request: Request,
     chat_request: StreamChatRequest,
-) -> StreamingResponse:
-    """Stream chat endpoint with explicit backpressure control.
-
-    This endpoint demonstrates the AsyncBackpressureBuffer for cases where
-    the consumer might be slower than the producer.
-
-    Args:
-        request: The FastAPI request object.
-        chat_request: The chat request with message and options.
-
-    Returns:
-        StreamingResponse with SSE events and backpressure control.
-    """
-    state = get_state(request)
-
-    # Create components
-    executor = StreamExecutor(
-        workspace=str(state.settings.workspace),
-        telemetry=None,
-    )
-    config = StreamConfig.from_env()
-    buffer = AsyncBackpressureBuffer(config=config)
-
-    # Build AIRequest
-    ai_request = AIRequest(
-        task_type=TaskType.DIALOGUE,
-        role=str(chat_request.role or "user"),
-        input=chat_request.message,
-        provider_id=chat_request.provider_id,
-        model=chat_request.model,
-        context=dict(chat_request.context or {}),
-        options=dict(chat_request.options or {}),
-    )
-
-    async def run_stream_with_buffer() -> None:
-        """Run stream and feed through backpressure buffer."""
-        try:
-            async for event in executor.invoke_stream(ai_request):
-                # Feed through backpressure-aware buffer
-                event_json = json.dumps(event.to_dict(), ensure_ascii=False)
-                await buffer.feed(event_json)
-        except asyncio.CancelledError:
-            pass  # Expected cancellation
-        except (RuntimeError, ValueError, OSError) as exc:
-            # Catch common streaming exceptions
-            logger.exception("[stream-chat/backpressure] error: %s", exc)
-        finally:
-            await buffer.clear()
-
-    # Start stream task
-    stream_task = asyncio.create_task(run_stream_with_buffer())
-    stream_task.set_name("stream-chat-backpressure-task")
-
-    async def sse_generator() -> Any:
-        """Generate SSE from backpressure buffer."""
-        stream_task_ref: asyncio.Task[Any] | None = stream_task
-        try:
-            while True:
-                chunks = await asyncio.wait_for(buffer.drain(), timeout=30.0)
-                if not chunks:
-                    # Check if stream is done
-                    if stream_task_ref is not None and stream_task_ref.done():
-                        break
-                    continue
-
-                for chunk_json in chunks:
-                    event_dict = json.loads(chunk_json)
-                    event_type = event_dict.get("type", "message")
-                    yield f"event: {event_type}\ndata: {chunk_json}\n\n".encode()
-                    await asyncio.sleep(0)
-
-                # Check completion
-                if stream_task_ref is not None and stream_task_ref.done():
-                    break
-        except asyncio.CancelledError:
-            logger.debug("[stream-chat/backpressure] SSE generator cancelled")
-            raise
-        except asyncio.TimeoutError:
-            # Keep-alive ping
-            yield b"event: ping\ndata: {}\n\n"
-        except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
-            # Catch common generator exceptions
-            logger.warning("[stream-chat/backpressure] generator error: %s", exc)
-        finally:
-            # Cancel and wait for stream task with timeout
-            if stream_task_ref is not None:
-                await _cancel_task_with_timeout(stream_task_ref)
-
-    return StreamingResponse(
-        sse_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+) -> None:
+    """Removed SSE endpoint; use Nat-JetStream WebSocket flow control."""
+    del request, chat_request
+    legacy_sse_removed("/v2/role/{role}/chat/jetstream")
 
 
 @router.get("/v2/stream/health", response_model=StreamHealthResponse, dependencies=[Depends(require_auth)])

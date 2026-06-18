@@ -1,4 +1,4 @@
-"""Factory Router - unattended factory HTTP/SSE adapter."""
+"""Factory Router - unattended factory HTTP + Nat-JetStream adapter."""
 
 from __future__ import annotations
 
@@ -1520,10 +1520,10 @@ async def get_factory_run_artifacts(
 # ``scripts/factory_bench/run_factory_bench.py`` subprocess (which runs in
 # a terminal, not in the backend process) can publish its lifecycle to the
 # Factory front-end panel in real time. The bench subprocess posts over HTTP
-# (urllib in the bench, FastAPI here) and the front-end subscribes via SSE.
-# Failures on either side are soft: missing session dir / dropped events are
-# logged, never raised into the HTTP response, so a misconfigured bench can
-# never crash the panel.
+# (urllib in the bench, FastAPI here) and the front-end subscribes via the
+# unified Nat-JetStream WebSocket runtime transport. Failures on either side
+# are soft: missing session dir / dropped events are logged, never raised into
+# the HTTP response, so a misconfigured bench can never crash the panel.
 # =============================================================================
 
 
@@ -1560,6 +1560,37 @@ class FactoryBenchProgressRequest(BaseModel):
 
 
 _bench_service = FactoryBenchService()
+
+
+async def _publish_factory_bench_event_to_jetstream(session_id: str, event: dict[str, Any]) -> bool:
+    """Fan out a persisted factory-bench event on the unified runtime stream."""
+    try:
+        from polaris.infrastructure.messaging.nats.nats_types import (
+            create_runtime_event,
+        )
+
+        envelope = create_runtime_event(
+            workspace_key="bench",
+            run_id=session_id,
+            # The front-end subscribes to ``event.bench:<sid>`` (see
+            # useFactoryBench: ``const channel = `event.bench:${sid}`;``).
+            # The WS filter does exact-string channel match, so we have
+            # to publish on the same per-session channel.
+            channel=f"event.bench:{session_id}",
+            kind=str(event.get("type") or "bench.event"),
+            payload=event,
+            meta={"source": "factory_bench_subprocess"},
+        )
+        # ``publish_to_jetstream`` -> ``client.publish_js`` JSON-serializes
+        # the payload (nats-py has no dataclass hook). Hand it a dict.
+        return await publish_to_jetstream(
+            subject=f"hp.runtime.bench.{session_id}",
+            payload=envelope.to_dict(),
+        )
+    except (RuntimeError, TimeoutError, ValueError, TypeError) as exc:
+        # JetStream fanout is best-effort; JSONL/session write already succeeded.
+        logger.debug("bench JetStream fanout failed for %s: %s", session_id, exc)
+        return False
 
 
 @router.post("/v2/factory/bench/sessions", response_model=FactoryBenchStartResponse)
@@ -1639,33 +1670,7 @@ async def append_factory_bench_event_v2(
     # kind, workspace_key, run_id); wrapping the bench event in that shape
     # means a front-end subscribing to ``event.bench`` gets the same shape
     # it already gets for ``log.llm`` etc.
-    published = False
-    try:
-        from polaris.infrastructure.messaging.nats.nats_types import (
-            create_runtime_event,
-        )
-
-        envelope = create_runtime_event(
-            workspace_key="bench",
-            run_id=session_id,
-            # The front-end subscribes to ``event.bench:<sid>`` (see
-            # useFactoryBench: ``const channel = `event.bench:${sid}`;``).
-            # The WS filter does exact-string channel match, so we have
-            # to publish on the same per-session channel.
-            channel=f"event.bench:{session_id}",
-            kind=str(event.get("type") or "bench.event"),
-            payload=event,
-            meta={"source": "factory_bench_subprocess"},
-        )
-        # ``publish_to_jetstream`` -> ``client.publish_js`` JSON-serializes
-        # the payload (nats-py has no dataclass hook). Hand it a dict.
-        published = await publish_to_jetstream(
-            subject=f"hp.runtime.bench.{session_id}",
-            payload=envelope.to_dict(),
-        )
-    except (RuntimeError, ValueError, TypeError) as exc:
-        # JetStream fanout is best-effort; JSONL write already succeeded.
-        logger.debug("bench JetStream fanout failed for %s: %s", session_id, exc)
+    published = await _publish_factory_bench_event_to_jetstream(session_id, event)
     return {"session_id": session_id, "appended": True, "published": published}
 
 
@@ -1680,7 +1685,28 @@ async def complete_factory_bench_session_v2(
         success=payload.success,
         summary=payload.summary,
     )
-    return {"session_id": session_id, "updated": ok}
+    published = False
+    if ok:
+        snapshot = _bench_service.get_session(session_id) or {}
+        status = str(snapshot.get("status") or ("completed" if payload.success else "failed"))
+        meta: dict[str, Any] = {
+            "status": status,
+            "total": snapshot.get("total"),
+            "completed": snapshot.get("completed"),
+            "failed": snapshot.get("failed"),
+            "completed_at": snapshot.get("completed_at"),
+            **dict(payload.summary),
+        }
+        event = {
+            "type": f"factory_bench.run.{status}",
+            "actor": "factory-bench",
+            "summary": "Factory bench run completed" if payload.success else "Factory bench run failed",
+            "ok": payload.success,
+            "meta": {k: v for k, v in meta.items() if v is not None},
+        }
+        _bench_service.append_event(session_id, event)
+        published = await _publish_factory_bench_event_to_jetstream(session_id, event)
+    return {"session_id": session_id, "updated": ok, "published": published}
 
 
 @router.post("/v2/factory/bench/sessions/{session_id}/progress")

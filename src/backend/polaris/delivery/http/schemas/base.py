@@ -16,6 +16,7 @@ class AgentsFeedbackPayload(BaseModel):
 
 
 class DocsInitPreviewPayload(BaseModel):
+    session_id: str | None = None
     mode: str = "minimal"
     goal: str = ""
     in_scope: str = ""
@@ -41,6 +42,7 @@ class DocsInitDialogueTurn(BaseModel):
 
 
 class DocsInitDialoguePayload(BaseModel):
+    session_id: str | None = None
     message: str = ""
     goal: str = ""
     in_scope: str = ""

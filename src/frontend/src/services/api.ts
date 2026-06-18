@@ -697,16 +697,6 @@ export const roleChatService = {
     return handleResponse(res, 'Role chat failed');
   },
 
-  /** POST /v2/role/{role}/chat/stream — Streaming unified role chat (returns raw Response for SSE handling) */
-  async chatStream(role: RoleChatRole, request: import('./api.types').RoleChatRequest, signal?: AbortSignal, workspace = ''): Promise<Response> {
-    return apiFetch(`/v2/role/${encodeURIComponent(role)}/chat/stream${workspaceQuerySuffix(workspace)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-      signal,
-    });
-  },
-
   /** GET /v2/role/{role}/chat/status — Role chat readiness status */
   async getStatus(role: RoleChatRole, workspace = ''): Promise<ApiResult<import('./api.types').RoleChatStatusResponse>> {
     const res = await apiFetch(`/v2/role/${encodeURIComponent(role)}/chat/status${workspaceQuerySuffix(workspace)}`);
@@ -729,16 +719,6 @@ export const roleSessionService = {
     return handleResponse(res, 'Failed to send session message');
   },
 
-  /** POST /v2/roles/sessions/{id}/messages/stream — Stream a message to a role session (returns raw Response for SSE) */
-  async sendMessageStream(sessionId: string, request: import('./api.types').SessionMessageRequest, signal?: AbortSignal): Promise<Response> {
-    return apiFetch(`/v2/roles/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-      signal,
-    });
-  },
-
   /** GET /v2/roles/sessions/{id}/memory — Get session memory (maps to memory search endpoint) */
   async getMemory(sessionId: string, query?: string, kind?: string, entity?: string, limit = 6): Promise<ApiResult<import('./api.types').SessionMemoryResponse>> {
     const params = new URLSearchParams();
@@ -748,43 +728,6 @@ export const roleSessionService = {
     params.set('limit', String(limit));
     const res = await apiFetch(`/v2/roles/sessions/${encodeURIComponent(sessionId)}/memory/search?${params}`);
     return handleResponse(res, 'Failed to load session memory');
-  },
-};
-
-// ============================================================================
-// V2 P0 Missing Routes — Neural Weave Stream
-// ============================================================================
-
-export const streamService = {
-  /** POST /v2/stream/chat — Neural Weave SSE chat (returns raw Response for SSE handling) */
-  async chat(request: import('./api.types').StreamChatRequest, signal?: AbortSignal): Promise<Response> {
-    return apiFetch('/v2/stream/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-      signal,
-    });
-  },
-
-  /** POST /v2/stream/chat/backpressure — Explicit backpressure SSE chat (returns raw Response) */
-  async chatWithBackpressure(request: import('./api.types').StreamChatRequest, signal?: AbortSignal): Promise<Response> {
-    return apiFetch('/v2/stream/chat/backpressure', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-      signal,
-    });
-  },
-};
-
-// ============================================================================
-// V2 P0 Missing Routes — Factory Run Stream
-// ============================================================================
-
-export const factoryStreamService = {
-  /** GET /v2/factory/runs/{id}/stream — Factory run SSE stream (returns raw Response for SSE handling) */
-  async connectRunStream(runId: string, signal?: AbortSignal): Promise<Response> {
-    return apiFetch(`/v2/factory/runs/${encodeURIComponent(runId)}/stream`, { signal });
   },
 };
 
@@ -1395,15 +1338,6 @@ export const interviewService = {
     return handleResponse(res, 'Interview cancel failed');
   },
 
-  /** POST /v2/llm/interview/stream — Interview stream (returns raw Response for SSE handling) */
-  async stream(request: import('./api.types').InterviewStreamRequest, signal?: AbortSignal): Promise<Response> {
-    return apiFetch('/v2/llm/interview/stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-      signal,
-    });
-  },
 };
 
 // ============================================================================

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -256,6 +257,54 @@ def test_run_chain_task_market_driver_plans_then_dispatches_market(
     assert "--director-workflow-execution-mode" not in planning_cmd
     assert "run_market_chain.py" in market_cmd[1]
     assert "--fresh-market" in market_cmd
+
+
+def test_main_marks_backend_session_failed_when_run_aborts(monkeypatch: Any, tmp_path: Path) -> None:
+    completed: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_factory_bench.py",
+            "--project-ids",
+            "L1-01",
+            "--work-dir",
+            str(tmp_path),
+            "--max-failed",
+            "3",
+        ],
+    )
+    monkeypatch.setattr(
+        bench,
+        "load_projects",
+        lambda: [{"id": "L1-01", "level": 1, "title": "Abort case", "brief": "Build something"}],
+    )
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "token")
+    monkeypatch.setattr(bench, "_push_bench_session_to_backend", lambda **_kwargs: "bench-abort")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+
+    def _capture_complete(**kwargs: Any) -> bool:
+      completed.append(kwargs)
+      return True
+
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", _capture_complete)
+
+    def _abort(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("simulated runner abort")
+
+    monkeypatch.setattr(bench, "run_factory_chain", _abort)
+
+    result = bench.main()
+
+    assert result == 1
+    assert completed, "bench session should be marked terminal on runner abort"
+    assert completed[-1]["session_id"] == "bench-abort"
+    assert completed[-1]["success"] is False
+    assert completed[-1]["summary"]["failed"] == 1
+    assert completed[-1]["summary"]["error"] == "simulated runner abort"
 
 
 # --- run_factory_chain (API path) ---

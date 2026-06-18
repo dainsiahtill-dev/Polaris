@@ -540,6 +540,86 @@ async def test_docs_init_apply_unsafe_path(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_docs_init_dialogue_jetstream_starts_nat_channel_and_publishes_events(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dialogue jetstream should publish docs init dialogue events through runtime JetStream."""
+    from polaris.delivery.http.routers import docs
+
+    scheduled: list[object] = []
+    published: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_generate_docs_dialogue_turn_streaming(**kwargs: object) -> None:
+        output_queue = kwargs["output_queue"]
+        await output_queue.put({"type": "thinking_chunk", "data": {"content": "分析"}})
+        await output_queue.put(
+            {
+                "type": "complete",
+                "data": {
+                    "reply": "可以拟定条陈",
+                    "questions": [],
+                    "fields": {"goal": "Build"},
+                },
+            }
+        )
+
+    async def _fake_publish_to_jetstream(*, subject: str, payload: dict[str, object]) -> bool:
+        published.append((subject, payload))
+        return True
+
+    class _CapturedTask:
+        def __init__(self, coro: object) -> None:
+            self.coro = coro
+
+        def add_done_callback(self, callback) -> None:
+            self.callback = callback
+
+    def _capture_create_task(coro):
+        scheduled.append(coro)
+        return _CapturedTask(coro)
+
+    monkeypatch.setattr(docs, "generate_docs_dialogue_turn_streaming", _fake_generate_docs_dialogue_turn_streaming)
+    monkeypatch.setattr(docs, "publish_to_jetstream", _fake_publish_to_jetstream)
+    monkeypatch.setattr(docs.asyncio, "create_task", _capture_create_task)
+
+    with patch(
+        "polaris.delivery.http.routers.docs.llm_config.load_llm_config",
+        return_value={
+            "roles": {"architect": {"provider_id": "provider-1", "model": "model-1"}},
+            "providers": {"provider-1": {"type": "openai_compatible"}},
+        },
+    ):
+        response = await client.post(
+            "/v2/docs/init/dialogue/jetstream",
+            json={"message": "请规划", "goal": "Build", "session_id": "docs-dialogue-1"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    data = response.json()
+    assert data == {
+        "ok": True,
+        "session_id": "docs-dialogue-1",
+        "status": "started",
+        "channel": "docs-init-dialogue:docs-dialogue-1",
+        "subject": "hp.runtime.docs.init.dialogue.docs-dialogue-1",
+        "transport": "nat-jetstream",
+    }
+    assert len(scheduled) == 1
+
+    await scheduled[0]
+
+    assert [payload["payload"]["type"] for _, payload in published] == [
+        "start",
+        "thinking_chunk",
+        "complete",
+    ]
+    assert {payload["channel"] for _, payload in published} == {"docs-init-dialogue:docs-dialogue-1"}
+    assert {subject for subject, _ in published} == {"hp.runtime.docs.init.dialogue.docs-dialogue-1"}
+
+
+@pytest.mark.asyncio
 async def test_docs_init_dialogue_stream_headers(client: AsyncClient) -> None:
     """Dialogue stream should return SSE headers.
 
@@ -552,6 +632,82 @@ async def test_docs_init_dialogue_stream_headers(client: AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 # POST /v2/docs/init/preview/stream
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_docs_init_preview_jetstream_starts_nat_channel_and_publishes_events(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preview jetstream should publish docs init preview events through runtime JetStream."""
+    from polaris.delivery.http.routers import docs
+
+    scheduled: list[object] = []
+    published: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_resolve_docs_preview_ai_fields(**kwargs: object) -> tuple[dict[str, list[str]], bool]:
+        queue = kwargs["queue"]
+        await queue.put({"type": "thinking", "data": {"content": "梳理文档"}})
+        return {"goal": ["Build"], "backlog": ["Task 1"]}, False
+
+    async def _fake_publish_to_jetstream(*, subject: str, payload: dict[str, object]) -> bool:
+        published.append((subject, payload))
+        return True
+
+    class _CapturedTask:
+        def __init__(self, coro: object) -> None:
+            self.coro = coro
+
+        def add_done_callback(self, callback) -> None:
+            self.callback = callback
+
+    def _capture_create_task(coro):
+        scheduled.append(coro)
+        return _CapturedTask(coro)
+
+    monkeypatch.setattr(docs, "_resolve_docs_preview_ai_fields", _fake_resolve_docs_preview_ai_fields)
+    monkeypatch.setattr(docs, "detect_project_profile", lambda _workspace: {"type": "python"})
+    monkeypatch.setattr(docs, "default_qa_commands", lambda _profile: ["pytest"])
+    monkeypatch.setattr(docs, "build_docs_templates", lambda *_args: {"docs/00_overview.md": "# Overview"})
+    monkeypatch.setattr(docs, "select_docs_target_root", lambda _workspace: "docs")
+    monkeypatch.setattr(docs, "resolve_artifact_path", lambda *_args: "/tmp/polaris-docs-preview-test.md")
+    monkeypatch.setattr(docs, "workspace_has_docs", lambda _workspace: False)
+    monkeypatch.setattr(docs, "publish_to_jetstream", _fake_publish_to_jetstream)
+    monkeypatch.setattr(docs.asyncio, "create_task", _capture_create_task)
+
+    with patch(
+        "polaris.delivery.http.routers.docs.llm_config.load_llm_config",
+        return_value={
+            "roles": {"architect": {"provider_id": "provider-1", "model": "model-1"}},
+            "providers": {"provider-1": {"type": "openai_compatible"}},
+        },
+    ):
+        response = await client.post(
+            "/v2/docs/init/preview/jetstream",
+            json={"mode": "minimal", "goal": "Build", "session_id": "docs-preview-1"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    data = response.json()
+    assert data == {
+        "ok": True,
+        "session_id": "docs-preview-1",
+        "status": "started",
+        "channel": "docs-init-preview:docs-preview-1",
+        "subject": "hp.runtime.docs.init.preview.docs-preview-1",
+        "transport": "nat-jetstream",
+    }
+    assert len(scheduled) == 1
+
+    await scheduled[0]
+
+    event_types = [payload["payload"]["type"] for _, payload in published]
+    assert event_types[:2] == ["start", "stage"]
+    assert "thinking" in event_types
+    assert event_types[-1] == "complete"
+    assert {payload["channel"] for _, payload in published} == {"docs-init-preview:docs-preview-1"}
+    assert {subject for subject, _ in published} == {"hp.runtime.docs.init.preview.docs-preview-1"}
 
 
 @pytest.mark.asyncio

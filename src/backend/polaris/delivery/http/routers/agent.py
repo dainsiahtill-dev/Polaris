@@ -8,12 +8,9 @@ instead of maintaining a private in-memory session model.
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import json
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import StreamingResponse
 from polaris.cells.factory.pipeline.public.types import RunPhase
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
@@ -48,7 +45,7 @@ from polaris.kernelone.context.session_continuity import (
 )
 from pydantic import BaseModel, Field
 
-from ._shared import StructuredHTTPException, get_state, require_auth
+from ._shared import StructuredHTTPException, get_state, legacy_sse_removed, require_auth
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -795,75 +792,10 @@ async def send_agent_message_stream(
     request: Request,
     session_id: str,
     payload: SessionMessageRequest,
-) -> StreamingResponse:
-    state = get_state(request)
-    session = _load_agent_session(session_id)
-    if session is None:
-        raise StructuredHTTPException(
-            status_code=404,
-            code="SESSION_NOT_FOUND",
-            message="Session not found",
-        )
-    message = payload.message.strip()
-    role = payload.role
-    output_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
-
-    _sse_type_map: dict[str, str] = {
-        "text": "content_chunk",
-        "thinking": "thinking_chunk",
-        "tool": "tool_call",
-        "done": "complete",
-    }
-
-    def _normalize_sse_event_type(raw: str | None) -> str:
-        if raw in ("content_chunk", "thinking_chunk", "tool_call", "tool_result", "complete", "error", "ping"):
-            return raw
-        if raw in _sse_type_map:
-            return _sse_type_map[raw]
-        return "content_chunk"
-
-    async def event_generator():
-        producer_task = asyncio.create_task(
-            _stream_agent_response(
-                session_id=session_id,
-                message=message,
-                workspace=state.settings.workspace,
-                role=role,
-                output_queue=output_queue,
-            )
-        )
-        try:
-            while True:
-                event = await output_queue.get()
-                if event.get("type") == "done":
-                    break
-                raw_type = event.get("type")
-                normalized_type = _normalize_sse_event_type(raw_type)
-                data_payload = event.get("data", {})
-                if normalized_type == "content_chunk" and raw_type not in ("content_chunk", "text", None):
-                    data_payload = {**data_payload, "_original_type": raw_type}
-                yield f"event: {normalized_type}\n"
-                yield f"data: {json.dumps(data_payload, ensure_ascii=False)}\n\n"
-                # Force flush to ensure immediate delivery (P0: SSE yield blocking fix)
-                await asyncio.sleep(0)
-        except (RuntimeError, ValueError):
-            yield f"event: error\ndata: {json.dumps({'error': 'Stream error'}, ensure_ascii=False)}\n\n"
-        finally:
-            if not producer_task.done():
-                producer_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await producer_task
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "Transfer-Encoding": "chunked",
-        },
-    )
+) -> None:
+    """Removed SSE endpoint; use role-session Nat-JetStream."""
+    del request, payload
+    legacy_sse_removed(f"/v2/roles/sessions/{session_id}/messages/jetstream")
 
 
 @router.post("/v2/sessions/{session_id}/messages/stream", dependencies=[Depends(require_auth)])
@@ -871,9 +803,10 @@ async def send_agent_message_stream_v2(
     request: Request,
     session_id: str,
     payload: SessionMessageRequest,
-) -> StreamingResponse:
-    """Send a message to an agent session (streaming SSE)."""
-    return await send_agent_message_stream(request, session_id, payload)
+) -> None:
+    """Removed SSE endpoint; use role-session Nat-JetStream."""
+    del request, payload
+    legacy_sse_removed(f"/v2/roles/sessions/{session_id}/messages/jetstream")
 
 
 @router.delete("/sessions/{session_id}", dependencies=[Depends(require_auth)])
@@ -927,7 +860,8 @@ async def agent_turn(
         return {
             "ok": True,
             "session_id": session_id,
-            "stream_url": f"/v2/agent/sessions/{session_id}/messages/stream",
+            "jetstream_url": f"/v2/roles/sessions/{session_id}/messages/jetstream",
+            "transport": "nat-jetstream",
         }
 
     response = await _execute_agent_message(

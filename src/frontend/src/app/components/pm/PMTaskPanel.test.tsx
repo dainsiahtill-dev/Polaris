@@ -179,6 +179,31 @@ describe('PMTaskPanel', () => {
     expect(screen.getByText('数字 ID 任务')).toBeInTheDocument();
   });
 
+  it('renders readable PM task titles when runtime projections contain numeric title placeholders', () => {
+    render(
+      <PMTaskPanel
+        tasks={[
+          makeTask({
+            id: '1',
+            title: 1 as unknown as string,
+            subject: '实现创建语义化 HTML5 简历结构',
+            goal: '创建可审计的简历页面结构',
+            summary: '创建可审计的简历页面结构',
+            priority: 1,
+          }),
+        ]}
+        selectedTaskId={null}
+        onTaskSelect={() => undefined}
+        pmRunning={false}
+      />,
+    );
+
+    const row = screen.getByTestId('pm-task-item');
+    expect(within(row).getByText('实现创建语义化 HTML5 简历结构')).toBeInTheDocument();
+    expect(within(row).queryByText(/^1$/)).not.toBeInTheDocument();
+    expect(within(row).getByText('创建可审计的简历页面结构')).toBeInTheDocument();
+  });
+
   it('renders PM task assignment history from the backend assignment route', async () => {
     listPmTaskAssignmentsMock.mockResolvedValueOnce({
       ok: true,

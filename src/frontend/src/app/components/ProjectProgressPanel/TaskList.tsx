@@ -86,17 +86,20 @@ function TaskListComponent({
                         >
                             <div className="flex flex-wrap items-start justify-between gap-3">
                                 <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2 text-xs text-text-dim font-mono">
-                                        <span>#{index + 1}</span>
+                                    <div data-testid="project-task-title" className="text-sm font-semibold leading-6 text-text-main">{clampText(title, 120)}</div>
+                                    {goal ? <div data-testid="project-task-goal" className="mt-2 text-xs text-text-muted">{clampText(goal, 180)}</div> : null}
+                                    <div
+                                        data-testid="project-task-metadata"
+                                        className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-text-dim"
+                                    >
+                                        <span className="font-mono">任务 #{index + 1}</span>
                                         {idText ? (
-                                            <span className="rounded-full border border-white/10 px-2 py-0.5">ID: {idText}</span>
+                                            <span className="font-mono">ID {idText}</span>
                                         ) : null}
                                         {task.priority !== undefined ? (
-                                            <span className="rounded-full border border-white/10 px-2 py-0.5">P{task.priority}</span>
+                                            <span>优先级 {task.priority}</span>
                                         ) : null}
                                     </div>
-                                    <div data-testid="project-task-title" className="mt-1 text-sm font-semibold text-text-main">{clampText(title, 120)}</div>
-                                    {goal ? <div data-testid="project-task-goal" className="mt-2 text-xs text-text-muted">{clampText(goal, 180)}</div> : null}
                                 </div>
                                 <div data-testid="project-task-status" className="flex items-center gap-2 text-xs text-text-dim">
                                     {isCompleted ? (

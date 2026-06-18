@@ -1,12 +1,30 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChiefEngineerWorkspace } from './ChiefEngineerWorkspace';
 import { TaskStatus, type PmTask } from '@/types/task';
+import { RuntimeTransportProvider } from '@/runtime/transport';
 
 const apiFetchMock = vi.hoisted(() => vi.fn());
+const runtimeTransportMock = vi.hoisted(() => ({
+  connected: true,
+  reconnecting: false,
+  error: null as string | null,
+  attemptCount: 0,
+  subscribeChannels: vi.fn(() => vi.fn()),
+  sendCommand: vi.fn(() => true),
+  getLastCursor: vi.fn(() => 0),
+  reconnect: vi.fn(),
+  registerMessageHandler: vi.fn(() => vi.fn()),
+}));
 
 vi.mock('@/api', () => ({
   apiFetch: apiFetchMock,
+}));
+
+vi.mock('@/runtime/transport', () => ({
+  RuntimeTransportProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+  useRuntimeTransport: () => runtimeTransportMock,
 }));
 
 vi.mock('./ChiefEngineerWorkbenchPanel', () => ({
@@ -455,7 +473,11 @@ describe('ChiefEngineerWorkspace', () => {
       },
     ];
 
-    render(<ChiefEngineerWorkspace {...baseProps} tasks={tasks} />);
+    render(
+      <RuntimeTransportProvider autoConnect={false}>
+        <ChiefEngineerWorkspace {...baseProps} tasks={tasks} />
+      </RuntimeTransportProvider>,
+    );
 
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/blueprints')));
     expect(screen.getByTestId('chief-engineer-blueprint-empty')).toBeInTheDocument();
@@ -571,13 +593,140 @@ describe('ChiefEngineerWorkspace', () => {
       },
     ];
 
-    render(<ChiefEngineerWorkspace {...baseProps} tasks={tasks} />);
+    render(
+      <RuntimeTransportProvider autoConnect={false}>
+        <ChiefEngineerWorkspace {...baseProps} tasks={tasks} />
+      </RuntimeTransportProvider>,
+    );
 
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/blueprints')));
     expect(screen.queryByTestId('chief-engineer-blueprint-empty')).not.toBeInTheDocument();
     expect(screen.getByText('Runtime-backed blueprint')).toBeInTheDocument();
     expect(screen.getByText('src/runtime.ts')).toBeInTheDocument();
     expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-runtime')).not.toBeInTheDocument();
+  });
+
+  it('does not list numeric PM tasks as pending when runtime blueprints expose TASK-prefixed ids outside raw', async () => {
+    apiFetchMock.mockImplementation((path: string) => {
+      if (path === cePath('/v2/chief-engineer/blueprints')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            total: 2,
+            blueprints: [
+              {
+                blueprint_id: 'ce_TASK-1_20260618070900420840',
+                task_id: 'TASK-1',
+                title: '实现创建语义化 HTML5 简历结构',
+                summary: 'Chief Engineer blueprint for TASK-1',
+                status: 'generated',
+                source: 'runtime/blueprints',
+                target_files: ['src/html5', 'tests'],
+                updated_at: '2026-06-18T07:09:00Z',
+              },
+              {
+                blueprint_id: 'ce_TASK-2_20260618070900430145',
+                title: '实现响应式 CSS3 样式表',
+                summary: 'Chief Engineer blueprint for TASK-2',
+                status: 'generated',
+                source: 'runtime/blueprints',
+                target_files: ['src/css3', 'tests'],
+                updated_at: '2026-06-18T07:09:00Z',
+              },
+            ],
+          }),
+        });
+      }
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            role: 'chief_engineer',
+            can_handoff: true,
+            can_generate: true,
+            generated_at: '2026-06-18T07:09:00Z',
+            workspace: { ok: true, status: 'ok', workspace: 'C:/Temp/Product', exists: true, error: null },
+            llm: {
+              ok: true,
+              state: 'ready',
+              role: 'chief_engineer',
+              blocked_roles: [],
+              unsupported_roles: [],
+              required_ready_roles: ['chief_engineer'],
+              provider_id: 'qwen',
+              model: 'Qwen3-Max',
+              error: null,
+              details: {},
+            },
+            blueprints: {
+              ok: true,
+              status: 'ready',
+              source: 'runtime/blueprints',
+              plan_status: 'ready',
+              plan_path: 'C:/Temp/Product/.polaris/runtime/tasks/plan.json',
+              plan_error: null,
+              total: 2,
+              loadable: 2,
+              invalid_payloads: 0,
+              planned_tasks: 2,
+              covered_tasks: 2,
+              missing_task_ids: [],
+              director_handoff_ready: true,
+              latest_updated_at: '2026-06-18T07:09:00Z',
+              error: null,
+            },
+            issues: [],
+            generate_blockers: [],
+            handoff_blockers: [],
+          }),
+        });
+      }
+      if (path === directorPath('/v2/director/tasks?source=auto') || path === directorPath('/v2/director/tasks?source=local')) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      if (path === directorPath('/v2/director/workers')) {
+        return Promise.resolve({ ok: true, json: async () => [] });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ ok: true, ready: true, configured: true, role: 'chief_engineer' }),
+      });
+    });
+
+    const tasks: PmTask[] = [
+      {
+        id: 1 as unknown as string,
+        title: '实现创建语义化 HTML5 简历结构',
+        summary: 'PM task has no inline blueprint fields',
+        status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: [],
+      },
+      {
+        id: 2 as unknown as string,
+        title: '实现响应式 CSS3 样式表',
+        summary: 'PM task has no inline blueprint fields',
+        status: TaskStatus.PENDING,
+        done: false,
+        priority: 1,
+        acceptance: [],
+      },
+    ];
+
+    render(
+      <RuntimeTransportProvider autoConnect={false}>
+        <ChiefEngineerWorkspace {...baseProps} tasks={tasks} />
+      </RuntimeTransportProvider>,
+    );
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/blueprints')));
+    expect(screen.getByText('Chief Engineer blueprint for TASK-1')).toBeInTheDocument();
+    expect(screen.getByText('Chief Engineer blueprint for TASK-2')).toBeInTheDocument();
+    expect(screen.queryByTestId('chief-engineer-blueprint-generate-1')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('chief-engineer-blueprint-generate-2')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('chief-engineer-blueprint-candidates')).not.toBeInTheDocument();
   });
 
   it('generates a Chief Engineer blueprint through the backend command route', async () => {

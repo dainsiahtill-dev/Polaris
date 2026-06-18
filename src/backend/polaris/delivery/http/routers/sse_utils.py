@@ -1,11 +1,6 @@
-"""Unified SSE (Server-Sent Events) utilities for streaming endpoints.
+"""Nat-JetStream publication and runtime event validation helpers.
 
-Provides a shared event generator pattern used by llm_test_routes,
-llm_interview_routes, and docs dialogue streaming.
-
-Also provides JetStream-based SSE consumer for remote event streaming.
-
-SECURITY HARDENING (v2):
+SECURITY HARDENING:
 - S1: Schema validation with RuntimeEventEnvelope
 - S2: Payload size limits enforcement
 - S3: Replay attack protection with timestamp validation
@@ -16,8 +11,6 @@ SECURITY HARDENING (v2):
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import hashlib
 import hmac
 import json
@@ -28,17 +21,10 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from fastapi.responses import StreamingResponse
-
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable
+    pass
 
 logger = logging.getLogger(__name__)
-
-# SSE queue max size to prevent unbounded memory growth
-# Reduced from 1000 to 50 to enable natural backpressure and reduce latency
-_SSE_QUEUE_MAX_SIZE = 50
-_SSE_TASK_DONE_EVENT = "__task_done__"
 
 # =============================================================================
 # Security Constants
@@ -193,125 +179,6 @@ def verify_event_signature(
     """
     expected = generate_event_signature(event_id, timestamp, payload)
     return hmac.compare_digest(expected, signature)
-
-
-async def stream_event_generator(
-    task_fn: Callable[[asyncio.Queue], Awaitable[None]],
-    timeout: float = 180.0,
-    cleanup_fn: Callable[[], Awaitable[None]] | None = None,
-) -> AsyncGenerator[str, None]:
-    """Run *task_fn* in a background ``asyncio.Task`` and yield NDJSON lines.
-
-    Parameters
-    ----------
-    task_fn:
-        An async callable that receives an ``asyncio.Queue`` and pushes
-        event dicts ``{"type": str, "data": dict}`` into it.  The task
-        **must** push a terminal event with ``type`` equal to
-        ``"complete"`` or ``"error"`` to signal the end of the stream.
-    timeout:
-        Seconds to wait for each queue item before emitting a ``ping``
-        keep-alive frame.
-    cleanup_fn:
-        Optional async callable invoked in the ``finally`` block (e.g.
-        to cancel a subprocess or release resources).
-
-    Wire format: one JSON object per line (NDJSON).  Each line is
-    ``{"type": "<event_type>", "data": {…}}``.  Terminal events have
-    ``type`` equal to ``"complete"`` or ``"error"``.
-    """
-    queue: asyncio.Queue = asyncio.Queue(maxsize=_SSE_QUEUE_MAX_SIZE)
-
-    async def _wrapper() -> None:
-        try:
-            await task_fn(queue)
-        except asyncio.CancelledError:
-            raise
-        except (RuntimeError, ValueError) as exc:
-            await queue.put({"type": "error", "data": {"error": str(exc)}})
-            return
-        except Exception as exc:
-            logger.exception("[sse] task failed without terminal event")
-            await queue.put(
-                {
-                    "type": "error",
-                    "data": {"error": str(exc) or type(exc).__name__},
-                }
-            )
-            return
-        await queue.put({"type": _SSE_TASK_DONE_EVENT, "data": {}})
-
-    task = asyncio.create_task(asyncio.wait_for(_wrapper(), timeout=max(timeout * 3, 600.0)))
-
-    try:
-        while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=timeout)
-
-                event_type = event.get("type", "message")
-                event_data = event.get("data", {})
-
-                if event_type == _SSE_TASK_DONE_EVENT:
-                    yield json.dumps({"type": "error", "data": {"error": "stream completed without a terminal event"}}, ensure_ascii=False) + "\n"
-                    break
-                elif event_type == "complete":
-                    yield json.dumps({"type": "complete", "data": event_data}, ensure_ascii=False) + "\n"
-                    break
-                elif event_type == "error":
-                    yield json.dumps({"type": "error", "data": event_data}, ensure_ascii=False) + "\n"
-                    break
-                else:
-                    yield json.dumps({"type": event_type, "data": event_data}, ensure_ascii=False) + "\n"
-                    # Force flush to ensure immediate delivery
-                    await asyncio.sleep(0)
-
-            except asyncio.TimeoutError:
-                if task.done():
-                    try:
-                        task_exception = task.exception()
-                    except asyncio.CancelledError:
-                        task_exception = None
-                    if task_exception is not None:
-                        error_text = str(task_exception) or type(task_exception).__name__
-                        yield json.dumps({"type": "error", "data": {"error": error_text}}, ensure_ascii=False) + "\n"
-                    else:
-                        yield json.dumps({"type": "error", "data": {"error": "stream completed without a terminal event"}}, ensure_ascii=False) + "\n"
-                    break
-                yield json.dumps({"type": "ping", "data": {}}, ensure_ascii=False) + "\n"
-                # Force flush to ensure immediate delivery
-                await asyncio.sleep(0)
-
-    finally:
-        if not task.done():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-        if cleanup_fn is not None:
-            try:
-                await cleanup_fn()
-            except (RuntimeError, ValueError) as exc:
-                logger.debug("[FIX] sse_utils.py silent exception: %s", exc)
-
-
-def create_streaming_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
-    """Wrap an NDJSON async generator into a properly-configured ``StreamingResponse``."""
-    return StreamingResponse(
-        generator,
-        media_type="application/x-ndjson",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-# Backward-compatible aliases
-sse_event_generator = stream_event_generator
-create_sse_response = create_streaming_response
-# =============================================================================
-# JetStream SSE Consumer (for v2 protocol SSE endpoints)
-# =============================================================================
 
 
 async def publish_to_jetstream(

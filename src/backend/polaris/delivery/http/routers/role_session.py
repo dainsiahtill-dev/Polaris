@@ -59,18 +59,12 @@ from polaris.kernelone.context.session_continuity import (
 )
 from polaris.kernelone.events.constants import (
     EVENT_TYPE_COMPLETE,
-    EVENT_TYPE_ERROR,
-    EVENT_TYPE_FINGERPRINT,
     EVENT_TYPE_THINKING_CHUNK,
-    EVENT_TYPE_TOOL_CALL,
-    EVENT_TYPE_TOOL_RESULT,
 )
 from pydantic import BaseModel
 
-from ._shared import StructuredHTTPException, ensure_required_roles_ready, get_state, require_auth
+from ._shared import StructuredHTTPException, ensure_required_roles_ready, get_state, legacy_sse_removed, require_auth
 from .role_chat_jetstream import execute_role_chat_jetstream
-from .role_runtime_chat import execute_role_chat_streaming
-from .sse_utils import create_sse_response, sse_event_generator
 
 logger = logging.getLogger(__name__)
 
@@ -738,170 +732,9 @@ async def send_message_stream(
     session_id: str,
     payload: SendMessageRequest,
 ) -> Any:
-    """发送消息（流式）
-
-    POST /v2/roles/sessions/{session_id}/messages/stream
-
-    使用 SSE 进行流式响应。
-    """
-    try:
-        with _role_session_service(request) as service:
-            session = service.get_session(session_id)
-            if not session:
-                raise StructuredHTTPException(
-                    status_code=404,
-                    code="session_not_found",
-                    message=f"Session not found: {session_id}",
-                    details={"session_id": session_id},
-                )
-
-            session_role = str(session.role or "").strip()
-            prior_messages = service.get_messages(session_id, limit=50, offset=0)
-            history = tuple(
-                (
-                    str(message.role or "").strip(),
-                    str(message.content or "").strip(),
-                )
-                for message in prior_messages
-                if str(message.role or "").strip() and str(message.content or "").strip()
-            )
-            context_config_raw = str(session.context_config or "").strip()
-            session_workspace = _session_workspace(session, request)
-            try:
-                session_context = json.loads(context_config_raw) if context_config_raw else None
-            except json.JSONDecodeError:
-                logger.warning(
-                    "Role session %s has invalid context_config JSON; falling back to None",
-                    session_id,
-                )
-                session_context = None
-
-            projection = await _SESSION_CONTINUITY_ENGINE.project(
-                SessionContinuityRequest(
-                    session_id=session_id,
-                    role=session_role,
-                    workspace=session_workspace,
-                    session_title=str(session.title or "").strip(),
-                    messages=history_pairs_to_messages(history),
-                    session_context_config=session_context,
-                    incoming_context={
-                        "role": session_role,
-                        "host_kind": RoleHostKind.API_SERVER.value,
-                    },
-                    history_limit=10,
-                )
-            )
-            runtime_history = messages_to_history_pairs(projection.recent_messages)
-            runtime_context = dict(projection.prompt_context)
-            if projection.changed:
-                service.update_session(
-                    session_id=session_id,
-                    context_config=projection.persisted_context_config,
-                )
-
-            # 保存用户消息
-            service.add_message(
-                session_id=session_id,
-                role=payload.role,
-                content=payload.content,
-            )
-
-            async def _run_role_session_dialogue(queue: asyncio.Queue[dict[str, Any]]) -> None:
-                output_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=100)
-                producer_task = asyncio.create_task(
-                    execute_role_chat_streaming(
-                        workspace=session_workspace,
-                        role=session_role,
-                        message=payload.content,
-                        output_queue=output_queue,
-                        payload=None,
-                        default_domain="general",
-                        host_kind="role_session_http_stream",
-                        context=runtime_context,
-                        session_id=session_id,
-                        history=runtime_history,
-                    )
-                )
-                response_parts: list[str] = []
-                thinking_parts: list[str] = []
-                assistant_saved = False
-                try:
-                    while True:
-                        event = await output_queue.get()
-                        event_type = str(event.get("type") or "").strip()
-                        event_data = event.get("data")
-                        event_payload = event_data if isinstance(event_data, dict) else {}
-
-                        if event_type == "content_chunk":
-                            response_parts.append(str(event_payload.get("content") or ""))
-                            await queue.put(event)
-                            continue
-
-                        if event_type == EVENT_TYPE_THINKING_CHUNK:
-                            thinking_parts.append(str(event_payload.get("content") or ""))
-                            await queue.put(event)
-                            continue
-
-                        if event_type in {EVENT_TYPE_TOOL_CALL, EVENT_TYPE_TOOL_RESULT, EVENT_TYPE_FINGERPRINT}:
-                            await queue.put(event)
-                            continue
-
-                        if event_type == EVENT_TYPE_COMPLETE:
-                            response = str(event_payload.get("content") or "") or "".join(response_parts)
-                            thinking = str(event_payload.get("thinking") or "") or "".join(thinking_parts) or None
-                            if response:
-                                with _role_session_service(request) as save_service:
-                                    save_service.add_message(
-                                        session_id=session_id,
-                                        role="assistant",
-                                        content=response,
-                                        thinking=thinking,
-                                    )
-                                assistant_saved = True
-                            await queue.put(event)
-                            break
-
-                        if event_type == EVENT_TYPE_ERROR:
-                            await queue.put(event)
-                            break
-
-                        if event_type == "done":
-                            if response_parts and not assistant_saved:
-                                with _role_session_service(request) as save_service:
-                                    save_service.add_message(
-                                        session_id=session_id,
-                                        role="assistant",
-                                        content="".join(response_parts),
-                                        thinking="".join(thinking_parts) or None,
-                                    )
-                            await queue.put(
-                                {
-                                    "type": "complete",
-                                    "data": {
-                                        "content": "".join(response_parts),
-                                        "thinking": "".join(thinking_parts),
-                                    },
-                                }
-                            )
-                            break
-                finally:
-                    if not producer_task.done():
-                        producer_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await producer_task
-
-            return create_sse_response(sse_event_generator(_run_role_session_dialogue, timeout=180.0))
-
-    except HTTPException:
-        raise
-    except (RuntimeError, ValueError) as e:
-        logger.error(f"Role session action failed: {e}")
-        raise StructuredHTTPException(
-            status_code=500,
-            code="INTERNAL_ERROR",
-            message="An internal error occurred while processing the role session.",
-            details={"exception": str(e)},
-        ) from e
+    """Removed SSE endpoint; use the Nat-JetStream role-session endpoint."""
+    del request, payload
+    legacy_sse_removed(f"/v2/roles/sessions/{session_id}/messages/jetstream")
 
 
 @router.post("/v2/roles/sessions/{session_id}/messages/jetstream", dependencies=[Depends(require_auth)])
