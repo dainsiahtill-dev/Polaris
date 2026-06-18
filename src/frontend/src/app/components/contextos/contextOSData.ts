@@ -68,6 +68,27 @@ export interface EventTypeSlice {
   colorClass: string;
 }
 
+export interface RoleInternalContext {
+  roleId: string;
+  title: string;
+  courtTitle: string;
+  state: PipelineState;
+  events: ContextOSEvent[];
+  eventCount: number;
+  projectionCount: number;
+  receiptCount: number;
+  contextItemsCount: number | null;
+  contextTokensLatest: number | null;
+  totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  calls: number;
+  lastEventAt: number | null;
+  currentTaskId: string | null;
+  currentTaskTitle: string | null;
+  detail: string;
+}
+
 export interface RoleCard {
   id: string;
   title: string;
@@ -82,6 +103,13 @@ export interface RoleCard {
    * 其余角色无 usage 通道，detail 以事件数/无观测呈现，不冒充 token 归因。
    */
   tokensReal: boolean;
+  /** 是否为只读辅助角色 */
+  readOnly?: boolean;
+  lastEventAt: number | null;
+  projectionCount: number;
+  contextItemsCount: number | null;
+  receiptCount: number;
+  internalContext: RoleInternalContext;
 }
 
 export interface DecisionRow {
@@ -150,6 +178,10 @@ export interface ContextOSModel {
   roles: RoleCard[];
   decisions: DecisionRow[];
   policies: string[];
+  /** 原始运行时快照（用于角色任务绑定）。 */
+  snapshot: SnapshotPayload | null;
+  /** 实时遥测数据（用于角色内部上下文构建）。 */
+  telemetry?: ContextOSTelemetry;
 }
 
 /** 事件类型 → 展示标签与颜色（与解析层 category 一致）。 */
@@ -168,6 +200,7 @@ const ROLE_KEY_ALIASES: Record<string, string[]> = {
   chief_engineer: ['chief_engineer', 'chief', 'engineer', 'blueprint'],
   director: ['director', 'execution', 'implementation', 'code', 'worker'],
   qa: ['qa', 'review', 'reviewer', 'quality', 'test'],
+  scout: ['scout', 'explore', 'search', 'probe'],
 };
 
 /** 角色 → Decision Log 中 actor/speaker 的匹配别名（用于角色页签交叉过滤）。 */
@@ -177,18 +210,20 @@ export const ROLE_DECISION_ALIASES: Record<string, string[]> = {
   chief_engineer: ['chief', 'engineer'],
   director: ['director'],
   qa: ['qa', 'reviewer'],
+  scout: ['scout'],
 };
 
 /**
- * ContextOS 角色信号面对应的 5 个主角色（与后端 `ROLE_PROMPT_TEMPLATES` /
- * 统一角色对话 API「所有 5 个角色」一致）。scout 为只读辅助 sub-agent，按设计不入此面。
+ * ContextOS 角色信号面对应的 6 个角色（与后端 `ROLE_PROMPT_TEMPLATES` /
+ * 统一角色对话 API「所有 5 个角色」一致）。scout 为只读辅助 sub-agent。
  */
-const ROLE_DEFINITIONS: ReadonlyArray<{ id: string; key: string; courtTitle: string; title: string }> = [
+export const ROLE_DEFINITIONS: ReadonlyArray<{ id: string; key: string; courtTitle: string; title: string; readOnly?: boolean }> = [
   { id: 'pm', key: 'pm', courtTitle: '尚书令', title: 'PM' },
   { id: 'architect', key: 'architect', courtTitle: '中书令', title: 'Architect' },
   { id: 'chief_engineer', key: 'chief_engineer', courtTitle: '工部尚书', title: 'Chief Eng' },
   { id: 'director', key: 'director', courtTitle: '工部侍郎', title: 'Director' },
   { id: 'qa', key: 'qa', courtTitle: '门下侍中', title: 'QA' },
+  { id: 'scout', key: 'scout', courtTitle: '斥候', title: 'Scout', readOnly: true },
 ];
 /** 主角色总数（角色信号面 N/N 角色的分母）。 */
 const ROLE_COUNT = ROLE_DEFINITIONS.length;
@@ -200,6 +235,84 @@ export function decisionMatchesRole(actor: string, roleId: string | null): boole
   if (!aliases) return true;
   const lowered = actor.toLowerCase();
   return aliases.some((alias) => lowered.includes(alias));
+}
+
+export function buildRoleContextModel(roleId: string, model: ContextOSModel): RoleInternalContext {
+  const roleDef = ROLE_DEFINITIONS.find((r) => r.id === roleId);
+  const title = roleDef?.title ?? roleId;
+  const courtTitle = roleDef?.courtTitle ?? roleId;
+  const aliases = ROLE_DECISION_ALIASES[roleId] ?? [roleId];
+
+  const roleEvents = model.telemetryActive && model.telemetry
+    ? model.telemetry.events.filter((event) =>
+        aliases.some((alias) => event.actor.toLowerCase().includes(alias.toLowerCase())),
+      )
+    : [];
+
+  let totalTokens = 0;
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let calls = 0;
+  let projectionCount = 0;
+  let receiptCount = 0;
+  let contextItemsCount: number | null = null;
+  let contextTokensLatest: number | null = null;
+
+  for (const event of roleEvents) {
+    if (event.hasUsage) {
+      totalTokens += event.totalTokens;
+      promptTokens += event.promptTokens;
+      completionTokens += event.completionTokens;
+    }
+    if (event.isCall || event.hasUsage) calls += 1;
+    if (event.isProjection) projectionCount += 1;
+    if (event.hasReceipt) receiptCount += 1;
+    if (event.contextItems !== null && contextItemsCount === null) contextItemsCount = event.contextItems;
+    if (event.contextTokens !== null && contextTokensLatest === null) contextTokensLatest = event.contextTokens;
+  }
+
+  const lastEvent = roleEvents[0] ?? null;
+  const lastEventAt = lastEvent ? lastEvent.epoch || null : null;
+
+  // Find current task binding from snapshot if available
+  let currentTaskId: string | null = null;
+  let currentTaskTitle: string | null = null;
+  const snapshotTasks = Array.isArray(model.snapshot?.tasks) ? model.snapshot.tasks : [];
+  const matchingTask = snapshotTasks.find((task: unknown) => {
+    if (!task || typeof task !== 'object') return false;
+    const t = task as Record<string, unknown>;
+    const assignee = String(t.assignee || '').toLowerCase();
+    return assignee === roleId || assignee === title.toLowerCase();
+  });
+  if (matchingTask && typeof matchingTask === 'object') {
+    currentTaskId = String((matchingTask as Record<string, unknown>).id || '');
+    currentTaskTitle = String((matchingTask as Record<string, unknown>).title || '');
+  }
+
+  const roleCard = model.roles.find((r) => r.id === roleId);
+  const state = roleCard?.state ?? 'idle';
+  const detail = roleCard?.detail ?? '待命';
+
+  return {
+    roleId,
+    title,
+    courtTitle,
+    state,
+    events: roleEvents.slice(0, 50),
+    eventCount: roleEvents.length,
+    projectionCount,
+    receiptCount,
+    contextItemsCount,
+    contextTokensLatest,
+    totalTokens,
+    promptTokens,
+    completionTokens,
+    calls,
+    lastEventAt,
+    currentTaskId,
+    currentTaskTitle,
+    detail,
+  };
 }
 
 function safeNumber(value: unknown): number {
@@ -618,31 +731,6 @@ export function buildContextOSModel(input: {
     return 0;
   };
 
-  const roles: RoleCard[] = ROLE_DEFINITIONS.map((role) => {
-    const tokens = roleTokens(role.key);
-    const telemetryEvents = telemetryActive ? telemetryRoleEvents(telemetry, role.key) : 0;
-    const speeches = speakerTokens(role.key === 'qa' ? ['QA', 'Reviewer'] : [role.title]);
-    // 只有拥有真实 usage 观测通道（目前仅 PM）的角色才以 token 归因；其余据实以事件数呈现，
-    // 不把「无 usage 通道」误读为真实零用量。
-    const tokensReal = telemetryActive && telemetryRoleHasUsageChannel(telemetry, role.key) && tokens > 0;
-    const detail = tokensReal
-      ? `${formatTokens(tokens)} tok`
-      : telemetryEvents > 0
-        ? `${telemetryEvents} 事件`
-        : speeches > 0
-          ? `${speeches} 次发言`
-          : '待命';
-    return {
-      id: role.id,
-      title: role.title,
-      courtTitle: role.courtTitle,
-      tokens,
-      state: roleState(role.key),
-      detail,
-      tokensReal,
-    };
-  });
-
   const policies: string[] = [
     '自适应排序',
     '回执卸载',
@@ -657,7 +745,7 @@ export function buildContextOSModel(input: {
     ? deriveTelemetryDecisions(telemetry)
     : deriveDecisions(dialogueEvents, executionLogs);
 
-  return {
+  const baseModel: Omit<ContextOSModel, 'roles'> = {
     running,
     dataIdle,
     errorCount,
@@ -686,10 +774,44 @@ export function buildContextOSModel(input: {
     byModeSlices,
     eventTypes,
     eventTypesTotal,
-    roles,
     decisions,
     policies,
+    snapshot,
+    telemetry,
   };
+
+  const roles: RoleCard[] = ROLE_DEFINITIONS.map((role) => {
+    const tokens = roleTokens(role.key);
+    const telemetryEvents = telemetryActive ? telemetryRoleEvents(telemetry, role.key) : 0;
+    const speeches = speakerTokens(role.key === 'qa' ? ['QA', 'Reviewer'] : [role.title]);
+    const tokensReal = telemetryActive && telemetryRoleHasUsageChannel(telemetry, role.key) && tokens > 0;
+    const detail = tokensReal
+      ? `${formatTokens(tokens)} tok`
+      : telemetryEvents > 0
+        ? `${telemetryEvents} 事件`
+        : speeches > 0
+          ? `${speeches} 次发言`
+          : '待命';
+    const state = roleState(role.key);
+    const internalContext = buildRoleContextModel(role.id, { ...baseModel, roles: [] } as ContextOSModel);
+    return {
+      id: role.id,
+      title: role.title,
+      courtTitle: role.courtTitle,
+      tokens,
+      state,
+      detail,
+      tokensReal,
+      readOnly: role.readOnly,
+      lastEventAt: internalContext.lastEventAt,
+      projectionCount: internalContext.projectionCount,
+      contextItemsCount: internalContext.contextItemsCount,
+      receiptCount: internalContext.receiptCount,
+      internalContext,
+    };
+  });
+
+  return { ...baseModel, roles };
 }
 
 export const contextOSFormat = {

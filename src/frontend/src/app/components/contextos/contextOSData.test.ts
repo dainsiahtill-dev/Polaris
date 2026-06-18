@@ -5,6 +5,8 @@ import {
   decisionMatchesRole,
   contextOSFormat,
   NOMINAL_CONTEXT_WINDOW,
+  buildRoleContextModel,
+  ROLE_DEFINITIONS,
 } from './contextOSData';
 import { buildTelemetryFromStream } from './contextOSTelemetry';
 import type { UsageStats } from '@/app/components/UsageHUD';
@@ -42,8 +44,8 @@ describe('buildContextOSModel', () => {
     expect(model.totalTokens).toBe(0);
     expect(model.pipeline).toHaveLength(8);
     expect(model.components).toHaveLength(7);
-    expect(model.roles).toHaveLength(5);
-    expect(model.roles.map((r) => r.id)).toEqual(['pm', 'architect', 'chief_engineer', 'director', 'qa']);
+    expect(model.roles).toHaveLength(6);
+    expect(model.roles.map((r) => r.id)).toEqual(['pm', 'architect', 'chief_engineer', 'director', 'qa', 'scout']);
     expect(model.decisions).toHaveLength(0);
     // Window occupancy must stay within [0,1].
     expect(model.windowOccupancy).toBeGreaterThanOrEqual(0);
@@ -293,5 +295,65 @@ describe('contextOSFormat', () => {
   });
   it('exposes a nominal context window constant', () => {
     expect(NOMINAL_CONTEXT_WINDOW).toBe(128_000);
+  });
+});
+
+describe('buildRoleContextModel', () => {
+  it('returns idle context when no telemetry exists', () => {
+    const model = buildContextOSModel({
+      usageStats: null,
+      dialogueEvents: [],
+      executionLogs: [],
+      snapshot: null,
+      llmRuntimeState: { state: 'READY', blockedRoles: [] },
+      currentPhase: 'idle',
+      pmRunning: false,
+      directorRunning: false,
+    });
+    const ctx = buildRoleContextModel('pm', model);
+    expect(ctx.roleId).toBe('pm');
+    expect(ctx.state).toBe('idle');
+    expect(ctx.eventCount).toBe(0);
+    expect(ctx.calls).toBe(0);
+  });
+
+  it('counts PM events from telemetry', () => {
+    const telemetry = buildTelemetryFromStream(
+      [
+        {
+          id: '1',
+          timestamp: new Date().toISOString(),
+          source: 'PM',
+          level: 'info',
+          message: 'invoke_done',
+          meta: { streamEvent: 'llm_completed', promptTokens: 100, completionTokens: 50, totalTokens: 150, durationMs: 1200 },
+        } as unknown as LogEntry,
+      ],
+      [],
+      [],
+    );
+    const model = buildContextOSModel({
+      usageStats: null,
+      dialogueEvents: [],
+      executionLogs: [],
+      snapshot: null,
+      llmRuntimeState: { state: 'READY', blockedRoles: [] },
+      currentPhase: 'planning',
+      pmRunning: true,
+      directorRunning: false,
+      telemetry,
+    });
+    const ctx = buildRoleContextModel('pm', model);
+    expect(ctx.eventCount).toBeGreaterThan(0);
+    expect(ctx.calls).toBe(1);
+    expect(ctx.totalTokens).toBe(150);
+  });
+});
+
+describe('ROLE_DEFINITIONS', () => {
+  it('includes scout as read-only auxiliary role', () => {
+    const scout = ROLE_DEFINITIONS.find((r) => r.id === 'scout');
+    expect(scout).toBeDefined();
+    expect(scout?.courtTitle).toBe('斥候');
   });
 });

@@ -431,13 +431,14 @@ export function buildTelemetryFromStream(
   return aggregateEvents(events, windowed);
 }
 
-/** 角色 id → 观测 actor 的匹配别名（用于把真实事件归并到 5 个角色卡）。 */
+/** 角色 id → 观测 actor 的匹配别名（用于把真实事件归并到 6 个角色卡）。 */
 const ACTOR_ROLE_ALIASES: Record<string, string[]> = {
   pm: ['pm'],
   architect: ['architect'],
   chief_engineer: ['chief', 'engineer'],
   director: ['director'],
   qa: ['qa', 'reviewer'],
+  scout: ['scout'],
 };
 
 /** 汇总某角色在真实遥测里的 token（按 actor 别名匹配，来自 journal `llm` 通道的真实 usage）。 */
