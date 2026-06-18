@@ -1,0 +1,158 @@
+"""
+Role Chat JetStream Publisher
+
+Mirror of execute_role_chat_streaming that publishes each chunk to NAT JetStream
+instead of an in-process asyncio.Queue. The same chunk shape is preserved
+(thinking_chunk / content_chunk / tool_call / tool_result / complete / error)
+so the front-end ``useChatStreamWS`` hook can decode identical events whether
+they arrive over the legacy SSE wire or the new v2 JetStream envelope.
+
+Wire format (one event per publish):
+    subject = "hp.runtime.chat.<session_id>"  (workspace-agnostic, like bench)
+    payload = RuntimeEventEnvelope.to_dict()  with
+        channel = "chat:<session_id>"
+        kind    = "chat.chunk"
+        payload = { "type": "<chunk_type>", "data": {...} }
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any, Mapping
+from uuid import uuid4
+
+from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+
+from .role_runtime_chat import (
+    _build_session_command,
+    _queue_event_from_runtime_event,
+    _stream_complete_payload,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _new_chat_session_id(role: str) -> str:
+    """Generate a chat session id with the same shape as the SSE host_kind prefix.
+
+    Returns:
+        e.g. ``chat-pm-1f2c3a4b5c``
+    """
+    return f"chat-{role}-{uuid4().hex[:12]}"
+
+
+async def _publish_chat_chunk(
+    *,
+    session_id: str,
+    chunk: dict[str, Any],
+    seq: int,
+) -> bool:
+    """Publish a single chat chunk to NAT JetStream as a v2 RuntimeEventEnvelope.
+
+    Returns:
+        True if the publish was accepted by the JetStream publisher.
+    """
+    try:
+        from polaris.delivery.http.routers.sse_utils import publish_to_jetstream
+        from polaris.infrastructure.messaging.nats.nats_types import (
+            create_runtime_event,
+        )
+    except (ImportError, RuntimeError, ValueError) as exc:  # pragma: no cover
+        logger.debug("chat-jetstream import failed: %s", exc)
+        return False
+
+    envelope = create_runtime_event(
+        workspace_key="chat",  # workspace-agnostic, like ``bench``
+        run_id=session_id,
+        channel=f"chat:{session_id}",
+        kind="chat.chunk",
+        payload={
+            "type": str(chunk.get("type") or "message"),
+            "data": dict(chunk.get("data") or {}),
+            "seq": int(seq),
+        },
+        meta={"source": "role_chat_jetstream"},
+    )
+    return await publish_to_jetstream(
+        subject=f"hp.runtime.chat.{session_id}",
+        payload=envelope.to_dict(),
+    )
+
+
+async def execute_role_chat_jetstream(
+    *,
+    role: str,
+    workspace: str,
+    message: str,
+    payload: Mapping[str, Any] | None,
+    default_domain: str,
+    host_kind: str,
+    context: Mapping[str, Any] | None = None,
+    session_id: str | None = None,
+    run_id: str | None = None,
+    task_id: str | None = None,
+    history: tuple[tuple[str, str], ...] | list[tuple[str, str]] | None = None,
+) -> str:
+    """Run the role chat LLM and publish every chunk to NAT JetStream.
+
+    Returns the ``session_id`` used (so the caller can return it in the HTTP
+    response). The same session_id is what the front-end subscribes to via
+    ``subscribeChannels([{ channel: "chat:<session_id>" }])`` over the
+    runtime.v2 WebSocket — identical to the bench path that already works.
+    """
+    resolved_session_id = session_id or _new_chat_session_id(role)
+    command = _build_session_command(
+        role=role,
+        workspace=workspace,
+        message=message,
+        payload=payload,
+        default_domain=default_domain,
+        host_kind=host_kind,
+        stream=True,
+        context=context,
+        session_id=resolved_session_id,
+        run_id=run_id,
+        task_id=task_id,
+        history=history,
+    )
+
+    seq = 0
+    saw_terminal = False
+    try:
+        async for event in RoleRuntimeService().stream_chat_turn(command):
+            chunk = _queue_event_from_runtime_event(event)
+            event_type = str(chunk.get("type") or "")
+            ok = await _publish_chat_chunk(
+                session_id=resolved_session_id,
+                chunk=chunk,
+                seq=seq,
+            )
+            seq += 1
+            if not ok:
+                # Best-effort; do not break the LLM stream if JetStream is down.
+                logger.debug("chat-jetstream publish dropped chunk for %s", resolved_session_id)
+            if event_type in {"complete", "error"}:
+                saw_terminal = True
+                break
+    except (RuntimeError, ValueError, asyncio.CancelledError) as exc:
+        logger.warning("chat-jetstream stream failed for %s: %s", resolved_session_id, exc)
+        await _publish_chat_chunk(
+            session_id=resolved_session_id,
+            chunk={"type": "error", "data": {"error": str(exc) or "role_runtime_stream_failed"}},
+            seq=seq,
+        )
+        return resolved_session_id
+
+    if not saw_terminal:
+        # Mirror the SSE path: synthesise a terminal complete chunk so the
+        # front-end always sees a clean close over WS.
+        await _publish_chat_chunk(
+            session_id=resolved_session_id,
+            chunk={
+                "type": "complete",
+                "data": _stream_complete_payload({"result": None}),
+            },
+            seq=seq,
+        )
+    return resolved_session_id

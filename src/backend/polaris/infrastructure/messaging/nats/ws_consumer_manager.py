@@ -163,6 +163,30 @@ class JetStreamConsumerManager:
                         self.client_id,
                         exc,
                     )
+            elif self._jetstream is not None:
+                # Real-time path (useFactoryBench with tailLines: 0): join
+                # at the stream's tail so the consumer only sees events
+                # from now on. Without this, a brand-new client would be
+                # stuck acking dozens of history messages before any new
+                # event could be delivered, and the user would see no
+                # real-time push on the Factory panel.
+                try:
+                    stream_info = await self._jetstream.stream_info(
+                        JetStreamConstants.STREAM_NAME,
+                    )
+                    state = getattr(stream_info, "state", None)
+                    if state is None and isinstance(stream_info, dict):
+                        state = stream_info.get("state", {})
+                    last_seq = int(
+                        getattr(state, "last_seq", 0) or (state.get("last_seq", 0) if isinstance(state, dict) else 0)
+                    )
+                    opt_start_seq = last_seq + 1
+                except (RuntimeError, ValueError, AttributeError) as exc:
+                    logger.debug(
+                        "real-time start_seq lookup failed for %s: %s",
+                        self.client_id,
+                        exc,
+                    )
 
             consumer_config = ConsumerConfig(
                 durable_name=self._durable_name,

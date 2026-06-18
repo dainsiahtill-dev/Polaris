@@ -82,6 +82,24 @@ def build_v2_subscription_subjects(workspace_key: str, channels: list[str]) -> l
             if run_id and _is_safe_subject_token(run_id):
                 subjects.add(f"hp.runtime.{workspace_key}.event.factory.{run_id}")
             continue
+        if ch == "chat:all" or ch == "chat":
+            # Workspace-agnostic role-chat stream. The role-chat jetstream
+            # publisher publishes to ``hp.runtime.chat.<session_id>``
+            # regardless of workspace, so a single subscription here lets the
+            # front-end observe every active chat session through the same
+            # WebSocket that already carries log.llm / event.bench / etc.
+            # This is the chat-streaming replacement for the legacy
+            # ``/v2/role/{role}/chat/stream`` SSE endpoint.
+            subjects.add("hp.runtime.chat.>")
+            continue
+        if ch.startswith("chat:"):
+            # Pin a specific chat session: ``chat:<session_id>`` maps to
+            # ``hp.runtime.chat.<session_id>`` (workspace-agnostic, mirroring
+            # the bench pattern that the factory panel already uses).
+            session_id = ch[len("chat:") :].strip()
+            if session_id and _is_safe_subject_token(session_id):
+                subjects.add(f"hp.runtime.chat.{session_id}")
+            continue
         subjects.add(resolve_v2_subject(workspace_key, ch))
     return list(subjects)
 

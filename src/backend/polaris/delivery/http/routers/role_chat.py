@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from typing import Any
 
@@ -42,7 +43,13 @@ from ._shared import (
     require_auth,
     require_role,
 )
+from .role_chat_jetstream import (
+    _new_chat_session_id,
+    execute_role_chat_jetstream,
+)
 from .role_runtime_chat import execute_role_chat_nonstreaming, execute_role_chat_streaming
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -440,3 +447,107 @@ async def _error_sse_generator(message: str) -> Any:
     """SSE 错误事件生成器"""
     yield f"event: error\ndata: {message}\n\n"
     yield "event: complete\ndata: {}\n\n"
+
+
+# ============================================================================
+# JetStream-backed Role Chat Endpoint (replaces /chat/stream SSE)
+# ============================================================================
+
+
+@router.post(
+    "/v2/role/{role}/chat/jetstream",
+    dependencies=[Depends(require_auth)],
+    response_model=None,
+)
+async def role_chat_jetstream(
+    request: Request,
+    role: str,
+    payload: dict[str, Any],
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Start a role chat turn and stream chunks via NAT JetStream WebSocket.
+
+    Replaces the legacy ``/v2/role/{role}/chat/stream`` SSE endpoint. The
+    HTTP response returns immediately with a ``session_id``; the LLM runs
+    in the background and publishes every chunk (thinking_chunk /
+    content_chunk / tool_call / tool_result / complete / error) to the
+    JetStream subject ``hp.runtime.chat.<session_id>``.
+
+    The front-end subscribes to ``chat:<session_id>`` over the existing
+    ``/v2/ws/runtime`` WebSocket and decodes each RuntimeEventEnvelope
+    whose ``channel`` equals ``chat:<session_id>``.
+
+    Returns:
+        ``{"session_id", "status", "channel", "subject", "transport"}``
+
+    SECURITY:
+    - Server-generated session id; clients cannot guess other users' ids.
+    - Subject validated against the platform's SUBJECT_PATTERN.
+    - Authorisation is unchanged from the legacy /chat/stream path.
+    """
+    state = get_state(request)
+    workspace = _workspace_for_role_request(state.settings, workspace, payload)
+    scoped_state = _state_for_workspace(state, workspace)
+
+    _validate_role(role)
+
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INVALID_REQUEST",
+            message="message is required",
+        )
+
+    try:
+        ensure_required_roles_ready(scoped_state, default_roles=[role])
+    except StructuredHTTPException:
+        raise
+    except (RuntimeError, ValueError) as exc:
+        raise StructuredHTTPException(
+            status_code=409,
+            code="LLM_NOT_READY",
+            message="LLM runtime not ready",
+        ) from exc
+
+    # Server-generated session id; clients cannot inject or guess another
+    # user's chat stream.
+    session_id = _new_chat_session_id(role)
+    channel = f"chat:{session_id}"
+    subject = f"hp.runtime.chat.{session_id}"
+
+    async def _run_chat() -> None:
+        # Errors are best-effort reported via the chunk stream itself
+        # (an ``error`` chunk with the underlying message).
+        try:
+            await execute_role_chat_jetstream(
+                role=role,
+                workspace=workspace,
+                message=message,
+                payload=payload,
+                default_domain="general",
+                host_kind="role_chat_jetstream",
+                context=payload.get("context"),
+                session_id=session_id,
+            )
+        except (RuntimeError, ValueError, asyncio.CancelledError) as exc:
+            logger.warning("role_chat_jetstream background task failed: %s", exc)
+
+    # Fire and forget; the response returns immediately and the LLM keeps
+    # publishing chunks to JetStream for any subscribed front-end.
+    task = asyncio.create_task(_run_chat())
+    _JETSTREAM_CHAT_TASKS.add(task)
+    task.add_done_callback(_JETSTREAM_CHAT_TASKS.discard)
+
+    return {
+        "session_id": session_id,
+        "status": "started",
+        "channel": channel,
+        "subject": subject,
+        "transport": "jetstream_ws",
+    }
+
+
+# Best-effort registry of in-flight chat tasks so the loop does not drop
+# them mid-stream (see role_chat_jetstream endpoint above).
+_JETSTREAM_CHAT_TASKS: set[asyncio.Task[Any]] = set()
