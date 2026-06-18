@@ -26,6 +26,7 @@ import {
 import { Button } from '@/app/components/ui/button';
 import { cn } from '@/app/components/ui/utils';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
+import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
 import type { FactoryAuditEvent, FactoryRunArtifact, FactoryRunStatus } from '@/hooks/useFactory';
 import type { LogEntry } from '@/types/log';
@@ -88,6 +89,14 @@ interface BlueprintEvidenceView {
   path: string;
   summary: string;
   source: 'task' | 'artifact';
+}
+
+interface ChiefEngineerReviewArtifactView {
+  id: string;
+  title: string;
+  path: string;
+  summary: string;
+  source: 'artifact';
 }
 
 interface BlueprintCoverageSummary {
@@ -538,6 +547,10 @@ function hasBlueprintEvidence(task: PmTask): boolean {
   return Boolean(readTaskString(task, ['blueprint_id', 'blueprint_path', 'runtime_blueprint_path']));
 }
 
+function taskDisplayText(task: PmTask): string {
+  return String(taskTitle(task) || task.goal || task.summary || task.description || task.id || '').trim();
+}
+
 function taskIdentityTokens(task: PmTask): string[] {
   const metadata = taskMetadata(task);
   const direct = taskRecord(task);
@@ -564,14 +577,69 @@ function taskIdentityTokens(task: PmTask): string[] {
   return tokens;
 }
 
+function mergeFactoryTaskPools(...pools: PmTask[][]): PmTask[] {
+  const byKey = new Map<string, PmTask>();
+  for (const pool of pools) {
+    for (const task of pool) {
+      const tokens = taskIdentityTokens(task).map(canonicalFactoryTaskId).filter(Boolean);
+      const key = tokens[0] || canonicalFactoryTaskId(task.id);
+      if (!key) continue;
+      const current = byKey.get(key);
+      if (!current || (!taskDisplayText(current) && taskDisplayText(task))) {
+        byKey.set(key, task);
+      }
+      for (const token of tokens) {
+        if (!byKey.has(token)) {
+          byKey.set(token, byKey.get(key) || task);
+        }
+      }
+    }
+  }
+  return Array.from(new Set(byKey.values()));
+}
+
+function canonicalFactoryTaskId(value: unknown): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const normalized = normalizeToken(text);
+  const numericAlias = normalized.match(/^(?:task|pm-task|pm)[-_]?(\d+)$/);
+  return numericAlias ? numericAlias[1] : normalized;
+}
+
 function isChiefEngineerArtifact(artifact: FactoryRunArtifact): boolean {
   const path = normalizeToken(artifact.path);
   const name = normalizeToken(artifact.name);
   return (
     path.includes('runtime/blueprints/')
-    || path.includes('runtime/state/blueprints/')
-    || name.includes('blueprint')
+    || (name.includes('blueprint') && !name.includes('review'))
   );
+}
+
+function isChiefEngineerReviewArtifact(artifact: FactoryRunArtifact): boolean {
+  const path = normalizeToken(artifact.path);
+  const name = normalizeToken(artifact.name);
+  return path.includes('runtime/state/blueprints/') || name.includes('.review') || name.includes('review');
+}
+
+function isLatestReviewArtifact(artifact: FactoryRunArtifact): boolean {
+  return normalizeToken(artifact.name || artifact.path).includes('latest.review');
+}
+
+function reviewArtifactGroupKey(artifact: FactoryRunArtifact): string {
+  const path = String(artifact.path || '').trim();
+  const name = String(artifact.name || basename(path)).trim();
+  const token = `${path}/${name}`;
+  const runMatch = token.match(/factory[_-][a-z0-9_-]+/i);
+  return normalizeToken(runMatch?.[0] || path || name);
+}
+
+function reviewArtifactRank(artifact: FactoryRunArtifact): number {
+  const path = normalizeToken(artifact.path);
+  if (path.includes('runtime/state/blueprints/')) return 0;
+  if (path.includes('workspace/blueprints/') && !path.includes('latest.review')) return 1;
+  if (path.includes('workspace/roles/chief_engineer/')) return 2;
+  if (path.includes('latest.review')) return 9;
+  return 5;
 }
 
 function basename(path: string): string {
@@ -609,6 +677,16 @@ function artifactTaskId(artifact: FactoryRunArtifact): string {
 function buildBlueprintEvidence(tasks: PmTask[], artifacts: FactoryRunArtifact[]): BlueprintEvidenceView[] {
   const rows: BlueprintEvidenceView[] = [];
   const seen = new Set<string>();
+  const tasksByCanonicalId = new Map<string, PmTask>();
+
+  for (const task of tasks) {
+    for (const token of taskIdentityTokens(task)) {
+      const canonical = canonicalFactoryTaskId(token);
+      if (canonical && !tasksByCanonicalId.has(canonical)) {
+        tasksByCanonicalId.set(canonical, task);
+      }
+    }
+  }
 
   for (const task of tasks) {
     if (!hasBlueprintEvidence(task)) continue;
@@ -620,7 +698,7 @@ function buildBlueprintEvidence(tasks: PmTask[], artifacts: FactoryRunArtifact[]
     rows.push({
       id: blueprintId,
       taskId: String(task.id || '').trim(),
-      title: task.title || task.id || blueprintId,
+      title: taskDisplayText(task) || blueprintId,
       path,
       summary: task.summary || task.goal || task.description || '任务合同携带的 Chief Engineer 蓝图字段',
       source: 'task',
@@ -633,14 +711,14 @@ function buildBlueprintEvidence(tasks: PmTask[], artifacts: FactoryRunArtifact[]
     const key = path || name;
     if (!key || seen.has(key)) continue;
     seen.add(key);
+    const taskId = artifactTaskId(artifact);
+    const matchedTask = tasksByCanonicalId.get(canonicalFactoryTaskId(taskId));
     rows.push({
       id: name,
-      taskId: artifactTaskId(artifact),
-      title: name,
+      taskId,
+      title: matchedTask ? taskDisplayText(matchedTask) || taskId || name : taskId || name,
       path: path || name,
-      summary: path.includes('runtime/state/blueprints/')
-        ? 'Factory Chief Engineer review summary artifact'
-        : 'Chief Engineer runtime blueprint artifact',
+      summary: matchedTask?.summary || matchedTask?.goal || matchedTask?.description || '',
       source: 'artifact',
     });
   }
@@ -648,8 +726,37 @@ function buildBlueprintEvidence(tasks: PmTask[], artifacts: FactoryRunArtifact[]
   return rows;
 }
 
+function buildChiefEngineerReviewArtifacts(artifacts: FactoryRunArtifact[]): ChiefEngineerReviewArtifactView[] {
+  const byKey = new Map<string, { rank: number; row: ChiefEngineerReviewArtifactView }>();
+  const reviewArtifacts = artifacts.filter(isChiefEngineerReviewArtifact);
+  const hasSpecificReview = reviewArtifacts.some((artifact) => !isLatestReviewArtifact(artifact));
+
+  for (const artifact of reviewArtifacts) {
+    if (hasSpecificReview && isLatestReviewArtifact(artifact)) continue;
+    const path = String(artifact.path || '').trim();
+    const name = String(artifact.name || basename(path)).trim();
+    const key = reviewArtifactGroupKey(artifact);
+    if (!key) continue;
+    const rank = reviewArtifactRank(artifact);
+    const current = byKey.get(key);
+    if (current && current.rank <= rank) continue;
+    byKey.set(key, {
+      rank,
+      row: {
+        id: name,
+        title: name,
+        path: path || name,
+        summary: 'Factory Chief Engineer review summary artifact',
+        source: 'artifact',
+      },
+    });
+  }
+
+  return Array.from(byKey.values()).map((entry) => entry.row);
+}
+
 function buildBlueprintCoverage(tasks: PmTask[], blueprintEvidence: BlueprintEvidenceView[]): BlueprintCoverageSummary {
-  const evidenceTaskIds = new Set(blueprintEvidence.map((item) => normalizeToken(item.taskId)).filter(Boolean));
+  const evidenceTaskIds = new Set(blueprintEvidence.map((item) => canonicalFactoryTaskId(item.taskId)).filter(Boolean));
   const byTaskKey = new Map<string, { task: PmTask; covered: boolean; completed: boolean }>();
 
   for (const task of tasks) {
@@ -657,7 +764,7 @@ function buildBlueprintCoverage(tasks: PmTask[], blueprintEvidence: BlueprintEvi
     const key = tokens[0] || normalizeToken(task.id);
     if (!key) continue;
 
-    const covered = hasBlueprintEvidence(task) || tokens.some((token) => evidenceTaskIds.has(token));
+    const covered = hasBlueprintEvidence(task) || tokens.some((token) => evidenceTaskIds.has(canonicalFactoryTaskId(token)));
     const completed = isTaskDone(task);
     const existing = byTaskKey.get(key);
     if (!existing) {
@@ -912,6 +1019,10 @@ export function FactoryWorkspace({
 
   const pmWorkflowTasks = pmTasks ?? tasks;
   const directorWorkflowTasks = directorTasks ?? tasks;
+  const blueprintTaskPool = useMemo(
+    () => mergeFactoryTaskPools(pmWorkflowTasks, directorWorkflowTasks),
+    [directorWorkflowTasks, pmWorkflowTasks]
+  );
   const activityLogs = useMemo(() => toActivityLogs(events), [events]);
   const operationsActivityLogs = useMemo(
     () => [...activityLogs, ...executionLogs],
@@ -920,8 +1031,12 @@ export function FactoryWorkspace({
   const gateResults = currentRun?.gates || [];
   const deliveryArtifacts = artifacts || currentRun?.artifacts || [];
   const blueprintEvidence = useMemo(
-    () => buildBlueprintEvidence(pmWorkflowTasks, deliveryArtifacts),
-    [deliveryArtifacts, pmWorkflowTasks]
+    () => buildBlueprintEvidence(blueprintTaskPool, deliveryArtifacts),
+    [blueprintTaskPool, deliveryArtifacts]
+  );
+  const chiefReviewArtifacts = useMemo(
+    () => buildChiefEngineerReviewArtifacts(deliveryArtifacts),
+    [deliveryArtifacts]
   );
   const blueprintCoverage = useMemo(
     () => buildBlueprintCoverage(pmWorkflowTasks, blueprintEvidence),
@@ -1072,6 +1187,8 @@ export function FactoryWorkspace({
         </div>
       </header>
 
+      <BenchStatusStrip />
+
       <main
         data-testid="factory-layered-layout"
         className="flex min-h-0 flex-1 flex-col overflow-hidden"
@@ -1104,6 +1221,7 @@ export function FactoryWorkspace({
               <FactoryChiefEngineerLayer
                 workspace={workspace}
                 blueprintEvidence={blueprintEvidence}
+                reviewArtifacts={chiefReviewArtifacts}
                 blueprintCoverage={blueprintCoverage}
                 roleStatus={getRunRole(currentRun?.roles, ['chief_engineer', 'chiefengineer', 'architect'])}
                 currentRun={currentRun}
@@ -1738,12 +1856,14 @@ function roleLayerDisplayName(layer: FactoryRoleLayer): string {
 function FactoryChiefEngineerLayer({
   workspace,
   blueprintEvidence,
+  reviewArtifacts,
   blueprintCoverage,
   roleStatus,
   currentRun,
 }: {
   workspace: string;
   blueprintEvidence: BlueprintEvidenceView[];
+  reviewArtifacts: ChiefEngineerReviewArtifactView[];
   blueprintCoverage: BlueprintCoverageSummary;
   roleStatus: RunRoleStatus | null;
   currentRun: FactoryRunStatus | null;
@@ -1794,10 +1914,10 @@ function FactoryChiefEngineerLayer({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-slate-100">施工蓝图证据</h3>
-                <p className="mt-1 text-xs text-slate-500">展示任务合同字段和 Factory 运行时蓝图产物。</p>
+                <p className="mt-1 text-xs text-slate-500">仅展示任务合同字段和 Factory 运行时蓝图产物。</p>
               </div>
               <span className="rounded-md border border-cyan-500/25 bg-cyan-500/10 px-2 py-1 text-[10px] text-cyan-100">
-                {blueprintEvidence.length} 条证据
+                {blueprintEvidence.length} 条蓝图
               </span>
             </div>
           </div>
@@ -1806,26 +1926,24 @@ function FactoryChiefEngineerLayer({
             {blueprintEvidence.length > 0 ? (
               blueprintEvidence.map((evidence) => {
                 return (
-                  <article key={`${evidence.source}-${evidence.id}-${evidence.path}`} className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+                  <article
+                    key={`${evidence.source}-${evidence.id}-${evidence.path}`}
+                    className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3"
+                    title={evidence.path || evidence.id}
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 text-sm font-medium text-cyan-100">
                           <FileText className="h-4 w-4 shrink-0" />
                           <span className="truncate">{evidence.title}</span>
                         </div>
-                        <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">
-                          {evidence.summary}
-                        </p>
+                        {evidence.summary ? (
+                          <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">
+                            {evidence.summary}
+                          </p>
+                        ) : null}
                       </div>
-                      <span className="shrink-0 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-slate-300">
-                        {evidence.source}
-                      </span>
                     </div>
-                    {evidence.path ? (
-                      <div className="mt-2 truncate rounded-md border border-white/10 bg-slate-950/55 px-2 py-1 text-[11px] text-slate-400" title={evidence.path}>
-                        {evidence.path}
-                      </div>
-                    ) : null}
                   </article>
                 );
               })
@@ -1852,10 +1970,34 @@ function FactoryChiefEngineerLayer({
             <div className="space-y-2">
               <MetricRow label="任务覆盖" value={`${blueprintCoverage.covered}/${blueprintCoverage.required}`} tone="text-cyan-200" />
               <MetricRow label="蓝图证据" value={String(blueprintEvidence.length)} tone="text-cyan-200" />
+              <MetricRow label="审查回执" value={String(reviewArtifacts.length)} tone="text-slate-300" />
               <MetricRow label="待蓝图任务" value={String(blueprintCoverage.missing.length)} tone={blueprintCoverage.missing.length > 0 ? 'text-red-200' : 'text-emerald-200'} />
               <MetricRow label="已完成任务" value={String(blueprintCoverage.completed)} tone="text-slate-300" />
               <MetricRow label="Director 交接" value={handoffLabel} tone={handoffTone} />
               <MetricRow label="Factory 阶段" value={currentRun?.current_stage || 'n/a'} tone="text-slate-300" />
+            </div>
+          </section>
+
+          <section className="min-h-0 rounded-lg border border-white/10 bg-white/[0.035] p-3">
+            <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
+              <BadgeCheck className="h-3.5 w-3.5 text-emerald-300" />
+              审查回执
+            </div>
+            <div className="space-y-2">
+              {reviewArtifacts.length > 0 ? (
+                reviewArtifacts.map((artifact) => (
+                  <div key={`${artifact.source}-${artifact.id}-${artifact.path}`} className="rounded-md border border-white/10 bg-slate-950/45 px-2 py-2">
+                    <div className="truncate text-xs font-medium text-slate-200">{artifact.title}</div>
+                    <div className="mt-1 truncate text-[10px] text-slate-500" title={artifact.path}>
+                      {artifact.path}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-md border border-white/10 bg-slate-950/45 px-2 py-2 text-xs text-slate-400">
+                  暂无 Factory Chief Engineer 审查回执。
+                </div>
+              )}
             </div>
           </section>
 

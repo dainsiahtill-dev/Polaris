@@ -614,61 +614,26 @@ async def test_get_factory_run_audit_bundle_not_found(client: AsyncClient) -> No
 
 @pytest.mark.asyncio
 async def test_stream_factory_run_events_headers(client: AsyncClient) -> None:
-    """GET /v2/factory/runs/{run_id}/stream should return SSE headers.
+    """GET /v2/factory/runs/{run_id}/stream should fail closed to runtime WS."""
+    response = await client.get("/v2/factory/runs/factory_abc/stream")
 
-    Full SSE consumption is skipped because the endpoint uses an async
-    generator with an infinite polling loop.
-    """
-    run = _make_factory_run(run_id="factory_abc", status="completed")
-
-    with (
-        patch(
-            "polaris.delivery.http.routers.factory.FactoryRunService",
-        ) as mock_svc_cls,
-        patch(
-            "polaris.delivery.http.routers.factory.create_sse_jetstream_consumer",
-        ) as mock_consumer_factory,
-    ):
-        mock_svc = MagicMock()
-        mock_svc_cls.return_value = mock_svc
-        mock_svc.get_run = AsyncMock(return_value=run)
-        mock_svc.get_run_events = AsyncMock(return_value=[])
-
-        mock_consumer = MagicMock()
-        mock_consumer.is_connected = False
-        mock_consumer.connect = AsyncMock(return_value=False)
-        mock_consumer_factory.return_value = mock_consumer
-
-        response = await client.get("/v2/factory/runs/factory_abc/stream")
-        assert response.status_code == 200
-        assert response.headers.get("content-type", "").startswith("text/event-stream")
-        assert response.headers.get("cache-control") == "no-cache"
+    assert response.status_code == 410
+    assert "text/event-stream" not in response.headers.get("content-type", "")
+    payload = response.json()
+    assert payload["error"]["code"] == "SSE_REMOVED"
+    assert payload["error"]["details"]["replacement"] == "/v2/ws/runtime"
+    assert payload["error"]["details"]["transport"] == "nat-jetstream"
 
 
 @pytest.mark.asyncio
 async def test_stream_factory_run_events_not_found(client: AsyncClient) -> None:
-    """GET /v2/factory/runs/{run_id}/stream should 404 when run missing and JetStream fails."""
-    with (
-        patch(
-            "polaris.delivery.http.routers.factory.FactoryRunService",
-        ) as mock_svc_cls,
-        patch(
-            "polaris.delivery.http.routers.factory.create_sse_jetstream_consumer",
-        ) as mock_consumer_factory,
-    ):
-        mock_svc = MagicMock()
-        mock_svc_cls.return_value = mock_svc
-        mock_svc.get_run = AsyncMock(return_value=None)
+    """Removed stream route should not leak run existence checks."""
+    response = await client.get("/v2/factory/runs/missing/stream")
 
-        mock_consumer = MagicMock()
-        mock_consumer.is_connected = False
-        mock_consumer.connect = AsyncMock(return_value=False)
-        mock_consumer_factory.return_value = mock_consumer
-
-        response = await client.get("/v2/factory/runs/missing/stream")
-        assert response.status_code == 404
-        data = response.json()
-        assert data["error"]["code"] == "RUN_NOT_FOUND"
+    assert response.status_code == 410
+    data = response.json()
+    assert data["error"]["code"] == "SSE_REMOVED"
+    assert data["error"]["details"]["replacement"] == "/v2/ws/runtime"
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,8 @@
-"""Event streamer for SSE serialization and channel multiplexing."""
+"""Event streamer for runtime packet serialization and channel multiplexing."""
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 import json
 from collections.abc import AsyncGenerator
@@ -41,7 +40,7 @@ def infer_channel(event: AIStreamEvent) -> str:
 
 
 class EventStreamer:
-    """Serialize AI stream events to SSE and multiplex by channel."""
+    """Serialize AI stream events to runtime packets and multiplex by channel."""
 
     def __init__(
         self,
@@ -64,22 +63,19 @@ class EventStreamer:
         *,
         channel: str | None = None,
     ) -> bytes:
-        """Serialize one event to SSE bytes."""
+        """Serialize one event to runtime packet bytes."""
         selected_channel = channel or infer_channel(event)
         payload = event.to_dict()
+        payload["event"] = event.type.value
         payload["channel"] = selected_channel
         payload["format"] = self._serialization_format.value
 
         if self._serialization_format == SerializationFormat.MSGPACK:
             if msgpack is None:
                 raise RuntimeError("msgpack serialization requested but msgpack is not installed")
-            binary = msgpack.packb(payload, use_bin_type=True)
-            data = base64.b64encode(binary).decode("ascii")
-        else:
-            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            return msgpack.packb(payload, use_bin_type=True)
 
-        event_name = event.type.value
-        return f"event: {event_name}\ndata: {data}\n\n".encode()
+        return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 
     async def publish(self, event: AIStreamEvent, *, channel: str | None = None) -> None:
         """Publish one event to subscribers of a channel."""

@@ -44,7 +44,7 @@ from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
-from .sse_utils import publish_to_jetstream
+from .jetstream_utils import publish_to_jetstream
 
 router = APIRouter()
 log = logging.getLogger("polaris.routers.docs")

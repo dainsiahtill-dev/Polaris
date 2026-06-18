@@ -17,8 +17,8 @@ import time
 from datetime import datetime, timezone
 
 import pytest
-from polaris.delivery.http.routers import sse_utils
-from polaris.delivery.http.routers.sse_utils import (
+from polaris.delivery.http.routers import jetstream_utils
+from polaris.delivery.http.routers.jetstream_utils import (
     generate_event_signature,
     publish_to_jetstream,
     validate_event_timestamp,
@@ -95,7 +95,7 @@ class TestSecurityValidation:
 
     def test_valid_payload_sizes(self) -> None:
         """Verify valid payload sizes are accepted."""
-        from polaris.delivery.http.routers.sse_utils import MAX_PAYLOAD_SIZE
+        from polaris.delivery.http.routers.jetstream_utils import MAX_PAYLOAD_SIZE
 
         # Small payload
         assert validate_payload_size({"key": "value"}) is True
@@ -112,7 +112,7 @@ class TestSecurityValidation:
 
     def test_oversized_payload_rejected(self) -> None:
         """Verify oversized payloads are rejected."""
-        from polaris.delivery.http.routers.sse_utils import MAX_PAYLOAD_SIZE
+        from polaris.delivery.http.routers.jetstream_utils import MAX_PAYLOAD_SIZE
 
         # Dict that's too large when serialized
         oversized = {"data": "x" * (MAX_PAYLOAD_SIZE + 1)}
@@ -138,7 +138,7 @@ class TestSecurityValidation:
 
     def test_stale_timestamps_rejected(self) -> None:
         """Verify stale timestamps (replay window exceeded) are rejected."""
-        from polaris.delivery.http.routers.sse_utils import MAX_REPLAY_WINDOW_SECONDS
+        from polaris.delivery.http.routers.jetstream_utils import MAX_REPLAY_WINDOW_SECONDS
 
         # Timestamp older than replay window
         old_ts = datetime.fromtimestamp(
@@ -201,7 +201,7 @@ class TestNatJetStreamPublication:
         async def fail_if_called() -> object:
             raise AssertionError("messaging client should not be requested for invalid subjects")
 
-        monkeypatch.setattr(sse_utils, "get_default_client", fail_if_called, raising=False)
+        monkeypatch.setattr(jetstream_utils, "get_default_client", fail_if_called, raising=False)
 
         assert await publish_to_jetstream("../bad", {"event": "x"}) is False
 

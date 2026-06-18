@@ -25,7 +25,7 @@ from polaris.infrastructure.messaging.nats.nats_types import create_runtime_even
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
 
 from .llm_models import LlmTestPayload
-from .sse_utils import publish_to_jetstream
+from .jetstream_utils import publish_to_jetstream
 
 if TYPE_CHECKING:
     from polaris.bootstrap.config import Settings

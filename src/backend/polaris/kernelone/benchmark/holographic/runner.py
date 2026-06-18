@@ -137,7 +137,7 @@ from polaris.kernelone.resilience.retry_policy import RetryPolicy
 from polaris.kernelone.security.aegis_restore import PIIReversibleMasker
 from polaris.kernelone.security.guardrails import GuardrailsChain
 from polaris.kernelone.security.rate_limiter import RateLimiter
-from polaris.kernelone.stream.sse_streamer import AsyncBackpressureBuffer
+from polaris.kernelone.stream.backpressure_buffer import AsyncBackpressureBuffer
 from polaris.kernelone.workflow.activity_runner import ActivityRunner
 from polaris.kernelone.workflow.base import WorkflowSnapshot
 from polaris.kernelone.workflow.dlq import DeadLetterItem, InMemoryDeadLetterQueue

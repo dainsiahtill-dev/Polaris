@@ -304,6 +304,30 @@ describe.sequential('Director capability desktop integration', () => {
     expect(screen.getByTestId('director-delete-capability')).toHaveTextContent('delete_files blocked');
   });
 
+  it('auto-opens realtime activity when Director runtime events arrive', async () => {
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[]}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+        processStreamEvents={[
+          {
+            id: 'director-live-1',
+            timestamp: '2026-05-23T00:00:00Z',
+            level: 'info',
+            source: 'Process',
+            message: 'Director live process event',
+          },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByTestId('realtime-activity-panel')).toBeInTheDocument();
+    expect(screen.getByText('Director live process event')).toBeInTheDocument();
+  });
+
   it('renders realtime file edits and diff details in the code view', async () => {
     render(
       <DirectorWorkspace

@@ -2,7 +2,7 @@
 
 Asserts:
   - POST /v2/role/{role}/chat/jetstream returns 200 + JSON
-  - response contains session_id, channel, subject, transport=jetstream_ws
+  - response contains session_id, channel, subject, transport=nat-jetstream
   - Content-Type is application/json, NOT text/event-stream
   - Subject is hp.runtime.chat.<session_id> (workspace-agnostic)
   - Channel is chat:<session_id>
@@ -67,7 +67,7 @@ def test_chat_jetstream_returns_json_with_session_id():
     assert "text/event-stream" not in (r.headers.get("content-type") or "")
     body = r.json()
     assert body["status"] == "started"
-    assert body["transport"] == "jetstream_ws"
+    assert body["transport"] == "nat-jetstream"
     assert body["channel"].startswith("chat:")
     assert body["subject"].startswith("hp.runtime.chat.")
     assert body["channel"] == f"chat:{body['session_id']}"

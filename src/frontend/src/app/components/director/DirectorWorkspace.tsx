@@ -1647,6 +1647,7 @@ export function DirectorWorkspace({
   // 用户手动切换视图的标记
   const userSwitchedViewRef = useRef(false);
   const lastPhaseRef = useRef<string>('');
+  const lastRealtimeEventCountRef = useRef(0);
 
   // 阶段到视图的映射
   const PHASE_TO_VIEW: Record<string, { view: DirectorActiveView; label: string }> = {
@@ -1675,6 +1676,16 @@ export function DirectorWorkspace({
       }
     }
   }, [currentPhase, directorRunning, activeView]);
+
+  useEffect(() => {
+    const eventCount = executionLogs.length + llmStreamEvents.length + processStreamEvents.length;
+    const previousCount = lastRealtimeEventCountRef.current;
+    lastRealtimeEventCountRef.current = eventCount;
+    if (eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
+    if (activeView !== 'activity') {
+      setActiveView('activity');
+    }
+  }, [activeView, executionLogs.length, llmStreamEvents.length, processStreamEvents.length]);
 
   // 用户手动点击导航时记录偏好
   const handleViewChange = useCallback((view: DirectorActiveView) => {

@@ -7,9 +7,8 @@ LLM provider and storage dependencies.
 
 from __future__ import annotations
 
-from asyncio import Queue
+import asyncio
 from collections.abc import AsyncIterator
-from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -255,36 +254,34 @@ async def test_role_chat_generation_uses_requested_workspace(client: AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_role_chat_stream_uses_context_workspace(client: AsyncClient, mock_settings: Settings) -> None:
-    """Streaming role chat should use context.workspace when the query is omitted."""
+async def test_role_chat_jetstream_uses_context_workspace(client: AsyncClient, mock_settings: Settings) -> None:
+    """JetStream role chat should use context.workspace when the query is omitted."""
     mock_settings.workspace = "C:/Repo/Polaris"
     mock_settings.workspace_path = "C:/Temp/Stale"
-
-    async def _stream_response(**kwargs: object) -> None:
-        queue = cast(Queue[dict[str, Any]], kwargs["output_queue"])
-        await queue.put({"type": "complete", "data": {"content": "done"}})
 
     with (
         patch("polaris.delivery.http.routers.role_chat.get_registered_roles", return_value=["director"]),
         patch("polaris.delivery.http.routers.role_chat.ensure_required_roles_ready") as mock_ready,
         patch(
-            "polaris.delivery.http.routers.role_chat.execute_role_chat_streaming",
+            "polaris.delivery.http.routers.role_chat.execute_role_chat_jetstream",
             new_callable=AsyncMock,
-            side_effect=_stream_response,
-        ) as mock_stream,
+        ) as mock_jetstream,
     ):
         response = await client.post(
-            "/v2/role/director/chat/stream",
+            "/v2/role/director/chat/jetstream",
             json={"message": "Run task", "context": {"workspace": "C:/Temp/Product"}},
         )
+        await asyncio.sleep(0)
 
     assert response.status_code == 200
-    assert "event: complete" in response.text
+    data = response.json()
+    assert data["transport"] == "nat-jetstream"
+    assert data["channel"].startswith("chat:")
     ready_state = mock_ready.call_args.args[0]
     assert str(ready_state.settings.workspace).replace("\\", "/") == "C:/Temp/Product"
-    stream_args = mock_stream.await_args
-    assert stream_args is not None
-    assert stream_args.kwargs["workspace"] == "C:/Temp/Product"
+    jetstream_args = mock_jetstream.await_args
+    assert jetstream_args is not None
+    assert jetstream_args.kwargs["workspace"] == "C:/Temp/Product"
 
 
 @pytest.mark.asyncio

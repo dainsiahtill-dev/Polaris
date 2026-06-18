@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import patch
 
 import pytest
@@ -68,15 +69,17 @@ class TestEventStreamerSerializeEvent:
         streamer = EventStreamer()
         event = AIStreamEvent(type=StreamEventType.CHUNK, chunk="hello")
         data = streamer.serialize_event(event)
-        assert data.startswith(b"event: chunk\ndata: ")
-        assert b"channel" in data
-        assert b"format" in data
+        payload = json.loads(data.decode("utf-8"))
+        assert payload["event"] == "chunk"
+        assert payload["channel"] == "final_answer"
+        assert payload["format"] == "json"
 
     def test_custom_channel(self) -> None:
         streamer = EventStreamer()
         event = AIStreamEvent(type=StreamEventType.CHUNK, chunk="hello")
         data = streamer.serialize_event(event, channel="custom")
-        assert b'"channel":"custom"' in data
+        payload = json.loads(data.decode("utf-8"))
+        assert payload["channel"] == "custom"
 
     def test_msgpack_not_installed(self) -> None:
         streamer = EventStreamer(serialization_format=SerializationFormat.MSGPACK)

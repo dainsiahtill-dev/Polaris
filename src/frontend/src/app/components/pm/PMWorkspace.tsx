@@ -1032,6 +1032,7 @@ export function PMWorkspace({
   // 用户手动切换视图的标记（避免自动切换覆盖用户选择）
   const userSwitchedViewRef = useRef(false);
   const lastPhaseRef = useRef<string>('');
+  const lastRealtimeEventCountRef = useRef(0);
   
   // 自动切换视图基于当前阶段
   useEffect(() => {
@@ -1049,6 +1050,16 @@ export function PMWorkspace({
       }
     }
   }, [currentPhase, pmRunning, activeView]);
+
+  useEffect(() => {
+    const eventCount = executionLogs.length + llmStreamEvents.length + processStreamEvents.length;
+    const previousCount = lastRealtimeEventCountRef.current;
+    lastRealtimeEventCountRef.current = eventCount;
+    if (eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
+    if (activeView !== 'activity') {
+      setActiveView('activity');
+    }
+  }, [activeView, executionLogs.length, llmStreamEvents.length, processStreamEvents.length]);
   
   // 当用户手动点击导航时，记录用户偏好
   const handleViewChange = useCallback((view: PMActiveView) => {

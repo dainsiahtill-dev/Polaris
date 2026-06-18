@@ -15,7 +15,7 @@ This service stores bench sessions + their event stream in
 
 The bench subprocess publishes through the HTTP router (see
 ``polaris/delivery/http/routers/factory.py``); the Factory front-end panel
-subscribes to the same router's SSE stream. Failures here are always
+observes the same events through Nat-JetStream/WebSocket fanout. Failures here are always
 soft: a missing session dir or a corrupt event line is logged and skipped,
 never raised to the HTTP layer, so the bench can never crash the UI.
 """

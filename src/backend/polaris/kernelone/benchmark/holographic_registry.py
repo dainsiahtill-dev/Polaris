@@ -212,9 +212,9 @@ HOLOGRAPHIC_CASES: tuple[HolographicCase, ...] = (
     _case(
         case_id="TC-NW-001",
         subsystem="S5-NW",
-        title="EventStreamer SSE throughput",
+        title="EventStreamer runtime packet throughput",
         target_path="polaris/kernelone/llm/engine/stream/event_streamer.py",
-        summary="AIStreamEvent to SSE serialization throughput and p99 latency.",
+        summary="AIStreamEvent to runtime packet serialization throughput and p99 latency.",
         readiness=CaseReadiness.READY,
         thresholds={"serialization_p99_ms_lt": 5.0},
     ),
@@ -242,7 +242,7 @@ HOLOGRAPHIC_CASES: tuple[HolographicCase, ...] = (
     _case(
         case_id="TC-NW-004",
         subsystem="S5-NW",
-        title="SSE multiplex channels",
+        title="Runtime packet multiplex channels",
         target_path="polaris/kernelone/llm/engine/stream/event_streamer.py",
         summary="Single connection multiplexed channel latency isolation.",
         readiness=CaseReadiness.READY,

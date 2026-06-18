@@ -2305,14 +2305,10 @@ class FactoryRunService:
         await self.store.append_event(run_id, payload)
         # Best-effort NAT JetStream fanout so the unified WebSocket pipeline
         # (``event.factory:<run_id>`` channel) can stream these events to
-        # subscribers without the legacy factory SSE wire format. The
-        # subject is the same one the previous ``sse_jetstream_consumer``
-        # was reading from; the publish path was simply never wired up,
-        # which is why the old SSE endpoint had to fall back to JSONL
-        # polling. The factory run stays the source of truth (durable on
-        # disk); the JetStream stream is a best-effort fanout.
+        # subscribers. The factory run stays the source of truth (durable on
+        # disk); JetStream is the best-effort realtime fanout.
         try:
-            from polaris.delivery.http.routers.sse_utils import (
+            from polaris.delivery.http.routers.jetstream_utils import (
                 publish_to_jetstream,
             )
             from polaris.infrastructure.messaging.nats.nats_types import (

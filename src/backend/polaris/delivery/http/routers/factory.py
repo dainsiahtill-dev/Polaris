@@ -42,7 +42,7 @@ from polaris.cells.storage.layout.public.service import (
     sync_process_settings_environment,
 )
 from polaris.delivery.http.routers._shared import StructuredHTTPException, ensure_required_roles_ready
-from polaris.delivery.http.routers.sse_utils import (
+from polaris.delivery.http.routers.jetstream_utils import (
     publish_to_jetstream,
 )
 from polaris.delivery.http.schemas import (
@@ -964,6 +964,21 @@ async def _persist_run_summary(
     await service.store.save_run(run)
 
 
+def _classify_factory_failure_code(*, stage: str, detail: str) -> str:
+    normalized_detail = str(detail or "").lower()
+    if "qa_llm_judgement_unavailable" in normalized_detail:
+        return "QA_LLM_JUDGEMENT_UNAVAILABLE"
+    if str(stage or "").strip():
+        return "FACTORY_STAGE_FAILED"
+    return "FACTORY_RUN_EXCEPTION"
+
+
+def _factory_failure_suggestion(code: str) -> str:
+    if code == "QA_LLM_JUDGEMENT_UNAVAILABLE":
+        return "Fix QA LLM connectivity or explicitly disable qa_require_llm_judgement for non-audited dry runs."
+    return ""
+
+
 async def _execute_run_with_service(
     service: FactoryRunService,
     run_id: str,
@@ -1150,13 +1165,19 @@ async def _execute_run_with_service(
         if current_run is not None and current_run.status != ServiceRunStatus.CANCELLED:
             failure_stage = active_stage or str(current_run.metadata.get("current_stage") or "").strip()
             tb = traceback.format_exc(limit=20)
+            failure_detail = str(exc)
+            failure_code = _classify_factory_failure_code(stage=failure_stage, detail=failure_detail)
+            suggested_action = _factory_failure_suggestion(failure_code)
             current_run.metadata["failure"] = {
                 "stage": failure_stage or "unknown",
-                "code": "FACTORY_RUN_EXCEPTION",
-                "detail": str(exc),
+                "code": failure_code,
+                "detail": failure_detail,
                 "traceback": tb,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
+            if suggested_action:
+                current_run.metadata["failure"]["recoverable"] = True
+                current_run.metadata["failure"]["suggested_action"] = suggested_action
             if failure_stage:
                 current_run.metadata["last_failed_stage"] = failure_stage
             await service.store.save_run(current_run)

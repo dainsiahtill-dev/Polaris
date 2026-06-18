@@ -293,6 +293,67 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(qa?.internalContext.state).toBe('idle');
   });
 
+  it('populates role internal contexts from Factory Bench role hints', () => {
+    const factoryProcess: LogEntry[] = [
+      wsLog({
+        id: 'bench-start',
+        timestamp: '2026-06-18T14:15:19Z',
+        source: 'Factory Bench',
+        title: 'factory_bench.project.started',
+        message: 'L1-01 CLI 科学计算器 starting',
+        meta: { channel: 'process', bench_event_type: 'factory_bench.project.started', project_id: 'L1-01', level: 1 },
+        tags: ['bench'],
+      }),
+      wsLog({
+        id: 'bench-blueprint',
+        timestamp: '2026-06-18T14:18:25Z',
+        source: 'Factory Bench',
+        title: 'factory_bench.gate.evaluated',
+        message: 'L1-01 gate:blueprint_artifact_present=ok',
+        meta: { channel: 'process', bench_event_type: 'factory_bench.gate.evaluated', gate: 'blueprint_artifact_present', project_id: 'L1-01', level: 1 },
+        tags: ['bench'],
+      }),
+      wsLog({
+        id: 'bench-completed',
+        timestamp: '2026-06-18T14:18:26Z',
+        source: 'Factory Bench',
+        title: 'factory_bench.project.completed',
+        message: 'L1-01 exit=1 dur=185.2s',
+        meta: { channel: 'process', bench_event_type: 'factory_bench.project.completed', project_id: 'L1-01', level: 1 },
+        tags: ['bench'],
+      }),
+      wsLog({
+        id: 'bench-qa',
+        timestamp: '2026-06-18T14:18:27Z',
+        source: 'Factory Bench',
+        title: 'factory_bench.gate.evaluated',
+        message: 'L1-01 gate:integration_qa_passed=FAIL',
+        level: 'error',
+        meta: { channel: 'process', bench_event_type: 'factory_bench.gate.evaluated', gate: 'integration_qa_passed', project_id: 'L1-01', level: 1 },
+        tags: ['bench'],
+      }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf([], [], factoryProcess) }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+    const chief = model.roles.find((r) => r.id === 'chief_engineer');
+    const director = model.roles.find((r) => r.id === 'director');
+    const qa = model.roles.find((r) => r.id === 'qa');
+
+    expect(pm?.internalContext.eventCount).toBe(1);
+    expect(pm?.internalContext.events[0].id).toBe('bench-start');
+    expect(chief?.internalContext.eventCount).toBe(1);
+    expect(chief?.internalContext.events[0].id).toBe('bench-blueprint');
+    expect(director?.internalContext.eventCount).toBe(1);
+    expect(director?.internalContext.events[0].id).toBe('bench-completed');
+    expect(director?.internalContext.workingMemoryItems).toBe(1);
+    expect(director?.internalContext.workingMemoryEstimated).toBe(true);
+    expect(qa?.internalContext.eventCount).toBe(1);
+    expect(qa?.internalContext.events[0].id).toBe('bench-qa');
+    expect(chief?.state).toBe('active');
+    expect(director?.state).toBe('active');
+    expect(qa?.state).toBe('active');
+  });
+
   it('keeps RoleInternalContext.state consistent with RoleCard.state when a role is running but has no events', () => {
     const model = buildContextOSModel(baseInput({ pmRunning: true, telemetry: telemetryOf() }));
     const pm = model.roles.find((r) => r.id === 'pm');
@@ -322,6 +383,8 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(pm?.internalContext.projectionCount).toBe(1); // items_count signature
     expect(pm?.internalContext.receiptCount).toBe(1); // snapshot_hash signature
     expect(pm?.internalContext.contextItemsCount).toBe(5);
+    expect(pm?.internalContext.workingMemoryItems).toBe(5);
+    expect(pm?.internalContext.workingMemoryEstimated).toBe(false);
     expect(pm?.internalContext.contextTokensLatest).toBe(3200);
   });
 

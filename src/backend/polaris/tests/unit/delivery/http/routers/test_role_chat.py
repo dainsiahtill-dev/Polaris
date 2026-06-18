@@ -7,7 +7,6 @@ External services are mocked to avoid LLM provider and storage dependencies.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -332,14 +331,9 @@ async def test_role_chat_with_context(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_role_chat_stream_success(client: AsyncClient) -> None:
-    """PM streaming role chat should return framed SSE chunks."""
-
-    async def _fake_streaming_response(**kwargs: Any) -> None:
-        output_queue = kwargs["output_queue"]
-        await output_queue.put({"type": "thinking_chunk", "data": {"content": "plan"}})
-        await output_queue.put({"type": "content_chunk", "data": {"content": "Hello"}})
-        await output_queue.put({"type": "complete", "data": {"response": "Hello from PM"}})
+async def test_role_chat_stream_fails_closed_to_nat_jetstream(client: AsyncClient) -> None:
+    """PM streaming role chat should fail closed to the Nat-JetStream route."""
+    from polaris.delivery.http.routers import role_chat
 
     with (
         patch(
@@ -349,36 +343,24 @@ async def test_role_chat_stream_success(client: AsyncClient) -> None:
         patch(
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
-        patch(
-            "polaris.delivery.http.routers.role_chat.execute_role_chat_streaming",
-            new_callable=AsyncMock,
-            side_effect=_fake_streaming_response,
-        ) as mock_generate,
     ):
         response = await client.post(
             "/v2/role/pm/chat/stream",
             json={"message": "hello", "context": {"source": "desktop"}},
-            headers={"Accept": "text/event-stream"},
         )
 
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/event-stream")
-    body = response.text
-    assert "event: thinking_chunk" in body
-    assert '"content": "plan"' in body
-    assert "event: content_chunk" in body
-    assert '"content": "Hello"' in body
-    assert "event: complete" in body
-    assert '"response": "Hello from PM"' in body
-    mock_generate.assert_awaited_once()
-    assert mock_generate.await_args is not None
-    assert mock_generate.await_args.kwargs["role"] == "pm"
-    assert mock_generate.await_args.kwargs["context"] == {"source": "desktop"}
+    assert response.status_code == 410
+    assert "text/event-stream" not in response.headers.get("content-type", "")
+    body = response.json()
+    assert body["error"]["code"] == "SSE_REMOVED"
+    assert body["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
+    assert body["error"]["details"]["transport"] == "nat-jetstream"
+    assert not hasattr(role_chat, "execute_role_chat_streaming")
 
 
 @pytest.mark.asyncio
-async def test_role_chat_stream_empty_message(client: AsyncClient) -> None:
-    """Empty message on stream should return SSE error event."""
+async def test_role_chat_stream_empty_message_fails_closed(client: AsyncClient) -> None:
+    """Empty message on removed stream route still returns the transport removal contract."""
     with (
         patch(
             "polaris.delivery.http.routers.role_chat.get_registered_roles",
@@ -388,26 +370,23 @@ async def test_role_chat_stream_empty_message(client: AsyncClient) -> None:
         response = await client.post(
             "/v2/role/pm/chat/stream",
             json={"message": ""},
-            headers={"Accept": "text/event-stream"},
         )
-        assert response.status_code == 200
-        body = response.text
-        assert "event: error" in body
-        assert "message is required" in body
+        assert response.status_code == 410
+        body = response.json()
+        assert body["error"]["code"] == "SSE_REMOVED"
+        assert body["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
 
 
 @pytest.mark.asyncio
-async def test_role_chat_stream_prefers_active_workspace_path(
+async def test_role_chat_stream_does_not_execute_legacy_generator(
     client: AsyncClient,
     mock_settings: Settings,
 ) -> None:
-    """Streaming role chat should generate against workspace_path before workspace."""
+    """Removed stream route should not execute the in-process stream generator."""
+    from polaris.delivery.http.routers import role_chat
+
     mock_settings.workspace = "C:/Repo/Polaris"
     mock_settings.workspace_path = "C:/Temp/Product"
-
-    async def _fake_streaming_response(**kwargs: Any) -> None:
-        output_queue = kwargs["output_queue"]
-        await output_queue.put({"type": "complete", "data": {"ok": True}})
 
     with (
         patch(
@@ -417,22 +396,14 @@ async def test_role_chat_stream_prefers_active_workspace_path(
         patch(
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
-        patch(
-            "polaris.delivery.http.routers.role_chat.execute_role_chat_streaming",
-            new_callable=AsyncMock,
-            side_effect=_fake_streaming_response,
-        ) as mock_generate,
     ):
         response = await client.post(
             "/v2/role/pm/chat/stream",
             json={"message": "hello"},
-            headers={"Accept": "text/event-stream"},
         )
 
-    assert response.status_code == 200
-    assert "event: complete" in response.text
-    assert mock_generate.await_args is not None
-    assert mock_generate.await_args.kwargs["workspace"] == "C:/Temp/Product"
+    assert response.status_code == 410
+    assert not hasattr(role_chat, "execute_role_chat_streaming")
 
 
 @pytest.mark.asyncio
@@ -447,7 +418,6 @@ async def test_role_chat_stream_unsupported_role(client: AsyncClient) -> None:
         response = await client.post(
             "/v2/role/unknown/chat/stream",
             json={"message": "hello"},
-            headers={"Accept": "text/event-stream"},
         )
         assert response.status_code == 400
         data = response.json()
@@ -456,8 +426,8 @@ async def test_role_chat_stream_unsupported_role(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_role_chat_stream_llm_not_ready(client: AsyncClient) -> None:
-    """LLM not ready on stream should return SSE error event."""
+async def test_role_chat_stream_llm_not_ready_fails_closed_before_runtime_check(client: AsyncClient) -> None:
+    """Removed stream route should not run legacy runtime readiness checks."""
     from polaris.delivery.http.routers._shared import StructuredHTTPException
 
     with (
@@ -477,23 +447,18 @@ async def test_role_chat_stream_llm_not_ready(client: AsyncClient) -> None:
         response = await client.post(
             "/v2/role/pm/chat/stream",
             json={"message": "hello"},
-            headers={"Accept": "text/event-stream"},
         )
-        assert response.status_code == 200
-        body = response.text
-        assert "event: error" in body
-        assert "PM LLM not ready" in body
+        assert response.status_code == 410
+        body = response.json()
+        assert body["error"]["code"] == "SSE_REMOVED"
+        assert body["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["director", "chief_engineer"])
 async def test_role_chat_stream_engineering_roles(client: AsyncClient, role: str) -> None:
-    """Director and Chief Engineer streaming role chat should return framed SSE chunks."""
-
-    async def _fake_streaming_response(**kwargs: Any) -> None:
-        output_queue = kwargs["output_queue"]
-        await output_queue.put({"type": "content_chunk", "data": {"content": f"{role} chunk"}})
-        await output_queue.put({"type": "complete", "data": {"response": f"{role} complete"}})
+    """Director and Chief Engineer removed stream routes should fail closed."""
+    from polaris.delivery.http.routers import role_chat
 
     with (
         patch(
@@ -503,24 +468,14 @@ async def test_role_chat_stream_engineering_roles(client: AsyncClient, role: str
         patch(
             "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
         ),
-        patch(
-            "polaris.delivery.http.routers.role_chat.execute_role_chat_streaming",
-            new_callable=AsyncMock,
-            side_effect=_fake_streaming_response,
-        ) as mock_generate,
     ):
         response = await client.post(
             f"/v2/role/{role}/chat/stream",
             json={"message": f"{role} hello"},
-            headers={"Accept": "text/event-stream"},
         )
 
-    assert response.status_code == 200
-    body = response.text
-    assert "event: content_chunk" in body
-    assert f'"content": "{role} chunk"' in body
-    assert "event: complete" in body
-    assert f'"response": "{role} complete"' in body
-    mock_generate.assert_awaited_once()
-    assert mock_generate.await_args is not None
-    assert mock_generate.await_args.kwargs["role"] == role
+    assert response.status_code == 410
+    body = response.json()
+    assert body["error"]["code"] == "SSE_REMOVED"
+    assert body["error"]["details"]["replacement"] == f"/v2/role/{role}/chat/jetstream"
+    assert not hasattr(role_chat, "execute_role_chat_streaming")

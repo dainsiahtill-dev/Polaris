@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import type { LogEntry } from '@/types/log';
 import {
   buildTelemetryFromStream,
+  filterEventsForRole,
   telemetryRoleTokens,
   telemetryRoleEvents,
   telemetryRoleHasUsageChannel,
@@ -263,8 +264,58 @@ describe('telemetry role helpers', () => {
 
   it('maps actor event counts onto role ids', () => {
     expect(telemetryRoleEvents(t, 'pm')).toBe(2); // llm_completed + prompt_context
-    expect(telemetryRoleEvents(t, 'director')).toBe(3);
+    expect(telemetryRoleEvents(t, 'director')).toBe(4); // actor Director + director process hint
     expect(telemetryRoleEvents(t, 'qa')).toBe(0);
+  });
+
+  it('attributes Factory Bench events to role signal planes from structured hints', () => {
+    const factoryEvents: LogEntry[] = [
+      logEntry({
+        id: 'bench-start',
+        timestamp: '2026-06-18T14:15:19Z',
+        source: 'Factory Bench',
+        title: 'factory_bench.project.started',
+        message: 'L1-01 CLI 科学计算器 starting',
+        meta: { channel: 'process', bench_event_type: 'factory_bench.project.started', project_id: 'L1-01', level: 1 },
+        tags: ['bench'],
+      }),
+      logEntry({
+        id: 'bench-blueprint',
+        timestamp: '2026-06-18T14:18:25Z',
+        source: 'Factory Bench',
+        title: 'factory_bench.gate.evaluated',
+        message: 'L1-01 gate:blueprint_artifact_present=ok',
+        meta: { channel: 'process', bench_event_type: 'factory_bench.gate.evaluated', gate: 'blueprint_artifact_present', project_id: 'L1-01', level: 1 },
+        tags: ['bench'],
+      }),
+      logEntry({
+        id: 'bench-completed',
+        timestamp: '2026-06-18T14:18:26Z',
+        source: 'Factory Bench',
+        title: 'factory_bench.project.completed',
+        message: 'L1-01 exit=1 dur=185.2s',
+        meta: { channel: 'process', bench_event_type: 'factory_bench.project.completed', exit_code: 1, project_id: 'L1-01', level: 1 },
+        tags: ['bench'],
+      }),
+      logEntry({
+        id: 'bench-qa',
+        timestamp: '2026-06-18T14:18:27Z',
+        source: 'Factory Bench',
+        title: 'factory_bench.gate.evaluated',
+        message: 'L1-01 gate:integration_qa_passed=FAIL',
+        meta: { channel: 'process', bench_event_type: 'factory_bench.gate.evaluated', gate: 'integration_qa_passed', ok: false, project_id: 'L1-01', level: 1 },
+        tags: ['bench'],
+      }),
+    ];
+    const factoryTelemetry = buildTelemetryFromStream([], [], factoryEvents);
+
+    expect(filterEventsForRole(factoryTelemetry.events, 'pm').map((event) => event.id)).toContain('bench-start');
+    expect(filterEventsForRole(factoryTelemetry.events, 'chief_engineer').map((event) => event.id)).toContain('bench-blueprint');
+    expect(filterEventsForRole(factoryTelemetry.events, 'director').map((event) => event.id)).toContain('bench-completed');
+    expect(filterEventsForRole(factoryTelemetry.events, 'qa').map((event) => event.id)).toContain('bench-qa');
+    expect(telemetryRoleEvents(factoryTelemetry, 'chief_engineer')).toBe(1);
+    expect(telemetryRoleEvents(factoryTelemetry, 'director')).toBe(1);
+    expect(telemetryRoleEvents(factoryTelemetry, 'qa')).toBe(1);
   });
 
   it('reports REAL per-role tokens from the journal llm usage channel', () => {

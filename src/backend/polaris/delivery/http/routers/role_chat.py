@@ -502,7 +502,7 @@ async def role_chat_jetstream(
         "status": "started",
         "channel": channel,
         "subject": subject,
-        "transport": "jetstream_ws",
+        "transport": "nat-jetstream",
     }
 
 

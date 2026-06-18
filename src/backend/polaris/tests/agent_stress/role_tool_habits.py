@@ -5,6 +5,8 @@ captures streamed tool calls/results, and classifies common LLM tool-use habits
 that still need normalization.
 """
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import argparse
@@ -15,6 +17,7 @@ import re
 import secrets
 import sys
 import time
+import urllib.parse
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -26,6 +29,7 @@ from .paths import ensure_backend_root_on_syspath
 ensure_backend_root_on_syspath()
 
 import httpx
+import websockets
 
 from .backend_bootstrap import (
     BackendBootstrapError,
@@ -575,19 +579,94 @@ async def _request_json(
     raise RuntimeError(f"Unexpected JSON payload from {url}")
 
 
+def _runtime_ws_url(base_url: str, token: str) -> str:
+    parsed = urllib.parse.urlparse(base_url.rstrip("/"))
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    query: dict[str, str] = {"protocol": "runtime.v2"}
+    if token:
+        query["token"] = token
+    query_text = urllib.parse.urlencode(query, quote_via=urllib.parse.quote)
+    return f"{scheme}://{parsed.netloc}/v2/ws/runtime?{query_text}"
+
+
+def _runtime_channel_event(raw: Any, channel: str) -> tuple[int, str, dict[str, Any]] | None:
+    try:
+        message = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(message, Mapping):
+        return None
+    if str(message.get("type") or "").upper() != "EVENT":
+        return None
+    event = message.get("event")
+    if not isinstance(event, Mapping) or str(event.get("channel") or "") != channel:
+        return None
+    payload = event.get("payload")
+    if not isinstance(payload, Mapping):
+        return None
+    event_type = str(payload.get("type") or "").strip()
+    data = payload.get("data")
+    data_payload = dict(data) if isinstance(data, Mapping) else {}
+    cursor = int(message.get("cursor") or 0)
+    return cursor, event_type, data_payload
+
+
+async def _subscribe_runtime_channel(ws: Any, channel: str) -> None:
+    await ws.send(
+        json.dumps(
+            {
+                "type": "SUBSCRIBE",
+                "protocol": "runtime.v2",
+                "channels": [channel],
+                "tail": 0,
+                "cursor": 0,
+            },
+            ensure_ascii=False,
+        )
+    )
+    while True:
+        raw = await asyncio.wait_for(ws.recv(), timeout=10.0)
+        try:
+            message = json.loads(str(raw))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(message, Mapping):
+            continue
+        if str(message.get("type") or "").upper() == "SUBSCRIBED":
+            return
+
+
+async def _ack_runtime_cursor(ws: Any, cursor: int) -> None:
+    if cursor <= 0:
+        return
+    await ws.send(
+        json.dumps(
+            {
+                "type": "ACK",
+                "protocol": "runtime.v2",
+                "cursor": cursor,
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
 async def _stream_single_prompt(
     client: httpx.AsyncClient,
     *,
     base_url: str,
+    token: str,
     session_id: str,
     prompt: str,
     prompt_index: int,
+    timeout_seconds: float,
 ) -> TurnRecord:
     record = TurnRecord(prompt_index=prompt_index, prompt=prompt)
     pending_interactions: list[ToolInteraction] = []
-    url = f"{base_url}/v2/roles/sessions/{session_id}/messages/stream"
+    url = f"{base_url}/v2/roles/sessions/{session_id}/messages/jetstream"
+    channel = f"chat:{session_id}"
 
-    def _normalize_sse_payload(event_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def _normalize_runtime_payload(event_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         normalized_type = str(event_type or payload.get("type") or "").strip()
         if not normalized_type:
             return dict(payload)
@@ -606,31 +685,21 @@ async def _stream_single_prompt(
             return {"type": normalized_type, "error": str(payload.get("error") or "")}
         return {"type": normalized_type, **dict(payload)}
 
-    async with client.stream(
-        "POST",
-        url,
-        json={"role": "user", "content": prompt},
-    ) as response:
+    async with websockets.connect(_runtime_ws_url(base_url, token), ping_interval=30) as ws:
+        await _subscribe_runtime_channel(ws, channel)
+        response = await client.post(url, json={"role": "user", "content": prompt})
         response.raise_for_status()
-        pending_event_type = ""
-        async for raw_line in response.aiter_lines():
-            line = str(raw_line or "").strip()
-            if not line:
-                pending_event_type = ""
+
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        while asyncio.get_running_loop().time() < deadline:
+            remaining = max(0.1, deadline - asyncio.get_running_loop().time())
+            raw_message = await asyncio.wait_for(ws.recv(), timeout=remaining)
+            runtime_event = _runtime_channel_event(raw_message, channel)
+            if runtime_event is None:
                 continue
-            if line.startswith("event:"):
-                pending_event_type = line.split("event:", 1)[1].strip()
-                continue
-            if not line.startswith("data:"):
-                continue
-            payload_text = line.split("data:", 1)[1].strip()
-            if not payload_text:
-                continue
-            payload = json.loads(payload_text)
-            if isinstance(payload, Mapping):
-                normalized_payload = _normalize_sse_payload(pending_event_type, payload)
-            else:
-                normalized_payload = {"type": pending_event_type or "message", "data": payload}
+            cursor, event_type, payload = runtime_event
+            await _ack_runtime_cursor(ws, cursor)
+            normalized_payload = _normalize_runtime_payload(event_type, payload)
             record.stream_events.append(normalized_payload)
             event_type = str(normalized_payload.get("type") or "").strip()
             if event_type == "content_chunk":
@@ -673,6 +742,7 @@ async def _stream_single_prompt(
                 continue
             if event_type == "complete":
                 record.completed = True
+                break
     return record
 
 
@@ -735,9 +805,11 @@ async def run_single_role_tool_habit_probe(
                 turn = await _stream_single_prompt(
                     client,
                     base_url=base_url,
+                    token=managed_session.context.token,
                     session_id=session_id,
                     prompt=prompt,
                     prompt_index=prompt_index,
+                    timeout_seconds=timeout_seconds,
                 )
                 turns.append(turn)
 

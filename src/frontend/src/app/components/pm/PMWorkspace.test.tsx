@@ -315,6 +315,31 @@ describe('PMWorkspace history panel', () => {
     expect(strip).toHaveTextContent('Qwen3-Max');
   });
 
+  it('auto-opens realtime activity when PM runtime events arrive', async () => {
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+        processStreamEvents={[
+          {
+            id: 'pm-live-1',
+            timestamp: '2026-05-23T00:00:00Z',
+            level: 'info',
+            source: 'Process',
+            message: 'PM live process event',
+          },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByTestId('pm-activity-panel-mock')).toBeInTheDocument();
+  });
+
   it('clears PM kernel cache from the desktop evidence strip and refreshes PM evidence', async () => {
     render(
       <PMWorkspace

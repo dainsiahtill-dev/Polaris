@@ -51,6 +51,7 @@ import {
   decisionMatchesRole,
   NOMINAL_CONTEXT_WINDOW,
   type ComponentHealth,
+  type ContextOSModel,
   type DecisionRow,
   type EventTypeSlice,
   type PipelineStage,
@@ -299,13 +300,142 @@ function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
   );
 }
 
+function StructureMetric({
+  label,
+  value,
+  tone = 'idle',
+  sub,
+}: {
+  label: string;
+  value: string | number;
+  tone?: PipelineState;
+  sub?: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[10px] font-semibold text-text-main" title={label}>{label}</span>
+        <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATE_STYLES[tone].dot)} />
+      </div>
+      <div className={cn('mt-1 font-mono text-sm font-bold', STATE_STYLES[tone].text)}>{value}</div>
+      {sub && <div className="mt-0.5 truncate text-[9px] text-text-dim" title={sub}>{sub}</div>}
+    </div>
+  );
+}
+
+function ContextStructurePanel({ model, telemetry }: { model: ContextOSModel; telemetry: ReturnType<typeof buildTelemetryFromStream> }) {
+  const roleWindowTotal = model.roles.reduce((sum, role) => sum + (role.internalContext.workingMemoryItems ?? 0), 0);
+  const activeRoles = model.roles.filter((role) => role.internalContext.eventCount > 0);
+  const newestEvents = telemetry.events.slice(0, 8);
+
+  return (
+    <SectionCard
+      title="上下文结构"
+      subtitle="TruthLog / WorkingMem / Projection / Receipt"
+      icon={Database}
+      className="border-accent-secondary/20"
+    >
+      <div data-testid="contextos-structure-panel" className="space-y-3">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <StructureMetric
+            label="TruthLog"
+            value={`${telemetry.events.length} 事件`}
+            tone={telemetry.events.length > 0 ? 'active' : 'idle'}
+            sub={model.telemetryWindowed ? '最近窗口' : '实时流'}
+          />
+          <StructureMetric
+            label="WorkingMem"
+            value={model.contextItemsCount !== null ? `${model.contextItemsCount} 项` : `~${roleWindowTotal} 项`}
+            tone={roleWindowTotal > 0 || (model.contextItemsCount ?? 0) > 0 ? 'active' : 'idle'}
+            sub={model.contextItemsCount !== null ? 'context.build' : '角色事件窗口估算'}
+          />
+          <StructureMetric
+            label="ProjectionEngine"
+            value={`${model.projectionCount} 投影`}
+            tone={model.projectionCount > 0 ? 'active' : 'idle'}
+            sub={`${model.eventTypesTotal} 观测基数`}
+          />
+          <StructureMetric
+            label="ReceiptStore"
+            value={`${model.receiptCount} 回执`}
+            tone={model.receiptCount > 0 ? 'active' : model.errorCount > 0 ? 'blocked' : 'idle'}
+            sub={model.errorCount > 0 ? `${model.errorCount} 错误` : 'snapshot receipts'}
+          />
+        </div>
+
+        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+          <div className="rounded-lg border border-white/[0.06] bg-black/20 p-2.5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-text-dim">角色上下文窗口</span>
+              <span className="font-mono text-[10px] text-text-muted">{activeRoles.length}/{model.roles.length}</span>
+            </div>
+            <div className="space-y-1.5">
+              {model.roles.map((role) => {
+                const ctx = role.internalContext;
+                return (
+                  <div key={role.id} className="grid grid-cols-[72px_1fr_54px] items-center gap-2 rounded-md bg-white/[0.02] px-2 py-1.5 text-[10px]">
+                    <span className="truncate font-semibold text-text-main" title={role.title}>{role.title}</span>
+                    <div className="min-w-0">
+                      <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
+                        <div
+                          className={cn('h-full rounded-full', STATE_STYLES[ctx.state].dot)}
+                          style={{ width: `${Math.max(4, Math.min(100, ctx.eventCount * 12))}%` }}
+                        />
+                      </div>
+                      <div className="mt-1 truncate font-mono text-[9px] text-text-dim">
+                        T{ctx.eventCount} · W{ctx.workingMemoryItems ?? 0}{ctx.workingMemoryEstimated ? '~' : ''} · P{ctx.projectionCount} · R{ctx.receiptCount}
+                      </div>
+                    </div>
+                    <span className={cn('text-right font-mono', STATE_STYLES[ctx.state].text)}>{ctx.eventCount}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-white/[0.06] bg-black/20 p-2.5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-text-dim">最近结构事件</span>
+              <span className="font-mono text-[10px] text-text-muted">{newestEvents.length}</span>
+            </div>
+            {newestEvents.length > 0 ? (
+              <div className="space-y-1">
+                {newestEvents.map((event) => (
+                  <div key={event.id} className="grid grid-cols-[54px_80px_1fr] gap-2 rounded-md px-2 py-1.5 text-[10px] hover:bg-white/[0.03]">
+                    <span className="font-mono text-text-dim">{contextOSFormat.clock(event.ts)}</span>
+                    <span className="truncate text-text-muted" title={event.actor}>{event.actor}</span>
+                    <span className="truncate text-text-main" title={event.summary}>{event.summary}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed border-white/10 px-3 py-5 text-center text-[11px] text-text-dim">
+                暂无结构事件
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
 function RoleInternalPanel({ role }: { role: RoleCard }) {
   const ctx = role.internalContext;
   const style = STATE_STYLES[ctx.state];
 
   const pipeline: PipelineStage[] = [
     { id: 'truthlog', label: 'TruthLog', component: '事件真值流', hint: '角色专属事件流', state: ctx.eventCount > 0 ? 'active' : 'idle', metric: `${ctx.eventCount} 事件` },
-    { id: 'working_mem', label: 'WorkingMem', component: '活动窗口', hint: '在窗上下文项', state: (ctx.contextItemsCount ?? 0) > 0 ? 'active' : 'idle', metric: ctx.contextItemsCount !== null ? `${ctx.contextItemsCount} 项` : '—' },
+    {
+      id: 'working_mem',
+      label: 'WorkingMem',
+      component: '活动窗口',
+      hint: ctx.workingMemoryEstimated ? '实时观测窗口' : '在窗上下文项',
+      state: (ctx.workingMemoryItems ?? 0) > 0 ? 'active' : 'idle',
+      metric: ctx.workingMemoryItems !== null
+        ? `${ctx.workingMemoryEstimated ? '~' : ''}${ctx.workingMemoryItems} 项${ctx.workingMemoryEstimated ? ' 估算' : ''}`
+        : '—',
+    },
     { id: 'projection', label: 'ProjectionEngine', component: '投影装配', hint: '上下文装配次数', state: ctx.projectionCount > 0 ? 'active' : 'idle', metric: `${ctx.projectionCount} 投影` },
     { id: 'receipt', label: 'ReceiptStore', component: '快照回执', hint: '落盘回执数', state: ctx.receiptCount > 0 ? 'active' : 'idle', metric: `${ctx.receiptCount} 回执` },
   ];
@@ -569,6 +699,7 @@ export function ContextOSWorkspace({
   );
 
   const [activeRole, setActiveRole] = useState<string | null>(null);
+  const [showStructure, setShowStructure] = useState(false);
 
   const wsTone = live ? 'success' : reconnecting ? 'warning' : 'error';
   const wsLabel = live ? 'WS LIVE' : reconnecting ? 'WS RECONNECT' : 'WS OFFLINE';
@@ -690,6 +821,22 @@ export function ContextOSWorkspace({
           <StatusBadge color={wsTone} variant="dot" pulse={reconnecting}>
             <span className="font-mono text-[10px]">{wsLabel}</span>
           </StatusBadge>
+          <Button
+            variant={showStructure ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setShowStructure((value) => !value)}
+            data-testid="contextos-structure-toggle"
+            title="打开 ContextOS 真实上下文结构"
+            aria-pressed={showStructure}
+            className={cn(
+              showStructure
+                ? 'bg-accent-secondary text-bg hover:bg-accent-secondary/90'
+                : 'border-accent-secondary/30 text-accent-secondary hover:bg-accent-secondary/10',
+            )}
+          >
+            <Database className="mr-1.5 h-3.5 w-3.5" />
+            上下文结构
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -822,6 +969,8 @@ export function ContextOSWorkspace({
                 <span>自适应权重: route / confidence / recency / dialog_act / role</span>
               </div>
             </SectionCard>
+
+            {showStructure && <ContextStructurePanel model={model} telemetry={telemetry} />}
 
             <SectionCard
               title="角色信号面"

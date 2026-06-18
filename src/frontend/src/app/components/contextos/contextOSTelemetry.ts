@@ -38,6 +38,8 @@ export interface ContextOSEvent {
   epoch: number;
   /** 原始 actor（保留大小写用于展示与角色过滤）。 */
   actor: string;
+  /** 从结构化 meta / 事件名 / 摘要推断出的角色归属，不改变原始 actor。 */
+  roleHints: string[];
   name: string;
   kind: string;
   /** 流通道 / 事件子类（llm / runtime_events / process …），缺省 unknown。 */
@@ -208,6 +210,94 @@ function classifyStream(params: {
   return { category, isCall };
 }
 
+function addRoleHint(hints: Set<string>, roleId: string): void {
+  if (roleId) hints.add(roleId);
+}
+
+function collectRoleHints(params: {
+  actor: string;
+  channel: string;
+  streamEvent: string;
+  text: string;
+  meta: Record<string, unknown>;
+}): string[] {
+  const { actor, channel, streamEvent, text, meta } = params;
+  const metaText = Object.entries(meta)
+    .map(([key, value]) => `${key} ${typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : ''}`)
+    .join(' ');
+  const token = `${actor} ${channel} ${streamEvent} ${text} ${metaText}`.toLowerCase();
+  const gate = nonEmptyString(meta['gate']).toLowerCase();
+  const benchType = nonEmptyString(meta['bench_event_type']).toLowerCase();
+  const role = nonEmptyString(meta['role']).toLowerCase();
+  const hints = new Set<string>();
+
+  if (role) {
+    if (role.includes('pm')) addRoleHint(hints, 'pm');
+    if (role.includes('architect')) addRoleHint(hints, 'architect');
+    if (role.includes('chief') || role.includes('engineer')) addRoleHint(hints, 'chief_engineer');
+    if (role.includes('director')) addRoleHint(hints, 'director');
+    if (role.includes('qa') || role.includes('reviewer')) addRoleHint(hints, 'qa');
+  }
+
+  if (
+    token.includes('pm_planning') ||
+    token.includes('plan_artifact_present') ||
+    token.includes('task contract') ||
+    token.includes('pm task') ||
+    benchType === 'factory_bench.project.started'
+  ) {
+    addRoleHint(hints, 'pm');
+  }
+
+  if (
+    token.includes('architect') ||
+    token.includes('architecture') ||
+    token.includes('design review')
+  ) {
+    addRoleHint(hints, 'architect');
+  }
+
+  if (
+    token.includes('chief_engineer') ||
+    token.includes('chief engineer') ||
+    token.includes('blueprint') ||
+    token.includes('handoff') ||
+    token.includes('ce_task') ||
+    gate.includes('blueprint')
+  ) {
+    addRoleHint(hints, 'chief_engineer');
+  }
+
+  if (
+    token.includes('director') ||
+    token.includes('implementation') ||
+    token.includes('director_dispatch') ||
+    token.includes('write_file') ||
+    token.includes('tool_call') ||
+    token.includes('chain_clean') ||
+    benchType === 'factory_bench.project.completed' ||
+    gate.includes('chain_clean')
+  ) {
+    addRoleHint(hints, 'director');
+  }
+
+  if (
+    token.includes('qa') ||
+    token.includes('quality') ||
+    token.includes('verdict') ||
+    token.includes('integration_qa') ||
+    token.includes('wrong_product_guard') ||
+    token.includes('test') ||
+    gate.includes('qa') ||
+    gate.includes('verdict') ||
+    gate.includes('wrong_product')
+  ) {
+    addRoleHint(hints, 'qa');
+  }
+
+  return Array.from(hints);
+}
+
 /**
  * 把一条 WS 推送的 LogEntry 适配成 ContextOSEvent。
  *
@@ -270,6 +360,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const hasReceipt = Boolean(snapshotHash) && contextItems === null;
 
   const { category, isCall } = classifyStream({ streamEvent, channel, text, isError, isProjection });
+  const roleHints = collectRoleHints({ actor, channel, streamEvent, text, meta });
   // 真实时延：meta.durationMs（journal raw.data.metadata.elapsed_ms）优先，回退从 details 文本还原。
   const durationMs = metaDurationMs ?? parseLatencyMs(log.details);
 
@@ -279,6 +370,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     ts: nonEmptyString(log.timestamp),
     epoch: toEpochMs(nonEmptyString(log.timestamp)),
     actor,
+    roleHints,
     name: nonEmptyString(log.title) || streamEvent || nonEmptyString(meta['streamEvent']),
     kind: channel || 'stream',
     mode: channel || 'unknown',
@@ -440,43 +532,29 @@ export const ACTOR_ROLE_ALIASES: Record<string, string[]> = {
   qa: ['qa', 'reviewer'],
 };
 
+function eventMatchesRole(event: ContextOSEvent, roleId: string): boolean {
+  const aliases = ACTOR_ROLE_ALIASES[roleId] ?? [roleId];
+  const lowered = event.actor.toLowerCase();
+  if (aliases.some((alias) => lowered.includes(alias))) return true;
+  return event.roleHints.includes(roleId);
+}
+
 /** 汇总某角色在真实遥测里的 token（按 actor 别名匹配，来自 journal `llm` 通道的真实 usage）。 */
 export function telemetryRoleTokens(telemetry: ContextOSTelemetry, roleId: string): number {
-  const aliases = ACTOR_ROLE_ALIASES[roleId] ?? [roleId];
-  let total = 0;
-  for (const [actor, agg] of Object.entries(telemetry.byActor)) {
-    const lowered = actor.toLowerCase();
-    if (aliases.some((alias) => lowered.includes(alias))) {
-      total += agg.totalTokens;
-    }
-  }
-  return total;
+  return filterEventsForRole(telemetry.events, roleId)
+    .reduce((total, event) => total + event.totalTokens, 0);
 }
 
 /** 汇总某角色在真实遥测里的事件数（按 actor 别名匹配）。 */
 export function telemetryRoleEvents(telemetry: ContextOSTelemetry, roleId: string): number {
-  const aliases = ACTOR_ROLE_ALIASES[roleId] ?? [roleId];
-  let total = 0;
-  for (const [actor, agg] of Object.entries(telemetry.byActor)) {
-    const lowered = actor.toLowerCase();
-    if (aliases.some((alias) => lowered.includes(alias))) {
-      total += agg.events;
-    }
-  }
-  return total;
+  return filterEventsForRole(telemetry.events, roleId).length;
 }
 
 /** 汇总某角色在真实遥测里的离散 LLM 调用次数（按 actor 别名匹配）。 */
 export function telemetryRoleCalls(telemetry: ContextOSTelemetry, roleId: string): number {
-  const aliases = ACTOR_ROLE_ALIASES[roleId] ?? [roleId];
-  let total = 0;
-  for (const [actor, agg] of Object.entries(telemetry.byActor)) {
-    const lowered = actor.toLowerCase();
-    if (aliases.some((alias) => lowered.includes(alias))) {
-      total += agg.calls;
-    }
-  }
-  return total;
+  return filterEventsForRole(telemetry.events, roleId)
+    .filter((event) => event.isCall || event.hasUsage)
+    .length;
 }
 
 /**
@@ -485,11 +563,7 @@ export function telemetryRoleCalls(telemetry: ContextOSTelemetry, roleId: string
  * 用于构建每个角色自己的 ContextOS 内部视图：事件、投影、回执、调用等都从该子集再聚合。
  */
 export function filterEventsForRole(events: readonly ContextOSEvent[], roleId: string): ContextOSEvent[] {
-  const aliases = ACTOR_ROLE_ALIASES[roleId] ?? [roleId];
-  return events.filter((event) => {
-    const lowered = event.actor.toLowerCase();
-    return aliases.some((alias) => lowered.includes(alias));
-  });
+  return events.filter((event) => eventMatchesRole(event, roleId));
 }
 
 /**

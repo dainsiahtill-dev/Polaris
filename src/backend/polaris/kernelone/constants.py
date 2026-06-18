@@ -291,9 +291,6 @@ STORAGE_RETENTION_RUNTIME_CONTROL: int = 0
 #: Buffer size for seek operations (bytes)
 SEEK_BUFFER_SIZE: int = 8192
 
-#: SSE event ID hash modulo to prevent large IDs
-SSE_EVENT_ID_MODULO: int = 1000000
-
 #: Maximum acceptable ratio of bad characters (replacement char) in text
 BAD_CHAR_THRESHOLD: float = 0.02
 
@@ -588,7 +585,6 @@ __all__ = [
     # File Operations
     "SEEK_BUFFER_SIZE",
     "SIMILARITY_THRESHOLD",
-    "SSE_EVENT_ID_MODULO",
     # Storage Retention
     "STORAGE_RETENTION_FACTORY",
     "STORAGE_RETENTION_RUNTIME_CONTROL",

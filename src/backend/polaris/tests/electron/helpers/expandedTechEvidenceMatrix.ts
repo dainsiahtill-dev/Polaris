@@ -755,8 +755,8 @@ export const EXPANDED_TECH_CANDIDATES: ExpandedTechCandidate[] = [
     e2eFields: ["llmSaving", "llmError", "orphan role cleared", "env_overrides"],
   },
   {
-    id: "factory_run_audit_bundle_sse",
-    title: "Factory run audit bundle and SSE dual channel",
+    id: "factory_run_audit_bundle_realtime",
+    title: "Factory run audit bundle and Nat-JetStream realtime channel",
     category: "factory",
     status: "implemented",
     source: "factory-archive-resident-audit",
@@ -766,7 +766,7 @@ export const EXPANDED_TECH_CANDIDATES: ExpandedTechCandidate[] = [
       "src/backend/polaris/tests/integration/delivery/routers/test_factory_router.py",
     ],
     gates: ["GET /v2/factory/runs/{run_id}/audit-bundle", "GET /v2/factory/runs/{run_id}/stream"],
-    e2eFields: ["evidence_counts.events_total", "events_tail", "summary_json", "SSE status/event/complete"],
+    e2eFields: ["evidence_counts.events_total", "events_tail", "summary_json", "Nat-JetStream status/event/complete"],
   },
   {
     id: "factory_pm_contract_quality_leakage_cleaning",
@@ -3090,7 +3090,7 @@ async function collectFactoryPipelineRuntimeProbe(): Promise<EvidenceProbe> {
 
   return makeProbe({
     id: "factory_pipeline_runtime_probe",
-    title: "Factory projection, verification, audit bundle, and SSE runtime probe",
+    title: "Factory projection, verification, audit bundle, and Nat-JetStream runtime probe",
     category: "factory",
     status: pass ? "PASS" : "WARN",
     required: false,

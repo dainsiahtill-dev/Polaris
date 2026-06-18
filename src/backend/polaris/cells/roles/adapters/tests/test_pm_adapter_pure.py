@@ -238,6 +238,38 @@ class TestExtractJsonPayload:
         adapter = _make_adapter(tmp_path)
         assert adapter._extract_json_payload("- 建立记账模型: 定义交易实体与校验") is None
 
+    def test_prompt_echo_error_does_not_parse_schema_example_as_tasks(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        response = """
+Failed to parse action: 你是 Polaris PM，需要产出可执行任务合同。
+需求指令:
+请基于 Architect 阶段产物生成 PM 执行任务合同。
+
+## Original Requirement Excerpt
+# Product Requirements — 命令行猜数字游戏
+
+## Goal
+- 实现命令行猜数字游戏:系统随机生成 1-100 的数字,玩家输入猜测,系统给予高/低提示。
+
+请仅输出 JSON，格式如下：
+{
+  "tasks": [
+    {
+      "id": "TASK-1",
+      "title": "任务标题",
+      "goal": "该任务目标",
+      "description": "执行背景与约束",
+      "scope": "变更范围摘要",
+      "steps": ["步骤1", "步骤2"],
+      "acceptance": ["可测验收1", "可测验收2"]
+    }
+  ]
+}
+禁止返回 Markdown、解释文本、代码块或工具调用标签。
+""".strip()
+
+        assert adapter._extract_task_contracts(response, directive="实现命令行猜数字游戏") == []
+
 
 # ---------------------------------------------------------------------------
 # Task extraction from payload
@@ -301,6 +333,26 @@ class TestExtractTasksFromSections:
         assert len(result) == 1
         # "编写" is in _ACTION_MARKERS so no prefix is added
         assert result[0]["title"] == "编写修复bug"
+
+    def test_bare_task_heading_is_not_promoted_to_placeholder_title(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        text = """
+## Task 1
+goal: 实现命令行猜数字游戏核心逻辑
+scope: guess_number.py, test_guess_number.py
+steps:
+- 编写随机数与输入校验逻辑
+- 补充单元测试
+acceptance:
+- pytest -q 通过
+- 游戏可在命令行运行
+""".strip()
+
+        result = adapter._extract_tasks_from_sections(text, directive="实现命令行猜数字游戏")
+
+        assert len(result) == 1
+        assert "命令行猜数字游戏" in result[0]["title"]
+        assert result[0]["title"] != "实现Task 1"
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +533,31 @@ class TestExtractDomainKeywords:
         adapter = _make_adapter(tmp_path)
         result = adapter._extract_domain_keywords("Keywords: alpha, beta, gamma")
         assert "alpha" in result
+
+    def test_synthesized_contracts_prefer_original_requirement_subject_over_pm_prompt_noise(
+        self, tmp_path: Any
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+请基于 Architect 阶段产物生成 PM 执行任务合同。任务必须覆盖需求、实现、验证、QA 闭环。
+
+## Original Requirement Excerpt
+# Product Requirements — 命令行猜数字游戏
+
+## Goal
+- 实现命令行猜数字游戏:系统随机生成 1-100 的数字,玩家输入猜测,系统给予高/低提示,限制 10 次机会,结束显示战绩。
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根。
+- 附 README.md 说明如何运行。
+""".strip()
+
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+
+        titles = [str(item.get("title") or "") for item in contracts]
+        assert any("命令行猜数字游戏" in title for title in titles)
+        assert all("Task " not in title for title in titles)
+        assert all("architect" not in title.lower() for title in titles)
 
 
 # ---------------------------------------------------------------------------

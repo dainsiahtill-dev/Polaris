@@ -39,7 +39,9 @@ import { RuntimeTransportProvider } from '@/runtime/transport';
 import { useLiveTaskQueues } from './hooks/useLiveTaskQueues';
 import { useUsageStats } from './hooks/useUsageStats';
 import { useFactory } from '@/hooks/useFactory';
+import { useFactoryBench } from '@/hooks/useFactoryBench';
 import { getLatestExecutionActivityLog, readEngineRoleDetail } from '@/app/utils/appRuntime';
+import { mergeProcessAndBenchLogs } from '@/app/utils/benchRuntimeLogs';
 import { isLancedbExplicitlyBlocked } from '@/app/utils/lancedbGate';
 import { normalizeStartedAtSeconds } from '@/app/utils/runtimeDisplay';
 import { useLlmRuntimeGate } from './hooks/useLlmRuntimeGate';
@@ -261,7 +263,12 @@ function AppContent() {
     retryRunFromCheckpoint: retryFactoryRunFromCheckpoint,
     isLoading: factoryIsLoading,
   } = useFactory({ workspace });
+  const { events: factoryBenchEvents } = useFactoryBench({ autoSelect: 'newest' });
   const factoryRuntimeActive = factoryIsLoading || isFactoryRunActive(factoryCurrentRun);
+  const combinedProcessStreamEvents = useMemo(
+    () => mergeProcessAndBenchLogs(processStreamEvents, factoryBenchEvents),
+    [processStreamEvents, factoryBenchEvents],
+  );
 
   // Usage stats are derived from the live WebSocket LLM stream (journal raw.data
   // tokens), not a polled file — see useUsageStats. llmStreamEvents is destructured
@@ -270,8 +277,8 @@ function AppContent() {
   const directorRunning = resolveRunning(directorStatus);
   const lancedbBlocked = isLancedbExplicitlyBlocked(lancedbStatus);
   const latestProcessActivity = useMemo(
-    () => getLatestExecutionActivityLog(processStreamEvents),
-    [processStreamEvents],
+    () => getLatestExecutionActivityLog(combinedProcessStreamEvents),
+    [combinedProcessStreamEvents],
   );
   const [progressSnapshot, setProgressSnapshot] = useState<SnapshotPayload | null>(null);
   const {
@@ -819,7 +826,7 @@ function AppContent() {
           qualityGate={qualityGate}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
+          processStreamEvents={combinedProcessStreamEvents}
           fileEditEvents={fileEditEvents}
           notifyError={notifyError}
         />
@@ -853,7 +860,7 @@ function AppContent() {
           fileEditEvents={fileEditEvents}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
+          processStreamEvents={combinedProcessStreamEvents}
           currentPhase={effectiveCurrentPhase}
           taskProgressMap={taskProgressMap}
           taskTraceMap={taskTraceMap}
@@ -892,7 +899,7 @@ function AppContent() {
           workspace={workspace}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
+          processStreamEvents={combinedProcessStreamEvents}
           fileEditEvents={fileEditEvents}
           currentPhase={effectiveCurrentPhase}
           qualityGate={qualityGate}
@@ -923,7 +930,7 @@ function AppContent() {
           directorTasks={directorTasks}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
+          processStreamEvents={combinedProcessStreamEvents}
           fileEditEvents={fileEditEvents}
           currentRun={factoryCurrentRun}
           events={factoryEvents}
@@ -955,7 +962,7 @@ function AppContent() {
           qualityGate={qualityGate}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
+          processStreamEvents={combinedProcessStreamEvents}
           fileEditEvents={fileEditEvents}
         />
         <Toaster position="bottom-right" />
@@ -989,7 +996,7 @@ function AppContent() {
             qualityGate={qualityGate}
             executionLogs={executionLogs}
             llmStreamEvents={llmStreamEvents}
-            processStreamEvents={processStreamEvents}
+            processStreamEvents={combinedProcessStreamEvents}
             fileEditEvents={fileEditEvents}
           />
         )}
@@ -1017,7 +1024,7 @@ function AppContent() {
           dialogueEvents={dialogueEvents}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
+          processStreamEvents={combinedProcessStreamEvents}
           snapshot={displaySnapshot ?? snapshot}
           qualityGate={qualityGate}
         />
@@ -1056,7 +1063,7 @@ function AppContent() {
           qualityGate={qualityGate}
           executionLogs={executionLogs}
           llmStreamEvents={llmStreamEvents}
-          processStreamEvents={processStreamEvents}
+          processStreamEvents={combinedProcessStreamEvents}
           fileEditEvents={fileEditEvents}
         />
         <Toaster position="bottom-right" />
@@ -1156,7 +1163,7 @@ function AppContent() {
             qualityGate={qualityGate}
             executionLogs={executionLogs}
             llmStreamEvents={llmStreamEvents}
-            processStreamEvents={processStreamEvents}
+            processStreamEvents={combinedProcessStreamEvents}
             fileEditEvents={fileEditEvents}
           />
         )}

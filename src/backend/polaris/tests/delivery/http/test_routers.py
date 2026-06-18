@@ -144,12 +144,12 @@ class TestSharedUtilities:
 
 
 # =============================================================================
-# Test: stream_router.py - SSE Streaming Endpoints
+# Test: stream_router.py - removed legacy HTTP stream endpoints
 # =============================================================================
 
 
 class TestStreamRouter:
-    """Tests for stream_router.py SSE streaming endpoints."""
+    """Tests for stream_router.py fail-closed legacy stream endpoints."""
 
     def _build_stream_app(self) -> FastAPI:
         """Build app with stream router and auth override."""
@@ -159,7 +159,7 @@ class TestStreamRouter:
         return app
 
     def test_stream_health_returns_healthy_status(self) -> None:
-        """GET /v2/stream/health should return healthy status."""
+        """GET /v2/stream/health should report the legacy stream as removed."""
         app = self._build_stream_app()
         client = TestClient(app)
 
@@ -167,8 +167,9 @@ class TestStreamRouter:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "healthy"
-        assert data["streaming"] == "enabled"
+        assert data["status"] == "removed"
+        assert data["streaming"] == "disabled"
+        assert data["transport"] == "nat-jetstream"
 
     def test_stream_chat_requires_auth(self) -> None:
         """POST /v2/stream/chat should require authentication."""
@@ -198,39 +199,26 @@ class TestStreamRouter:
 
         assert response.status_code == 422  # Validation error
 
-    def test_stream_chat_accepts_valid_request(self) -> None:
-        """POST /v2/stream/chat should accept valid request body."""
+    def test_stream_chat_fails_closed_to_nat_jetstream(self) -> None:
+        """POST /v2/stream/chat must not expose a second realtime transport."""
         app = self._build_stream_app()
         client = TestClient(app)
 
-        with (
-            patch("polaris.delivery.http.routers.stream_router.StreamExecutor") as mock_executor,
-            patch("polaris.delivery.http.routers.stream_router.EventStreamer") as mock_streamer,
-            patch("polaris.delivery.http.routers.stream_router.StreamConfig") as mock_config,
-        ):
-            # Setup mocks
-            mock_executor_instance = MagicMock()
-            mock_executor.return_value = mock_executor_instance
+        response = client.post(
+            "/v2/stream/chat",
+            json={
+                "message": "Hello",
+                "role": "user",
+                "provider_id": "openai",
+                "model": "gpt-4",
+            },
+        )
 
-            mock_streamer_instance = MagicMock()
-            mock_streamer.return_value = mock_streamer_instance
-            mock_streamer_instance.subscribe = MagicMock(return_value=iter([]))
-
-            mock_config.from_env = MagicMock(return_value=MagicMock())
-
-            response = client.post(
-                "/v2/stream/chat",
-                json={
-                    "message": "Hello",
-                    "role": "user",
-                    "provider_id": "openai",
-                    "model": "gpt-4",
-                },
-            )
-
-            # Streaming response returns 200
-            assert response.status_code == 200
-            assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+        assert response.status_code == 410
+        body = response.json()
+        assert body["code"] == "SSE_REMOVED"
+        assert body["details"]["transport"] == "nat-jetstream"
+        assert body["details"]["replacement"] == "/v2/role/{role}/chat/jetstream"
 
     def test_stream_chat_backpressure_requires_auth(self) -> None:
         """POST /v2/stream/chat/backpressure should require authentication."""
@@ -246,17 +234,20 @@ class TestStreamRouter:
 
         assert response.status_code == 401
 
-    def test_format_sse_event_converts_ai_stream_event(self) -> None:
-        """format_sse_event should convert AIStreamEvent to SSE bytes."""
-        mock_event = MagicMock()
-        mock_event.type.value = "chunk"
-        mock_event.to_dict.return_value = {"type": "chunk", "content": "Hello"}
+    def test_stream_chat_backpressure_fails_closed_to_nat_jetstream(self) -> None:
+        """POST /v2/stream/chat/backpressure must fail closed."""
+        app = self._build_stream_app()
+        client = TestClient(app)
 
-        result = stream_router.format_sse_event(mock_event)
+        response = client.post(
+            "/v2/stream/chat/backpressure",
+            json={"message": "Hello"},
+        )
 
-        assert isinstance(result, bytes)
-        assert b"event: text" in result
-        assert b'"type"' in result
+        assert response.status_code == 410
+        body = response.json()
+        assert body["code"] == "SSE_REMOVED"
+        assert body["details"]["transport"] == "nat-jetstream"
 
 
 # =============================================================================

@@ -597,9 +597,21 @@ async def test_v2_llm_interview_jetstream_starts_nat_channel_and_publishes_event
 
 @pytest.mark.asyncio
 async def test_v2_llm_interview_stream_headers(client: AsyncClient) -> None:
-    """POST /v2/llm/interview/stream should return SSE headers.
+    """POST /v2/llm/interview/stream should fail closed to Nat-JetStream."""
+    response = await client.post(
+        "/v2/llm/interview/stream",
+        json={
+            "role": "pm",
+            "provider_id": "provider-1",
+            "model": "model-1",
+            "question": "hello",
+            "session_id": "interactive-1",
+        },
+    )
 
-    Full SSE event consumption is skipped because testing async generators
-    with background tasks inside httpx test clients is non-trivial.
-    """
-    pytest.skip("SSE streaming test requires special async generator handling")
+    assert response.status_code == 410
+    assert "text/event-stream" not in response.headers.get("content-type", "")
+    data = response.json()
+    assert data["error"]["code"] == "SSE_REMOVED"
+    assert data["error"]["details"]["replacement"] == "/v2/llm/interview/jetstream"
+    assert data["error"]["details"]["transport"] == "nat-jetstream"

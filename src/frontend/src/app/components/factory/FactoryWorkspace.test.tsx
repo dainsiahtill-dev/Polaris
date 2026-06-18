@@ -36,6 +36,10 @@ vi.mock('@/app/components/common/RealtimeActivityPanel', () => ({
   ),
 }));
 
+vi.mock('@/app/components/factory/BenchStatusStrip', () => ({
+  BenchStatusStrip: () => <div data-testid="bench-status-strip">Factory Bench probe</div>,
+}));
+
 const baseProps = {
   workspace: 'X:/workspace',
   onBackToMain: vi.fn(),
@@ -53,6 +57,7 @@ describe('FactoryWorkspace', () => {
 
     expect(screen.getByRole('button', { name: '启动' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '取消' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('bench-status-strip')).toHaveTextContent('Factory Bench probe');
   });
 
   it('shows compact workspace labels while preserving the full path as evidence', () => {
@@ -139,7 +144,8 @@ describe('FactoryWorkspace', () => {
 
     expect(screen.getByTestId('factory-role-layer-chief_engineer')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('factory-chief-layer')).toBeInTheDocument();
-    expect(screen.getByText('docs/blueprints/bp-1.md')).toBeInTheDocument();
+    expect(screen.getByText('Prepare implementation blueprint')).toBeInTheDocument();
+    expect(screen.queryByText('docs/blueprints/bp-1.md')).not.toBeInTheDocument();
   });
 
   it('uses a compact PM contract layer inside Factory instead of embedding the full PM console', () => {
@@ -184,11 +190,18 @@ describe('FactoryWorkspace', () => {
   });
 
   it('renders Chief Engineer runtime blueprint artifacts as handoff evidence', () => {
+    const task = {
+      id: 'TASK-1',
+      subject: 'Implement checkout workflow',
+      goal: 'Deliver checkout workflow',
+      status: 'pending',
+    } as PmTask;
+
     render(
       <FactoryWorkspace
         {...baseProps}
-        tasks={[]}
-        pmTasks={[]}
+        tasks={[task]}
+        pmTasks={[task]}
         directorTasks={[]}
         artifacts={[
           {
@@ -219,10 +232,78 @@ describe('FactoryWorkspace', () => {
       />
     );
 
-    expect(screen.getByTestId('factory-chief-layer')).toBeInTheDocument();
-    expect(screen.getAllByText('ce_TASK-1.json').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('runtime/blueprints/ce_TASK-1.json').length).toBeGreaterThan(0);
-    expect(screen.getByText('1 条证据')).toBeInTheDocument();
+    const chiefLayer = screen.getByTestId('factory-chief-layer');
+    expect(chiefLayer).toBeInTheDocument();
+    expect(within(chiefLayer).getByText('Implement checkout workflow')).toBeInTheDocument();
+    expect(within(chiefLayer).queryByText('ce_TASK-1.json')).not.toBeInTheDocument();
+    expect(within(chiefLayer).queryByText('runtime/blueprints/ce_TASK-1.json')).not.toBeInTheDocument();
+    expect(within(chiefLayer).queryByText('Chief Engineer runtime blueprint artifact')).not.toBeInTheDocument();
+    expect(screen.getByText('1 条蓝图')).toBeInTheDocument();
+  });
+
+  it('separates Factory Chief Engineer review artifacts from blueprint handoff evidence', () => {
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        tasks={[]}
+        pmTasks={[]}
+        directorTasks={[]}
+        artifacts={[
+          { name: 'ce_TASK-1.json', path: 'runtime/blueprints/ce_TASK-1.json', size: 128 },
+          { name: 'ce_TASK-2.json', path: 'runtime/blueprints/ce_TASK-2.json', size: 128 },
+          { name: 'ce_TASK-3.json', path: 'runtime/blueprints/ce_TASK-3.json', size: 128 },
+          {
+            name: 'factory_fc1625758450.review.json',
+            path: 'runtime/state/blueprints/factory_fc1625758450.review.json',
+            size: 128,
+          },
+          {
+            name: 'review.json',
+            path: 'workspace/roles/chief_engineer/factory_fc1625758450/review.json',
+            size: 128,
+          },
+          {
+            name: 'factory_fc1625758450.review.json',
+            path: 'workspace/blueprints/factory_fc1625758450.review.json',
+            size: 128,
+          },
+          {
+            name: 'latest.review.json',
+            path: 'workspace/blueprints/latest.review.json',
+            size: 128,
+          },
+        ]}
+        currentRun={{
+          run_id: 'run-ce-review-artifact',
+          phase: 'planning',
+          status: 'running',
+          current_stage: 'chief_engineer_review',
+          last_successful_stage: 'pm_planning',
+          progress: 50,
+          roles: {
+            chief_engineer: {
+              role: 'chief_engineer',
+              status: 'completed',
+              current_task: 'chief_engineer_review',
+              progress: 100,
+            },
+          },
+          gates: [],
+          created_at: '2026-05-23T00:00:00Z',
+        }}
+        events={[]}
+      />
+    );
+
+    const chiefLayer = screen.getByTestId('factory-chief-layer');
+    expect(within(chiefLayer).getByText('3 条蓝图')).toBeInTheDocument();
+    expect(within(chiefLayer).queryByText('4 条证据')).not.toBeInTheDocument();
+    expect(within(chiefLayer).getAllByText('审查回执').length).toBeGreaterThan(0);
+    expect(within(chiefLayer).getByText('factory_fc1625758450.review.json')).toBeInTheDocument();
+    expect(within(chiefLayer).getByText('runtime/state/blueprints/factory_fc1625758450.review.json')).toBeInTheDocument();
+    expect(within(chiefLayer).queryByText('workspace/roles/chief_engineer/factory_fc1625758450/review.json')).not.toBeInTheDocument();
+    expect(within(chiefLayer).queryByText('workspace/blueprints/factory_fc1625758450.review.json')).not.toBeInTheDocument();
+    expect(within(chiefLayer).queryByText('workspace/blueprints/latest.review.json')).not.toBeInTheDocument();
   });
 
   it('does not list a PM task as pending when a runtime blueprint artifact matches task_id', () => {
@@ -270,9 +351,8 @@ describe('FactoryWorkspace', () => {
     );
 
     expect(screen.getByTestId('factory-chief-layer')).toBeInTheDocument();
-    expect(screen.getAllByText('ce_TASK-1.json').length).toBeGreaterThan(0);
+    expect(screen.getByText('Implement checkout workflow')).toBeInTheDocument();
     expect(screen.getByText('当前任务均已具备蓝图字段或暂无 PM 任务。')).toBeInTheDocument();
-    expect(screen.queryByText('Implement checkout workflow')).not.toBeInTheDocument();
   });
 
   it('keeps Factory Chief Engineer handoff blocked when only part of the PM task pool has blueprint coverage', () => {
@@ -322,7 +402,7 @@ describe('FactoryWorkspace', () => {
     expect(within(chiefLayer).getByText('1/2')).toBeInTheDocument();
     expect(within(chiefLayer).getByText('缺证据')).toBeInTheDocument();
     expect(within(chiefLayer).getByText('Missing implementation blueprint')).toBeInTheDocument();
-    expect(within(chiefLayer).queryByText('Covered implementation blueprint')).not.toBeInTheDocument();
+    expect(within(chiefLayer).getByText('Covered implementation blueprint')).toBeInTheDocument();
   });
 
   it('focuses Chief Engineer when the factory stage is chief_engineer_review', () => {

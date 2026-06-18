@@ -22,15 +22,13 @@ from .ports import (
     stream_from_async_gen,
     stream_from_sync_gen,
 )
-from .sse_streamer import AsyncBackpressureBuffer, EventStreamer, SSEEvent
+from .backpressure_buffer import AsyncBackpressureBuffer
 
 __all__ = [
     "AsyncBackpressureBuffer",
     "AsyncByteStream",
     "AsyncTextStream",
-    "EventStreamer",
     "KStreamChunk",
-    "SSEEvent",
     "StreamAdapter",
     "StreamObserver",
     "observe_stream",

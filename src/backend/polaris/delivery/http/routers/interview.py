@@ -28,7 +28,7 @@ from polaris.kernelone.llm.model_identity import model_identity_equal
 from polaris.kernelone.storage.io_paths import build_cache_root
 
 from .llm_models import InterviewAskPayload, InterviewCancelPayload, InterviewSavePayload
-from .sse_utils import publish_to_jetstream
+from .jetstream_utils import publish_to_jetstream
 
 logger = logging.getLogger(__name__)
 _create_internal_task = asyncio.create_task

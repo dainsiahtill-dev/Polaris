@@ -491,80 +491,52 @@
       "defined_in": "polaris/delivery/http/routers/_shared.py"
     },
     {
-      "type": "class",
-      "name": "SSEJetStreamConsumer",
-      "description": "SSE consumer that reads from JetStream for remote event streaming.",
-      "defined_in": "polaris/delivery/http/routers/sse_utils.py",
-      "methods": [
-        {
-          "name": "__init__",
-          "doc": "Initialize SSE JetStream consumer."
-        },
-        {
-          "name": "is_connected",
-          "doc": "Check if consumer is connected."
-        }
-      ]
-    },
-    {
       "type": "function",
       "name": "_get_replay_secret",
       "description": "Get or generate replay protection secret.",
-      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+      "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
     },
     {
       "type": "function",
       "name": "validate_subject",
       "description": "Validate JetStream subject pattern to prevent injection.",
-      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+      "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
     },
     {
       "type": "function",
       "name": "validate_workspace_key",
       "description": "Validate workspace key format.",
-      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+      "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
     },
     {
       "type": "function",
       "name": "validate_payload_size",
       "description": "Validate payload size against configured limits.",
-      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+      "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
     },
     {
       "type": "function",
       "name": "validate_event_timestamp",
       "description": "Validate event timestamp is within acceptable replay window.",
-      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+      "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
     },
     {
       "type": "function",
       "name": "generate_event_signature",
       "description": "Generate HMAC signature for event integrity verification.",
-      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+      "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
     },
     {
       "type": "function",
       "name": "verify_event_signature",
       "description": "Verify HMAC signature of event.",
-      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+      "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
     },
     {
       "type": "function",
-      "name": "create_sse_response",
-      "description": "Wrap an SSE async generator into a properly-configured ``StreamingResponse``.",
-      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
-    },
-    {
-      "type": "function",
-      "name": "create_sse_jetstream_consumer",
-      "description": "Factory function to create SSE JetStream consumer with proper configuration.",
-      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
-    },
-    {
-      "type": "function",
-      "name": "create_sse_response_from_jetstream",
-      "description": "Create SSE response from JetStream consumer.",
-      "defined_in": "polaris/delivery/http/routers/sse_utils.py"
+      "name": "publish_to_jetstream",
+      "description": "Publish runtime events to Nat-JetStream for WebSocket fanout.",
+      "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

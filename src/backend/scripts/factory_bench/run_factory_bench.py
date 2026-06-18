@@ -231,7 +231,7 @@ def _resolve_bench_cache_root(workspace: Path) -> str:
 
 
 # Module-level state populated by main() so the emit helper can also
-# forward each event to the Factory HTTP backend (Factory panel SSE stream).
+# forward each event to the Factory HTTP backend (Nat-JetStream/WebSocket fanout).
 # Empty values mean "no backend wiring": the helper degrades to local JSONL
 # only and never makes a network call.
 _BENCH_BACKEND: dict[str, str] = {"backend_url": "", "session_id": "", "token": ""}
@@ -263,7 +263,7 @@ def _emit_bench_event(
 
     Backend path: when main() registered a session, also POSTs the event to
     ``/v2/factory/bench/sessions/{id}/events`` so the Factory front-end
-    panel can subscribe via SSE.
+    panel can observe through the unified Nat-JetStream/WebSocket runtime path.
 
     Returns True if at least one of the two paths succeeded; False only when
     neither produced a record (e.g. local path has no run_id and backend
@@ -445,6 +445,51 @@ def _push_bench_session_to_backend(
     return sid or None
 
 
+def _ensure_bench_session(
+    *,
+    backend_url: str,
+    work_dir: str,
+    project_ids: list[str],
+    total: int,
+    metadata: dict[str, Any] | None = None,
+    requested_session_id: str = "",
+    token: str = "",
+) -> str:
+    """Register a bench session and return the usable session id.
+
+    An explicit ``FACTORY_BENCH_SESSION_ID`` is still a real frontend contract:
+    the Factory panel can subscribe to ``event.bench:<id>`` only after the
+    backend has a durable session row for that id.
+    """
+
+    requested = str(requested_session_id or "").strip()
+    if not backend_url:
+        return requested
+    registered = _push_bench_session_to_backend(
+        backend_url=backend_url,
+        work_dir=work_dir,
+        project_ids=project_ids,
+        total=total,
+        metadata=metadata,
+        session_id=requested or None,
+        token=token,
+    )
+    return registered or requested
+
+
+def _bench_record_counts(records: list[dict[str, Any]], *, total: int) -> dict[str, int]:
+    passed = sum(1 for record in records if record.get("all_checks_passed"))
+    failed = sum(1 for record in records if not record.get("all_checks_passed"))
+    attempted = len(records)
+    return {
+        "total": int(total),
+        "attempted": attempted,
+        "passed": passed,
+        "failed": failed,
+        "pending": max(0, int(total) - attempted),
+    }
+
+
 def _push_bench_event_to_backend(
     *,
     backend_url: str,
@@ -509,7 +554,7 @@ def _push_bench_progress_to_backend(
     zero they had at registration time and the bench UI shows ``0/Y 通过``
     for the whole run. The bench subprocess must call this after every
     project so each project.finished (success or fail) increments the
-    right counter and the SSE snapshot reflects it on the next tick.
+    right counter and the Nat-JetStream/WebSocket snapshot reflects it on the next tick.
     """
     payload: dict[str, Any] = {
         "completed": int(completed),
@@ -945,18 +990,15 @@ def main() -> int:
     bench_session_id = os.environ.get("FACTORY_BENCH_SESSION_ID") or ""
     backend_url = _resolve_backend_url()
     backend_token = _resolve_backend_token()
-    if backend_url and not bench_session_id:
-        bench_session_id = (
-            _push_bench_session_to_backend(
-                backend_url=backend_url,
-                work_dir=str(base),
-                project_ids=[str(p["id"]) for p in selected],
-                total=len(selected),
-                metadata={"levels": sorted({int(p.get("level") or 0) for p in selected})},
-                token=backend_token,
-            )
-            or ""
-        )
+    bench_session_id = _ensure_bench_session(
+        backend_url=backend_url,
+        work_dir=str(base),
+        project_ids=[str(p["id"]) for p in selected],
+        total=len(selected),
+        metadata={"levels": sorted({int(p.get("level") or 0) for p in selected})},
+        requested_session_id=bench_session_id,
+        token=backend_token,
+    )
     configure_bench_backend(backend_url, bench_session_id, backend_token)
     _emit_bench_event(
         workspace=base,
@@ -1004,6 +1046,7 @@ def main() -> int:
             chain = {"exit_code": -1, "duration_s": float(args.timeout), "timeout": True}
         except KeyboardInterrupt as exc:
             reason = "interrupted"
+            interrupted_counts = _bench_record_counts(records, total=len(selected))
             _emit_bench_event(
                 workspace=base,
                 project_id="-",
@@ -1012,9 +1055,7 @@ def main() -> int:
                 summary=f"factory-bench cancelled: {reason}",
                 meta={
                     "session_id": bench_session_id,
-                    "total": len(selected),
-                    "passed": sum(1 for r in records if r.get("all_checks_passed")),
-                    "failed": max(1, len(selected) - sum(1 for r in records if r.get("all_checks_passed"))),
+                    **interrupted_counts,
                     "error": reason,
                 },
             )
@@ -1024,9 +1065,7 @@ def main() -> int:
                     session_id=bench_session_id,
                     success=False,
                     summary={
-                        "total": len(selected),
-                        "passed": sum(1 for r in records if r.get("all_checks_passed")),
-                        "failed": max(1, len(selected) - sum(1 for r in records if r.get("all_checks_passed"))),
+                        **interrupted_counts,
                         "error": reason,
                         "exception": type(exc).__name__,
                     },

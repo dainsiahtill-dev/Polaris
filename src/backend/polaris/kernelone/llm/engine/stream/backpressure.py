@@ -1,7 +1,8 @@
 """Polaris AI Platform - Backpressure Buffer
 
-DEPRECATED: This module is deprecated. Use polaris.kernelone.stream.sse_streamer
-instead for async-native backpressure control with asyncio.Queue.
+DEPRECATED: This module is deprecated. Use
+polaris.kernelone.stream.backpressure_buffer instead for async-native
+backpressure control with asyncio.Queue.
 
 Thread-safe buffer with backpressure control for streaming chunks.
 """
@@ -24,7 +25,7 @@ class BackpressureBuffer:
 
     DEPRECATED: This class uses threading.Lock which causes GIL contention
     in async contexts. Use AsyncBackpressureBuffer from
-    polaris.kernelone.stream.sse_streamer instead.
+    polaris.kernelone.stream.backpressure_buffer instead.
 
     Manages chunk buffering with configurable size limits and automatic
     backpressure application when the buffer is full.
@@ -41,7 +42,7 @@ class BackpressureBuffer:
         """Initialize the backpressure buffer.
 
         DEPRECATED: Use AsyncBackpressureBuffer from
-        polaris.kernelone.stream.sse_streamer for async contexts.
+        polaris.kernelone.stream.backpressure_buffer for async contexts.
 
         Args:
             max_size: Maximum number of chunks to buffer. Defaults to StreamConfig.buffer_size.
@@ -50,7 +51,7 @@ class BackpressureBuffer:
         """
         warnings.warn(
             "BackpressureBuffer is deprecated. "
-            "Use polaris.kernelone.stream.sse_streamer.AsyncBackpressureBuffer instead. "
+            "Use polaris.kernelone.stream.backpressure_buffer.AsyncBackpressureBuffer instead. "
             "This class uses threading.Lock which causes GIL contention in async contexts.",
             DeprecationWarning,
             stacklevel=2,

@@ -150,6 +150,30 @@ describe('ContextOSWorkspace', () => {
     expect(screen.getByText('pm planning call returned')).toBeTruthy();
   });
 
+  it('opens the real ContextOS structure view from an explicit entry point', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmStreamEvents={LLM_STREAM}
+        executionLogs={EXECUTION_STREAM}
+      />,
+    );
+
+    expect(screen.queryByTestId('contextos-structure-panel')).toBeNull();
+
+    fireEvent.click(screen.getByTestId('contextos-structure-toggle'));
+
+    const panel = screen.getByTestId('contextos-structure-panel');
+    expect(panel).toBeTruthy();
+    expect(panel.textContent).toContain('TruthLog');
+    expect(panel.textContent).toContain('WorkingMem');
+    expect(panel.textContent).toContain('ProjectionEngine');
+    expect(panel.textContent).toContain('ReceiptStore');
+    expect(panel.textContent).toContain('角色上下文窗口');
+    expect(panel.textContent).toContain('最近结构事件');
+    expect(panel.textContent).toContain('pm planning call returned');
+  });
+
   it('opens the per-role internal ContextOS panel when a role card is selected', () => {
     render(
       <ContextOSWorkspace

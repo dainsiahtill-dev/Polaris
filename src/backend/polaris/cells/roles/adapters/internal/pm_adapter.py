@@ -112,6 +112,110 @@ _PM_PLAN_FORBIDDEN_TEXT_REPLACEMENTS = (
     (re.compile(r"<\s*/?\s*thinking\s*>", re.IGNORECASE), "[redacted]"),
     (re.compile(r"<\s*/?\s*tool_call\s*>", re.IGNORECASE), "[redacted]"),
 )
+_PM_PROMPT_ECHO_MARKERS = (
+    "Failed to parse action:",
+    "你是 Polaris PM",
+    "请仅输出 JSON，格式如下",
+    "禁止返回 Markdown",
+)
+_PM_SCHEMA_PLACEHOLDER_VALUES = {
+    "任务标题",
+    "该任务目标",
+    "执行背景与约束",
+    "变更范围摘要",
+    "步骤1",
+    "步骤2",
+    "可测验收1",
+    "可测验收2",
+    "task title",
+    "task goal",
+    "task description",
+    "untitled task",
+}
+
+
+def _pm_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _pm_is_prompt_echo_response(text: str) -> bool:
+    normalized = str(text or "")
+    if not normalized.strip():
+        return False
+    marker_hits = sum(1 for marker in _PM_PROMPT_ECHO_MARKERS if marker in normalized)
+    lower = normalized.lower()
+    schema_echo = '"tasks"' in normalized and (
+        '"title": "任务标题"' in normalized or '"title":"任务标题"' in normalized or '"title": "task title"' in lower
+    )
+    return "failed to parse action" in lower or (schema_echo and marker_hits >= 2)
+
+
+def _pm_is_placeholder_task_title(value: Any) -> bool:
+    text = _pm_text(value)
+    if not text:
+        return True
+    normalized = re.sub(r"\s+", " ", text).strip()
+    lower = normalized.lower()
+    if lower in _PM_SCHEMA_PLACEHOLDER_VALUES:
+        return True
+    return bool(
+        re.fullmatch(r"(?:task|任务|pm[-_ ]*task)\s*[-_#]*\s*\d+", lower, flags=re.IGNORECASE)
+        or re.fullmatch(r"task[-_ ]*\d+", lower, flags=re.IGNORECASE)
+    )
+
+
+def _pm_strip_action_prefix(value: str) -> str:
+    text = _pm_text(value)
+    for marker in ("实现", "构建", "设计", "编写", "定义"):
+        if text.startswith(marker) and len(text) > len(marker) + 1:
+            return text[len(marker) :].strip()
+    text = re.sub(r"^(?:implement|build|create|design|define|develop)\s+", "", text, flags=re.IGNORECASE)
+    return text.strip()
+
+
+def _pm_extract_requirement_subject(directive: str) -> str:
+    text = str(directive or "")
+    if not text.strip():
+        return ""
+
+    title_match = re.search(
+        r"^\s*#\s*(?:Product\s+Requirements|需求|需求文档)\s*[—\-:：]\s*(.+?)\s*$",
+        text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if title_match:
+        candidate = _pm_strip_action_prefix(str(title_match.group(1) or ""))
+        if candidate and not _pm_is_placeholder_task_title(candidate):
+            return candidate[:80]
+
+    goal_match = re.search(
+        r"(?:^|\n)##\s*Goal\s*\n(?P<section>.*?)(?=\n##\s|\Z)", text, flags=re.IGNORECASE | re.DOTALL
+    )
+    if goal_match:
+        section = str(goal_match.group("section") or "")
+        for raw_line in section.splitlines():
+            line = re.sub(r"^\s*[-*]\s*", "", raw_line).strip()
+            if not line:
+                continue
+            candidate = re.split(r"[:：。.;；]", line, maxsplit=1)[0].strip()
+            candidate = _pm_strip_action_prefix(candidate)
+            if candidate and not _pm_is_placeholder_task_title(candidate):
+                return candidate[:80]
+
+    chinese_goal = re.search(r"(?:实现|构建|编写|开发)([\u4e00-\u9fffA-Za-z0-9_ -]{4,80}?)(?:[:：。.;；\n]|$)", text)
+    if chinese_goal:
+        candidate = _pm_strip_action_prefix(str(chinese_goal.group(1) or ""))
+        if candidate and not _pm_is_placeholder_task_title(candidate):
+            return candidate[:80]
+    return ""
+
+
+def _pm_path_token_from_subject(subject: str) -> str:
+    text = _pm_text(subject).lower()
+    ascii_tokens = [token for token in re.findall(r"[a-z][a-z0-9_-]{2,}", text) if token not in _STOPWORDS]
+    if ascii_tokens:
+        return ascii_tokens[0]
+    return "product"
 
 
 class PMAdapter(BaseRoleAdapter):
@@ -753,6 +857,8 @@ class PMAdapter(BaseRoleAdapter):
         directive: str,
         projection_hint: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
+        if _pm_is_prompt_echo_response(str(response or "")):
+            return []
         payload = self._extract_json_payload(response)
         raw_tasks: list[Any] = self._extract_tasks_from_payload(payload)
 
@@ -848,6 +954,8 @@ class PMAdapter(BaseRoleAdapter):
     def _extract_json_payload(response: str) -> Any:
         text = str(response or "").strip()
         if not text:
+            return None
+        if _pm_is_prompt_echo_response(text):
             return None
         candidates = [text]
         fenced_blocks = re.findall(
@@ -1016,8 +1124,14 @@ class PMAdapter(BaseRoleAdapter):
         directive: str,
     ) -> dict[str, Any]:
         title = str(raw.get("title") or raw.get("subject") or "").strip()
-        if not title:
-            title = f"Task {index}"
+        if _pm_is_placeholder_task_title(title):
+            for candidate in (raw.get("goal"), raw.get("description"), raw.get("backlog_ref")):
+                candidate_text = _pm_text(candidate)
+                if candidate_text and not _pm_is_placeholder_task_title(candidate_text):
+                    title = re.split(r"[:：。.;；\n]", candidate_text, maxsplit=1)[0].strip()
+                    break
+            else:
+                title = _pm_extract_requirement_subject(directive) or f"项目交付任务 {index}"
         title_lower = title.lower()
         if not any(marker in title_lower for marker in _ACTION_MARKERS):
             title = f"实现{title}"
@@ -1606,9 +1720,20 @@ class PMAdapter(BaseRoleAdapter):
             normalized = [self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(contracts)]
             return [item for item in normalized if isinstance(item, dict)]
 
+        requirement_subject = _pm_extract_requirement_subject(directive)
         keywords = self._extract_domain_keywords(directive, limit=4)
-        domain = keywords[0] if keywords else self._derive_domain_token(directive)
-        secondary = keywords[1] if len(keywords) > 1 else f"{domain}_feature"
+        domain = (
+            _pm_path_token_from_subject(requirement_subject)
+            if requirement_subject
+            else (keywords[0] if keywords else self._derive_domain_token(directive))
+        )
+        domain_label = requirement_subject or domain
+        secondary = (
+            f"{domain}_integration"
+            if requirement_subject
+            else (keywords[1] if len(keywords) > 1 else f"{domain}_feature")
+        )
+        secondary_label = f"{domain_label} 集成能力" if requirement_subject else secondary
         source_metadata = {
             "source_context_redacted": True,
             "source_directive_length": len(str(directive or "")),
@@ -1649,18 +1774,18 @@ class PMAdapter(BaseRoleAdapter):
         raw_contracts: list[dict[str, Any]] = [
             {
                 "id": "TASK-1",
-                "title": f"实现 {domain} 核心业务模块",
-                "goal": f"完成 {domain} 领域核心功能落地，形成可执行主流程",
+                "title": f"实现 {domain_label} 核心业务模块",
+                "goal": f"完成 {domain_label} 领域核心功能落地，形成可执行主流程",
                 "description": "建立核心数据结构、领域服务与入口调用链，确保关键场景可运行。",
                 "scope": [f"src/{domain}", f"src/{domain}_core", "tests/"],
                 "steps": [
-                    f"梳理并实现 {domain} 核心数据模型与服务接口",
+                    f"梳理并实现 {domain_label} 核心数据模型与服务接口",
                     "补齐主流程入口与基础错误处理",
                     "为核心流程增加最小可运行验证用例",
                 ],
                 "acceptance": [
-                    f"执行 `pytest -q` 或 `npm test` 时，{domain} 核心模块测试通过",
-                    f"运行主流程后可看到 {domain} 关键业务输出，无 TODO/FIXME/stub",
+                    f"执行 `pytest -q` 或 `npm test` 时，{domain_label} 核心模块测试通过",
+                    f"运行主流程后可看到 {domain_label} 关键业务输出，无 TODO/FIXME/stub",
                 ],
                 "phase": "requirements",
                 "depends_on": [],
@@ -1669,12 +1794,12 @@ class PMAdapter(BaseRoleAdapter):
             },
             {
                 "id": "TASK-2",
-                "title": f"实现 {secondary} 增强能力与集成链路",
-                "goal": f"补齐 {secondary} 相关增强特性并接入主流程",
+                "title": f"实现 {secondary_label} 增强能力与集成链路",
+                "goal": f"补齐 {secondary_label} 相关增强特性并接入主流程",
                 "description": "实现增强功能、状态同步与异常回退路径，确保与核心模块联动。",
                 "scope": [f"src/{domain}_feature", f"src/{secondary}", "tests/integration/"],
                 "steps": [
-                    f"实现 {secondary} 增强逻辑并与核心模块集成",
+                    f"实现 {secondary_label} 增强逻辑并与核心模块集成",
                     "补齐失败重试、异常处理与边界校验",
                     "增加集成测试覆盖主流程与异常分支",
                 ],
@@ -1689,8 +1814,8 @@ class PMAdapter(BaseRoleAdapter):
             },
             {
                 "id": "TASK-3",
-                "title": f"编写 {domain} 验收测试与交付校验脚本",
-                "goal": f"固化 {domain} 交付基线，确保回归可复现",
+                "title": f"编写 {domain_label} 验收测试与交付校验脚本",
+                "goal": f"固化 {domain_label} 交付基线，确保回归可复现",
                 "description": "补齐单元/集成验证与质量检查脚本，形成可重复验收证据。",
                 "scope": [f"tests/{domain}", "scripts/", "tui_runtime.md"],
                 "steps": [

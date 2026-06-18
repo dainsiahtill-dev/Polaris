@@ -186,6 +186,68 @@ def test_map_contract_goal_always_empty() -> None:
     assert result["contract_goal"] == ""
 
 
+def test_explicit_bench_session_id_is_registered(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_push(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return str(kwargs["session_id"])
+
+    monkeypatch.setattr(bench, "_push_bench_session_to_backend", _fake_push)
+
+    session_id = bench._ensure_bench_session(
+        backend_url="http://127.0.0.1:49977",
+        work_dir="/tmp/bench",
+        project_ids=["L1-01"],
+        total=1,
+        metadata={"levels": [1]},
+        requested_session_id="bench-explicit",
+        token="secret",
+    )
+
+    assert session_id == "bench-explicit"
+    assert captured["session_id"] == "bench-explicit"
+    assert captured["backend_url"] == "http://127.0.0.1:49977"
+    assert captured["token"] == "secret"
+
+
+def test_bench_session_registration_uses_backend_assigned_id(monkeypatch: Any) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_push(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "bench-generated"
+
+    monkeypatch.setattr(bench, "_push_bench_session_to_backend", _fake_push)
+
+    session_id = bench._ensure_bench_session(
+        backend_url="http://127.0.0.1:49977",
+        work_dir="/tmp/bench",
+        project_ids=["L1-01"],
+        total=1,
+    )
+
+    assert session_id == "bench-generated"
+    assert captured["session_id"] is None
+
+
+def test_bench_record_counts_do_not_mark_pending_projects_failed() -> None:
+    records = [
+        {"all_checks_passed": False},
+        {"all_checks_passed": True},
+    ]
+
+    counts = bench._bench_record_counts(records, total=12)
+
+    assert counts == {
+        "total": 12,
+        "attempted": 2,
+        "passed": 1,
+        "failed": 1,
+        "pending": 10,
+    }
+
+
 def _capture_run_chain_command(
     monkeypatch: Any,
     tmp_path: Path,
@@ -287,8 +349,8 @@ def test_main_marks_backend_session_failed_when_run_aborts(monkeypatch: Any, tmp
     monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
 
     def _capture_complete(**kwargs: Any) -> bool:
-      completed.append(kwargs)
-      return True
+        completed.append(kwargs)
+        return True
 
     monkeypatch.setattr(bench, "_push_bench_complete_to_backend", _capture_complete)
 

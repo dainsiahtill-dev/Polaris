@@ -18,7 +18,7 @@ owned_paths:
 - polaris/delivery/http/middleware/**
 - polaris/delivery/http/routers/__init__.py
 - polaris/delivery/http/routers/_shared.py
-- polaris/delivery/http/routers/sse_utils.py
+- polaris/delivery/http/routers/jetstream_utils.py
 - polaris/delivery/http/v2/__init__.py
 public_contracts:
   modules:

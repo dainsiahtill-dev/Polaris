@@ -431,34 +431,18 @@ async def test_v2_send_agent_message(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_v2_send_agent_message_stream(client: AsyncClient) -> None:
-    """V2 stream message should return 200 with SSE headers."""
-    fake_session = _make_fake_session("sess-123")
-    fake_message = _make_fake_message("msg-1", "user", "hello")
+    """V2 stream message should fail closed to the role-session Nat-JetStream route."""
+    response = await client.post(
+        "/v2/agent/sessions/sess-123/messages/stream",
+        json={"message": "hello", "role": "assistant"},
+    )
 
-    async def _mock_stream(*, output_queue, **kwargs):
-        await output_queue.put({"type": "done"})
-
-    with (
-        patch(
-            "polaris.delivery.http.routers.agent.RoleSessionService",
-        ) as mock_session_cls,
-        patch(
-            "polaris.delivery.http.routers.agent._stream_agent_response",
-            side_effect=_mock_stream,
-        ),
-    ):
-        mock_session = MagicMock()
-        mock_session_cls.return_value.__enter__.return_value = mock_session
-        mock_session.get_session.return_value = fake_session
-        mock_session.get_messages.return_value = [fake_message]
-
-        response = await client.post(
-            "/v2/agent/sessions/sess-123/messages/stream",
-            json={"message": "hello", "role": "assistant"},
-            headers={"Accept": "text/event-stream"},
-        )
-        assert response.status_code == 200
-        assert response.headers.get("content-type") == "text/event-stream; charset=utf-8"
+    assert response.status_code == 410
+    assert "text/event-stream" not in response.headers.get("content-type", "")
+    data = response.json()
+    assert data["error"]["code"] == "SSE_REMOVED"
+    assert data["error"]["details"]["replacement"] == "/v2/roles/sessions/sess-123/messages/jetstream"
+    assert data["error"]["details"]["transport"] == "nat-jetstream"
 
 
 # ---------------------------------------------------------------------------
@@ -567,4 +551,6 @@ async def test_v2_agent_turn_stream(client: AsyncClient) -> None:
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
-        assert data["stream_url"] == "/v2/agent/sessions/sess-new/messages/stream"
+        assert data["jetstream_url"] == "/v2/roles/sessions/sess-new/messages/jetstream"
+        assert data["transport"] == "nat-jetstream"
+        assert "stream_url" not in data

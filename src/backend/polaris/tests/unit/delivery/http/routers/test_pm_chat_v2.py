@@ -8,7 +8,6 @@ External services are mocked to avoid LLM provider and storage dependencies.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -223,77 +222,53 @@ async def test_pm_chat_prefers_active_workspace_path(client: AsyncClient, mock_s
 
 
 @pytest.mark.asyncio
-async def test_pm_chat_stream_sse_headers(client: AsyncClient) -> None:
-    """Streaming PM chat should return framed SSE chunks."""
+async def test_pm_chat_stream_fails_closed_to_nat_jetstream(client: AsyncClient) -> None:
+    """Legacy PM stream route must fail closed to the Nat-JetStream endpoint."""
 
-    async def _fake_streaming_response(**kwargs: Any) -> None:
-        output_queue = kwargs["output_queue"]
-        await output_queue.put({"type": "content_chunk", "data": {"content": "PM chunk"}})
-        await output_queue.put({"type": "complete", "data": {"response": "PM complete"}})
+    response = await client.post(
+        "/v2/pm/chat/stream",
+        json={"message": "hello", "context": {"source": "pm-desktop"}},
+    )
 
-    with patch(
-        "polaris.delivery.http.routers.pm_chat.execute_role_chat_streaming",
-        new_callable=AsyncMock,
-        side_effect=_fake_streaming_response,
-    ) as mock_generate:
-        response = await client.post(
-            "/v2/pm/chat/stream",
-            json={"message": "hello", "context": {"source": "pm-desktop"}},
-            headers={"Accept": "text/event-stream"},
-        )
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/event-stream")
-    body = response.text
-    assert "event: content_chunk" in body
-    assert '"content": "PM chunk"' in body
-    assert "event: complete" in body
-    assert '"response": "PM complete"' in body
-    mock_generate.assert_awaited_once()
-    assert mock_generate.await_args is not None
-    assert mock_generate.await_args.kwargs["workspace"] == "."
-    assert mock_generate.await_args.kwargs["context"] == {"source": "pm-desktop"}
+    assert response.status_code == 410
+    assert "text/event-stream" not in response.headers.get("content-type", "")
+    body = response.json()
+    assert body["error"]["code"] == "SSE_REMOVED"
+    assert body["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
+    assert body["error"]["details"]["transport"] == "nat-jetstream"
 
 
 @pytest.mark.asyncio
-async def test_pm_chat_stream_prefers_active_workspace_path(client: AsyncClient, mock_settings: Settings) -> None:
-    """Streaming PM chat should generate against workspace_path before legacy workspace."""
+async def test_pm_chat_stream_does_not_execute_legacy_generator(
+    client: AsyncClient,
+    mock_settings: Settings,
+) -> None:
+    """Legacy PM stream route should not execute the in-process stream generator."""
+    from polaris.delivery.http.routers import pm_chat
+
     mock_settings.workspace = "C:/Repo/Polaris"
     mock_settings.workspace_path = "C:/Temp/Product"
 
-    async def _fake_streaming_response(**kwargs: Any) -> None:
-        output_queue = kwargs["output_queue"]
-        await output_queue.put({"type": "complete", "data": {"response": "ok"}})
+    response = await client.post(
+        "/v2/pm/chat/stream",
+        json={"message": "hello"},
+    )
 
-    with patch(
-        "polaris.delivery.http.routers.pm_chat.execute_role_chat_streaming",
-        new_callable=AsyncMock,
-        side_effect=_fake_streaming_response,
-    ) as mock_generate:
-        response = await client.post(
-            "/v2/pm/chat/stream",
-            json={"message": "hello"},
-            headers={"Accept": "text/event-stream"},
-        )
-
-    assert response.status_code == 200
-    assert "event: complete" in response.text
-    assert mock_generate.await_args is not None
-    assert mock_generate.await_args.kwargs["workspace"] == "C:/Temp/Product"
+    assert response.status_code == 410
+    assert not hasattr(pm_chat, "execute_role_chat_streaming")
 
 
 @pytest.mark.asyncio
-async def test_pm_chat_stream_empty_message(client: AsyncClient) -> None:
-    """Empty message on stream should return SSE error event."""
+async def test_pm_chat_stream_empty_message_fails_closed(client: AsyncClient) -> None:
+    """Empty message on removed stream route still returns the transport removal contract."""
     response = await client.post(
         "/v2/pm/chat/stream",
         json={"message": ""},
-        headers={"Accept": "text/event-stream"},
     )
-    assert response.status_code == 200
-    body = response.text
-    assert "event: error" in body
-    assert "message is required" in body
+    assert response.status_code == 410
+    body = response.json()
+    assert body["error"]["code"] == "SSE_REMOVED"
+    assert body["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
 
 
 # ---------------------------------------------------------------------------

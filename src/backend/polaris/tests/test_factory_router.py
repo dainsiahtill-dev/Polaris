@@ -1,4 +1,4 @@
-"""Tests for Factory router contract and SSE behavior."""
+"""Tests for Factory router contract and runtime transport behavior."""
 
 from __future__ import annotations
 
@@ -28,6 +28,30 @@ class FakeStageExecutor:
     """Fast deterministic executor for router tests."""
 
     async def execute(self, stage, run, context):
+        return StageResult(
+            stage=stage,
+            status="success",
+            output=f"{stage} completed",
+            artifacts=[f"artifacts/{stage}.json"],
+        )
+
+
+class QaLlmUnavailableStageExecutor(FakeStageExecutor):
+    """Executor that simulates a deterministic QA pass with missing LLM judgement."""
+
+    async def execute(self, stage, run, context):
+        del run, context
+        if stage == "quality_gate":
+            return StageResult(
+                stage=stage,
+                status="failed",
+                output=(
+                    "Quality gate completed: Run status: completed; qa_passed=True; qa_score=92; "
+                    "qa_critical=0; workspace_checks_passed=True; qa_llm_required=True; "
+                    "qa_llm_judgement_ready=False; qa_gate_blocker=qa_llm_judgement_unavailable"
+                ),
+                artifacts=["runtime/qa/report.json"],
+            )
         return StageResult(
             stage=stage,
             status="success",
@@ -131,6 +155,18 @@ def temp_workspace():
         yield Path(tmpdir)
 
 
+@pytest.fixture(autouse=True)
+def _disable_factory_jetstream_publish(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _noop_publish_to_jetstream(**_kwargs):
+        return True
+
+    monkeypatch.setattr(
+        "polaris.delivery.http.routers.jetstream_utils.publish_to_jetstream",
+        _noop_publish_to_jetstream,
+    )
+    monkeypatch.setattr(factory_router_module, "publish_to_jetstream", _noop_publish_to_jetstream)
+
+
 @pytest.fixture
 def service(temp_workspace: Path) -> FactoryRunService:
     return FactoryRunService(temp_workspace, executor=FakeStageExecutor())
@@ -147,29 +183,6 @@ def client(temp_workspace: Path, service: FactoryRunService, monkeypatch: pytest
 
     with TestClient(app, headers={"Authorization": f"Bearer {test_token}"}) as test_client:
         yield test_client
-
-
-def _collect_sse_events(lines) -> list[tuple[str, str]]:
-    events: list[tuple[str, str]] = []
-    current_event = ""
-    current_data: list[str] = []
-
-    for line in lines:
-        if line == "":
-            if current_event:
-                events.append((current_event, "\n".join(current_data)))
-                if current_event == "done":
-                    break
-            current_event = ""
-            current_data = []
-            continue
-
-        if line.startswith("event: "):
-            current_event = line[7:]
-        elif line.startswith("data: "):
-            current_data.append(line[6:])
-
-    return events
 
 
 def test_start_and_get_factory_run_without_workspace(client: TestClient, temp_workspace: Path) -> None:
@@ -215,35 +228,22 @@ def test_cancel_factory_run_without_workspace(
     assert payload["phase"] == "cancelled"
 
 
-def test_stream_emits_status_and_done_events(
+def test_stream_route_fails_closed_to_runtime_websocket(
     client: TestClient,
     service: FactoryRunService,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class DisconnectedConsumer:
-        is_connected = False
-
-        async def connect(self) -> bool:
-            return False
-
-    monkeypatch.setattr(
-        factory_router_module,
-        "create_sse_jetstream_consumer",
-        lambda **_: DisconnectedConsumer(),
-    )
-
     run = asyncio.run(service.create_run(FactoryConfig(name="stream-run", stages=["pm_planning"])))
     asyncio.run(service.start_run(run.id))
     asyncio.run(service.complete_run(run.id, success=True))
 
-    with client.stream("GET", f"/v2/factory/runs/{run.id}/stream") as stream_response:
-        assert stream_response.status_code == 200
-        events = _collect_sse_events(stream_response.iter_lines())
+    response = client.get(f"/v2/factory/runs/{run.id}/stream")
 
-    event_names = [event_name for event_name, _ in events]
-    assert "status" in event_names
-    assert "event" in event_names
-    assert "done" in event_names
+    assert response.status_code == 410
+    assert "text/event-stream" not in response.headers.get("content-type", "")
+    payload = response.json()
+    assert payload["error"]["code"] == "SSE_REMOVED"
+    assert payload["error"]["details"]["replacement"] == "/v2/ws/runtime"
+    assert payload["error"]["details"]["transport"] == "nat-jetstream"
 
 
 def test_start_from_director_builds_director_to_qa_chain(
@@ -438,3 +438,27 @@ def test_delivery_loop_fails_when_docs_pipeline_stalled_without_new_plan(temp_wo
     )
     assert decision["action"] == "fail"
     assert decision["reason"] == "docs_pipeline_stalled"
+
+
+def test_execute_run_preserves_qa_llm_unavailable_root_cause(temp_workspace: Path) -> None:
+    service = FactoryRunService(temp_workspace, executor=QaLlmUnavailableStageExecutor())
+    run = asyncio.run(service.create_run(FactoryConfig(name="qa-llm-run", stages=["quality_gate"])))
+    asyncio.run(service.start_run(run.id))
+    payload = FactoryStartRequest(
+        workspace=str(temp_workspace),
+        start_from="pm",
+        directive="Verify generated project",
+        run_director=False,
+    )
+    state = SimpleNamespace(settings=Settings(workspace=str(temp_workspace)))
+
+    asyncio.run(factory_router_module._execute_run_with_service(service, run.id, payload, state))
+
+    updated = asyncio.run(service.get_run(run.id))
+    assert updated is not None
+    assert updated.status == FactoryRunStatus.FAILED
+    failure = updated.metadata.get("failure")
+    assert isinstance(failure, dict)
+    assert failure.get("stage") == "quality_gate"
+    assert failure.get("code") == "QA_LLM_JUDGEMENT_UNAVAILABLE"
+    assert "qa_llm_judgement_unavailable" in str(failure.get("detail") or "")

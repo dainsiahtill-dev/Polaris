@@ -17,7 +17,6 @@ import type { SnapshotPayload } from '@/app/types/appContracts';
 import {
   EMPTY_TELEMETRY,
   filterEventsForRole,
-  telemetryRoleCalls,
   telemetryRoleEvents,
   telemetryRoleHasUsageChannel,
   telemetryRoleTokens,
@@ -80,6 +79,8 @@ export interface RoleInternalContext {
   projectionCount: number;
   receiptCount: number;
   contextItemsCount: number | null;
+  workingMemoryItems: number | null;
+  workingMemoryEstimated: boolean;
   contextTokensLatest: number | null;
   totalTokens: number;
   promptTokens: number;
@@ -680,12 +681,13 @@ export function buildContextOSModel(input: {
       }
     }
 
-    // 离散调用次数复用 telemetry 层聚合，避免与 aggregateEvents 的判定口径分歧。
-    const calls = telemetryActive ? telemetryRoleCalls(telemetry, role.key) : 0;
+    const calls = roleEvents.filter((event) => event.isCall || event.hasUsage).length;
 
     // 最近一次 context.build 的 items_count / total_tokens 来自该角色自身的事件子集。
     const lastContextBuild = roleEvents.find((event) => event.contextItems !== null);
     const lastContextSize = roleEvents.find((event) => event.contextTokens !== null);
+    const contextItemsCount = lastContextBuild ? lastContextBuild.contextItems : null;
+    const workingMemoryItems = contextItemsCount ?? (roleEvents.length > 0 ? roleEvents.length : null);
 
     // 当前任务：ContextOSEvent 目前未携带 refs，先诚实留空；后续可在 logEntryToEvent 中扩展
     // refs/task_id 字段后再精确填充。
@@ -710,7 +712,9 @@ export function buildContextOSModel(input: {
       eventCount: roleEvents.length,
       projectionCount,
       receiptCount,
-      contextItemsCount: lastContextBuild ? lastContextBuild.contextItems : null,
+      contextItemsCount,
+      workingMemoryItems,
+      workingMemoryEstimated: contextItemsCount === null && workingMemoryItems !== null,
       contextTokensLatest: lastContextSize ? lastContextSize.contextTokens : null,
       totalTokens,
       promptTokens,

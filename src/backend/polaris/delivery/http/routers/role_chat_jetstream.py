@@ -56,7 +56,7 @@ async def _publish_chat_chunk(
         True if the publish was accepted by the JetStream publisher.
     """
     try:
-        from polaris.delivery.http.routers.sse_utils import publish_to_jetstream
+        from polaris.delivery.http.routers.jetstream_utils import publish_to_jetstream
         from polaris.infrastructure.messaging.nats.nats_types import (
             create_runtime_event,
         )

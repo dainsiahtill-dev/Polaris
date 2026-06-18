@@ -294,30 +294,25 @@ class TestInterviewRouterMockedHappyPath:
         assert payload["ok"] is True
         assert payload["cancelled"] is True
 
-    def test_interview_stream_happy_path(self) -> None:
-        """POST /llm/interview/stream returns SSE response (mocked)."""
+    def test_interview_stream_fails_closed_to_nat_jetstream(self) -> None:
+        """POST /llm/interview/stream must not expose HTTP SSE."""
         client = _build_client()
 
-        async def _mock_stream(*_args: Any, **kwargs: Any) -> None:
-            queue = kwargs.get("output_queue")
-            if queue is not None:
-                await queue.put({"type": "message", "data": {"chunk": "Hello"}})
-                await queue.put({"type": "complete", "data": {"answer": "Hello!"}})
+        response = client.post(
+            "/llm/interview/stream",
+            json={
+                "role": "pm",
+                "provider_id": "test-provider",
+                "model": "gpt-4",
+                "question": "What is 2+2?",
+                "session_id": "session-123",
+            },
+        )
 
-        with patch(
-            "polaris.delivery.http.routers.interview.generate_interview_answer_streaming",
-            side_effect=_mock_stream,
-        ):
-            response = client.post(
-                "/llm/interview/stream",
-                json={
-                    "role": "pm",
-                    "provider_id": "test-provider",
-                    "model": "gpt-4",
-                    "question": "What is 2+2?",
-                    "session_id": "session-123",
-                },
-            )
-
-        assert response.status_code == 200
-        assert response.headers.get("content-type", "").startswith("text/event-stream")
+        assert response.status_code == 410
+        assert "text/event-stream" not in response.headers.get("content-type", "")
+        payload: dict[str, Any] = response.json()
+        detail = payload["detail"]
+        assert detail["code"] == "SSE_REMOVED"
+        assert detail["details"]["replacement"] == "/v2/llm/interview/jetstream"
+        assert detail["details"]["transport"] == "nat-jetstream"
