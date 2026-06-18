@@ -10,6 +10,7 @@ from scripts.factory_bench import run_factory_bench as bench
 from scripts.factory_bench.run_factory_bench import (
     apply_factory_bench_gates,
     map_factory_run_to_chain_results,
+    run_factory_chain,
 )
 
 
@@ -255,3 +256,175 @@ def test_run_chain_task_market_driver_plans_then_dispatches_market(
     assert "--director-workflow-execution-mode" not in planning_cmd
     assert "run_market_chain.py" in market_cmd[1]
     assert "--fresh-market" in market_cmd
+
+
+# --- run_factory_chain (API path) ---
+
+
+def _setup_run_factory_chain_mocks(
+    monkeypatch: Any,
+    tmp_path: Path,
+    *,
+    start_response: dict[str, Any] | None,
+    terminal_status: dict[str, Any] | None,
+    audit_bundle: dict[str, Any] | None,
+) -> Path:
+    workspace = tmp_path / "L2-07"
+    workspace.mkdir()
+
+    def _fake_start_factory_run(_backend_url: str, _payload: dict[str, Any], token: str = "") -> dict[str, Any] | None:
+        return start_response
+
+    def _fake_poll_run_until_terminal(
+        _backend_url: str,
+        run_id: str,
+        token: str = "",
+        on_status: Any = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any] | None:
+        if on_status is not None and terminal_status is not None:
+            on_status(terminal_status)
+        return terminal_status
+
+    def _fake_get_audit_bundle(_backend_url: str, _run_id: str, token: str = "") -> dict[str, Any] | None:
+        return audit_bundle
+
+    monkeypatch.setattr(bench, "start_factory_run", _fake_start_factory_run)
+    monkeypatch.setattr(bench, "poll_run_until_terminal", _fake_poll_run_until_terminal)
+    monkeypatch.setattr(bench, "get_audit_bundle", _fake_get_audit_bundle)
+
+    return workspace
+
+
+def test_run_factory_chain_success(monkeypatch: Any, tmp_path: Path) -> None:
+    workspace = _setup_run_factory_chain_mocks(
+        monkeypatch,
+        tmp_path,
+        start_response={"run_id": "run-123"},
+        terminal_status={"status": "completed", "phase": "qa_gate"},
+        audit_bundle={
+            "gates": [{"gate_name": "quality_gate", "passed": True, "message": "ok"}],
+            "summary_json": {"director": {"total": 5, "successes": 5, "failures": 0, "blocked": 0}},
+        },
+    )
+
+    result = run_factory_chain(
+        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
+        workspace,
+        backend_url="http://localhost:49977",
+        backend_token="",
+        timeout_s=30,
+        log_path=tmp_path / "L2-07.chain.log",
+    )
+
+    assert result["exit_code"] == 0
+    assert result["run_id"] == "run-123"
+    assert result["chain_results"]["exit_class"] == "clean"
+    assert result["chain_results"]["qa_passed"] is True
+    assert result["chain_results"]["director"] == {
+        "total": 5,
+        "successes": 5,
+        "failures": 0,
+        "blocked": 0,
+    }
+    assert "audit_bundle" in result
+
+
+def test_run_factory_chain_start_failure(monkeypatch: Any, tmp_path: Path) -> None:
+    workspace = _setup_run_factory_chain_mocks(
+        monkeypatch,
+        tmp_path,
+        start_response=None,
+        terminal_status=None,
+        audit_bundle=None,
+    )
+
+    result = run_factory_chain(
+        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
+        workspace,
+        backend_url="http://localhost:49977",
+        backend_token="",
+        timeout_s=30,
+        log_path=tmp_path / "L2-07.chain.log",
+    )
+
+    assert result["exit_code"] == -1
+    assert result["error"] == "start_failed"
+
+
+def test_run_factory_chain_poll_timeout(monkeypatch: Any, tmp_path: Path) -> None:
+    workspace = _setup_run_factory_chain_mocks(
+        monkeypatch,
+        tmp_path,
+        start_response={"run_id": "run-456"},
+        terminal_status=None,
+        audit_bundle=None,
+    )
+
+    result = run_factory_chain(
+        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
+        workspace,
+        backend_url="http://localhost:49977",
+        backend_token="",
+        timeout_s=30,
+        log_path=tmp_path / "L2-07.chain.log",
+    )
+
+    assert result["exit_code"] == -1
+    assert result["run_id"] == "run-456"
+    assert result["error"] == "poll_timeout"
+
+
+def test_run_factory_chain_failed_status(monkeypatch: Any, tmp_path: Path) -> None:
+    workspace = _setup_run_factory_chain_mocks(
+        monkeypatch,
+        tmp_path,
+        start_response={"run_id": "run-789"},
+        terminal_status={"status": "failed", "phase": "director_dispatch"},
+        audit_bundle={
+            "gates": [],
+            "summary_json": {"director": {"total": 3, "successes": 1, "failures": 2}},
+        },
+    )
+
+    result = run_factory_chain(
+        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
+        workspace,
+        backend_url="http://localhost:49977",
+        backend_token="",
+        timeout_s=30,
+        log_path=tmp_path / "L2-07.chain.log",
+    )
+
+    assert result["exit_code"] == 1
+    assert result["chain_results"]["exit_class"] == "director_partial"
+
+
+def test_run_factory_chain_on_stage_change_callback(monkeypatch: Any, tmp_path: Path) -> None:
+    callbacks: list[tuple[str, dict[str, Any]]] = []
+
+    def _on_stage_change(status: str, status_dict: dict[str, Any]) -> None:
+        callbacks.append((status, status_dict))
+
+    workspace = _setup_run_factory_chain_mocks(
+        monkeypatch,
+        tmp_path,
+        start_response={"run_id": "run-cb"},
+        terminal_status={"status": "completed", "phase": "qa_gate"},
+        audit_bundle={
+            "gates": [{"gate_name": "quality_gate", "passed": True}],
+        },
+    )
+
+    run_factory_chain(
+        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
+        workspace,
+        backend_url="http://localhost:49977",
+        backend_token="",
+        timeout_s=30,
+        log_path=tmp_path / "L2-07.chain.log",
+        on_stage_change=_on_stage_change,
+    )
+
+    assert len(callbacks) == 1
+    assert callbacks[0][0] == "completed"

@@ -24,13 +24,18 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
 from polaris.kernelone.benchmark.factory_audit import (
     aggregate_factory_audits,
     build_factory_audit_record,
+)
+from scripts.factory_bench.factory_http_client import (
+    get_audit_bundle,
+    poll_run_until_terminal,
+    start_factory_run,
 )
 
 _FIXTURE = Path(__file__).resolve().parent / "projects_v1.json"
@@ -669,6 +674,102 @@ def purge_project_runtime(workspace: Path) -> None:
             continue
 
 
+def run_factory_chain(
+    project: dict[str, Any],
+    workspace: Path,
+    *,
+    backend_url: str,
+    backend_token: str,
+    timeout_s: int,
+    log_path: Path,
+    on_stage_change: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """Start a /v2/factory/runs for the project workspace and wait for completion."""
+    purge_project_runtime(workspace)
+
+    requirements_doc = build_requirements_doc(project)
+    requirements_path = workspace / "requirements.md"
+    requirements_path.write_text(requirements_doc, encoding="utf-8")
+    ws_requirements = workspace / ".polaris" / "docs" / "product" / "requirements.md"
+    ws_requirements.parent.mkdir(parents=True, exist_ok=True)
+    ws_requirements.write_text(requirements_doc, encoding="utf-8")
+
+    if not (workspace / ".git").exists():
+        subprocess.run(["git", "init", "-q"], cwd=str(workspace), check=False)
+        subprocess.run(["git", "add", "-A"], cwd=str(workspace), check=False)
+        subprocess.run(
+            ["git", "-c", "user.email=bench@polaris", "-c", "user.name=bench", "commit", "-qm", "bench: seed"],
+            cwd=str(workspace),
+            check=False,
+        )
+
+    payload = {
+        "workspace": str(workspace),
+        "start_from": "pm",
+        "directive": requirements_doc,
+        "run_director": True,
+        "director_iterations": 0,
+        "loop": False,
+        "input_source": "directive",
+    }
+
+    started = time.time()
+
+    with open(log_path, "w", encoding="utf-8") as log_fh:
+
+        def _on_status(status: dict[str, Any]) -> None:
+            ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+            phase = status.get("phase", "")
+            msg = f"[{ts}] status={status.get('status')} phase={phase}\n"
+            log_fh.write(msg)
+            log_fh.flush()
+            if on_stage_change is not None:
+                on_stage_change(str(status.get("status") or ""), status)
+
+        start_response = start_factory_run(backend_url, payload, token=backend_token)
+        if not isinstance(start_response, dict):
+            return {"exit_code": -1, "duration_s": 0, "error": "start_failed"}
+
+        run_id = str(start_response.get("run_id") or "").strip()
+        if not run_id:
+            return {"exit_code": -1, "duration_s": 0, "error": "start_failed"}
+
+        terminal_status = poll_run_until_terminal(
+            backend_url,
+            run_id,
+            token=backend_token,
+            timeout_s=float(timeout_s),
+            on_status=_on_status,
+        )
+        if terminal_status is None:
+            return {
+                "exit_code": -1,
+                "duration_s": round(time.time() - started, 1),
+                "run_id": run_id,
+                "error": "poll_timeout",
+            }
+
+    audit_bundle = get_audit_bundle(backend_url, run_id, token=backend_token) or {}
+    chain_results = map_factory_run_to_chain_results(terminal_status, audit_bundle)
+
+    # Read contract_goal from workspace tasks/plan.json if available
+    plan_path = workspace / ".polaris" / "docs" / "product" / "plan.json"
+    if plan_path.is_file():
+        try:
+            plan_data = json.loads(plan_path.read_text(encoding="utf-8"))
+            chain_results["contract_goal"] = str(plan_data.get("overall_goal") or "")[:160]
+        except (OSError, ValueError):
+            pass
+
+    return {
+        "exit_code": 0 if str(terminal_status.get("status") or "").lower() == "completed" else 1,
+        "duration_s": round(time.time() - started, 1),
+        "run_id": run_id,
+        "chain_results": chain_results,
+        "audit_bundle": audit_bundle,
+    }
+
+
 def run_chain(
     project: dict[str, Any],
     workspace: Path,
@@ -818,6 +919,11 @@ def main() -> int:
         default="workflow",
         help="Director dispatch path: legacy PM workflow or task-market chain after PM planning",
     )
+    ap.add_argument(
+        "--use-legacy-chain",
+        action="store_true",
+        help="Use the legacy subprocess-based chain runner instead of the Factory HTTP API",
+    )
     args = ap.parse_args()
 
     projects = load_projects()
@@ -875,14 +981,24 @@ def main() -> int:
             meta={"session_id": bench_session_id, "title": project.get("title") or ""},
         )
         try:
-            chain = run_chain(
-                project,
-                workspace,
-                timeout_s=args.timeout,
-                log_path=log_path,
-                director_workflow_execution_mode=args.director_workflow_execution_mode,
-                director_dispatch_driver=args.director_dispatch_driver,
-            )
+            if args.use_legacy_chain:
+                chain = run_chain(
+                    project,
+                    workspace,
+                    timeout_s=args.timeout,
+                    log_path=log_path,
+                    director_workflow_execution_mode=args.director_workflow_execution_mode,
+                    director_dispatch_driver=args.director_dispatch_driver,
+                )
+            else:
+                chain = run_factory_chain(
+                    project,
+                    workspace,
+                    backend_url=backend_url,
+                    backend_token=backend_token,
+                    timeout_s=args.timeout,
+                    log_path=log_path,
+                )
         except subprocess.TimeoutExpired:
             chain = {"exit_code": -1, "duration_s": float(args.timeout), "timeout": True}
         _emit_bench_event(
@@ -906,7 +1022,10 @@ def main() -> int:
         )
         record["runtime_dir"] = str(runtime_dir) if runtime_dir else None
         record["chain"] = chain
-        record["chain_results"] = read_chain_results(runtime_dir)
+        if args.use_legacy_chain:
+            record["chain_results"] = read_chain_results(runtime_dir)
+        else:
+            record["chain_results"] = chain.get("chain_results") or read_chain_results(runtime_dir)
         contract_goal = record["chain_results"]["contract_goal"]
         own_overlap = brief_goal_overlap(str(project.get("brief") or ""), contract_goal)
         record["goal_brief_overlap"] = round(own_overlap, 3)
