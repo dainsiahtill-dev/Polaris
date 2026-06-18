@@ -100,6 +100,28 @@ interface LegacyEngineResponse {
 /**
  * Nested status format (from WebSocket message)
  */
+interface DirectorServiceMetrics {
+  tasks_submitted?: number | string;
+  tasks_completed?: number | string;
+  tasks_failed?: number | string;
+  tasks_active?: number | string;
+  active_tasks?: number | string;
+  tasks_running?: number | string;
+  running_tasks?: number | string;
+  tasks_pending?: number | string;
+  pending_tasks?: number | string;
+  queue_depth?: number | string;
+}
+
+interface DirectorServiceStatus {
+  state?: string;
+  run_id?: string;
+  current_run_id?: string;
+  id?: string;
+  is_running?: boolean;
+  metrics?: DirectorServiceMetrics | null;
+}
+
 interface NestedStatusResponse {
   pm_status?: {
     running?: boolean;
@@ -116,33 +138,36 @@ interface NestedStatusResponse {
     failed_tasks?: number;
     current_run_id?: string;
     queue_depth?: number;
+    mode?: string;
+    pid?: number | null;
+    status?: DirectorServiceStatus | string | null;
   } | null;
   snapshot?: {
     run_id?: string;
-  tasks?: Array<{
-    id?: string;
-    title?: string;
-    name?: string;
-    subject?: string;
-    goal?: string;
-    status?: string;
-    assignee?: string;
-    priority?: string;
-    done?: boolean;
-    completed?: boolean;
-    metadata?: Record<string, unknown>;
-    blueprint_id?: string | null;
-    blueprint_path?: string | null;
-    runtime_blueprint_path?: string | null;
-    acceptance?: unknown[];
-    acceptance_criteria?: string[];
-    execution_checklist?: string[];
-    target_files?: string[];
-    scope_paths?: string[];
-    files?: string[];
-    dependencies?: string[];
-    blocked_by?: string[];
-  }>;
+    tasks?: Array<{
+      id?: string;
+      title?: string;
+      name?: string;
+      subject?: string;
+      goal?: string;
+      status?: string;
+      assignee?: string;
+      priority?: string;
+      done?: boolean;
+      completed?: boolean;
+      metadata?: Record<string, unknown>;
+      blueprint_id?: string | null;
+      blueprint_path?: string | null;
+      runtime_blueprint_path?: string | null;
+      acceptance?: unknown[];
+      acceptance_criteria?: string[];
+      execution_checklist?: string[];
+      target_files?: string[];
+      scope_paths?: string[];
+      files?: string[];
+      dependencies?: string[];
+      blocked_by?: string[];
+    }>;
     timestamp?: string;
     progress?: number;
   } | null;
@@ -195,6 +220,83 @@ const LEGACY_FIELD_NAMES = [
   "engine_health",
   "engine_last_check",
 ] as const;
+
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function toOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function metricValue(metrics: DirectorServiceMetrics | null | undefined, ...keys: Array<keyof DirectorServiceMetrics>): number | undefined {
+  if (!metrics) {
+    return undefined;
+  }
+  for (const key of keys) {
+    const value = toFiniteNumber(metrics[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function deriveOutstandingTasks(
+  metrics: DirectorServiceMetrics | null | undefined,
+  completedTasks: number,
+  failedTasks: number
+): number | undefined {
+  const explicit = metricValue(
+    metrics,
+    "active_tasks",
+    "tasks_active",
+    "tasks_running",
+    "running_tasks",
+    "queue_depth",
+    "tasks_pending",
+    "pending_tasks"
+  );
+  if (explicit !== undefined) {
+    return Math.max(0, explicit);
+  }
+
+  const submitted = metricValue(metrics, "tasks_submitted");
+  if (submitted === undefined) {
+    return undefined;
+  }
+  return Math.max(0, submitted - completedTasks - failedTasks);
+}
+
+function normalizeDirectorStateToken(value: unknown, runningHint: boolean): string {
+  const state = String(value || "").trim().toLowerCase();
+  if (["running", "working", "active", "executing", "in_progress", "in-progress"].includes(state)) {
+    return "running";
+  }
+  if (["completed", "complete", "done", "success", "succeeded", "stopped"].includes(state)) {
+    return "completed";
+  }
+  if (["failed", "failure", "error"].includes(state)) {
+    return "error";
+  }
+  if (["paused", "pause"].includes(state)) {
+    return "paused";
+  }
+  if (["recovering", "retrying"].includes(state)) {
+    return "recovering";
+  }
+  if (["idle", "ready", "waiting"].includes(state)) {
+    return "idle";
+  }
+  return runningHint ? "running" : "idle";
+}
 
 function createProjectionProvenance(params: {
   source: RuntimeProjectionSource;
@@ -356,14 +458,32 @@ function normalizeDirectorStatus(legacy: LegacyResponse, nested?: NestedStatusRe
   // Check nested format first (WebSocket message)
   const directorNested = nested?.director_status;
   if (directorNested && typeof directorNested === 'object') {
+    const serviceStatus = directorNested.status && typeof directorNested.status === "object" ? directorNested.status : null;
+    const metrics = serviceStatus?.metrics || null;
+    const completedTasks = directorNested.completed_tasks ?? metricValue(metrics, "tasks_completed") ?? 0;
+    const failedTasks = directorNested.failed_tasks ?? metricValue(metrics, "tasks_failed") ?? 0;
+    const activeTasks = directorNested.active_tasks ?? deriveOutstandingTasks(metrics, completedTasks, failedTasks) ?? 0;
+    const queueDepth = directorNested.queue_depth ?? deriveOutstandingTasks(metrics, completedTasks, failedTasks) ?? 0;
+    const running = Boolean(directorNested.running)
+      || Boolean(serviceStatus?.is_running)
+      || activeTasks > 0
+      || normalizeDirectorStateToken(serviceStatus?.state, false) === "running";
+    const phase = normalizeDirectorPhase(
+      directorNested.phase || normalizeDirectorStateToken(serviceStatus?.state, running)
+    );
+
     return {
-      running: Boolean(directorNested.running),
-      active_tasks: directorNested.active_tasks || 0,
-      completed_tasks: directorNested.completed_tasks || 0,
-      failed_tasks: directorNested.failed_tasks || 0,
-      phase: normalizeDirectorPhase(directorNested.phase),
-      current_run_id: directorNested.current_run_id || null,
-      queue_depth: directorNested.queue_depth || 0,
+      running,
+      active_tasks: activeTasks,
+      completed_tasks: completedTasks,
+      failed_tasks: failedTasks,
+      phase,
+      current_run_id: directorNested.current_run_id
+        || serviceStatus?.current_run_id
+        || serviceStatus?.run_id
+        || serviceStatus?.id
+        || null,
+      queue_depth: queueDepth,
       last_updated: new Date().toISOString(),
     };
   }
@@ -528,7 +648,9 @@ function extractCompatFields(legacy: LegacyResponse, nested?: NestedStatusRespon
     compat.pm_status = nested.pm_status.phase || 'idle';
   }
   if (nested?.director_status) {
-    compat.director_status = nested.director_status.phase || 'idle';
+    const director = normalizeDirectorStatus(legacy, nested);
+    compat.director_status = director?.phase || 'idle';
+    compat.director_active = director?.active_tasks ?? 0;
   }
   if (nested?.snapshot) {
     compat.workflow_loaded = Boolean(nested.snapshot.run_id);

@@ -1025,7 +1025,9 @@ def main() -> int:
         if args.use_legacy_chain:
             record["chain_results"] = read_chain_results(runtime_dir)
         else:
-            record["chain_results"] = chain.get("chain_results") or read_chain_results(runtime_dir)
+            record["chain_results"] = (
+                chain.get("chain_results") if "chain_results" in chain else read_chain_results(runtime_dir)
+            )
         contract_goal = record["chain_results"]["contract_goal"]
         own_overlap = brief_goal_overlap(str(project.get("brief") or ""), contract_goal)
         record["goal_brief_overlap"] = round(own_overlap, 3)
