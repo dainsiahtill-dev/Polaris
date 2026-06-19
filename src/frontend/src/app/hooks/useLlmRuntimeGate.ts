@@ -10,9 +10,24 @@ export interface LlmRuntimeGateState {
   roleDetails?: Record<string, LlmRuntimeRoleDetail>;
 }
 
+export interface LlmRuntimeRoleBinding {
+  providerId: string;
+  providerName: string;
+  providerType: string;
+  model: string;
+  profile: string;
+  maxContextTokens: number | null;
+  maxOutputTokens: number | null;
+}
+
 export interface LlmRuntimeRoleDetail {
   providerId: string;
+  providerName: string;
+  providerType: string;
   model: string;
+  maxContextTokens: number | null;
+  maxOutputTokens: number | null;
+  bindings: LlmRuntimeRoleBinding[];
   ready: boolean | null;
   runtimeSupported: boolean | null;
   runtimeIssue: string;
@@ -76,8 +91,34 @@ function readText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function readPositiveIntOrNull(value: unknown): number | null {
+  const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number.parseInt(value, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 function readBooleanOrNull(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null;
+}
+
+function normalizeRoleBindings(value: unknown): LlmRuntimeRoleBinding[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const binding = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+      const providerId = readText(binding.provider_id);
+      const model = readText(binding.model);
+      if (!providerId && !model) return null;
+      return {
+        providerId,
+        providerName: readText(binding.provider_name),
+        providerType: readText(binding.provider_type),
+        model,
+        profile: readText(binding.profile),
+        maxContextTokens: readPositiveIntOrNull(binding.max_context_tokens),
+        maxOutputTokens: readPositiveIntOrNull(binding.max_output_tokens),
+      };
+    })
+    .filter((item): item is LlmRuntimeRoleBinding => item !== null);
 }
 
 function normalizeRoleDetails(value: unknown): Record<string, LlmRuntimeRoleDetail> {
@@ -87,9 +128,15 @@ function normalizeRoleDetails(value: unknown): Record<string, LlmRuntimeRoleDeta
       .map(([rawRoleId, rawRole]) => {
         const roleId = readText(rawRoleId).toLowerCase();
         const role = rawRole && typeof rawRole === 'object' ? rawRole as Record<string, unknown> : {};
+        const bindings = normalizeRoleBindings(role.bindings);
         return [roleId, {
           providerId: readText(role.provider_id),
+          providerName: readText(role.provider_name),
+          providerType: readText(role.provider_type),
           model: readText(role.model),
+          maxContextTokens: readPositiveIntOrNull(role.max_context_tokens),
+          maxOutputTokens: readPositiveIntOrNull(role.max_output_tokens),
+          bindings,
           ready: readBooleanOrNull(role.ready),
           runtimeSupported: readBooleanOrNull(role.runtime_supported),
           runtimeIssue: readText(role.runtime_issue),

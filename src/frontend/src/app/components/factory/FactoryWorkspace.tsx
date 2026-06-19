@@ -30,7 +30,7 @@ import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
 import type { FactoryAuditEvent, FactoryRunArtifact, FactoryRunStatus } from '@/hooks/useFactory';
 import type { LogEntry } from '@/types/log';
-import type { PmTask } from '@/types/task';
+import { TaskStatus, type PmTask } from '@/types/task';
 
 interface FactoryWorkspaceProps {
   workspace: string;
@@ -640,6 +640,68 @@ function canonicalFactoryTaskId(value: unknown): string {
   return numericAlias ? numericAlias[1] : normalized;
 }
 
+function directorTaskOverlayStatus(task: PmTask): PmTask['status'] | null {
+  if (isTaskRunning(task)) return TaskStatus.IN_PROGRESS;
+  if (isTaskBlocked(task)) {
+    const status = taskStatusToken(task);
+    return status === 'failed' || status === 'error' ? TaskStatus.FAILED : TaskStatus.BLOCKED;
+  }
+  if (isTaskDone(task)) return TaskStatus.COMPLETED;
+  return null;
+}
+
+function directorTaskOverlayRank(status: PmTask['status'] | null): number {
+  if (status === TaskStatus.IN_PROGRESS) return 4;
+  if (status === TaskStatus.FAILED || status === TaskStatus.BLOCKED) return 3;
+  if (status === TaskStatus.COMPLETED || status === TaskStatus.SUCCESS) return 2;
+  return 0;
+}
+
+function overlayDirectorRuntimeState(pmTasks: PmTask[], directorTasks: PmTask[]): PmTask[] {
+  if (!pmTasks.length || !directorTasks.length) return pmTasks;
+  const overlays = new Map<string, { status: PmTask['status']; task: PmTask; rank: number }>();
+
+  for (const task of directorTasks) {
+    const status = directorTaskOverlayStatus(task);
+    const rank = directorTaskOverlayRank(status);
+    if (!status || rank <= 0) continue;
+    const tokens = taskIdentityTokens(task).map(canonicalFactoryTaskId).filter(Boolean);
+    for (const token of tokens) {
+      const current = overlays.get(token);
+      if (!current || current.rank < rank) {
+        overlays.set(token, { status, task, rank });
+      }
+    }
+  }
+
+  if (overlays.size === 0) return pmTasks;
+  return pmTasks.map((task) => {
+    const overlay = taskIdentityTokens(task)
+      .map(canonicalFactoryTaskId)
+      .map((token) => overlays.get(token))
+      .find(Boolean);
+    if (!overlay) return task;
+
+    const completed = overlay.status === TaskStatus.COMPLETED || overlay.status === TaskStatus.SUCCESS;
+    return {
+      ...task,
+      status: overlay.status,
+      state: overlay.status,
+      done: completed,
+      completed,
+      started_at: overlay.task.started_at || overlay.task.startedAt || task.started_at,
+      completed_at: completed ? overlay.task.completed_at || overlay.task.completedAt || task.completed_at : task.completed_at,
+      worker_id: overlay.task.worker_id || overlay.task.assigned_worker || task.worker_id,
+      assigned_worker: overlay.task.assigned_worker || overlay.task.worker_id || task.assigned_worker,
+      metadata: {
+        ...(task.metadata || {}),
+        runtime_overlay_source: 'director_realtime',
+        runtime_overlay_status: overlay.status,
+      },
+    };
+  });
+}
+
 function isChiefEngineerArtifact(artifact: FactoryRunArtifact): boolean {
   const path = normalizeToken(artifact.path);
   const name = normalizeToken(artifact.name);
@@ -1053,6 +1115,10 @@ export function FactoryWorkspace({
 
   const pmWorkflowTasks = pmTasks ?? tasks;
   const directorWorkflowTasks = directorTasks ?? tasks;
+  const pmWorkflowTasksWithRuntimeState = useMemo(
+    () => overlayDirectorRuntimeState(pmWorkflowTasks, directorWorkflowTasks),
+    [directorWorkflowTasks, pmWorkflowTasks]
+  );
   const blueprintTaskPool = useMemo(
     () => mergeFactoryTaskPools(pmWorkflowTasks, directorWorkflowTasks),
     [directorWorkflowTasks, pmWorkflowTasks]
@@ -1244,7 +1310,7 @@ export function FactoryWorkspace({
           <section className="h-full min-w-0 overflow-hidden" data-testid="factory-focused-layer">
             {activeLayerView.id === 'pm' && (
               <FactoryPmLayer
-                tasks={pmWorkflowTasks}
+                tasks={pmWorkflowTasksWithRuntimeState}
                 workspace={workspace}
                 executionLogs={executionLogs}
                 roleStatus={getRunRole(currentRun?.roles, ['pm'])}

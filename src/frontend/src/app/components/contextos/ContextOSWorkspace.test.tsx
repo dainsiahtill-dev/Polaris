@@ -55,6 +55,70 @@ const READY_LLM: LlmRuntimeGateState = {
   lastUpdated: null,
 };
 
+const READY_LLM_WITH_WINDOWS: LlmRuntimeGateState = {
+  state: 'READY',
+  blockedRoles: [],
+  requiredRoles: ['pm', 'director'],
+  lastUpdated: null,
+  roleDetails: {
+    pm: {
+      providerId: 'kimi',
+      providerName: 'Kimi Coding',
+      providerType: 'anthropic_compat',
+      model: 'kimi-for-coding',
+      maxContextTokens: 262_144,
+      maxOutputTokens: 16_384,
+      bindings: [],
+      ready: true,
+      runtimeSupported: true,
+      runtimeIssue: '',
+      readinessIssue: '',
+      readinessSource: 'role_index',
+      testedProviderId: 'kimi',
+      testedModel: 'kimi-for-coding',
+      testedTimestamp: null,
+      timestamp: null,
+    },
+    director: {
+      providerId: 'qwen-a',
+      providerName: 'Qwen A',
+      providerType: 'openai_compat',
+      model: 'qwen3.6-27b-gpu0',
+      maxContextTokens: 32_768,
+      maxOutputTokens: 8_192,
+      bindings: [
+        {
+          providerId: 'qwen-a',
+          providerName: 'Qwen A',
+          providerType: 'openai_compat',
+          model: 'qwen3.6-27b-gpu0',
+          profile: '',
+          maxContextTokens: 32_768,
+          maxOutputTokens: 8_192,
+        },
+        {
+          providerId: 'qwen-b',
+          providerName: 'Qwen B',
+          providerType: 'openai_compat',
+          model: 'qwen3.6-27b-gpu1',
+          profile: '',
+          maxContextTokens: 65_536,
+          maxOutputTokens: 8_190,
+        },
+      ],
+      ready: true,
+      runtimeSupported: true,
+      runtimeIssue: '',
+      readinessIssue: '',
+      readinessSource: 'role_index',
+      testedProviderId: 'qwen-a',
+      testedModel: 'qwen3.6-27b-gpu0',
+      testedTimestamp: null,
+      timestamp: null,
+    },
+  },
+};
+
 function baseProps() {
   return {
     workspace: '/tmp/demo',
@@ -115,6 +179,31 @@ describe('ContextOSWorkspace', () => {
     );
     // total tokens appears (header chip + budget headline) — sourced from the usage-stats channel.
     expect(screen.getAllByText('10,000').length).toBeGreaterThan(0);
+  });
+
+  it('renders Context Budget against the actual selected role window', () => {
+    const usageStats: UsageStats = {
+      totals: { prompt_tokens: 16_384, completion_tokens: 1024, total_tokens: 17_408 },
+      calls: 1,
+      estimated_calls: 0,
+      by_mode: {},
+    };
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        usageStats={usageStats}
+        llmRuntimeState={READY_LLM_WITH_WINDOWS}
+      />,
+    );
+
+    const source = screen.getByTestId('contextos-window-source');
+    expect(source.textContent).toContain('32.8k');
+    expect(source.textContent).toContain('最小绑定窗口');
+    expect(source.textContent).not.toContain('128k');
+
+    fireEvent.click(screen.getByTestId('contextos-role-pm'));
+    expect(screen.getByTestId('contextos-window-source').textContent).toContain('262k');
+    expect(screen.getByTestId('contextos-window-source').textContent).toContain('PM');
   });
 
   it('surfaces REAL ContextOS telemetry from the live WebSocket stream props', () => {

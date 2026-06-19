@@ -232,6 +232,182 @@ function isRuntimeV2Envelope(payload: WebSocketMessage): boolean {
   return schemaVersion === 'runtime.v2' || Boolean(record.channel && record.kind && record.payload);
 }
 
+type RuntimeTaskLifecycleUpdate = {
+  taskId: string;
+  title?: string;
+  status: TaskStatus;
+  workerId?: string;
+  timestamp?: string;
+};
+
+function normalizeTaskMatchToken(value: unknown): string {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function taskMatchTokens(task: PmTask): string[] {
+  const metadata = task.metadata && typeof task.metadata === 'object' ? task.metadata : {};
+  const record = task as PmTask & Record<string, unknown>;
+  const values = [
+    task.id,
+    record.task_id,
+    record.taskId,
+    record.pm_task_id,
+    metadata.task_id,
+    metadata.taskId,
+    metadata.pm_task_id,
+    metadata.id,
+  ];
+  const seen = new Set<string>();
+  return values
+    .map(normalizeTaskMatchToken)
+    .filter((token) => {
+      if (!token || seen.has(token)) return false;
+      seen.add(token);
+      return true;
+    });
+}
+
+function runtimeTaskLifecyclePayload(raw: Record<string, unknown>): RuntimeTaskLifecycleUpdate | null {
+  const payload = firstRecord(raw.payload);
+  const data = firstRecord(raw.data, raw.output, payload?.data, payload?.raw, payload);
+  const meta = firstRecord(raw.meta, payload?.meta, data?.metadata, data?.meta);
+  const eventText = [
+    raw.event,
+    raw.name,
+    raw.kind,
+    raw.type,
+    payload?.event,
+    payload?.name,
+    payload?.kind,
+    data?.event,
+    data?.name,
+    data?.kind,
+    data?.stream_event,
+    data?.event_type,
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean).join(' ');
+  const domainText = [
+    raw.channel,
+    raw.domain,
+    raw.actor,
+    raw.role,
+    payload?.channel,
+    payload?.domain,
+    payload?.actor,
+    payload?.role,
+    data?.actor,
+    data?.role,
+  ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean).join(' ');
+
+  const isTaskLifecycle =
+    eventText.includes('director_task') ||
+    eventText.includes('task_started') ||
+    eventText.includes('task_completed') ||
+    eventText.includes('task_failed') ||
+    eventText.includes('task_blocked') ||
+    (domainText.includes('director') && eventText.includes('task'));
+  if (!isTaskLifecycle) return null;
+
+  const taskId =
+    Parsing.toStringValue(data?.task_id) ||
+    Parsing.toStringValue(data?.taskId) ||
+    Parsing.toStringValue(data?.pm_task_id) ||
+    Parsing.toStringValue(meta?.task_id) ||
+    Parsing.toStringValue(meta?.taskId) ||
+    Parsing.toStringValue(meta?.pm_task_id) ||
+    Parsing.toStringValue(raw.task_id) ||
+    Parsing.toStringValue(raw.taskId);
+  if (!taskId) return null;
+
+  let status: TaskStatus | null = null;
+  if (eventText.includes('failed') || eventText.includes('error')) status = TaskStatus.FAILED;
+  else if (eventText.includes('blocked')) status = TaskStatus.BLOCKED;
+  else if (eventText.includes('completed') || eventText.includes('success')) status = TaskStatus.COMPLETED;
+  else if (
+    eventText.includes('started') ||
+    eventText.includes('running') ||
+    eventText.includes('claimed') ||
+    eventText.includes('in_progress')
+  ) {
+    status = TaskStatus.IN_PROGRESS;
+  }
+  if (!status) return null;
+
+  return {
+    taskId,
+    status,
+    title:
+      Parsing.toStringValue(data?.task_title) ||
+      Parsing.toStringValue(data?.title) ||
+      Parsing.toStringValue(data?.subject) ||
+      Parsing.toStringValue(meta?.task_title) ||
+      Parsing.toStringValue(meta?.title) ||
+      undefined,
+    workerId:
+      Parsing.toStringValue(data?.worker_id) ||
+      Parsing.toStringValue(data?.claimed_by) ||
+      Parsing.toStringValue(meta?.worker_id) ||
+      Parsing.toStringValue(meta?.claimed_by) ||
+      undefined,
+    timestamp:
+      Parsing.toStringValue(raw.ts) ||
+      Parsing.toStringValue(raw.timestamp) ||
+      Parsing.toStringValue(data?.timestamp) ||
+      undefined,
+  };
+}
+
+function mergeRuntimeTaskLifecycle(tasks: PmTask[], update: RuntimeTaskLifecycleUpdate): PmTask[] {
+  const updateToken = normalizeTaskMatchToken(update.taskId);
+  if (!updateToken) return tasks;
+  const terminalDone = update.status === TaskStatus.COMPLETED || update.status === TaskStatus.SUCCESS;
+  let matched = false;
+  const nextTasks = tasks.map((task) => {
+    if (!taskMatchTokens(task).includes(updateToken)) return task;
+    matched = true;
+    return {
+      ...task,
+      title: task.title || update.title || update.taskId,
+      subject: task.subject || update.title,
+      status: update.status,
+      state: update.status,
+      done: terminalDone,
+      completed: terminalDone,
+      started_at: update.status === TaskStatus.IN_PROGRESS ? update.timestamp || task.started_at : task.started_at,
+      completed_at: terminalDone ? update.timestamp || task.completed_at : task.completed_at,
+      worker_id: update.workerId || task.worker_id,
+      assigned_worker: update.workerId || task.assigned_worker,
+      metadata: {
+        ...(task.metadata || {}),
+        runtime_lifecycle_source: 'runtime_events',
+        runtime_lifecycle_status: update.status,
+      },
+    };
+  });
+  if (matched) return nextTasks;
+  return [
+    ...nextTasks,
+    {
+      id: update.taskId,
+      title: update.title || update.taskId,
+      subject: update.title,
+      status: update.status,
+      state: update.status,
+      done: terminalDone,
+      completed: terminalDone,
+      priority: 3,
+      acceptance: [],
+      started_at: update.status === TaskStatus.IN_PROGRESS ? update.timestamp : undefined,
+      completed_at: terminalDone ? update.timestamp : undefined,
+      worker_id: update.workerId,
+      assigned_worker: update.workerId,
+      metadata: {
+        runtime_lifecycle_source: 'runtime_events',
+        runtime_lifecycle_status: update.status,
+      },
+    },
+  ];
+}
+
 function normalizeChannelToken(value: unknown): string {
   return String(value || '').trim().toLowerCase();
 }
@@ -1207,6 +1383,10 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               if (!line.trim()) return;
               try {
                 const raw = JSON.parse(line);
+                const lifecycleUpdate = Parsing.isRecord(raw) ? runtimeTaskLifecyclePayload(raw) : null;
+                if (lifecycleUpdate) {
+                  setTasks(mergeRuntimeTaskLifecycle(useRuntimeStore.getState().tasks, lifecycleUpdate));
+                }
                 const log = parseRuntimeEvent(raw);
                 if (log) logs.push(log);
                 const fileEdit = Parsing.extractRuntimeFileEditEvent(raw);
@@ -1278,6 +1458,10 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           } else if (channel === 'runtime_events') {
             try {
               const raw = JSON.parse(payload.text);
+              const lifecycleUpdate = Parsing.isRecord(raw) ? runtimeTaskLifecyclePayload(raw) : null;
+              if (lifecycleUpdate) {
+                setTasks(mergeRuntimeTaskLifecycle(useRuntimeStore.getState().tasks, lifecycleUpdate));
+              }
               const log = parseRuntimeEvent(raw);
               if (log) {
                 appendExecutionLog(log);

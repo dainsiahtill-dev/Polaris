@@ -466,8 +466,21 @@ export interface LLMStatusResponse {
   factory_unsupported_roles?: string[];
   roles: Record<string, {
     provider_id?: string;
+    provider_name?: string;
+    provider_type?: string;
     model?: string;
     profile?: string;
+    max_context_tokens?: number | null;
+    max_output_tokens?: number | null;
+    bindings?: Array<{
+      provider_id?: string;
+      provider_name?: string;
+      provider_type?: string;
+      model?: string;
+      profile?: string;
+      max_context_tokens?: number | null;
+      max_output_tokens?: number | null;
+    }>;
     ready?: boolean;
     grade?: string;
     last_run_id?: string | null;
@@ -486,6 +499,10 @@ export interface LLMStatusResponse {
     last_run_id?: string | null;
     timestamp?: string | null;
     suites?: Record<string, unknown> | null;
+    name?: string | null;
+    type?: string | null;
+    max_context_tokens?: number | null;
+    max_output_tokens?: number | null;
     model?: string | null;
     role?: string | null;
   }>;

@@ -125,6 +125,99 @@ def _normalize_required_roles(value: Any, *, qa_enabled: bool) -> list[str]:
     return roles
 
 
+def _positive_int_or_none(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _provider_name(provider_id: str, provider_cfg: dict[str, Any]) -> str:
+    name = str(provider_cfg.get("name") or "").strip()
+    return name or provider_id
+
+
+def _provider_type(provider_cfg: dict[str, Any]) -> str:
+    return str(provider_cfg.get("type") or "").strip()
+
+
+def _binding_matches(candidate: dict[str, Any], provider_id: str, model: str) -> bool:
+    return (
+        str(candidate.get("provider_id") or "").strip() == provider_id
+        and str(candidate.get("model") or "").strip() == model
+    )
+
+
+def _role_binding_payload(
+    *,
+    binding_cfg: dict[str, Any],
+    role_cfg: dict[str, Any],
+    providers_cfg: dict[str, Any],
+) -> dict[str, Any]:
+    provider_id = str(binding_cfg.get("provider_id") or role_cfg.get("provider_id") or "").strip()
+    provider_cfg = providers_cfg.get(provider_id, {}) if isinstance(providers_cfg, dict) else {}
+    if not isinstance(provider_cfg, dict):
+        provider_cfg = {}
+    model = str(
+        binding_cfg.get("model") or role_cfg.get("model") or provider_cfg.get("model") or "",
+    ).strip()
+    return {
+        "provider_id": provider_id,
+        "provider_name": _provider_name(provider_id, provider_cfg),
+        "provider_type": _provider_type(provider_cfg),
+        "model": model,
+        "profile": binding_cfg.get("profile") or role_cfg.get("profile"),
+        "max_context_tokens": (
+            _positive_int_or_none(binding_cfg.get("max_context_tokens"))
+            or _positive_int_or_none(role_cfg.get("max_context_tokens"))
+            or _positive_int_or_none(provider_cfg.get("max_context_tokens"))
+        ),
+        "max_output_tokens": (
+            _positive_int_or_none(binding_cfg.get("max_output_tokens"))
+            or _positive_int_or_none(role_cfg.get("max_output_tokens"))
+            or _positive_int_or_none(provider_cfg.get("max_output_tokens"))
+            or _positive_int_or_none(provider_cfg.get("max_tokens"))
+        ),
+    }
+
+
+def _role_bindings_payload(
+    *,
+    role_cfg: dict[str, Any],
+    providers_cfg: dict[str, Any],
+    provider_id: str,
+    model: str,
+) -> list[dict[str, Any]]:
+    raw_bindings = role_cfg.get("bindings")
+    candidates: list[dict[str, Any]] = []
+    if isinstance(raw_bindings, list):
+        for item in raw_bindings:
+            if isinstance(item, dict):
+                candidates.append(item)
+
+    primary = {"provider_id": provider_id, "model": model, "profile": role_cfg.get("profile")}
+    if provider_id and not any(_binding_matches(candidate, provider_id, model) for candidate in candidates):
+        candidates.insert(0, primary)
+    elif not candidates:
+        candidates.append(primary)
+
+    bindings: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        payload = _role_binding_payload(
+            binding_cfg=candidate,
+            role_cfg=role_cfg,
+            providers_cfg=providers_cfg,
+        )
+        identity = (str(payload.get("provider_id") or ""), str(payload.get("model") or ""))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        bindings.append(payload)
+    return bindings
+
+
 def _lookup_role_status(index: dict[str, Any], role: str) -> dict[str, Any] | None:
     roles = index.get("roles") if isinstance(index.get("roles"), dict) else {}
     if not isinstance(roles, dict):
@@ -410,7 +503,15 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
         provider_id = str(role_cfg.get("provider_id") or "").strip()
         model = str(role_cfg.get("model") or "").strip()
         provider_cfg = providers_cfg.get(provider_id, {}) if isinstance(providers_cfg, dict) else {}
+        provider_cfg = provider_cfg if isinstance(provider_cfg, dict) else {}
         role_key = _role_key(role)
+        bindings = _role_bindings_payload(
+            role_cfg=role_cfg,
+            providers_cfg=providers_cfg,
+            provider_id=provider_id,
+            model=model,
+        )
+        primary_binding = bindings[0] if bindings else {}
         test_info, provider_test_info = _select_binding_status(
             indexes=index_candidates,
             role=role_key,
@@ -428,8 +529,13 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
         )
         roles_status[role_key] = {
             "provider_id": provider_id,
+            "provider_name": primary_binding.get("provider_name") or _provider_name(provider_id, provider_cfg),
+            "provider_type": primary_binding.get("provider_type") or _provider_type(provider_cfg),
             "model": model,
             "profile": role_cfg.get("profile"),
+            "max_context_tokens": primary_binding.get("max_context_tokens"),
+            "max_output_tokens": primary_binding.get("max_output_tokens"),
+            "bindings": bindings,
             "ready": binding_readiness["ready"],
             "grade": test_info.get("grade") if isinstance(test_info, dict) else "UNKNOWN",
             "last_run_id": test_info.get("last_run_id") if isinstance(test_info, dict) else None,
@@ -454,6 +560,11 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
             "last_run_id": test_info.get("last_run_id") if isinstance(test_info, dict) else None,
             "timestamp": test_info.get("timestamp") if isinstance(test_info, dict) else None,
             "suites": test_info.get("suites") if isinstance(test_info, dict) else None,
+            "name": _provider_name(str(provider_id), provider_cfg),
+            "type": _provider_type(provider_cfg),
+            "max_context_tokens": _positive_int_or_none(provider_cfg.get("max_context_tokens")),
+            "max_output_tokens": _positive_int_or_none(provider_cfg.get("max_output_tokens"))
+            or _positive_int_or_none(provider_cfg.get("max_tokens")),
             "model": test_info.get("model") if isinstance(test_info, dict) else None,
             "role": test_info.get("role") if isinstance(test_info, dict) else None,
         }

@@ -41,6 +41,66 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_STATUS_EVENT_DOMAINS = {"director", "pm", "chief_engineer", "chief-engineer", "qa", "factory", "task", "stage"}
+_STATUS_EVENT_TRANSITIONS = {
+    "started",
+    "starting",
+    "running",
+    "claimed",
+    "in_progress",
+    "completed",
+    "failed",
+    "cancelled",
+    "canceled",
+    "updated",
+    "generated",
+    "validated",
+}
+
+
+def _text_parts(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key in ("channel", "kind", "name", "event", "type", "domain", "actor", "role", "stage", "status", "state"):
+            item = value.get(key)
+            if item is not None:
+                parts.append(str(item))
+        return parts
+    if value is None:
+        return []
+    return [str(value)]
+
+
+def _runtime_event_affects_status(payload: dict[str, Any]) -> bool:
+    """Return True when a realtime payload should trigger a status snapshot.
+
+    Runtime event streams carry both high-volume logs and lifecycle changes.
+    Only lifecycle-like events should rebuild the status projection; this keeps
+    the update event-driven without turning token streams into status churn.
+    """
+
+    channel = str(payload.get("channel") or "").strip().lower()
+    if channel.startswith("status."):
+        return True
+    if channel.startswith("event.") and any(domain in channel for domain in _STATUS_EVENT_DOMAINS):
+        return True
+
+    parts = _text_parts(payload)
+    for nested_key in ("payload", "meta", "data", "event"):
+        nested = payload.get(nested_key)
+        if isinstance(nested, dict):
+            parts.extend(_text_parts(nested))
+
+    normalized = " ".join(parts).lower().replace("-", "_").replace(".", "_")
+    has_domain = any(domain.replace("-", "_") in normalized for domain in _STATUS_EVENT_DOMAINS)
+    has_transition = any(transition in normalized for transition in _STATUS_EVENT_TRANSITIONS)
+    return has_domain and has_transition
+
+
+def _runtime_envelope_affects_status(event: RuntimeEventEnvelope) -> bool:
+    return _runtime_event_affects_status(event.to_dict())
+
+
 async def run_main_loop(
     websocket: WebSocket,
     state: Any,
@@ -190,7 +250,7 @@ async def run_main_loop(
                 realtime_task = (
                     asyncio.create_task(realtime_subscription.queue.get()) if realtime_subscription else None
                 )
-                realtime_sent, realtime_resync = await _drain_realtime_log_events(
+                realtime_sent, realtime_resync, realtime_status_affecting = await _drain_realtime_log_events(
                     websocket=websocket,
                     connection_id=connection_id,
                     client=client,
@@ -202,6 +262,10 @@ async def run_main_loop(
                     stream_signature_order=stream_signature_order,
                     first_event=first_realtime_event,
                 )
+                if realtime_status_affecting:
+                    previous_status_sig = status_sig
+                    status_sig, _ = await send_status_func(force=False, last_sig=status_sig)
+                    sent_any = sent_any or status_sig != previous_status_sig
                 sent_any = sent_any or realtime_sent
                 needs_resync = needs_resync or realtime_resync
 
@@ -226,6 +290,10 @@ async def run_main_loop(
                     if v2_sent:
                         v2_cursor = event_cursor
                         sent_any = True
+                        if _runtime_envelope_affects_status(v2_event):
+                            previous_status_sig = status_sig
+                            status_sig, _ = await send_status_func(force=False, last_sig=status_sig)
+                            sent_any = sent_any or status_sig != previous_status_sig
                     else:
                         close_code = 1011
                         close_reason = "runtime_v2_send_failed"
@@ -251,7 +319,7 @@ async def run_main_loop(
             if not active:
                 continue
 
-            fanout_sent, fanout_resync = await _drain_fanout_events(
+            fanout_sent, fanout_resync, fanout_status_affecting = await _drain_fanout_events(
                 websocket=websocket,
                 connection_id=connection_id,
                 client=client,
@@ -260,6 +328,10 @@ async def run_main_loop(
             )
             sent_any = sent_any or fanout_sent
             needs_resync = needs_resync or fanout_resync
+            if fanout_status_affecting:
+                previous_status_sig = status_sig
+                status_sig, _ = await send_status_func(force=False, last_sig=status_sig)
+                sent_any = sent_any or status_sig != previous_status_sig
 
             # Handle resync if needed
             if needs_resync:
@@ -301,16 +373,17 @@ async def _drain_fanout_events(
     client: str,
     resolved_workspace: str,
     roles_filter: set[str],
-) -> tuple[bool, bool]:
+) -> tuple[bool, bool, bool]:
     """Drain events from RuntimeEventFanout."""
     from datetime import datetime, timezone
 
     sent_any = False
     needs_resync = False
+    status_affecting = False
 
     if not wants_role(roles_filter, "director"):
         await RUNTIME_EVENT_FANOUT.drain_events(connection_id)
-        return False, False
+        return False, False, False
 
     file_events, task_trace_events, sequential_events, total_dropped = await RUNTIME_EVENT_FANOUT.drain_events(
         connection_id
@@ -347,6 +420,7 @@ async def _drain_fanout_events(
             websocket, item, connection_id=connection_id, client=client, workspace=resolved_workspace
         ):
             sent_any = True
+            status_affecting = True
 
     for item in sequential_events:
         item.setdefault("protocol", RUNTIME_EVENT_SCHEMA_VERSION)
@@ -360,6 +434,8 @@ async def _drain_fanout_events(
             websocket, item, connection_id=connection_id, client=client, workspace=resolved_workspace
         ):
             sent_any = True
+            if _runtime_event_affects_status(item):
+                status_affecting = True
 
     if total_dropped > 0:
         needs_resync = True
@@ -368,7 +444,7 @@ async def _drain_fanout_events(
             extra={"client": client, "workspace": resolved_workspace},
         )
 
-    return sent_any, needs_resync
+    return sent_any, needs_resync, status_affecting
 
 
 async def _drain_realtime_log_events(
@@ -382,14 +458,15 @@ async def _drain_realtime_log_events(
     stream_signatures: set[str],
     stream_signature_order: Any,
     first_event: dict[str, Any] | None = None,
-) -> tuple[bool, bool]:
+) -> tuple[bool, bool, bool]:
     """Drain in-process canonical journal events from realtime fanout."""
     if realtime_subscription is None:
-        return False, False
+        return False, False, False
     del v2_protocol
 
     sent_any = False
     needs_resync = False
+    status_affecting = False
     pending: list[dict[str, Any]] = []
     if isinstance(first_event, dict):
         pending.append(first_event)
@@ -429,6 +506,8 @@ async def _drain_realtime_log_events(
         ):
             sent_any = True
             remember_stream_signature(stream_signatures, stream_signature_order, signature)
+            if _runtime_event_affects_status(event_payload):
+                status_affecting = True
 
     dropped = realtime_subscription.consume_dropped()
     if dropped > 0:
@@ -439,7 +518,7 @@ async def _drain_realtime_log_events(
             dropped,
             extra={"client": client, "workspace": resolved_workspace},
         )
-    return sent_any, needs_resync
+    return sent_any, needs_resync, status_affecting
 
 
 __all__ = ["run_main_loop"]

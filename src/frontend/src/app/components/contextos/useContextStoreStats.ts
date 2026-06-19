@@ -60,6 +60,14 @@ function readErrorPayload(body: string): ErrorPayload {
   return {};
 }
 
+function isAbortLikeError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const error = err as { name?: unknown; message?: unknown };
+  if (error.name === 'AbortError') return true;
+  const message = typeof error.message === 'string' ? error.message.toLowerCase() : '';
+  return message.includes('signal is aborted') || message.includes('operation was aborted');
+}
+
 export function useContextStoreStats(options: {
   workspace?: string | null;
   enabled?: boolean;
@@ -89,7 +97,7 @@ export function useContextStoreStats(options: {
         timeout: REQUEST_TIMEOUT_MS,
       });
     } catch (err) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || isAbortLikeError(err)) return;
       setState({
         kind: 'error',
         message: err instanceof Error ? err.message : String(err),
@@ -142,7 +150,7 @@ export function useContextStoreStats(options: {
     }
   }, []);
 
-  // 主 effect：workspace 切换时读取一次快照；无后台轮询。
+  // 主 effect：workspace 切换时读取一次快照；后续由显式 refresh 驱动。
   useEffect(() => {
     if (!enabled) {
       // 关闭时静默清空状态——保留之前的"最近一次"会误导用户。
@@ -173,6 +181,7 @@ export function useContextStoreStats(options: {
       void fetchOnce();
       return { ok: true, error: null };
     } catch (err) {
+      if (isAbortLikeError(err)) return { ok: false, error: null };
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }, [fetchOnce]);

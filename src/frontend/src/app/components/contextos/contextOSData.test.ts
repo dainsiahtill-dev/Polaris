@@ -20,6 +20,98 @@ const READY_LLM: LlmRuntimeGateState = {
   lastUpdated: null,
 };
 
+const READY_LLM_WITH_WINDOWS: LlmRuntimeGateState = {
+  state: 'READY',
+  blockedRoles: [],
+  requiredRoles: ['pm', 'director', 'qa'],
+  lastUpdated: null,
+  roleDetails: {
+    pm: {
+      providerId: 'kimi',
+      providerName: 'Kimi Coding',
+      providerType: 'anthropic_compat',
+      model: 'kimi-for-coding',
+      maxContextTokens: 262_144,
+      maxOutputTokens: 16_384,
+      bindings: [
+        {
+          providerId: 'kimi',
+          providerName: 'Kimi Coding',
+          providerType: 'anthropic_compat',
+          model: 'kimi-for-coding',
+          profile: '',
+          maxContextTokens: 262_144,
+          maxOutputTokens: 16_384,
+        },
+      ],
+      ready: true,
+      runtimeSupported: true,
+      runtimeIssue: '',
+      readinessIssue: '',
+      readinessSource: 'role_index',
+      testedProviderId: 'kimi',
+      testedModel: 'kimi-for-coding',
+      testedTimestamp: null,
+      timestamp: null,
+    },
+    director: {
+      providerId: 'qwen-a',
+      providerName: 'Qwen A',
+      providerType: 'openai_compat',
+      model: 'qwen3.6-27b-gpu0',
+      maxContextTokens: 32_768,
+      maxOutputTokens: 8_192,
+      bindings: [
+        {
+          providerId: 'qwen-a',
+          providerName: 'Qwen A',
+          providerType: 'openai_compat',
+          model: 'qwen3.6-27b-gpu0',
+          profile: '',
+          maxContextTokens: 32_768,
+          maxOutputTokens: 8_192,
+        },
+        {
+          providerId: 'qwen-b',
+          providerName: 'Qwen B',
+          providerType: 'openai_compat',
+          model: 'qwen3.6-27b-gpu1',
+          profile: '',
+          maxContextTokens: 65_536,
+          maxOutputTokens: 8_190,
+        },
+      ],
+      ready: true,
+      runtimeSupported: true,
+      runtimeIssue: '',
+      readinessIssue: '',
+      readinessSource: 'role_index',
+      testedProviderId: 'qwen-a',
+      testedModel: 'qwen3.6-27b-gpu0',
+      testedTimestamp: null,
+      timestamp: null,
+    },
+    qa: {
+      providerId: 'minimax',
+      providerName: 'MiniMax',
+      providerType: 'minimax',
+      model: 'MiniMax-M3',
+      maxContextTokens: 1_000_000,
+      maxOutputTokens: 8_192,
+      bindings: [],
+      ready: true,
+      runtimeSupported: true,
+      runtimeIssue: '',
+      readinessIssue: '',
+      readinessSource: 'role_index',
+      testedProviderId: 'minimax',
+      testedModel: 'MiniMax-M3',
+      testedTimestamp: null,
+      timestamp: null,
+    },
+  },
+};
+
 function baseInput(overrides: Partial<Parameters<typeof buildContextOSModel>[0]> = {}) {
   return {
     usageStats: null,
@@ -91,6 +183,29 @@ describe('buildContextOSModel', () => {
     const director = model.roles.find((r) => r.id === 'director');
     expect(director?.tokens).toBe(200);
     expect(director?.state).toBe('active');
+  });
+
+  it('uses actual per-role LLM context windows instead of the 128k fallback', () => {
+    const usageStats: UsageStats = {
+      totals: { prompt_tokens: 16_384, completion_tokens: 1024, total_tokens: 17_408 },
+      calls: 1,
+      estimated_calls: 0,
+      by_mode: {},
+    };
+    const model = buildContextOSModel(baseInput({ usageStats, llmRuntimeState: READY_LLM_WITH_WINDOWS }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+    const director = model.roles.find((r) => r.id === 'director');
+    const qa = model.roles.find((r) => r.id === 'qa');
+
+    expect(model.contextWindowSource).toBe('binding');
+    expect(model.contextWindowTokens).toBe(32_768);
+    expect(model.contextWindowLabel).toBe('最小绑定窗口');
+    expect(model.windowOccupancy).toBeCloseTo(0.5, 5);
+    expect(pm?.contextWindowTokens).toBe(262_144);
+    expect(pm?.contextWindowLabel).toBe('绑定窗口');
+    expect(director?.contextWindowTokens).toBe(32_768);
+    expect(director?.contextWindowLabel).toBe('2 路最小窗口');
+    expect(qa?.contextWindowTokens).toBe(1_000_000);
   });
 
   it('flags blocked roles in both the role card and the role-signal stage', () => {
@@ -496,6 +611,11 @@ describe('contextOSFormat', () => {
   });
   it('exposes a nominal context window constant', () => {
     expect(NOMINAL_CONTEXT_WINDOW).toBe(128_000);
+  });
+  it('formats model context windows with useful precision', () => {
+    expect(contextOSFormat.windowTokens(32_768)).toBe('32.8k');
+    expect(contextOSFormat.windowTokens(262_144)).toBe('262k');
+    expect(contextOSFormat.windowTokens(1_000_000)).toBe('1M');
   });
 });
 

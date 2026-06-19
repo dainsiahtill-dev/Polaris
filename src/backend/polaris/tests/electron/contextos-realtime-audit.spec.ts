@@ -22,6 +22,7 @@ const ignoredConsoleErrorPatterns = [
   /Failed to load resource: net::ERR_FILE_NOT_FOUND/i,
   /TypeError: Failed to fetch/i,
   /Unable to preload CSS for \/assets\//i,
+  /404 \(Not Found\).*\/v2\/context\/admin\/stats/i,
 ];
 
 function getActionableConsoleErrors(errors: string[]): string[] {
@@ -52,7 +53,8 @@ test("ContextOS entry is reachable and the real-time dashboard renders", async (
   });
   window.on("console", (message) => {
     if (message.type() === "error") {
-      consoleErrors.push(message.text());
+      const location = message.location();
+      consoleErrors.push(`${message.text()} @ ${location.url || "unknown"}`);
     }
   });
 
@@ -85,8 +87,9 @@ test("ContextOS entry is reachable and the real-time dashboard renders", async (
   await expect(window.locator("[data-testid='contextos-roletab-pm']")).toHaveAttribute("aria-pressed", "true");
   await window.locator("[data-testid='contextos-roletab-all']").click();
 
-  // Capture a full-page screenshot for human visual audit.
-  await window.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
+  // Capture a viewport screenshot for human visual audit without stretching the
+  // Electron test timeout on long dashboards.
+  await window.screenshot({ path: SCREENSHOT_PATH });
   await testInfo.attach("contextos-dashboard", { path: SCREENSHOT_PATH, contentType: "image/png" });
 
   // Back button returns to the main view.

@@ -268,6 +268,112 @@ class TestLLMStatusLastUpdated:
         assert response["blocked_roles"] == []
         assert response["last_updated"] == interview_timestamp
 
+    def test_status_exposes_role_binding_context_windows(self):
+        """ContextOS must not fall back to one fixed 128k window for every bound model."""
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        config_payload = {
+            "schema_version": 2,
+            "providers": {
+                "kimi": {
+                    "type": "anthropic_compat",
+                    "name": "Kimi Coding",
+                    "model": "kimi-for-coding",
+                    "max_context_tokens": 262_144,
+                    "max_output_tokens": 16_384,
+                },
+                "qwen-a": {
+                    "type": "openai_compat",
+                    "name": "Qwen A",
+                    "model": "qwen3.6-27b-gpu0",
+                    "max_context_tokens": 32_768,
+                    "max_output_tokens": 8_192,
+                },
+                "qwen-b": {
+                    "type": "openai_compat",
+                    "name": "Qwen B",
+                    "model": "qwen3.6-27b-gpu1",
+                    "max_context_tokens": 65_536,
+                    "max_output_tokens": 8_190,
+                },
+            },
+            "roles": {
+                "pm": {"provider_id": "kimi", "model": "kimi-for-coding"},
+                "director": {
+                    "provider_id": "qwen-a",
+                    "model": "qwen3.6-27b-gpu0",
+                    "bindings": [
+                        {"provider_id": "qwen-a", "model": "qwen3.6-27b-gpu0"},
+                        {"provider_id": "qwen-b", "model": "qwen3.6-27b-gpu1"},
+                    ],
+                },
+            },
+            "policies": {
+                "required_ready_roles": ["pm", "director"],
+            },
+        }
+
+        ready_index = {
+            "roles": {
+                "pm": {
+                    "ready": True,
+                    "provider_id": "kimi",
+                    "model": "kimi-for-coding",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+                "director": {
+                    "ready": True,
+                    "provider_id": "qwen-a",
+                    "model": "qwen3.6-27b-gpu0",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            },
+            "providers": {},
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=ready_index,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index_candidates",
+                return_value=[],
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={"lastUpdated": None},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        pm_status = response["roles"]["pm"]
+        director_status = response["roles"]["director"]
+
+        assert pm_status["provider_name"] == "Kimi Coding"
+        assert pm_status["provider_type"] == "anthropic_compat"
+        assert pm_status["max_context_tokens"] == 262_144
+        assert pm_status["max_output_tokens"] == 16_384
+        assert pm_status["bindings"][0]["max_context_tokens"] == 262_144
+
+        assert director_status["provider_name"] == "Qwen A"
+        assert director_status["max_context_tokens"] == 32_768
+        assert [item["max_context_tokens"] for item in director_status["bindings"]] == [32_768, 65_536]
+        assert response["providers"]["qwen-b"]["max_context_tokens"] == 65_536
+
 
 class TestRoleRuntimeSupportConsistency:
     """Keep llm/status and director runtime gate aligned on provider support."""

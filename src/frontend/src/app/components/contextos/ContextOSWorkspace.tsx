@@ -6,7 +6,7 @@
  * 角色信号 → project() 消息装配 → CompressionEngine 装配后预算压缩兜底 → LLM 调用，再回流到
  * Receipt / Telemetry 回执遥测的反馈闭环（顺序忠实于后端 gateway.py 真实装配流）。
  *
- * 数据源 = Polaris 既有实时框架（无轮询）：emit_event/emit_llm_event → MessageBus →
+ * 数据源 = Polaris 既有 WS 实时框架：emit_event/emit_llm_event → MessageBus →
  * WebSocket /v2/ws/runtime → useRuntime → llmStreamEvents/executionLogs/processStreamEvents
  * 这些 props 经 buildTelemetryFromStream 派生为遥测（见 contextOSTelemetry.ts / contextOSData.ts）。
  * 组件随 WS 事件到达即重渲染。真实 per-call token / 时延来自 journal `llm` 通道（raw.data），
@@ -49,7 +49,6 @@ import {
   buildContextOSModel,
   contextOSFormat,
   decisionMatchesRole,
-  NOMINAL_CONTEXT_WINDOW,
   type ContextOSModel,
   type DecisionRow,
   type EventTypeSlice,
@@ -191,7 +190,7 @@ function RoleHex({ role, selected, onSelect }: { role: RoleCard; selected: boole
       data-selected={selected}
       aria-pressed={selected}
       onClick={onSelect}
-      title={`${role.title} ${role.courtTitle} · ${role.tokensReal ? '真实 token 归因' : '事件归因'}`}
+      title={`${role.title} ${role.courtTitle} · ${role.tokensReal ? '真实 token 归因' : '事件归因'} · ${role.contextWindowDetail}`}
       className={cn(
         'flex items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-all duration-300 hover:border-accent-secondary/40',
         style.ring,
@@ -466,8 +465,8 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
         <div className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-bg-panel/70 to-transparent xl:hidden" aria-hidden />
       </div>
 
-      {/* 统计卡：6 → 3 */}
-      <div className="mb-3 grid grid-cols-3 gap-2">
+      {/* 统计卡 */}
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <RoleInternalStat
           label="活动"
           value={`${ctx.eventCount} · ${ctx.projectionCount}`}
@@ -477,6 +476,12 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
           label="调用"
           value={ctx.calls}
           sub={ctx.lastEventAt !== null ? `最近 ${formatFreshness(ctx.lastEventAt)}` : '无活动'}
+        />
+        <RoleInternalStat
+          label="窗口"
+          value={ctx.contextWindowTokens !== null ? contextOSFormat.windowTokens(ctx.contextWindowTokens) : '未知'}
+          sub={ctx.contextWindowDetail}
+          highlight={ctx.contextWindowTokens !== null}
         />
         <RoleInternalStat
           label="Token"
@@ -829,7 +834,7 @@ export function ContextOSWorkspace({
   const idle = !model.telemetryActive && (model.dataIdle || (!live && !model.running));
   const pipelineLive = observed && live;
 
-  // 新鲜度以"最近一条 WS 推送事件"的时间为准（而非轮询时刻），避免陈旧数据被误读为实时。
+  // 新鲜度以"最近一条 WS 推送事件"的时间为准，避免陈旧数据被误读为实时。
   const lastEventEpoch = model.lastTelemetryEpoch;
   const telemetryAgeMs = lastEventEpoch ? Date.now() - lastEventEpoch : null;
   const telemetryFresh = telemetryAgeMs !== null && telemetryAgeMs < 30_000; // 30s 内视为"实时"
@@ -839,6 +844,13 @@ export function ContextOSWorkspace({
     () => model.decisions.filter((row) => decisionMatchesRole(row.actor, activeRole)),
     [model.decisions, activeRole],
   );
+  const selectedRole = activeRole ? model.roles.find((role) => role.id === activeRole) ?? null : null;
+  const budgetWindowTokens = selectedRole?.contextWindowTokens ?? model.contextWindowTokens;
+  const budgetWindowLabel = selectedRole
+    ? `${selectedRole.title} · ${selectedRole.contextWindowLabel}`
+    : model.contextWindowLabel;
+  const budgetWindowDetail = selectedRole?.contextWindowDetail ?? model.contextWindowDetail;
+  const budgetWindowOccupancy = Math.max(0, Math.min(1, model.windowOccupancyTokens / budgetWindowTokens));
 
   const toggleRole = (roleId: string) => setActiveRole((prev) => (prev === roleId ? null : roleId));
 
@@ -1179,24 +1191,31 @@ export function ContextOSWorkspace({
                 {/* Context window occupancy (estimated) */}
                 <div className="space-y-1 border-t border-white/[0.06] pt-3">
                   <div className="flex items-center justify-between text-[11px]">
-                    <span className="flex items-center gap-1 text-text-muted">
-                      <Gauge className="h-3 w-3" />
-                      上下文窗口占用
-                      <span className="rounded bg-white/5 px-1 text-[9px] text-text-dim">估算</span>
+                    <span className="flex min-w-0 items-center gap-1 text-text-muted">
+                      <Gauge className="h-3 w-3 shrink-0" />
+                      <span className="truncate">上下文窗口占用</span>
+                      <span className="shrink-0 rounded bg-white/5 px-1 text-[9px] text-text-dim">估算</span>
                     </span>
-                    <span className="font-mono text-text-main">{Math.round(model.windowOccupancy * 100)}%</span>
+                    <span className="font-mono text-text-main">{Math.round(budgetWindowOccupancy * 100)}%</span>
                   </div>
                   <div className="h-2 overflow-hidden rounded-full bg-white/5">
                     <div
                       className={cn(
                         'h-full rounded-full transition-all duration-500',
-                        model.windowOccupancy > 0.85 ? 'bg-status-error' : model.windowOccupancy > 0.6 ? 'bg-status-warning' : 'bg-accent-secondary',
+                        budgetWindowOccupancy > 0.85 ? 'bg-status-error' : budgetWindowOccupancy > 0.6 ? 'bg-status-warning' : 'bg-accent-secondary',
                       )}
-                      style={{ width: `${Math.max(2, Math.round(model.windowOccupancy * 100))}%` }}
+                      style={{ width: `${Math.max(2, Math.round(budgetWindowOccupancy * 100))}%` }}
                     />
                   </div>
-                  <div className="text-right font-mono text-[9px] text-text-dim">
-                    ~{contextOSFormat.tokens(model.windowOccupancyTokens)} / {contextOSFormat.tokens(NOMINAL_CONTEXT_WINDOW)} 窗口
+                  <div
+                    className="flex items-center justify-end gap-1 text-right font-mono text-[9px] text-text-dim"
+                    data-testid="contextos-window-source"
+                    title={budgetWindowDetail}
+                  >
+                    <span>~{contextOSFormat.tokens(model.windowOccupancyTokens)}</span>
+                    <span>/</span>
+                    <span>{contextOSFormat.windowTokens(budgetWindowTokens)}</span>
+                    <span className="max-w-[170px] truncate">{budgetWindowLabel}</span>
                   </div>
                 </div>
               </div>

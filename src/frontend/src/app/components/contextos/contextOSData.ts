@@ -12,7 +12,7 @@
 import type { UsageStats } from '@/app/components/UsageHUD';
 import type { DialogueEvent } from '@/app/components/DialoguePanel';
 import type { LogEntry } from '@/types/log';
-import type { LlmRuntimeGateState } from '@/app/hooks/useLlmRuntimeGate';
+import type { LlmRuntimeGateState, LlmRuntimeRoleBinding, LlmRuntimeRoleDetail } from '@/app/hooks/useLlmRuntimeGate';
 import type { SnapshotPayload } from '@/app/types/appContracts';
 import {
   EMPTY_TELEMETRY,
@@ -25,7 +25,7 @@ import {
   type WorkerAggregate,
 } from './contextOSTelemetry';
 
-/** 名义上下文窗口大小（用于「上下文窗口占用」估算条；真实窗口随模型而变）。 */
+/** 无绑定窗口时的兜底上下文窗口；真实显示优先使用 /v2/llm/status 的角色绑定窗口。 */
 export const NOMINAL_CONTEXT_WINDOW = 128_000;
 
 export type PipelineState = 'active' | 'idle' | 'blocked';
@@ -83,6 +83,9 @@ export interface RoleInternalContext {
   workingMemoryItems: number | null;
   workingMemoryEstimated: boolean;
   contextTokensLatest: number | null;
+  contextWindowTokens: number | null;
+  contextWindowLabel: string;
+  contextWindowDetail: string;
   totalTokens: number;
   promptTokens: number;
   completionTokens: number;
@@ -118,6 +121,9 @@ export interface RoleCard {
   lastEventAt: number | null;
   projectionCount: number;
   contextItemsCount: number | null;
+  contextWindowTokens: number | null;
+  contextWindowLabel: string;
+  contextWindowDetail: string;
   receiptCount: number;
   internalContext: RoleInternalContext;
 }
@@ -182,6 +188,11 @@ export interface ContextOSModel {
   /** 估算的单次上下文窗口占用比例 0..1 */
   windowOccupancy: number;
   windowOccupancyTokens: number;
+  /** 用于全部视角的窗口分母：优先取已绑定角色窗口的最小值，无数据才使用 NOMINAL_CONTEXT_WINDOW。 */
+  contextWindowTokens: number;
+  contextWindowLabel: string;
+  contextWindowDetail: string;
+  contextWindowSource: 'binding' | 'fallback';
   /** 是否绑定了真实实时遥测（WebSocket 运行时流有事件）。 */
   telemetryActive: boolean;
   /** 真实 ProjectionEngine 投影次数（telemetry 优先，无则回退 calls 估算）。 */
@@ -274,6 +285,68 @@ function formatTokens(value: number): string {
     return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k`;
   }
   return String(Math.round(value));
+}
+
+function formatWindowTokens(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
+  }
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(value >= 100_000 ? 0 : 1)}k`;
+  }
+  return String(Math.round(value));
+}
+
+function modelLabel(value: string): string {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.length > 26 ? `${text.slice(0, 23)}...` : text;
+}
+
+function roleDetailForWindow(state: LlmRuntimeGateState, roleKey: string): LlmRuntimeRoleDetail | undefined {
+  const details = state.roleDetails || {};
+  return details[roleKey] || (roleKey === 'architect' ? details.docs : undefined);
+}
+
+function bindingWindow(binding: LlmRuntimeRoleBinding): number | null {
+  return typeof binding.maxContextTokens === 'number' && Number.isFinite(binding.maxContextTokens) && binding.maxContextTokens > 0
+    ? binding.maxContextTokens
+    : null;
+}
+
+function deriveRoleContextWindow(
+  state: LlmRuntimeGateState,
+  roleKey: string,
+): { tokens: number | null; label: string; detail: string } {
+  const detail = roleDetailForWindow(state, roleKey);
+  if (!detail) {
+    return { tokens: null, label: '窗口未知', detail: 'LLM status 未提供角色绑定窗口' };
+  }
+
+  const bindingWindows = detail.bindings
+    .map((binding) => bindingWindow(binding))
+    .filter((value): value is number => typeof value === 'number');
+  const directWindow = typeof detail.maxContextTokens === 'number' && detail.maxContextTokens > 0
+    ? detail.maxContextTokens
+    : null;
+  const tokens = bindingWindows.length > 0 ? Math.min(...bindingWindows) : directWindow;
+  const provider = detail.providerName || detail.providerId || 'Provider';
+  const model = detail.model || detail.bindings[0]?.model || '';
+  const bindingCount = detail.bindings.length;
+
+  if (!tokens) {
+    return {
+      tokens: null,
+      label: model ? `${modelLabel(model)} 窗口未知` : '窗口未知',
+      detail: `${provider}${model ? ` / ${model}` : ''}`,
+    };
+  }
+
+  return {
+    tokens,
+    label: bindingCount > 1 ? `${bindingCount} 路最小窗口` : '绑定窗口',
+    detail: `${provider}${model ? ` / ${model}` : ''}`,
+  };
 }
 
 function formatClock(raw: string | undefined): string {
@@ -455,7 +528,7 @@ export function buildContextOSModel(input: {
     : typeof rawIteration === 'string' && Number.isFinite(Number(rawIteration))
       ? Number(rawIteration)
       : null;
-  // 数据来源（全部来自 WS 既有实时框架，无轮询）：
+  // 数据来源（全部来自既有 WS 实时框架）：
   //  - 活动指标（调用 / 投影 / 时延 / 事件 / 错误）来自实时遥测——随事件到达即更新。
   //  - 真实 token 来自 journal `llm` 通道（raw.data.prompt/completion_tokens），同样实时送达；
   //    故遥测激活且有 token 时以遥测为准。仅当无实时 token 时，退回 usageStats（用量统计通道）作
@@ -495,10 +568,23 @@ export function buildContextOSModel(input: {
   // 遥测只看到尾部窗口（某条 WS 流已达环形缓冲上限）时为 true：把「累计」诚实降级为「最近窗口」。
   const telemetryWindowed = telemetry.windowed;
 
+  const roleWindowByKey: Record<string, { tokens: number | null; label: string; detail: string }> = Object.fromEntries(
+    ROLE_DEFINITIONS.map((role) => [role.key, deriveRoleContextWindow(llmRuntimeState, role.key)] as const),
+  );
+  const configuredRoleWindows = Object.values(roleWindowByKey)
+    .map((entry) => entry.tokens)
+    .filter((value): value is number => typeof value === 'number' && value > 0);
+  const contextWindowTokens = configuredRoleWindows.length > 0 ? Math.min(...configuredRoleWindows) : NOMINAL_CONTEXT_WINDOW;
+  const contextWindowSource: ContextOSModel['contextWindowSource'] = configuredRoleWindows.length > 0 ? 'binding' : 'fallback';
+  const contextWindowLabel = contextWindowSource === 'binding' ? '最小绑定窗口' : '兜底窗口';
+  const contextWindowDetail = contextWindowSource === 'binding'
+    ? '按当前角色绑定中的最小 max_context_tokens 估算'
+    : 'LLM status 未提供窗口字段，使用兜底值';
+
   // 估算单次上下文窗口占用：以「平均单次提示 token」近似当前窗口压力。
   const avgPromptPerCall = calls > 0 ? promptTokens / calls : promptTokens;
   const windowOccupancyTokens = Math.round(avgPromptPerCall);
-  const windowOccupancy = Math.max(0, Math.min(1, windowOccupancyTokens / NOMINAL_CONTEXT_WINDOW));
+  const windowOccupancy = Math.max(0, Math.min(1, windowOccupancyTokens / contextWindowTokens));
 
   const blockedRoles = new Set(llmRuntimeState.blockedRoles.map((role) => role.toLowerCase()));
   const llmBlocked = llmRuntimeState.state === 'BLOCKED';
@@ -596,7 +682,7 @@ export function buildContextOSModel(input: {
       id: 'budget', name: '平均消耗', component: '单次平均用量',
       state: observed ? 'active' : 'idle',
       metric: `${formatTokens(avgPerCall)} tok / 次`,
-      intensity: avgPerCall > 0 ? Math.min(1, avgPerCall / NOMINAL_CONTEXT_WINDOW * 4) : null,
+      intensity: avgPerCall > 0 ? Math.min(1, avgPerCall / contextWindowTokens * 4) : null,
     },
     {
       id: 'prompt', name: 'Projection.project', component: '消息装配',
@@ -720,6 +806,7 @@ export function buildContextOSModel(input: {
     const lastContextSize = roleEvents.find((event) => event.contextTokens !== null);
     const contextItemsCount = lastContextBuild ? lastContextBuild.contextItems : null;
     const workingMemoryItems = contextItemsCount ?? (roleEvents.length > 0 ? roleEvents.length : null);
+    const roleWindow = roleWindowByKey[role.key] ?? { tokens: null, label: '窗口未知', detail: 'LLM status 未提供角色绑定窗口' };
 
     // 当前任务：ContextOSEvent 目前未携带 refs，先诚实留空；后续可在 logEntryToEvent 中扩展
     // refs/task_id 字段后再精确填充。
@@ -754,6 +841,9 @@ export function buildContextOSModel(input: {
       workingMemoryItems,
       workingMemoryEstimated: contextItemsCount === null && workingMemoryItems !== null,
       contextTokensLatest: lastContextSize ? lastContextSize.contextTokens : null,
+      contextWindowTokens: roleWindow.tokens,
+      contextWindowLabel: roleWindow.label,
+      contextWindowDetail: roleWindow.detail,
       totalTokens,
       promptTokens,
       completionTokens,
@@ -794,6 +884,9 @@ export function buildContextOSModel(input: {
       lastEventAt: internalContext.lastEventAt,
       projectionCount: internalContext.projectionCount,
       contextItemsCount: internalContext.contextItemsCount,
+      contextWindowTokens: internalContext.contextWindowTokens,
+      contextWindowLabel: internalContext.contextWindowLabel,
+      contextWindowDetail: internalContext.contextWindowDetail,
       receiptCount: internalContext.receiptCount,
       internalContext,
     };
@@ -854,6 +947,10 @@ export function buildContextOSModel(input: {
     avgPerCall,
     windowOccupancy,
     windowOccupancyTokens,
+    contextWindowTokens,
+    contextWindowLabel,
+    contextWindowDetail,
+    contextWindowSource,
     telemetryActive,
     projectionCount,
     receiptCount,
@@ -878,5 +975,6 @@ export function buildContextOSModel(input: {
 
 export const contextOSFormat = {
   tokens: formatTokens,
+  windowTokens: formatWindowTokens,
   clock: formatClock,
 };

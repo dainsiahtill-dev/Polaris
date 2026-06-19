@@ -64,6 +64,50 @@ describe('useLlmRuntimeGate', () => {
     expect(reason).toContain('2026-05-23T23:59:00Z');
   });
 
+  it('normalizes role binding context windows from llm status', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'ready',
+      blocked_roles: [],
+      required_ready_roles: ['pm', 'director'],
+      roles: {
+        pm: {
+          provider_id: 'kimi',
+          provider_name: 'Kimi Coding',
+          provider_type: 'anthropic_compat',
+          model: 'kimi-for-coding',
+          max_context_tokens: 262144,
+          max_output_tokens: 16384,
+          bindings: [
+            {
+              provider_id: 'kimi',
+              provider_name: 'Kimi Coding',
+              provider_type: 'anthropic_compat',
+              model: 'kimi-for-coding',
+              max_context_tokens: 262144,
+              max_output_tokens: 16384,
+            },
+          ],
+        },
+        director: {
+          provider_id: 'qwen-a',
+          provider_name: 'Qwen A',
+          provider_type: 'openai_compat',
+          model: 'qwen3.6-27b-gpu0',
+          max_context_tokens: 32768,
+          bindings: [
+            { provider_id: 'qwen-a', model: 'qwen3.6-27b-gpu0', max_context_tokens: 32768 },
+            { provider_id: 'qwen-b', model: 'qwen3.6-27b-gpu1', max_context_tokens: 65536 },
+          ],
+        },
+      },
+    });
+
+    expect(state.roleDetails?.pm?.providerName).toBe('Kimi Coding');
+    expect(state.roleDetails?.pm?.maxContextTokens).toBe(262144);
+    expect(state.roleDetails?.pm?.bindings[0]?.maxOutputTokens).toBe(16384);
+    expect(state.roleDetails?.director?.bindings.map((binding) => binding.maxContextTokens)).toEqual([32768, 65536]);
+  });
+
   it('treats deprecated readiness_stale blocks as ready', () => {
     const state = normalizeLlmRuntimeGatePayload({
       state: 'blocked',

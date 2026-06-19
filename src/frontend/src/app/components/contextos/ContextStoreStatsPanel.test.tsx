@@ -188,6 +188,16 @@ describe('ContextStoreStatsPanel', () => {
     expect(within(screen.getByTestId('contextos-store-stats-error')).getByText(/HTTP 500/)).toBeTruthy();
   });
 
+  it('does not surface aborted stats reads as user-visible errors', async () => {
+    mockedApiFetch.mockRejectedValueOnce(new Error('signal is aborted without reason'));
+    render(<ContextStoreStatsPanel workspace="/repo" />);
+    await waitFor(() => {
+      expect(mockedApiFetch).toHaveBeenCalledWith('/v2/context/admin/stats', expect.any(Object));
+    });
+    expect(screen.queryByTestId('contextos-store-stats-error')).toBeNull();
+    expect(screen.queryByText(/读取统计失败/)).toBeNull();
+  });
+
   it('falls back to last successful data on subsequent error and surfaces it as warning', async () => {
     mockAdminReady();
     render(<ContextStoreStatsPanel workspace="/repo" />);

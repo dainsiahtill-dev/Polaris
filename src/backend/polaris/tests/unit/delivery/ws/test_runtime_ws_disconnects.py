@@ -5,7 +5,7 @@ from typing import Any, cast
 import pytest
 from fastapi import WebSocket
 from polaris.delivery.ws.endpoints.models import is_websocket_disconnect_runtime_error
-from polaris.delivery.ws.endpoints.websocket_loop import run_main_loop
+from polaris.delivery.ws.endpoints.websocket_loop import _runtime_event_affects_status, run_main_loop
 
 
 class _DisconnectingWebSocket:
@@ -30,6 +30,27 @@ def test_starlette_disconnect_runtime_error_is_classified_as_disconnect() -> Non
 def test_asgi_send_after_close_runtime_error_is_classified_as_disconnect() -> None:
     exc = RuntimeError("Unexpected ASGI message 'websocket.send', after sending 'websocket.close'.")
     assert is_websocket_disconnect_runtime_error(exc) is True
+
+
+def test_runtime_task_lifecycle_event_affects_status() -> None:
+    assert _runtime_event_affects_status(
+        {
+            "channel": "runtime_events",
+            "name": "director_task_started",
+            "actor": "Director",
+            "data": {"task_id": "TASK-2"},
+        }
+    )
+
+
+def test_runtime_llm_token_event_does_not_affect_status() -> None:
+    assert not _runtime_event_affects_status(
+        {
+            "channel": "llm",
+            "kind": "content_chunk",
+            "payload": {"content": "partial"},
+        }
+    )
 
 
 @pytest.mark.asyncio

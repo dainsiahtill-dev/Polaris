@@ -1,0 +1,38 @@
+id: vc-20260619-contextos-role-window-telemetry
+date: 2026-06-19
+scope:
+  - src/backend/polaris/cells/runtime/projection/internal/llm_status.py
+  - src/frontend/src/app/hooks/useLlmRuntimeGate.ts
+  - src/frontend/src/app/components/contextos/contextOSData.ts
+  - src/frontend/src/app/components/contextos/ContextOSWorkspace.tsx
+classification: pattern
+assumption_register:
+  - id: A1
+    statement: ContextOS budget UI used one nominal 128k denominator for all roles.
+    evidence: src/frontend/src/app/components/contextos/contextOSData.ts exported NOMINAL_CONTEXT_WINDOW and used it in windowOccupancy.
+    status: confirmed
+  - id: A2
+    statement: The backend already knows each role provider binding and provider max_context_tokens.
+    evidence: GET /v2/llm/config contains providers.*.max_context_tokens and roles.* bindings.
+    status: confirmed
+  - id: A3
+    statement: Context store stats aborts should not become user-visible errors.
+    evidence: Screenshot showed "读取统计失败 signal is aborted..." during ContextOS view refresh.
+    status: confirmed
+pre_mortem:
+  likely_failure_modes:
+    - UI keeps using fallback window when llm status omits role binding metadata.
+    - Multi-binding Director shows only primary model and hides smaller worker windows.
+    - Abort suppression accidentally hides real HTTP 500 stats failures.
+verification_plan:
+  backend:
+    - python -m pytest -q src/backend/polaris/tests/test_llm_phase0_regression.py -k context_windows
+    - python -m mypy src/backend/polaris/cells/runtime/projection/internal/llm_status.py
+  frontend:
+    - npm run test -- src/frontend/src/app/hooks/__tests__/useLlmRuntimeGate.test.ts src/frontend/src/app/components/contextos/contextOSData.test.ts src/frontend/src/app/components/contextos/ContextOSWorkspace.test.tsx src/frontend/src/app/components/contextos/ContextStoreStatsPanel.test.tsx
+    - npm run typecheck
+acceptance:
+  - /v2/llm/status exposes roles.*.max_context_tokens and roles.*.bindings[].max_context_tokens.
+  - ContextOS all-role budget uses the smallest configured role window.
+  - Selecting a role switches the displayed budget denominator to that role's binding window.
+  - Abort-like stats fetch failures do not render "读取统计失败"; real HTTP failures still do.
