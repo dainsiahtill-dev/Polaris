@@ -17,6 +17,7 @@ import time
 import urllib.error
 import urllib.request
 from collections import Counter
+from collections.abc import Iterable
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -211,6 +212,20 @@ def _smoke_python_cli(workspace: Path, entrypoint: str, *, timeout_s: int) -> di
     if result["ok"]:
         return {"kind": "python_cli", "entrypoint": entrypoint, **result}
     fallback = _run_command([sys.executable, entrypoint], workspace, timeout_s=min(max(2, int(timeout_s)), 5))
+    fallback_output = f"{fallback.get('stdout_tail') or ''}\n{fallback.get('stderr_tail') or ''}".lower()
+    if (
+        fallback.get("returncode") in {1, 2}
+        and "usage:" in fallback_output
+        and "traceback" not in fallback_output
+        and "syntaxerror" not in fallback_output
+    ):
+        return {
+            "kind": "python_cli",
+            "entrypoint": entrypoint,
+            "usage_screen": True,
+            **fallback,
+            "ok": True,
+        }
     if fallback["ok"] or fallback.get("timeout"):
         return {"kind": "python_cli", "entrypoint": entrypoint, "started": bool(fallback.get("timeout")), **fallback}
     return {"kind": "python_cli", "entrypoint": entrypoint, **fallback}
@@ -435,12 +450,18 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
 
 def collect_llm_events(
     workspace: Path,
-    runtime_dir: Path | None,
+    runtime_dir: Path | Iterable[Path] | None,
     audit_bundle: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Collect normalized LLM invocation evidence from runtime artifacts."""
     candidates: set[Path] = set()
-    for base in (runtime_dir, workspace / ".polaris" / "runtime", workspace / ".polaris"):
+    if runtime_dir is None:
+        runtime_dirs: list[Path] = []
+    elif isinstance(runtime_dir, Path):
+        runtime_dirs = [runtime_dir]
+    else:
+        runtime_dirs = [path for path in runtime_dir if isinstance(path, Path)]
+    for base in (*runtime_dirs, workspace / ".polaris" / "runtime", workspace / ".polaris"):
         if base is None:
             continue
         candidates.update(base.glob("events/*.llm.events.jsonl"))
@@ -546,6 +567,10 @@ def _loose_binding_key(row: dict[str, Any]) -> str:
     return f"{_norm_text(row.get('provider_id') or row.get('provider'))}|{_norm_text(row.get('model'))}"
 
 
+def _model_key(row: dict[str, Any]) -> str:
+    return _norm_text(row.get("model"))
+
+
 def _matches_family(role: str, row: dict[str, Any]) -> bool:
     alternatives = _ROLE_FAMILIES.get(role)
     if not alternatives:
@@ -579,18 +604,31 @@ def build_llm_route_audit(
         observed = list(by_role.get(normalized) or [])
         configured_keys = {_binding_key(row) for row in configured if _loose_binding_key(row) != "|"}
         configured_loose = {_loose_binding_key(row) for row in configured if _loose_binding_key(row) != "|"}
+        configured_models = {_model_key(row) for row in configured if _model_key(row)}
         observed_keys = {_binding_key(row) for row in observed if _loose_binding_key(row) != "|"}
         observed_loose = {_loose_binding_key(row) for row in observed if _loose_binding_key(row) != "|"}
+        observed_providerless_models = {
+            _model_key(row)
+            for row in observed
+            if _model_key(row) and not _norm_text(row.get("provider_id") or row.get("provider"))
+        }
         missing = sorted(
-            key for key in configured_keys if key not in observed_keys and key.rsplit("|", 1)[0] not in observed_loose
+            key
+            for key in configured_keys
+            if key not in observed_keys
+            and key.rsplit("|", 1)[0] not in observed_loose
+            and key.split("|", 2)[1] not in observed_providerless_models
         )
         family_ok = any(_matches_family(normalized, row) for row in observed)
-        binding_ok = bool(configured) and bool(observed) and (not missing or normalized != "director")
+        binding_ok = bool(configured) and bool(observed) and not missing
         if normalized != "director" and configured_loose:
-            binding_ok = bool(observed_loose.intersection(configured_loose))
+            binding_ok = bool(observed_loose.intersection(configured_loose)) or bool(
+                observed_providerless_models.intersection(configured_models)
+            )
         multi_route_ok = True
         if normalized == "director":
-            multi_route_ok = len(configured_loose) >= 2 and not missing
+            configured_routes = configured_loose or configured_models
+            multi_route_ok = len(configured_routes) >= 2 and not missing
             binding_ok = binding_ok and multi_route_ok
         role_ok = binding_ok and family_ok
         role_results[normalized] = {

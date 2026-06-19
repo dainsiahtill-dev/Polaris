@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:08.320517Z",
-  "source_hash": "007ef968b041e455",
+  "generated_at": "2026-06-19T14:36:49.999149Z",
+  "source_hash": "308713d722131513",
   "cell_id": "roles.adapters",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -375,6 +375,24 @@
     },
     {
       "type": "function",
+      "name": "_diag_write_results_summary",
+      "description": "Wall 2 diagnostic: ``(tool_name, max content length)`` per write-tool result.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_empty_write_content_retry_needed",
+      "description": "Return True only when write tools were attempted with blank content.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_empty_write_content_retry_message",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
       "name": "_finalize_claimed_execution",
       "description": "Finalize a runtime task and surface terminal-state conflicts as data.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
@@ -399,8 +417,26 @@
     },
     {
       "type": "function",
+      "name": "_pin_materialize_delivery_mode",
+      "description": "Pin ``[mode:materialize]`` for a from-scratch build task.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_pin_materialize_context_delivery_mode",
+      "description": "Carry the materialize contract on the control plane for ContextOS turns.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
       "name": "_collect_workspace_code_diff",
       "description": "Collect workspace fingerprints and compute task-relevant changed files.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_workspace_out_of_scope_diff",
+      "description": "Return real workspace changes that were filtered out by task path scope.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -431,6 +467,18 @@
       "type": "function",
       "name": "_is_recoverable_no_write_mutation_contract_error_text",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_evaluate_acceptance_verify_exists",
+      "description": "Evaluate the PM contract's machine-checkable ``verify <path> exists`` assertions.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_path_exists_case_insensitive",
+      "description": "Check workspace-relative existence, tolerating path-case drift.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -507,8 +555,56 @@
     },
     {
       "type": "function",
+      "name": "_apply_deterministic_unresolved_import_symbol_repair",
+      "description": "Repair cross-file Python unresolved import symbol failures.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_python_symbol_defined",
+      "description": "True when the symbol is already resolvable in ``text``.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_python_symbol_stub",
+      "description": "Choose the most useful minimal binding for ``symbol``.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_deterministic_python_static_smoke",
+      "description": "py_compile every Python artifact the model wrote, declared or not.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_apply_deterministic_python_runtime_smoke",
+      "description": "Surface runtime errors that ``py_compile`` cannot catch.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
       "name": "_apply_deterministic_typescript_reexport_repair",
       "description": "Repair a narrow TypeScript runtime re-export miss without target-specific code.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_failing_verify_clause",
+      "description": "Clause-level teaching diagnosis — delegates to the KernelOne toolkit",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_step_verify_errors",
+      "description": "写后即查（三层裂变 DO 层自查）: run the construction step's machine",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_single_file_step_target",
+      "description": "Pin-eligibility mirror of roles.kernel ``extract_declared_step_target_files``:",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -533,6 +629,12 @@
       "type": "function",
       "name": "_is_node_runtime_source_path",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_case_insensitive_file_match",
+      "description": "Return True when a sibling file matches ``target_path``'s name ignoring case.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -568,42 +670,6 @@
     {
       "type": "function",
       "name": "_apply_deterministic_declared_target_contract_repairs",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_task_model_contract_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_tenant_model_contract_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_declared_tenant_model_contract_paths",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_declared_task_model_contract_paths",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_tenant_model_contract_needs_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_model_contract_needs_repair",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
@@ -693,103 +759,7 @@
     },
     {
       "type": "function",
-      "name": "_apply_deterministic_node_test_file_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_select_node_test_file_repair_path",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_detect_node_test_runner",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_node_test_file_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_workspace_test_contract_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_audit_service_contract_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_task_service_contract_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_apply_deterministic_framework_free_service_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_requests_dag_service_contract",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_requests_audit_service_contract",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_task_requests_task_service_contract",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_audit_service_contract_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_audit_middleware_contract_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_task_service_contract_content_for_crud",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_task_controller_contract_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_taskgraph_contract_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_taskgraph_test_contract_content",
+      "name": "_is_repairable_npm_test_script_error",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
@@ -807,55 +777,7 @@
     },
     {
       "type": "function",
-      "name": "_synthesize_dag_service_contract_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_task_service_contract_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
       "name": "_apply_deterministic_missing_declared_target_repair",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_task_model_contract_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_base_model_contract_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_base_repository_contract_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_tenant_model_contract_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_synthesize_declared_target_file_content",
-      "description": "",
-      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
-    },
-    {
-      "type": "function",
-      "name": "_class_name_from_declared_target_path",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
@@ -881,6 +803,12 @@
       "type": "function",
       "name": "_parse_missing_declared_target_files",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_filter_satisfied_declared_target_missing_errors",
+      "description": "Drop stale declared-target-missing errors after repair/smoke side effects.",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
     {
@@ -940,6 +868,48 @@
     {
       "type": "function",
       "name": "_materialization_quality_scan_paths",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_select_materialization_quality_repair_target_batch",
+      "description": "Select the missing targets to repair in a single LLM attempt.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_missing_declared_target_files",
+      "description": "Machine-derive the declared target files absent from the workspace.",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_missing_materialization_quality_repair_target_files",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_missing_unresolved_relative_import_target_files",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_relative_import_repair_target_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_relative_import_suffix_order",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_unresolved_import_symbol_repair_block",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/director/execute_method.py"
     },
@@ -1800,6 +1770,162 @@
       ]
     },
     {
+      "type": "function",
+      "name": "_pm_text",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_strip_markdown_title_noise",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_strip_task_label_prefix",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_title_fragment",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_extract_inline_list_field",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_is_dependency_chain_text",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_raw_task_is_dependency_chain",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_flatten_raw_path_values",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_raw_task_has_explicit_concrete_target",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_raw_task_is_non_delivery_constraint",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_raw_task_is_meta_diagnostic",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_is_prompt_echo_response",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_is_placeholder_task_title",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_strip_action_prefix",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_extract_requirement_subject",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_path_token_from_subject",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_is_concrete_target_file_path",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_split_concrete_targets_and_scopes",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_normalize_explicit_file_path",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_extract_concrete_file_paths_from_text",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_append_unique_path",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_root_source_filename_from_text",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_root_workspace_target_files_from_context",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_target_files_include_tests",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_infer_test_target_file_for_contract",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_pm_root_workspace_contract_targets_from_directive",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/pm_adapter.py"
+    },
+    {
       "type": "class",
       "name": "QAAdapter",
       "description": "QA adapter.",
@@ -1836,6 +1962,18 @@
         {
           "name": "_build_qa_message",
           "doc": "Build optional LLM review prompt."
+        },
+        {
+          "name": "_build_qa_prompt_appendix",
+          "doc": "Build trusted QA output-contract instructions for the system prompt."
+        },
+        {
+          "name": "_build_qa_json_repair_message",
+          "doc": "Build a strict JSON-only repair prompt for non-structured QA output."
+        },
+        {
+          "name": "_build_qa_json_repair_prompt_appendix",
+          "doc": "Build trusted strict JSON repair instructions for the system prompt."
         },
         {
           "name": "_parse_review_result",
@@ -1901,8 +2039,26 @@
     },
     {
       "type": "function",
+      "name": "_is_nonfatal_qa_llm_runtime_exception",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/qa_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_format_qa_evidence_block",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/internal/qa_adapter.py"
+    },
+    {
+      "type": "function",
       "name": "_has_unfinished_placeholder_match",
       "description": "Return whether placeholder-like text indicates unfinished implementation.",
+      "defined_in": "polaris/cells/roles/adapters/internal/qa_adapter.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_comment_marker_match",
+      "description": "",
       "defined_in": "polaris/cells/roles/adapters/internal/qa_adapter.py"
     },
     {
@@ -3151,6 +3307,42 @@
       "defined_in": "polaris/cells/roles/adapters/tests/test_cell_integration.py"
     },
     {
+      "type": "function",
+      "name": "_write",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_declared_target_case_insensitive.py"
+    },
+    {
+      "type": "function",
+      "name": "test_case_variant_declared_target_not_reported_missing",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_declared_target_case_insensitive.py"
+    },
+    {
+      "type": "function",
+      "name": "test_exact_case_declared_target_not_reported_missing",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_declared_target_case_insensitive.py"
+    },
+    {
+      "type": "function",
+      "name": "test_genuinely_missing_target_still_reported",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_declared_target_case_insensitive.py"
+    },
+    {
+      "type": "function",
+      "name": "test_case_insensitive_file_match_helper",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_declared_target_case_insensitive.py"
+    },
+    {
+      "type": "function",
+      "name": "test_case_insensitive_match_requires_a_file_not_a_dir",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_declared_target_case_insensitive.py"
+    },
+    {
       "type": "class",
       "name": "TestSelectExecutionStrategy",
       "description": "_select_execution_strategy is a pure function of directive + task + context.",
@@ -3336,10 +3528,6 @@
           "doc": ""
         },
         {
-          "name": "test_missing_declared_target_repair_synthesizes_taskgraph_contract_targets",
-          "doc": ""
-        },
-        {
           "name": "test_detects_legacy_overstrict_node_export_contract",
           "doc": ""
         },
@@ -3361,6 +3549,10 @@
         },
         {
           "name": "test_claim_external_task_id_prefers_selected_task_source",
+          "doc": ""
+        },
+        {
+          "name": "test_get_task_resolves_external_task_id_before_queue_fallback",
           "doc": ""
         },
         {
@@ -3417,6 +3609,102 @@
         },
         {
           "name": "test_non_transient_no_write_still_requires_materialization",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDeterministicPythonRuntimeSmokeLongRunningBoundary",
+      "description": "Runtime smoke must not penalize a long-running __main__ block.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_long_running_main_block_is_not_a_failure",
+          "doc": ""
+        },
+        {
+          "name": "test_clean_main_block_still_passes",
+          "doc": "A clean main that exits within timeout is still a pass."
+        },
+        {
+          "name": "test_subprocess_timeout_expired_process_killed",
+          "doc": "Sanity: when a long-running process is killed, the"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDeterministicPythonStaticSmoke",
+      "description": "Director py_compiles every .py file the model touches, not just declared targets.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_python_static_smoke_catches_syntax_error_in_undeclared_file",
+          "doc": ""
+        },
+        {
+          "name": "test_python_static_smoke_passes_clean_files",
+          "doc": ""
+        },
+        {
+          "name": "test_python_static_smoke_skips_non_python_files",
+          "doc": ""
+        },
+        {
+          "name": "test_python_static_smoke_catches_multiple_broken_files",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDeterministicPythonRuntimeSmoke",
+      "description": "Director surfaces runtime errors that py_compile misses.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_python_runtime_smoke_catches_call_time_error",
+          "doc": ""
+        },
+        {
+          "name": "test_python_runtime_smoke_passes_clean_main",
+          "doc": ""
+        },
+        {
+          "name": "test_python_runtime_smoke_skips_module_without_main",
+          "doc": ""
+        },
+        {
+          "name": "test_python_runtime_smoke_skips_non_python_files",
+          "doc": ""
+        },
+        {
+          "name": "test_python_runtime_smoke_terminates_hung_process",
+          "doc": "The smoke test must kill the child process after the"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDeterministicPythonUnresolvedSymbolRepair",
+      "description": "Director can repair cross-file Python unresolved import symbol failures",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_repairs_missing_symbol_with_similar_named_alias",
+          "doc": ""
+        },
+        {
+          "name": "test_repairs_missing_symbol_with_class_stub_when_no_similar",
+          "doc": ""
+        },
+        {
+          "name": "test_idempotent_when_symbol_already_defined",
+          "doc": ""
+        },
+        {
+          "name": "test_skips_when_exporter_file_missing",
           "doc": ""
         }
       ]
@@ -3567,9 +3855,363 @@
       ]
     },
     {
+      "type": "class",
+      "name": "TestDeclaredPathCaseInsensitiveMatching",
+      "description": "L2-09 PM-0001-2 regression: PM declared \"readme.md\", Director wrote",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_filter_keeps_case_mismatched_target",
+          "doc": ""
+        },
+        {
+          "name": "test_filter_keeps_exact_case_target",
+          "doc": ""
+        },
+        {
+          "name": "test_filter_still_excludes_unrelated_files",
+          "doc": ""
+        },
+        {
+          "name": "test_out_of_scope_diff_reports_filtered_real_output",
+          "doc": ""
+        },
+        {
+          "name": "test_out_of_scope_diff_ignores_declared_output",
+          "doc": ""
+        },
+        {
+          "name": "test_directory_candidate_matches_case_insensitively",
+          "doc": ""
+        },
+        {
+          "name": "test_glob_candidate_matches_case_insensitively",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAcceptanceVerifyExistsExemption",
+      "description": "L2-09 class: identical-rewrite / case-variant writes produce an empty",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "_evaluate",
+          "doc": ""
+        },
+        {
+          "name": "test_all_assertions_pass",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_path_not_exempted",
+          "doc": ""
+        },
+        {
+          "name": "test_no_machine_assertions_no_exemption",
+          "doc": ""
+        },
+        {
+          "name": "test_requires_write_tool_evidence",
+          "doc": ""
+        },
+        {
+          "name": "test_nested_path_case_insensitive",
+          "doc": ""
+        },
+        {
+          "name": "test_one_missing_among_many_blocks_exemption",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Execution",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "extract_kernel_tool_results",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Adapter",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Execution",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "extract_kernel_tool_results",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Adapter",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Execution",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "extract_kernel_tool_results",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Adapter",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQualityRepairMissingTargetContract",
+      "description": "L2-10 r3 regression: the repair turn rewrote src/main.js (already",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_missing_declared_targets_derived_from_workspace",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_targets_case_insensitive",
+          "doc": ""
+        },
+        {
+          "name": "test_satisfied_declared_target_missing_errors_are_filtered",
+          "doc": ""
+        },
+        {
+          "name": "test_repair_targets_css_import_exact_path",
+          "doc": ""
+        },
+        {
+          "name": "test_repair_targets_existing_import_case_variant_is_not_missing",
+          "doc": ""
+        },
+        {
+          "name": "test_repair_message_names_missing_targets_and_hides_changed_paths",
+          "doc": ""
+        },
+        {
+          "name": "test_single_missing_target_repair_forces_one_write_without_reads",
+          "doc": ""
+        },
+        {
+          "name": "test_unresolved_symbol_repair_targets_exporting_module",
+          "doc": ""
+        },
+        {
+          "name": "test_repair_message_without_missing_block_when_none",
+          "doc": ""
+        },
+        {
+          "name": "test_semantic_quality_repair_allows_rewriting_failed_changed_artifact",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSyntaxRepairDirective",
+      "description": "I3-r15: the narrow-edit-ONLY directive (added L2-11 r2 to break the",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_syntax_error_gives_executable_repair_path",
+          "doc": ""
+        },
+        {
+          "name": "test_no_directive_without_syntax_errors",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTruncatedFileDirective",
+      "description": "L2-11 r6: index.html was whole-file-rewritten three times and every",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_truncation_error_gets_append_directive",
+          "doc": ""
+        },
+        {
+          "name": "test_plain_syntax_error_keeps_narrow_edit_directive",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCrossFileCoherenceRepair",
+      "description": "C7-text W3 (#54 repair-mode cross-file coherence): an unresolved relative",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_unresolved_import_gets_coherence_directive",
+          "doc": ""
+        },
+        {
+          "name": "test_no_coherence_block_without_unresolved_imports",
+          "doc": ""
+        },
+        {
+          "name": "test_coherence_block_is_floor_inert",
+          "doc": "Floor-safety lock: with no unresolved-import error the builder emits"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCollectStepVerifyErrors",
+      "description": "写后即查（Fix-9, live I3-r11）: step verify 必须在执行轮内跑进修复梯,",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "_collect",
+          "doc": ""
+        },
+        {
+          "name": "test_non_step_context_is_noop",
+          "doc": ""
+        },
+        {
+          "name": "test_passing_verify_returns_no_errors",
+          "doc": ""
+        },
+        {
+          "name": "test_failing_verify_yields_repairable_error",
+          "doc": ""
+        },
+        {
+          "name": "test_list_verify_joined",
+          "doc": ""
+        },
+        {
+          "name": "test_failure_names_first_failing_clause",
+          "doc": "Fix-10 (live I3-r12): S2 passed 7/8 clauses but teaching carried only"
+        },
+        {
+          "name": "test_single_clause_failure_has_no_clause_suffix",
+          "doc": ""
+        },
+        {
+          "name": "test_quoted_and_inside_pattern_aborts_clause_diagnosis",
+          "doc": "Splitting on ' && ' cuts through the quoted pattern; the sh -n guard"
+        },
+        {
+          "name": "test_state_carrying_chain_aborts_clause_diagnosis",
+          "doc": "Adversarial review (live repro): a cd/VAR= clause passes sh -n but its"
+        },
+        {
+          "name": "test_top_level_or_chain_aborts_clause_diagnosis",
+          "doc": ""
+        },
+        {
+          "name": "test_clause_detail_precedes_full_command_in_message",
+          "doc": "Teaching channels truncate (step card 240 chars) — the actionable"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSingleFileStepTarget",
+      "description": "对抗复核 C-fix: 钉靶步轮的质量门只裁决该步拥有的文件 — package.json 等",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+      "methods": [
+        {
+          "name": "_target",
+          "doc": ""
+        },
+        {
+          "name": "test_clean_step_target_is_extracted",
+          "doc": ""
+        },
+        {
+          "name": "test_malformed_targets_are_refused",
+          "doc": ""
+        },
+        {
+          "name": "test_non_step_sources_are_refused",
+          "doc": ""
+        },
+        {
+          "name": "test_quality_scan_is_scoped_to_step_target",
+          "doc": ""
+        },
+        {
+          "name": "_capture",
+          "doc": ""
+        },
+        {
+          "name": "test_non_step_turn_keeps_full_scan_scope",
+          "doc": ""
+        },
+        {
+          "name": "_capture",
+          "doc": ""
+        }
+      ]
+    },
+    {
       "type": "function",
       "name": "_make_adapter",
       "description": "Create a DirectorAdapter with mocked heavy dependencies.",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    },
+    {
+      "type": "function",
+      "name": "test_empty_write_content_retry_needed_only_for_blank_write",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    },
+    {
+      "type": "function",
+      "name": "test_empty_write_retry_uses_concrete_scope_path_when_target_files_missing",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    },
+    {
+      "type": "function",
+      "name": "_source_tools_from_tool_results",
+      "description": "",
       "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
     },
     {
@@ -3582,6 +4224,36 @@
       "type": "function",
       "name": "test_validate_generated_output_rejects_todo_comment",
       "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    },
+    {
+      "type": "function",
+      "name": "test_validate_generated_output_allows_title_case_todo_product_heading",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    },
+    {
+      "type": "function",
+      "name": "test_scaffold_synthesis_default_off",
+      "description": "§8 integrity: a declared TS target with no clean nearby source must never",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    },
+    {
+      "type": "function",
+      "name": "_run",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    },
+    {
+      "type": "function",
+      "name": "test_business_contract_synthesis_default_off",
+      "description": "§8 regression: Director must not fabricate business-domain service code",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+    },
+    {
+      "type": "function",
+      "name": "test_placeholder_node_test_synthesis_default_off",
+      "description": "§8 regression: missing test files should not be masked by fabricated",
       "defined_in": "polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
     },
     {
@@ -4545,6 +5217,18 @@
         {
           "name": "test_rejects_parent_traversal",
           "doc": ""
+        },
+        {
+          "name": "test_html_placeholder_attribute_is_not_low_quality",
+          "doc": "L2-10 r4 live regression: a real Markdown editor's <textarea"
+        },
+        {
+          "name": "test_prose_placeholder_scaffold_still_rejected",
+          "doc": ""
+        },
+        {
+          "name": "test_css_placeholder_pseudo_element_is_not_low_quality",
+          "doc": "L2-10 r5 live regression: a real .editor::placeholder CSS rule was"
         }
       ]
     },
@@ -5006,6 +5690,50 @@
     },
     {
       "type": "class",
+      "name": "TestPinMaterializeDeliveryMode",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_pin_materialize_delivery_mode.py",
+      "methods": [
+        {
+          "name": "test_fresh_create_context_pins_materialize_control_plane",
+          "doc": ""
+        },
+        {
+          "name": "test_non_fresh_context_is_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_fresh_create_without_marker_is_pinned",
+          "doc": ""
+        },
+        {
+          "name": "test_marker_already_present_is_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_marker_present_other_case_is_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_non_fresh_task_is_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_message_non_fresh_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_closed_loop_pinned_message_resolves_to_materialize",
+          "doc": ""
+        },
+        {
+          "name": "test_non_fresh_terse_goal_not_forced",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestBuildPmMessage",
       "description": "",
       "defined_in": "polaris/cells/roles/adapters/tests/test_pm_adapter_pure.py",
@@ -5133,6 +5861,26 @@
         {
           "name": "test_invalid_python_literal_returns_none",
           "doc": ""
+        },
+        {
+          "name": "test_prompt_echo_error_does_not_parse_schema_example_as_tasks",
+          "doc": ""
+        },
+        {
+          "name": "test_json_dependency_chain_task_is_not_promoted_to_contract",
+          "doc": ""
+        },
+        {
+          "name": "test_json_meta_diagnostic_tasks_are_not_promoted_to_contracts",
+          "doc": ""
+        },
+        {
+          "name": "test_json_non_delivery_constraint_tasks_force_recovery",
+          "doc": ""
+        },
+        {
+          "name": "test_json_test_implementation_with_explicit_target_is_preserved",
+          "doc": ""
         }
       ]
     },
@@ -5181,6 +5929,14 @@
         {
           "name": "test_chinese_headings",
           "doc": ""
+        },
+        {
+          "name": "test_bare_task_heading_is_not_promoted_to_placeholder_title",
+          "doc": ""
+        },
+        {
+          "name": "test_task_preamble_is_not_promoted_to_section_task",
+          "doc": ""
         }
       ]
     },
@@ -5200,6 +5956,14 @@
         },
         {
           "name": "test_with_description",
+          "doc": ""
+        },
+        {
+          "name": "test_markdown_task_label_uses_meaningful_title",
+          "doc": ""
+        },
+        {
+          "name": "test_detail_bullets_are_not_promoted_to_tasks",
           "doc": ""
         }
       ]
@@ -5236,6 +6000,38 @@
         },
         {
           "name": "test_keeps_concrete_relative_scope_paths",
+          "doc": ""
+        },
+        {
+          "name": "test_inline_target_files_are_preferred_over_title_inference",
+          "doc": ""
+        },
+        {
+          "name": "test_inline_target_files_accept_backticked_array",
+          "doc": ""
+        },
+        {
+          "name": "test_workspace_root_cli_requirement_uses_root_files_not_src_directory_targets",
+          "doc": ""
+        },
+        {
+          "name": "test_implementation_task_default_test_wording_does_not_add_test_target",
+          "doc": ""
+        },
+        {
+          "name": "test_verification_task_adds_test_target_for_root_cli_project",
+          "doc": ""
+        },
+        {
+          "name": "test_synthetic_root_cli_contracts_use_file_level_targets",
+          "doc": ""
+        },
+        {
+          "name": "test_fallback_goal_does_not_echo_prompt_directive",
+          "doc": ""
+        },
+        {
+          "name": "test_trailing_task_label_is_removed_from_title",
           "doc": ""
         }
       ]
@@ -5312,6 +6108,10 @@
         },
         {
           "name": "test_keyword_hint_parsed",
+          "doc": ""
+        },
+        {
+          "name": "test_synthesized_contracts_prefer_original_requirement_subject_over_pm_prompt_noise",
           "doc": ""
         }
       ]
@@ -5680,6 +6480,10 @@
           "doc": ""
         },
         {
+          "name": "test_todo_product_selectors_are_not_unfinished_content",
+          "doc": ""
+        },
+        {
           "name": "test_targeted_repair_does_not_fail_on_out_of_scope_placeholder",
           "doc": ""
         },
@@ -5710,6 +6514,14 @@
         {
           "name": "test_no_evidence_fallback",
           "doc": ""
+        },
+        {
+          "name": "test_prompt_appendix_contains_json_contract",
+          "doc": ""
+        },
+        {
+          "name": "test_json_repair_message_preserves_previous_output",
+          "doc": ""
         }
       ]
     },
@@ -5729,6 +6541,22 @@
         },
         {
           "name": "test_unparseable",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQaExecute",
+      "description": "",
+      "defined_in": "polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py",
+      "methods": [
+        {
+          "name": "test_cognitive_runtime_blocked_is_nonfatal_when_static_gate_passes",
+          "doc": ""
+        },
+        {
+          "name": "test_retries_strict_json_when_llm_output_lacks_verdict",
           "doc": ""
         }
       ]

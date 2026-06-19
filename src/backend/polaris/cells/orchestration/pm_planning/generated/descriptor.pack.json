@@ -1,10 +1,183 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:06.615101Z",
-  "source_hash": "eb76494b26e5ead5",
+  "generated_at": "2026-06-19T14:36:48.747295Z",
+  "source_hash": "700e12524471fd98",
   "cell_id": "orchestration.pm_planning",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "class",
+      "name": "DecisionStatus",
+      "description": "The ADR-lite lifecycle state of a governance decision.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/decision_log.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "DecisionRecordV1",
+      "description": "A single immutable governance-decision record.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/decision_log.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Serialize to a JSON-safe dict in a fixed key order."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "DecisionRegister",
+      "description": "Workspace-scoped governance-decision store.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/decision_log.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Resolve the storage directory under ``runtime/pm/decisions``."
+        },
+        {
+          "name": "register",
+          "doc": "Create, persist and return a new ``PROPOSED`` decision."
+        },
+        {
+          "name": "update_status",
+          "doc": "Transition a decision to ``status`` and append an append-only event."
+        },
+        {
+          "name": "load",
+          "doc": "Load one decision by id; return ``None`` if absent. Traversal-guarded."
+        },
+        {
+          "name": "list",
+          "doc": "Return decisions (filename-sorted) matching the AND of all filters."
+        },
+        {
+          "name": "summarize",
+          "doc": "Return tallies over the (optionally filtered) register."
+        },
+        {
+          "name": "_save",
+          "doc": "Atomically persist a record to ``{decision_id}.json``."
+        },
+        {
+          "name": "_load_path",
+          "doc": "Load and coerce one record file; return ``None`` on any read error."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "Return the current UTC time as an ISO-8601 string ending in ``Z``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/decision_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_nonce",
+      "description": "Build a collision-resistant nonce (microsecond UTC stamp + random suffix).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/decision_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_token",
+      "description": "Sanitize a token to the ``[A-Za-z0-9_.-]`` charset, capped at 80 chars.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/decision_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_record_id",
+      "description": "Reject ids that could escape the storage directory (path traversal).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/decision_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "Raise ``ValueError`` if a string field is empty/whitespace.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/decision_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_status",
+      "description": "Coerce a loaded value to a :class:`DecisionStatus`, defaulting ``PROPOSED``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/decision_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_str_tuple",
+      "description": "Coerce a loaded value to a tuple of non-empty strings (fail-closed).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/decision_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_history",
+      "description": "Coerce a loaded value to a tuple of history events (fail-closed).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/decision_log.py"
+    },
+    {
+      "type": "class",
+      "name": "DorCheckResult",
+      "description": "Per-task Definition-of-Ready check result (immutable, JSON-safe).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/definition_of_ready.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Serialize to a JSON-safe dict."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_extract_task_id",
+      "description": "Return a non-empty task id, fall back to a deterministic position key.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/definition_of_ready.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_string_list",
+      "description": "Coerce a string-or-list value to a list of non-empty strings.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/definition_of_ready.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_acceptance_items",
+      "description": "Collect acceptance items from any recognized field.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/definition_of_ready.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_estimate",
+      "description": "Return True when the task carries a non-zero effort/size estimate.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/definition_of_ready.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_concrete_scope",
+      "description": "Return True when at least one scope_path is a concrete PM path.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/definition_of_ready.py"
+    },
+    {
+      "type": "function",
+      "name": "_collect_dependency_refs",
+      "description": "Collect dependency refs with the same precedence as dependency_validator.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/definition_of_ready.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_risk_assessment",
+      "description": "Return True when the task explicitly links risk or contains risk text.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/definition_of_ready.py"
+    },
+    {
+      "type": "function",
+      "name": "_evaluate_task_dor",
+      "description": "Evaluate one task against the DoR rules.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/definition_of_ready.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_definition_of_ready",
+      "description": "Evaluate a PM task contract against generic Definition-of-Ready rules.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/definition_of_ready.py"
+    },
     {
       "type": "class",
       "name": "DependencyCycleError",
@@ -13,6 +186,18 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "Schedule",
+      "description": "A Critical Path Method schedule over a task DAG (times in effort units).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/dependency_validator.py",
+      "methods": [
+        {
+          "name": "to_dict",
           "doc": ""
         }
       ]
@@ -46,6 +231,161 @@
       "name": "dfs",
       "description": "",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/dependency_validator.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_weight",
+      "description": "Best-effort CPM weight for a task, in abstract effort units.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/dependency_validator.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_schedule",
+      "description": "Compute a Critical Path Method schedule over the task dependency DAG.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/dependency_validator.py"
+    },
+    {
+      "type": "function",
+      "name": "_wsjf_order_enabled",
+      "description": "Return whether the WSJF dispatch-order gate is enabled (default OFF).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/live_wiring.py"
+    },
+    {
+      "type": "function",
+      "name": "reorder_tasks_by_wsjf",
+      "description": "Reorder PM contract tasks highest-WSJF-first, behind the default-OFF gate.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/live_wiring.py"
+    },
+    {
+      "type": "class",
+      "name": "MilestoneStatus",
+      "description": "The lifecycle state of a milestone.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "MilestoneRecordV1",
+      "description": "A single immutable milestone record.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Serialize to a JSON-safe dict in a fixed key order."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "MilestoneRegister",
+      "description": "Workspace-scoped milestone store.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Resolve the storage directory under ``runtime/pm/milestones``."
+        },
+        {
+          "name": "register",
+          "doc": "Create, persist and return a new ``PLANNED`` milestone."
+        },
+        {
+          "name": "update_status",
+          "doc": "Transition a milestone to ``status`` and append an append-only event."
+        },
+        {
+          "name": "load",
+          "doc": "Load one milestone by id; return ``None`` if absent. Traversal-guarded."
+        },
+        {
+          "name": "list",
+          "doc": "Return milestones (filename-sorted) matching the AND of all filters."
+        },
+        {
+          "name": "summarize",
+          "doc": "Return tallies over the (optionally task-scoped) register."
+        },
+        {
+          "name": "_save",
+          "doc": "Atomically persist a record to ``{milestone_id}.json``."
+        },
+        {
+          "name": "_load_path",
+          "doc": "Load and coerce one record file; return ``None`` on any read error."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "Return the current UTC time as an ISO-8601 string ending in ``Z``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
+    },
+    {
+      "type": "function",
+      "name": "_nonce",
+      "description": "Build a collision-resistant nonce (microsecond UTC stamp + random suffix).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_token",
+      "description": "Sanitize a token to the ``[A-Za-z0-9_.-]`` charset, capped at 80 chars.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_record_id",
+      "description": "Reject ids that could escape the storage directory (path traversal).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "Raise ``ValueError`` if a string field is empty/whitespace.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_status",
+      "description": "Coerce a loaded value to a :class:`MilestoneStatus`, defaulting ``PLANNED``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_task_ids",
+      "description": "Coerce a loaded value to a tuple of non-empty task-id strings (fail-closed).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_history",
+      "description": "Coerce a loaded value to a tuple of history events (fail-closed).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_target_iteration",
+      "description": "Coerce a loaded value to an iteration index ``int`` or ``None`` (fail-closed).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
+    },
+    {
+      "type": "function",
+      "name": "_milestone_gate_enabled",
+      "description": "Return whether the milestone wiring gate is enabled (default OFF).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
+    },
+    {
+      "type": "function",
+      "name": "classify_milestone_health",
+      "description": "Classify a milestone's health into a generic band (PURE, no I/O).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
+    },
+    {
+      "type": "function",
+      "name": "_schedule_flags_at_risk",
+      "description": "Return whether a linked task sits on the schedule's critical path (pure).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/milestones.py"
     },
     {
       "type": "class",
@@ -533,6 +873,70 @@
           "doc": "Check approval request status."
         },
         {
+          "name": "_tool_risk_summary",
+          "doc": "Return a fail-closed risk register summary."
+        },
+        {
+          "name": "_tool_risk_list",
+          "doc": "List risk register entries with optional filters."
+        },
+        {
+          "name": "_tool_risk_register",
+          "doc": "Register a new risk register entry."
+        },
+        {
+          "name": "_tool_risk_update_status",
+          "doc": "Update the status of a risk register entry."
+        },
+        {
+          "name": "_tool_commitment_summary",
+          "doc": "Return a fail-closed commitment register summary."
+        },
+        {
+          "name": "_tool_commitment_list",
+          "doc": "List commitments with optional filters."
+        },
+        {
+          "name": "_tool_commitment_register",
+          "doc": "Register a new commitment."
+        },
+        {
+          "name": "_tool_commitment_update_status",
+          "doc": "Update the status of a commitment."
+        },
+        {
+          "name": "_tool_decision_summary",
+          "doc": "Return a fail-closed decision register summary."
+        },
+        {
+          "name": "_tool_decision_list",
+          "doc": "List governance decisions with optional filters."
+        },
+        {
+          "name": "_tool_decision_register",
+          "doc": "Register a governance decision."
+        },
+        {
+          "name": "_tool_decision_update_status",
+          "doc": "Update the status of a governance decision."
+        },
+        {
+          "name": "_tool_project_status_report",
+          "doc": "Build and publish the composed PM project status report."
+        },
+        {
+          "name": "_tool_compute_backlog_ranking",
+          "doc": "Rank tasks by priority against the current contract."
+        },
+        {
+          "name": "_tool_compute_critical_path",
+          "doc": "Compute the critical path from the current PM task contract."
+        },
+        {
+          "name": "_tool_evaluate_definition_of_ready",
+          "doc": "Evaluate the current PM task contract against Definition-of-Ready rules."
+        },
+        {
           "name": "handle_message",
           "doc": "Handle incoming message from Director or other agents."
         },
@@ -549,6 +953,308 @@
           "doc": "Save current state as snapshot."
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "ProjectReport",
+      "description": "The composed, PM-publishable project status view (immutable, JSON-safe).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Serialize to a JSON-safe dict."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_coerce_iteration",
+      "description": "Return a genuine non-``bool`` ``int`` iteration, fail-closed to ``0``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "compose_project_report",
+      "description": "Fold plain-data inputs into a frozen :class:`ProjectReport` (PURE).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_render_health_block",
+      "description": "Render the Health & Progress section (INLINED status-rollup format).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_render_wsjf_block",
+      "description": "Render the Top Priorities (WSJF) section as a fixed Markdown table.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_render_raid_block",
+      "description": "Render the Open RAID section, iterating the canonical order tuples.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_render_milestone_block",
+      "description": "Render the Milestones section (summary + per-milestone health table).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "render_project_markdown",
+      "description": "Render a :class:`ProjectReport` to a deterministic Markdown document.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_as_float",
+      "description": "Fail-closed float read for rendering (``bool``/junk/non-finite -> ``0.0``).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_as_int",
+      "description": "Fail-closed int read for rendering (``bool``/junk -> ``0``).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_pm_tasks",
+      "description": "Read the PM task contract directly and return its task dicts (fail-closed).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_status_counts",
+      "description": "Tally contract task statuses into the rollup vocabulary (status adapter).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_ids",
+      "description": "Return the non-empty, stripped task ids in contract order (deduplicated).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_raid_summary",
+      "description": "Return ``raid.summarize()`` fail-closed to ``{}`` on any store error.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_raid_pressure",
+      "description": "Project per-task open-critical/blocker RAID pressure (fail-closed per id).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_milestone_records",
+      "description": "Return ``register.list()`` fail-closed to ``[]`` on any store error.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_milestone_summary",
+      "description": "Return ``register.summarize(...)`` fail-closed to ``{}`` on any store error.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "_write_text_atomic",
+      "description": "Atomically write UTF-8 ``text`` to ``path`` (temp companion + replace).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "function",
+      "name": "build_pm_project_report",
+      "description": "Gather the live PM stores, compose the report, write it, return a summary.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/project_report.py"
+    },
+    {
+      "type": "class",
+      "name": "RaidCategory",
+      "description": "The RAID axis a register entry belongs to.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RaidSeverity",
+      "description": "Impact axis. Values are aligned with the CE Risk Register vocabulary.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RaidProbability",
+      "description": "Likelihood axis (RAID-native; CE has no probability concept).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RaidStatus",
+      "description": "Lifecycle ladder, shared across all four categories.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RaidRecordV1",
+      "description": "A single immutable RAID register entry.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Serialize to a JSON-safe dict, including derived read-only fields."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RaidEventV1",
+      "description": "A generic, audit-friendly RAID lifecycle event.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Serialize the event to a JSON-safe dict."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RaidRegister",
+      "description": "Workspace-scoped RAID register storage.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": "Resolve the storage directory under ``runtime/pm/raid``."
+        },
+        {
+          "name": "register",
+          "doc": "Create, persist and return a new ``OPEN`` RAID entry."
+        },
+        {
+          "name": "update_status",
+          "doc": "Transition an entry to ``status`` and append an append-only event."
+        },
+        {
+          "name": "load",
+          "doc": "Load one entry by id; return ``None`` if absent. Traversal-guarded."
+        },
+        {
+          "name": "list",
+          "doc": "Return entries (entry-id-sorted) matching the AND of all filters."
+        },
+        {
+          "name": "summarize",
+          "doc": "Return tallies over the (optionally filtered) register."
+        },
+        {
+          "name": "_save",
+          "doc": "Atomically persist a record to ``{entry_id}.json``."
+        },
+        {
+          "name": "_load_path",
+          "doc": "Load and coerce one entry file; return ``None`` on any read error."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "Return the current UTC time as an ISO-8601 string ending in ``Z``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "_nonce",
+      "description": "Build a collision-resistant nonce (microsecond UTC stamp + random suffix).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_token",
+      "description": "Sanitize a token to the ``[A-Za-z0-9_.-]`` charset, capped at 80 chars.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_record_id",
+      "description": "Reject ids that could escape the storage directory (path traversal).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "_risk_gate_enabled",
+      "description": "Return whether the RAID planning gate is enabled (default OFF).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_risk_score",
+      "description": "Return the ``probability x impact`` score on a standard 5x5 matrix.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_risk_band",
+      "description": "Map a 1..25 risk score to a generic ``low``/``medium``/``high`` band.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_category",
+      "description": "Coerce a loaded value to a :class:`RaidCategory`, defaulting to ``RISK``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_severity",
+      "description": "Coerce a loaded value to a :class:`RaidSeverity`, defaulting to ``MEDIUM``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_probability",
+      "description": "Coerce a loaded value to a :class:`RaidProbability`, default ``POSSIBLE``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_status",
+      "description": "Coerce a loaded value to a :class:`RaidStatus`, defaulting to ``OPEN``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_links",
+      "description": "Coerce a loaded value to a tuple of non-empty link strings (fail-closed).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_history",
+      "description": "Coerce a loaded value to a tuple of history events (fail-closed).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "build_raid_event",
+      "description": "Build a timestamped :class:`RaidEventV1` (pure factory, no I/O).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
+    },
+    {
+      "type": "function",
+      "name": "_require_non_empty",
+      "description": "Raise ``ValueError`` if a required string field is empty/whitespace.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/raid_register.py"
     },
     {
       "type": "function",
@@ -714,6 +1420,12 @@
     },
     {
       "type": "function",
+      "name": "_workspace_has_python_sources",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
+    },
+    {
+      "type": "function",
       "name": "_resolve_repo_tsc",
       "description": "Resolve a usable ``tsc`` executable from env override or the Polaris repo toolchain.",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
@@ -767,9 +1479,87 @@
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/shared_quality.py"
     },
     {
+      "type": "class",
+      "name": "PmStatusRollup",
+      "description": "Immutable snapshot of project status, ready to render or serialize.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Serialize to a JSON-safe dict."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_coerce_count",
+      "description": "Coerce one status-count value to a non-negative ``int`` (fail-closed).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_int_key",
+      "description": "Read ``mapping[key]`` as a non-negative ``int`` (fail-closed).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_positive_finite",
+      "description": "Return whether ``value`` is a finite real number strictly greater than 0.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_ratio",
+      "description": "Coerce a supplied ``0..1`` ratio to a clamped float, or ``None``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_requirements",
+      "description": "Resolve the three requirements fields fail-closed and unit-uniformly.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py"
+    },
+    {
+      "type": "function",
+      "name": "_compute_remaining_effort",
+      "description": "Compute remaining effort from CPM weights (§7 reuse, never recomputed).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py"
+    },
+    {
+      "type": "function",
+      "name": "_compute_rag",
+      "description": "Map the generic signals to a ``red``/``amber``/``green`` band.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py"
+    },
+    {
+      "type": "function",
+      "name": "compute_status_rollup",
+      "description": "Compute the pure :class:`PmStatusRollup` from plain-data inputs.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py"
+    },
+    {
+      "type": "function",
+      "name": "_format_ratio_percent",
+      "description": "Render a ``0..1`` ratio as a one-decimal percent, or ``n/a`` for None.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py"
+    },
+    {
+      "type": "function",
+      "name": "render_status_markdown",
+      "description": "Render a :class:`PmStatusRollup` to a deterministic markdown report.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/status_rollup.py"
+    },
+    {
       "type": "function",
       "name": "build_card3d_pm_required_domain_contract",
       "description": "Return the canonical Card3D PM task decomposition contract.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_domain_contracts_enabled",
+      "description": "Return whether project-specific game/card3d PM domain contracts are active.",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
     },
     {
@@ -829,6 +1619,12 @@
     {
       "type": "function",
       "name": "_normalize_path",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_pm_contract_output_path",
       "description": "",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
     },
@@ -912,6 +1708,12 @@
     },
     {
       "type": "function",
+      "name": "_is_directory_scope_evidenced",
+      "description": "Accept a bare directory token when evidence shows it is a real dir.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
       "name": "_coerce_pm_path_to_workspace_relative",
       "description": "Coerce an LLM-provided PM path into a workspace-relative path.",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
@@ -932,6 +1734,18 @@
       "type": "function",
       "name": "_replace_external_roots_in_text",
       "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_strip_unfulfillable_vendored_targets_in_place",
+      "description": "Remove third-party minified asset paths from write-target fields.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_steer_single_file_ui_tasks_in_place",
+      "description": "Split single-HTML interactive-app tasks into a modular file contract.",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
     },
     {
@@ -1046,6 +1860,12 @@
       "type": "function",
       "name": "_has_card3d_text_hints",
       "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_domain_text_hints_enabled",
+      "description": "Opt-in gate for KEYWORD-driven domain task injection (CLAUDE.md §8 fix).",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
     },
     {
@@ -1263,6 +2083,72 @@
       "name": "get_quality_gate_config",
       "description": "Get quality gate configuration from environment.",
       "defined_in": "polaris/cells/orchestration/pm_planning/internal/task_quality_gate.py"
+    },
+    {
+      "type": "class",
+      "name": "WsjfScore",
+      "description": "One task's WSJF score and its fully decomposed Cost-of-Delay components.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/wsjf.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": "Return a JSON-safe ``dict`` of every field (stable key set)."
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_coerce_nonneg_float",
+      "description": "Fail-closed numeric read: a real ``int``/``float`` (not ``bool``) clamped to ``>= 0.0``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/wsjf.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_nonneg_int",
+      "description": "Fail-closed count read: a real non-``bool`` number truncated to a ``>= 0`` ``int``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/wsjf.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_first_alias",
+      "description": "Return the first present alias among ``aliases`` coerced fail-closed to a non-negative float.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/wsjf.py"
+    },
+    {
+      "type": "function",
+      "name": "_priority_int",
+      "description": "Read the raw ordinal ``priority`` fail-closed.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/wsjf.py"
+    },
+    {
+      "type": "function",
+      "name": "_priority_urgency",
+      "description": "Inverse-priority urgency term: ``scale / max(priority_int, 1)`` (lower int -> higher).",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/wsjf.py"
+    },
+    {
+      "type": "function",
+      "name": "_job_size",
+      "description": "Return the epsilon-floored CPM job size (effort) for ``task_id``.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/wsjf.py"
+    },
+    {
+      "type": "function",
+      "name": "_finite_wsjf",
+      "description": "Return ``cost_of_delay / job_size`` clamped to a finite, JSON-safe value.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/wsjf.py"
+    },
+    {
+      "type": "function",
+      "name": "score_tasks_wsjf",
+      "description": "Score ``tasks`` by WSJF against a precomputed ``schedule``; rank highest WSJF first.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/wsjf.py"
+    },
+    {
+      "type": "function",
+      "name": "render_wsjf_markdown",
+      "description": "Render ``scores`` as a byte-stable Markdown table, rows in the given (ranked) order.",
+      "defined_in": "polaris/cells/orchestration/pm_planning/internal/wsjf.py"
     },
     {
       "type": "class",

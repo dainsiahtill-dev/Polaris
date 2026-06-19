@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:03.886465Z",
-  "source_hash": "8396fc450b00122c",
+  "generated_at": "2026-06-19T14:36:44.808122Z",
+  "source_hash": "7f8a1bc58aa77624",
   "cell_id": "qa.audit_verdict",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -174,6 +174,14 @@
           "doc": "Signal the consumer to stop after the current cycle."
         },
         {
+          "name": "_run_step_verify",
+          "doc": "Run a construction step's machine verify in the workspace."
+        },
+        {
+          "name": "_run_syntax_gate",
+          "doc": "Return a precise, weak-model-fixable message when a declared/changed"
+        },
+        {
           "name": "_claim_and_process_one",
           "doc": "Attempt to claim one PENDING_QA task and process it."
         },
@@ -187,6 +195,48 @@
       "type": "function",
       "name": "_resolve_qa_route",
       "description": "Resolve QA route from audit result.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_findings_requeue_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_findings_max_bounces",
+      "description": "Resolve the per-task RANK 1 requeue cap (env override, else 2). Clamped to >=0.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_feedback_counters",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_feedback_counters_from_payload",
+      "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_qa_findings_are_actionable",
+      "description": "True iff findings is a non-empty list with at least one non-blank entry.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_format_qa_findings_feedback",
+      "description": "Render QA findings as an actionable, content-preserving repair directive.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_format_qa_requeue_feedback",
+      "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
     },
     {
@@ -241,6 +291,12 @@
       "type": "function",
       "name": "_extract_fallback_audit_files",
       "description": "",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_failing_verify_clause",
+      "description": "Clause-level teaching diagnosis — delegates to the KernelOne toolkit",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/qa_consumer.py"
     },
     {
@@ -364,6 +420,38 @@
     },
     {
       "type": "class",
+      "name": "TestQAFindingsRequeue",
+      "description": "RANK 1 (Reflexion/Actor-Critic): a content FAIL must hand its precise",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_qa_consumer.py",
+      "methods": [
+        {
+          "name": "test_actionable_predicate",
+          "doc": ""
+        },
+        {
+          "name": "test_feedback_quotes_findings_and_caps",
+          "doc": ""
+        },
+        {
+          "name": "test_content_fail_with_findings_requeues_to_pending_exec",
+          "doc": ""
+        },
+        {
+          "name": "test_content_fail_without_findings_stays_terminal_reject",
+          "doc": ""
+        },
+        {
+          "name": "test_env_off_keeps_terminal_reject",
+          "doc": ""
+        },
+        {
+          "name": "test_repeated_content_fail_terminates_at_bounce_cap",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestQAConsumerPollOnce",
       "description": "",
       "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_qa_consumer.py",
@@ -377,6 +465,22 @@
           "doc": ""
         },
         {
+          "name": "test_requeue_design_verdict_preserves_findings_as_last_failure",
+          "doc": ""
+        },
+        {
+          "name": "test_findings_bounce_cap_survives_new_consumer_instances",
+          "doc": ""
+        },
+        {
+          "name": "_qa_pass",
+          "doc": ""
+        },
+        {
+          "name": "_director_moves_back_to_qa",
+          "doc": ""
+        },
+        {
           "name": "test_audit_exception_requeues_pending_qa",
           "doc": ""
         },
@@ -386,6 +490,30 @@
         },
         {
           "name": "test_code_task_without_director_changed_files_routes_to_exec",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestSyntaxGate",
+      "description": "I3-r18 fail-closed syntax gate: a non-parsing target is rejected, not shipped.",
+      "defined_in": "polaris/cells/qa/audit_verdict/internal/tests/test_qa_consumer.py",
+      "methods": [
+        {
+          "name": "test_rejects_broken_python_target",
+          "doc": ""
+        },
+        {
+          "name": "test_clean_python_target_passes",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_file_not_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_broken_js_target_rejected_with_line",
           "doc": ""
         }
       ]
@@ -679,6 +807,12 @@
       "type": "function",
       "name": "parse_traceback_frames",
       "description": "Parse traceback text into a typed QA failure signal.",
+      "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "claim_qa_task",
+      "description": "Handle ClaimQaTaskCommandV1 → targeted claim from the task market.",
       "defined_in": "polaris/cells/qa/audit_verdict/public/service.py"
     }
   ],

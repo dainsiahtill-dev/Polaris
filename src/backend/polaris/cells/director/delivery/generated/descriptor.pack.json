@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:04.285794Z",
-  "source_hash": "7050a1113eb63dc7",
+  "generated_at": "2026-06-19T14:36:45.210927Z",
+  "source_hash": "5c89397ed7cddb7d",
   "cell_id": "director.delivery",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -174,6 +174,14 @@
         {
           "name": "_snapshot_tool_call",
           "doc": ""
+        },
+        {
+          "name": "_stash_tool_snapshot",
+          "doc": "Store a file snapshot for later claim by its tool_result."
+        },
+        {
+          "name": "_claim_tool_snapshot",
+          "doc": "Claim the snapshot belonging to a tool_result, never mispairing."
         },
         {
           "name": "_enrich_tool_call_payload",

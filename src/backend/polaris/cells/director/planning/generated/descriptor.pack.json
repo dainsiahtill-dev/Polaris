@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:03.961876Z",
-  "source_hash": "9fb1360b001ac297",
+  "generated_at": "2026-06-19T14:36:44.885438Z",
+  "source_hash": "1150e2d49b21ccca",
   "cell_id": "director.planning",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -465,6 +465,30 @@
       "defined_in": "polaris/cells/director/planning/public/contracts.py"
     },
     {
+      "type": "function",
+      "name": "get_planning_agent",
+      "description": "Return the shared per-workspace DirectorAgent used by contract handlers.",
+      "defined_in": "polaris/cells/director/planning/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_planning_agents",
+      "description": "Test hook: drop all cached per-workspace agents.",
+      "defined_in": "polaris/cells/director/planning/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "plan_director_task",
+      "description": "Handle PlanDirectorTaskCommandV1 via the agent's canonical TASK ingress.",
+      "defined_in": "polaris/cells/director/planning/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_director_status",
+      "description": "Handle GetDirectorStatusQueryV1 from the cell's persisted planning state.",
+      "defined_in": "polaris/cells/director/planning/public/service.py"
+    },
+    {
       "type": "class",
       "name": "TestPlanDirectorTaskCommandV1",
       "description": "Tests for PlanDirectorTaskCommandV1 contract.",
@@ -623,6 +647,52 @@
           "doc": "Test error is properly constructed and raised."
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "TestPlanDirectorTask",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/tests/test_public_service_contracts.py",
+      "methods": [
+        {
+          "name": "test_plan_registers_execution_via_agent_ingress",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGetDirectorStatus",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/tests/test_public_service_contracts.py",
+      "methods": [
+        {
+          "name": "test_status_on_fresh_workspace",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAgentCache",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/tests/test_public_service_contracts.py",
+      "methods": [
+        {
+          "name": "test_same_workspace_shares_agent",
+          "doc": ""
+        },
+        {
+          "name": "test_reset_drops_cached_agents",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_isolated_agents",
+      "description": "",
+      "defined_in": "polaris/cells/director/planning/tests/test_public_service_contracts.py"
     }
   ],
   "embedding_runtime_fingerprint": "local-v1"

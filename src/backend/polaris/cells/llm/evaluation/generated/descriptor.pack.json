@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:13.472558Z",
-  "source_hash": "2362641e291fd4c9",
+  "generated_at": "2026-06-19T14:36:54.129821Z",
+  "source_hash": "1ddbd73d2ca420f3",
   "cell_id": "llm.evaluation",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -1941,7 +1941,7 @@
     {
       "type": "function",
       "name": "readiness_max_age_seconds",
-      "description": "Return the configured readiness max age in seconds.",
+      "description": "Return the readiness max age in seconds.",
       "defined_in": "polaris/cells/llm/evaluation/internal/readiness_freshness.py"
     },
     {
@@ -1952,14 +1952,8 @@
     },
     {
       "type": "function",
-      "name": "_utc_now",
-      "description": "",
-      "defined_in": "polaris/cells/llm/evaluation/internal/readiness_freshness.py"
-    },
-    {
-      "type": "function",
       "name": "readiness_freshness_issue",
-      "description": "Return a readiness freshness issue code, or ``\"\"`` when acceptable.",
+      "description": "Return a timestamp audit issue code, or ``\"\"`` when acceptable.",
       "defined_in": "polaris/cells/llm/evaluation/internal/readiness_freshness.py"
     },
     {
@@ -3439,6 +3433,18 @@
           "doc": "DANGEROUS_PATH_CHARS should be a compiled pattern."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "test_readiness_timestamp_age_does_not_expire_successful_binding",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_readiness_freshness.py"
+    },
+    {
+      "type": "function",
+      "name": "test_readiness_timestamp_invalid_still_reports_audit_issue",
+      "description": "",
+      "defined_in": "polaris/cells/llm/evaluation/tests/test_readiness_freshness.py"
     },
     {
       "type": "class",

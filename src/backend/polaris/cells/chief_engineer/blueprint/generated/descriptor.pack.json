@@ -1,10 +1,96 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:05.645320Z",
-  "source_hash": "66a9b65b2cf22cbf",
+  "generated_at": "2026-06-19T14:36:46.763632Z",
+  "source_hash": "d75c982785422811",
   "cell_id": "chief_engineer.blueprint",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
+    {
+      "type": "class",
+      "name": "ADRDecisionLog",
+      "description": "Workspace-scoped Architecture Decision Record ledger.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_log.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": ""
+        },
+        {
+          "name": "update_status",
+          "doc": ""
+        },
+        {
+          "name": "list",
+          "doc": ""
+        },
+        {
+          "name": "load",
+          "doc": ""
+        },
+        {
+          "name": "summarize",
+          "doc": ""
+        },
+        {
+          "name": "_mark_superseded",
+          "doc": ""
+        },
+        {
+          "name": "_save",
+          "doc": ""
+        },
+        {
+          "name": "_load_path",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_nonce",
+      "description": "Build a collision-resistant nonce (microsecond UTC + random suffix).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_token",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_record_id",
+      "description": "Reject ids that could escape the storage directory (path traversal).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_status",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_log.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_str_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_log.py"
+    },
+    {
+      "type": "function",
+      "name": "build_adr_event",
+      "description": "Build an ``ADREventV1`` stamped with the current UTC time.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/adr_log.py"
+    },
     {
       "type": "class",
       "name": "BlueprintADR",
@@ -144,6 +230,26 @@
           "doc": "Attempt to claim one PENDING_DESIGN task and process it."
         },
         {
+          "name": "_step_fission_enabled",
+          "doc": "Three-tier fission flag (migration default OFF; I3 comparison flips it)."
+        },
+        {
+          "name": "_run_step_fission",
+          "doc": "Ask the CE role (cloud model) to fission one PM task into steps."
+        },
+        {
+          "name": "_invoke",
+          "doc": ""
+        },
+        {
+          "name": "_extract_steps",
+          "doc": ""
+        },
+        {
+          "name": "_publish_step_tasks",
+          "doc": "E1 fan-out: publish each construction step as a leaf pending_exec item."
+        },
+        {
           "name": "_run_ce_preflight",
           "doc": "Run CE preflight and return blueprint result dict."
         },
@@ -156,6 +262,18 @@
           "doc": "Signal the consumer to stop after the current poll cycle."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_ce_fission_max_output_tokens",
+      "description": "Output-token budget for the CE step-fission LLM call (I3-r17).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_owned_target",
+      "description": "Match file_ownership_ledger._normalize_target so publish-time lookups hit.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/ce_consumer.py"
     },
     {
       "type": "function",
@@ -698,6 +816,240 @@
       ]
     },
     {
+      "type": "function",
+      "name": "handoff_enforcement_enabled",
+      "description": "Whether the CE consumer hard-blocks a failing handoff.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/handoff.py"
+    },
+    {
+      "type": "function",
+      "name": "build_handoff_decision",
+      "description": "Decide whether ``blueprint`` may be handed to the Director.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/handoff.py"
+    },
+    {
+      "type": "class",
+      "name": "PostMortemLog",
+      "description": "Workspace-scoped post-mortem / incident-review log.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/post_mortem.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": ""
+        },
+        {
+          "name": "update_status",
+          "doc": ""
+        },
+        {
+          "name": "list",
+          "doc": ""
+        },
+        {
+          "name": "list_for_query",
+          "doc": ""
+        },
+        {
+          "name": "load",
+          "doc": ""
+        },
+        {
+          "name": "summarize",
+          "doc": "Aggregate counts for the post-mortem log."
+        },
+        {
+          "name": "_save",
+          "doc": ""
+        },
+        {
+          "name": "_load_path",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/post_mortem.py"
+    },
+    {
+      "type": "function",
+      "name": "_nonce",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/post_mortem.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_token",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/post_mortem.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_record_id",
+      "description": "Reject ids that could escape the storage directory (path traversal).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/post_mortem.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_severity",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/post_mortem.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_status",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/post_mortem.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_str_tuple",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/post_mortem.py"
+    },
+    {
+      "type": "function",
+      "name": "build_post_mortem_event",
+      "description": "Build a ``PostMortemEventV1`` stamped with the current UTC time.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/post_mortem.py"
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_risk_from_dict",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_risks",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_quality_gate",
+      "description": "Compute a structured quality-gate result for the blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/quality_gate.py"
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/release_readiness.py"
+    },
+    {
+      "type": "function",
+      "name": "build_release_readiness",
+      "description": "Synthesize an executive release decision from the governance surface.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/release_readiness.py"
+    },
+    {
+      "type": "class",
+      "name": "RiskRegister",
+      "description": "Workspace-scoped Risk Register storage.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/risks.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": ""
+        },
+        {
+          "name": "update_status",
+          "doc": ""
+        },
+        {
+          "name": "list",
+          "doc": ""
+        },
+        {
+          "name": "load",
+          "doc": ""
+        },
+        {
+          "name": "summarize",
+          "doc": ""
+        },
+        {
+          "name": "_save",
+          "doc": ""
+        },
+        {
+          "name": "_load_path",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/risks.py"
+    },
+    {
+      "type": "function",
+      "name": "_nonce",
+      "description": "Build a collision-resistant nonce (microsecond UTC + random suffix).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/risks.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_token",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/risks.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_record_id",
+      "description": "Reject ids that could escape the storage directory (path traversal).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/risks.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_severity",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/risks.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_status",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/risks.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_links",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/risks.py"
+    },
+    {
+      "type": "function",
+      "name": "build_risk_event",
+      "description": "Build a ``RiskEventV1`` stamped with the current UTC time.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/risks.py"
+    },
+    {
       "type": "class",
       "name": "RollbackGuard",
       "description": "Director-level memory snapshot (parallel mode).",
@@ -760,6 +1112,332 @@
       "name": "create_rollback_guard",
       "description": "Factory function to create the appropriate rollback guard.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_guard.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_git",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_link.py"
+    },
+    {
+      "type": "function",
+      "name": "_marker_path",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_link.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_open_blocker",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_link.py"
+    },
+    {
+      "type": "function",
+      "name": "build_rollback_link",
+      "description": "Build a :class:`RollbackLinkV1` for the given blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/rollback_link.py"
+    },
+    {
+      "type": "function",
+      "name": "normalize_construction_step",
+      "description": "Coerce one model-proposed step into the canonical contract shape.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_target_file_shape_error",
+      "description": "Reject targets that are not a single clean relative path.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "validate_construction_steps",
+      "description": "CE-stage circuit breaker: return blocking errors (empty = gate passes).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_dependency_cycle",
+      "description": "Kahn's algorithm: return the step_ids stuck in a depends_on cycle.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_target_requires_signatures",
+      "description": "Doc/style steps (readme.md, style.css) have no signatures to declare —",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_verify_is_all_hollow",
+      "description": "True when a code step's verify is existence/line-count/marker-only.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "build_blueprint_tasks_contract",
+      "description": "Assemble the market-facing fission contract (E1 triple binding).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "_split_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_single_file_no_fission_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_within_step_contract_line_ceiling",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_positive_int_env",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_norm_target",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_syntax_check_cmd",
+      "description": "Return a per-language syntax-check command, or None when none is known.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_signature_symbol",
+      "description": "Extract the identifier from a CE-declared signature string (generic).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_symbol_greps",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_verify",
+      "description": "Syntax check (structural, defeats the all-hollow gate) + per-symbol presence.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_substep",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_should_split",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_split_one",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "split_oversize_steps",
+      "description": "Split over-budget from-scratch code steps into skeleton + fill chains.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/step_splitter.py"
+    },
+    {
+      "type": "class",
+      "name": "TechDebtLedger",
+      "description": "Workspace-scoped Tech-Debt Ledger storage.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_debt.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": ""
+        },
+        {
+          "name": "update_status",
+          "doc": ""
+        },
+        {
+          "name": "list",
+          "doc": ""
+        },
+        {
+          "name": "list_for_query",
+          "doc": ""
+        },
+        {
+          "name": "load",
+          "doc": ""
+        },
+        {
+          "name": "summarize",
+          "doc": ""
+        },
+        {
+          "name": "_save",
+          "doc": ""
+        },
+        {
+          "name": "_load_path",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_debt.py"
+    },
+    {
+      "type": "function",
+      "name": "_nonce",
+      "description": "Build a collision-resistant nonce (microsecond UTC + random suffix).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_debt.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_token",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_debt.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_record_id",
+      "description": "Reject ids that could escape the storage directory (path traversal).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_debt.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_severity",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_debt.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_status",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_debt.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_evidence",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_debt.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tech_debt_event",
+      "description": "Build a ``TechDebtEventV1`` stamped with the current UTC time.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_debt.py"
+    },
+    {
+      "type": "class",
+      "name": "TechRadarLedger",
+      "description": "Workspace-scoped Tech-Radar ledger.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_radar.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "register",
+          "doc": ""
+        },
+        {
+          "name": "update_ring",
+          "doc": ""
+        },
+        {
+          "name": "list",
+          "doc": ""
+        },
+        {
+          "name": "load",
+          "doc": ""
+        },
+        {
+          "name": "summarize",
+          "doc": ""
+        },
+        {
+          "name": "check_stack_policy",
+          "doc": "Return a violation for each requested library on a hold/deprecated ring."
+        },
+        {
+          "name": "_supersede",
+          "doc": ""
+        },
+        {
+          "name": "_save",
+          "doc": ""
+        },
+        {
+          "name": "_load_path",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_utc_now",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_radar.py"
+    },
+    {
+      "type": "function",
+      "name": "_nonce",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_radar.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_token",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_radar.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_record_id",
+      "description": "Reject ids that could escape the storage directory (path traversal).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_radar.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_library",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_radar.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_ring",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_radar.py"
+    },
+    {
+      "type": "function",
+      "name": "build_tech_radar_event",
+      "description": "Build a ``TechRadarEventV1`` stamped with the current UTC time.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tech_radar.py"
     },
     {
       "type": "class",
@@ -883,6 +1561,18 @@
     },
     {
       "type": "class",
+      "name": "TestStepSplitterIntegration",
+      "description": "I3-r29: an over-budget step is split and the skeleton+fills flow through the",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
+      "methods": [
+        {
+          "name": "test_split_output_publishes_skeleton_and_fills",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestCEConsumerStop",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
@@ -892,6 +1582,484 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "TestCEFissionMaxOutputTokens",
+      "description": "The CE step-fission output budget (I3-r17): reasoning-sized floor, env-tunable.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
+      "methods": [
+        {
+          "name": "test_default_is_reasoning_sized",
+          "doc": ""
+        },
+        {
+          "name": "test_env_override",
+          "doc": ""
+        },
+        {
+          "name": "test_invalid_env_falls_back",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCrossParentFileOwnershipInjection",
+      "description": "I3-r18 FIX-1: a step writing a file owned by an EARLIER parent is published",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_ce_consumer.py",
+      "methods": [
+        {
+          "name": "_steps",
+          "doc": ""
+        },
+        {
+          "name": "test_owned_file_gets_depends_on_and_edit_flag",
+          "doc": ""
+        },
+        {
+          "name": "test_unowned_file_keeps_minimization",
+          "doc": ""
+        },
+        {
+          "name": "test_same_parent_owner_not_self_serialized",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestNormalize",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py",
+      "methods": [
+        {
+          "name": "test_defaults_and_coercion",
+          "doc": ""
+        },
+        {
+          "name": "test_normalizes_verify_before_market_publish",
+          "doc": ""
+        },
+        {
+          "name": "test_non_dict_input_yields_empty_shape",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestGate",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py",
+      "methods": [
+        {
+          "name": "test_valid_steps_pass",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_fission_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_oversized_step_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_verify_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_signatures_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_all_hollow_verify_for_code_target_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_syntax_check_verify_passes",
+          "doc": ""
+        },
+        {
+          "name": "test_signature_grep_verify_passes",
+          "doc": ""
+        },
+        {
+          "name": "test_doc_target_existence_only_verify_exempt",
+          "doc": ""
+        },
+        {
+          "name": "test_style_target_existence_only_verify_exempt",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_dependency_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_self_dependency_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_duplicate_step_id_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_dependency_cycle_blocked",
+          "doc": "A 2-cycle passes the unknown-ref and self-dep checks but would"
+        },
+        {
+          "name": "test_three_node_dependency_cycle_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_list_verify_joined_into_one_command",
+          "doc": "Cloud models drift between string and array verify shapes — a"
+        },
+        {
+          "name": "test_empty_list_verify_blocked_by_gate",
+          "doc": ""
+        },
+        {
+          "name": "test_diamond_dependency_dag_passes",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRefinements",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py",
+      "methods": [
+        {
+          "name": "test_bare_step_id_namespaced_under_parent",
+          "doc": ""
+        },
+        {
+          "name": "test_prefixed_step_id_untouched",
+          "doc": ""
+        },
+        {
+          "name": "test_bare_depends_on_namespaced_under_parent",
+          "doc": ""
+        },
+        {
+          "name": "test_prefixed_depends_on_untouched",
+          "doc": ""
+        },
+        {
+          "name": "test_bare_id_fission_with_dependency_chain_passes_gate",
+          "doc": "Regression (live I3-r8): a fully-bare model fission (step_id S1..S4,"
+        },
+        {
+          "name": "test_doc_step_passes_without_signatures",
+          "doc": ""
+        },
+        {
+          "name": "test_css_step_passes_without_signatures",
+          "doc": ""
+        },
+        {
+          "name": "test_code_step_still_requires_signatures",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTargetFileShape",
+      "description": "对抗复核 D-fix: 非单文件相对路径的 target_file 会被执行侧 enum 钉靶拒绝,",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py",
+      "methods": [
+        {
+          "name": "test_glob_target_is_refused",
+          "doc": ""
+        },
+        {
+          "name": "test_comma_list_target_is_refused",
+          "doc": ""
+        },
+        {
+          "name": "test_absolute_and_escaping_targets_are_refused",
+          "doc": ""
+        },
+        {
+          "name": "test_clean_subdir_target_passes",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_step",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_contract_assembly",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_contract.py"
+    },
+    {
+      "type": "class",
+      "name": "TestSplitCorrectness",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
+      "methods": [
+        {
+          "name": "test_oversize_js_step_splits_into_skeleton_plus_fills",
+          "doc": ""
+        },
+        {
+          "name": "test_skeleton_from_scratch_fills_edit_on_prior",
+          "doc": ""
+        },
+        {
+          "name": "test_fills_chain_linearly_no_cycle",
+          "doc": ""
+        },
+        {
+          "name": "test_skeleton_and_fills_under_ceiling",
+          "doc": ""
+        },
+        {
+          "name": "test_split_output_passes_gate",
+          "doc": ""
+        },
+        {
+          "name": "test_skeleton_marked_stub_only",
+          "doc": ""
+        },
+        {
+          "name": "test_fills_marked_scope_only",
+          "doc": ""
+        },
+        {
+          "name": "test_skeleton_inherits_step_depends_on",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTriggerBoundaries",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
+      "methods": [
+        {
+          "name": "test_small_code_step_not_split",
+          "doc": ""
+        },
+        {
+          "name": "test_sole_writer_sig_only_leaf_is_kept_whole",
+          "doc": ""
+        },
+        {
+          "name": "test_sig_only_split_still_fires_when_suppression_disabled",
+          "doc": ""
+        },
+        {
+          "name": "test_sole_writer_est_lines_trigger_leaf_is_kept_whole",
+          "doc": ""
+        },
+        {
+          "name": "test_est_lines_trigger_can_still_split_when_suppression_disabled",
+          "doc": ""
+        },
+        {
+          "name": "test_multi_writer_same_file_sig_only_still_splits",
+          "doc": ""
+        },
+        {
+          "name": "test_doc_target_never_split",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_suffix_fails_open",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFileAssemblyContractP1",
+      "description": "P1 (deterministic file-assembly protocol, codex 2026-06-15): the skeleton is the",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
+      "methods": [
+        {
+          "name": "test_skeleton_requires_full_shell_and_declares_every_anchor",
+          "doc": ""
+        },
+        {
+          "name": "test_fill_carries_constrained_patch_contract",
+          "doc": ""
+        },
+        {
+          "name": "test_fill_anchors_union_equals_skeleton_anchors",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVerifyGeneration",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
+      "methods": [
+        {
+          "name": "test_skeleton_verify_is_structural_syntax_check",
+          "doc": ""
+        },
+        {
+          "name": "test_fill_verify_greps_own_symbols",
+          "doc": ""
+        },
+        {
+          "name": "test_signature_symbol_extraction_generic",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFailOpenGuards",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
+      "methods": [
+        {
+          "name": "test_disabled_env_returns_input_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_already_split_substep_not_resplit",
+          "doc": ""
+        },
+        {
+          "name": "test_owned_elsewhere_target_not_split",
+          "doc": ""
+        },
+        {
+          "name": "test_too_many_substeps_fails_open",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestFillBodyFloor",
+      "description": "Each fill carries a cumulative line floor so it cannot resolve on the",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
+      "methods": [
+        {
+          "name": "test_fill_verify_has_increasing_line_floor",
+          "doc": ""
+        },
+        {
+          "name": "test_skeleton_has_no_line_floor",
+          "doc": ""
+        },
+        {
+          "name": "test_fill_floor_env_override",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDependentRepointing",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py",
+      "methods": [
+        {
+          "name": "test_dependents_repointed_to_terminal_fill",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_step",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py"
+    },
+    {
+      "type": "function",
+      "name": "_ids",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/internal/tests/test_step_splitter.py"
+    },
+    {
+      "type": "class",
+      "name": "RiskSeverity",
+      "description": "Severity ladder for a Risk Register entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RiskStatus",
+      "description": "Lifecycle status of a Risk Register entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TechDebtSeverity",
+      "description": "Severity ladder for a Tech-Debt Ledger entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TechDebtStatus",
+      "description": "Lifecycle status of a Tech-Debt Ledger entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RollbackStrategy",
+      "description": "Rollback strategy attached to a blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ADRStatus",
+      "description": "Lifecycle status of an Architecture Decision Record (decision log).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TechRadarRing",
+      "description": "ThoughtWorks-style Tech-Radar ring for a library / technology.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "IncidentSeverity",
+      "description": "Incident severity ladder for a post-mortem (sev1 = most severe).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReleaseDecision",
+      "description": "Executive release / change-advisory verdict.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PostMortemStatus",
+      "description": "Lifecycle status of a post-mortem / incident review.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
     },
     {
       "type": "class",
@@ -929,6 +2097,278 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RiskRecordV1",
+      "description": "A single Risk Register entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RegisterRiskCommandV1",
+      "description": "Register a new risk in the workspace Risk Register.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ListRisksQueryV1",
+      "description": "Filter Risk Register entries.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UpdateRiskStatusCommandV1",
+      "description": "Transition a risk to a new status.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "RiskEventV1",
+      "description": "Audit event emitted on risk state change.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TechDebtRecordV1",
+      "description": "A single Technical-Debt Ledger entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RegisterTechDebtCommandV1",
+      "description": "Register a new tech-debt entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ListTechDebtQueryV1",
+      "description": "Filter Tech-Debt Ledger entries.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UpdateTechDebtStatusCommandV1",
+      "description": "Transition a tech-debt entry to a new status.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TechDebtEventV1",
+      "description": "Audit event emitted on tech-debt state change.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "QualityGateResultV1",
+      "description": "Structured quality-gate result for a blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RollbackLinkV1",
+      "description": "Rollback linkage attached to a blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ADRRecordV1",
+      "description": "A single Architecture Decision Record (human-facing decision log).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RegisterADRCommandV1",
+      "description": "Record a new Architecture Decision Record.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ListADRsQueryV1",
+      "description": "Filter Architecture Decision Records.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UpdateADRStatusCommandV1",
+      "description": "Transition an ADR to a new status.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ADREventV1",
+      "description": "Audit event emitted on ADR state change.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TechRadarEntryV1",
+      "description": "A single Tech-Radar entry (a library/technology placed on a ring).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RegisterTechRadarCommandV1",
+      "description": "Place a library on a Tech-Radar ring.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ListTechRadarQueryV1",
+      "description": "Filter Tech-Radar entries.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UpdateTechRadarRingCommandV1",
+      "description": "Move a Tech-Radar entry to a new ring.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "StackPolicyViolationV1",
+      "description": "A blueprint dependency that violates the Tech Radar (hold/deprecated).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TechRadarEventV1",
+      "description": "Audit event emitted on Tech-Radar state change.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PostMortemRecordV1",
+      "description": "A single post-mortem / incident review (blameless, learning-oriented).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RegisterPostMortemCommandV1",
+      "description": "Record a new post-mortem / incident review.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ListPostMortemsQueryV1",
+      "description": "Filter post-mortems.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "UpdatePostMortemStatusCommandV1",
+      "description": "Transition a post-mortem to a new status.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "PostMortemEventV1",
+      "description": "Audit event emitted on post-mortem state change.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ReleaseReadinessV1",
+      "description": "Executive GO / NO-GO that aggregates the whole governance surface.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "GovernanceSummaryV1",
+      "description": "Aggregate governance view attached to a blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "HandoffDecisionV1",
+      "description": "Director-handoff gate decision for a blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/contracts.py",
+      "methods": [
+        {
+          "name": "to_dict",
           "doc": ""
         }
       ]
@@ -1034,6 +2474,218 @@
       "name": "get_blueprint_status",
       "description": "Return the latest persisted Chief Engineer blueprint status for a task.",
       "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "register_risk",
+      "description": "Register a new entry in the workspace Risk Register.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_risks",
+      "description": "List Risk Register entries for the workspace with optional filters.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "update_risk_status",
+      "description": "Transition a risk to a new status; append a history entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "register_tech_debt",
+      "description": "Register a new entry in the workspace Tech-Debt Ledger.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_tech_debt",
+      "description": "List Tech-Debt Ledger entries for the workspace with optional filters.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "update_tech_debt_status",
+      "description": "Transition a tech-debt entry to a new status; append a history entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "register_adr",
+      "description": "Record a new Architecture Decision Record in the workspace.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_adrs",
+      "description": "List Architecture Decision Records for the workspace with optional filters.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "update_adr_status",
+      "description": "Transition an ADR to a new status; append a history entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_adrs",
+      "description": "Return aggregate counts for the workspace Architecture Decision Log.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_risks",
+      "description": "Return aggregate counts for the workspace Risk Register.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_tech_debt",
+      "description": "Return aggregate counts for the workspace Tech-Debt Ledger.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "register_tech_radar",
+      "description": "Place a library on a Tech-Radar ring for the workspace.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_tech_radar",
+      "description": "List Tech-Radar entries for the workspace with an optional ring filter.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "update_tech_radar_ring",
+      "description": "Move a Tech-Radar entry to a new ring; append a history entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_tech_radar",
+      "description": "Return aggregate counts for the workspace Tech Radar.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "check_stack_policy",
+      "description": "Return a stack-policy violation for each library on a hold/deprecated ring.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "register_post_mortem",
+      "description": "Record a new post-mortem / incident review for the workspace.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "list_post_mortems",
+      "description": "List post-mortems for the workspace with optional filters.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "update_post_mortem_status",
+      "description": "Transition a post-mortem to a new status; append a history entry.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "summarize_post_mortems",
+      "description": "Return aggregate counts for the workspace post-mortem log.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "assess_release_readiness",
+      "description": "Synthesize an executive release GO / NO-GO from the governance surface.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_blueprint_governance",
+      "description": "Read the governance summary for a persisted blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_handoff_decision",
+      "description": "Decide whether a blueprint may be handed to the Director.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "evaluate_handoff_decision_for_blueprint",
+      "description": "Load a persisted blueprint and decide whether it may be handed off.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "assert_handoff_ready",
+      "description": "Raise when a blueprint must not be handed to the Director.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "build_blueprint_governance",
+      "description": "Compute the governance summary for a blueprint payload.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "attach_governance_to_blueprint",
+      "description": "Compute and *persist* governance for a blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/service.py"
+    },
+    {
+      "type": "class",
+      "name": "TestGovernanceEnumFailClosed",
+      "description": "Tier-1 governance contracts must fail-closed on invalid enum input.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_invalid_severity_string_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_severity_string_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_invalid_tech_debt_severity_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_valid_severity_enum_passes",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestHandoffDecisionContract",
+      "description": "Director-handoff decision contract invariants.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/public/tests/test_public_contracts.py",
+      "methods": [
+        {
+          "name": "test_negative_count_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_blueprint_id_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_to_dict_round_trips",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",
@@ -1219,6 +2871,82 @@
         },
         {
           "name": "test_query_missing_task_blueprint",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestADRDecisionLog",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_log.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "tearDown",
+          "doc": ""
+        },
+        {
+          "name": "test_register_persists_canonical_adr",
+          "doc": ""
+        },
+        {
+          "name": "test_supersede_marks_predecessor_and_preserves_fields",
+          "doc": ""
+        },
+        {
+          "name": "test_supersede_traversal_id_is_safe_noop",
+          "doc": ""
+        },
+        {
+          "name": "test_supersede_nonexistent_id_is_safe_noop",
+          "doc": ""
+        },
+        {
+          "name": "test_double_supersede_does_not_remark",
+          "doc": ""
+        },
+        {
+          "name": "test_update_status_appends_history",
+          "doc": ""
+        },
+        {
+          "name": "test_path_traversal_rejected",
+          "doc": ""
+        },
+        {
+          "name": "test_list_filters_by_status_and_task",
+          "doc": ""
+        },
+        {
+          "name": "test_load_tolerates_invalid_status_on_disk",
+          "doc": ""
+        },
+        {
+          "name": "test_build_adr_event",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestADRServiceSurface",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_adr_log.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "tearDown",
+          "doc": ""
+        },
+        {
+          "name": "test_service_round_trip",
           "doc": ""
         }
       ]
@@ -1499,6 +3227,98 @@
         },
         {
           "name": "test_ce_consumer_ack_does_not_submit_director_workflow",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCEConsumerHandoffGate",
+      "description": "Tier-2: the Director-handoff quality gate is advisory by default and",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
+      "methods": [
+        {
+          "name": "_wire_blocked_claim",
+          "doc": ""
+        },
+        {
+          "name": "test_flag_off_is_advisory_still_acks",
+          "doc": ""
+        },
+        {
+          "name": "test_flag_on_requeues_blocked_handoff",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCEConsumerStepFission",
+      "description": "Three-tier E1: CE fissions a PM task into leaf step tasks on the market.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
+      "methods": [
+        {
+          "name": "test_fission_publishes_leaf_steps_and_marks_parent",
+          "doc": ""
+        },
+        {
+          "name": "test_gate_failure_circuit_breaks_to_requeue",
+          "doc": ""
+        },
+        {
+          "name": "test_flag_off_keeps_legacy_advance",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeResult",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FakeRoleRuntimeService",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FakeResult",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FakeRoleRuntimeService",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestFissionExtraction",
+      "description": "I3-r6: cloud output shape drifts (think wrappers, fences, prose).",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_ce_consumer_integration.py",
+      "methods": [
+        {
+          "name": "_patch_role_runtime",
+          "doc": ""
+        },
+        {
+          "name": "test_fission_marks_headless_cognitive_blockers_auto_accepted",
+          "doc": ""
+        },
+        {
+          "name": "test_think_wrapped_fenced_json",
+          "doc": ""
+        },
+        {
+          "name": "test_prose_with_inline_object",
           "doc": ""
         }
       ]
@@ -2027,6 +3847,262 @@
       "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_event_bus.py"
     },
     {
+      "type": "class",
+      "name": "TestPostMortemLog",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_post_mortem.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "tearDown",
+          "doc": ""
+        },
+        {
+          "name": "test_register_persists_full_record",
+          "doc": ""
+        },
+        {
+          "name": "test_update_status_appends_history",
+          "doc": ""
+        },
+        {
+          "name": "test_list_filters_by_severity_and_status",
+          "doc": ""
+        },
+        {
+          "name": "test_summarize_counts_open_action_items",
+          "doc": ""
+        },
+        {
+          "name": "test_path_traversal_rejected",
+          "doc": ""
+        },
+        {
+          "name": "test_load_tolerates_invalid_enum_on_disk",
+          "doc": ""
+        },
+        {
+          "name": "test_build_event",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPostMortemServiceSurface",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_post_mortem.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "tearDown",
+          "doc": ""
+        },
+        {
+          "name": "test_service_round_trip",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQualityGate",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_quality_gate.py",
+      "methods": [
+        {
+          "name": "test_empty_target_files_is_blocker",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_checklist_is_warning",
+          "doc": ""
+        },
+        {
+          "name": "test_short_recommendations_is_info",
+          "doc": ""
+        },
+        {
+          "name": "test_open_blocker_risk_pushes_to_blocker",
+          "doc": ""
+        },
+        {
+          "name": "test_open_high_risk_is_warning",
+          "doc": ""
+        },
+        {
+          "name": "test_resolved_risk_does_not_count",
+          "doc": ""
+        },
+        {
+          "name": "test_pure_pass",
+          "doc": ""
+        },
+        {
+          "name": "test_risk_dicts_coerced_from_blueprint_risk_register",
+          "doc": ""
+        },
+        {
+          "name": "test_malformed_risk_dict_is_skipped_not_crash",
+          "doc": ""
+        },
+        {
+          "name": "test_evaluated_at_override",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestReleaseReadiness",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_release_readiness.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "tearDown",
+          "doc": ""
+        },
+        {
+          "name": "test_clean_workspace_is_go",
+          "doc": ""
+        },
+        {
+          "name": "test_open_blocker_risk_is_no_go",
+          "doc": ""
+        },
+        {
+          "name": "test_open_high_risk_only_is_conditional",
+          "doc": ""
+        },
+        {
+          "name": "test_open_sev1_incident_is_no_go",
+          "doc": ""
+        },
+        {
+          "name": "test_stack_policy_violation_is_no_go",
+          "doc": ""
+        },
+        {
+          "name": "test_unpaid_fatal_tech_debt_is_no_go",
+          "doc": ""
+        },
+        {
+          "name": "test_blueprint_quality_gate_blocker_is_no_go",
+          "doc": ""
+        },
+        {
+          "name": "test_risk_not_double_counted_with_blueprint_gate",
+          "doc": ""
+        },
+        {
+          "name": "test_contract_blocker_still_flagged_in_quality_gate",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_blueprint_is_blocker",
+          "doc": ""
+        },
+        {
+          "name": "test_conditional_go_multi_signal_aggregation",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_blueprint_signal_structure",
+          "doc": ""
+        },
+        {
+          "name": "test_signals_always_present",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_WorkspaceFixture",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_risks.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "cleanup",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRiskRegister",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_risks.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "tearDown",
+          "doc": ""
+        },
+        {
+          "name": "test_register_creates_atomically",
+          "doc": ""
+        },
+        {
+          "name": "test_list_filters_by_task_and_severity",
+          "doc": ""
+        },
+        {
+          "name": "test_update_status_appends_history",
+          "doc": ""
+        },
+        {
+          "name": "test_update_missing_risk_raises",
+          "doc": ""
+        },
+        {
+          "name": "test_summarize_counts_open_critical_or_blocker",
+          "doc": ""
+        },
+        {
+          "name": "test_load_handles_corrupt_file",
+          "doc": ""
+        },
+        {
+          "name": "test_path_traversal_id_is_rejected_on_load",
+          "doc": ""
+        },
+        {
+          "name": "test_path_traversal_id_is_rejected_on_update",
+          "doc": ""
+        },
+        {
+          "name": "test_generated_ids_are_unique_under_tight_loop",
+          "doc": ""
+        },
+        {
+          "name": "test_load_tolerates_invalid_enum_on_disk",
+          "doc": ""
+        },
+        {
+          "name": "test_build_risk_event_stamps_at",
+          "doc": ""
+        }
+      ]
+    },
+    {
       "type": "function",
       "name": "test_git_stash_guard_requires_git_repo",
       "description": "",
@@ -2049,6 +4125,248 @@
       "name": "test_git_stash_guard_discard_missing",
       "description": "",
       "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_guard.py"
+    },
+    {
+      "type": "class",
+      "name": "TestRollbackLink",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_rollback_link.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "tearDown",
+          "doc": ""
+        },
+        {
+          "name": "test_git_workspace_picks_git_revert",
+          "doc": ""
+        },
+        {
+          "name": "test_non_git_workspace_picks_file_snapshot",
+          "doc": ""
+        },
+        {
+          "name": "test_open_blocker_omits_satisfied_precondition",
+          "doc": ""
+        },
+        {
+          "name": "test_no_open_blocker_lists_satisfied_precondition",
+          "doc": ""
+        },
+        {
+          "name": "test_no_targets_disables",
+          "doc": ""
+        },
+        {
+          "name": "test_marker_path_under_state_dir",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestServiceGovernance",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_service_governance.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "tearDown",
+          "doc": ""
+        },
+        {
+          "name": "test_generate_blueprint_attaches_governance",
+          "doc": ""
+        },
+        {
+          "name": "test_open_blocker_risk_blocks_handoff",
+          "doc": ""
+        },
+        {
+          "name": "test_resolving_risk_unblocks_handoff",
+          "doc": ""
+        },
+        {
+          "name": "test_tech_debt_round_trip",
+          "doc": ""
+        },
+        {
+          "name": "test_build_blueprint_governance_pure_call",
+          "doc": ""
+        },
+        {
+          "name": "test_get_blueprint_governance_reflects_resolved_risk",
+          "doc": ""
+        },
+        {
+          "name": "test_get_blueprint_governance_missing_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_handoff_enforcement_flag_parsing",
+          "doc": ""
+        },
+        {
+          "name": "test_handoff_decision_allows_clean_blueprint",
+          "doc": ""
+        },
+        {
+          "name": "test_handoff_decision_blocks_on_missing_contract",
+          "doc": ""
+        },
+        {
+          "name": "test_handoff_decision_blocks_on_open_blocker_risk",
+          "doc": ""
+        },
+        {
+          "name": "test_assert_handoff_ready_raises_when_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_evaluate_handoff_decision_for_blueprint_reads_persisted",
+          "doc": ""
+        },
+        {
+          "name": "test_attach_governance_writes_back",
+          "doc": ""
+        },
+        {
+          "name": "test_list_risks_filters",
+          "doc": ""
+        },
+        {
+          "name": "test_get_blueprint_status_unchanged",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_blueprint_json_path",
+      "description": "Resolve the real on-disk path of a persisted blueprint.",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_service_governance.py"
+    },
+    {
+      "type": "class",
+      "name": "TestTechDebtLedger",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_tech_debt.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "tearDown",
+          "doc": ""
+        },
+        {
+          "name": "test_register_persists_with_history",
+          "doc": ""
+        },
+        {
+          "name": "test_list_filters_by_surface_and_status",
+          "doc": ""
+        },
+        {
+          "name": "test_update_status_appends_history",
+          "doc": ""
+        },
+        {
+          "name": "test_list_for_query_respects_all_filters",
+          "doc": ""
+        },
+        {
+          "name": "test_summarize_counts",
+          "doc": ""
+        },
+        {
+          "name": "test_path_traversal_debt_id_rejected",
+          "doc": ""
+        },
+        {
+          "name": "test_build_tech_debt_event_stamps",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTechRadarLedger",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_tech_radar.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "tearDown",
+          "doc": ""
+        },
+        {
+          "name": "test_register_persists",
+          "doc": ""
+        },
+        {
+          "name": "test_update_ring_appends_history",
+          "doc": ""
+        },
+        {
+          "name": "test_check_stack_policy_flags_hold_and_deprecated",
+          "doc": ""
+        },
+        {
+          "name": "test_check_stack_policy_latest_ring_wins",
+          "doc": ""
+        },
+        {
+          "name": "test_path_traversal_rejected",
+          "doc": ""
+        },
+        {
+          "name": "test_supersede_deprecates_predecessor",
+          "doc": ""
+        },
+        {
+          "name": "test_load_tolerates_invalid_ring_on_disk",
+          "doc": ""
+        },
+        {
+          "name": "test_check_stack_policy_decided_at_tie_is_deterministic",
+          "doc": ""
+        },
+        {
+          "name": "test_build_event",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTechRadarServiceSurface",
+      "description": "",
+      "defined_in": "polaris/cells/chief_engineer/blueprint/tests/test_tech_radar.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "tearDown",
+          "doc": ""
+        },
+        {
+          "name": "test_service_round_trip_and_policy",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",
@@ -2152,6 +4470,83 @@
       "type": "class",
       "name": "ChiefEngineerDiagnosticsResponse",
       "description": "Side-effect-free Chief Engineer desktop readiness snapshot.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerRegisterRiskRequest",
+      "description": "Desktop request to register a Risk Register entry.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerUpdateRiskStatusRequest",
+      "description": "Desktop request to transition a risk to a new status.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerRegisterTechDebtRequest",
+      "description": "Desktop request to register a Tech-Debt Ledger entry.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerUpdateTechDebtStatusRequest",
+      "description": "Desktop request to transition a tech-debt entry to a new status.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerRegisterADRRequest",
+      "description": "Desktop request to record an Architecture Decision Record.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerUpdateADRStatusRequest",
+      "description": "Desktop request to transition an ADR to a new status.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerRegisterTechRadarRequest",
+      "description": "Desktop request to place a library on a Tech-Radar ring.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerUpdateTechRadarRingRequest",
+      "description": "Desktop request to move a Tech-Radar entry to a new ring.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerStackPolicyCheckRequest",
+      "description": "Desktop request to check libraries against the Tech Radar.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerRegisterPostMortemRequest",
+      "description": "Desktop request to record a post-mortem / incident review.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ChiefEngineerUpdatePostMortemStatusRequest",
+      "description": "Desktop request to transition a post-mortem to a new status.",
       "defined_in": "polaris/delivery/http/v2/chief_engineer.py",
       "methods": []
     },
@@ -2411,6 +4806,126 @@
       "type": "function",
       "name": "delete_chief_engineer_blueprint",
       "description": "Delete one persisted Chief Engineer blueprint by id.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_governance_workspace",
+      "description": "Resolve and validate the workspace for a governance request.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "register_chief_engineer_risk",
+      "description": "Register a new Risk Register entry for the workspace.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "list_chief_engineer_risks",
+      "description": "List Risk Register entries for the workspace with optional filters.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "update_chief_engineer_risk_status",
+      "description": "Transition a Risk Register entry to a new status.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "register_chief_engineer_tech_debt",
+      "description": "Register a new Tech-Debt Ledger entry for the workspace.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "list_chief_engineer_tech_debt",
+      "description": "List Tech-Debt Ledger entries for the workspace with optional filters.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "update_chief_engineer_tech_debt_status",
+      "description": "Transition a Tech-Debt Ledger entry to a new status.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "register_chief_engineer_adr",
+      "description": "Record a new Architecture Decision Record for the workspace.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "list_chief_engineer_adrs",
+      "description": "List Architecture Decision Records with optional filters.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "update_chief_engineer_adr_status",
+      "description": "Transition an Architecture Decision Record to a new status.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "get_chief_engineer_handoff_decision",
+      "description": "Return the Director-handoff gate decision for a persisted blueprint.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "register_chief_engineer_tech_radar",
+      "description": "Place a library on a Tech-Radar ring for the workspace.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "list_chief_engineer_tech_radar",
+      "description": "List Tech-Radar entries with an optional ring filter.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "update_chief_engineer_tech_radar_ring",
+      "description": "Move a Tech-Radar entry to a new ring.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "check_chief_engineer_stack_policy",
+      "description": "Check a list of libraries against the Tech Radar (hold/deprecated).",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "register_chief_engineer_post_mortem",
+      "description": "Record a new post-mortem / incident review for the workspace.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "list_chief_engineer_post_mortems",
+      "description": "List post-mortems with optional filters.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "update_chief_engineer_post_mortem_status",
+      "description": "Transition a post-mortem to a new status.",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "_split_csv",
+      "description": "",
+      "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
+    },
+    {
+      "type": "function",
+      "name": "get_chief_engineer_release_readiness",
+      "description": "Executive GO / NO-GO that aggregates the whole governance surface.",
       "defined_in": "polaris/delivery/http/v2/chief_engineer.py"
     }
   ],

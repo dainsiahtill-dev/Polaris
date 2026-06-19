@@ -32,6 +32,29 @@ def test_real_run_gate_executes_python_build_and_cli_entrypoint(tmp_path: Path) 
     assert gate["entrypoint"]["kind"] == "python_cli"
 
 
+def test_real_run_gate_accepts_required_arg_cli_usage_screen(tmp_path: Path) -> None:
+    (tmp_path / "cli.py").write_text(
+        "from __future__ import annotations\n"
+        "import sys\n"
+        "if __name__ == '__main__':\n"
+        "    if '--help' in sys.argv:\n"
+        "        print('Usage: python cli.py <value>', file=sys.stderr)\n"
+        "        raise SystemExit(2)\n"
+        "    if len(sys.argv) < 2:\n"
+        "        print('Usage: python cli.py <value>', file=sys.stderr)\n"
+        "        raise SystemExit(1)\n"
+        "    print(sys.argv[1])\n",
+        encoding="utf-8",
+    )
+    record = {"code_files": ["cli.py"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    assert gate["requirements"]["entrypoint_smoke"]["ok"] is True
+    assert gate["entrypoint"]["usage_screen"] is True
+
+
 def test_real_run_gate_starts_static_web_entrypoint(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text("<html><body><h1>ok</h1></body></html>", encoding="utf-8")
     (tmp_path / "app.js").write_text("const answer = 42;\n", encoding="utf-8")
@@ -74,6 +97,38 @@ def test_collect_llm_events_reads_runtime_role_jsonl(tmp_path: Path) -> None:
     assert events[0]["provider_id"] == "kimi-cloud"
     assert events[0]["model"] == "kimi-k2"
     assert events[0]["terminal"] is True
+
+
+def test_collect_llm_events_reads_multiple_runtime_candidates(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    runtime_a = tmp_path / "runtime-a"
+    runtime_b = tmp_path / "runtime-b"
+    for runtime, role, model in (
+        (runtime_a, "pm", "kimi-k2"),
+        (runtime_b, "director", "qwen3.6-27b-gpu0"),
+    ):
+        events_dir = runtime / "events"
+        events_dir.mkdir(parents=True)
+        (events_dir / f"{role}.llm.events.jsonl").write_text(
+            json.dumps(
+                {
+                    "event": "llm_call_end",
+                    "role": role,
+                    "model": model,
+                    "data": {"prompt_tokens": 1, "completion_tokens": 2},
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    events = collect_llm_events(workspace, [runtime_a, runtime_b])
+
+    assert {(event["role"], event["model"]) for event in events} == {
+        ("pm", "kimi-k2"),
+        ("director", "qwen3.6-27b-gpu0"),
+    }
 
 
 def test_llm_route_audit_requires_actual_bound_families_and_all_director_routes() -> None:
@@ -188,6 +243,50 @@ def test_llm_route_audit_fails_when_a_director_route_is_unobserved() -> None:
     assert audit["ok"] is False
     assert audit["roles"]["director"]["multi_route_ok"] is False
     assert audit["roles"]["director"]["missing_bindings"]
+
+
+def test_llm_route_audit_matches_providerless_events_by_model() -> None:
+    expected = {
+        "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-for-coding", "binding_id": "pm0"}],
+        "chief_engineer": [
+            {"role": "chief_engineer", "provider_id": "kimi-a", "model": "kimi-for-coding", "binding_id": "ce0"}
+        ],
+        "qa": [{"role": "qa", "provider_id": "minimax-a", "model": "MiniMax-M3", "binding_id": "qa0"}],
+        "director": [
+            {"role": "director", "provider_id": "qwen-a", "model": "qwen3.6-27b-gpu0", "binding_id": "d0"},
+            {"role": "director", "provider_id": "qwen-b", "model": "qwen3.6-27b-gpu1", "binding_id": "d1"},
+        ],
+    }
+    events = [
+        {"event": "llm_call_end", "role": "pm", "model": "kimi-for-coding", "terminal": True, "invocation": True},
+        {
+            "event": "llm_call_end",
+            "role": "chief_engineer",
+            "model": "kimi-for-coding",
+            "terminal": True,
+            "invocation": True,
+        },
+        {"event": "llm_call_end", "role": "qa", "model": "MiniMax-M3", "terminal": True, "invocation": True},
+        {
+            "event": "llm_call_end",
+            "role": "director",
+            "model": "qwen3.6-27b-gpu0",
+            "terminal": True,
+            "invocation": True,
+        },
+        {
+            "event": "llm_call_end",
+            "role": "director",
+            "model": "qwen3.6-27b-gpu1",
+            "terminal": True,
+            "invocation": True,
+        },
+    ]
+
+    audit = build_llm_route_audit(events, expected_bindings=expected)
+
+    assert audit["ok"] is True
+    assert audit["roles"]["director"]["missing_bindings"] == []
 
 
 def test_failure_taxonomy_prefers_llm_route_before_generic_chain_failure() -> None:

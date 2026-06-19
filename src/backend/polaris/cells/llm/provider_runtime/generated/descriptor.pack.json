@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:13.524516Z",
-  "source_hash": "488f0cf44527cc8a",
+  "generated_at": "2026-06-19T14:36:54.182267Z",
+  "source_hash": "2b93ba953b020337",
   "cell_id": "llm.provider_runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:03.798102Z",
-  "source_hash": "400e68e636ea807c",
+  "generated_at": "2026-06-19T14:36:44.710381Z",
+  "source_hash": "bc818edb5a963af4",
   "cell_id": "events.fact_stream",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -552,6 +552,12 @@
     },
     {
       "type": "function",
+      "name": "_jetstream_publish_enabled",
+      "description": "",
+      "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
+    },
+    {
+      "type": "function",
       "name": "_channel_to_subject",
       "description": "Map canonical channel to JetStream subject.",
       "defined_in": "polaris/infrastructure/log_pipeline/writer.py"
@@ -927,6 +933,12 @@
       "type": "function",
       "name": "_infer_workspace_for_path",
       "description": "",
+      "defined_in": "polaris/kernelone/events/io_events.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_workspace_from_llm_event_data",
+      "description": "Return a validated workspace path carried by an LLM event payload.",
       "defined_in": "polaris/kernelone/events/io_events.py"
     },
     {
@@ -1436,6 +1448,12 @@
       "type": "function",
       "name": "test_io_events_dispatch_empty_path_is_noop",
       "description": "Empty llm_events_path must silently skip without error or log.",
+      "defined_in": "polaris/kernelone/events/tests/test_io_events_observability.py"
+    },
+    {
+      "type": "function",
+      "name": "test_llm_realtime_bridge_prefers_payload_workspace_over_cache_path",
+      "description": "Cache-backed LLM event files must publish realtime events for the real workspace.",
       "defined_in": "polaris/kernelone/events/tests/test_io_events_observability.py"
     },
     {

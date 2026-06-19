@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:07.290139Z",
-  "source_hash": "e00ca8274df68aaa",
+  "generated_at": "2026-06-19T14:36:49.269974Z",
+  "source_hash": "06e88db9e07a5b13",
   "cell_id": "orchestration.pm_dispatch",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -11,6 +11,12 @@
       "description": "Cell-layer abstraction for host-layer callbacks used during dispatch.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_pool_trace",
+      "description": "Emit a Director-pool trace to stderr (captured by run wrappers) when",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
       "type": "function",
@@ -34,6 +40,12 @@
       "type": "function",
       "name": "_get_task_market_services",
       "description": "Lazy import for runtime.task_market to avoid module-level cross-Cell coupling.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_task_market_requeue_services",
+      "description": "Lazy import for supervisor requeue without widening module-level coupling.",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
@@ -194,8 +206,128 @@
     },
     {
       "type": "function",
+      "name": "_endpoint_reachable",
+      "description": "True if an OpenAI-compatible ``/v1/models`` endpoint responds.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_reachable_provider_pool",
+      "description": "Filter a provider pool to currently-reachable backends (skip offline endpoints).",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_role_worker_pool",
+      "description": "Build N market worker consumers for a ROLE, one per CONFIGURED worker slot.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_director_worker_pool",
+      "description": "Byte-identical Director facade over the role-generalized ``_build_role_worker_pool``.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_director_factory",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_drive_role_workers",
+      "description": "Continuously drain ready stage items across a ROLE's worker pool.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_batch_shows_live_backend",
+      "description": "True if the claim proves the bound backend ran (a resolved step or a",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_provider_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_model",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_slot_index",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_active_claim_snapshot",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_retire",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_run",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_drive_director_workers",
+      "description": "Byte-identical Director facade over the role-generalized :func:`_drive_role_workers`.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_log_director_backend_distribution",
+      "description": "Emit a one-line per-backend claim distribution so 4-Director load is visible.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
       "name": "_run_inline_task_market_consumers",
       "description": "Run one bounded PM->CE->Director->QA cycle for mainline-full mode.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_ce_factory",
+      "description": "Build a CE consumer for a pooled worker (role-specific kwargs: analysis_runner).",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_pool_enabled",
+      "description": "A non-Director role drains via a config-driven worker pool ONLY when explicitly",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_refresh_role_workers",
+      "description": "Re-probe reachability and (re)build a role's config-driven worker pool for THIS",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_refresh_director_workers",
+      "description": "Re-evaluate backend reachability and (re)build the Director worker pool for",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {
@@ -304,6 +436,54 @@
       "type": "function",
       "name": "_execute_post_dispatch_integration_qa",
       "description": "Execute integration QA and mutate the result payload in place.",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_integration_qa_failure_should_requeue",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_task_id",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_is_director_assigned_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list_from_task",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_string_list_from_result_field",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_integration_qa_last_failure",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_integration_qa_requeue_target_ids",
+      "description": "",
+      "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
+    },
+    {
+      "type": "function",
+      "name": "_requeue_director_tasks_after_integration_qa_failure",
+      "description": "",
       "defined_in": "polaris/cells/orchestration/pm_dispatch/internal/dispatch_pipeline.py"
     },
     {

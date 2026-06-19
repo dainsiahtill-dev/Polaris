@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:15.011218Z",
-  "source_hash": "75421654ebecb349",
+  "generated_at": "2026-06-19T14:36:55.704820Z",
+  "source_hash": "1ce341ff1a202544",
   "cell_id": "runtime.task_market",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -161,6 +161,18 @@
       "type": "class",
       "name": "StaleLeaseTokenError",
       "description": "Raised when a lease token is stale or does not match the current holder.",
+      "defined_in": "polaris/cells/runtime/task_market/internal/errors.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "StaleWriteConflictError",
+      "description": "Raised when an optimistic write sees a different stored item version.",
       "defined_in": "polaris/cells/runtime/task_market/internal/errors.py",
       "methods": [
         {
@@ -616,6 +628,10 @@
           "doc": "Return the appropriate store backend (lazy)."
         },
         {
+          "name": "_atomic_save_changed_items",
+          "doc": "Persist only rows whose read-version baseline is known."
+        },
+        {
           "name": "_coerce_optional_bool",
           "doc": ""
         },
@@ -772,6 +788,18 @@
           "doc": "Classify the impact of a change order on a task based on its current status (read-only)."
         },
         {
+          "name": "_strip_compensation_side_effects",
+          "doc": ""
+        },
+        {
+          "name": "_collect_compensation_transitions",
+          "doc": ""
+        },
+        {
+          "name": "_collect_compensation_outbox",
+          "doc": ""
+        },
+        {
           "name": "_apply_change_order_impact",
           "doc": ""
         },
@@ -792,11 +820,35 @@
           "doc": ""
         },
         {
+          "name": "_cascade_dead_letter_dependents",
+          "doc": "Dead-letter ``pending_exec`` steps whose dependency terminally failed."
+        },
+        {
+          "name": "_exec_claim_ready",
+          "doc": "Execution-stage readiness gate (three-tier fission)."
+        },
+        {
+          "name": "_target",
+          "doc": ""
+        },
+        {
+          "name": "_design_claim_ready",
+          "doc": "Design-stage ordering gate (组合律 / cross-parent interface coherence)."
+        },
+        {
           "name": "_select_claim_candidate",
           "doc": ""
         },
         {
           "name": "_result_from_item",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_feedback_counters",
+          "doc": ""
+        },
+        {
+          "name": "_integration_qa_reopen_allowed",
           "doc": ""
         },
         {
@@ -812,6 +864,12 @@
           "doc": "Write an outbox record for async fact_stream delivery via relay."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_stable_outbox_id",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/internal/service.py"
     },
     {
       "type": "function",
@@ -1145,7 +1203,7 @@
         },
         {
           "name": "save_items_and_outbox_atomic",
-          "doc": "Atomically persist items, transitions, and outbox messages in one transaction."
+          "doc": "Atomically persist items, audits, reviews, and outbox messages in one transaction."
         },
         {
           "name": "acquire_advisory_lock",
@@ -2244,6 +2302,12 @@
     },
     {
       "type": "function",
+      "name": "test_drift_requeue_skips_item_with_active_lease",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_drift_requeue.py"
+    },
+    {
+      "type": "function",
       "name": "test_drift_requeue_skips_terminal_and_dead_letter",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_market/tests/test_drift_requeue.py"
@@ -2428,6 +2492,44 @@
     },
     {
       "type": "class",
+      "name": "TestExecClaimReadySameFile",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_exec_claim_ready_samefile.py",
+      "methods": [
+        {
+          "name": "test_same_file_dep_at_qa_blocks_dependent",
+          "doc": ""
+        },
+        {
+          "name": "test_same_file_dep_resolved_unblocks",
+          "doc": ""
+        },
+        {
+          "name": "test_same_file_active_writer_blocks_even_without_declared_dep",
+          "doc": ""
+        },
+        {
+          "name": "test_same_file_expired_writer_does_not_block_recovery",
+          "doc": ""
+        },
+        {
+          "name": "test_different_file_dep_at_qa_keeps_fastpath",
+          "doc": ""
+        },
+        {
+          "name": "test_normalizes_dot_slash_when_comparing_targets",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_item",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_exec_claim_ready_samefile.py"
+    },
+    {
+      "type": "class",
       "name": "TestTaskStageFSM",
       "description": "Unit tests for the FSM.",
       "defined_in": "polaris/cells/runtime/task_market/tests/test_fsm.py",
@@ -2501,7 +2603,27 @@
           "doc": ""
         },
         {
+          "name": "test_ack_in_execution_to_pending_exec_is_legal_for_supervision_parent",
+          "doc": ""
+        },
+        {
+          "name": "test_ack_in_execution_to_resolved_is_legal",
+          "doc": ""
+        },
+        {
+          "name": "test_ack_in_execution_to_pending_design_is_illegal",
+          "doc": ""
+        },
+        {
           "name": "test_fail_in_execution_to_dead_letter",
+          "doc": ""
+        },
+        {
+          "name": "test_ack_in_qa_to_resolved_is_legal",
+          "doc": ""
+        },
+        {
+          "name": "test_ack_in_qa_to_waiting_human_is_legal",
           "doc": ""
         },
         {
@@ -2747,6 +2869,14 @@
         {
           "name": "test_resolution_to_stage_mapping",
           "doc": ""
+        },
+        {
+          "name": "test_create_review_request_uses_atomic_cas_item_write",
+          "doc": ""
+        },
+        {
+          "name": "test_resolve_review_uses_atomic_cas_item_write",
+          "doc": ""
         }
       ]
     },
@@ -2773,6 +2903,18 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_item",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_human_review.py"
+    },
+    {
+      "type": "function",
+      "name": "_store_with_item",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_human_review.py"
     },
     {
       "type": "function",
@@ -2854,6 +2996,10 @@
         },
         {
           "name": "test_renew_lease_fails_on_empty_token",
+          "doc": ""
+        },
+        {
+          "name": "test_renew_lease_fails_when_existing_lease_expired",
           "doc": ""
         },
         {
@@ -3292,6 +3438,22 @@
     },
     {
       "type": "class",
+      "name": "_RecordingStore",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "save_items_and_outbox_atomic",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "FakeConsumerForService",
       "description": "Minimal consumer stub for service-level consumer loop tests.",
       "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
@@ -3311,8 +3473,176 @@
       ]
     },
     {
+      "type": "class",
+      "name": "TestExecClaimReadinessGate",
+      "description": "Three-tier fission (I2): queue-scan claims at pending_exec must skip",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
+      "methods": [
+        {
+          "name": "_publish",
+          "doc": ""
+        },
+        {
+          "name": "_scan_claim",
+          "doc": ""
+        },
+        {
+          "name": "test_non_leaf_parent_skipped_on_scan",
+          "doc": ""
+        },
+        {
+          "name": "test_dependency_unready_blocks_scan_claim",
+          "doc": ""
+        },
+        {
+          "name": "test_orphan_dependency_blocks",
+          "doc": ""
+        },
+        {
+          "name": "test_ack_metadata_demotes_parent_to_non_leaf",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDesignClaimOrderingGate",
+      "description": "组合律 (live I3-r14): a pending_design parent that depends_on another",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
+      "methods": [
+        {
+          "name": "_publish_design",
+          "doc": ""
+        },
+        {
+          "name": "_claim_design",
+          "doc": ""
+        },
+        {
+          "name": "test_consumer_parent_waits_for_producer_to_leave_design",
+          "doc": ""
+        },
+        {
+          "name": "test_independent_parents_not_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_orphan_design_dependency_does_not_block",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDependencyTerminalCascade",
+      "description": "Dependents of a terminally-failed dependency must cascade into the",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
+      "methods": [
+        {
+          "name": "_claim_targeted",
+          "doc": ""
+        },
+        {
+          "name": "_dead_letter",
+          "doc": ""
+        },
+        {
+          "name": "test_dead_lettered_dependency_cascades_dependent_to_dlq",
+          "doc": ""
+        },
+        {
+          "name": "test_rejected_dependency_cascades_dependent",
+          "doc": ""
+        },
+        {
+          "name": "test_cascade_is_transitive_across_dependency_chain",
+          "doc": ""
+        },
+        {
+          "name": "test_failed_requeued_dependency_does_not_cascade",
+          "doc": ""
+        },
+        {
+          "name": "test_in_flight_dependent_not_swept",
+          "doc": "A claimed step keeps stage pending_exec with status in_execution —"
+        },
+        {
+          "name": "test_receipt_failure_skips_item_without_poisoning_claims",
+          "doc": "A required-receipt failure on one cascade candidate must not abort"
+        },
+        {
+          "name": "poisoned",
+          "doc": ""
+        },
+        {
+          "name": "test_replay_unblocks_cascaded_dependent",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCrossParentFileOwnershipSerialization",
+      "description": "I3-r18 FIX-1 load-bearing proof: the market serializes two same-file writers",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py",
+      "methods": [
+        {
+          "name": "_stub",
+          "doc": ""
+        },
+        {
+          "name": "test_dependent_blocked_until_owner_leaves_exec_queue",
+          "doc": ""
+        },
+        {
+          "name": "test_failed_owner_requeue_keeps_dependent_blocked",
+          "doc": ""
+        },
+        {
+          "name": "test_no_dependency_makes_both_concurrently_claimable_regression",
+          "doc": ""
+        }
+      ]
+    },
+    {
       "type": "function",
       "name": "test_publish_claim_ack_flow",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_hot_mutation_paths_pass_expected_versions_to_atomic_store",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_human_review_state_and_review_record_share_atomic_write",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_dead_letter_record_shares_atomic_write_with_item_state",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_leaf_execution_ack_to_pending_exec_is_rejected",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_ack_rejects_illegal_fsm_transition_without_persisting",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_qa_ack_waiting_human_from_in_qa_creates_review",
       "description": "",
       "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
     },
@@ -3354,8 +3684,20 @@
     },
     {
       "type": "function",
+      "name": "test_claim_skips_same_file_task_while_writer_lease_active",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
       "name": "test_fail_stage_moves_to_dead_letter_after_retry_exhaustion",
       "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_scope_conflict_requeue_does_not_consume_retry_budget",
+      "description": "Transient safe-parallel file scope conflicts must wait, not dead-letter.",
       "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
     },
     {
@@ -3404,6 +3746,12 @@
       "type": "function",
       "name": "test_reconcile_parent_dead_letter_when_child_dead_letter",
       "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_reconcile_parent_dead_letter_with_mixed_resolved_children",
+      "description": "dead_letter precedence over resolved in the parent merge: one dead",
       "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
     },
     {
@@ -3462,6 +3810,18 @@
     },
     {
       "type": "function",
+      "name": "test_outbox_relay_retry_after_mark_sent_failure_is_idempotent",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "flaky_mark_sent",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
       "name": "test_atomic_write_preserves_items_and_outbox_together",
       "description": "Verify that save_items_and_outbox_atomic writes items, transitions,",
       "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
@@ -3497,6 +3857,66 @@
       "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
     },
     {
+      "type": "function",
+      "name": "test_json_store_dead_letter_append_is_idempotent_by_task_id",
+      "description": "A retried dead-letter (replayed cascade sweep) must replace, not",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_stage_advance_resets_attempt_budget",
+      "description": "Live I3-r9: a step that succeeded on its final exec attempt was",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_claim",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_requeue_carries_failure_teaching_and_advance_clears_it",
+      "description": "Live I3-r10: claim results expose payload (not last_error), so a",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_claim",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_requeue_task_can_teach_next_claim_without_worker_lease",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_requeue_task_rejects_actively_leased_work",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_requeue_task_rejects_terminal_and_legacy_terminal_statuses",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_requeue_task_allows_integration_qa_to_reopen_resolved_work",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
+      "type": "function",
+      "name": "test_requeue_task_allows_expired_lease_recovery",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/task_market/tests/test_service.py"
+    },
+    {
       "type": "class",
       "name": "TestTaskMarketSQLiteStore",
       "description": "Integration tests for SQLite WAL store.",
@@ -3516,6 +3936,10 @@
         },
         {
           "name": "test_upsert_updates_existing",
+          "doc": ""
+        },
+        {
+          "name": "test_save_items_and_outbox_atomic_rejects_stale_expected_version",
           "doc": ""
         },
         {

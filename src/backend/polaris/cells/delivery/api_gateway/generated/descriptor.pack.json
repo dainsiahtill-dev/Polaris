@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:03.521316Z",
-  "source_hash": "3a9f9c960f970603",
+  "generated_at": "2026-06-19T14:36:44.431454Z",
+  "source_hash": "ccd40d60c9d9d2e4",
   "cell_id": "delivery.api_gateway",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -486,6 +486,12 @@
     },
     {
       "type": "function",
+      "name": "legacy_sse_removed",
+      "description": "Fail closed for removed HTTP SSE endpoints.",
+      "defined_in": "polaris/delivery/http/routers/_shared.py"
+    },
+    {
+      "type": "function",
       "name": "structured_error_response",
       "description": "Return a JSONResponse with unified {code, message, details} format.",
       "defined_in": "polaris/delivery/http/routers/_shared.py"
@@ -530,12 +536,6 @@
       "type": "function",
       "name": "verify_event_signature",
       "description": "Verify HMAC signature of event.",
-      "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
-    },
-    {
-      "type": "function",
-      "name": "publish_to_jetstream",
-      "description": "Publish runtime events to Nat-JetStream for WebSocket fanout.",
       "defined_in": "polaris/delivery/http/routers/jetstream_utils.py"
     }
   ],

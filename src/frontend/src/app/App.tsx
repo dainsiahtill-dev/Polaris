@@ -361,33 +361,6 @@ function AppContent() {
     }
   }, []);
 
-  useEffect(() => {
-    const benchWorkDir = String(factoryBenchSession?.work_dir || '').trim();
-    if (!benchWorkDir) {
-      return;
-    }
-    if (isFactoryRunScopedToBenchWorkDir(factoryCurrentRun, benchWorkDir)) {
-      return;
-    }
-
-    const syncLatestFactoryRun = async () => {
-      const run = await resumeLatestFactoryRun();
-      if (run) {
-        void refreshProgressSnapshot();
-      }
-    };
-
-    void syncLatestFactoryRun();
-  }, [
-    factoryBenchSession?.session_id,
-    factoryBenchSession?.status,
-    factoryBenchSession?.updated_at,
-    factoryBenchSession?.work_dir,
-    factoryCurrentRun,
-    refreshProgressSnapshot,
-    resumeLatestFactoryRun,
-  ]);
-
   const {
     isStartingPM,
     isStoppingPM,

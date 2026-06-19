@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:15.364551Z",
-  "source_hash": "e5931386d956f561",
+  "generated_at": "2026-06-19T14:36:56.039197Z",
+  "source_hash": "8aa7a70b095148bb",
   "cell_id": "runtime.projection",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -128,6 +128,42 @@
     {
       "type": "function",
       "name": "_normalize_required_roles",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_positive_int_or_none",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_provider_name",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_provider_type",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_matches",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_binding_payload",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
+    },
+    {
+      "type": "function",
+      "name": "_role_bindings_payload",
       "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/llm_status.py"
     },
@@ -436,6 +472,30 @@
     {
       "type": "function",
       "name": "_read_first_json_candidate",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_artifact_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_factory_latest_plan_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_factory_blueprints_by_task",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_enrich_tasks_with_factory_blueprints",
       "description": "",
       "defined_in": "polaris/cells/runtime/projection/internal/runtime_projection_service.py"
     },

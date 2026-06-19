@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:12.178261Z",
-  "source_hash": "42c23e043c34e145",
+  "generated_at": "2026-06-19T14:36:53.237171Z",
+  "source_hash": "d1cfa066f5d29614",
   "cell_id": "roles.runtime",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -2302,6 +2302,38 @@
       ]
     },
     {
+      "type": "class",
+      "name": "TestWave3ReadContentCarryOver",
+      "description": "Phase-2 Wave-3: 跨回合 WorkingMemory 必须以可转写规模携带读内容。",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_session_orchestrator.py",
+      "methods": [
+        {
+          "name": "tmp_workspace",
+          "doc": ""
+        },
+        {
+          "name": "_orchestrator",
+          "doc": ""
+        },
+        {
+          "name": "_envelope_with_read",
+          "doc": ""
+        },
+        {
+          "name": "test_repo_read_slice_content_is_carried_with_range_label",
+          "doc": ""
+        },
+        {
+          "name": "test_truncation_is_honest_not_false_completeness",
+          "doc": ""
+        },
+        {
+          "name": "test_small_file_carried_in_full_with_copy_instruction",
+          "doc": ""
+        }
+      ]
+    },
+    {
       "type": "function",
       "name": "_make_local_workspace",
       "description": "",
@@ -2468,6 +2500,12 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_hermetic_cwd",
+      "description": "Isolate the working directory.",
+      "defined_in": "polaris/cells/roles/runtime/internal/tests/test_skill_loader.py"
     },
     {
       "type": "class",
@@ -5694,6 +5732,18 @@
       "description": "Request to export session to workflow",
       "defined_in": "polaris/delivery/http/routers/role_session.py",
       "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_track_role_session_jetstream_task",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
+    },
+    {
+      "type": "function",
+      "name": "_on_done",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/role_session.py"
     },
     {
       "type": "function",

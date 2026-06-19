@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,8 @@ from scripts.factory_bench.run_factory_bench import (
     apply_factory_bench_gates,
     discover_artifacts,
     map_factory_run_to_chain_results,
+    read_chain_results_from_runtime_dirs,
+    resolve_runtime_dirs_for_workspace,
     run_factory_chain,
 )
 
@@ -86,6 +89,46 @@ def test_discover_artifacts_accepts_current_qa_report_verdicts(tmp_path: Path) -
         "rt:qa/report.json",
         "ws:.polaris/qa/latest.report.json",
     ]
+
+
+def test_runtime_dir_candidates_merge_artifacts_and_chain_results(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "L1-01"
+    workspace.mkdir()
+    runtime_base_a = tmp_path / "ramdisk-projects"
+    runtime_base_b = tmp_path / "cache-projects"
+    runtime_a = runtime_base_a / "l1-01-aaa" / "runtime"
+    runtime_b = runtime_base_b / "l1-01-bbb" / "runtime"
+    (runtime_a / "contracts").mkdir(parents=True)
+    (runtime_b / "results").mkdir(parents=True)
+    (runtime_a / "contracts" / "pm_tasks.contract.json").write_text(
+        json.dumps({"overall_goal": "Build calculator"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (runtime_a / "contracts" / "plan.md").write_text("plan", encoding="utf-8")
+    (runtime_b / "results" / "director.result.json").write_text(
+        json.dumps({"total": 2, "successes": 1, "failures": 1}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (runtime_b / "results" / "integration_qa.result.json").write_text(
+        json.dumps({"ran": True, "passed": False, "reason": "director failures"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    os.utime(runtime_a, (100, 100))
+    os.utime(runtime_b, (200, 200))
+    monkeypatch.setattr(bench, "_RUNTIME_PROJECT_BASES", (runtime_base_a, runtime_base_b))
+
+    runtime_dirs = resolve_runtime_dirs_for_workspace(workspace)
+    artifacts = discover_artifacts(workspace, runtime_dirs)
+    chain_results = read_chain_results_from_runtime_dirs(runtime_dirs)
+
+    assert runtime_dirs == [runtime_b, runtime_a]
+    assert artifacts["plan"] == ["rt:l1-01-aaa/contracts/plan.md", "rt:l1-01-aaa/contracts/pm_tasks.contract.json"]
+    assert chain_results["contract_goal"] == "Build calculator"
+    assert chain_results["qa_ran"] is True
+    assert chain_results["director"] == {"total": 2, "successes": 1, "failures": 1}
 
 
 def test_clean_chain_preserves_static_pass() -> None:

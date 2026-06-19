@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:14.354584Z",
-  "source_hash": "413a1d98b2ba5678",
+  "generated_at": "2026-06-19T14:36:55.051828Z",
+  "source_hash": "d3304edf657e35eb",
   "cell_id": "factory.pipeline",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -76,6 +76,286 @@
       "name": "_normalize_symbol_rows",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/back_mapping.py"
+    },
+    {
+      "type": "class",
+      "name": "_QuietStaticHandler",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py",
+      "methods": [
+        {
+          "name": "log_message",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_norm_text",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_norm_role",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_tail",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_to_text",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_as_dict",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_run_command",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_load_package_json",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_has_package_dependencies",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_smoke_static_web",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_html_entrypoint",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_find_python_entrypoint",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_smoke_python_cli",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_ok_command",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "build_real_run_gate",
+      "description": "Run the platform's real-runnability gate for one generated project.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_jsonl",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_nested_dict",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_string",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_llm_event",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "collect_llm_events",
+      "description": "Collect normalized LLM invocation evidence from runtime artifacts.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_expected_llm_bindings",
+      "description": "Resolve actual configured role bindings from the runtime LLM config.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_binding_key",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_loose_binding_key",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_model_key",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_matches_family",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "build_llm_route_audit",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_gate_failures",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_check_failures",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_contains_context_budget_signal",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_first_real_run_failure",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "_category_signature",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "classify_factory_bench_failure",
+      "description": "Assign one stable root-cause category to a per-project bench record.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "aggregate_goal_audit",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_gates.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryBenchService",
+      "description": "Workspace-agnostic bench session store.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "root",
+          "doc": ""
+        },
+        {
+          "name": "register_session",
+          "doc": ""
+        },
+        {
+          "name": "append_event",
+          "doc": ""
+        },
+        {
+          "name": "update_progress",
+          "doc": "Update the per-project counters in the session status."
+        },
+        {
+          "name": "complete_session",
+          "doc": ""
+        },
+        {
+          "name": "_touch_status",
+          "doc": ""
+        },
+        {
+          "name": "get_session",
+          "doc": ""
+        },
+        {
+          "name": "list_sessions",
+          "doc": ""
+        },
+        {
+          "name": "tail_events",
+          "doc": ""
+        },
+        {
+          "name": "read_events_from",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_sessions_root",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_session_dir",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_now_iso",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_atomic_write_json",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/bench_service.py"
     },
     {
       "type": "class",
@@ -189,6 +469,18 @@
           "doc": ""
         },
         {
+          "name": "_workspace_package_has_external_dependencies",
+          "doc": ""
+        },
+        {
+          "name": "_workspace_quality_prepare_commands",
+          "doc": ""
+        },
+        {
+          "name": "_artifact_file_ready",
+          "doc": "Return whether an expected stage artifact is present after upstream completion."
+        },
+        {
           "name": "_artifact_exists",
           "doc": ""
         },
@@ -206,6 +498,10 @@
         },
         {
           "name": "_validate_pm_plan_contract",
+          "doc": ""
+        },
+        {
+          "name": "_is_pm_meta_diagnostic_task",
           "doc": ""
         },
         {
@@ -309,6 +605,10 @@
           "doc": ""
         },
         {
+          "name": "_resolve_cancel_event",
+          "doc": ""
+        },
+        {
           "name": "_resolve_abort_checker",
           "doc": ""
         }
@@ -349,6 +649,36 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_factory_cancel_key",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_register_factory_cancel_event",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_unregister_factory_cancel_event",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_signal_factory_cancel_event",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_jetstream_fanout_timeout_seconds",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_run_service.py"
     },
     {
       "type": "class",
@@ -412,6 +742,12 @@
       "type": "function",
       "name": "_acquire_lock_with_timeout",
       "description": "Acquire a threading.Lock with timeout.",
+      "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py"
+    },
+    {
+      "type": "function",
+      "name": "_release_acquired_lock_from_task",
+      "description": "",
       "defined_in": "polaris/cells/factory/pipeline/internal/factory_store.py"
     },
     {
@@ -918,6 +1254,138 @@
       "defined_in": "polaris/cells/factory/pipeline/tests/test_back_mapping_tree_sitter.py"
     },
     {
+      "type": "function",
+      "name": "test_real_run_gate_executes_python_build_and_cli_entrypoint",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "test_real_run_gate_accepts_required_arg_cli_usage_screen",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "test_real_run_gate_starts_static_web_entrypoint",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "test_collect_llm_events_reads_runtime_role_jsonl",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "test_collect_llm_events_reads_multiple_runtime_candidates",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "test_llm_route_audit_requires_actual_bound_families_and_all_director_routes",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "test_llm_route_audit_fails_when_a_director_route_is_unobserved",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "test_llm_route_audit_matches_providerless_events_by_model",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "test_failure_taxonomy_prefers_llm_route_before_generic_chain_failure",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
+    },
+    {
+      "type": "function",
+      "name": "test_aggregate_goal_audit_counts_real_route_and_root_causes",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_gates.py"
+    },
+    {
+      "type": "class",
+      "name": "TestFactoryBenchService",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_bench_service.py",
+      "methods": [
+        {
+          "name": "setUp",
+          "doc": ""
+        },
+        {
+          "name": "_read_jsonl",
+          "doc": ""
+        },
+        {
+          "name": "test_register_session_writes_status_and_events",
+          "doc": ""
+        },
+        {
+          "name": "test_register_session_rejects_duplicate",
+          "doc": ""
+        },
+        {
+          "name": "test_register_session_rejects_path_traversal_id",
+          "doc": ""
+        },
+        {
+          "name": "test_append_event_writes_to_events_jsonl",
+          "doc": ""
+        },
+        {
+          "name": "test_append_event_returns_false_for_unknown_session",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_session_marks_terminal_status",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_session_failure_marks_failed",
+          "doc": ""
+        },
+        {
+          "name": "test_get_session_returns_status_and_recent_events",
+          "doc": ""
+        },
+        {
+          "name": "test_list_sessions_returns_recent_first",
+          "doc": ""
+        },
+        {
+          "name": "test_read_events_from_returns_all_events_from_offset",
+          "doc": ""
+        },
+        {
+          "name": "test_update_progress_sets_completed_and_failed",
+          "doc": ""
+        },
+        {
+          "name": "test_update_progress_partial",
+          "doc": ""
+        },
+        {
+          "name": "test_update_progress_rejects_unknown_session",
+          "doc": ""
+        },
+        {
+          "name": "test_complete_session_honours_summary_counters",
+          "doc": ""
+        }
+      ]
+    },
+    {
       "type": "class",
       "name": "TestStartFactoryRunCommandV1",
       "description": "Tests for StartFactoryRunCommandV1 contract.",
@@ -1271,6 +1739,24 @@
     },
     {
       "type": "function",
+      "name": "_write_plan",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_factory_run_service_pm_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_pm_plan_contract_rejects_meta_diagnostic_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_factory_run_service_pm_contract.py"
+    },
+    {
+      "type": "function",
+      "name": "test_pm_plan_contract_accepts_product_implementation_tasks",
+      "description": "",
+      "defined_in": "polaris/cells/factory/pipeline/tests/test_factory_run_service_pm_contract.py"
+    },
+    {
+      "type": "function",
       "name": "_configure_default_adapter",
       "description": "",
       "defined_in": "polaris/cells/factory/pipeline/tests/test_projection_change_analysis.py"
@@ -1389,6 +1875,41 @@
       "name": "main",
       "description": "",
       "defined_in": "polaris/delivery/cli/factory/projection_reproject.py"
+    },
+    {
+      "type": "class",
+      "name": "FactoryBenchStartRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryBenchStartResponse",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryBenchEventRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryBenchCompleteRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "FactoryBenchProgressRequest",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py",
+      "methods": []
     },
     {
       "type": "function",
@@ -1680,8 +2201,26 @@
     },
     {
       "type": "function",
+      "name": "_classify_factory_failure_code",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_factory_failure_suggestion",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
       "name": "_schedule_factory_run_task",
       "description": "",
+      "defined_in": "polaris/delivery/http/routers/factory.py"
+    },
+    {
+      "type": "function",
+      "name": "_bench_session_event_meta",
+      "description": "Build the bench session fields every realtime bench event should carry.",
       "defined_in": "polaris/delivery/http/routers/factory.py"
     }
   ],

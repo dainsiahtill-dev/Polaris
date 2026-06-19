@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:04.506455Z",
-  "source_hash": "bfee292cf9ab80ad",
+  "generated_at": "2026-06-19T14:36:45.442606Z",
+  "source_hash": "4142ffc4e0ca1618",
   "cell_id": "director.tasking",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -321,6 +321,12 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_case_insensitive_match_exists",
+      "description": "Return True when a file matching ``full`` exists under different casing.",
+      "defined_in": "polaris/cells/director/tasking/internal/existence_gate.py"
     },
     {
       "type": "function",
@@ -1205,6 +1211,60 @@
       "defined_in": "polaris/cells/director/tasking/public/contracts.py"
     },
     {
+      "type": "function",
+      "name": "_run_async",
+      "description": "Bridge async TaskService calls into sync contract handlers.",
+      "defined_in": "polaris/cells/director/tasking/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "get_task_service",
+      "description": "Return the shared per-workspace TaskService used by contract handlers.",
+      "defined_in": "polaris/cells/director/tasking/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "reset_task_services",
+      "description": "Test hook: drop all cached per-workspace services.",
+      "defined_in": "polaris/cells/director/tasking/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_priority",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_task_to_dict",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "create_task",
+      "description": "Handle CreateTaskCommandV1 → internal TaskService.create_task.",
+      "defined_in": "polaris/cells/director/tasking/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "cancel_task",
+      "description": "Handle CancelTaskCommandV1 → internal TaskService.cancel_task.",
+      "defined_in": "polaris/cells/director/tasking/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_task_status",
+      "description": "Handle TaskStatusQueryV1 → internal TaskService.get_task/get_tasks.",
+      "defined_in": "polaris/cells/director/tasking/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "query_task_result",
+      "description": "Handle TaskResultQueryV1 → task terminal state + result payload.",
+      "defined_in": "polaris/cells/director/tasking/public/service.py"
+    },
+    {
       "type": "class",
       "name": "TestGetPythonBootstrap",
       "description": "Tests for Python bootstrap functions.",
@@ -1718,6 +1778,26 @@
     },
     {
       "type": "class",
+      "name": "TestCheckModeCaseInsensitive",
+      "description": "L2-12 regression: a declared target whose only on-disk match differs in",
+      "defined_in": "polaris/cells/director/tasking/tests/test_existence_gate.py",
+      "methods": [
+        {
+          "name": "test_declared_lowercase_resolves_to_uppercase_on_disk",
+          "doc": ""
+        },
+        {
+          "name": "test_case_variant_in_subdir_is_matched",
+          "doc": ""
+        },
+        {
+          "name": "test_genuinely_absent_file_still_missing",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestFileApplyService",
       "description": "Tests for FileApplyService class.",
       "defined_in": "polaris/cells/director/tasking/tests/test_file_apply_service.py",
@@ -1848,7 +1928,11 @@
         },
         {
           "name": "test_validate_response_with_operations",
-          "doc": "Test validation with response containing operations."
+          "doc": "Test validation with a response carrying a real file operation."
+        },
+        {
+          "name": "test_validate_bare_fence_without_file_target_is_rejected",
+          "doc": "A bare ```python fence names no file — applying it would require"
         },
         {
           "name": "test_validate_unclosed_patch_file",
@@ -1939,6 +2023,110 @@
           "doc": "Test that OperationResult is exported."
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "TestCreateTask",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py",
+      "methods": [
+        {
+          "name": "test_create_returns_real_task",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_priority_falls_back_to_medium",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQueryTaskStatus",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py",
+      "methods": [
+        {
+          "name": "test_status_by_id_roundtrip",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_task_id_reports_not_found",
+          "doc": ""
+        },
+        {
+          "name": "test_list_with_invalid_status_filter_fails_closed",
+          "doc": ""
+        },
+        {
+          "name": "test_list_respects_limit",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestCancelTask",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py",
+      "methods": [
+        {
+          "name": "test_cancel_pending_task",
+          "doc": ""
+        },
+        {
+          "name": "test_cancel_unknown_task_reports_not_found",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestQueryTaskResult",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py",
+      "methods": [
+        {
+          "name": "test_result_for_non_terminal_task",
+          "doc": ""
+        },
+        {
+          "name": "test_result_for_cancelled_task_is_failure",
+          "doc": ""
+        },
+        {
+          "name": "test_unknown_task_reports_not_found",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestServiceCache",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py",
+      "methods": [
+        {
+          "name": "test_same_workspace_shares_service",
+          "doc": ""
+        },
+        {
+          "name": "test_reset_drops_cached_services",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_isolated_services",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/director/tasking/tests/test_public_service_contracts.py"
     },
     {
       "type": "class",

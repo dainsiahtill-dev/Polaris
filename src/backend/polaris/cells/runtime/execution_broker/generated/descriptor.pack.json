@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:14.721012Z",
-  "source_hash": "98490dd8b5aae11f",
+  "generated_at": "2026-06-19T14:36:55.394040Z",
+  "source_hash": "1e4edd0a4a0fbdc2",
   "cell_id": "runtime.execution_broker",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -82,6 +82,30 @@
     {
       "type": "function",
       "name": "_format_error_for_log",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_security_blocked_launch_result",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_validate_launch_args",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_log_path_inside_workspace",
+      "description": "",
+      "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_sanitized_process_env",
       "description": "",
       "defined_in": "polaris/cells/runtime/execution_broker/internal/service.py"
     },

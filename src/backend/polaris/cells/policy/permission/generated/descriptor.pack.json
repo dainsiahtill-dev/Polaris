@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:14.030196Z",
-  "source_hash": "6428d3da31ee3c5b",
+  "generated_at": "2026-06-19T14:36:54.684826Z",
+  "source_hash": "7be6c486a11e2874",
   "cell_id": "policy.permission",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [

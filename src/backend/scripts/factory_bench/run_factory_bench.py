@@ -102,21 +102,42 @@ def load_projects() -> list[dict[str, Any]]:
 
 def resolve_runtime_dir_for_workspace(workspace: Path) -> Path | None:
     """Find this workspace's runtime dir by its deterministic name key."""
+    runtime_dirs = resolve_runtime_dirs_for_workspace(workspace)
+    return runtime_dirs[0] if runtime_dirs else None
+
+
+def _safe_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def resolve_runtime_dirs_for_workspace(workspace: Path) -> list[Path]:
+    """Find all runtime dirs for this workspace across ramdisk/cache bases."""
     key_prefix = workspace.name.lower() + "-"
-    matches: list[Path] = []
+    matches: set[Path] = set()
     for base in _RUNTIME_PROJECT_BASES:
         try:
-            matches.extend(e for e in base.iterdir() if e.is_dir() and e.name.startswith(key_prefix))
+            matches.update(e for e in base.iterdir() if e.is_dir() and e.name.startswith(key_prefix))
         except OSError:
             continue
     if not matches:
-        return None
-    newest = max(matches, key=lambda e: e.stat().st_mtime)
-    runtime = newest / "runtime"
-    return runtime if runtime.is_dir() else newest
+        return []
+    runtime_dirs: set[Path] = set()
+    for match in matches:
+        runtime = match / "runtime"
+        if runtime.is_dir():
+            runtime_dirs.add(runtime)
+        elif match.is_dir():
+            runtime_dirs.add(match)
+    return sorted(runtime_dirs, key=_safe_mtime, reverse=True)
 
 
-def discover_artifacts(workspace: Path, runtime_dir: Path | None) -> dict[str, list[str]]:
+def discover_artifacts(
+    workspace: Path,
+    runtime_dirs: Path | list[Path] | tuple[Path, ...] | None,
+) -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
     for kind, patterns in _WORKSPACE_ARTIFACT_GLOBS.items():
         hits: list[str] = []
@@ -127,12 +148,23 @@ def discover_artifacts(workspace: Path, runtime_dir: Path | None) -> dict[str, l
                 if p.is_file() and _is_valid_artifact_match(kind, p)
             )
         found[kind] = sorted(set(hits))
-    if runtime_dir is not None:
+    if runtime_dirs is None:
+        runtime_dir_list: list[Path] = []
+    elif isinstance(runtime_dirs, Path):
+        runtime_dir_list = [runtime_dirs]
+    else:
+        runtime_dir_list = list(runtime_dirs)
+    multi_runtime = len(runtime_dir_list) > 1
+    for runtime_dir in runtime_dir_list:
         for kind, patterns in _RUNTIME_ARTIFACT_GLOBS.items():
             hits = list(found.get(kind, []))
             for pattern in patterns:
                 hits.extend(
-                    f"rt:{p.relative_to(runtime_dir)}"
+                    (
+                        f"rt:{runtime_dir.parent.name}/{p.relative_to(runtime_dir)}"
+                        if multi_runtime
+                        else f"rt:{p.relative_to(runtime_dir)}"
+                    )
                     for p in runtime_dir.glob(pattern)
                     if p.is_file() and _is_valid_artifact_match(kind, p)
                 )
@@ -230,6 +262,24 @@ def read_chain_results(runtime_dir: Path | None) -> dict[str, Any]:
         except (OSError, json.JSONDecodeError):
             pass
     return summary
+
+
+def read_chain_results_from_runtime_dirs(runtime_dirs: list[Path]) -> dict[str, Any]:
+    """Merge terminal chain facts from all runtime candidates, newest first."""
+    merged = read_chain_results(None)
+    for runtime_dir in runtime_dirs:
+        current = read_chain_results(runtime_dir)
+        if merged["qa_ran"] is None and current["qa_ran"] is not None:
+            merged["qa_ran"] = current["qa_ran"]
+            merged["qa_passed"] = current["qa_passed"]
+            merged["qa_reason"] = current["qa_reason"]
+        if not merged["director"] and current["director"]:
+            merged["director"] = current["director"]
+        if not merged["contract_goal"] and current["contract_goal"]:
+            merged["contract_goal"] = current["contract_goal"]
+        if not merged["exit_class"] and current["exit_class"]:
+            merged["exit_class"] = current["exit_class"]
+    return merged
 
 
 _EXIT_CLASS_BY_CODE = {0: "clean", 4: "director_partial", 5: "qa_failed"}
@@ -408,15 +458,17 @@ def _resolve_backend_token(explicit: str | None = None) -> str:
     header (query tokens are intentionally rejected — see
     ``polaris.delivery.http.dependencies.require_auth``). The bench subprocess
     runs in a terminal and has no way to ask the Electron app for a token,
-    so the user must set ``KERNELONE_TOKEN`` (or ``FACTORY_BENCH_BACKEND_TOKEN``)
-    in the same env as the bench, matching the value the backend was started
-    with. Returns "" when no token is configured (the bench then makes
-    unauthenticated requests, which is fine for dev mode with auth disabled).
+    so the user must set ``KERNELONE_TOKEN`` / ``KERNELONE_BACKEND_TOKEN`` (or
+    ``FACTORY_BENCH_BACKEND_TOKEN``) in the same env as the bench, matching the
+    value the backend was started with. Returns "" when no token is configured
+    (the bench then makes unauthenticated requests, which is fine for dev mode
+    with auth disabled).
     """
     return (
         (explicit or "").strip()
         or os.environ.get("FACTORY_BENCH_BACKEND_TOKEN", "").strip()
         or os.environ.get("KERNELONE_TOKEN", "").strip()
+        or os.environ.get("KERNELONE_BACKEND_TOKEN", "").strip()
     )
 
 
@@ -1164,19 +1216,23 @@ def main() -> int:
                 "timeout": bool(chain.get("timeout")),
             },
         )
-        runtime_dir = resolve_runtime_dir_for_workspace(workspace)
+        runtime_dirs = resolve_runtime_dirs_for_workspace(workspace)
+        runtime_dir = runtime_dirs[0] if runtime_dirs else None
         record = build_factory_audit_record(
             project=project,
             workspace=str(workspace),
-            artifact_globs=discover_artifacts(workspace, runtime_dir),
+            artifact_globs=discover_artifacts(workspace, runtime_dirs),
         )
         record["runtime_dir"] = str(runtime_dir) if runtime_dir else None
+        record["runtime_dirs"] = [str(path) for path in runtime_dirs]
         record["chain"] = chain
         if use_legacy_chain:
-            record["chain_results"] = read_chain_results(runtime_dir)
+            record["chain_results"] = read_chain_results_from_runtime_dirs(runtime_dirs)
         else:
             record["chain_results"] = (
-                chain.get("chain_results") if "chain_results" in chain else read_chain_results(runtime_dir)
+                chain.get("chain_results")
+                if "chain_results" in chain
+                else read_chain_results_from_runtime_dirs(runtime_dirs)
             )
         contract_goal = record["chain_results"]["contract_goal"]
         own_overlap = brief_goal_overlap(str(project.get("brief") or ""), contract_goal)
@@ -1209,7 +1265,7 @@ def main() -> int:
             timeout_s=int(args.real_run_timeout),
         )
         record["llm_route_audit"] = build_llm_route_audit(
-            collect_llm_events(workspace, runtime_dir, audit_bundle),
+            collect_llm_events(workspace, runtime_dirs, audit_bundle),
             expected_bindings=expected_llm_bindings,
         )
         apply_factory_bench_gates(record, chain)

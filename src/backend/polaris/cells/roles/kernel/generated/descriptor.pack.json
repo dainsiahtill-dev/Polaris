@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:10.683209Z",
-  "source_hash": "36ae2c6764b826e2",
+  "generated_at": "2026-06-19T14:36:52.029293Z",
+  "source_hash": "966b76aa71ab6b9d",
   "cell_id": "roles.kernel",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -558,6 +558,10 @@
           "doc": "Emergency truncation when budget is violated."
         },
         {
+          "name": "_assemble",
+          "doc": ""
+        },
+        {
           "name": "emergency_truncate_with_limit",
           "doc": "Emergency truncation with token count return."
         },
@@ -621,6 +625,18 @@
         {
           "name": "record_projection_outcome",
           "doc": "Feed turn outcome back into the role-scoped ProjectionEngine."
+        },
+        {
+          "name": "_emit_context_build_observation",
+          "doc": "Emit a ``context.build`` observation to the per-run events file."
+        },
+        {
+          "name": "_resolve_run_events_path",
+          "doc": "Resolve the per-run events file for this request, or ``\"\"`` to skip."
+        },
+        {
+          "name": "_emit_prefix_drift_observation",
+          "doc": "Emit a ``context.prefix_drift`` observation (Headroom T1-B step 1)."
         },
         {
           "name": "_extract_strategy_override",
@@ -687,6 +703,18 @@
           "doc": "获取项目结构信息"
         },
         {
+          "name": "_get_repo_identity",
+          "doc": "仓库身份卡（确定性反幻觉 grounding,Phase-1 B1）。"
+        },
+        {
+          "name": "_get_blueprint_step",
+          "doc": "施工步骤卡（三层裂变 I2）：从请求上下文读取 construction_step。"
+        },
+        {
+          "name": "_get_scout_anchors",
+          "doc": "侦察锚点卡（Phase-2 A7 定位持久化）。"
+        },
+        {
           "name": "_get_task_history",
           "doc": "获取任务历史"
         },
@@ -714,6 +742,12 @@
     },
     {
       "type": "function",
+      "name": "_context_override_value_char_cap",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/gateway.py"
+    },
+    {
+      "type": "function",
       "name": "_copy_strategy_value",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/gateway.py"
@@ -721,6 +755,18 @@
     {
       "type": "function",
       "name": "_deep_merge_strategy_payload",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/gateway.py"
+    },
+    {
+      "type": "function",
+      "name": "_capability_profile_ref_from_request",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/gateway.py"
+    },
+    {
+      "type": "function",
+      "name": "_coerce_int",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/gateway.py"
     },
@@ -781,6 +827,18 @@
           "doc": "Convert ContextOSProjection to message list for LLM."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_scan_language_share",
+      "description": "Bounded walk: (top languages with share, classified source-file count).",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/repo_identity.py"
+    },
+    {
+      "type": "function",
+      "name": "build_repo_identity_card",
+      "description": "Build the deterministic identity card; None when the workspace is unusable.",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/repo_identity.py"
     },
     {
       "type": "class",
@@ -925,8 +983,68 @@
     },
     {
       "type": "class",
+      "name": "BlueprintStepsSignal",
+      "description": "Director 专属：当前 construction_step 的蓝图智能（三层裂变 I2）。",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/role_signals.py",
+      "methods": [
+        {
+          "name": "applies_to",
+          "doc": ""
+        },
+        {
+          "name": "priority",
+          "doc": ""
+        },
+        {
+          "name": "build",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "VerdictHistorySignal",
       "description": "QA 专属：质量判定 / 门禁历史概览。",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/role_signals.py",
+      "methods": [
+        {
+          "name": "applies_to",
+          "doc": ""
+        },
+        {
+          "name": "priority",
+          "doc": ""
+        },
+        {
+          "name": "build",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "RepoIdentitySignal",
+      "description": "seed 信号：仓库身份卡（确定性反幻觉 grounding,Phase-1 B1）。",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/role_signals.py",
+      "methods": [
+        {
+          "name": "applies_to",
+          "doc": ""
+        },
+        {
+          "name": "priority",
+          "doc": ""
+        },
+        {
+          "name": "build",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "ScoutAnchorsSignal",
+      "description": "seed 信号：侦察锚点卡（Phase-2 A7 定位持久化）。",
       "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/role_signals.py",
       "methods": [
         {
@@ -1087,6 +1205,219 @@
       "name": "test_gateway_reads_verdict_history_from_configured_provider",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_blueprint_overview_render.py"
+    },
+    {
+      "type": "class",
+      "name": "TestContextBuildEmission",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_context_build_emission.py",
+      "methods": [
+        {
+          "name": "test_emits_to_explicit_events_path",
+          "doc": ""
+        },
+        {
+          "name": "test_self_resolves_per_run_file_when_run_dir_exists",
+          "doc": ""
+        },
+        {
+          "name": "test_failsafe_skips_when_run_dir_missing",
+          "doc": "Resolution mismatch (run dir absent) → skip rather than write a phantom file."
+        },
+        {
+          "name": "test_no_run_id_no_emit",
+          "doc": ""
+        },
+        {
+          "name": "test_emit_never_raises_on_io_error",
+          "doc": ""
+        },
+        {
+          "name": "test_explicit_path_bypasses_run_dir_existence_guard",
+          "doc": "An explicitly provided events_path is trusted (no run-dir existence guard)."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestContextBuildEmittedByBuildContext",
+      "description": "Integration: the real build_context() path emits context.build end-to-end.",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_context_build_emission.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_mock_profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_context_build_emission.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_events",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_context_build_emission.py"
+    },
+    {
+      "type": "class",
+      "name": "TestPrefixDriftEmission",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_prefix_drift_emission.py",
+      "methods": [
+        {
+          "name": "setup_method",
+          "doc": ""
+        },
+        {
+          "name": "test_emits_to_explicit_events_path",
+          "doc": ""
+        },
+        {
+          "name": "test_drift_flagged_on_second_assembly_with_changed_prefix",
+          "doc": ""
+        },
+        {
+          "name": "test_no_drift_when_prefix_stable",
+          "doc": ""
+        },
+        {
+          "name": "test_self_resolves_when_run_dir_exists",
+          "doc": ""
+        },
+        {
+          "name": "test_failsafe_skips_when_run_dir_missing",
+          "doc": ""
+        },
+        {
+          "name": "test_no_run_id_no_emit",
+          "doc": ""
+        },
+        {
+          "name": "test_emit_never_raises_on_io_error",
+          "doc": ""
+        },
+        {
+          "name": "test_volatile_token_in_prefix_is_flagged",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPrefixDriftEmittedByBuildContext",
+      "description": "Integration: the real build_context() path emits context.prefix_drift.",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_prefix_drift_emission.py",
+      "methods": [
+        {
+          "name": "setup_method",
+          "doc": ""
+        },
+        {
+          "name": "test_build_context_emits_prefix_drift",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDriftEventConsumer",
+      "description": "T1-B sink is wired: the events file is consumed by ``summarize_drift_events``.",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_prefix_drift_emission.py",
+      "methods": [
+        {
+          "name": "setup_method",
+          "doc": ""
+        },
+        {
+          "name": "test_summarize_returns_zero_for_missing_file",
+          "doc": ""
+        },
+        {
+          "name": "test_summarize_reads_real_emitted_events",
+          "doc": ""
+        },
+        {
+          "name": "test_summarize_classifies_drifted_and_volatile_kinds",
+          "doc": "Synthetic events file: 1 first_seen + 1 drifted + volatile kinds."
+        },
+        {
+          "name": "test_summarize_consumes_real_drift_on_second_emit",
+          "doc": "Adversarial: drive TWO real emits (the 2nd triggers real drift) and"
+        },
+        {
+          "name": "test_summarize_consumes_real_stable_on_repeat_emit",
+          "doc": "Adversarial: two IDENTICAL real emits must yield first_seen+stable, not drift."
+        },
+        {
+          "name": "test_summarize_falls_back_to_refs_role_when_output_role_missing",
+          "doc": "Adversarial: when ``output.role`` is absent, the consumer must use"
+        },
+        {
+          "name": "test_summarize_tolerates_malformed_jsonl_line",
+          "doc": "Adversarial: a corrupt JSONL line must NOT crash the consumer."
+        },
+        {
+          "name": "test_to_dict_round_trips_through_json",
+          "doc": "Adversarial: ``to_dict()`` must be JSON-serializable end-to-end so a"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_mock_profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_prefix_drift_emission.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_events",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_prefix_drift_emission.py"
+    },
+    {
+      "type": "class",
+      "name": "TestBuildRepoIdentityCard",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_repo_identity.py",
+      "methods": [
+        {
+          "name": "test_python_repo_positive_and_negative_assertions",
+          "doc": ""
+        },
+        {
+          "name": "test_node_repo_flips_assertions",
+          "doc": ""
+        },
+        {
+          "name": "test_deterministic",
+          "doc": ""
+        },
+        {
+          "name": "test_top_level_entries_listed_with_dir_suffix",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_workspace_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_repo_still_produces_negative_assertions",
+          "doc": ""
+        },
+        {
+          "name": "test_card_respects_size_cap",
+          "doc": ""
+        },
+        {
+          "name": "test_skip_dirs_excluded_from_language_scan",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_make_django_like",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_repo_identity.py"
     },
     {
       "type": "function",
@@ -1278,6 +1609,48 @@
       "type": "function",
       "name": "test_must_have_survives_budget_pressure",
       "description": "压力下 must-have 不被断流（即便要卸载也要挤入）。",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_role_signals.py"
+    },
+    {
+      "type": "function",
+      "name": "_ctx_with_identity",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_role_signals.py"
+    },
+    {
+      "type": "function",
+      "name": "test_repo_identity_injected_by_default_after_seeds",
+      "description": "seed 级默认开启：无需 flag,身份卡紧随两个既有 seed 注入并进 sources。",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_role_signals.py"
+    },
+    {
+      "type": "function",
+      "name": "test_repo_identity_explicit_opt_out",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_role_signals.py"
+    },
+    {
+      "type": "function",
+      "name": "test_repo_identity_none_accessor_keeps_baseline",
+      "description": "缺省 accessor（None）→ 不注入,与历史 baseline 逐字节一致。",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_role_signals.py"
+    },
+    {
+      "type": "function",
+      "name": "test_repo_identity_is_must_have_under_budget_pressure",
+      "description": "must-have 级：预算压力下不被熔断丢弃（必要时卸载,但仍在场）。",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_role_signals.py"
+    },
+    {
+      "type": "function",
+      "name": "test_scout_anchors_injected_by_default_as_must_have",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_role_signals.py"
+    },
+    {
+      "type": "function",
+      "name": "test_scout_anchors_none_accessor_keeps_baseline",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/context_gateway/tests/test_role_signals.py"
     },
     {
@@ -3367,6 +3740,42 @@
       ]
     },
     {
+      "type": "function",
+      "name": "_context_requests_materialize_delivery",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/core.py"
+    },
+    {
+      "type": "function",
+      "name": "_text_requests_materialize_delivery",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/core.py"
+    },
+    {
+      "type": "function",
+      "name": "_ensure_context_delivery_mode_marker",
+      "description": "Restore the materialize marker after ContextOS projection when needed.",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/core.py"
+    },
+    {
+      "type": "function",
+      "name": "_latest_user_content_preview",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/core.py"
+    },
+    {
+      "type": "function",
+      "name": "_turn_id_component",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/core.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_transaction_turn_id",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/kernel/core.py"
+    },
+    {
       "type": "class",
       "name": "KernelEventEmitter",
       "description": "内核事件发射器",
@@ -4109,6 +4518,14 @@
           "doc": "Reuse prepared request baseline when native structured output is unavailable."
         },
         {
+          "name": "_build_reasoning_truncation_retry_request",
+          "doc": "Re-ask after a reasoning-model truncated mid-thought (5th floor)."
+        },
+        {
+          "name": "_append_fallback_instruction_to_chat_messages",
+          "doc": ""
+        },
+        {
           "name": "_emit_call_error_event",
           "doc": ""
         },
@@ -4128,6 +4545,12 @@
     },
     {
       "type": "function",
+      "name": "is_reasoning_truncation_error",
+      "description": "True when an LLM call failed because a reasoning model truncated mid-thought",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/caller.py"
+    },
+    {
+      "type": "function",
       "name": "_normalize_user_message_for_dedupe",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/caller.py"
@@ -4137,6 +4560,42 @@
       "name": "_copy_provider_policy_options",
       "description": "Copy provider type policy from role-runtime context into AIRequest options.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/caller.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_projection_capability_profile",
+      "description": "Attach provider-bound capabilities to the control plane before projection.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/caller.py"
+    },
+    {
+      "type": "class",
+      "name": "ResolvedActorCapabilityProfile",
+      "description": "Provider-bound role/model capability snapshot.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/capability_profile.py",
+      "methods": [
+        {
+          "name": "to_dict",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "resolve_actor_capability_profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/capability_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_as_int",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/capability_profile.py"
+    },
+    {
+      "type": "function",
+      "name": "_as_float_or_none",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/capability_profile.py"
     },
     {
       "type": "class",
@@ -4209,6 +4668,10 @@
           "doc": "Initialize event emitter."
         },
         {
+          "name": "_emits_canonical_llm_events",
+          "doc": "Return whether a delegated emitter already writes canonical LLM events."
+        },
+        {
           "name": "publish_uep_lifecycle_event",
           "doc": "Fire-and-forget publish of an LLM lifecycle event to the UEP bus."
         },
@@ -4229,6 +4692,12 @@
           "doc": "Emit call retry event."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_build_content_preview_payload",
+      "description": "Return bounded metadata for CONTENT_PREVIEW without full response duplication.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/event_emitter.py"
     },
     {
       "type": "class",
@@ -4294,6 +4763,18 @@
     },
     {
       "type": "function",
+      "name": "_coerce_context_temperature_override",
+      "description": "Parse a per-request temperature override from trusted runtime context.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_temperature",
+      "description": "Resolve sampling temperature from trusted runtime context.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py"
+    },
+    {
+      "type": "function",
       "name": "resolve_platform_retry_max",
       "description": "Resolve platform retry max based on role.",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/helpers.py"
@@ -4341,8 +4822,52 @@
           "doc": "Set ProviderFormatter for lazy serialization."
         },
         {
+          "name": "_role_allows_binding_fallback",
+          "doc": ""
+        },
+        {
+          "name": "_profile_for_binding",
+          "doc": ""
+        },
+        {
+          "name": "_fallback_slots_for_role",
+          "doc": ""
+        },
+        {
+          "name": "_profile_uses_healthy_binding",
+          "doc": ""
+        },
+        {
+          "name": "_profile_for_healthy_binding",
+          "doc": ""
+        },
+        {
+          "name": "_mark_profile_binding_unhealthy",
+          "doc": ""
+        },
+        {
+          "name": "_restore_role_binding_override",
+          "doc": ""
+        },
+        {
           "name": "_get_executor",
           "doc": "Get or create AIExecutor instance (lazy, respects DI injection)."
+        },
+        {
+          "name": "_record_final_request_receipt",
+          "doc": ""
+        },
+        {
+          "name": "_normalize_trace_refs",
+          "doc": ""
+        },
+        {
+          "name": "_optional_str",
+          "doc": ""
+        },
+        {
+          "name": "_extract_context_snapshot_ref",
+          "doc": "Extract context_snapshot_ref from an AIRequest's context dict, if present."
         },
         {
           "name": "_is_cache_eligible",
@@ -4377,6 +4902,12 @@
     {
       "type": "function",
       "name": "_with_context_os_audit",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    },
+    {
+      "type": "function",
+      "name": "_get_cognitive_runtime_receipt_deps",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
     },
@@ -4522,6 +5053,10 @@
         {
           "name": "_with_context_os_audit",
           "doc": ""
+        },
+        {
+          "name": "_extract_context_snapshot_ref",
+          "doc": "Extract context_snapshot_ref from an AIRequest's context dict, if present."
         },
         {
           "name": "_current_slo",
@@ -4816,6 +5351,12 @@
       ]
     },
     {
+      "type": "function",
+      "name": "test_invoker_module_import_is_stdout_silent",
+      "description": "F15: worker daemons must not keep raw stdout writes alive at shutdown.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tests/test_llm_caller.py"
+    },
+    {
       "type": "class",
       "name": "TestExtractNativeToolCalls",
       "description": "Tests for native and text fallback tool extraction.",
@@ -4832,9 +5373,193 @@
       ]
     },
     {
+      "type": "class",
+      "name": "TestResolveFromScratchWriteTarget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tests/test_tool_helpers.py",
+      "methods": [
+        {
+          "name": "test_from_scratch_leaf_returns_target",
+          "doc": ""
+        },
+        {
+          "name": "test_edit_on_prior_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_existing_target_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_dot_slash_target_normalized",
+          "doc": ""
+        },
+        {
+          "name": "test_no_construction_step_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_env_off_disables",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRestrictToolDefinitionsToWrite",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tests/test_tool_helpers.py",
+      "methods": [
+        {
+          "name": "test_drops_read_tools_keeps_write",
+          "doc": ""
+        },
+        {
+          "name": "test_keeps_all_mutation_tools",
+          "doc": ""
+        },
+        {
+          "name": "test_returns_original_when_no_write_tool_survives",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveRepairEditTarget",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tests/test_tool_helpers.py",
+      "methods": [
+        {
+          "name": "test_existing_file_with_failure_returns_target",
+          "doc": ""
+        },
+        {
+          "name": "test_absent_file_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_no_last_failure_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_edit_on_prior_existing_file_returns_target",
+          "doc": ""
+        },
+        {
+          "name": "test_edit_on_prior_absent_file_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_blank_error_message_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_dot_slash_target_normalized",
+          "doc": ""
+        },
+        {
+          "name": "test_mutually_exclusive_with_from_scratch",
+          "doc": ""
+        },
+        {
+          "name": "test_no_construction_step_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_env_off_disables",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRestrictToolDefinitionsToEdit",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tests/test_tool_helpers.py",
+      "methods": [
+        {
+          "name": "test_drops_rewrite_verbs_keeps_edit_and_read",
+          "doc": ""
+        },
+        {
+          "name": "test_fail_open_when_no_anchored_edit_tool",
+          "doc": ""
+        },
+        {
+          "name": "test_keeps_diff_and_treesitter_edit_tools",
+          "doc": ""
+        },
+        {
+          "name": "test_does_not_mutate_input_in_place",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_tools",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tests/test_tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_co",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tests/test_tool_helpers.py"
+    },
+    {
       "type": "function",
       "name": "resolve_tool_call_provider",
       "description": "Resolve tool call format provider hint.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "extract_declared_step_target_files",
+      "description": "Return the construction step's declared target file as enum-ready variants.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_tool_name",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_from_scratch_write_target",
+      "description": "Return the single target of a FROM-SCRATCH leaf step, else None (I3-r23).",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "restrict_tool_definitions_to_write",
+      "description": "Keep only write/mutation (+ execute_command) tools, dropping read/scout.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_repair_edit_target",
+      "description": "Return the target of an EDIT-EXISTING turn that must preserve content (R7).",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "restrict_tool_definitions_to_edit",
+      "description": "Drop the whole-file rewrite verbs on a repair turn, forcing an anchored edit.",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "pin_write_tool_file_param_to_targets",
+      "description": "Pin write tools' ``file`` parameter to the declared step targets (enum).",
+      "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    },
+    {
+      "type": "function",
+      "name": "_ccr_retrieve_offering_enabled",
+      "description": "Return True when context_retrieve should be offered to the model (flag-gated).",
       "defined_in": "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
     },
     {
@@ -5402,6 +6127,18 @@
           "doc": "安全检查"
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_tool_name_match_keys",
+      "description": "Return raw and canonical forms for allow-list comparisons.",
+      "defined_in": "polaris/cells/roles/kernel/internal/output_parser.py"
+    },
+    {
+      "type": "function",
+      "name": "_normalize_allowed_tool_names",
+      "description": "Normalize allowed tool names while retaining legacy raw aliases.",
+      "defined_in": "polaris/cells/roles/kernel/internal/output_parser.py"
     },
     {
       "type": "class",
@@ -8281,6 +9018,12 @@
     },
     {
       "type": "function",
+      "name": "_drop_default_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/speculation/fingerprints.py"
+    },
+    {
+      "type": "function",
       "name": "normalize_args",
       "description": "对工具参数做 canonical 归一化.",
       "defined_in": "polaris/cells/roles/kernel/internal/speculation/fingerprints.py"
@@ -8346,6 +9089,10 @@
         {
           "name": "record_failed",
           "doc": ""
+        },
+        {
+          "name": "record_timeout",
+          "doc": "登记一次真实的 deadline miss（推测任务超时）."
         },
         {
           "name": "record_cancel",
@@ -9040,6 +9787,24 @@
     },
     {
       "type": "function",
+      "name": "test_record_timeout_increments_timeout_ratio",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/speculation/tests/test_metrics_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "test_abandonment_ratio_includes_cancelled_and_failed",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/speculation/tests/test_metrics_surface.py"
+    },
+    {
+      "type": "function",
+      "name": "_candidate",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/speculation/tests/test_metrics_surface.py"
+    },
+    {
+      "type": "function",
       "name": "test_sink_exception_does_not_break_emit",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/speculation/tests/test_metrics_surface.py"
@@ -9465,6 +10230,14 @@
           "doc": "Test normalize_args with empty dict."
         },
         {
+          "name": "test_read_file_alias_defaults_match_stream_canonical_payload",
+          "doc": "Raw stream args and canonical registry args should share a spec key."
+        },
+        {
+          "name": "test_read_file_explicit_ranges_stay_distinct",
+          "doc": "Different read ranges are not semantically equivalent shadow calls."
+        },
+        {
           "name": "test_complex_normalization",
           "doc": "Test normalize_args with complex structure (keys sorted, EOL normalized only)."
         },
@@ -9640,8 +10413,12 @@
       "defined_in": "polaris/cells/roles/kernel/internal/speculation/tests/test_write_tool_phases.py",
       "methods": [
         {
-          "name": "test_prepare_uses_file_exists",
-          "doc": "Prepare should map write tools to file_exists for readonly validation."
+          "name": "test_prepare_uses_synthetic_shadow_tool",
+          "doc": "Prepare should emit a non-registered sentinel tool name (not file_exists)."
+        },
+        {
+          "name": "test_prepare_tool_name_does_not_collide_with_file_exists",
+          "doc": "Adversarial: a model-emitted file_exists must not be mistaken for a"
         },
         {
           "name": "test_prepare_id_prefix",
@@ -9672,8 +10449,8 @@
       "defined_in": "polaris/cells/roles/kernel/internal/speculation/tests/test_write_tool_phases.py",
       "methods": [
         {
-          "name": "test_validate_uses_file_exists",
-          "doc": "Validate should also map to file_exists for schema checking."
+          "name": "test_validate_uses_synthetic_shadow_tool",
+          "doc": "Validate should emit a non-registered sentinel tool name distinct from"
         },
         {
           "name": "test_validate_id_prefix",
@@ -9757,6 +10534,13 @@
       "type": "class",
       "name": "ShadowExecutionError",
       "description": "推测执行失败的统一异常类型.",
+      "defined_in": "polaris/cells/roles/kernel/internal/speculative_executor.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "ShadowTimeoutError",
+      "description": "推测执行因超过 deadline 而失败的异常类型.",
       "defined_in": "polaris/cells/roles/kernel/internal/speculative_executor.py",
       "methods": []
     },
@@ -12128,6 +12912,18 @@
     },
     {
       "type": "function",
+      "name": "_dedupe_normalized_paths",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_file_tokens_from_text",
+      "description": "Extract file-looking path tokens from one trusted text fragment.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
+    },
+    {
+      "type": "function",
       "name": "extract_target_files_from_message",
       "description": "从用户消息中提取疑似目标文件路径。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
@@ -12141,7 +12937,7 @@
     {
       "type": "function",
       "name": "build_path_match_candidates",
-      "description": "构建路径匹配候选集（全路径 + basename）。",
+      "description": "构建路径匹配候选集。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
     },
     {
@@ -12260,6 +13056,24 @@
     },
     {
       "type": "function",
+      "name": "_collect_write_error_text",
+      "description": "Collect auditable error text from one normalized write receipt item.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
+    },
+    {
+      "type": "function",
+      "name": "_matching_raw_write_error_text",
+      "description": "Return error text from the raw receipt matching a canonical result item.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
+    },
+    {
+      "type": "function",
+      "name": "batch_write_results_all_failed_on_argument_shape",
+      "description": "判定:批内出现过写调用,且全部因参数形状失败(无一成功)。",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
+    },
+    {
+      "type": "function",
       "name": "has_successful_recon_execution",
       "description": "判定 ledger 工具执行记录中是否存在至少一次成功的侦察工具执行。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
@@ -12274,6 +13088,12 @@
       "type": "function",
       "name": "is_safe_readonly_bootstrap_invocations",
       "description": "判定 invocations 是否为安全的只读 bootstrap 调用。",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
+    },
+    {
+      "type": "function",
+      "name": "apply_delivery_mode_filter",
+      "description": "根据 delivery_contract 过滤决策中的 write tools。",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
     },
     {
@@ -13138,6 +13958,78 @@
     },
     {
       "type": "function",
+      "name": "narrow_edit_blocks_schema_to_line_range",
+      "description": "Rewrite the ``edit_blocks`` schema to the line-range-only form (ADR-0090).",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "_workspace_materialization_fingerprint",
+      "description": "Return (source_file_count, total_bytes), or None when unmeasurable.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_bootstrap_makes_no_progress",
+      "description": "True when read-only bootstraps for a step have stalled (no new materialization).",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "_clear_read_bootstrap_progress",
+      "description": "Reset a step's read-bootstrap progress once it converges to a write.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "_requires_write_only_single_target_repair",
+      "description": "Return True for Director quality repair of exactly one missing target.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "_should_bootstrap_original_read_batch",
+      "description": "Decide whether an original read-only violating batch may be executed.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_materialization_workspace",
+      "description": "Resolve the workspace for the F24 fingerprint / forced-write targeting.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_escalation_temperature",
+      "description": "ADR-0090 W2.6: deterministic sampling temperature for escalated writes.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_retry_output_floor",
+      "description": "I3-r22 (F10): reserved reasoning-sized OUTPUT floor for retry/re-ask calls.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_retry_create_output_floor",
+      "description": "F16 follow-up (Wall 2, 2026-06-15): a LARGER reserved output floor for a",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_retry_temperature_override",
+      "description": "Phase-aware decoding: low temperature only for escalated retry attempts.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "resolve_retry_escalation",
+      "description": "ADR-0090: API-level escalation ladder for mutation-contract retries.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
       "name": "_extract_latest_assistant_message",
       "description": "Return the most recent assistant message content (the model's own analysis).",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
@@ -13162,6 +14054,12 @@
     },
     {
       "type": "function",
+      "name": "detect_creation_mode",
+      "description": "Return True when at least one target file does not yet exist on disk.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
       "name": "select_retry_forced_write_tool_name",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
@@ -13174,6 +14072,12 @@
     },
     {
       "type": "function",
+      "name": "bootstrap_receipt_contains_whole_file_edit_error",
+      "description": "Return True when edit_blocks rejected a new-file whole-file write.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
       "name": "select_bootstrap_followup_write_tool_name",
       "description": "Select the write tool for the post-bootstrap implementation stage.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
@@ -13182,6 +14086,24 @@
       "type": "function",
       "name": "build_forced_write_only_retry_tool_definitions",
       "description": "Builds the strict forced-write tool definitions.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_positive_int_env",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "_bootstrap_read_content_max_chars",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "_bootstrap_read_content_total_chars",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
     },
     {
@@ -13204,6 +14126,12 @@
     },
     {
       "type": "function",
+      "name": "_extract_declared_step_card",
+      "description": "Return the executing construction-step card carried in the turn context.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
       "name": "_extract_deterministic_bootstrap_write_targets",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
@@ -13218,6 +14146,18 @@
       "type": "function",
       "name": "_synthesize_deterministic_dag_service_content",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "_extract_decision_invocations",
+      "description": "Pull invocations from a TurnDecision-like object or mapping (defensive).",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
+    },
+    {
+      "type": "function",
+      "name": "merge_bootstrap_receipt_into_result",
+      "description": "Prepend bootstrap READ receipts into the turn result's batch receipt.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/retry_orchestrator.py"
     },
     {
@@ -13384,6 +14324,12 @@
       "type": "function",
       "name": "_strip_benchmark_boilerplate",
       "description": "Return only the real task instruction, stripping Benchmark Tool Contract boilerplate.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py"
+    },
+    {
+      "type": "function",
+      "name": "_outer_explicit_delivery_mode_marker",
+      "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/task_contract_builder.py"
     },
     {
@@ -13657,6 +14603,108 @@
       "name": "_gateway_with_no_slm",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/tests/test_cognitive_gateway.py"
+    },
+    {
+      "type": "class",
+      "name": "TestApplyDeliveryModeFilterShared",
+      "description": "FINDING 1: the filter is a shared helper with identical semantics.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tests/test_delivery_mode_filter_parity.py",
+      "methods": [
+        {
+          "name": "test_analyze_only_strips_all_writes_and_downgrades_to_final_answer",
+          "doc": ""
+        },
+        {
+          "name": "test_propose_patch_strips_writes_keeps_reads",
+          "doc": ""
+        },
+        {
+          "name": "test_materialize_changes_passthrough",
+          "doc": ""
+        },
+        {
+          "name": "test_controller_static_method_delegates_to_shared_helper",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestInheritMaterializeDowngradeGuard",
+      "description": "FINDING 2: latest negation / downgrade marker must block inheritance.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tests/test_delivery_mode_filter_parity.py",
+      "methods": [
+        {
+          "name": "_history",
+          "doc": ""
+        },
+        {
+          "name": "test_negated_latest_message_blocks_inheritance",
+          "doc": ""
+        },
+        {
+          "name": "test_explicit_analyze_marker_blocks_inheritance",
+          "doc": ""
+        },
+        {
+          "name": "test_explicit_propose_marker_blocks_inheritance",
+          "doc": ""
+        },
+        {
+          "name": "test_plain_continuation_still_inherits_materialize",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_write_decision",
+      "description": "Build a TOOL_BATCH decision containing a single write_file invocation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tests/test_delivery_mode_filter_parity.py"
+    },
+    {
+      "type": "function",
+      "name": "_mixed_decision",
+      "description": "Build a TOOL_BATCH decision with one read and one write invocation.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tests/test_delivery_mode_filter_parity.py"
+    },
+    {
+      "type": "function",
+      "name": "_ledger_with_mode",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tests/test_delivery_mode_filter_parity.py"
+    },
+    {
+      "type": "class",
+      "name": "TestResolveMaterializationWorkspace",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tests/test_f32_materialization_workspace.py",
+      "methods": [
+        {
+          "name": "test_dot_workspace_falls_through_to_env",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_workspace_falls_through_to_env",
+          "doc": ""
+        },
+        {
+          "name": "test_real_config_workspace_wins_over_env",
+          "doc": ""
+        },
+        {
+          "name": "test_dot_workspace_no_env_stays_dot",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_workspace_attr_uses_env",
+          "doc": ""
+        },
+        {
+          "name": "test_closed_loop_dot_is_unmeasurable_real_dir_is_measurable",
+          "doc": ""
+        }
+      ]
     },
     {
       "type": "class",
@@ -14645,6 +15693,10 @@
           "doc": ""
         },
         {
+          "name": "test_continuation_prompt_preserves_outer_explicit_mode_marker",
+          "doc": ""
+        },
+        {
           "name": "test_skips_non_user_messages",
           "doc": ""
         },
@@ -14778,6 +15830,12 @@
     },
     {
       "type": "function",
+      "name": "_recent_edit_failure_in_context",
+      "description": "Whether the tail of the conversation records a failed edit attempt.",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
       "name": "_normalize_allowed_tool_name_alias",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
@@ -14792,6 +15850,30 @@
       "type": "function",
       "name": "_tool_requires_existing_file",
       "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_canonical_single_target_file",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_invocation_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "_with_invocation_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
+    },
+    {
+      "type": "function",
+      "name": "fill_single_target_line_range_edit_blocks",
+      "description": "Fill omitted ``file`` for unambiguous single-target edit_blocks calls.",
       "defined_in": "polaris/cells/roles/kernel/internal/transaction/tool_batch_executor.py"
     },
     {
@@ -15096,12 +16178,24 @@
           "doc": "提取工具调用：native-only"
         },
         {
+          "name": "_parse_recovered_textual_tool",
+          "doc": ""
+        },
+        {
           "name": "_native_tool_name_hint",
           "doc": "Best-effort tool-name extraction from an unparseable native payload."
         },
         {
           "name": "_parse_native_tool",
           "doc": "解析 provider 原生工具调用格式。"
+        },
+        {
+          "name": "_native_tool_name_from_payload",
+          "doc": ""
+        },
+        {
+          "name": "_native_tool_arguments_payload",
+          "doc": ""
         },
         {
           "name": "_parse_native_tool_arguments",
@@ -15587,6 +16681,10 @@
           "doc": "Test tool_call_signature is case insensitive for tool name."
         },
         {
+          "name": "test_canonicalizes_stream_tool_argument_aliases",
+          "doc": "Equivalent LLM spellings should dedupe to one streamed tool call."
+        },
+        {
           "name": "test_none_args",
           "doc": "Test tool_call_signature with None args."
         },
@@ -15867,6 +16965,12 @@
           "doc": "Parse tool calls from the sanitized assistant turn plus native payloads."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_canonical_tool_signature_parts",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/turn_engine/utils.py"
     },
     {
       "type": "function",
@@ -16249,6 +17353,18 @@
           "doc": "Phase 3.3: Check budget status and return warnings."
         }
       ]
+    },
+    {
+      "type": "function",
+      "name": "_has_explicit_materialize_delivery_marker",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/internal/turn_transaction_controller.py"
+    },
+    {
+      "type": "function",
+      "name": "_enforce_explicit_materialize_delivery_marker",
+      "description": "Make an explicit materialize marker authoritative over classifier output.",
+      "defined_in": "polaris/cells/roles/kernel/internal/turn_transaction_controller.py"
     },
     {
       "type": "class",
@@ -17753,6 +18869,98 @@
     },
     {
       "type": "class",
+      "name": "TestT2AVetoOnLiveLlmCompact",
+      "description": "T2-A reject-if-not-smaller veto on the LIVE llm_compact path.",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_context_compressor.py",
+      "methods": [
+        {
+          "name": "_make_compressor",
+          "doc": ""
+        },
+        {
+          "name": "_enable_flag",
+          "doc": ""
+        },
+        {
+          "name": "test_flag_off_byte_identical_to_historical",
+          "doc": "Default-off: the compressed message list is unchanged (floor-inert)."
+        },
+        {
+          "name": "test_flag_on_non_shrinking_pass_reverts_to_input_messages",
+          "doc": "Flag-on + non-shrinking pass: messages are REVERTED, snapshot records it."
+        },
+        {
+          "name": "test_flag_on_shrinking_pass_still_uses_llm_compact",
+          "doc": "Flag-on + shrinking pass: the veto does NOT fire; llm_compact normal path runs."
+        },
+        {
+          "name": "test_flag_on_degenerate_zero_original_tokens_skips_veto",
+          "doc": "Adversarial: original_tokens == 0 must NOT trigger the veto."
+        },
+        {
+          "name": "test_flag_on_shrinking_exactly_by_one_keeps_llm_path",
+          "doc": "Adversarial: compressed_tokens == original_tokens - 1 (strict <) keeps llm path."
+        },
+        {
+          "name": "_fake_estimate_tokens",
+          "doc": ""
+        },
+        {
+          "name": "test_flag_on_accepts_case_insensitive_enabled_values",
+          "doc": "Adversarial: enabled values must be case-insensitive (TRUE / Yes / on)."
+        },
+        {
+          "name": "test_flag_off_unrecognised_values_keep_historical_path",
+          "doc": "Adversarial: anything outside the enabled-set must keep historical behaviour."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBlueprintStepCard",
+      "description": "I3-r28: consumed cross-file interfaces (inject-b) + R7-B repair directive.",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_context_gateway_fallback.py",
+      "methods": [
+        {
+          "name": "_card",
+          "doc": ""
+        },
+        {
+          "name": "test_consumed_interfaces_rendered_for_reuse",
+          "doc": ""
+        },
+        {
+          "name": "test_no_consumed_block_when_absent",
+          "doc": ""
+        },
+        {
+          "name": "test_repair_turn_emits_localized_edit_directive",
+          "doc": ""
+        },
+        {
+          "name": "test_skeleton_stub_only_directive_rendered",
+          "doc": ""
+        },
+        {
+          "name": "test_no_stub_directive_without_flag",
+          "doc": ""
+        },
+        {
+          "name": "test_fill_scope_directive_rendered",
+          "doc": ""
+        },
+        {
+          "name": "test_p2_skeleton_shell_and_anchor_directive_rendered",
+          "doc": ""
+        },
+        {
+          "name": "test_p2_fill_anchor_interface_law_directive_rendered",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestProcessContextOverride",
       "description": "Test _process_context_override method.",
       "defined_in": "polaris/cells/roles/kernel/tests/test_context_gateway_fallback.py",
@@ -17764,6 +18972,22 @@
         {
           "name": "test_process_normal_context_override",
           "doc": "Verify normal context_override is processed correctly."
+        },
+        {
+          "name": "_gateway",
+          "doc": ""
+        },
+        {
+          "name": "test_control_plane_runtime_knobs_excluded",
+          "doc": "order-4 (ADR-0071): runtime execution knobs must NOT leak into the data"
+        },
+        {
+          "name": "test_signal_rendered_planes_not_duplicated_into_message",
+          "doc": "2026-06-15: construction_step/consumed_interfaces/pre_state_verify/last_failure"
+        },
+        {
+          "name": "test_oversized_value_is_capped",
+          "doc": "order-4: a single oversized value cannot blow the window."
         },
         {
           "name": "test_process_context_override_filters_prompt_injection",
@@ -17852,6 +19076,60 @@
     },
     {
       "type": "class",
+      "name": "TestBlueprintStepCardRendering",
+      "description": "施工步骤卡渲染（_get_blueprint_step 静态方法,有界注入）。",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_context_gateway_fallback.py",
+      "methods": [
+        {
+          "name": "_render",
+          "doc": ""
+        },
+        {
+          "name": "test_step_card_includes_bounce_teaching",
+          "doc": "反弹教学(live I3-r10): QA verify 失败原因必须进重试上下文,"
+        },
+        {
+          "name": "test_step_card_without_failure_has_no_teaching_line",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPunchListCardRendering",
+      "description": "Fix-13 缺陷清单渲染: 改建式步骤的施工单携带现状勘察 ——",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_context_gateway_fallback.py",
+      "methods": [
+        {
+          "name": "_render",
+          "doc": ""
+        },
+        {
+          "name": "test_failing_clauses_render_as_numbered_punch_list",
+          "doc": ""
+        },
+        {
+          "name": "test_whole_failure_without_clause_list_still_demands_changes",
+          "doc": ""
+        },
+        {
+          "name": "test_passing_pre_state_warns_against_noop",
+          "doc": ""
+        },
+        {
+          "name": "test_card_without_pre_state_is_unchanged",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_gateway_profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_context_gateway_fallback.py"
+    },
+    {
+      "type": "class",
       "name": "TestStateFirstContextOSIntegration",
       "description": "Test Phase 2: StateFirstContextOS.project() integration.",
       "defined_in": "polaris/cells/roles/kernel/tests/test_context_gateway_integration.py",
@@ -17879,6 +19157,66 @@
         {
           "name": "test_creates_run_card_message",
           "doc": "Verify run_card creates a system message."
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEmergencyTruncatePreservesInstruction",
+      "description": "L2-10 regression: emergency_truncate dropped the FINAL user turn, the",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_context_gateway_integration.py",
+      "methods": [
+        {
+          "name": "_engine",
+          "doc": ""
+        },
+        {
+          "name": "test_final_user_turn_survives_truncation",
+          "doc": ""
+        },
+        {
+          "name": "test_oversized_instruction_content_truncated_not_dropped",
+          "doc": ""
+        },
+        {
+          "name": "test_history_still_dropped_first",
+          "doc": ""
+        },
+        {
+          "name": "test_no_user_turn_behaves_as_before",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestEmergencyTruncateSystemPlanes",
+      "description": "L2-10 budget-crash root cause: PM planning's oversized \"Current goal\"",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_context_gateway_integration.py",
+      "methods": [
+        {
+          "name": "_engine",
+          "doc": ""
+        },
+        {
+          "name": "_estimate",
+          "doc": ""
+        },
+        {
+          "name": "test_oversized_system_plane_truncated_to_fit",
+          "doc": ""
+        },
+        {
+          "name": "test_user_instruction_preserved_when_system_plane_makes_room",
+          "doc": ""
+        },
+        {
+          "name": "test_largest_system_plane_trimmed_first",
+          "doc": ""
+        },
+        {
+          "name": "test_small_system_planes_left_untouched",
+          "doc": ""
         }
       ]
     },
@@ -17991,6 +19329,108 @@
     {
       "type": "function",
       "name": "test_retry_no_analysis_when_assistant_absent",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_forced_write_file_enforcement_mentions_non_empty_complete_content",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_retry_enforcement_restates_target_files_not_acceptance_artifacts",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_forced_edit_blocks_enforcement_includes_minimal_line_range_schema",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_edit_blocks_validation_failure_enforcement_forbids_search_retry",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_contract_retry_context_restates_target_files_not_acceptance_artifacts",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_extract_target_files_includes_pyproject_toml",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_extract_target_files_prefers_structured_scope_line_over_step_mentions",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_contract_retry_context_does_not_expand_scoped_target_to_bare_basename",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_retry_context_lists_all_detected_target_files_for_large_repair",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_original_read_bootstrap_allowed_without_single_target_marker",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_single_target_repair_blocks_original_read_bootstrap",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_unmeasurable_workspace_never_forces",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_stalled_reads_force_after_threshold",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_new_materialization_resets_streak",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_clear_resets_progress",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_fingerprint_none_for_unmeasurable",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
+    },
+    {
+      "type": "function",
+      "name": "test_bootstrap_read_candidates_preserve_qualified_target_only",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_contract_retry_weak_model_assist.py"
     },
@@ -18333,6 +19773,42 @@
       "name": "_decode",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_decode_failure_feedback.py"
+    },
+    {
+      "type": "class",
+      "name": "TestEmergencyTruncateGuaranteeFit",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_emergency_truncate_guarantee_fit.py",
+      "methods": [
+        {
+          "name": "test_many_floored_planes_still_fit_and_keep_user",
+          "doc": ""
+        },
+        {
+          "name": "test_extreme_budget_drops_all_planes_keeps_user",
+          "doc": ""
+        },
+        {
+          "name": "test_fitting_input_is_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_always_fits_across_plane_counts",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_engine",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_emergency_truncate_guarantee_fit.py"
+    },
+    {
+      "type": "function",
+      "name": "_user_content",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_emergency_truncate_guarantee_fit.py"
     },
     {
       "type": "class",
@@ -19822,6 +21298,46 @@
         {
           "name": "test_repo_read_head_schema_exposes_alias_params",
           "doc": ""
+        },
+        {
+          "name": "test_context_retrieve_offering_is_flag_gated",
+          "doc": "T1-A: context_retrieve is offered to the model ONLY when KERNELONE_CCR_RETRIEVE is on"
+        },
+        {
+          "name": "test_flag_on_without_opt_in_does_not_offer",
+          "doc": "Adversarial: env flag ON but role did NOT opt in → context_retrieve is"
+        },
+        {
+          "name": "test_flag_off_empty_whitelist_returns_empty",
+          "doc": "Defensive: empty whitelist + flag-OFF must yield [] (no offering path runs)."
+        },
+        {
+          "name": "test_flag_off_byte_identical_to_historical",
+          "doc": "Floor: with flag OFF (default), the emitted schema list is byte-identical"
+        },
+        {
+          "name": "test_flag_on_with_weird_casing_normalizes_to_lower",
+          "doc": "Robustness: KERNELONE_CCR_RETRIEVE='Yes'/'TRUE'/'On' all enable (when opt-in)."
+        },
+        {
+          "name": "test_flag_on_with_garbage_value_does_not_enable",
+          "doc": "Floor: garbage values must NOT enable the offering (default-off discipline)."
+        },
+        {
+          "name": "test_flag_on_but_spec_registration_raises_returns_original_tools",
+          "doc": "Defensive: when spec registration raises ImportError/RuntimeError/ValueError,"
+        },
+        {
+          "name": "_boom",
+          "doc": ""
+        },
+        {
+          "name": "test_flag_on_does_not_duplicate_when_already_in_whitelist",
+          "doc": "Floor: if context_retrieve is already in the whitelist, enabling the flag"
+        },
+        {
+          "name": "test_flag_on_for_opted_in_role_offered",
+          "doc": "Floor: a role that explicitly opted in via ccr_retrieve_opt_in=True"
         }
       ]
     },
@@ -20186,6 +21702,10 @@
           "doc": ""
         },
         {
+          "name": "test_native_tool_fallback_request_updates_provider_bound_chat_messages",
+          "doc": ""
+        },
+        {
           "name": "_normalize_stream_chunk",
           "doc": ""
         },
@@ -20195,6 +21715,42 @@
         },
         {
           "name": "_capture_debug_event",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_ModelCatalog",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_caller_capability_profile.py",
+      "methods": [
+        {
+          "name": "resolve",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_NoToolModelCatalog",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_caller_capability_profile.py",
+      "methods": [
+        {
+          "name": "resolve",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Gateway",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_caller_capability_profile.py",
+      "methods": [
+        {
+          "name": "__init__",
           "doc": ""
         }
       ]
@@ -20383,6 +21939,10 @@
         {
           "name": "test_init",
           "doc": "基本初始化."
+        },
+        {
+          "name": "test_publish_uep_lifecycle_event_without_loop_does_not_leak_warning",
+          "doc": "无运行中 event loop 时不应创建未 await 的 coroutine."
         }
       ]
     },
@@ -20398,7 +21958,11 @@
         },
         {
           "name": "test_emits_with_event_emitter_override",
-          "doc": "传入 event_emitter 时应使用其方法."
+          "doc": "传入 event_emitter 时应使用其方法并补写 canonical 事件."
+        },
+        {
+          "name": "test_canonical_event_emitter_override_does_not_double_emit",
+          "doc": "已声明写 canonical 事件的 emitter 不应被重复补写."
         }
       ]
     },
@@ -20411,6 +21975,10 @@
         {
           "name": "test_emits_error_event",
           "doc": "错误事件应被发射."
+        },
+        {
+          "name": "test_custom_error_emitter_still_writes_canonical_event",
+          "doc": "错误 override 不能吞掉 canonical 事件."
         }
       ]
     },
@@ -20423,6 +21991,18 @@
         {
           "name": "test_emits_end_event",
           "doc": "结束事件应被发射."
+        },
+        {
+          "name": "test_response_content_emits_content_preview_before_end_event",
+          "doc": "response_content 应进入实时内容预览，而不是只留在 call_end metadata."
+        },
+        {
+          "name": "test_response_content_preview_is_truncated_without_full_response_duplication",
+          "doc": "CONTENT_PREVIEW must be bounded and must not duplicate full response_content."
+        },
+        {
+          "name": "test_custom_end_emitter_still_writes_canonical_event",
+          "doc": "结束 override 不能吞掉 canonical 事件."
         }
       ]
     },
@@ -20435,8 +22015,19 @@
         {
           "name": "test_emits_retry_event",
           "doc": "重试事件应被发射."
+        },
+        {
+          "name": "test_custom_retry_emitter_still_writes_canonical_event",
+          "doc": "重试 override 不能吞掉 canonical 事件."
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "TestLLMCallerInvokerDelegation",
+      "description": "LLMCaller facade should not override the invoker's canonical event writer.",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_caller_components.py",
+      "methods": []
     },
     {
       "type": "class",
@@ -20546,6 +22137,14 @@
         {
           "name": "test_json_with_nested_arguments",
           "doc": "Normal: Nested arguments in JSON."
+        },
+        {
+          "name": "test_lfm_pythonic_tool_call_block",
+          "doc": "Normal: LFM/Pythonic local-model tool call text is recovered."
+        },
+        {
+          "name": "test_xml_pythonic_tool_call_block",
+          "doc": "Normal: XML-wrapped Pythonic local-model tool call text is recovered."
         }
       ]
     },
@@ -20750,6 +22349,108 @@
       "name": "test_lifecycle_snapshot_includes_unclosed_run_details",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_llm_events_lifecycle.py"
+    },
+    {
+      "type": "class",
+      "name": "_Runtime",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_invoker_final_request_receipt.py",
+      "methods": [
+        {
+          "name": "record_runtime_receipt",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "test_get_executor_injects_contextos_final_request_sink",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_invoker_final_request_receipt.py"
+    },
+    {
+      "type": "function",
+      "name": "test_final_request_sink_records_cognitive_runtime_receipt",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_invoker_final_request_receipt.py"
+    },
+    {
+      "type": "function",
+      "name": "test_final_request_sink_runtime_shape_error_does_not_raise",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_invoker_final_request_receipt.py"
+    },
+    {
+      "type": "function",
+      "name": "test_final_request_sink_required_mode_raises_on_runtime_shape_error",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_invoker_final_request_receipt.py"
+    },
+    {
+      "type": "class",
+      "name": "_RuntimeConfig",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "get_role_binding_slots",
+          "doc": ""
+        },
+        {
+          "name": "get_role_config",
+          "doc": ""
+        },
+        {
+          "name": "get_role_model",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_Executor",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "_ProviderFailingExecutor",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "_profile",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py"
+    },
+    {
+      "type": "function",
+      "name": "_prepared",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py"
+    },
+    {
+      "type": "function",
+      "name": "role_slots",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_llm_invoker_role_binding_fallback.py"
     },
     {
       "type": "class",
@@ -21175,11 +22876,105 @@
       "defined_in": "polaris/cells/roles/kernel/tests/test_mutation_guard_soft_mode.py"
     },
     {
+      "type": "function",
+      "name": "_native_tool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "_decode_single_tool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_write_file_native_tool_aliases_decode_to_write_file",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_additional_write_file_native_tool_aliases_decode_to_write_file",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_write_file_native_tool_storage_aliases_decode_to_write_file",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_edit_file_native_tool_aliases_decode_to_edit_file",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_google_function_call_parameters_decode_to_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_openai_function_parameters_decode_to_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_openai_arguments_envelope_decode_to_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_flat_provider_tool_envelopes_decode_to_canonical_tool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_flat_provider_camel_case_arguments_decode_to_canonical_tool",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_edit_blocks_line_range_aliases_decode_to_canonical_arguments",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_common_target_file_aliases_decode_to_file",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_qwen_textual_function_call_recovers_when_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
+      "type": "function",
+      "name": "test_textual_tool_recovery_ignores_thinking_when_enabled",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_native_tool_normalization.py"
+    },
+    {
       "type": "class",
       "name": "TestOutputParserJSONFallbackNormal",
       "description": "Normal scenario tests: valid JSON tool calls in text.",
       "defined_in": "polaris/cells/roles/kernel/tests/test_output_parser_json_fallback.py",
       "methods": [
+        {
+          "name": "test_tool_call_result_canonicalizes_create_file_alias",
+          "doc": "Parse-phase ToolCallResult should canonicalize LLM tool-name aliases."
+        },
         {
           "name": "test_native_calls_take_precedence_over_json",
           "doc": "Native tool calls should be returned before JSON fallback."
@@ -21195,6 +22990,10 @@
         {
           "name": "test_json_with_args_key",
           "doc": "JSON tool call using 'args' key should be parsed."
+        },
+        {
+          "name": "test_json_with_camel_case_tool_envelope",
+          "doc": "Provider/model dialects may emit toolName/toolInput wrappers."
         },
         {
           "name": "test_json_with_tool_key",
@@ -21561,6 +23360,156 @@
           "doc": ""
         }
       ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveRetryOutputFloor",
+      "description": "I3-r22 (F10): reserved reasoning-sized output floor for retry/re-ask calls.",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_phase_aware_temperature.py",
+      "methods": [
+        {
+          "name": "test_unset_env_defaults_to_reasoning_sized",
+          "doc": ""
+        },
+        {
+          "name": "test_disable_sentinels_return_none",
+          "doc": ""
+        },
+        {
+          "name": "test_env_value_wins",
+          "doc": ""
+        },
+        {
+          "name": "test_garbage_falls_back_to_default",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRetryOutputFloorChannel",
+      "description": "The floor rides context_override['llm_max_tokens'], which resolve_max_tokens reads.",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_phase_aware_temperature.py",
+      "methods": [
+        {
+          "name": "test_resolve_max_tokens_honors_floor_override",
+          "doc": ""
+        },
+        {
+          "name": "test_no_floor_keeps_requested",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveEscalationTemperature",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_phase_aware_temperature.py",
+      "methods": [
+        {
+          "name": "test_unset_env_defaults_to_low",
+          "doc": ""
+        },
+        {
+          "name": "test_disable_sentinels_return_none",
+          "doc": ""
+        },
+        {
+          "name": "test_env_value_wins",
+          "doc": ""
+        },
+        {
+          "name": "test_zero_is_a_valid_deterministic_value",
+          "doc": ""
+        },
+        {
+          "name": "test_garbage_falls_back_to_default",
+          "doc": ""
+        },
+        {
+          "name": "test_clamped_to_two",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveRetryTemperatureOverride",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_phase_aware_temperature.py",
+      "methods": [
+        {
+          "name": "test_prompt_phase_attempts_keep_profile_temperature",
+          "doc": ""
+        },
+        {
+          "name": "test_escalated_attempts_get_low_temperature",
+          "doc": ""
+        },
+        {
+          "name": "test_env_off_disables_everywhere",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveTemperatureHelper",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_phase_aware_temperature.py",
+      "methods": [
+        {
+          "name": "test_no_override_returns_requested",
+          "doc": ""
+        },
+        {
+          "name": "test_override_wins",
+          "doc": ""
+        },
+        {
+          "name": "test_zero_override_is_honored",
+          "doc": ""
+        },
+        {
+          "name": "test_negative_garbage_and_bool_fall_back",
+          "doc": ""
+        },
+        {
+          "name": "test_clamped_to_two",
+          "doc": ""
+        },
+        {
+          "name": "test_non_dict_override_ignored",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExecuteRetryBatchTemperaturePassThrough",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_phase_aware_temperature.py",
+      "methods": []
+    },
+    {
+      "type": "class",
+      "name": "TestTransactionKernelTemperatureChannel",
+      "description": "request_payload[\"temperature_override\"] → context_override channel key.",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_phase_aware_temperature.py",
+      "methods": []
+    },
+    {
+      "type": "function",
+      "name": "_raw_response",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_phase_aware_temperature.py"
+    },
+    {
+      "type": "function",
+      "name": "_build_orchestrator",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_phase_aware_temperature.py"
     },
     {
       "type": "class",
@@ -22872,6 +24821,14 @@
         {
           "name": "test_empty_content_returns_empty",
           "doc": ""
+        },
+        {
+          "name": "test_preserves_raw_tool_name",
+          "doc": "§6.6: name_raw must be the model's emitted token, verbatim case."
+        },
+        {
+          "name": "test_uppercase_tool_name_preserved_in_raw",
+          "doc": "§6.6: case in the raw observed name must NOT be erased by .lower()."
         }
       ]
     },
@@ -23121,6 +25078,182 @@
     },
     {
       "type": "class",
+      "name": "TestRetryCreateOutputFloor",
+      "description": "F16 follow-up (Wall 2, 2026-06-15): a pure-create forced write needs a",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_retry_api_escalation.py",
+      "methods": [
+        {
+          "name": "test_default_create_floor_exceeds_standard_floor",
+          "doc": ""
+        },
+        {
+          "name": "test_env_override",
+          "doc": ""
+        },
+        {
+          "name": "test_env_disable",
+          "doc": ""
+        },
+        {
+          "name": "test_non_positive_disables",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestResolveRetryEscalation",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_retry_api_escalation.py",
+      "methods": [
+        {
+          "name": "test_early_attempts_keep_defaults",
+          "doc": ""
+        },
+        {
+          "name": "test_third_attempt_narrows_to_write_only_without_forcing",
+          "doc": ""
+        },
+        {
+          "name": "test_final_attempt_forces_named_write_tool_and_narrows_schema",
+          "doc": ""
+        },
+        {
+          "name": "test_final_attempt_with_non_edit_blocks_tool_keeps_schema",
+          "doc": ""
+        },
+        {
+          "name": "test_narrow_transform_preserves_other_tools",
+          "doc": ""
+        },
+        {
+          "name": "test_no_strict_definitions_disables_escalation",
+          "doc": ""
+        },
+        {
+          "name": "test_final_attempt_without_forced_name_still_narrows",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestF16CreationModeEscalation",
+      "description": "F16 (2026-06-15): from-scratch creates force the write tool by name from",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_retry_api_escalation.py",
+      "methods": [
+        {
+          "name": "test_creation_keeps_first_retry_attempt_free",
+          "doc": ""
+        },
+        {
+          "name": "test_creation_forces_named_write_from_second_attempt",
+          "doc": ""
+        },
+        {
+          "name": "test_creation_forces_edit_blocks_schema_narrowing_early",
+          "doc": ""
+        },
+        {
+          "name": "test_non_creation_schedule_is_unchanged",
+          "doc": ""
+        },
+        {
+          "name": "test_creation_low_temperature_phase_shifts_with_force",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestDetectCreationMode",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_retry_api_escalation.py",
+      "methods": [
+        {
+          "name": "test_missing_target_is_creation",
+          "doc": ""
+        },
+        {
+          "name": "test_any_missing_target_is_creation",
+          "doc": ""
+        },
+        {
+          "name": "test_all_existing_targets_is_not_creation",
+          "doc": ""
+        },
+        {
+          "name": "test_no_targets_is_not_creation",
+          "doc": ""
+        },
+        {
+          "name": "test_no_workspace_is_not_creation",
+          "doc": ""
+        },
+        {
+          "name": "test_extensionless_stem_phantom_does_not_flag_existing_file",
+          "doc": ""
+        },
+        {
+          "name": "test_stem_filter_preserves_distinct_missing_targets",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestMutationImpliesVerification",
+      "description": "Phase-1 A2 (run20 audit): a mutation contract implies verification access.",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_retry_api_escalation.py",
+      "methods": [
+        {
+          "name": "test_write_only_set_includes_execute_command_when_verification_enabled",
+          "doc": ""
+        },
+        {
+          "name": "test_benchmark_forbidden_execute_command_stays_excluded",
+          "doc": ""
+        },
+        {
+          "name": "test_plain_fix_request_implies_verification_in_retry_path",
+          "doc": "The composed predicate used by retry_tool_batch_after_contract_violation:"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExistenceAwareForcedTool",
+      "description": "L1-05 round-6 regression: creation tasks must force write_file, not",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_retry_api_escalation.py",
+      "methods": [
+        {
+          "name": "test_missing_targets_force_write_file",
+          "doc": ""
+        },
+        {
+          "name": "test_existing_target_keeps_edit_blocks",
+          "doc": ""
+        },
+        {
+          "name": "test_no_target_info_keeps_legacy_order",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "test_forced_edit_blocks_set_includes_write_file_companion",
+      "description": "factory-bench live deadlock: teaching error says 'use write_file' for",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_retry_api_escalation.py"
+    },
+    {
+      "type": "function",
+      "name": "test_partially_missing_targets_force_write_file",
+      "description": "Round-7 regression: one created file must not lock the remaining",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_retry_api_escalation.py"
+    },
+    {
+      "type": "class",
       "name": "_MockProfile",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py",
@@ -23164,6 +25297,34 @@
         },
         {
           "name": "test_request_allows_transaction_tools_by_default",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestContextDeliveryModeMarker",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py",
+      "methods": [
+        {
+          "name": "test_materialize_context_restores_marker_on_latest_user_message",
+          "doc": ""
+        },
+        {
+          "name": "test_propose_context_leaves_messages_unchanged",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestTransactionTurnId",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py",
+      "methods": [
+        {
+          "name": "test_task_scoped_turn_id_distinguishes_concurrent_tasks",
           "doc": ""
         }
       ]
@@ -23330,6 +25491,30 @@
         },
         {
           "name": "test_singleton_returns_same_instance",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestBlueprintStepsSignal",
+      "description": "三层裂变 I2: Director 的施工步骤蓝图智能注入(default-on, must-have)。",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_role_signals.py",
+      "methods": [
+        {
+          "name": "test_injects_for_director_by_default",
+          "doc": ""
+        },
+        {
+          "name": "test_absent_step_injects_nothing",
+          "doc": ""
+        },
+        {
+          "name": "test_not_for_other_roles",
+          "doc": ""
+        },
+        {
+          "name": "test_flag_can_disable",
           "doc": ""
         }
       ]
@@ -24592,8 +26777,8 @@
           "doc": ""
         },
         {
-          "name": "test_build_prepare_invocation_maps_to_file_exists",
-          "doc": ""
+          "name": "test_build_prepare_invocation_uses_synthetic_sentinel",
+          "doc": "Prepare must emit a non-registered sentinel tool name (not file_exists)"
         },
         {
           "name": "test_build_commit_invocation_restores_write",
@@ -24810,6 +26995,82 @@
         {
           "name": "test_finalization_tool_chain_forbidden",
           "doc": "验证finalization后调工具被禁止"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestExtractDeclaredStepTargetFiles",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_step_target_file_pinning.py",
+      "methods": [
+        {
+          "name": "test_non_step_context_yields_nothing",
+          "doc": ""
+        },
+        {
+          "name": "test_bare_target_yields_both_enum_variants",
+          "doc": ""
+        },
+        {
+          "name": "test_prefixed_target_yields_single_variant",
+          "doc": ""
+        },
+        {
+          "name": "test_malformed_targets_refuse_to_pin",
+          "doc": "Adversarial review D-fix: a CE-authored glob/list/absolute target"
+        },
+        {
+          "name": "test_subdir_target_is_pinnable",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPinWriteToolFileParam",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_step_target_file_pinning.py",
+      "methods": [
+        {
+          "name": "test_pins_write_tools_and_leaves_read_tools_alone",
+          "doc": ""
+        },
+        {
+          "name": "test_source_definitions_are_not_mutated",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_targets_is_a_noop",
+          "doc": ""
+        },
+        {
+          "name": "test_definition_without_file_property_passes_through",
+          "doc": ""
+        },
+        {
+          "name": "test_non_dict_entries_pass_through",
+          "doc": ""
+        },
+        {
+          "name": "test_alias_path_properties_are_pinned_too",
+          "doc": "Adversarial review B-fix: arg_aliases expand into REAL optional"
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPinSurvivesLineRangeNarrowing",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_step_target_file_pinning.py",
+      "methods": [
+        {
+          "name": "test_pinned_enum_survives_edit_blocks_narrowing",
+          "doc": "The W1.10 wholesale parameters rewrite must carry the pinned enum —"
+        },
+        {
+          "name": "test_unpinned_narrowing_has_no_enum",
+          "doc": ""
         }
       ]
     },
@@ -25671,6 +27932,22 @@
     },
     {
       "type": "class",
+      "name": "TestExplicitDeliveryModeMarker",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_controller.py",
+      "methods": [
+        {
+          "name": "test_materialize_marker_overrides_analyze_contract",
+          "doc": ""
+        },
+        {
+          "name": "test_plain_message_keeps_existing_mode",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestFinalAnswerPath",
       "description": "测试直接回答路径",
       "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_controller.py",
@@ -25816,6 +28093,82 @@
       ]
     },
     {
+      "type": "class",
+      "name": "TestWriteArgumentShapeFailureGuard",
+      "description": "Phase-1 A8a: malformed-write batches must escalate through the retry ladder.",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py",
+      "methods": [
+        {
+          "name": "_receipt",
+          "doc": ""
+        },
+        {
+          "name": "test_all_writes_failed_on_shape_triggers",
+          "doc": ""
+        },
+        {
+          "name": "test_line_range_missing_file_triggers_shape_retry",
+          "doc": "L6-32: edit_blocks line-range form omitted file and bypassed shape retry."
+        },
+        {
+          "name": "test_missing_edit_payload_triggers_shape_retry",
+          "doc": ""
+        },
+        {
+          "name": "test_missing_blocks_start_argument_triggers_shape_retry",
+          "doc": ""
+        },
+        {
+          "name": "test_whole_file_write_not_edit_triggers_shape_retry",
+          "doc": ""
+        },
+        {
+          "name": "test_edit_block_validation_failed_triggers_shape_retry",
+          "doc": ""
+        },
+        {
+          "name": "test_pre_write_syntax_block_triggers",
+          "doc": "L2-11 r3 live regression: a single PreWriteGuard-blocked write"
+        },
+        {
+          "name": "test_empty_write_content_raw_error_triggers",
+          "doc": "Wall 2 regression: ToolBatchRuntime can serialize a failed write with"
+        },
+        {
+          "name": "test_raw_error_without_call_id_does_not_broadcast_to_mixed_write_failures",
+          "doc": ""
+        },
+        {
+          "name": "test_any_successful_write_disarms",
+          "doc": ""
+        },
+        {
+          "name": "test_non_shape_write_failure_is_owned_by_other_guards",
+          "doc": ""
+        },
+        {
+          "name": "test_read_only_batch_never_triggers",
+          "doc": ""
+        },
+        {
+          "name": "test_empty_receipt_never_triggers",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestVoidBatchDoesNotConsumeBudget",
+      "description": "L2-11 r5 live regression: the A8a escalation's replacement batch became",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py",
+      "methods": [
+        {
+          "name": "test_a8a_raise_rolls_back_batch_count",
+          "doc": ""
+        }
+      ]
+    },
+    {
       "type": "function",
       "name": "test_build_decision_messages_adds_write_verify_contract_hint",
       "description": "",
@@ -25859,6 +28212,12 @@
     },
     {
       "type": "function",
+      "name": "test_bootstrap_followup_switches_whole_file_edit_blocks_error_to_write_file",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+    },
+    {
+      "type": "function",
       "name": "test_resolve_mutation_target_guard_violation_allows_matching_write_target",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
@@ -25866,6 +28225,12 @@
     {
       "type": "function",
       "name": "test_resolve_mutation_target_guard_violation_rejects_extra_out_of_scope_write_target",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+    },
+    {
+      "type": "function",
+      "name": "test_resolve_mutation_target_guard_violation_rejects_bare_basename_for_scoped_target",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
     },
@@ -25884,6 +28249,24 @@
     {
       "type": "function",
       "name": "test_rewrite_existing_file_paths_in_invocations_drops_nonexistent_prefix",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+    },
+    {
+      "type": "function",
+      "name": "test_fill_single_target_line_range_edit_blocks_adds_missing_file",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+    },
+    {
+      "type": "function",
+      "name": "test_fill_single_target_line_range_edit_blocks_handles_tool_invocation_model",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+    },
+    {
+      "type": "function",
+      "name": "test_fill_single_target_line_range_edit_blocks_refuses_multi_target",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
     },
@@ -26022,6 +28405,18 @@
     {
       "type": "function",
       "name": "_fake_decode",
+      "description": "",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+    },
+    {
+      "type": "function",
+      "name": "test_bootstrap_followup_never_forces_write_file_on_large_real_files",
+      "description": "Phase-1 live regression (phase1smoke django-15213): a large real source",
+      "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+    },
+    {
+      "type": "function",
+      "name": "test_small_scaffold_with_markers_still_qualifies_for_whole_file_replacement",
       "description": "",
       "defined_in": "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
     },

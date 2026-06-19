@@ -3,9 +3,10 @@
 The Polaris factory router uses ``require_auth`` which demands a Bearer
 token in the ``Authorization`` header (query tokens are intentionally
 rejected for security). The bench subprocess must therefore read the
-token from ``KERNELONE_TOKEN`` (or ``FACTORY_BENCH_BACKEND_TOKEN``) and
-include it in every POST; without the header, the backend returns 401
-and the bench falls back to local-JSONL-only emission.
+token from ``KERNELONE_TOKEN`` / ``KERNELONE_BACKEND_TOKEN`` (or
+``FACTORY_BENCH_BACKEND_TOKEN``) and include it in every POST; without the
+header, the backend returns 401 and the bench falls back to local-JSONL-only
+emission.
 """
 
 from __future__ import annotations
@@ -88,9 +89,23 @@ class TestBenchAuth(unittest.TestCase):
         ):
             self.assertEqual(_resolve_backend_token(), "env-kernelone")
         with unittest.mock.patch.dict(
-            "os.environ", {"FACTORY_BENCH_BACKEND_TOKEN": "env-bench", "KERNELONE_TOKEN": "env-kernelone"}
+            "os.environ",
+            {
+                "FACTORY_BENCH_BACKEND_TOKEN": "",
+                "KERNELONE_TOKEN": "",
+                "KERNELONE_BACKEND_TOKEN": "env-backend",
+            },
         ):
-            # FACTORY_BENCH_BACKEND_TOKEN wins over KERNELONE_TOKEN.
+            self.assertEqual(_resolve_backend_token(), "env-backend")
+        with unittest.mock.patch.dict(
+            "os.environ",
+            {
+                "FACTORY_BENCH_BACKEND_TOKEN": "env-bench",
+                "KERNELONE_TOKEN": "env-kernelone",
+                "KERNELONE_BACKEND_TOKEN": "env-backend",
+            },
+        ):
+            # FACTORY_BENCH_BACKEND_TOKEN wins over generic backend token aliases.
             self.assertEqual(_resolve_backend_token(), "env-bench")
         with unittest.mock.patch.dict("os.environ", {}, clear=True):
             self.assertEqual(_resolve_backend_token(), "")

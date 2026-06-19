@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:12.765486Z",
-  "source_hash": "aa5052fe0fffcd6d",
+  "generated_at": "2026-06-19T14:36:53.641953Z",
+  "source_hash": "4bb31bb520138c12",
   "cell_id": "llm.control_plane",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -469,6 +469,24 @@
     },
     {
       "type": "function",
+      "name": "_safe_event_id",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_track_jetstream_task",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
+      "name": "_discard",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/interview.py"
+    },
+    {
+      "type": "function",
       "name": "llm_interview_save",
       "description": "",
       "defined_in": "polaris/delivery/http/routers/interview.py"
@@ -747,6 +765,24 @@
       "type": "function",
       "name": "_map_provider_config_error",
       "description": "Map domain config errors to HTTP status codes.",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_event_id",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_track_jetstream_task",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/tests.py"
+    },
+    {
+      "type": "function",
+      "name": "_discard",
+      "description": "",
       "defined_in": "polaris/delivery/http/routers/tests.py"
     },
     {

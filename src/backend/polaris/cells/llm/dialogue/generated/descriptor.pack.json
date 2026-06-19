@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:12.953681Z",
-  "source_hash": "a10cc82b6996196a",
+  "generated_at": "2026-06-19T14:36:53.759824Z",
+  "source_hash": "75869218dadb283b",
   "cell_id": "llm.dialogue",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -432,6 +432,26 @@
       "methods": [
         {
           "name": "test_missing_session_id_creates_fresh_ad_hoc_session",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRoleOutputSchemaEnum",
+      "description": "",
+      "defined_in": "polaris/cells/llm/dialogue/tests/test_role_output_schema_enum.py",
+      "methods": [
+        {
+          "name": "test_invalid_qa_verdict_fails_with_enum_error",
+          "doc": ""
+        },
+        {
+          "name": "test_valid_qa_verdict_passes",
+          "doc": ""
+        },
+        {
+          "name": "test_invalid_pm_priority_enum_fails",
           "doc": ""
         }
       ]

@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:04.560233Z",
-  "source_hash": "aa8ae8bd97416818",
+  "generated_at": "2026-06-19T14:36:45.518518Z",
+  "source_hash": "b71884d7110900a8",
   "cell_id": "director.task_consumer",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -64,6 +64,18 @@
       "methods": [
         {
           "name": "__init__",
+          "doc": ""
+        },
+        {
+          "name": "active_claim_watchdog_snapshot",
+          "doc": "Return the currently executing claim, if any, for outer pool watchdogs."
+        },
+        {
+          "name": "_mark_active_claim",
+          "doc": ""
+        },
+        {
+          "name": "_clear_active_claim",
           "doc": ""
         },
         {
@@ -138,6 +150,66 @@
     },
     {
       "type": "function",
+      "name": "_step_target_file",
+      "description": "Declared single target for fission or direct single-file work.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_changed_files_cover_target",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_shrink_guard_ratio",
+      "description": "Resolve the shrink floor ratio (env override, else 0.6). Clamped to (0,1].",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_prior_target_size",
+      "description": "Byte size of the step target before a repair exec, else None (fail-open).",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_repair_shrink_error",
+      "description": "Teaching error if a repair shrank the target below the guard floor, else None.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_fill_assembly_owned_anchors",
+      "description": "Anchors a ``fill_scope_only`` step is permitted to implement ([] for non-fills).",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_target_file_content",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_fill_assembly_baseline",
+      "description": "The target file content BEFORE an anchored-fill exec (the skeleton / prior-fill",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_fill_assembly_drift_error",
+      "description": "P3 deterministic merger gate (codex 2026-06-15): validate a fill's RESULTING file",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_read_consumed_interfaces",
+      "description": "Frozen identifiers of OTHER files this step must reuse, from the interface ledger.",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
       "name": "_append_normalized_paths",
       "description": "",
       "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
@@ -170,6 +242,12 @@
       "type": "function",
       "name": "_adapter_failure_message",
       "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
+    },
+    {
+      "type": "function",
+      "name": "_pre_state_punch_list",
+      "description": "施工现状勘察（缺陷清单 / punch list, Fix-13）。",
       "defined_in": "polaris/cells/director/task_consumer/internal/director_consumer.py"
     },
     {
@@ -224,6 +302,18 @@
     },
     {
       "type": "class",
+      "name": "FakeDirectorAdapter",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
       "name": "TestDirectorExecutionConsumerPollOnce",
       "description": "",
       "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
@@ -243,6 +333,22 @@
         {
           "name": "test_no_execution_evidence_requeues_pending_exec",
           "doc": "Placeholder/no-evidence execution must not advance to QA."
+        },
+        {
+          "name": "test_step_target_not_in_changed_files_requeues",
+          "doc": "A fission step that changed OTHER files but not its declared"
+        },
+        {
+          "name": "test_direct_route_target_file_not_in_changed_files_requeues",
+          "doc": "Direct PM->Director single-file work must also enforce target_files."
+        },
+        {
+          "name": "test_execute_task_forwards_bounce_teaching_to_adapter_context",
+          "doc": "A requeued step's last_failure must reach the adapter context —"
+        },
+        {
+          "name": "test_step_target_covered_advances_to_qa",
+          "doc": ""
         },
         {
           "name": "test_execute_task_delegates_to_director_adapter_for_existing_workspace",
@@ -278,6 +384,18 @@
         },
         {
           "name": "_slow_execute",
+          "doc": ""
+        },
+        {
+          "name": "test_active_claim_snapshot_is_visible_only_during_execution",
+          "doc": ""
+        },
+        {
+          "name": "_blocking_execute",
+          "doc": ""
+        },
+        {
+          "name": "_run_poll",
           "doc": ""
         }
       ]
@@ -322,6 +440,182 @@
         },
         {
           "name": "flaky_poll",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestAdapterFailureMessage",
+      "description": "Fix-10 (live I3-r12): the market bounce carried only the generic",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "_message",
+          "doc": ""
+        },
+        {
+          "name": "test_carries_first_quality_error_detail",
+          "doc": ""
+        },
+        {
+          "name": "test_detail_is_truncated",
+          "doc": ""
+        },
+        {
+          "name": "test_without_quality_errors_keeps_marker_only",
+          "doc": ""
+        },
+        {
+          "name": "test_blank_quality_entries_are_skipped",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPreStatePunchList",
+      "description": "Fix-13 缺陷清单(punch list): 改建式步骤的施工单必须携带现状勘察 ——",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "_punch",
+          "doc": ""
+        },
+        {
+          "name": "test_no_verify_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_passing_pre_state_reports_exit_zero",
+          "doc": ""
+        },
+        {
+          "name": "test_failing_clauses_are_listed",
+          "doc": ""
+        },
+        {
+          "name": "test_state_carrying_chain_reports_whole_failure_only",
+          "doc": ""
+        },
+        {
+          "name": "test_top_level_or_reports_whole_failure_only",
+          "doc": ""
+        },
+        {
+          "name": "test_list_verify_is_joined",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRepairShrinkGuard",
+      "description": "R7-C (I3-r28): deterministic anti-shrink backstop on repair turns —",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "_prior_size",
+          "doc": ""
+        },
+        {
+          "name": "_shrink_error",
+          "doc": ""
+        },
+        {
+          "name": "_repair_payload",
+          "doc": ""
+        },
+        {
+          "name": "test_prior_size_returns_bytes_on_repair_turn",
+          "doc": ""
+        },
+        {
+          "name": "test_prior_size_none_without_last_failure",
+          "doc": ""
+        },
+        {
+          "name": "test_prior_size_none_when_target_absent",
+          "doc": ""
+        },
+        {
+          "name": "test_shrink_below_floor_returns_teaching_error",
+          "doc": ""
+        },
+        {
+          "name": "test_preserved_size_returns_none",
+          "doc": ""
+        },
+        {
+          "name": "test_tiny_prior_file_not_guarded",
+          "doc": ""
+        },
+        {
+          "name": "test_env_overrides_ratio",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestRepairShrinkGuardWiring",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "test_shrunk_repair_requeues_pending_exec",
+          "doc": ""
+        },
+        {
+          "name": "_shrink_exec",
+          "doc": ""
+        },
+        {
+          "name": "test_preserving_repair_acks_pending_qa",
+          "doc": ""
+        },
+        {
+          "name": "_edit_exec",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeDirectorAdapter",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "FakeDirectorAdapter",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "__init__",
+          "doc": ""
+        }
+      ]
+    },
+    {
+      "type": "class",
+      "name": "TestPunchListWiring",
+      "description": "",
+      "defined_in": "polaris/cells/director/task_consumer/internal/tests/test_director_consumer.py",
+      "methods": [
+        {
+          "name": "test_execute_task_attaches_pre_state_verify_to_context",
+          "doc": ""
+        },
+        {
+          "name": "test_execute_task_injects_consumed_interfaces",
           "doc": ""
         }
       ]

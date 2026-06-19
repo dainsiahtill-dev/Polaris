@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:05.764191Z",
-  "source_hash": "b92260e0937a6620",
+  "generated_at": "2026-06-19T14:36:46.888260Z",
+  "source_hash": "cecd9bf03b57b339",
   "cell_id": "context.engine",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -203,6 +203,12 @@
     {
       "type": "function",
       "name": "_build_context_os_overlay",
+      "description": "",
+      "defined_in": "polaris/cells/context/engine/public/service.py"
+    },
+    {
+      "type": "function",
+      "name": "_resolve_context_os_overlay_model_window",
       "description": "",
       "defined_in": "polaris/cells/context/engine/public/service.py"
     },

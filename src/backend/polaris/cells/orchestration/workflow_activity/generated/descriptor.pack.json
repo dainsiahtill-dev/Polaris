@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:07.115301Z",
-  "source_hash": "780b9a065bb6b6a2",
+  "generated_at": "2026-06-19T14:36:49.139376Z",
+  "source_hash": "d278c3add98814ac",
   "cell_id": "orchestration.workflow_activity",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [

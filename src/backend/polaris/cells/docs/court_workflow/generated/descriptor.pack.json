@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:05.830058Z",
-  "source_hash": "5932f708dd97c904",
+  "generated_at": "2026-06-19T14:36:46.957975Z",
+  "source_hash": "76ac2744f7f866e1",
   "cell_id": "docs.court_workflow",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -312,6 +312,36 @@
       "name": "_get_engine_status",
       "description": "读取引擎状态文件.",
       "defined_in": "polaris/delivery/http/routers/court.py"
+    },
+    {
+      "type": "function",
+      "name": "_safe_docs_event_id",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_track_docs_jetstream_task",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_discard",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_docs_init_channel",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
+    },
+    {
+      "type": "function",
+      "name": "_docs_init_subject",
+      "description": "",
+      "defined_in": "polaris/delivery/http/routers/docs.py"
     },
     {
       "type": "function",

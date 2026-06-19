@@ -1,7 +1,7 @@
 {
   "version": "2.1.0",
-  "generated_at": "2026-06-10T11:24:11.458220Z",
-  "source_hash": "cde6caebdc1fe92c",
+  "generated_at": "2026-06-19T14:36:52.676369Z",
+  "source_hash": "800b0d8ba62e1a20",
   "cell_id": "roles.profile",
   "workspace": "/home/dains/Documents/polaris/src/backend",
   "capabilities": [
@@ -1248,6 +1248,14 @@
         {
           "name": "test_roundtrip",
           "doc": ""
+        },
+        {
+          "name": "test_ccr_retrieve_opt_in_plumbed_through_profile_from_dict",
+          "doc": "Regression: a yaml/json profile with tool_policy.ccr_retrieve_opt_in=True"
+        },
+        {
+          "name": "test_ccr_retrieve_opt_in_defaults_to_false_when_absent",
+          "doc": "Fail-closed default: when the field is absent from the source dict,"
         },
         {
           "name": "test_includes_all_policy_fields",
