@@ -141,7 +141,7 @@ async def _subscribe_factory_events(ws: Any, *, run_id: str, workspace: str) -> 
                 "type": "SUBSCRIBE",
                 "protocol": "runtime.v2",
                 "client_id": f"factory-bench-{uuid.uuid4().hex[:10]}",
-                "channels": ["event.factory"],
+                "channels": ["event.factory", f"event.factory:{run_id}"],
                 "cursor": 0,
                 "tail": FACTORY_EVENT_TAIL,
                 "workspace": workspace,

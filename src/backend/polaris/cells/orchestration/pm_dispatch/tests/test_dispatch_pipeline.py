@@ -385,6 +385,65 @@ def test_run_inline_task_market_consumers_mainline_full_success(monkeypatch) -> 
     assert result["terminal_status_by_task"]["T01"] == "resolved"
 
 
+def test_run_inline_task_market_consumers_ignores_transient_scope_conflict(monkeypatch) -> None:
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline-full")
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._build_director_worker_pool",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._task_market_lineage_snapshot",
+        lambda **_kwargs: {
+            "available": True,
+            "open_task_ids": (),
+            "status_counts": {},
+            "terminal_status_by_task": {"T01": "resolved"},
+        },
+    )
+
+    class _FakeCEConsumer:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def poll_once(self) -> list[dict[str, object]]:
+            return []
+
+    class _FakeDirectorConsumer:
+        def __init__(self, **_kwargs) -> None:
+            self._called = False
+
+        def poll_once(self) -> list[dict[str, object]]:
+            if self._called:
+                return []
+            self._called = True
+            return [{"task_id": "T01-B", "ok": False, "reason": "scope_conflict"}]
+
+    class _FakeQAConsumer:
+        def __init__(self, **_kwargs) -> None:
+            self._called = False
+
+        def poll_once(self) -> list[dict[str, object]]:
+            if self._called:
+                return []
+            self._called = True
+            return [{"task_id": "T01", "ok": True, "status": "resolved"}]
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._get_task_market_consumers",
+        lambda: (_FakeCEConsumer, _FakeDirectorConsumer, _FakeQAConsumer),
+    )
+
+    result = _run_inline_task_market_consumers(
+        workspace_full="/workspace",
+        run_id="run-scope-conflict",
+        iteration=1,
+        published_task_ids=("T01",),
+    )
+    assert result["ok"] is True
+    assert result["reason"] == "mainline_full_complete"
+    assert result["director_results"] == ({"task_id": "T01-B", "ok": False, "reason": "scope_conflict"},)
+
+
 def test_run_inline_task_market_consumers_drains_past_legacy_two_cycles(monkeypatch) -> None:
     monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline-full")
     monkeypatch.delenv("KERNELONE_TASK_MARKET_MAINLINE_FULL_MAX_CYCLES", raising=False)

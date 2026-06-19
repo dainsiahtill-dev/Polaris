@@ -116,6 +116,32 @@ def test_line_range_missing_file_rejected(tmp_path: Path) -> None:
     assert "not found" in result.get("error", "").lower()
 
 
+def test_tiny_line_range_whole_file_replacement_rejected(tmp_path: Path) -> None:
+    ex = _executor(tmp_path)
+    replacement = """class HttpResponse:
+    def __init__(self, content=b""):
+        self.content = bytes(content)
+
+    def serialize(self):
+        return bytes(self.content)
+
+
+def add_header(response, name, value):
+    response.headers[name] = value
+    return response
+
+
+def build_response(content):
+    return HttpResponse(content)
+"""
+    result = _handle_edit_blocks(ex, file="response.py", start=1, end=1, replace=replacement)
+
+    assert result.get("ok") is False
+    assert result.get("error_type") == "line_range_whole_file_mismatch"
+    assert "only 1 of" in result.get("error", "")
+    assert (tmp_path / "response.py").read_text(encoding="utf-8") == SAMPLE
+
+
 # ----- regression: classic SEARCH/REPLACE still works -----
 
 

@@ -647,6 +647,29 @@ class TestDirectorExecutionConsumerPollOnce:
         assert fail_call.requeue_stage == "pending_exec"
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_safe_parallel_conflict_uses_single_target_file(self, mock_get_svc: MagicMock) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-conflict"
+        claim_result.lease_token = "lease-conflict"
+        claim_result.payload = {"blueprint_id": "bp-002", "target_file": "src/a.py"}
+
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=False)
+
+        consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1", enable_safe_parallel=True)
+        with patch.object(consumer._conflict_detector, "check_conflict", return_value=True) as check_conflict:
+            results = consumer.poll_once()
+
+        assert results[0]["reason"] == "scope_conflict"
+        assert check_conflict.call_args.args[2] == ["src/a.py"]
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_execution_renews_lease_heartbeat(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
@@ -786,6 +809,24 @@ class TestScopeConflictDetector:
                 )
             )
             assert detector.check_conflict("/test", "task-1", ["/src/main.py"]) is True
+
+    def test_detects_conflict_with_other_in_execution_single_target_file(self) -> None:
+        detector = ScopeConflictDetector()
+        with patch(
+            "polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service"
+        ) as mock_get:
+            mock_svc = MagicMock()
+            mock_get.return_value = mock_svc
+            mock_svc.query_status.return_value = MagicMock(
+                items=(
+                    {
+                        "task_id": "task-2",
+                        "status": "in_execution",
+                        "payload": {"target_file": "src/main.py"},
+                    },
+                )
+            )
+            assert detector.check_conflict("/test", "task-1", ["src/main.py"]) is True
 
 
 class TestDirectorExecutionConsumerRunStop:

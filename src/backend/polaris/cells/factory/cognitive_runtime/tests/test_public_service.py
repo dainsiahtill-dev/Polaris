@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 from typing import TYPE_CHECKING, cast
@@ -97,6 +98,86 @@ def _build_store(workspace: str) -> CognitiveRuntimeSqliteStore:
     if os.path.exists(db_path):
         os.unlink(db_path)
     return CognitiveRuntimeSqliteStore(workspace, db_path=db_path)
+
+
+def _reset_conversation_runtime_singletons() -> None:
+    import polaris.cells.roles.session.internal.conversation as conv_mod
+
+    for engine in list(getattr(conv_mod, "_engines_by_url", {}).values()):
+        engine.dispose()
+    if getattr(conv_mod, "_engine", None) is not None:
+        conv_mod._engine.dispose()
+    conv_mod._engine = None
+    conv_mod._SessionLocal = None
+    conv_mod._engine_database_url = None
+    conv_mod._engines_by_url.clear()
+    conv_mod._session_locals_by_url.clear()
+    conv_mod._kernel_db = None
+    conv_mod._kernel_dbs_by_workspace.clear()
+
+
+def test_runtime_export_handoff_uses_workspace_bound_role_session_store(monkeypatch, tmp_path) -> None:
+    from polaris.cells.roles.session.public import RoleSessionService
+    from polaris.kernelone.context.context_os import CodeContextDomainAdapter
+    from polaris.kernelone.context.context_os.runtime.engine import StateFirstContextOS
+
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(tmp_path / "kernelone-cache"))
+    _reset_conversation_runtime_singletons()
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+
+    projection = asyncio.run(
+        StateFirstContextOS(domain_adapter=CodeContextDomainAdapter(), workspace=str(workspace_a)).project(
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Stabilize the workspace A context runtime and preserve handoff state.",
+                    "sequence": 1,
+                },
+                {
+                    "role": "assistant",
+                    "content": "I will preserve the workspace A session goal.",
+                    "sequence": 2,
+                },
+            ],
+            recent_window_messages=2,
+        )
+    )
+    persisted_snapshot = projection.snapshot.to_dict()
+    persisted_snapshot.pop("transcript_log", None)
+
+    runtime = CognitiveRuntimeService()
+    try:
+        with RoleSessionService(workspace=str(workspace_a)) as session_service:
+            session = session_service.create_session(
+                role="director",
+                workspace=str(workspace_a),
+                context_config={"state_first_context_os": persisted_snapshot},
+            )
+            session_id = str(session.id)
+
+        handoff_a = runtime.export_handoff_pack(
+            workspace=str(workspace_a),
+            session_id=session_id,
+            run_id="run-a",
+            reason="handoff-a",
+        )
+        handoff_b = runtime.export_handoff_pack(
+            workspace=str(workspace_b),
+            session_id=session_id,
+            run_id="run-b",
+            reason="handoff-b",
+        )
+
+        assert "workspace a context runtime" in handoff_a.current_goal.lower()
+        assert handoff_a.run_card
+        assert handoff_b.current_goal == ""
+        assert handoff_b.run_card == {}
+    finally:
+        runtime.close()
+        _reset_conversation_runtime_singletons()
 
 
 def test_public_service_resolves_context_scope_and_validation(monkeypatch) -> None:

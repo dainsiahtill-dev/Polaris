@@ -36,7 +36,7 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 # SQLAlchemy's declarative_base() returns a dynamically created class
 # that is valid as a base class for ORM models.
@@ -211,17 +211,21 @@ class ConversationMessage(Base):
 # 数据库连接管理
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
+_engine_database_url: str | None = None
+_engines_by_url: dict[str, Engine] = {}
+_session_locals_by_url: dict[str, sessionmaker[Session]] = {}
 _engine_lock = threading.Lock()
 _kernel_db_lock = threading.Lock()
 _kernel_db: KernelDatabase | None = None
+_kernel_dbs_by_workspace: dict[str, KernelDatabase] = {}
 _DEFAULT_CONVERSATIONS_DB_LOGICAL_PATH = "runtime/conversations/conversations.db"
 _FALLBACK_CONVERSATIONS_DB_LOGICAL_PATH = "workspace/runtime/conversations/conversations.db"
 
 
-def _default_database_url() -> str:
+def _default_database_url(workspace: str | None = None) -> str:
     """构建默认会话数据库 URL。"""
     resolved = resolve_preferred_sqlite_path(
-        _get_kernel_db(),
+        _get_kernel_db(workspace),
         runtime_logical_path=_DEFAULT_CONVERSATIONS_DB_LOGICAL_PATH,
         workspace_fallback_logical_path=_FALLBACK_CONVERSATIONS_DB_LOGICAL_PATH,
     )
@@ -229,11 +233,13 @@ def _default_database_url() -> str:
     return f"sqlite:///{Path(resolved).as_posix()}"
 
 
-def _normalize_database_url(database_url: str | None) -> str:
+def _normalize_database_url(database_url: str | None, *, workspace: str | None = None) -> str:
     """Normalize SQLite URLs through KernelOne path policy."""
     token = str(database_url or "").strip()
     if not token:
-        return _default_database_url()
+        if workspace is None:
+            return _default_database_url()
+        return _default_database_url(workspace)
     if not token.startswith("sqlite:///"):
         return token
 
@@ -244,79 +250,117 @@ def _normalize_database_url(database_url: str | None) -> str:
     path_part, sep, query = raw.partition("?")
     if path_part.startswith("runtime/"):
         resolved = resolve_preferred_sqlite_path(
-            _get_kernel_db(),
+            _get_kernel_db(workspace),
             runtime_logical_path=path_part,
             workspace_fallback_logical_path=f"workspace/{path_part}",
         )
     else:
-        resolved = _get_kernel_db().resolve_sqlite_path(path_part, ensure_parent=True)
+        resolved = _get_kernel_db(workspace).resolve_sqlite_path(path_part, ensure_parent=True)
     normalized = f"sqlite:///{Path(resolved).as_posix()}"
     if sep:
         normalized = f"{normalized}?{query}"
     return normalized
 
 
-def _resolve_kernel_workspace() -> str:
-    explicit_workspace = str(os.environ.get("KERNELONE_CONTEXT_ROOT") or "").strip()
+def _resolve_kernel_workspace(workspace: str | None = None) -> str:
+    explicit_workspace = str(workspace or os.environ.get("KERNELONE_CONTEXT_ROOT") or "").strip()
     if explicit_workspace:
         return str(Path(explicit_workspace).resolve())
     return str(Path.cwd().resolve())
 
 
-def _get_kernel_db() -> KernelDatabase:
+def _get_kernel_db(workspace: str | None = None) -> KernelDatabase:
     global _kernel_db
-    if _kernel_db is None:
+    resolved_workspace = _resolve_kernel_workspace(workspace)
+    db = _kernel_dbs_by_workspace.get(resolved_workspace)
+    if db is None:
         with _kernel_db_lock:
-            if _kernel_db is None:
-                _kernel_db = KernelDatabase(
-                    _resolve_kernel_workspace(),
+            db = _kernel_dbs_by_workspace.get(resolved_workspace)
+            if db is None:
+                db = KernelDatabase(
+                    resolved_workspace,
                     sqlalchemy_adapter=SqlAlchemyAdapter(),
                     allow_unmanaged_absolute=False,
                 )
-    return _kernel_db
+                _kernel_dbs_by_workspace[resolved_workspace] = db
+    _kernel_db = db
+    return db
 
 
-def get_engine(database_url: str | None = None) -> Any:
+def _forget_cached_engines_after_legacy_reset() -> None:
+    """Honor tests and legacy callers that still reset only the old singletons."""
+    global _engine_database_url
+    if _engine is None and _SessionLocal is None:
+        _engines_by_url.clear()
+        _session_locals_by_url.clear()
+        _engine_database_url = None
+
+
+def _sqlite_pool_options(resolved_database_url: str) -> tuple[dict[str, Any], Any]:
+    if "sqlite" not in resolved_database_url:
+        return {}, NullPool
+    connect_args: dict[str, Any] = {"check_same_thread": False}
+    if resolved_database_url.endswith("/:memory:") or resolved_database_url == "sqlite:///:memory:":
+        return connect_args, StaticPool
+    return connect_args, NullPool
+
+
+def get_engine(database_url: str | None = None, *, workspace: str | None = None) -> Any:
     """获取或创建数据库引擎（线程安全）"""
-    global _engine
-    resolved_database_url = _normalize_database_url(database_url)
+    global _engine, _engine_database_url
+    if _engine is not None and _engine not in _engines_by_url.values():
+        Base.metadata.create_all(bind=_engine)
+        return _engine
 
-    if _engine is None:
+    _forget_cached_engines_after_legacy_reset()
+    resolved_database_url = _normalize_database_url(database_url, workspace=workspace)
+
+    engine = _engines_by_url.get(resolved_database_url)
+    if engine is None:
         with _engine_lock:
-            # 双重检查锁定
-            if _engine is None:
-                # 为 SQLite 配置合适的连接池
-                connect_args = {}
-                pool_class = NullPool  # SQLite 使用 NullPool 避免连接池问题
-
-                if "sqlite" in resolved_database_url:
-                    connect_args = {"check_same_thread": False}
-
-                _engine = _get_kernel_db().sqlalchemy(
+            engine = _engines_by_url.get(resolved_database_url)
+            if engine is None:
+                connect_args, pool_class = _sqlite_pool_options(resolved_database_url)
+                engine = _get_kernel_db(workspace).sqlalchemy(
                     resolved_database_url,
                     connect_args=connect_args,
                     pool_class=pool_class,
                     pool_pre_ping=True,
                 )
-                Base.metadata.create_all(bind=_engine)
-    return _engine
+                Base.metadata.create_all(bind=engine)
+                _engines_by_url[resolved_database_url] = engine
+    else:
+        Base.metadata.create_all(bind=engine)
+    _engine = engine
+    _engine_database_url = resolved_database_url
+    return engine
 
 
-def get_session_local() -> Any:
+def get_session_local(*, workspace: str | None = None) -> Any:
     """获取会话工厂（线程安全）"""
     global _SessionLocal
-    engine = get_engine()
+    if _SessionLocal is not None and _engine is not None and _engine not in _engines_by_url.values():
+        return _SessionLocal
 
-    if _SessionLocal is None:
+    engine = get_engine(workspace=workspace)
+    resolved_database_url = str(getattr(engine, "url", ""))
+    if not resolved_database_url:
+        resolved_database_url = _normalize_database_url(None, workspace=workspace)
+
+    session_local = _session_locals_by_url.get(resolved_database_url)
+    if session_local is None:
         with _engine_lock:
-            if _SessionLocal is None:
-                _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    return _SessionLocal
+            session_local = _session_locals_by_url.get(resolved_database_url)
+            if session_local is None:
+                session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+                _session_locals_by_url[resolved_database_url] = session_local
+    _SessionLocal = session_local
+    return session_local
 
 
-def init_db() -> None:
+def init_db(*, workspace: str | None = None) -> None:
     """初始化数据库（创建表）"""
-    engine = get_engine()
+    engine = get_engine(workspace=workspace)
     Base.metadata.create_all(bind=engine)
 
 

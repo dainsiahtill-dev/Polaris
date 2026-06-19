@@ -310,6 +310,13 @@ def _build_director_worker_pool(
     return _build_role_worker_pool("director", _director_factory, worker_suffix=worker_suffix)
 
 
+def _is_transient_worker_requeue_result(result: dict[str, Any]) -> bool:
+    """Return True for expected transient worker results that requeued work."""
+    reason = str(result.get("reason") or "").strip().lower()
+    error_code = str(result.get("error_code") or "").strip().upper()
+    return reason == "scope_conflict" or error_code == "SCOPE_CONFLICT"
+
+
 def _run_inline_task_market_consumers(
     *,
     workspace_full: str,
@@ -546,7 +553,7 @@ def _run_inline_task_market_consumers(
     has_worker_failure = any(
         not bool(result.get("ok", False))
         for result in (ce_results + director_results + qa_results)
-        if isinstance(result, dict)
+        if isinstance(result, dict) and not _is_transient_worker_requeue_result(result)
     )
     ok = not has_worker_failure and not unresolved_ids and not rejected_ids and not loop_error
     reason = "mainline_full_complete" if ok else "mainline_full_incomplete"

@@ -15,6 +15,11 @@ only partial obedience.
 
 from __future__ import annotations
 
+import ast
+import math
+import operator
+import re
+from collections.abc import Callable
 from typing import Any
 
 from polaris.kernelone.quality.step_verify import normalize_step_verify
@@ -23,6 +28,24 @@ CE_BLUEPRINT_TASKS_SCHEMA_VERSION = "ce-blueprint-tasks/1"
 
 _MAX_STEP_LINES = 120
 _MAX_STEPS_PER_TASK = 24
+_VERIFY_ARITHMETIC_CALL_RE = re.compile(
+    r"\b(?:calculate|evaluate|eval(?:uate)?_expression|parse_and_evaluate)\s*"
+    r"\(\s*(?P<quote>['\"])(?P<expr>[0-9+\-*/().\s]{1,120})(?P=quote)\s*\)"
+)
+_VERIFY_GREP_NUMBER_RE = re.compile(
+    r"\bgrep\b(?:\s+-[A-Za-z]+)*(?:\s+--)?\s*(?P<quote>['\"])(?P<expected>-?\d+(?:\.\d+)?)(?P=quote)"
+)
+_ARITHMETIC_EXPR_RE = re.compile(r"^[0-9+\-*/().\s]+$")
+_BIN_OPS: dict[type[ast.operator], Callable[[float, float], float]] = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+}
+_UNARY_OPS: dict[type[ast.unaryop], Callable[[float], float]] = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
 
 
 def normalize_construction_step(raw: Any, *, parent_pm_task: str, index: int) -> dict[str, Any]:
@@ -82,6 +105,67 @@ def _target_file_shape_error(target_file: str) -> str:
     return ""
 
 
+def _safe_eval_arithmetic_expr(expr: str) -> float | None:
+    if not expr or not _ARITHMETIC_EXPR_RE.fullmatch(expr) or "**" in expr:
+        return None
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError:
+        return None
+
+    def eval_node(node: ast.AST) -> float | None:
+        if isinstance(node, ast.Expression):
+            return eval_node(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp):
+            operand = eval_node(node.operand)
+            unary_func = _UNARY_OPS.get(type(node.op))
+            if operand is None or unary_func is None:
+                return None
+            return float(unary_func(operand))
+        if isinstance(node, ast.BinOp):
+            left = eval_node(node.left)
+            right = eval_node(node.right)
+            binary_func = _BIN_OPS.get(type(node.op))
+            if left is None or right is None or binary_func is None:
+                return None
+            if isinstance(node.op, ast.Div) and math.isclose(right, 0.0, abs_tol=1e-12):
+                return None
+            return float(binary_func(left, right))
+        return None
+
+    return eval_node(tree)
+
+
+def _verify_arithmetic_oracle_error(verify_text: str) -> str:
+    """Reject only obvious self-contradictory arithmetic smoke checks.
+
+    Live L1-01 produced a construction-step verify that asserted
+    ``1+2*(3-4)/5 == -0.2``. The product implementation was correct (0.6), but
+    the bad oracle caused a false materialization failure. This guard is narrow
+    and fail-open: it only checks pure arithmetic string literals piped into a
+    calculator/evaluator-style function and a numeric grep oracle.
+    """
+    call_match = _VERIFY_ARITHMETIC_CALL_RE.search(verify_text)
+    grep_match = _VERIFY_GREP_NUMBER_RE.search(verify_text)
+    if call_match is None or grep_match is None:
+        return ""
+    actual = _safe_eval_arithmetic_expr(call_match.group("expr"))
+    if actual is None:
+        return ""
+    try:
+        expected = float(grep_match.group("expected"))
+    except ValueError:
+        return ""
+    if math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-9):
+        return ""
+    return (
+        f"verify arithmetic oracle mismatch: expression {call_match.group('expr')!r} "
+        f"evaluates to {actual:g}, but grep expects {expected:g}"
+    )
+
+
 def validate_construction_steps(
     steps: list[dict[str, Any]],
     *,
@@ -124,6 +208,8 @@ def validate_construction_steps(
         verify_text = str(step.get("verify") or "").strip()
         if not verify_text:
             errors.append(f"{label}: step requires a machine-executable verify")
+        elif oracle_error := _verify_arithmetic_oracle_error(verify_text):
+            errors.append(f"{label}: {oracle_error}")
         elif _target_requires_signatures(target_file) and _verify_is_all_hollow(step, verify_text):
             # I3-r21: an existence-only verify (test -f / wc / filename-grep) lets a
             # code step "resolve" on a placeholder stub that never ran the real logic.

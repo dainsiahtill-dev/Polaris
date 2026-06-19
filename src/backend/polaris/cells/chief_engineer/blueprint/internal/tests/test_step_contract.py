@@ -92,6 +92,38 @@ class TestGate:
         )
         assert errors == []
 
+    def test_arithmetic_oracle_mismatch_blocked(self) -> None:
+        errors = validate_construction_steps(
+            [
+                _step(
+                    target_file="calculator.py",
+                    signatures=["def calculate(expression: str) -> float"],
+                    verify=(
+                        'python3 -c "import calculator; '
+                        "print(calculator.calculate('1+2*(3-4)/5'))\" | grep -q -- '-0.2'"
+                    ),
+                )
+            ],
+            parent_pm_task="PM-1",
+        )
+        assert any("arithmetic oracle mismatch" in e and "evaluates to 0.6" in e for e in errors)
+
+    def test_arithmetic_oracle_match_passes(self) -> None:
+        errors = validate_construction_steps(
+            [
+                _step(
+                    target_file="calculator.py",
+                    signatures=["def calculate(expression: str) -> float"],
+                    verify=(
+                        'python3 -c "import calculator; '
+                        "print(calculator.calculate('1+2*(3-4)/5'))\" | grep -q -- '0.6'"
+                    ),
+                )
+            ],
+            parent_pm_task="PM-1",
+        )
+        assert errors == []
+
     def test_signature_grep_verify_passes(self) -> None:
         # A grep for a DECLARED signature token is structural, not hollow.
         errors = validate_construction_steps(

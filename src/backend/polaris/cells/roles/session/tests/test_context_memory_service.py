@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -45,25 +46,33 @@ def memory_service(role_session_service: RoleSessionService) -> RoleSessionConte
 
 
 def _seed_context_os_snapshot(service: RoleSessionService) -> str:
-    projection = StateFirstContextOS(domain_adapter=CodeContextDomainAdapter())._project_impl(
-        messages=[
-            {
-                "role": "user",
-                "content": "Fix polaris/kernelone/context/session_continuity.py and preserve session continuity runtime.",
-                "sequence": 1,
-            },
-            {
-                "role": "assistant",
-                "content": "I will update the continuity runtime and keep the public facade stable.",
-                "sequence": 2,
-            },
-            {
-                "role": "tool",
-                "content": "```python\nfrom polaris.kernelone.context.session_continuity import SessionContinuityEngine\n```",
-                "sequence": 3,
-            },
-        ],
-        recent_window_messages=2,
+    projection = asyncio.run(
+        StateFirstContextOS(domain_adapter=CodeContextDomainAdapter()).project(
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Fix polaris/kernelone/context/session_continuity.py and preserve session continuity runtime."
+                    ),
+                    "sequence": 1,
+                },
+                {
+                    "role": "assistant",
+                    "content": "I will update the continuity runtime and keep the public facade stable.",
+                    "sequence": 2,
+                },
+                {
+                    "role": "tool",
+                    "content": (
+                        "```python\n"
+                        "from polaris.kernelone.context.session_continuity import SessionContinuityEngine\n"
+                        "```"
+                    ),
+                    "sequence": 3,
+                },
+            ],
+            recent_window_messages=2,
+        )
     )
     persisted_snapshot = projection.snapshot.to_dict()
     persisted_snapshot.pop("transcript_log", None)

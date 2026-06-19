@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from polaris.cells.roles.session.internal.conversation import Conversation
 
 import json
+import sqlite3
+from pathlib import Path
 
 import pytest
 from polaris.cells.roles.session.internal.conversation import (
@@ -22,6 +24,7 @@ from polaris.cells.roles.session.internal.conversation import (
     Conversation,
 )
 from polaris.cells.roles.session.internal.role_session_service import RoleSessionService
+from polaris.kernelone.storage import resolve_runtime_path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as DbSession, sessionmaker
 
@@ -36,6 +39,22 @@ def _install_conversation_singleton():
     conv_mod._engine = engine
     conv_mod._SessionLocal = session_factory
     return engine, session_factory, conv_mod
+
+
+def _reset_conversation_runtime_singletons() -> None:
+    import polaris.cells.roles.session.internal.conversation as conv_mod
+
+    for engine in list(getattr(conv_mod, "_engines_by_url", {}).values()):
+        engine.dispose()
+    if getattr(conv_mod, "_engine", None) is not None:
+        conv_mod._engine.dispose()
+    conv_mod._engine = None
+    conv_mod._SessionLocal = None
+    conv_mod._engine_database_url = None
+    conv_mod._engines_by_url.clear()
+    conv_mod._session_locals_by_url.clear()
+    conv_mod._kernel_db = None
+    conv_mod._kernel_dbs_by_workspace.clear()
 
 
 def _build_legacy_context_os_payload(*events: tuple[str, str]) -> tuple[dict[str, object], list[dict[str, object]]]:
@@ -129,6 +148,41 @@ def _reset_conversation_singleton():
     finally:
         conv_mod._engine = orig_engine
         conv_mod._SessionLocal = orig_session_local
+
+
+def test_workspace_bound_services_use_isolated_conversation_databases(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("KERNELONE_RUNTIME_CACHE_ROOT", str(tmp_path / "kernelone-cache"))
+    _reset_conversation_runtime_singletons()
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+
+    try:
+        with RoleSessionService(workspace=str(workspace_a)) as service_a:
+            session_a = service_a.create_session(role="pm", workspace=str(workspace_a), title="A")
+            session_a_id = str(session_a.id)
+
+        with RoleSessionService(workspace=str(workspace_b)) as service_b:
+            assert service_b.get_session(session_a_id) is None
+            session_b = service_b.create_session(role="qa", workspace=str(workspace_b), title="B")
+            session_b_id = str(session_b.id)
+
+        with RoleSessionService(workspace=str(workspace_a)) as service_a_again:
+            assert service_a_again.get_session(session_a_id) is not None
+            assert service_a_again.get_session(session_b_id) is None
+
+        db_a = Path(resolve_runtime_path(str(workspace_a), "runtime/conversations/conversations.db"))
+        db_b = Path(resolve_runtime_path(str(workspace_b), "runtime/conversations/conversations.db"))
+        assert db_a.exists()
+        assert db_b.exists()
+        assert db_a != db_b
+        with sqlite3.connect(db_a) as conn:
+            assert conn.execute("select count(*) from conversations").fetchone()[0] == 1
+        with sqlite3.connect(db_b) as conn:
+            assert conn.execute("select count(*) from conversations").fetchone()[0] == 1
+    finally:
+        _reset_conversation_runtime_singletons()
 
 
 # ---------------------------------------------------------------------------

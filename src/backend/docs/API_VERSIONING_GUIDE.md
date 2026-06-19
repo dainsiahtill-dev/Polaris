@@ -1,7 +1,7 @@
 # Polaris API Versioning Guide
 
-> How to work with Polaris v2 APIs: structure, deprecation, error handling, SSE, and RBAC.
-> Last updated: 2026-05-06
+> How to work with Polaris v2 APIs: structure, deprecation, error handling, realtime transport, and RBAC.
+> Last updated: 2026-06-20
 
 ---
 
@@ -11,7 +11,7 @@
 2. [How to Add New v2 Routes](#2-how-to-add-new-v2-routes)
 3. [How to Deprecate Old Routes](#3-how-to-deprecate-old-routes)
 4. [Error Response Format Specification](#4-error-response-format-specification)
-5. [SSE Event Schema Specification](#5-sse-event-schema-specification)
+5. [Realtime Transport Policy](#5-realtime-transport-policy)
 6. [RBAC Usage Examples](#6-rbac-usage-examples)
 
 ---
@@ -304,74 +304,17 @@ INTERNAL_ERROR           # Unhandled exception
 
 ---
 
-## 5. SSE Event Schema Specification
+## 5. Realtime Transport Policy
 
-### 5.1 SSE Frame Format
+Polaris product realtime is single-rail as of 2026-06-20:
 
-All SSE endpoints emit frames in this format:
+1. Realtime UI state must flow through Nat-JetStream and the unified `/v2/ws/runtime` WebSocket runtime.v2 protocol.
+2. Do not add or restore product SSE endpoints, `EventSource` clients, `StreamingResponse` event streams, HTTP long-polling, timer-driven fetch loops, file polling, or polling fallback.
+3. HTTP endpoints are allowed for initial snapshots, explicit user refreshes, and one-shot command/query responses only.
+4. New realtime events must define a JetStream subject/channel mapping and be consumed in the frontend through `RuntimeTransportProvider` / `runtimeSocketManager`.
+5. Test harnesses may wait for asynchronous completion with bounded status checks, but that waiting code must never be reused as a product realtime mechanism.
 
-```
-event: <type>
-data: <json-payload>
-
-```
-
-### 5.2 Canonical Event Types
-
-| Type | Payload Schema | Description |
-|------|---------------|-------------|
-| `thinking_chunk` | `{"content": "..."}` | Reasoning/thinking token |
-| `content_chunk` | `{"content": "..."}` | Response content token |
-| `tool_call` | `{"tool": "name", "args": {...}}` | Tool invocation |
-| `tool_result` | `{...}` | Tool execution result |
-| `fingerprint` | `{"fingerprint": "..."}` | Response fingerprint |
-| `complete` | `{"content": "...", "thinking": "...", "tool_calls": [...]}` | Stream complete |
-| `error` | `{"error": "..."}` | Terminal error |
-| `ping` | `{}` | Keep-alive |
-
-### 5.3 Creating an SSE Endpoint
-
-```python
-from polaris.delivery.http.routers.sse_utils import create_sse_response, sse_event_generator
-import asyncio
-
-@router.post("/stream")
-async def stream_example() -> StreamingResponse:
-    async def _producer(queue: asyncio.Queue) -> None:
-        for i in range(3):
-            await queue.put({"type": "content_chunk", "data": {"content": f"chunk {i}"}})
-            await asyncio.sleep(0.1)
-        await queue.put({"type": "complete", "data": {"content": "done"}})
-
-    return create_sse_response(sse_event_generator(_producer, timeout=30.0))
-```
-
-### 5.4 JetStream SSE Consumer
-
-For remote event streaming via JetStream:
-
-```python
-from polaris.delivery.http.routers.sse_utils import (
-    create_sse_jetstream_consumer,
-    create_sse_response_from_jetstream,
-)
-
-@router.get("/remote-stream")
-async def remote_stream(last_event_id: int = 0) -> StreamingResponse:
-    consumer = create_sse_jetstream_consumer(
-        workspace_key="my-workspace",
-        subject="hp.runtime.my-workspace.events",
-        last_event_id=last_event_id,
-    )
-    return create_sse_response_from_jetstream(consumer)
-```
-
-### 5.5 Security Considerations
-
-- Payloads are limited to **256KB**
-- Event timestamps older than **1 hour** are rejected (replay protection)
-- Consumer names use **cryptographically random** suffixes
-- Subjects are validated against `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$`
+Legacy `*stream*` routes are compatibility surfaces only. They must fail closed or be migrated to runtime.v2 before being used by product UI.
 
 ---
 

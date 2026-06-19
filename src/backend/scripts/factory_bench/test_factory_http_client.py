@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import unittest
@@ -14,6 +15,7 @@ from factory_http_client import (
     _http_post_json,
     _runtime_ws_url,
     _status_from_factory_event,
+    _subscribe_factory_events,
     cancel_factory_run,
     get_audit_bundle,
     get_run_artifacts,
@@ -288,6 +290,24 @@ class TestEventWaitUntilTerminal(unittest.TestCase):
         result = _factory_event_payload(message, "run-42")
 
         self.assertEqual(result, (12, {"type": "completed", "timestamp": "2026-06-19T00:00:00", "run_id": "run-42"}))
+
+    def test_subscribe_factory_events_includes_pinned_channel(self) -> None:
+        class FakeWebSocket:
+            def __init__(self) -> None:
+                self.sent: list[dict[str, object]] = []
+
+            async def send(self, payload: str) -> None:
+                self.sent.append(json.loads(payload))
+
+            async def recv(self) -> str:
+                return json.dumps({"type": "SUBSCRIBED"})
+
+        ws = FakeWebSocket()
+
+        asyncio.run(_subscribe_factory_events(ws, run_id="run-42", workspace="/tmp/ws"))
+
+        self.assertEqual(len(ws.sent), 1)
+        self.assertEqual(ws.sent[0]["channels"], ["event.factory", "event.factory:run-42"])
 
     def test_factory_event_payload_rejects_other_run(self) -> None:
         message = {

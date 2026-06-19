@@ -7,8 +7,9 @@ sequence, port selection, and environment setup logic.
 from __future__ import annotations
 
 import os
+import socket
 from pathlib import Path
-from types import SimpleNamespace
+from types import SimpleNamespace, TracebackType
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -98,6 +99,49 @@ class TestBackendBootstrapperPortSelection:
         bootstrapper = BackendBootstrapper()
         result = bootstrapper._is_port_available(0)
         assert isinstance(result, bool)
+
+    def test_is_port_available_uses_reuseaddr_for_restart_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Port probes should not reject a just-stopped server in TIME_WAIT."""
+
+        class FakeSocket:
+            def __init__(self) -> None:
+                self.setsockopt_calls: list[tuple[int, int, int]] = []
+                self.bind_calls: list[tuple[str, int]] = []
+
+            def __enter__(self) -> FakeSocket:
+                return self
+
+            def __exit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc: BaseException | None,
+                tb: TracebackType | None,
+            ) -> None:
+                return None
+
+            def setsockopt(self, level: int, optname: int, value: int) -> None:
+                self.setsockopt_calls.append((level, optname, value))
+
+            def bind(self, address: tuple[str, int]) -> None:
+                self.bind_calls.append(address)
+
+        created: list[FakeSocket] = []
+
+        def fake_socket(family: int, sock_type: int) -> FakeSocket:
+            assert family == socket.AF_INET
+            assert sock_type == socket.SOCK_STREAM
+            instance = FakeSocket()
+            created.append(instance)
+            return instance
+
+        monkeypatch.setattr(socket, "socket", fake_socket)
+
+        result = BackendBootstrapper()._is_port_available(49978)
+
+        assert result is True
+        assert created
+        assert created[0].setsockopt_calls == [(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)]
+        assert created[0].bind_calls == [("127.0.0.1", 49978)]
 
     def test_find_free_port(self) -> None:
         """Should return a valid port number."""

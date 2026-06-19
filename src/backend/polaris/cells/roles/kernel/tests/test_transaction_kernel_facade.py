@@ -1525,6 +1525,38 @@ def test_build_decision_messages_uses_single_batch_guard_for_materialize_contrac
     assert not any("Subsequent turns: You MUST call write/edit tools" in text for text in system_messages)
 
 
+def test_build_decision_messages_keeps_bootstrap_write_retry_user_final() -> None:
+    controller = TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+    )
+    user_request = "Implement index.html and styles.css for the static resume page."
+    context = [
+        {
+            "role": "system",
+            "content": (
+                "WRITE RETRY MODE: bootstrap read context has been collected.\nMandatory write tool: write_file."
+            ),
+        },
+        {"role": "user", "content": user_request},
+    ]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+    ]
+    ledger = TurnLedger(turn_id="turn_bootstrap_write_retry")
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+
+    messages = controller._build_decision_messages(context, tool_definitions, ledger)
+
+    system_messages = [str(item.get("content") or "") for item in messages if item.get("role") == "system"]
+    assert any("WRITE RETRY MODE" in text for text in system_messages)
+    assert any("SINGLE-BATCH execution" in text for text in system_messages)
+    assert messages[-1]["role"] == "user"
+    assert messages[-1]["content"] == user_request
+
+
 def test_build_decision_messages_omits_write_contract_for_toolless_proposal() -> None:
     controller = TurnTransactionController(
         llm_provider=AsyncMock(return_value={}),

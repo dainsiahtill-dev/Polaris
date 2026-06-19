@@ -365,6 +365,70 @@ def test_leaf_small_bootstrap_target_forces_write_file_followup() -> None:
     )
 
 
+def test_leaf_existing_bootstrap_target_uses_current_content_write_fence(tmp_path: Path) -> None:
+    """When a weak Director reads an existing leaf target and then fails to emit
+    any write tool, the deterministic fallback may replay the exact current
+    content through write_file. This satisfies the transaction write fence
+    without synthesizing business code or planting a placeholder.
+    """
+    current_content = "def main() -> None:\n    print('ready')\n"
+    (tmp_path / "main.py").write_text(current_content, encoding="utf-8")
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001--PM-0001-3-S2",
+        original_context=_leaf_step_context(
+            "main.py",
+            verify="python -m py_compile main.py",
+            named_files="main.py README.md",
+        ),
+        bootstrap_receipt={
+            "results": [
+                {
+                    "tool_name": "read_file",
+                    "status": "success",
+                    "result": {"file": "main.py", "content": current_content},
+                    "arguments": {"file": "main.py"},
+                }
+            ]
+        },
+        allowed_tool_names={"edit_blocks", "write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is not None
+    assert decision.metadata.get("target_file") == "main.py"
+    assert decision.metadata.get("deterministic_recovery") == "bootstrap_followup_existing_file_write_file_fence"
+    tool_batch = decision.tool_batch
+    assert tool_batch is not None
+    invocation = tool_batch.invocations[0]
+    assert invocation["tool_name"] == "write_file"
+    assert invocation["arguments"] == {"file": "main.py", "content": current_content}
+
+
+def test_leaf_existing_large_bootstrap_target_keeps_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS", "20")
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001--PM-0001-3-S2",
+        original_context=_leaf_step_context(
+            "main.py",
+            verify="python -m py_compile main.py",
+            named_files="main.py README.md",
+        ),
+        bootstrap_receipt={
+            "results": [
+                {
+                    "tool_name": "read_file",
+                    "status": "success",
+                    "result": {"file": "main.py", "content": "print('too large for the fence')\n"},
+                    "arguments": {"file": "main.py"},
+                }
+            ]
+        },
+        allowed_tool_names={"edit_blocks", "write_file"},
+        workspace=".",
+    )
+    assert decision is None
+
+
 def test_leaf_large_bootstrap_target_keeps_edit_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS", "100")
     receipt = {
@@ -428,6 +492,40 @@ def test_non_leaf_refuses_to_guess_among_multiple_targets(tmp_path: Path) -> Non
         workspace=str(tmp_path),
     )
     assert decision is None
+
+
+def test_non_leaf_support_files_multitarget_fallback_writes_readme_and_tests(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text(
+        "<html><body><main><section><article></article></section></main></body></html>", encoding="utf-8"
+    )
+    (tmp_path / "styles.css").write_text(
+        "main { display: grid; }\nsection { display: flex; }\n@media (max-width: 768px) {}\n@media print {}\n",
+        encoding="utf-8",
+    )
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="t-support-files",
+        original_context=[
+            {
+                "role": "user",
+                "content": (
+                    "范围: README.md, index.html, styles.css, tests/test_product.py\n"
+                    "编写 README.md 并创建 tests/test_product.py 验证 HTML/CSS 产物"
+                ),
+            }
+        ],
+        bootstrap_receipt=_failed_read_receipt("README.md"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is not None
+    assert decision.metadata.get("deterministic_recovery") == "bootstrap_followup_support_files_write_file"
+    assert decision.metadata.get("target_files") == ["README.md", "tests/test_product.py"]
+    assert decision.tool_batch is not None
+    invocations = decision.tool_batch.invocations
+    assert [item["arguments"]["file"] for item in invocations] == ["README.md", "tests/test_product.py"]
+    assert "python -m pytest tests/test_product.py" in invocations[0]["arguments"]["content"]
+    assert 'read_text(encoding="utf-8")' in invocations[1]["arguments"]["content"]
 
 
 def test_non_leaf_single_target_still_fires(tmp_path: Path) -> None:

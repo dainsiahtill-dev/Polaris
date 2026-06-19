@@ -42,6 +42,7 @@ _ROLE_FAMILIES: dict[str, tuple[tuple[str, ...], ...]] = {
     "director": (("qwen", "3.6", "27"), ("qwen3.6",), ("qwen", "27b")),
 }
 _PY_ENTRYPOINT_NAMES = ("main.py", "app.py", "cli.py", "__main__.py")
+_ENTRYPOINT_FAILURE_MARKER_RE = re.compile(r"(?im)^\s*FAIL(?:ED)?(?:\b|:)")
 _FAILURE_CATEGORIES = {
     "pm_contract",
     "director_tool_execution",
@@ -119,6 +120,20 @@ def _run_command(command: list[str], cwd: Path, *, timeout_s: int) -> dict[str, 
             "stderr_tail": str(exc),
             "timeout": False,
         }
+
+
+def _entrypoint_has_failure_marker(result: dict[str, Any]) -> bool:
+    output = f"{result.get('stdout_tail') or ''}\n{result.get('stderr_tail') or ''}"
+    return bool(_ENTRYPOINT_FAILURE_MARKER_RE.search(output))
+
+
+def _mark_entrypoint_failure(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **result,
+        "ok": False,
+        "detail": "entrypoint output contained a failure marker",
+        "failure_marker": True,
+    }
 
 
 def _load_package_json(workspace: Path) -> dict[str, Any]:
@@ -210,6 +225,8 @@ def _smoke_python_cli(workspace: Path, entrypoint: str, *, timeout_s: int) -> di
     command = [sys.executable, entrypoint, "--help"]
     result = _run_command(command, workspace, timeout_s=min(max(2, int(timeout_s)), 10))
     if result["ok"]:
+        if _entrypoint_has_failure_marker(result):
+            return _mark_entrypoint_failure({"kind": "python_cli", "entrypoint": entrypoint, **result})
         return {"kind": "python_cli", "entrypoint": entrypoint, **result}
     fallback = _run_command([sys.executable, entrypoint], workspace, timeout_s=min(max(2, int(timeout_s)), 5))
     fallback_output = f"{fallback.get('stdout_tail') or ''}\n{fallback.get('stderr_tail') or ''}".lower()
@@ -227,6 +244,15 @@ def _smoke_python_cli(workspace: Path, entrypoint: str, *, timeout_s: int) -> di
             "ok": True,
         }
     if fallback["ok"] or fallback.get("timeout"):
+        if _entrypoint_has_failure_marker(fallback):
+            return _mark_entrypoint_failure(
+                {
+                    "kind": "python_cli",
+                    "entrypoint": entrypoint,
+                    "started": bool(fallback.get("timeout")),
+                    **fallback,
+                }
+            )
         return {
             "kind": "python_cli",
             "entrypoint": entrypoint,
@@ -329,6 +355,17 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
         py_entry = _find_python_entrypoint(workspace, code_files)
         if py_entry:
             entrypoint = _smoke_python_cli(workspace, py_entry, timeout_s=timeout_s)
+
+    if (
+        not build_command_ok
+        and bool(entrypoint.get("ok"))
+        and str(entrypoint.get("kind") or "") == "web_static"
+        and not package
+        and code_files
+        and all(rel.endswith((".html", ".css")) for rel in code_files)
+    ):
+        build_command_ok = True
+        build_detail = "static HTML/CSS entrypoint smoke passed"
 
     requirements = {
         "artifact_landed": {

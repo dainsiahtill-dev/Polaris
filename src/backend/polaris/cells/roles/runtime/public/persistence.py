@@ -33,6 +33,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _create_role_session_service(factory: Any, workspace: str | None = None) -> Any:
+    try:
+        return factory(workspace=workspace or None)
+    except TypeError:
+        return factory()
+
+
 # ── Session Persistence ───────────────────────────────────────────────────────
 
 
@@ -94,7 +101,7 @@ async def persist_session_turn_state(
             SessionType,
         )
 
-        with RoleSessionService() as svc:
+        with _create_role_session_service(RoleSessionService, command.workspace) as svc:
             session = svc.get_session(session_id)
             if session is None:
                 # Session doesn't exist yet — create it with the provided session_id.

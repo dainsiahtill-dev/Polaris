@@ -1568,6 +1568,24 @@ class TurnTransactionController:
                 }
             )
 
+        _is_bootstrap_write_retry = any(
+            "WRITE RETRY MODE" in str(m.get("content", ""))
+            for m in context
+            if str(m.get("role", "")).strip().lower() == "system"
+        )
+        if (
+            _is_bootstrap_write_retry
+            and _latest_user_for_guard.strip()
+            and (not messages or str(messages[-1].get("role", "")).strip().lower() != "user")
+        ):
+            messages.append(
+                {
+                    "role": "user",
+                    "content": _latest_user_for_guard,
+                    "metadata": {"plane": "control", "kind": "retry_write_user_anchor"},
+                }
+            )
+
         return messages
 
     # ---------------------------------------------------------------------------

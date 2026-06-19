@@ -108,6 +108,11 @@ _PM_SOURCE_FILE_HINT_RE = re.compile(
     r"(?:源码|代码文件|真实代码文件|source\s+file|code\s+file|implementation|可运行)",
     re.IGNORECASE,
 )
+_PM_STATIC_WEB_HINT_RE = re.compile(
+    r"(?:\bhtml5?\b|\bcss3?\b|flexbox|grid|media\s+quer(?:y|ies)|"
+    r"静态页面|静态网页|网页|响应式|简历|语义化标签|媒体查询)",
+    re.IGNORECASE,
+)
 _PM_BARE_FILENAME_HINT_RE = re.compile(r"`?([A-Za-z][A-Za-z0-9_-]{2,})(?:\.py)?`?")
 _PM_EXPLICIT_FILE_PATH_RE = re.compile(
     r"(?<![A-Za-z0-9_./-])"
@@ -133,6 +138,15 @@ _PM_PROMPT_ECHO_MARKERS = (
     "你是 Polaris PM",
     "请仅输出 JSON，格式如下",
     "禁止返回 Markdown",
+    "上一版 PM 合同未通过质量门禁",
+    "当前分数:",
+    "关键问题:",
+    "强制要求：",
+    "上一版输出片段：",
+    "=== THINKING PHASE ===",
+    "Reasoning confidence:",
+    "Should proceed:",
+    "Blockers: Cannot verify",
 )
 _PM_SCHEMA_PLACEHOLDER_VALUES = {
     "任务标题",
@@ -171,6 +185,13 @@ _PM_NON_DELIVERY_CONSTRAINT_TEXT_RE = re.compile(
     r"验收维度强调|"
     r"教学[/／]考核点|"
     r"必须形成依赖链|"
+    r"每个任务必须含\s*goal/scope/steps/acceptance|"
+    r"Director/ChiefEngineer\s*任务必须含真实相对路径|"
+    r"scope_paths/target_files\s*禁止使用自然语言|"
+    r"仅输出\s*JSON\s*对象|"
+    r"禁止任何额外文字|"
+    r"补全文件级路径|"
+    r"调整输出格式|"
     r"避免并行冲突|"
     r"^design$|"
     r"^执行至少\s*\d+\s*组测试用例.*全部通过$"
@@ -315,7 +336,16 @@ def _pm_is_prompt_echo_response(text: str) -> bool:
     schema_echo = '"tasks"' in normalized and (
         '"title": "任务标题"' in normalized or '"title":"任务标题"' in normalized or '"title": "task title"' in lower
     )
-    return "failed to parse action" in lower or (schema_echo and marker_hits >= 2)
+    thinking_echo = "=== thinking phase ===" in lower and "=== end thinking phase ===" in lower
+    retry_echo = "上一版 PM 合同未通过质量门禁" in normalized and (
+        "强制要求：" in normalized or "上一版输出片段：" in normalized or "当前分数:" in normalized
+    )
+    return (
+        "failed to parse action" in lower
+        or retry_echo
+        or (schema_echo and marker_hits >= 2)
+        or (thinking_echo and marker_hits >= 2)
+    )
 
 
 def _pm_is_placeholder_task_title(value: Any) -> bool:
@@ -454,6 +484,8 @@ def _pm_root_source_filename_from_text(text: str) -> str:
         return "calculator.py"
     if "guess" in lower and "number" in lower:
         return "guess_number.py"
+    if _PM_STATIC_WEB_HINT_RE.search(source):
+        return "index.html"
 
     for match in _PM_BARE_FILENAME_HINT_RE.finditer(source):
         stem = str(match.group(1) or "").strip().lower()

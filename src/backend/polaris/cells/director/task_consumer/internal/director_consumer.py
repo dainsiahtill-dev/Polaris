@@ -503,12 +503,12 @@ class ScopeConflictDetector:
             payload = item.get("payload")
             if not isinstance(payload, dict):
                 continue
-            candidate_paths = self._extract_scope_paths(payload)
+            candidate_paths = self.extract_conflict_paths(payload)
             if normalized_scope.intersection(candidate_paths):
                 return True
         return False
 
-    def _extract_scope_paths(self, payload: dict[str, Any]) -> set[str]:
+    def extract_conflict_paths(self, payload: dict[str, Any]) -> set[str]:
         collected: list[str] = []
         raw_scope = payload.get("scope_paths")
         if isinstance(raw_scope, list):
@@ -520,6 +520,9 @@ class ScopeConflictDetector:
             for row in raw_targets:
                 if isinstance(row, str):
                     collected.append(row)
+        raw_target = payload.get("target_file")
+        if isinstance(raw_target, str):
+            collected.append(raw_target)
         return self._normalize_paths(collected)
 
     def _normalize_paths(self, paths: list[str]) -> set[str]:
@@ -701,7 +704,7 @@ class DirectorExecutionConsumer:
 
         # Safe parallel conflict check
         if self._enable_safe_parallel:
-            scope_paths = payload.get("scope_paths", [])
+            scope_paths = sorted(self._conflict_detector.extract_conflict_paths(payload))
             if self._conflict_detector.check_conflict(self._workspace, task_id, scope_paths):
                 # Requeue instead of dead-letter — it's a transient conflict
                 self._svc.fail_task_stage(

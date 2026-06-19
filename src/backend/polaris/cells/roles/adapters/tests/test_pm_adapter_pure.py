@@ -145,6 +145,31 @@ class TestFrontendTestRepairContracts:
         assert contracts[0]["scope_paths"] == ["src/main/providers.ts"]
         assert contracts[0]["target_files"] == ["src/main/providers.ts"]
 
+    def test_static_web_root_workspace_directive_synthesizes_file_level_contracts(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+请基于 Architect 阶段产物生成 PM 执行任务合同。
+
+## Original Requirement Excerpt
+# Product Requirements — 个人响应式简历网页
+
+## Goal
+- 用纯 HTML5/CSS3 制作个人简历静态页面,包含现代 Flexbox/Grid 布局与媒体查询,适配移动端。
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。
+- 附 README.md 说明如何运行。
+- 关键验收维度: UI 布局、CSS 样式生成与语义化标签。
+""".strip()
+
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+        _normalized, quality = adapter._evaluate_contract_quality(contracts)
+
+        assert contracts[0]["target_files"] == ["index.html", "styles.css"]
+        assert "README.md" in contracts[2]["target_files"]
+        assert quality["ok"] is True
+        assert (quality.get("score") or 0) >= 80
+
     def test_synthesizes_focused_frontend_test_repair_contracts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         contracts = adapter._synthesize_task_contracts_from_directive(
@@ -269,6 +294,44 @@ Failed to parse action: 你是 Polaris PM，需要产出可执行任务合同。
 """.strip()
 
         assert adapter._extract_task_contracts(response, directive="实现命令行猜数字游戏") == []
+
+    def test_retry_thinking_echo_does_not_parse_constraints_as_tasks(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        response = """
+=== THINKING PHASE ===
+Intent: 上一版 PM 合同未通过质量门禁，请重写并只输出 JSON。
+当前分数: 88
+关键问题:
+- TASK-2: Director task requires file-level target_files or scope_paths
+
+强制要求：
+- 至少 3 个任务
+- 每个任务必须含 goal/scope/steps/acceptance
+- Director/ChiefEngineer 任务必须含真实相对路径 scope_paths/target_files
+- scope_paths/target_files 禁止使用自然语言句子或中文模块描述
+- 只能输出 JSON 对象，禁止任何额外文字与代码块
+
+上一版输出片段：
+**风险点已标注**
+- 单文件 vs 多文件：建议 index.html + styles.css 分离，便于维护
+- 媒体查询断点：需覆盖典型移动端（≤768px）
+- 无构建工具：纯静态，验收以文件存在和浏览器验证为准
+
+**验收标准（可验证）**
+- 文件存在性：index.html、styles.css、README.md 均落盘工作区根
+- 功能验证：浏览器打开 index.html 正常渲染，缩放至 375px 宽度布局无错乱
+- README 包含运行说明（本地打开或简易 HTTP 服务器方式）
+
+<SESSION_PATCH>
+{"task_progress": "done", "action_taken": "完成需求理解与任务拆解"}
+</SESSION_PATCH>
+Reasoning confidence: high
+Should proceed: True
+Blockers: Cannot verify - high risk
+=== END THINKING PHASE ===
+""".strip()
+
+        assert adapter._extract_task_contracts(response, directive="个人响应式简历网页") == []
 
     def test_json_dependency_chain_task_is_not_promoted_to_contract(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

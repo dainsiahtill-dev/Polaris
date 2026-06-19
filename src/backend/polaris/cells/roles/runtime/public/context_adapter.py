@@ -17,6 +17,13 @@ from polaris.kernelone.context.context_os.rehydration import rehydrate_persisted
 logger = logging.getLogger(__name__)
 
 
+def _create_role_session_service(factory: Any, workspace: str | None = None) -> Any:
+    try:
+        return factory(workspace=workspace or None)
+    except TypeError:
+        return factory()
+
+
 # ── Context Override Merging ───────────────────────────────────────────────────
 
 
@@ -268,7 +275,7 @@ def load_session_context_os_snapshot(
     try:
         from polaris.cells.roles.session.public import RoleSessionService
 
-        with RoleSessionService() as svc:
+        with _create_role_session_service(RoleSessionService, workspace) as svc:
             session = svc.get_session(session_id_token)
             if session is not None:
                 session_ctx = svc.get_context_config_dict(session_id_token) or {}

@@ -4160,6 +4160,44 @@ class TestAcceptanceVerifyExistsExemption:
         assert evidence["passed"] == ["a.md"]
         assert evidence["missing"] == ["b.md"]
 
+    def test_posix_test_file_assertion_passes(self, tmp_path) -> None:
+        (tmp_path / "requirements.txt").write_text("# standard library only\n", encoding="utf-8")
+        satisfied, evidence = self._evaluate(
+            {"acceptance_criteria": ["test -f requirements.txt"]},
+            tmp_path,
+        )
+        assert satisfied is True
+        assert evidence == {"checked": 1, "passed": ["requirements.txt"], "missing": []}
+
+    def test_posix_test_and_grep_assertion_passes(self, tmp_path) -> None:
+        (tmp_path / "README.md").write_text("Run with python3 calculator.py\n", encoding="utf-8")
+        satisfied, evidence = self._evaluate(
+            {"acceptance_criteria": ["test -f README.md && grep -q 'python3 calculator.py' README.md"]},
+            tmp_path,
+        )
+        assert satisfied is True
+        assert evidence == {"checked": 1, "passed": ["README.md"], "missing": []}
+
+    def test_posix_grep_literal_miss_blocks_exemption(self, tmp_path) -> None:
+        (tmp_path / "README.md").write_text("Run with python calculator.py\n", encoding="utf-8")
+        satisfied, evidence = self._evaluate(
+            {"acceptance_criteria": ["test -f README.md && grep -q 'python3 calculator.py' README.md"]},
+            tmp_path,
+        )
+        assert satisfied is False
+        assert evidence["checked"] == 1
+        assert evidence["passed"] == ["README.md"]
+        assert evidence["missing"] == ["README.md"]
+
+    def test_arbitrary_shell_command_not_exempted(self, tmp_path) -> None:
+        (tmp_path / "calculator.py").write_text("def add(a, b): return a + b\n", encoding="utf-8")
+        satisfied, evidence = self._evaluate(
+            {"acceptance_criteria": ['python3 -c "import calculator; print(calculator.add(2,3))"']},
+            tmp_path,
+        )
+        assert satisfied is False
+        assert evidence["checked"] == 0
+
 
 class TestQualityRepairMissingTargetContract:
     """L2-10 r3 regression: the repair turn rewrote src/main.js (already
@@ -4384,6 +4422,92 @@ class TestQualityRepairMissingTargetContract:
             "tool": "write_file",
             "target_file": "services/product_service/app.py",
         }
+
+    @pytest.mark.asyncio
+    async def test_existing_python_runtime_smoke_failure_repair_forces_write_context(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_context: dict[str, Any] = {}
+                self.repair_message = ""
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_context = context
+                self.repair_message = message
+                return {"content": ""}
+
+        adapter = _Adapter()
+        (tmp_path / "calculator.py").write_text("print('placeholder')\n", encoding="utf-8")
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["calculator.py"]},
+            target_task_id="PM-0001-1",
+            run_id="run-runtime-smoke-write-only",
+            context={},
+            original_message="Create a runnable Python CLI script.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: python runtime smoke crashed for 'calculator.py' "
+                "(returncode=2); tail:\nusage: calculator.py [-h] a {+,-,*,/} b"
+            ],
+            changed_files=["calculator.py"],
+        )
+
+        assert summary["missing_target_files"] == []
+        assert summary["runtime_smoke_target_files"] == ["calculator.py"]
+        assert summary["repair_target_files"] == ["calculator.py"]
+        assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "write_file"},
+        }
+        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
+            "tool": "write_file",
+            "target_file": "calculator.py",
+        }
+        assert adapter._execution.allowed_tool_names == {"write_file"}
+        assert adapter._execution.allow_patch_fallback is False
+        assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
+        assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
+        assert "MISSING TARGET FILES" not in adapter.repair_message
+        assert "calculator.py" in adapter.repair_message
+        assert "rewrite only the existing failed target" in adapter.repair_message
 
     @pytest.mark.asyncio
     async def test_multi_missing_target_repair_forces_write_tool_choice(

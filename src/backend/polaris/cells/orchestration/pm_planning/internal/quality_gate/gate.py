@@ -14,6 +14,7 @@ decomposition).
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from polaris.cells.orchestration.pm_planning.internal.dependency_validator import (
@@ -66,6 +67,35 @@ from polaris.cells.orchestration.pm_planning.internal.quality_gate.primitives im
     _title_is_too_short,
     _unknown_dependency_refs,
 )
+
+_PM_CONTRACT_GOVERNANCE_EXACT_MARKERS = (
+    "补全文件级路径",
+    "调整输出格式",
+    "上一版 PM 合同未通过质量门禁",
+    "每个任务必须含 goal/scope/steps/acceptance",
+)
+_PM_CONTRACT_PATH_FIELD_RE = re.compile(r"(?:scope_paths|target_files)", re.IGNORECASE)
+_PM_CONTRACT_JSON_OUTPUT_RE = re.compile(r"仅输出\s*JSON|JSON\s*对象", re.IGNORECASE)
+
+
+def _contains_pm_contract_governance_task(text: str) -> bool:
+    source = _normalize_text(text)
+    if not source:
+        return False
+    lower = source.lower()
+    if any(marker in source for marker in _PM_CONTRACT_GOVERNANCE_EXACT_MARKERS):
+        return True
+    if _PM_CONTRACT_PATH_FIELD_RE.search(source) and (
+        "director" in lower
+        or "chiefengineer" in lower
+        or "chief engineer" in lower
+        or "真实相对路径" in source
+        or "自然语言描述" in source
+    ):
+        return any(marker in source for marker in ("必须", "禁止", "requires", "require"))
+    if _PM_CONTRACT_JSON_OUTPUT_RE.search(source):
+        return any(marker in lower for marker in ("markdown", "代码块", "额外文字", "只输出", "禁止"))
+    return False
 
 
 def evaluate_pm_task_quality(
@@ -128,6 +158,8 @@ def evaluate_pm_task_quality(
             warnings.append(f"{task_id}: goal is too short")
         if _contains_prompt_leakage(combined_text):
             critical_issues.append(f"{task_id}: detected role/prompt leakage markers in task content")
+        if _contains_pm_contract_governance_task(combined_text):
+            critical_issues.append(f"{task_id}: task describes PM contract governance instead of product delivery")
         if (is_card3d_contract or is_game_contract) and _has_forbidden_game_dependency_policy(task):
             critical_issues.append(f"{task_id}: game task violates no-external-dependency policy")
 

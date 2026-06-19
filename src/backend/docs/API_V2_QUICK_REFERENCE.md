@@ -2,6 +2,8 @@
 
 Concise developer reference for the Polaris V2 HTTP API. All paths are canonical `/v2/*` routes.
 
+> Realtime transport policy (2026-06-20): product realtime must use Nat-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket only. SSE, `EventSource`, `StreamingResponse` event streams, HTTP long-polling, timer-driven fetch polling, file polling, and polling fallback are forbidden for product realtime. Legacy stream routes are listed only for migration/fail-closed awareness.
+
 ---
 
 ## 1. Endpoint Index
@@ -28,7 +30,7 @@ Concise developer reference for the Polaris V2 HTTP API. All paths are canonical
 | GET | `/v2/role/chat/roles` | List all registered LLM roles |
 | GET | `/v2/role/{role}/chat/status` | LLM readiness for a role |
 | POST | `/v2/role/{role}/chat` | Chat with a role (non-streaming) |
-| POST | `/v2/role/{role}/chat/stream` | Chat with a role (SSE streaming) |
+| POST | `/v2/role/{role}/chat/stream` | Legacy stream route; do not use for product realtime |
 | GET | `/v2/role/{role}/llm-events` | LLM call events for a role |
 | GET | `/v2/role/llm-events` | LLM events across all roles |
 | GET | `/v2/role/cache-stats` | LLM cache statistics |
@@ -40,7 +42,7 @@ Concise developer reference for the Polaris V2 HTTP API. All paths are canonical
 | GET | `/v2/pm/chat/ping` | PM chat health check |
 | GET | `/v2/pm/chat/status` | PM role LLM readiness |
 | POST | `/v2/pm/chat` | PM chat (non-streaming) |
-| POST | `/v2/pm/chat/stream` | PM chat (SSE streaming) |
+| POST | `/v2/pm/chat/stream` | Legacy stream route; do not use for product realtime |
 
 ### PM Management
 | Method | Path | Description |
@@ -105,7 +107,7 @@ Concise developer reference for the Polaris V2 HTTP API. All paths are canonical
 | GET | `/v2/factory/runs/{run_id}` | Run status |
 | GET | `/v2/factory/runs/{run_id}/events` | Audit events |
 | GET | `/v2/factory/runs/{run_id}/audit-bundle` | Machine-readable audit bundle |
-| GET | `/v2/factory/runs/{run_id}/stream` | SSE stream of status/events |
+| GET | `/v2/factory/runs/{run_id}/stream` | Legacy stream route; use `/v2/ws/runtime` events |
 | POST | `/v2/factory/runs/{run_id}/control` | Control run (cancel) |
 | GET | `/v2/factory/runs/{run_id}/artifacts` | List artifacts |
 
@@ -119,7 +121,7 @@ Concise developer reference for the Polaris V2 HTTP API. All paths are canonical
 | DELETE | `/v2/roles/sessions/{session_id}` | Delete session (soft/hard) |
 | GET | `/v2/roles/sessions/{session_id}/messages` | Get messages |
 | POST | `/v2/roles/sessions/{session_id}/messages` | Send message |
-| POST | `/v2/roles/sessions/{session_id}/messages/stream` | Send message (SSE) |
+| POST | `/v2/roles/sessions/{session_id}/messages/stream` | Legacy stream route; do not use for product realtime |
 | POST | `/v2/roles/sessions/{session_id}/actions/attach` | Attach to workflow |
 | POST | `/v2/roles/sessions/{session_id}/actions/detach` | Detach from workflow |
 | GET | `/v2/roles/sessions/{session_id}/artifacts` | Session artifacts |
@@ -151,7 +153,7 @@ Concise developer reference for the Polaris V2 HTTP API. All paths are canonical
 | GET | `/v2/sessions` | List agent sessions |
 | GET | `/v2/sessions/{session_id}` | Get agent session |
 | POST | `/v2/sessions/{session_id}/messages` | Send message (non-streaming) |
-| POST | `/v2/sessions/{session_id}/messages/stream` | Send message (SSE) |
+| POST | `/v2/sessions/{session_id}/messages/stream` | Legacy stream route; do not use for product realtime |
 | DELETE | `/v2/sessions/{session_id}` | Delete agent session |
 | GET | `/v2/sessions/{session_id}/memory/search` | Search session memory |
 | GET | `/v2/sessions/{session_id}/memory/artifacts/{artifact_id}` | Read artifact |
@@ -198,7 +200,7 @@ Concise developer reference for the Polaris V2 HTTP API. All paths are canonical
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/v2/llm/test` | Run LLM readiness tests |
-| POST | `/v2/llm/test/stream` | Stream test results (SSE) |
+| POST | `/v2/llm/test/stream` | Legacy stream route; do not use for product realtime |
 | GET | `/v2/llm/test/{test_run_id}` | Get test report |
 | GET | `/v2/llm/test/{test_run_id}/transcript` | Get test transcript |
 
@@ -208,16 +210,16 @@ Concise developer reference for the Polaris V2 HTTP API. All paths are canonical
 | POST | `/v2/llm/interview/ask` | Generate interview answer |
 | POST | `/v2/llm/interview/save` | Save interview report |
 | POST | `/v2/llm/interview/cancel` | Cancel interview stream |
-| POST | `/v2/llm/interview/stream` | Stream interview (SSE) |
+| POST | `/v2/llm/interview/stream` | Legacy stream route; do not use for product realtime |
 
 ### Docs Init
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/v2/docs/init/dialogue` | Docs wizard dialogue turn |
-| POST | `/v2/docs/init/dialogue/stream` | Docs wizard dialogue (SSE) |
+| POST | `/v2/docs/init/dialogue/stream` | Legacy stream route; do not use for product realtime |
 | POST | `/v2/docs/init/suggest` | Suggest docs fields |
 | POST | `/v2/docs/init/preview` | Preview generated docs |
-| POST | `/v2/docs/init/preview/stream` | Preview docs (SSE) |
+| POST | `/v2/docs/init/preview/stream` | Legacy stream route; do not use for product realtime |
 | POST | `/v2/docs/init/apply` | Apply generated docs |
 
 ### Runtime
@@ -285,7 +287,7 @@ Concise developer reference for the Polaris V2 HTTP API. All paths are canonical
 ### Stream
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/v2/stream/chat` | Neural weave SSE stream chat |
+| POST | `/v2/stream/chat` | Legacy stream route; do not use for product realtime |
 | POST | `/v2/stream/chat/backpressure` | Stream with backpressure |
 | GET | `/v2/stream/health` | Stream subsystem health |
 
@@ -391,52 +393,13 @@ All errors follow the unified `StructuredHTTPException` format (ADR-003):
 
 ---
 
-## 4. SSE Events
+## 4. Realtime Events
 
-Streaming endpoints return `text/event-stream` with the following canonical event types.
+Product realtime events are delivered through `/v2/ws/runtime` using the runtime.v2 WebSocket protocol backed by Nat-JetStream.
 
-### Generic SSE Format
-```
-event: <type>
-data: <json-payload>
+Do not implement product realtime with SSE, `EventSource`, `StreamingResponse`, HTTP long-polling, timer-driven fetch polling, file polling, or polling fallback. Legacy stream routes are compatibility/migration surfaces only and must not be used by the frontend realtime path.
 
-```
-
-### Canonical Event Types
-
-| Event | Description | Payload Example |
-|-------|-------------|-----------------|
-| `thinking_chunk` | Reasoning/thinking token | `{"content": "..."}` |
-| `content_chunk` | Response content token | `{"content": "..."}` |
-| `tool_call` | Tool invocation | `{"tool": "name", "args": {}}` |
-| `tool_result` | Tool execution result | `{"result": {}}` |
-| `fingerprint` | Response fingerprint | `{"fingerprint": "..."}` |
-| `complete` | Stream completed | `{"content": "...", "thinking": "..."}` |
-| `error` | Error occurred | `{"error": "message"}` |
-| `ping` | Keep-alive | `{}` |
-| `status` | Status update | `{...status payload...}` |
-| `event` | Generic audit event | `{...event payload...}` |
-| `stage` | Progress stage | `{"stage": "name", "progress": 50}` |
-
-### Router-Specific SSE Patterns
-
-**Role Chat / Agent / Stream Router**
-- `thinking_chunk`, `content_chunk`, `tool_call`, `tool_result`, `complete`, `error`
-
-**Factory Stream**
-- `status` (run status snapshot), `event` (audit events), `complete`, `error`
-
-**Docs Init Preview Stream**
-- `stage` (progress stages), `thinking` (LLM thinking), `complete`, `error`
-
-**LLM Test Stream**
-- `start`, `suite_start`, `suite_result`, `suite_complete`, `complete`
-
-### SSE Security
-- Payload size limit: 256KB (`MAX_PAYLOAD_SIZE`)
-- Timestamp freshness validation (replay window: 1 hour)
-- HMAC-SHA256 event signatures for integrity
-- Cryptographically random ephemeral consumer names
+Runtime.v2 event payloads are structured envelopes with channel, actor, kind, summary, metadata, and cursor information. New realtime features must define their JetStream subject/channel mapping and subscribe through `RuntimeTransportProvider` / `runtimeSocketManager`.
 
 ---
 

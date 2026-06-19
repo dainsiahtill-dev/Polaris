@@ -34,6 +34,8 @@ UI_TIMER_ALLOWLIST = {
     FRONTEND_SRC / "app" / "components" / "LlmRuntimeOverlay.tsx",
     FRONTEND_SRC / "app" / "components" / "ai-dialogue" / "ManusStyleStatusIndicator.tsx",
     FRONTEND_SRC / "app" / "components" / "RealTimeStatusBar.tsx",
+    # Runtime WebSocket heartbeat only; HTTP/file data polling remains forbidden.
+    FRONTEND_SRC / "runtime" / "transport" / "runtimeSocketManager.ts",
 }
 
 

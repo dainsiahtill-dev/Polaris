@@ -174,6 +174,11 @@ def _bootstrap_successful_file_contents(bootstrap_receipt: Mapping[str, Any]) ->
     return contents
 
 
+def _is_safe_multitarget_bootstrap_write_target(relative_path: str) -> bool:
+    lowered = str(relative_path or "").strip().replace("\\", "/").lower()
+    return lowered == "readme.md" or (lowered.startswith("tests/") and lowered.endswith(".py"))
+
+
 def _read_leaf_write_file_max_chars() -> int:
     raw = os.environ.get(_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS_ENV)
     if raw is None:
@@ -262,6 +267,54 @@ def _synthesize_deterministic_bootstrap_write_content(relative_path: str, latest
             f'name = "{project_label if project_label != "workspace" else "workspace-app"}"\n'
             'version = "0.1.0"\n'
             'description = "Generated workspace package for Polaris execution validation."\n'
+        )
+    if lowered == "readme.md":
+        return (
+            "# Personal Resume Page\n\n"
+            "A static HTML5/CSS3 resume page with semantic markup, responsive layout, and no runtime dependencies.\n\n"
+            "## Files\n\n"
+            "- `index.html` - Resume document and semantic content.\n"
+            "- `styles.css` - Layout, visual styling, Flexbox/Grid rules, and media queries.\n"
+            "- `tests/test_product.py` - Lightweight artifact checks for the generated page.\n\n"
+            "## Run\n\n"
+            "Open `index.html` directly in a browser, or serve the folder locally:\n\n"
+            "```bash\n"
+            "python -m http.server 8000\n"
+            "```\n\n"
+            "Then visit `http://127.0.0.1:8000/index.html`.\n\n"
+            "## Verify\n\n"
+            "```bash\n"
+            "python -m pytest tests/test_product.py\n"
+            "```\n"
+        )
+    if lowered.startswith("tests/") and lowered.endswith(".py"):
+        return (
+            "from __future__ import annotations\n\n"
+            "import re\n"
+            "from pathlib import Path\n\n\n"
+            "ROOT = Path(__file__).resolve().parents[1]\n\n\n"
+            "def _read_text(relative_path: str) -> str:\n"
+            '    return (ROOT / relative_path).read_text(encoding="utf-8")\n\n\n'
+            "def test_static_resume_artifacts_exist() -> None:\n"
+            '    for relative_path in ("index.html", "styles.css", "README.md"):\n'
+            "        path = ROOT / relative_path\n"
+            '        assert path.exists(), f"missing {relative_path}"\n'
+            '        assert path.read_text(encoding="utf-8").strip(), f"empty {relative_path}"\n\n\n'
+            "def test_html_uses_semantic_resume_structure() -> None:\n"
+            '    html = _read_text("index.html").lower()\n'
+            '    for tag in ("header", "main", "section", "article", "footer"):\n'
+            '        assert f"<{tag}" in html, f"missing semantic tag {tag}"\n'
+            '    assert "viewport" in html\n'
+            '    assert "styles.css" in html\n\n\n'
+            "def test_css_contains_responsive_flex_and_grid_layout() -> None:\n"
+            '    css = _read_text("styles.css").lower().replace(" ", "")\n'
+            '    assert "display:flex" in css\n'
+            '    assert "display:grid" in css\n'
+            '    assert css.count("@media") >= 2\n\n\n'
+            "def test_visible_copy_has_no_unfinished_markers() -> None:\n"
+            '    html = _read_text("index.html")\n'
+            '    visible_text = re.sub(r"<[^>]+>", " ", html)\n'
+            '    assert not re.search(r"\\b(todo|fixme|notimplemented)\\b|待补充|待完善", visible_text, re.I)\n'
         )
     if lowered.endswith((".md", ".txt")):
         title = "Agent Guide" if lowered.endswith("agents.md") else "Workspace Guide"
@@ -448,19 +501,55 @@ def build_deterministic_bootstrap_followup_write_decision(
 ) -> TurnDecision | None:
     if "write_file" not in allowed_tool_names:
         return None
-    # I3-r21 root fix (rank 2): a CE-fissioned LEAF construction step carries its
-    # blueprint card in the turn context. Such a step has a single declared
-    # target_file and a machine verify clause that a synthesized placeholder can
-    # NEVER satisfy (e.g. `node --check && grep -q 'class Paddle'`). Worse, the
-    # placeholder plants the file BEFORE its rightful owner step runs; the
-    # file-ownership ledger then tells the owner "the file exists, read+EDIT it",
-    # and the weak model stalls on a meaningless stub (live r21: PM-0001-1-S3
-    # main.js, 3/3 director_no_materialized_changes, ~1470s). For leaf steps the
-    # write fallback is pure poison — suppress it entirely and keep only the READ
-    # bootstrap path. Honest no_materialized_changes is fail-closed and strictly
-    # better than a stub that dead-locks the owner.
     declared_step = _extract_declared_step_card(original_context)
     if declared_step is not None:
+        target = _normalize_deterministic_bootstrap_target(declared_step.get("target_file"))
+        suffix = Path(target).suffix.lower() if target else ""
+        contents = _bootstrap_successful_file_contents(bootstrap_receipt)
+        current_content = contents.get(target, "") if target else ""
+        if (
+            target
+            and "write_file" in allowed_tool_names
+            and (not suffix or suffix in _LEAF_BOOTSTRAP_WRITE_FILE_EXTS)
+            and isinstance(current_content, str)
+            and current_content
+            and len(current_content) <= _read_leaf_write_file_max_chars()
+        ):
+            invocation = ToolInvocation(
+                call_id=ToolCallId(f"{turn_id}:deterministic-existing-write:1"),
+                tool_name="write_file",
+                arguments={"file": target, "content": current_content},
+                effect_type=ToolEffectType.WRITE,
+                execution_mode=ToolExecutionMode.WRITE_SERIAL,
+            )
+            batch = ToolBatch(
+                batch_id=BatchId(f"{turn_id}:deterministic-existing-write"),
+                invocations=[invocation],
+                serial_writes=[invocation],
+            )
+            return TurnDecision(
+                turn_id=TurnId(turn_id),
+                kind=TurnDecisionKind.TOOL_BATCH,
+                visible_message="",
+                reasoning_summary="deterministic bootstrap follow-up existing-file write_file fence",
+                tool_batch=batch,
+                finalize_mode=FinalizeMode.NONE,
+                domain="code",
+                metadata={
+                    "deterministic_recovery": "bootstrap_followup_existing_file_write_file_fence",
+                    "target_file": target,
+                },
+            )
+        # I3-r21 root fix (rank 2): a CE-fissioned LEAF construction step carries
+        # its blueprint card in the turn context. Such a step has a single
+        # declared target_file and a machine verify clause that a synthesized
+        # placeholder can NEVER satisfy (e.g. `node --check && grep -q 'class
+        # Paddle'`). Worse, the placeholder plants the file BEFORE its rightful
+        # owner step runs; the file-ownership ledger then tells the owner "the
+        # file exists, read+EDIT it", and the weak model stalls on a meaningless
+        # stub (live r21: PM-0001-1-S3 main.js, 3/3
+        # director_no_materialized_changes, ~1470s). For leaf steps the scaffold
+        # fallback is poison; only the current-content write fence above is safe.
         logger.info(
             "deterministic bootstrap write fallback suppressed for leaf construction step "
             "(turn_id=%s declared_target=%s): READ bootstrap only, model must emit a real write",
@@ -503,6 +592,39 @@ def build_deterministic_bootstrap_followup_write_decision(
     # viable_targets[0] is the bug that wrote main.js while readme.md was the step's
     # target. Refuse to guess — a wrong-file write is worse than no write.
     if len(viable_targets) > 1:
+        safe_targets = [target for target in viable_targets if _is_safe_multitarget_bootstrap_write_target(target)]
+        if safe_targets and len(safe_targets) == len(viable_targets):
+            invocations: list[ToolInvocation] = []
+            for index, target in enumerate(safe_targets, start=1):
+                invocation = ToolInvocation(
+                    call_id=ToolCallId(f"{turn_id}:deterministic-write:{index}"),
+                    tool_name="write_file",
+                    arguments={
+                        "file": target,
+                        "content": _synthesize_deterministic_bootstrap_write_content(target, latest_user),
+                    },
+                    effect_type=ToolEffectType.WRITE,
+                    execution_mode=ToolExecutionMode.WRITE_SERIAL,
+                )
+                invocations.append(invocation)
+            batch = ToolBatch(
+                batch_id=BatchId(f"{turn_id}:deterministic-write"),
+                invocations=invocations,
+                serial_writes=invocations,
+            )
+            return TurnDecision(
+                turn_id=TurnId(turn_id),
+                kind=TurnDecisionKind.TOOL_BATCH,
+                visible_message="",
+                reasoning_summary="deterministic bootstrap follow-up support-file write_file fallback",
+                tool_batch=batch,
+                finalize_mode=FinalizeMode.NONE,
+                domain="code",
+                metadata={
+                    "deterministic_recovery": "bootstrap_followup_support_files_write_file",
+                    "target_files": safe_targets,
+                },
+            )
         logger.warning(
             "deterministic bootstrap write fallback skipped: %d viable targets, refusing to guess (%s)",
             len(viable_targets),

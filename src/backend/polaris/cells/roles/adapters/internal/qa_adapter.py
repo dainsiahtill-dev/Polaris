@@ -1285,6 +1285,12 @@ def _has_unfinished_placeholder_match(content: str, pattern: re.Pattern[str]) ->
         if line_end < 0:
             line_end = len(content)
         line = content[line_start:line_end]
+        relative_start = match.start() - line_start
+        tag_start = line.rfind("<", 0, relative_start)
+        tag_end_before = line.rfind(">", 0, relative_start)
+        tag_end_after = line.find(">", match.end() - line_start)
+        if tag_start > tag_end_before and tag_end_after >= 0:
+            continue
         if re.search(r"\bplaceholder\s*=", line, flags=re.IGNORECASE):
             continue
         return True

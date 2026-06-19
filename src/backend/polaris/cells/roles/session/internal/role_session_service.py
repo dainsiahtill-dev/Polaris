@@ -133,7 +133,7 @@ class RoleSessionService:
     def db(self) -> DbSession:
         """获取数据库会话"""
         if self._db is None:
-            self._db = get_session_local()()
+            self._db = get_session_local(workspace=self._workspace)()
         return self._db
 
     @property

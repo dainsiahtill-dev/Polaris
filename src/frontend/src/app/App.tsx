@@ -36,7 +36,11 @@ import { apiFetchFresh, openPath, pickWorkspace } from '@/api';
 import { runtimeService } from '@/services';
 import { useRuntime } from './hooks/useRuntime';
 import { useRuntimeConnectionNotifications } from './hooks/useConnectionNotifications';
-import { RuntimeTransportProvider } from '@/runtime/transport';
+import {
+  RuntimeTransportProvider,
+  useConnectionState as useRuntimeTransportConnectionState,
+  useTransportActions,
+} from '@/runtime/transport';
 import { useLiveTaskQueues } from './hooks/useLiveTaskQueues';
 import { useUsageStats } from './hooks/useUsageStats';
 import { useFactory } from '@/hooks/useFactory';
@@ -230,9 +234,6 @@ function AppContent() {
   const workspace = settings?.workspace || '';
 
   const {
-    live,
-    reconnecting,
-    attemptCount,
     pmStatus,
     directorStatus,
     engineStatus,
@@ -248,7 +249,6 @@ function AppContent() {
     processStreamEvents,
     currentPhase,
     fileEditEvents,
-    reconnect: reconnectWebSocket,
     tasks: runtimeTasks,
     workers: runtimeWorkers,
     isConnected: runtimeConnected,
@@ -256,6 +256,12 @@ function AppContent() {
     taskProgressMap,
     taskTraceMap,
   } = useRuntime({ roles: ['pm', 'chief_engineer', 'director', 'qa'], workspace });
+  const {
+    connected: live,
+    reconnecting,
+    attemptCount,
+  } = useRuntimeTransportConnectionState();
+  const { reconnect: reconnectWebSocket } = useTransportActions();
 
   // Connection status notifications for the unified runtime WebSocket.
   useRuntimeConnectionNotifications({

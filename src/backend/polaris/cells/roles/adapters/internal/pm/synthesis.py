@@ -173,6 +173,78 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         root_workspace_targets = _pm_root_workspace_contract_targets_from_directive(directive)
         if root_workspace_targets:
             source_file, test_file, readme_file = root_workspace_targets
+            if source_file == "index.html":
+                static_targets = [source_file, "styles.css"]
+                verification_targets = [target for target in (readme_file, test_file) if target]
+                root_contracts = [
+                    {
+                        "id": "TASK-1",
+                        "title": f"实现 {domain_label} 静态页面结构与样式",
+                        "goal": f"在工作区根交付 {domain_label} 的 HTML/CSS 真实可运行页面。",
+                        "description": "创建语义化 HTML 页面与响应式样式文件，禁止只写说明文档或空壳占位。",
+                        "scope": static_targets,
+                        "target_files": static_targets,
+                        "steps": [
+                            f"创建或更新 `{source_file}`，实现简历页面语义化结构",
+                            "创建或更新 `styles.css`，实现 Flexbox/Grid 布局、视觉样式与移动端媒体查询",
+                            "浏览器打开页面确认桌面与移动宽度布局正常",
+                        ],
+                        "acceptance": [
+                            "`index.html` 与 `styles.css` 存在于工作区根且非空",
+                            "浏览器打开 `index.html` 正常渲染，375px 宽度布局无错乱",
+                        ],
+                        "phase": "requirements",
+                        "depends_on": [],
+                        "assigned_to": "Director",
+                        "metadata": dict(source_metadata),
+                    },
+                    {
+                        "id": "TASK-2",
+                        "title": f"实现 {domain_label} 响应式验收测试",
+                        "goal": f"用自动化检查覆盖 {domain_label} 的文件存在、语义化标签与移动端样式要求。",
+                        "description": "补齐测试文件，验证 HTML/CSS 产物、关键内容、媒体查询与运行说明。",
+                        "scope": [*static_targets, test_file],
+                        "target_files": [*static_targets, test_file],
+                        "steps": [
+                            f"创建或更新 `{test_file}`，检查 HTML/CSS/README 交付文件",
+                            "验证页面包含语义化结构、简历内容区域、CSS Grid/Flexbox 与媒体查询",
+                            "执行 `pytest -q` 并确保测试通过",
+                        ],
+                        "acceptance": [
+                            f"`{test_file}` 存在且包含静态页面验收用例",
+                            "`pytest -q` 返回 PASS，并覆盖产品验收样例",
+                        ],
+                        "phase": "implementation",
+                        "depends_on": ["TASK-1"],
+                        "assigned_to": "Director",
+                        "metadata": dict(source_metadata),
+                    },
+                    {
+                        "id": "TASK-3",
+                        "title": f"完善 {domain_label} README 与交付证据",
+                        "goal": f"交付 {domain_label} 的本地运行说明和可复现验收路径。",
+                        "description": "补齐 README 运行方式、文件说明、浏览器验证步骤，并确认测试证据可复现。",
+                        "scope": verification_targets or [readme_file or test_file],
+                        "target_files": verification_targets or [readme_file or test_file],
+                        "steps": [
+                            "补充 README 本地打开方式和可选简易 HTTP 服务器方式",
+                            "记录桌面与移动端验证步骤",
+                            "记录最终验证命令和结果",
+                        ],
+                        "acceptance": [
+                            "`README.md` 说明如何运行并包含验收步骤",
+                            "`pytest -q` 返回 PASS，交付物包含 HTML、CSS、测试与文档",
+                        ],
+                        "phase": "verification",
+                        "depends_on": ["TASK-2"],
+                        "assigned_to": "Director",
+                        "metadata": dict(source_metadata),
+                    },
+                ]
+                contracts = [
+                    self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(root_contracts)
+                ]
+                return [item for item in contracts if isinstance(item, dict)]
             verification_targets = [target for target in (readme_file, test_file) if target]
             root_contracts = [
                 {

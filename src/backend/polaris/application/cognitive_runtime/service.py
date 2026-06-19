@@ -293,6 +293,7 @@ class CognitiveRuntimeService:
         self._store = store
         self._store_workspace_key: str | None = None
         self._stores: dict[str, CognitiveRuntimeSqliteStore] = {}
+        self._context_memory_services: dict[str, RoleSessionContextMemoryService] = {}
 
     @staticmethod
     def _workspace_key(workspace: str) -> str:
@@ -312,6 +313,16 @@ class CognitiveRuntimeService:
         if self._context_memory_service is None:
             self._context_memory_service = RoleSessionContextMemoryService(session_service=self.session_service)
         return self._context_memory_service
+
+    def _context_memory_service_for(self, workspace: str) -> RoleSessionContextMemoryService:
+        if self._context_memory_service is not None:
+            return self._context_memory_service
+        key = self._workspace_key(workspace)
+        service = self._context_memory_services.get(key)
+        if service is None:
+            service = RoleSessionContextMemoryService(session_service=RoleSessionService(workspace=workspace or None))
+            self._context_memory_services[key] = service
+        return service
 
     def _store_for(self, workspace: str) -> CognitiveRuntimeSqliteStore:
         key = self._workspace_key(workspace)
@@ -334,6 +345,9 @@ class CognitiveRuntimeService:
         if self._session_service is not None:
             self._session_service.close()
             self._session_service = None
+        for context_memory_service in self._context_memory_services.values():
+            context_memory_service.close()
+        self._context_memory_services.clear()
         if self._store is not None:
             self._store.close()
             self._store = None
@@ -468,7 +482,8 @@ class CognitiveRuntimeService:
         normalized_scope = _normalize_paths(list(scope_paths))
         if not normalized_scope:
             raise ValueError("scope_paths must contain at least one path")
-        run_card = self.context_memory_service.get_state_for_session(session_id, "run_card") if session_id else None
+        context_memory_service = self._context_memory_service_for(workspace)
+        run_card = context_memory_service.get_state_for_session(session_id, "run_card") if session_id else None
         current_goal = ""
         hard_constraints: tuple[str, ...] = ()
         if isinstance(run_card, dict):
@@ -577,7 +592,8 @@ class CognitiveRuntimeService:
         receipt_limit: int = 20,
         turn_envelope: dict[str, Any] | None = None,
     ) -> ContextHandoffPack:
-        run_card = self.context_memory_service.get_state_for_session(session_id, "run_card")
+        context_memory_service = self._context_memory_service_for(workspace)
+        run_card = context_memory_service.get_state_for_session(session_id, "run_card")
         current_goal = ""
         hard_constraints: tuple[str, ...] = ()
         open_loops: tuple[str, ...] = ()
@@ -594,7 +610,7 @@ class CognitiveRuntimeService:
             run_card_payload = dict(run_card)
             state_snapshot["run_card"] = dict(run_card)
 
-        slice_plan = self.context_memory_service.get_state_for_session(
+        slice_plan = context_memory_service.get_state_for_session(
             session_id,
             "context_slice_plan",
         )
@@ -602,7 +618,7 @@ class CognitiveRuntimeService:
             context_slice_plan_payload = dict(slice_plan)
             state_snapshot["context_slice_plan"] = dict(slice_plan)
 
-        decision_log = self.context_memory_service.get_state_for_session(
+        decision_log = context_memory_service.get_state_for_session(
             session_id,
             "decision_log",
         )
@@ -625,7 +641,7 @@ class CognitiveRuntimeService:
                     break
         if resolved_envelope is not None:
             resolved_envelope = resolved_envelope.with_receipt_ids(receipt_refs)
-        memory_hits = self.context_memory_service.search_memory_for_session(
+        memory_hits = context_memory_service.search_memory_for_session(
             session_id,
             current_goal or reason or "handoff",
             limit=6,
@@ -642,7 +658,7 @@ class CognitiveRuntimeService:
         )
         source_spans: list[str] = []
         for episode_id in episode_refs:
-            episode_payload = self.context_memory_service.read_episode_for_session(session_id, episode_id)
+            episode_payload = context_memory_service.read_episode_for_session(session_id, episode_id)
             if not isinstance(episode_payload, dict):
                 continue
             for item in episode_payload.get("source_spans") or []:

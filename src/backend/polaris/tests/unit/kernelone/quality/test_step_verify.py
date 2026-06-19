@@ -60,7 +60,7 @@ class TestNormalize:
         assert normalize_step_verify("  test -f a.md ") == "test -f a.md"
 
     def test_array_joined(self) -> None:
-        assert normalize_step_verify(["test -f a.md", " grep -q x a.md "]) == "test -f a.md && grep -q x a.md"
+        assert normalize_step_verify(["test -f a.md", " grep -q x a.md "]) == "test -f a.md && grep -Fq x a.md"
 
     def test_empty_shapes(self) -> None:
         assert normalize_step_verify(None) == ""
@@ -77,6 +77,11 @@ class TestNormalize:
 
         assert normalize_step_verify(verify) == "python -c \"print(1)\" && printf '%s\\n' 2+3 | python calculator.py"
 
+    def test_bash_here_string_rewrites_before_pipeline_suffix(self) -> None:
+        verify = "python calculator.py <<< 'exit' | head -n 5"
+
+        assert normalize_step_verify(verify) == "printf '%s\\n' exit | python calculator.py | head -n 5"
+
     def test_quoted_here_string_marker_is_preserved(self) -> None:
         verify = "python -c \"print('<<<')\""
 
@@ -88,6 +93,59 @@ class TestNormalize:
             encoding="utf-8",
         )
         verify = normalize_step_verify("python3 read_stdin.py <<< 'ok'")
+        outcome = run_step_verify(verify, cwd=str(tmp_path))
+
+        assert outcome is not None
+        assert outcome[0] == 0
+
+    def test_normalized_here_string_pipeline_runs_under_bin_sh(self, tmp_path: Path) -> None:
+        (tmp_path / "read_stdin.py").write_text(
+            "import sys\nprint(sys.stdin.readline().strip())\n",
+            encoding="utf-8",
+        )
+        verify = normalize_step_verify("python3 read_stdin.py <<< 'ok' | grep -q ok")
+        outcome = run_step_verify(verify, cwd=str(tmp_path))
+
+        assert outcome is not None
+        assert outcome[0] == 0
+
+    def test_simple_grep_q_is_normalized_to_literal_grep(self) -> None:
+        verify = "grep -q '3 + (4 - 2) * 5' README.md"
+
+        assert normalize_step_verify(verify) == "grep -Fq '3 + (4 - 2) * 5' README.md"
+
+    def test_explicit_regex_grep_is_preserved(self) -> None:
+        verify = "grep -Eq 'class .+App' src/main.js"
+
+        assert normalize_step_verify(verify) == verify
+
+    def test_normalized_literal_grep_runs_under_bin_sh(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text(
+            'python calculator.py "3 + (4 - 2) * 5"\n',
+            encoding="utf-8",
+        )
+        verify = normalize_step_verify("grep -q '3 + (4 - 2) * 5' README.md")
+        outcome = run_step_verify(verify, cwd=str(tmp_path))
+
+        assert outcome is not None
+        assert outcome[0] == 0
+
+    def test_basic_grep_or_pattern_is_normalized_to_literal_alternates(self) -> None:
+        verify = r"grep -q 'exit\|quit' README.md"
+
+        assert normalize_step_verify(verify) == "grep -Fq -e exit -e quit README.md"
+
+    def test_fixed_grep_or_pattern_is_normalized_to_literal_alternates(self) -> None:
+        verify = r"grep -Fq 'exit\|quit' README.md"
+
+        assert normalize_step_verify(verify) == "grep -Fq -e exit -e quit README.md"
+
+    def test_normalized_grep_or_pattern_runs_under_bin_sh(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text(
+            "Run python calculator.py, then type exit or quit to leave.\n",
+            encoding="utf-8",
+        )
+        verify = normalize_step_verify(r"grep -Fq 'exit\|quit' README.md")
         outcome = run_step_verify(verify, cwd=str(tmp_path))
 
         assert outcome is not None

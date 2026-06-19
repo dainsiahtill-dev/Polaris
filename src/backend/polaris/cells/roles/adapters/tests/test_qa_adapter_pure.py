@@ -14,9 +14,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
-from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter, _extract_qa_rework_evidence
+from polaris.cells.roles.adapters.internal.qa_adapter import (
+    QAAdapter,
+    _extract_qa_rework_evidence,
+    _has_unfinished_placeholder_match,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -84,6 +89,13 @@ class TestSafeInt:
         adapter = _make_adapter(tmp_path)
         assert adapter._safe_int(None) == 0
         assert adapter._safe_int(None, default=4) == 4
+
+
+def test_placeholder_in_html_class_attribute_is_not_unfinished_marker() -> None:
+    pattern = re.compile(r"\bplaceholder\b", re.IGNORECASE)
+
+    assert _has_unfinished_placeholder_match('<span class="avatar-placeholder">张</span>', pattern) is False
+    assert _has_unfinished_placeholder_match("<p>placeholder</p>", pattern) is True
 
 
 class TestExtractQaReworkEvidence:
@@ -411,8 +423,10 @@ class TestQaExecute:
         async def fake_invoke_role_runtime_first(**kwargs: Any) -> dict[str, str]:
             calls.append(str(kwargs.get("message") or ""))
             appendices.append(str(kwargs.get("prompt_appendix") or ""))
-            context = kwargs.get("context") if isinstance(kwargs.get("context"), dict) else {}
-            metadata = context.get("metadata") if isinstance(context.get("metadata"), dict) else {}
+            raw_context = kwargs.get("context")
+            context: dict[str, Any] = raw_context if isinstance(raw_context, dict) else {}
+            raw_metadata = context.get("metadata")
+            metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
             metadata_calls.append(dict(metadata))
             if len(calls) == 1:
                 return {"response": "我先对工作区进行侦察，然后按 QA 工作流执行审查 → 测试 → 报告。"}

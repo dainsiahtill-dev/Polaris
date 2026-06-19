@@ -557,6 +557,41 @@ def test_evaluate_pm_task_quality_rejects_director_tasks_with_empty_target_files
     assert (report.get("score") or 100) < 100
 
 
+def test_evaluate_pm_task_quality_rejects_contract_governance_tasks() -> None:
+    payload = {
+        "tasks": [
+            {
+                "id": "TASK-1",
+                "title": "实现补全文件级路径",
+                "goal": (
+                    "每个 Director/ChiefEngineer 任务必须包含真实相对路径"
+                    "（如 `index.html`、`styles.css`、`README.md`），禁止用中文模块描述替代。"
+                ),
+                "description": "修复 PM 合同字段格式，而不是交付产品功能。",
+                "assigned_to": "Director",
+                "scope_paths": ["index.html", "styles.css", "README.md"],
+                "target_files": ["index.html", "styles.css", "README.md"],
+                "phase": "requirements",
+                "execution_checklist": [
+                    "补齐 target_files",
+                    "调整 scope_paths",
+                    "重新输出 JSON",
+                ],
+                "acceptance_criteria": [
+                    "verify ./index.html exists",
+                    "verify ./styles.css exists",
+                ],
+            }
+        ]
+    }
+
+    report = evaluate_pm_task_quality(payload, docs_stage={})
+
+    issues = "\n".join(report.get("critical_issues") or [])
+    assert report["ok"] is False
+    assert "contract governance" in issues
+
+
 def test_unevidenced_bare_word_scope_still_rejected(tmp_path) -> None:
     """A bare English token with no sibling path and no existing dir stays invalid."""
     payload = {

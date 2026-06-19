@@ -91,6 +91,39 @@ def _strip_unquoted_natural_language_tail(value: str) -> str:
     return candidate
 
 
+def _split_first_shell_word(value: str) -> tuple[str, str] | None:
+    quote: str | None = None
+    escaped = False
+    start: int | None = None
+    for index, char in enumerate(value):
+        if start is None:
+            if char.isspace():
+                continue
+            if char in "|;&":
+                return None
+            start = index
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote != "'":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            continue
+        if char.isspace():
+            return value[start:index], value[index:].strip()
+        if char in "|;&":
+            return value[start:index].strip(), value[index:].strip()
+    if start is None:
+        return None
+    return value[start:].strip(), ""
+
+
 def _rewrite_simple_bash_here_string_clause(clause: str) -> str:
     marker_index = _first_unquoted_marker_index(clause, ("<<<",))
     if marker_index is None:
@@ -99,19 +132,86 @@ def _rewrite_simple_bash_here_string_clause(clause: str) -> str:
     rhs = clause[marker_index + 3 :].strip()
     if not command or not rhs:
         return clause
+    split_rhs = _split_first_shell_word(rhs)
+    if split_rhs is None:
+        return clause
+    rhs_word, rhs_suffix = split_rhs
     try:
-        rhs_tokens = shlex.split(rhs, posix=True)
+        rhs_tokens = shlex.split(rhs_word, posix=True)
     except ValueError:
         return clause
     if len(rhs_tokens) != 1:
         return clause
-    return f"printf '%s\\n' {shlex.quote(rhs_tokens[0])} | {command}"
+    rewritten = f"printf '%s\\n' {shlex.quote(rhs_tokens[0])} | {command}"
+    if rhs_suffix:
+        return f"{rewritten} {rhs_suffix}"
+    return rewritten
 
 
 def _normalize_bash_here_strings(value: str) -> str:
     if "<<<" not in value:
         return value
     return " && ".join(_rewrite_simple_bash_here_string_clause(part) for part in value.split(" && "))
+
+
+def _normalize_simple_literal_grep_clause(clause: str) -> str:
+    stripped = clause.strip()
+    if not stripped.startswith("grep "):
+        return clause
+    try:
+        parts = shlex.split(stripped)
+    except ValueError:
+        return clause
+    if len(parts) != 4 or parts[0] != "grep":
+        return clause
+
+    raw_flags = parts[1]
+    if not raw_flags.startswith("-") or raw_flags.startswith("--"):
+        return clause
+    flag_text = raw_flags[1:]
+    if not flag_text or any(char in flag_text for char in "EPG") or "q" not in flag_text:
+        return clause
+
+    alternate_patterns = _split_basic_grep_or_pattern(parts[2])
+    if alternate_patterns is not None:
+        normalized_flags = "-" + "".join(_dedupe_flag_order("F" + flag_text))
+        grep_parts = ["grep", normalized_flags]
+        for pattern in alternate_patterns:
+            grep_parts.extend(("-e", pattern))
+        grep_parts.append(parts[3])
+        return " ".join(shlex.quote(part) for part in grep_parts)
+
+    if "F" in flag_text:
+        return clause
+
+    normalized_flags = "-" + "".join(_dedupe_flag_order("F" + flag_text))
+    return " ".join(shlex.quote(part) for part in ("grep", normalized_flags, parts[2], parts[3]))
+
+
+def _split_basic_grep_or_pattern(pattern: str) -> list[str] | None:
+    if "\\|" not in pattern:
+        return None
+    parts = pattern.split("\\|")
+    if len(parts) < 2 or any(not part.strip() for part in parts):
+        return None
+    return parts
+
+
+def _dedupe_flag_order(flags: str) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for flag in flags:
+        if flag in seen:
+            continue
+        seen.add(flag)
+        ordered.append(flag)
+    return ordered
+
+
+def _normalize_literal_grep_clauses(value: str) -> str:
+    if "grep " not in value:
+        return value
+    return " && ".join(_normalize_simple_literal_grep_clause(part) for part in value.split(" && "))
 
 
 def normalize_step_verify(raw_verify: Any) -> str:
@@ -122,7 +222,9 @@ def normalize_step_verify(raw_verify: Any) -> str:
     """
     if isinstance(raw_verify, (list, tuple)):
         raw_verify = " && ".join(str(part).strip() for part in raw_verify if str(part).strip())
-    return _normalize_bash_here_strings(_strip_unquoted_natural_language_tail(str(raw_verify or "").strip()))
+    normalized = _strip_unquoted_natural_language_tail(str(raw_verify or "").strip())
+    normalized = _normalize_bash_here_strings(normalized)
+    return _normalize_literal_grep_clauses(normalized)
 
 
 def split_verify_clauses(verify: str) -> list[str]:

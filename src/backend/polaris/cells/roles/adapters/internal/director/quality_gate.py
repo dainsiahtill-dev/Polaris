@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -110,6 +111,7 @@ def _is_recoverable_no_write_mutation_contract_error_text(text: str) -> bool:
 
 
 _ACCEPTANCE_VERIFY_EXISTS_RE = re.compile(r"^verify\s+(?P<path>\S+)\s+exists$", re.IGNORECASE)
+_ACCEPTANCE_TEST_FILE_FLAGS = {"-d", "-e", "-f", "-s"}
 
 
 def _evaluate_acceptance_verify_exists(
@@ -118,17 +120,20 @@ def _evaluate_acceptance_verify_exists(
     workspace_full: str,
     write_tool_evidence: bool,
 ) -> tuple[bool, dict[str, Any]]:
-    """Evaluate the PM contract's machine-checkable ``verify <path> exists`` assertions.
+    """Evaluate machine-checkable file-existence acceptance assertions.
 
     The PM task quality gate emits acceptance criteria in this canonical form
     (task_quality_gate ``f"verify {scope_path} exists"``). When the Director
     produced no NEW diff but every such assertion already holds — e.g. a
     rewrite with identical content — failing with
     ``director_no_materialized_changes`` punishes a satisfied contract.
-    Strictly gated: requires at least one assertion, ALL assertions passing,
-    successful write-tool evidence (the model demonstrably did the work), and
-    a real workspace. Path existence is case-insensitive, consistent with
-    declared-target matching.
+    CE fission also emits direct POSIX checks such as ``test -f file`` and
+    ``test -f README.md && grep -q 'literal' README.md``. Parse only this
+    tiny allowlist; never execute shell. Strictly gated: requires at least one
+    recognized assertion, ALL recognized assertions passing, successful
+    write-tool evidence (the model demonstrably did the work), and a real
+    workspace. Path existence is case-insensitive, consistent with declared-
+    target matching.
     """
     evidence: dict[str, Any] = {"checked": 0, "passed": [], "missing": []}
     if not write_tool_evidence or not workspace_full:
@@ -148,17 +153,127 @@ def _evaluate_acceptance_verify_exists(
     if not root.is_dir():
         return False, evidence
     for criterion in criteria:
-        match = _ACCEPTANCE_VERIFY_EXISTS_RE.match(criterion)
-        if not match:
+        assertion = _evaluate_machine_checkable_acceptance_criterion(criterion, root)
+        if assertion is None:
             continue
         evidence["checked"] += 1
-        rel = _normalize_declared_task_path(match.group("path"))
-        if rel and _workspace_path_exists_case_insensitive(root, rel):
-            evidence["passed"].append(rel)
-        else:
-            evidence["missing"].append(rel or match.group("path"))
+        passed_paths, missing_paths = assertion
+        evidence["passed"].extend(passed_paths)
+        evidence["missing"].extend(missing_paths)
+    evidence["passed"] = _dedupe_preserve_order([str(item) for item in evidence["passed"]])
+    evidence["missing"] = _dedupe_preserve_order([str(item) for item in evidence["missing"]])
     satisfied = evidence["checked"] > 0 and not evidence["missing"]
     return satisfied, evidence
+
+
+def _evaluate_machine_checkable_acceptance_criterion(
+    criterion: str,
+    root: Path,
+) -> tuple[list[str], list[str]] | None:
+    token = str(criterion or "").strip()
+    if not token:
+        return None
+
+    match = _ACCEPTANCE_VERIFY_EXISTS_RE.match(token)
+    if match:
+        rel = _normalize_declared_task_path(match.group("path"))
+        if rel and _workspace_path_satisfies_flag(root, rel, "-e"):
+            return [rel], []
+        return [], [rel or match.group("path")]
+
+    clauses = [part.strip() for part in token.split("&&") if part.strip()]
+    if not clauses:
+        return None
+    passed: list[str] = []
+    missing: list[str] = []
+    for clause in clauses:
+        clause_result = _evaluate_safe_acceptance_clause(clause, root)
+        if clause_result is None:
+            return None
+        path, ok = clause_result
+        if ok:
+            passed.append(path)
+        else:
+            missing.append(path)
+    return passed, missing
+
+
+def _evaluate_safe_acceptance_clause(clause: str, root: Path) -> tuple[str, bool] | None:
+    try:
+        parts = shlex.split(clause)
+    except ValueError:
+        return None
+    if not parts:
+        return None
+
+    if parts[0] == "test" and len(parts) == 3 and parts[1] in _ACCEPTANCE_TEST_FILE_FLAGS:
+        rel = _normalize_declared_task_path(parts[2])
+        if not rel:
+            return parts[2], False
+        return rel, _workspace_path_satisfies_flag(root, rel, parts[1])
+
+    if parts[0] == "[" and len(parts) == 4 and parts[3] == "]" and parts[1] in _ACCEPTANCE_TEST_FILE_FLAGS:
+        rel = _normalize_declared_task_path(parts[2])
+        if not rel:
+            return parts[2], False
+        return rel, _workspace_path_satisfies_flag(root, rel, parts[1])
+
+    if len(parts) in {4, 5} and parts[0] == "grep" and parts[1] == "-q":
+        rest = parts[2:]
+        if rest and rest[0] == "--":
+            rest = rest[1:]
+        if len(rest) != 2:
+            return None
+        literal, raw_path = rest
+        rel = _normalize_declared_task_path(raw_path)
+        if not rel:
+            return raw_path, False
+        path = _resolve_workspace_path_case_insensitive(root, rel)
+        if path is None or not path.is_file():
+            return rel, False
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return rel, False
+        return rel, literal in text
+
+    return None
+
+
+def _workspace_path_satisfies_flag(root: Path, rel_path: str, flag: str) -> bool:
+    path = _resolve_workspace_path_case_insensitive(root, rel_path)
+    if path is None:
+        return False
+    if flag == "-e":
+        return path.exists()
+    if flag == "-f":
+        return path.is_file()
+    if flag == "-d":
+        return path.is_dir()
+    if flag == "-s":
+        try:
+            return path.is_file() and path.stat().st_size > 0
+        except OSError:
+            return False
+    return False
+
+
+def _resolve_workspace_path_case_insensitive(root: Path, rel_path: str) -> Path | None:
+    candidate = root / rel_path
+    if candidate.exists():
+        return candidate
+    current = root
+    for part in rel_path.split("/"):
+        if not current.is_dir():
+            return None
+        try:
+            matched = next((entry for entry in current.iterdir() if entry.name.casefold() == part.casefold()), None)
+        except OSError:
+            return None
+        if matched is None:
+            return None
+        current = matched
+    return current if current.exists() else None
 
 
 def _collect_workspace_code_diff(
@@ -466,12 +581,20 @@ async def _run_materialization_quality_repair_retry(
         workspace_full,
         artifact_quality_errors,
     )
-    repair_target_files = _select_materialization_quality_repair_target_batch(missing_target_files)
+    runtime_smoke_target_files = _python_runtime_smoke_repair_target_files(
+        artifact_quality_errors=artifact_quality_errors,
+        changed_files=changed_files,
+    )
+    repair_target_candidates = missing_target_files or runtime_smoke_target_files
+    repair_target_files = _select_materialization_quality_repair_target_batch(repair_target_candidates)
+    missing_repair_target_files = repair_target_files if missing_target_files else []
+    existing_repair_target_files = repair_target_files if not missing_target_files else []
     repair_message = _build_materialization_quality_repair_message(
         original_message=original_message,
         artifact_quality_errors=artifact_quality_errors,
         changed_files=changed_files,
-        missing_target_files=repair_target_files,
+        missing_target_files=missing_repair_target_files,
+        repair_target_files=existing_repair_target_files,
     )
     repair_context = {
         **dict(context or {}),
@@ -480,19 +603,15 @@ async def _run_materialization_quality_repair_retry(
             "artifact_quality_errors": artifact_quality_errors[:20],
             "changed_files": changed_files[:40],
             "missing_target_files": missing_target_files[:20],
+            "runtime_smoke_target_files": runtime_smoke_target_files[:20],
             "repair_target_files": repair_target_files[:12],
         },
     }
-    # Force tool_choice=write_file whenever there are missing target files.
-    # The single-missing branch already did this (factory-bench L2-10 r3);
-    # the multi-missing branch was leaving the LLM free to echo the long
-    # repair prompt back as a no-tool-call response. Live factory-bench
-    # L6-32 (2026-06-17): all three repair attempts in one task echoed
-    # the prompt verbatim and the loop broke after the hard cap, killing
-    # the run with zero source files. Forcing the structural constraint
-    # matches the single-missing contract and prevents the model from
-    # sidestepping the write tool. The API still allows the model to call
-    # write_file multiple times in one response when the schema permits.
+    # Force tool_choice=write_file whenever repair can be tied to exact target
+    # files. Missing files need creation; Python runtime-smoke failures need a
+    # complete rewrite of the already-written failing script. Leaving either
+    # case to the default repair path lets weak Director models drift into
+    # repeated reads, prose, or malformed edit_blocks.
     if repair_target_files:
         repair_context["_transaction_kernel_forced_tool_choice"] = {
             "type": "function",
@@ -560,6 +679,7 @@ async def _run_materialization_quality_repair_retry(
             "tool_results": len(repair_tool_results),
             "write_tool_evidence": has_successful_write_tool(repair_tool_results),
             "missing_target_files": missing_target_files[:12],
+            "runtime_smoke_target_files": runtime_smoke_target_files[:12],
             "repair_target_files": repair_target_files[:12],
         }
     )
@@ -578,6 +698,53 @@ def _select_materialization_quality_repair_target_batch(missing_target_files: li
     if len(missing_target_files) <= 1:
         return list(missing_target_files)
     return [missing_target_files[0]]
+
+
+_PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"python runtime smoke (?:crashed|timed out|was killed) for (?P<target>['\"`][^'\"`]+['\"`]|[^:\s;]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"python runtime smoke could not launch (?P<target>['\"`][^'\"`]+['\"`]|[^:\s;]+)",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _python_runtime_smoke_repair_target_files(
+    *,
+    artifact_quality_errors: list[str],
+    changed_files: list[str],
+) -> list[str]:
+    """Extract existing Python files that failed Polaris' own runtime smoke.
+
+    This intentionally trusts only quality-gate error strings emitted by
+    ``_apply_deterministic_python_runtime_smoke`` and only when the target is
+    one of the already-written changed files. That keeps arbitrary traceback
+    paths from seeding repair scope.
+    """
+
+    changed_python_files = {
+        rel for item in changed_files if (rel := _normalize_declared_task_path(str(item or ""))) and rel.endswith(".py")
+    }
+    if not changed_python_files:
+        return []
+
+    targets: list[str] = []
+    for item in artifact_quality_errors:
+        text = str(item or "")
+        if "python runtime smoke" not in text.lower():
+            continue
+        for pattern in _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS:
+            match = pattern.search(text)
+            if not match:
+                continue
+            rel = _normalize_declared_task_path(match.group("target"))
+            if rel.endswith(".py") and rel in changed_python_files:
+                targets.append(rel)
+            break
+    return _dedupe_preserve_order(targets)
 
 
 def _missing_declared_target_files(task: dict[str, Any], workspace_full: str) -> list[str]:
@@ -619,6 +786,7 @@ def _build_materialization_quality_repair_message(
     artifact_quality_errors: list[str],
     changed_files: list[str],
     missing_target_files: list[str] | None = None,
+    repair_target_files: list[str] | None = None,
 ) -> str:
     error_lines = "\n".join(f"- {item}" for item in artifact_quality_errors[:12])
     # Already-written files are reported as a COUNT, not paths: every
@@ -629,6 +797,10 @@ def _build_materialization_quality_repair_message(
     changed_line = f"{len(changed_files)} file(s) were already written and must NOT be rewritten."
     missing_block = ""
     single_missing_block = ""
+    existing_repair_block = ""
+    single_existing_repair_block = ""
+    missing_target_set = set(missing_target_files or [])
+    existing_repair_target_files = [item for item in repair_target_files or [] if item not in missing_target_set]
     if missing_target_files:
         missing_lines = "\n".join(f"- {item}" for item in missing_target_files[:12])
         missing_block = (
@@ -642,6 +814,22 @@ def _build_materialization_quality_repair_message(
                 f"- Target path: {single_missing}\n"
                 "- Emit exactly one write_file tool call for that target path.\n"
                 "- The write_file content must be the complete non-empty file body.\n"
+                "- Do not read files first. Do not list directories. Do not explore. Do not explain.\n"
+            )
+    if existing_repair_target_files:
+        repair_lines = "\n".join(f"- {item}" for item in existing_repair_target_files[:12])
+        existing_repair_block = (
+            "EXISTING FAILED TARGET FILES — rewrite these exact paths NOW, one write_file call per path:\n"
+            f"{repair_lines}\n"
+        )
+        if len(existing_repair_target_files) == 1:
+            single_target = existing_repair_target_files[0]
+            single_existing_repair_block = (
+                "SINGLE FAILED TARGET REPAIR:\n"
+                "[director_quality_repair:write_only_single_target]\n"
+                f"- Target path: {single_target}\n"
+                "- Emit exactly one write_file tool call for that target path.\n"
+                "- The write_file content must be the complete corrected UTF-8 file body.\n"
                 "- Do not read files first. Do not list directories. Do not explore. Do not explain.\n"
             )
     # C7-text W3 (2026-06-16 deliberation): cross-file coherence repair. An
@@ -710,7 +898,12 @@ def _build_materialization_quality_repair_message(
             "line copied VERBATIM and REPLACE is the corrected line.\n"
             "Do not change any other line; do not regenerate unrelated code.\n"
         )
-    if not missing_target_files and not symbol_repair_block:
+    if existing_repair_target_files and not missing_target_files and not symbol_repair_block:
+        changed_line = (
+            f"{len(changed_files)} file(s) were already written; rewrite only the existing failed target "
+            "file(s) named above, not unrelated files."
+        )
+    elif not missing_target_files and not symbol_repair_block:
         if syntax_block and "TRUNCATED FILE DIRECTIVE" in syntax_block:
             changed_line = (
                 f"{len(changed_files)} file(s) were already written; the truncated artifact is the repair target. "
@@ -727,6 +920,8 @@ def _build_materialization_quality_repair_message(
         "The previous write reached the workspace but failed Polaris artifact quality gates.\n"
         f"{missing_block}"
         f"{single_missing_block}"
+        f"{existing_repair_block}"
+        f"{single_existing_repair_block}"
         f"{coherence_block}"
         f"{symbol_repair_block}"
         f"{syntax_block}"

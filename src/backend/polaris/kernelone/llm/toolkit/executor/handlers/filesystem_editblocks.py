@@ -243,6 +243,21 @@ def _synthesize_line_range_block(
         repl = repl + "\n"
     removed_lines = end_no - start_no + 1
     added_lines = len(repl.splitlines())
+    if total > removed_lines and removed_lines <= 3 and _looks_like_complete_file_replacement(repl, rel):
+        return None, {
+            "ok": False,
+            "error": (
+                f"line-range edit for {file}[{start_no}:{end_no}] looks like a whole-file replacement, "
+                f"but the selected range covers only {removed_lines} of {total} lines."
+            ),
+            "suggestion": (
+                f"If replacing the full existing file, use start=1 and end={total}; otherwise set "
+                "replace to only the new source for the selected line range. Use write_file when the "
+                "intent is a whole-file overwrite."
+            ),
+            "error_type": "line_range_whole_file_mismatch",
+            "retryable": True,
+        }
     if (
         removed_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
         and added_lines <= removed_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO
