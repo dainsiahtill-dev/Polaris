@@ -2,6 +2,8 @@
 
 本文件用于指导在本仓库工作的 AI 编码代理。仅保留可执行、可验证的技术约束。
 
+**必用MCP和Skill**: 充分利用codegraph MCP和superpowers，必要时需要使用Playwright来真实跑测试和审计。
+
 ## 0) 后端权威入口（2026-03-22）
 - 对于任何 `src/backend` 任务，必须先读 `src/backend/AGENTS.md`。
 - 统一架构执行标准入口：`src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md`。
