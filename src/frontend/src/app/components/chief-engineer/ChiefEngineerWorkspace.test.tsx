@@ -1574,6 +1574,67 @@ describe('ChiefEngineerWorkspace', () => {
     expect(onToggleDirector).not.toHaveBeenCalled();
   });
 
+  it('allows Director handoff when snapshot tasks carry blueprint evidence despite stale plan diagnostics', async () => {
+    const defaultApiFetch = apiFetchMock.getMockImplementation();
+    apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === cePath('/v2/chief-engineer/diagnostics')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ok: false,
+            can_handoff: false,
+            can_generate: true,
+            role: 'chief_engineer',
+            generated_at: '2026-05-25T00:00:00Z',
+            workspace: { ok: true, status: 'ok', workspace: 'C:/Temp/Product', exists: true, error: null },
+            llm: { ok: true, state: 'ready', role: 'chief_engineer', blocked_roles: [], unsupported_roles: [], required_ready_roles: ['chief_engineer'], provider_id: 'qwen', model: 'Qwen3-Max', error: null, details: {} },
+            blueprints: {
+              ok: false,
+              status: 'ready',
+              source: 'runtime/blueprints',
+              plan_status: 'missing',
+              plan_path: 'C:/Temp/Product/.polaris/runtime/tasks/plan.json',
+              plan_error: 'pm_task_plan_missing',
+              total: 3,
+              loadable: 3,
+              invalid_payloads: 0,
+              planned_tasks: 0,
+              covered_tasks: 0,
+              missing_task_ids: [],
+              director_handoff_ready: false,
+              latest_updated_at: '2026-05-25T00:00:00Z',
+              error: null,
+            },
+            issues: ['blueprint_task_plan_unavailable'],
+            generate_blockers: [],
+            handoff_blockers: ['blueprint_task_plan_unavailable'],
+          }),
+        });
+      }
+      if (path === cePath('/v2/chief-engineer/blueprints')) {
+        return Promise.resolve({ ok: true, json: async () => ({ blueprints: [], total: 0 }) });
+      }
+      return defaultApiFetch?.(path, init) ?? Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+
+    render(
+      <ChiefEngineerWorkspace
+        {...baseProps}
+        tasks={[
+          { id: 'PM-alpha', title: 'Alpha task', blueprint_id: 'bp-alpha', runtime_blueprint_path: 'runtime/blueprints/bp-alpha.json' } as PmTask,
+          { id: 'PM-beta', title: 'Beta task', blueprint_id: 'bp-beta', runtime_blueprint_path: 'runtime/blueprints/bp-beta.json' } as PmTask,
+          { id: 'PM-gamma', title: 'Gamma task', blueprint_id: 'bp-gamma', runtime_blueprint_path: 'runtime/blueprints/bp-gamma.json' } as PmTask,
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(cePath('/v2/chief-engineer/diagnostics')));
+    expect(screen.queryByTestId('chief-engineer-director-start-gate')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('chief-engineer-diagnostics-issues')).not.toBeInTheDocument();
+    expect(screen.getByTestId('chief-engineer-diagnostics')).toHaveTextContent('3/3');
+    expect(screen.getByTestId('chief-engineer-start-director')).not.toBeDisabled();
+  });
+
   it('loads Director workers through the backend route when realtime heartbeats are absent', async () => {
     apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
       if (path === directorPath('/v2/director/workers')) {

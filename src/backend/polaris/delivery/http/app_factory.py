@@ -41,6 +41,7 @@ async def lifespan(app: FastAPI):
     reset_container()
     reset_resident_services()
     container = await get_container()
+    os.environ.setdefault("KERNELONE_JETSTREAM_PUBLISH", "1")
 
     nats_settings = getattr(app.state.settings, "nats", None)
     nats_enabled = bool(getattr(nats_settings, "enabled", True))

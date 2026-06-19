@@ -176,6 +176,95 @@ def _read_first_json_candidate(paths: list[str]) -> dict[str, Any]:
     return {}
 
 
+def _workspace_artifact_candidates(workspace: str, rel_paths: list[str]) -> list[str]:
+    candidates: list[str] = []
+    if not workspace:
+        return candidates
+    for rel_path in rel_paths:
+        try:
+            candidates.append(resolve_artifact_path(workspace, "", rel_path))
+        except (RuntimeError, ValueError) as exc:
+            logger.debug(
+                "workspace artifact candidate rejected: workspace=%r rel=%r error=%s",
+                workspace,
+                rel_path,
+                exc,
+            )
+    return _dedupe_text_values(candidates)
+
+
+def _read_factory_latest_plan_tasks(workspace: str) -> list[dict[str, Any]]:
+    payload = _read_first_json_candidate(
+        _workspace_artifact_candidates(
+            workspace,
+            ["workspace/plans/latest.plan.json"],
+        )
+    )
+    raw_tasks = payload.get("tasks")
+    if not isinstance(raw_tasks, list):
+        return []
+    return [dict(item) for item in raw_tasks if isinstance(item, dict)]
+
+
+def _read_factory_blueprints_by_task(workspace: str) -> dict[str, dict[str, Any]]:
+    candidates = _workspace_artifact_candidates(
+        workspace,
+        ["workspace/blueprints/latest.review.json"],
+    )
+    if not candidates:
+        return {}
+    blueprint_dir = Path(candidates[0]).parent
+    try:
+        paths = sorted(blueprint_dir.glob("ce_*.json"))
+    except (OSError, RuntimeError, ValueError) as exc:
+        logger.debug("Failed to scan factory blueprint dir %s: %s", blueprint_dir, exc)
+        return {}
+
+    by_task: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        payload = read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        task_id = str(payload.get("task_id") or payload.get("taskId") or "").strip()
+        if not task_id:
+            continue
+        by_task[task_id] = {
+            "blueprint_id": str(payload.get("blueprint_id") or payload.get("blueprintId") or path.stem).strip(),
+            "runtime_blueprint_path": str(path),
+            "blueprint_summary": str(payload.get("summary") or payload.get("objective") or "").strip(),
+            "blueprint_status": str(payload.get("status") or "").strip(),
+            "handoff_ready": bool(payload.get("handoff_ready")),
+            "target_files": payload.get("target_files"),
+            "scope_paths": payload.get("scope_paths"),
+        }
+    return by_task
+
+
+def _enrich_tasks_with_factory_blueprints(tasks: list[dict[str, Any]], workspace: str) -> list[dict[str, Any]]:
+    if not tasks:
+        return tasks
+    blueprints_by_task = _read_factory_blueprints_by_task(workspace)
+    if not blueprints_by_task:
+        return tasks
+
+    enriched: list[dict[str, Any]] = []
+    for task in tasks:
+        task_id = str(task.get("id") or task.get("task_id") or task.get("taskId") or "").strip()
+        blueprint = blueprints_by_task.get(task_id)
+        if not blueprint:
+            enriched.append(task)
+            continue
+        merged = dict(task)
+        for key, value in blueprint.items():
+            if value in (None, "", []):
+                continue
+            if key in {"target_files", "scope_paths"} and merged.get(key):
+                continue
+            merged.setdefault(key, value)
+        enriched.append(merged)
+    return enriched
+
+
 def _read_first_text_candidate(paths: list[str]) -> tuple[str, float | None]:
     for path in paths:
         if not path or not os.path.isfile(path):
@@ -1351,6 +1440,9 @@ def build_snapshot_payload_from_projection(
             base_tasks = pm_contract_payload.get("tasks")
             if isinstance(base_tasks, list):
                 tasks = [dict(item) for item in base_tasks if isinstance(item, dict)]
+        if not tasks:
+            tasks = _read_factory_latest_plan_tasks(workspace)
+    tasks = _enrich_tasks_with_factory_blueprints(tasks, workspace)
 
     pm_state = _read_first_json_candidate(
         _resolve_runtime_artifact_candidates(

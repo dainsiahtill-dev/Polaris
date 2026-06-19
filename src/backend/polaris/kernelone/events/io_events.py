@@ -59,6 +59,29 @@ def _infer_workspace_for_path(path: str) -> str:
     return os.getcwd()
 
 
+def _extract_workspace_from_llm_event_data(data: dict[str, Any]) -> str:
+    """Return a validated workspace path carried by an LLM event payload."""
+    if not isinstance(data, dict):
+        return ""
+
+    candidates: list[Any] = [data.get("workspace")]
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict):
+        candidates.append(metadata.get("workspace"))
+        extra_fields = metadata.get("extra_fields")
+        if isinstance(extra_fields, dict):
+            candidates.append(extra_fields.get("workspace"))
+
+    for value in candidates:
+        workspace = str(value or "").strip()
+        if not workspace:
+            continue
+        workspace_path = os.path.abspath(workspace)
+        if os.path.isdir(workspace_path):
+            return workspace_path
+    return ""
+
+
 def _append_jsonl_direct(path: str, payload: dict[str, Any]) -> None:
     """Append a JSONL record directly to *path* using the default adapter.
 
@@ -128,9 +151,10 @@ def _publish_llm_event_to_realtime_bridge(
         return
 
     try:
+        workspace = _extract_workspace_from_llm_event_data(data) or _infer_workspace_for_path(llm_events_path)
         publish_llm_realtime_event(
             LLMRealtimeEvent(
-                workspace=_infer_workspace_for_path(llm_events_path),
+                workspace=workspace,
                 run_id=str(run_id or "").strip(),
                 role=str(role or "unknown").strip().lower() or "unknown",
                 event_type=str(event or "").strip(),

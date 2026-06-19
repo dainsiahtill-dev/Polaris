@@ -45,6 +45,12 @@ _PLACEHOLDER_PATTERNS = (
 )
 _DOMAIN_STOPWORDS = {"project", "quality", "gate", "feature", "module", "system", "task", "tasks"}
 _DEFAULT_DIRECTOR_TASK_REWORK_MAX_RETRIES = 3
+_QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING = "qa_llm_judgement_unavailable"
+
+
+def _is_nonfatal_qa_llm_runtime_exception(error_text: str) -> bool:
+    lowered = str(error_text or "").lower()
+    return "cognitive_runtime_blocked" in lowered or "low probability" in lowered
 
 
 class QAAdapter(BaseRoleAdapter):
@@ -91,12 +97,52 @@ class QAAdapter(BaseRoleAdapter):
                     "run_id": run_id,
                     "review_type": review_type,
                     "target": target,
+                    "metadata": {
+                        "native_tool_mode": "disabled",
+                        "response_format_mode": "json",
+                        "qa_output_contract": "json_only_verdict",
+                    },
                 },
                 validate_output=False,
                 max_retries=1,
             )
             raw_content = str(response.get("response") or "") if isinstance(response, dict) else str(response or "")
             llm_review = self._parse_review_result(raw_content)
+            if not bool(llm_review.get("parsed_json")):
+                repair_message = self._build_qa_json_repair_message(
+                    review_type,
+                    target,
+                    review_result=review_result,
+                    previous_output=raw_content,
+                )
+                repair_response = await invoke_role_runtime_first(
+                    workspace=self.workspace,
+                    role=self.role_id,
+                    message=repair_message,
+                    context={
+                        "task_id": task_id,
+                        "run_id": run_id,
+                        "review_type": review_type,
+                        "target": target,
+                        "qa_retry": "strict_json_verdict",
+                        "metadata": {
+                            "native_tool_mode": "disabled",
+                            "response_format_mode": "json",
+                            "qa_output_contract": "json_only_verdict",
+                        },
+                    },
+                    validate_output=False,
+                    max_retries=1,
+                )
+                repair_content = (
+                    str(repair_response.get("response") or "")
+                    if isinstance(repair_response, dict)
+                    else str(repair_response or "")
+                )
+                repair_review = self._parse_review_result(repair_content)
+                if bool(repair_review.get("parsed_json")):
+                    raw_content = f"{raw_content}\n\n[qa_json_repair]\n{repair_content}"
+                    llm_review = repair_review
             review_result = self._merge_review_result(review_result, llm_review)
 
             review_result = self._finalize_review_result(review_result)
@@ -130,12 +176,23 @@ class QAAdapter(BaseRoleAdapter):
         except (RuntimeError, ValueError) as exc:
             run_id = str(context.get("run_id") or "").strip() if isinstance(context, dict) else ""
             fallback_review = self._run_static_review(target, run_id=run_id)
-            fallback_review["critical_issues"] = self._dedupe_list(
-                [*list(fallback_review.get("critical_issues") or []), "qa_runtime_exception"]
-            )
-            fallback_review["evidence"] = self._dedupe_list(
-                [*list(fallback_review.get("evidence") or []), f"qa_runtime_exception={exc}"]
-            )
+            if _is_nonfatal_qa_llm_runtime_exception(str(exc)):
+                fallback_review["warnings"] = self._dedupe_list(
+                    [
+                        *list(fallback_review.get("warnings") or []),
+                        _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING,
+                    ]
+                )
+                fallback_review["evidence"] = self._dedupe_list(
+                    [*list(fallback_review.get("evidence") or []), f"qa_runtime_warning={exc}"]
+                )
+            else:
+                fallback_review["critical_issues"] = self._dedupe_list(
+                    [*list(fallback_review.get("critical_issues") or []), "qa_runtime_exception"]
+                )
+                fallback_review["evidence"] = self._dedupe_list(
+                    [*list(fallback_review.get("evidence") or []), f"qa_runtime_exception={exc}"]
+                )
             finalized = self._finalize_review_result(fallback_review)
             report_path = self._write_qa_report(
                 review_type=review_type,
@@ -451,7 +508,8 @@ class QAAdapter(BaseRoleAdapter):
         evidence_block = "\n".join(evidence_lines) if evidence_lines else "- no deterministic evidence"
         return "\n".join(
             [
-                "You are Polaris QA. Return JSON only.",
+                "You are Polaris QA. Return exactly one JSON object and nothing else.",
+                "Do not inspect the workspace. Do not call tools. Do not narrate the QA process.",
                 "Judge semantic task completion quality; do not rely only on file count or line count.",
                 "Small but complete utility classes are acceptable if requirements are met.",
                 f"Review type: {review_type}",
@@ -468,6 +526,49 @@ class QAAdapter(BaseRoleAdapter):
                 '  "warnings": ["..."],',
                 '  "evidence": ["..."],',
                 '  "suggestions": ["..."]',
+                "}",
+            ]
+        )
+
+    def _build_qa_json_repair_message(
+        self,
+        review_type: str,
+        target: str,
+        *,
+        review_result: dict[str, Any] | None = None,
+        previous_output: str = "",
+    ) -> str:
+        """Build a strict JSON-only repair prompt for non-structured QA output."""
+        evidence_lines: list[str] = []
+        if isinstance(review_result, dict):
+            for item in list(review_result.get("evidence") or [])[:16]:
+                token = str(item).strip()
+                if token:
+                    evidence_lines.append(f"- {token}")
+        evidence_block = "\n".join(evidence_lines) if evidence_lines else "- no deterministic evidence"
+        previous_excerpt = str(previous_output or "").strip()[:1200]
+        return "\n".join(
+            [
+                "Return exactly one JSON object. No markdown. No prose. No process narration.",
+                "Do not inspect the workspace. Do not call tools. Convert the evidence below into a verdict.",
+                "Use only the schema below and include a concrete PASS or FAIL verdict.",
+                f"Review type: {review_type}",
+                f"Target: {target}",
+                "",
+                "Deterministic evidence:",
+                evidence_block,
+                "",
+                "Previous non-JSON output to convert into a verdict-bearing QA judgement:",
+                previous_excerpt or "(empty)",
+                "",
+                "{",
+                '  "verdict": "PASS|FAIL",',
+                '  "score": 0,',
+                '  "critical_issues": [],',
+                '  "major_issues": [],',
+                '  "warnings": [],',
+                '  "evidence": [],',
+                '  "suggestions": []',
                 "}",
             ]
         )
@@ -542,7 +643,7 @@ class QAAdapter(BaseRoleAdapter):
             # 当确定性静态门禁已通过时，仅将其记录为 warning，
             # 避免因为模型格式漂移导致 quality_gate 假阴性失败。
             merged["warnings"] = self._dedupe_list(
-                [*list(cast("list", merged["warnings"])), "qa_llm_judgement_unavailable"]
+                [*list(cast("list", merged["warnings"])), _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING]
             )
             excerpt = str(llm.get("raw_excerpt") or "").strip()
             if excerpt:

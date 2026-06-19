@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
-from pathlib import Path
 
 # ─── Preload stdlib ``http`` before polaris.delivery.http shadows it.
 # ``polaris/delivery/http/__init__.py`` is a Python package whose name
@@ -30,8 +28,10 @@ from pathlib import Path
 # polaris import – pins the correct module objects in ``sys.modules``
 # so subsequent ``from http import ...`` resolves to the stdlib.
 import http as _stdlib_http  # noqa: F401 – preload stdlib
-import http.client  # noqa: F401 – preload stdlib
+import http.client
 import http.cookies  # noqa: F401 – preload stdlib
+import sys
+from pathlib import Path
 
 # ─── Early env-var normalization (must run before any polaris.kernelone import)
 from polaris._env_compat import normalize_env_prefix

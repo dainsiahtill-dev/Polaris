@@ -210,7 +210,7 @@ describe('useRuntimeConnection', () => {
       const channels = subscriptions.map((item: { channel: string }) => item.channel);
       expect(channels).toEqual(['system', 'process', 'llm', 'dialogue', 'runtime_events', 'event.file_edit']);
       expect(channels).not.toContain('roles:pm,director,qa');
-      expect(subscriptions.map((item: { tailLines?: number }) => item.tailLines)).toEqual([0, 0, 0, 0, 0, 0]);
+      expect(subscriptions.map((item: { tailLines?: number }) => item.tailLines)).toEqual([200, 200, 200, 200, 200, 200]);
     });
 
     it('passes roles to transport subscribe request', async () => {
@@ -290,7 +290,7 @@ describe('useRuntimeConnection', () => {
         type: 'SUBSCRIBE',
         protocol: 'runtime.v2',
         roles: ['director', 'qa'],
-        tail: 0,
+        tail: 200,
         channels: ['system', 'process', 'llm', 'dialogue', 'runtime_events', 'event.file_edit'],
         cursor: 128,
       });
@@ -346,7 +346,7 @@ describe('useRuntimeConnection', () => {
         type: 'SUBSCRIBE',
         protocol: 'runtime.v2',
         roles: ['director'],
-        tail: 0,
+        tail: 200,
         channels: ['system', 'process', 'llm', 'dialogue', 'runtime_events', 'event.file_edit'],
         cursor: 0,
       });
@@ -378,7 +378,7 @@ describe('useRuntimeConnection', () => {
           type: 'SUBSCRIBE',
           protocol: 'runtime.v2',
           roles: ['qa'],
-          tail: 0,
+          tail: 200,
           channels: ['system', 'process', 'llm', 'dialogue', 'runtime_events', 'event.file_edit'],
           cursor: 0,
         });

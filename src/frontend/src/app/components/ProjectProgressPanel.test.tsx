@@ -155,4 +155,38 @@ describe('ProjectProgressPanel QA evidence', () => {
     expect(rows[1]).toHaveTextContent(/^实现响应式 CSS3 样式表/);
     expect(rows[2]).toHaveTextContent(/^交付验证与 README 编写/);
   });
+
+  it('shows CE handoff and completed Director queue instead of stale waiting labels', () => {
+    const tasks = [
+      { id: '1', subject: '实现 CLI 科学计算器核心模块', status: 'completed' },
+      { id: '2', subject: '编写 README', status: 'completed' },
+      { id: '3', subject: '实现验证与 QA 闭环', status: 'completed' },
+    ];
+
+    render(
+      <ProjectProgressPanel
+        tasks={tasks}
+        directorTasks={tasks}
+        pmRunning={false}
+        pmState={{
+          completed_task_count: 3,
+          last_director_status: 'success',
+        }}
+      />,
+    );
+
+    const pm = screen.getByTestId('project-chain-role-pm');
+    const chiefEngineer = screen.getByTestId('project-chain-role-chief-engineer');
+    const director = screen.getByTestId('project-chain-role-director');
+
+    expect(pm).toHaveTextContent('success');
+    expect(pm).toHaveTextContent('任务合同已完成：3/3');
+    expect(pm).not.toHaveTextContent('等待任务合同');
+    expect(chiefEngineer).toHaveTextContent('success');
+    expect(chiefEngineer).toHaveTextContent('蓝图已交接：3/3 Director queue 已完成');
+    expect(chiefEngineer).not.toHaveTextContent('等待 PM 合同');
+    expect(director).toHaveTextContent('success');
+    expect(director).toHaveTextContent('实现验证与 QA 闭环');
+    expect(director).not.toHaveTextContent('等待 CE 交接');
+  });
 });

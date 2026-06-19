@@ -14,6 +14,8 @@ from polaris.kernelone.events.uep_publisher import UEPEventPublisher
 
 logger = logging.getLogger(__name__)
 
+_CANONICAL_LLM_EVENT_MARKER = "_emits_canonical_llm_events"
+
 
 class LLMEventEmitter:
     """Emits UEP v2.0 lifecycle events and backward-compatible LLM events."""
@@ -25,6 +27,11 @@ class LLMEventEmitter:
             workspace: Workspace path for context.
         """
         self.workspace = workspace
+
+    @staticmethod
+    def _emits_canonical_llm_events(event_emitter: Any | None) -> bool:
+        """Return whether a delegated emitter already writes canonical LLM events."""
+        return getattr(event_emitter, _CANONICAL_LLM_EVENT_MARKER, False) is True
 
     def publish_uep_lifecycle_event(
         self,
@@ -83,6 +90,7 @@ class LLMEventEmitter:
             event_type="call_error",
             metadata=_payload,
         )
+        canonical_event_written = False
         if event_emitter is not None and hasattr(event_emitter, "_emit_call_error_event"):
             event_emitter._emit_call_error_event(
                 role=role,
@@ -96,7 +104,8 @@ class LLMEventEmitter:
                 elapsed_ms=elapsed_ms,
                 metadata=metadata,
             )
-        else:
+            canonical_event_written = self._emits_canonical_llm_events(event_emitter)
+        if not canonical_event_written:
             from polaris.cells.roles.kernel.internal.events import LLMEventType, emit_llm_event
 
             payload = dict(metadata or {})
@@ -147,6 +156,7 @@ class LLMEventEmitter:
             event_type="call_start",
             metadata=_payload,
         )
+        canonical_event_written = False
         if event_emitter is not None and hasattr(event_emitter, "_emit_call_start_event"):
             event_emitter._emit_call_start_event(
                 role=role,
@@ -161,7 +171,8 @@ class LLMEventEmitter:
                 messages=messages,
                 metadata=metadata,
             )
-        else:
+            canonical_event_written = self._emits_canonical_llm_events(event_emitter)
+        if not canonical_event_written:
             from polaris.cells.roles.kernel.internal.events import LLMEventType, emit_llm_event
 
             payload = dict(metadata or {})
@@ -228,6 +239,7 @@ class LLMEventEmitter:
             event_type="call_end",
             metadata=_payload,
         )
+        canonical_event_written = False
         if event_emitter is not None and hasattr(event_emitter, "_emit_call_end_event"):
             event_emitter._emit_call_end_event(
                 role=role,
@@ -246,7 +258,8 @@ class LLMEventEmitter:
                 tool_errors_count=tool_errors_count,
                 metadata=metadata,
             )
-        else:
+            canonical_event_written = self._emits_canonical_llm_events(event_emitter)
+        if not canonical_event_written:
             from polaris.cells.roles.kernel.internal.events import LLMEventType, emit_llm_event
 
             payload = dict(metadata or {})
@@ -302,6 +315,7 @@ class LLMEventEmitter:
             event_type="call_retry",
             metadata=_payload,
         )
+        canonical_event_written = False
         if event_emitter is not None and hasattr(event_emitter, "_emit_call_retry_event"):
             event_emitter._emit_call_retry_event(
                 role=role,
@@ -314,7 +328,8 @@ class LLMEventEmitter:
                 backoff_seconds=backoff_seconds,
                 metadata=metadata,
             )
-        else:
+            canonical_event_written = self._emits_canonical_llm_events(event_emitter)
+        if not canonical_event_written:
             from polaris.cells.roles.kernel.internal.events import LLMEventType, emit_llm_event
 
             payload = dict(metadata or {})

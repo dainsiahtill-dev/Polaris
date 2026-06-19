@@ -39,6 +39,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     LLMResponse,
+    StructuredLLMResponse,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import StreamEngine
 
@@ -405,21 +406,43 @@ class TestLLMEventEmitterEmitCallStartEvent:
             assert kwargs["run_id"] == "run_1"
 
     def test_emits_with_event_emitter_override(self) -> None:
-        """传入 event_emitter 时应使用其方法."""
+        """传入 event_emitter 时应使用其方法并补写 canonical 事件."""
         emitter = LLMEventEmitter(workspace="/ws")
         custom_emitter = Mock()
         custom_emitter._emit_call_start_event = Mock()
 
-        emitter.emit_call_start_event(
-            event_emitter=custom_emitter,
-            role="director",
-            run_id="run_1",
-            task_id="task_1",
-            attempt=0,
-            model="claude",
-            call_id="call_1",
-        )
+        with patch("polaris.cells.roles.kernel.internal.events.emit_llm_event") as mock_emit:
+            emitter.emit_call_start_event(
+                event_emitter=custom_emitter,
+                role="director",
+                run_id="run_1",
+                task_id="task_1",
+                attempt=0,
+                model="claude",
+                call_id="call_1",
+            )
         custom_emitter._emit_call_start_event.assert_called_once()
+        mock_emit.assert_called_once()
+
+    def test_canonical_event_emitter_override_does_not_double_emit(self) -> None:
+        """已声明写 canonical 事件的 emitter 不应被重复补写."""
+        emitter = LLMEventEmitter(workspace="/ws")
+        custom_emitter = Mock()
+        custom_emitter._emits_canonical_llm_events = True
+        custom_emitter._emit_call_start_event = Mock()
+
+        with patch("polaris.cells.roles.kernel.internal.events.emit_llm_event") as mock_emit:
+            emitter.emit_call_start_event(
+                event_emitter=custom_emitter,
+                role="director",
+                run_id="run_1",
+                task_id="task_1",
+                attempt=0,
+                model="claude",
+                call_id="call_1",
+            )
+        custom_emitter._emit_call_start_event.assert_called_once()
+        mock_emit.assert_not_called()
 
 
 class TestLLMEventEmitterEmitCallErrorEvent:
@@ -446,6 +469,28 @@ class TestLLMEventEmitterEmitCallErrorEvent:
             assert kwargs["error_category"] == "timeout"
             assert kwargs["error_message"] == "timed out"
 
+    def test_custom_error_emitter_still_writes_canonical_event(self) -> None:
+        """错误 override 不能吞掉 canonical 事件."""
+        emitter = LLMEventEmitter(workspace="/ws")
+        custom_emitter = Mock()
+        custom_emitter._emit_call_error_event = Mock()
+
+        with patch("polaris.cells.roles.kernel.internal.events.emit_llm_event") as mock_emit:
+            emitter.emit_call_error_event(
+                event_emitter=custom_emitter,
+                role="director",
+                run_id="run_1",
+                task_id="task_1",
+                attempt=0,
+                model="claude",
+                error_category="timeout",
+                error_message="timed out",
+                call_id="call_1",
+                elapsed_ms=1000.0,
+            )
+            custom_emitter._emit_call_error_event.assert_called_once()
+            mock_emit.assert_called_once()
+
 
 class TestLLMEventEmitterEmitCallEndEvent:
     """测试 emit_call_end_event."""
@@ -467,6 +512,26 @@ class TestLLMEventEmitterEmitCallEndEvent:
             mock_emit.assert_called_once()
             kwargs = mock_emit.call_args.kwargs
             assert kwargs["completion_tokens"] == 50
+
+    def test_custom_end_emitter_still_writes_canonical_event(self) -> None:
+        """结束 override 不能吞掉 canonical 事件."""
+        emitter = LLMEventEmitter(workspace="/ws")
+        custom_emitter = Mock()
+        custom_emitter._emit_call_end_event = Mock()
+
+        with patch("polaris.cells.roles.kernel.internal.events.emit_llm_event") as mock_emit:
+            emitter.emit_call_end_event(
+                event_emitter=custom_emitter,
+                role="director",
+                run_id="run_1",
+                task_id="task_1",
+                attempt=0,
+                model="claude",
+                call_id="call_1",
+                completion_tokens=50,
+            )
+            custom_emitter._emit_call_end_event.assert_called_once()
+            mock_emit.assert_called_once()
 
 
 class TestLLMEventEmitterEmitCallRetryEvent:
@@ -491,6 +556,72 @@ class TestLLMEventEmitterEmitCallRetryEvent:
             kwargs = mock_emit.call_args.kwargs
             assert kwargs["retry_decision"] == "backoff"
             assert kwargs["backoff_seconds"] == 2.0
+
+    def test_custom_retry_emitter_still_writes_canonical_event(self) -> None:
+        """重试 override 不能吞掉 canonical 事件."""
+        emitter = LLMEventEmitter(workspace="/ws")
+        custom_emitter = Mock()
+        custom_emitter._emit_call_retry_event = Mock()
+
+        with patch("polaris.cells.roles.kernel.internal.events.emit_llm_event") as mock_emit:
+            emitter.emit_call_retry_event(
+                event_emitter=custom_emitter,
+                role="director",
+                run_id="run_1",
+                task_id="task_1",
+                attempt=1,
+                model="claude",
+                call_id="call_1",
+                retry_decision="backoff",
+                backoff_seconds=2.0,
+            )
+            custom_emitter._emit_call_retry_event.assert_called_once()
+            mock_emit.assert_called_once()
+
+
+@pytest.mark.asyncio
+class TestLLMCallerInvokerDelegation:
+    """LLMCaller facade should not override the invoker's canonical event writer."""
+
+    async def test_call_does_not_pass_itself_as_event_emitter(self) -> None:
+        from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
+
+        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
+        invoker = Mock()
+        invoker.call = AsyncMock(return_value=LLMResponse(content="ok"))
+        caller._invoker = invoker
+
+        await caller.call(profile=Mock(), system_prompt="sys", context=Mock())
+
+        assert "event_emitter" not in invoker.call.call_args.kwargs
+
+    async def test_call_structured_does_not_pass_itself_as_event_emitter(self) -> None:
+        from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
+
+        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
+        invoker = Mock()
+        invoker.call_structured = AsyncMock(return_value=StructuredLLMResponse(data={}))
+        caller._invoker = invoker
+
+        await caller.call_structured(profile=Mock(), system_prompt="sys", context=Mock(), response_model=dict)
+
+        assert "event_emitter" not in invoker.call_structured.call_args.kwargs
+
+    async def test_call_stream_does_not_pass_itself_as_event_emitter(self) -> None:
+        from polaris.cells.roles.kernel.internal.llm_caller.caller import LLMCaller
+
+        async def _stream():
+            yield {"type": "chunk", "content": "ok"}
+
+        caller = LLMCaller(workspace="/ws", emit_deprecation_warning=False)
+        invoker = Mock()
+        invoker.call_stream = Mock(return_value=_stream())
+        caller._invoker = invoker
+
+        chunks = [chunk async for chunk in caller.call_stream(profile=Mock(), system_prompt="sys", context=Mock())]
+
+        assert chunks == [{"type": "chunk", "content": "ok"}]
+        assert "event_emitter" not in invoker.call_stream.call_args.kwargs
 
 
 # ============ ProviderFormatter Tests ============

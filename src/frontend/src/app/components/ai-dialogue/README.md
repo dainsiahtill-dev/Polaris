@@ -5,7 +5,7 @@
 ## 特性
 
 - **多角色支持**: pm, architect, director, qa 等角色
-- **流式输出**: SSE 实时流式响应
+- **流式输出**: Nat-JetStream + Runtime WebSocket 实时响应
 - **思考过程**: 自动解析并显示 LLM 思考过程
 - **类型安全**: TypeScript 完整类型支持
 - **可复用**: Hook + 组件双层抽象
@@ -178,7 +178,7 @@ GET /v2/role/chat/roles
 |------|---------------------------|-------------------------|
 | 角色支持 | 仅 PM | 任意角色 |
 | 复用性 | 低 | 高 |
-| 流式输出 | 支持 | 支持 |
+| 流式输出 | Nat-JetStream + Runtime WebSocket | Nat-JetStream + Runtime WebSocket |
 | 思考过程 | 支持 | 支持 |
 | Hook 抽象 | 无 | 有 |
 | 类型安全 | 部分 | 完整 |

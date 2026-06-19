@@ -339,8 +339,13 @@ export function ProjectProgressPanel({
 
   const liveDirectorTask = normalizedDirectorTasks.find((task) => isTaskActive(task))
     ?? normalizedDirectorTasks.find((task) => !isTaskDone(task));
+  const lastDirectorTask = normalizedDirectorTasks.length > 0
+    ? normalizedDirectorTasks[normalizedDirectorTasks.length - 1]
+    : undefined;
   const directorCompletedCount = normalizedDirectorTasks.filter((task) => isTaskDone(task)).length;
+  const directorQueueComplete = normalizedDirectorTasks.length > 0 && directorCompletedCount >= normalizedDirectorTasks.length;
   const directorTaskLabel = pickTaskSummary(liveDirectorTask as PmTask)
+    || pickTaskSummary(lastDirectorTask as PmTask)
     || engineDirectorTaskTitle
     || lastTaskTitle;
   const positionIndex = currentIndex >= 0 ? currentIndex : totalTasks > 0 ? 0 : -1;
@@ -389,27 +394,58 @@ export function ProjectProgressPanel({
         ? 'Director live queue 为空'
         : 'Director live queue 已断开'
       : 'Director queue 待同步';
+  const pmContractsReady = totalTasks > 0;
+  const pmContractsComplete = totalTasks > 0 && completedCount >= totalTasks;
+  const directorHandoffReady = normalizedDirectorTasks.length > 0;
+  const chiefEngineerFallbackStatus = currentPhase === 'chief_engineer'
+    ? 'running'
+    : directorHandoffReady
+      ? directorQueueComplete
+        ? 'success'
+        : 'ready'
+      : pmContractsReady
+        ? 'ready'
+        : 'waiting';
+  const chiefEngineerTaskFallback = highlightedTask
+    ? `蓝图审查：${pickTaskSummary(highlightedTask)}`
+    : directorHandoffReady
+      ? `蓝图已交接：${directorQueueHint}`
+      : pmContractsReady
+        ? 'PM 合同已接收，等待蓝图生成'
+        : '等待 PM 合同';
+  const pmTaskFallback = highlightedTask
+    ? pickTaskSummary(highlightedTask)
+    : pmContractsComplete
+      ? `任务合同已完成：${completedCount}/${totalTasks}`
+      : pmContractsReady
+        ? `任务合同已生成：${totalTasks} 项`
+        : '等待任务合同';
+  const directorFallbackStatus = directorQueueComplete
+    ? 'success'
+    : liveDirectorTask
+      ? 'running'
+      : 'waiting';
   const qaEvidence = extractLatestQaEvidence(executionLogs, dialogueEvents);
   const pipelineRoles = [
     {
       id: 'pm',
       label: 'PM',
       detail: `${totalTasks} contracts · ${completedCount}/${totalTasks || 0} done`,
-      status: rolePipelineStatus(pmRole, pmRunning ? 'running' : totalTasks > 0 ? 'ready' : 'waiting'),
-      task: rolePipelineTask(pmRole, highlightedTask ? pickTaskSummary(highlightedTask) : '等待任务合同'),
+      status: rolePipelineStatus(pmRole, pmRunning ? 'running' : pmContractsComplete ? 'success' : pmContractsReady ? 'ready' : 'waiting'),
+      task: rolePipelineTask(pmRole, pmTaskFallback),
     },
     {
       id: 'chief-engineer',
       label: 'Chief Engineer',
       detail: 'blueprint / handoff gate',
-      status: rolePipelineStatus(chiefEngineerRole, currentPhase === 'chief_engineer' ? 'running' : 'waiting'),
-      task: rolePipelineTask(chiefEngineerRole, highlightedTask ? `蓝图审查：${pickTaskSummary(highlightedTask)}` : '等待 PM 合同'),
+      status: rolePipelineStatus(chiefEngineerRole, chiefEngineerFallbackStatus),
+      task: rolePipelineTask(chiefEngineerRole, chiefEngineerTaskFallback),
     },
     {
       id: 'director',
       label: 'Director',
       detail: directorQueueHint,
-      status: rolePipelineStatus(directorRole, effectiveStatus || (liveDirectorTask ? 'running' : 'waiting')),
+      status: rolePipelineStatus(directorRole, effectiveStatus || directorFallbackStatus),
       task: rolePipelineTask(directorRole, currentSummary || '等待 CE 交接'),
     },
   ];

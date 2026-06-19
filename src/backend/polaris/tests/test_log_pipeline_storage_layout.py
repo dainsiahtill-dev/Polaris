@@ -157,3 +157,67 @@ def test_log_writer_enqueues_jetstream_publish_with_canonical_workspace_key(tmp_
     assert captured[0]["subject"] == f"hp.runtime.{writer.workspace_key}.llm"
     assert payload["workspace_key"] == writer.workspace_key
     assert payload["channel"] == "llm"
+
+
+def test_log_writer_env_switch_enables_jetstream_publish(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    runtime_root = tmp_path / "runtime_root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_JETSTREAM_PUBLISH", "1")
+
+    captured: list[dict[str, object]] = []
+
+    class _StubPublisher:
+        def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
+            captured.append({"subject": subject, "payload": payload})
+            return True
+
+    monkeypatch.setattr(writer_module, "_jetstream_available", True)
+    monkeypatch.setattr(writer_module, "PUBLISH_ENABLED", False)
+    monkeypatch.setattr(writer_module, "get_log_jetstream_publisher", lambda: _StubPublisher())
+
+    writer = LogEventWriter(workspace=str(workspace), run_id="RUN-JS-ENV-001")
+    writer.write_event(
+        message="jetstream-env-check",
+        channel="llm",
+        domain="llm",
+        actor="PM",
+    )
+
+    assert len(captured) == 1
+
+
+def test_log_writer_env_switch_disables_jetstream_publish(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    runtime_root = tmp_path / "runtime_root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("KERNELONE_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.setenv("KERNELONE_STATE_TO_RAMDISK", "0")
+    monkeypatch.setenv("KERNELONE_JETSTREAM_PUBLISH", "0")
+
+    captured: list[dict[str, object]] = []
+
+    class _StubPublisher:
+        def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
+            captured.append({"subject": subject, "payload": payload})
+            return True
+
+    monkeypatch.setattr(writer_module, "_jetstream_available", True)
+    monkeypatch.setattr(writer_module, "PUBLISH_ENABLED", True)
+    monkeypatch.setattr(writer_module, "get_log_jetstream_publisher", lambda: _StubPublisher())
+
+    writer = LogEventWriter(workspace=str(workspace), run_id="RUN-JS-ENV-002")
+    writer.write_event(
+        message="jetstream-env-disabled-check",
+        channel="llm",
+        domain="llm",
+        actor="PM",
+    )
+
+    assert captured == []

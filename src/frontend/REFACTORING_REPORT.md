@@ -15,7 +15,7 @@ src/frontend/src/
 │   ├── useGeneralSettingsForm.ts # 设置表单
 │   ├── useFileManager.ts       # 文件管理
 │   ├── useAgentsReview.ts      # AGENTS 审阅
-│   ├── useSSEStream.ts         # SSE 流处理
+│   ├── useRuntime.ts           # Nat-JetStream Runtime WebSocket 流处理
 │   ├── useMemos.ts             # Memos 管理
 │   ├── useTerminal.ts          # 终端会话
 │   ├── useNotifications.ts     # 通知管理

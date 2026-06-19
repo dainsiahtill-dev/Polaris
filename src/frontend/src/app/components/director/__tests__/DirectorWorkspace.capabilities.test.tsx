@@ -304,13 +304,37 @@ describe.sequential('Director capability desktop integration', () => {
     expect(screen.getByTestId('director-delete-capability')).toHaveTextContent('delete_files blocked');
   });
 
-  it('auto-opens realtime activity when Director runtime events arrive', async () => {
+  it('keeps the task queue view when historical Director runtime events arrive while idle', async () => {
     render(
       <DirectorWorkspace
         workspace="C:/Temp/Product"
         onBackToMain={vi.fn()}
         tasks={[]}
         directorRunning={false}
+        onToggleDirector={vi.fn()}
+        processStreamEvents={[
+          {
+            id: 'director-live-1',
+            timestamp: '2026-05-23T00:00:00Z',
+            level: 'info',
+            source: 'Process',
+            message: 'Director live process event',
+          },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText('当前没有可执行任务')).toBeInTheDocument();
+    expect(screen.queryByTestId('realtime-activity-panel')).not.toBeInTheDocument();
+  });
+
+  it('auto-opens realtime activity when live Director runtime events arrive while running', async () => {
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={[]}
+        directorRunning={true}
         onToggleDirector={vi.fn()}
         processStreamEvents={[
           {
@@ -661,6 +685,240 @@ describe.sequential('Director capability desktop integration', () => {
 
     fireEvent.click(headerExecute);
     expect(serviceMocks.runDirector).not.toHaveBeenCalled();
+  });
+
+  it('does not show no-ready handoff blockers after all Director tasks completed', async () => {
+    serviceMocks.getDirectorDiagnostics.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: false,
+        can_execute: false,
+        role: 'director',
+        generated_at: '2026-05-23T00:00:00Z',
+        workspace: 'C:/Temp/Product',
+        status: {
+          ok: true,
+          state: 'COMPLETED',
+          running: false,
+          source: 'workflow',
+          projection_source: 'director_merged',
+        },
+        tasks: {
+          ok: true,
+          source: 'workflow',
+          total: 3,
+          pending: 0,
+          claimed: 0,
+          running: 0,
+          blocked: 0,
+          failed: 0,
+          completed: 3,
+          cancelled: 0,
+          ready_to_execute: 0,
+          ready_task_ids: [],
+          blocked_task_ids: [],
+          running_task_ids: [],
+        },
+        workers: {
+          ok: false,
+          total: 0,
+          idle: 0,
+          busy: 0,
+          healthy: 0,
+          unhealthy: 0,
+          active_task_ids: [],
+        },
+        issues: ['director_no_ready_tasks', 'director_no_workers'],
+        execution_blockers: ['director_no_ready_tasks', 'director_no_workers'],
+      },
+    });
+    const completedTasks = [
+      { id: '1', title: '实现 CLI 科学计算器核心模块', status: 'completed', completed: true },
+      { id: '2', title: '编写 README', status: 'completed', completed: true },
+      { id: '3', title: '实现验证与 QA 闭环', status: 'completed', completed: true },
+    ] as PmTask[];
+
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={completedTasks}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('director-readiness-state')).toHaveTextContent('completed'));
+    expect(screen.getByTestId('director-readiness-diagnostics')).toHaveTextContent('completed 3/3');
+    expect(screen.queryByTestId('director-execution-guard')).not.toBeInTheDocument();
+
+    const headerExecute = screen.getByTestId('director-workspace-execute');
+    expect(headerExecute).not.toHaveAttribute('title', expect.stringContaining('Director 交接诊断未通过'));
+  });
+
+  it('uses snapshot blueprint tasks when Director diagnostics lag behind the workflow queue', async () => {
+    serviceMocks.getDirectorDiagnostics.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: false,
+        can_execute: false,
+        role: 'director',
+        generated_at: '2026-05-23T00:00:00Z',
+        workspace: 'C:/Temp/Product',
+        status: {
+          ok: true,
+          state: 'IDLE',
+          running: false,
+          source: 'workflow',
+          projection_source: 'director_merged',
+        },
+        tasks: {
+          ok: true,
+          source: 'workflow',
+          total: 3,
+          pending: 0,
+          claimed: 0,
+          running: 0,
+          blocked: 0,
+          failed: 0,
+          completed: 0,
+          cancelled: 0,
+          ready_to_execute: 0,
+          ready_task_ids: [],
+          blueprint_ready_task_ids: [],
+          missing_blueprint_task_ids: [],
+          invalid_blueprint_task_ids: [],
+          blocked_task_ids: [],
+          running_task_ids: [],
+        },
+        workers: {
+          ok: true,
+          total: 1,
+          idle: 1,
+          busy: 0,
+          healthy: 1,
+          unhealthy: 0,
+          active_task_ids: [],
+        },
+        issues: ['director_no_ready_tasks'],
+        execution_blockers: ['director_no_ready_tasks'],
+      },
+    });
+    const snapshotTasks = [1, 2, 3].map((index) => ({
+      id: `TASK-${index}`,
+      title: `Factory task ${index}`,
+      status: 'pending',
+      blueprint_id: `ce_TASK-${index}`,
+      runtime_blueprint_path: `runtime/blueprints/ce_TASK-${index}.json`,
+      acceptance: [{ description: `acceptance ${index}` }],
+    })) as PmTask[];
+
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={snapshotTasks}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('director-readiness-state')).toHaveTextContent('ready'));
+    const strip = screen.getByTestId('director-readiness-diagnostics');
+    expect(strip).toHaveTextContent('ready 3/3');
+    expect(strip).not.toHaveTextContent('no ready');
+
+    const headerExecute = screen.getByTestId('director-workspace-execute');
+    expect(headerExecute).not.toBeDisabled();
+    expect(headerExecute).not.toHaveAttribute('title', expect.stringContaining('没有 ready 任务'));
+  });
+
+  it('uses snapshot blueprint evidence when Director diagnostics lag behind blueprint coverage', async () => {
+    serviceMocks.getDirectorDiagnostics.mockResolvedValue({
+      ok: true,
+      data: {
+        ok: false,
+        can_execute: false,
+        role: 'director',
+        generated_at: '2026-05-23T00:00:00Z',
+        workspace: 'C:/Temp/Product',
+        status: {
+          ok: true,
+          state: 'IDLE',
+          running: false,
+          source: 'workflow',
+          projection_source: 'director_merged',
+        },
+        tasks: {
+          ok: false,
+          source: 'workflow',
+          total: 3,
+          pending: 3,
+          claimed: 0,
+          running: 0,
+          blocked: 0,
+          failed: 0,
+          completed: 0,
+          cancelled: 0,
+          ready_to_execute: 3,
+          ready_task_ids: ['TASK-1', 'TASK-2', 'TASK-3'],
+          blueprint_ready_task_ids: [],
+          missing_blueprint_task_ids: ['TASK-1', 'TASK-2', 'TASK-3'],
+          invalid_blueprint_task_ids: [],
+          blocked_task_ids: [],
+          running_task_ids: [],
+        },
+        workers: {
+          ok: true,
+          total: 0,
+          idle: 0,
+          busy: 0,
+          healthy: 0,
+          unhealthy: 0,
+          active_task_ids: [],
+        },
+        llm: {
+          ok: true,
+          state: 'ready',
+          role: 'director',
+          blocked_roles: [],
+          unsupported_roles: [],
+          required_ready_roles: ['director'],
+          provider_id: 'qwen',
+          model: 'qwen3-max',
+        },
+        issues: ['director_ready_tasks_missing_blueprints'],
+        execution_blockers: ['director_ready_tasks_missing_blueprints'],
+      },
+    });
+    const snapshotTasks = [1, 2, 3].map((index) => ({
+      id: `TASK-${index}`,
+      title: `Factory task ${index}`,
+      status: 'pending',
+      blueprint_id: `ce_TASK-${index}`,
+      runtime_blueprint_path: `runtime/blueprints/ce_TASK-${index}.json`,
+      acceptance: [{ description: `acceptance ${index}` }],
+    })) as PmTask[];
+
+    render(
+      <DirectorWorkspace
+        workspace="C:/Temp/Product"
+        onBackToMain={vi.fn()}
+        tasks={snapshotTasks}
+        directorRunning={false}
+        onToggleDirector={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('director-readiness-state')).toHaveTextContent('ready'));
+    const strip = screen.getByTestId('director-readiness-diagnostics');
+    expect(strip).toHaveTextContent('ready 3/3');
+    expect(strip).not.toHaveTextContent('missing BP');
+    expect(strip).not.toHaveTextContent('ready tasks missing blueprints');
+
+    const headerExecute = screen.getByTestId('director-workspace-execute');
+    expect(headerExecute).not.toBeDisabled();
+    expect(headerExecute).not.toHaveAttribute('title', expect.stringContaining('缺少 Chief Engineer 蓝图证据'));
   });
 
   it('surfaces Director LLM readiness as an execution blocker', async () => {

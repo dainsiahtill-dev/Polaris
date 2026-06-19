@@ -10,6 +10,7 @@ Verifies that:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -109,6 +110,34 @@ def test_io_events_dispatch_empty_path_is_noop() -> None:
             timestamp="",
         )
     mock_pub.assert_not_called()
+
+
+def test_llm_realtime_bridge_prefers_payload_workspace_over_cache_path(tmp_path: Path) -> None:
+    """Cache-backed LLM event files must publish realtime events for the real workspace."""
+    from polaris.kernelone.events import io_events
+
+    real_workspace = tmp_path / "factory-workspace"
+    real_workspace.mkdir()
+    cache_events_path = tmp_path / "cache" / "polaris" / ".polaris" / "projects" / "demo" / "runtime" / "events"
+    cache_events_path.mkdir(parents=True)
+    llm_events_path = cache_events_path / "director.llm.events.jsonl"
+
+    published = []
+    with patch("polaris.kernelone.events.io_events.publish_llm_realtime_event") as mock_pub:
+        mock_pub.side_effect = published.append
+        io_events._publish_llm_event_to_realtime_bridge(
+            llm_events_path=str(llm_events_path),
+            event="llm_call_start",
+            role="director",
+            data={"metadata": {"workspace": str(real_workspace)}},
+            run_id="director-run-1",
+            iteration=0,
+            source="roles.kernel.events",
+            timestamp="2026-06-19T00:00:00Z",
+        )
+
+    assert published
+    assert published[0].workspace == str(real_workspace)
 
 
 def test_message_bus_sync_publish_without_loop_skips_without_warning(caplog) -> None:

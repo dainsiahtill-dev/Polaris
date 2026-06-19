@@ -109,6 +109,20 @@ class CognitivePipeline:
         )
 
         # Step 5: ACTING phase
+        if not self._acting.can_execute_action(message):
+            return CognitivePipelineResult(
+                thinking_output=thinking_output,
+                acting_output=None,
+                execution_recommendation=recommendation,
+                reasoning_chain=reasoning_chain,
+                meta_cognition=meta_cognition,
+                path_taken=recommendation.path,
+                blocked=False,
+                block_reason=None,
+                error_type=None,
+                retryable=True,
+            )
+
         acting_output = await self._acting.execute_action(
             action=message,
             execution_recommendation=recommendation,

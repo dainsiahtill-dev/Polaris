@@ -947,7 +947,7 @@ function buildRoleLayers({
       progress: chiefProgress,
       metric: blueprintCoverage.required > 0
         ? `${blueprintCoverage.covered}/${blueprintCoverage.required} 蓝图`
-        : `${blueprintEvidenceCount} evidence`,
+        : `${blueprintEvidenceCount} 条蓝图`,
       detail: chiefRole?.detail
         || chiefRole?.current_task
         || (blueprintCoverage.missing.length > 0
@@ -1039,8 +1039,8 @@ export function FactoryWorkspace({
     [deliveryArtifacts]
   );
   const blueprintCoverage = useMemo(
-    () => buildBlueprintCoverage(pmWorkflowTasks, blueprintEvidence),
-    [blueprintEvidence, pmWorkflowTasks]
+    () => buildBlueprintCoverage(blueprintTaskPool, blueprintEvidence),
+    [blueprintEvidence, blueprintTaskPool]
   );
   const summaryMarkdown = String(summaryMd ?? currentRun?.summary_md ?? '').trim();
   const summaryRows = toSummaryRows(summaryJson ?? currentRun?.summary_json ?? null);
@@ -1546,8 +1546,8 @@ function FactoryPmLayer({
             </div>
             <div className="space-y-2">
               {recentLogs.length > 0 ? (
-                recentLogs.map((log) => (
-                  <div key={log.id} className="rounded-md border border-white/10 bg-slate-950/45 px-2 py-2">
+                recentLogs.map((log, index) => (
+                  <div key={`pm-log-${log.id || 'no-id'}-${index}`} className="rounded-md border border-white/10 bg-slate-950/45 px-2 py-2">
                     <div className="truncate text-xs font-medium text-slate-200">{log.title || log.source || 'PM 事件'}</div>
                     <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-500">{log.message}</div>
                   </div>
@@ -1781,8 +1781,8 @@ function FactoryDirectorLayer({
             </div>
             <div className="space-y-2">
               {recentFileEvents.length > 0 ? (
-                recentFileEvents.map((event) => (
-                  <div key={event.id} className="rounded-md border border-white/10 bg-slate-950/45 px-2 py-2">
+                recentFileEvents.map((event, index) => (
+                  <div key={`file-${event.id || event.filePath || 'no-id'}-${index}`} className="rounded-md border border-white/10 bg-slate-950/45 px-2 py-2">
                     <div className="flex items-center justify-between gap-2 text-[10px]">
                       <span className="uppercase text-emerald-300">{event.operation}</span>
                       <span className="text-slate-600">{event.addedLines || 0}+ / {event.deletedLines || 0}-</span>
@@ -1805,8 +1805,8 @@ function FactoryDirectorLayer({
             </div>
             <div className="space-y-2">
               {recentLogs.length > 0 ? (
-                recentLogs.map((log) => (
-                  <div key={log.id} className="rounded-md border border-white/10 bg-slate-950/45 px-2 py-2">
+                recentLogs.map((log, index) => (
+                  <div key={`director-log-${log.id || 'no-id'}-${index}`} className="rounded-md border border-white/10 bg-slate-950/45 px-2 py-2">
                     <div className="truncate text-xs font-medium text-slate-200">{log.title || log.source || 'Director 事件'}</div>
                     <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-slate-500">{log.message}</div>
                   </div>
@@ -2008,8 +2008,8 @@ function FactoryChiefEngineerLayer({
             </div>
             <div className="space-y-2">
               {candidateTasks.length > 0 ? (
-                candidateTasks.map((task) => (
-                  <div key={task.id} className="rounded-md border border-white/10 bg-slate-950/45 px-2 py-2">
+                candidateTasks.map((task, index) => (
+                  <div key={`candidate-${task.id || taskTitle(task) || 'task'}-${index}`} className="rounded-md border border-white/10 bg-slate-950/45 px-2 py-2">
                     <div className="truncate text-xs font-medium text-slate-200">{task.title || task.id}</div>
                     <div className="mt-1 truncate text-[10px] text-slate-500">{task.goal || task.summary || task.description || '等待蓝图输入'}</div>
                   </div>

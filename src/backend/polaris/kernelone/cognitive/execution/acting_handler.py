@@ -86,6 +86,14 @@ class ActingPhaseHandler:
             executor.reset_failure_budget()
         self._action_history.clear()
 
+    def can_execute_action(self, action: str) -> bool:
+        """Return True only when ``action`` is an explicit, executable tool action."""
+        is_valid, _ = self._validate_action(action)
+        if not is_valid:
+            return False
+        tool_name, _ = self._parse_action(action)
+        return bool(tool_name and tool_name in self._ALLOWED_TOOLS)
+
     async def execute_action(
         self,
         action: str,

@@ -110,6 +110,35 @@ async def _run_empty_write_content_materialization_retry(
         tool_results=tool_results,
     )
     retry_context = _pin_materialize_context_delivery_mode(dict(context), True)
+    target_files = _extract_task_target_path_candidates(task)
+    retry_context["_transaction_kernel_forced_tool_choice"] = {
+        "type": "function",
+        "function": {"name": "write_file"},
+    }
+    retry_context["_transaction_kernel_forced_tool_definitions"] = [
+        {
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "description": "Write a complete UTF-8 text file at the requested target path.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file": {"type": "string"},
+                        "content": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["file", "content"],
+                },
+            },
+        }
+    ]
+    if len(target_files) == 1:
+        retry_context["director_empty_write_retry"] = {
+            "write_only_single_target": {
+                "tool": "write_file",
+                "target_file": target_files[0],
+            }
+        }
     try:
         retry_result = await adapter._invoke_role_dialogue_with_timeout(
             retry_message,
@@ -1734,8 +1763,7 @@ async def _execute_standard_llm_flow(
         if semantic_quality_error:
             semantic_repair_errors.append(semantic_quality_error)
         semantic_repair_errors.extend(
-            f"Artifact quality scan failed: declared target file missing '{path}'"
-            for path in missing_declared_targets
+            f"Artifact quality scan failed: declared target file missing '{path}'" for path in missing_declared_targets
         )
         if not semantic_repair_errors:
             break
@@ -1783,9 +1811,8 @@ async def _execute_standard_llm_flow(
             all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
         )
         if artifact_quality_errors:
-            semantic_quality_error = (
-                "Director output quality gate failed after semantic repair: "
-                + "; ".join(artifact_quality_errors[:6])
+            semantic_quality_error = "Director output quality gate failed after semantic repair: " + "; ".join(
+                artifact_quality_errors[:6]
             )
             break
         semantic_quality_error = adapter._execution.validate_generated_output(task, all_affected_files)
@@ -2205,6 +2232,15 @@ def _extract_task_target_path_candidates(task: dict[str, Any]) -> list[str]:
             continue
         for key in ("target_files", "target_file", "targets"):
             candidates.extend(_coerce_path_candidate_list(record.get(key)))
+    if not candidates:
+        for record in (task, metadata):
+            if not isinstance(record, dict):
+                continue
+            for key in ("scope_paths", "scope", "file_paths", "files", "paths"):
+                for candidate in _coerce_path_candidate_list(record.get(key)):
+                    normalized = _normalize_declared_task_path(candidate)
+                    if normalized and Path(normalized).suffix:
+                        candidates.append(candidate)
     return _dedupe_preserve_order([candidate for candidate in candidates if _looks_like_task_path_candidate(candidate)])
 
 
@@ -4213,7 +4249,7 @@ def _apply_deterministic_npm_test_script_repair(
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
-    if not any("npm default failing test script" in str(error or "") for error in artifact_quality_errors):
+    if not any(_is_repairable_npm_test_script_error(error) for error in artifact_quality_errors):
         return []
 
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
@@ -4267,6 +4303,13 @@ def _apply_deterministic_npm_test_script_repair(
             },
         }
     ]
+
+
+def _is_repairable_npm_test_script_error(error: Any) -> bool:
+    text = str(error or "")
+    return "npm default failing test script" in text or (
+        "npm package manifest script 'test' has invalid shell syntax" in text
+    )
 
 
 def _apply_deterministic_node_test_file_repair(
@@ -5694,11 +5737,12 @@ async def _run_materialization_quality_repair_retry(
         workspace_full,
         artifact_quality_errors,
     )
+    repair_target_files = _select_materialization_quality_repair_target_batch(missing_target_files)
     repair_message = _build_materialization_quality_repair_message(
         original_message=original_message,
         artifact_quality_errors=artifact_quality_errors,
         changed_files=changed_files,
-        missing_target_files=missing_target_files,
+        missing_target_files=repair_target_files,
     )
     repair_context = {
         **dict(context or {}),
@@ -5706,6 +5750,8 @@ async def _run_materialization_quality_repair_retry(
         "director_quality_repair": {
             "artifact_quality_errors": artifact_quality_errors[:20],
             "changed_files": changed_files[:40],
+            "missing_target_files": missing_target_files[:20],
+            "repair_target_files": repair_target_files[:12],
         },
     }
     # Force tool_choice=write_file whenever there are missing target files.
@@ -5718,7 +5764,7 @@ async def _run_materialization_quality_repair_retry(
     # matches the single-missing contract and prevents the model from
     # sidestepping the write tool. The API still allows the model to call
     # write_file multiple times in one response when the schema permits.
-    if missing_target_files:
+    if repair_target_files:
         repair_context["_transaction_kernel_forced_tool_choice"] = {
             "type": "function",
             "function": {"name": "write_file"},
@@ -5740,13 +5786,13 @@ async def _run_materialization_quality_repair_retry(
                 },
             }
         ]
-        if len(missing_target_files) == 1:
+        if len(repair_target_files) == 1:
             # Single-missing: also name the specific target file in the
             # context, so any downstream code that special-cases a single
             # target can read it from director_quality_repair.
             repair_context["director_quality_repair"]["write_only_single_target"] = {
                 "tool": "write_file",
-                "target_file": missing_target_files[0],
+                "target_file": repair_target_files[0],
             }
     try:
         result = await adapter._invoke_role_dialogue_with_timeout(
@@ -5771,6 +5817,8 @@ async def _run_materialization_quality_repair_retry(
             content,
             target_task_id,
             adapter._update_task_progress,
+            allowed_tool_names={"write_file"} if repair_target_files else None,
+            allow_patch_fallback=not bool(repair_target_files),
         )
         if fallback_tool_results:
             repair_tool_results.extend(fallback_tool_results)
@@ -5783,6 +5831,7 @@ async def _run_materialization_quality_repair_retry(
             "tool_results": len(repair_tool_results),
             "write_tool_evidence": has_successful_write_tool(repair_tool_results),
             "missing_target_files": missing_target_files[:12],
+            "repair_target_files": repair_target_files[:12],
         }
     )
     return repair_tool_results, summary
@@ -5790,6 +5839,14 @@ async def _run_materialization_quality_repair_retry(
 
 _QUALITY_REPAIR_BASE_ATTEMPTS = 2
 _QUALITY_REPAIR_ATTEMPT_HARD_CAP = 5
+
+
+def _select_materialization_quality_repair_target_batch(missing_target_files: list[str]) -> list[str]:
+    """Select the missing targets to repair in a single LLM attempt."""
+
+    if len(missing_target_files) <= 1:
+        return list(missing_target_files)
+    return [missing_target_files[0]]
 
 
 def _missing_declared_target_files(task: dict[str, Any], workspace_full: str) -> list[str]:
@@ -6036,6 +6093,17 @@ def _build_materialization_quality_repair_message(
             "line copied VERBATIM and REPLACE is the corrected line.\n"
             "Do not change any other line; do not regenerate unrelated code.\n"
         )
+    if not missing_target_files and not symbol_repair_block:
+        if syntax_block and "TRUNCATED FILE DIRECTIVE" in syntax_block:
+            changed_line = (
+                f"{len(changed_files)} file(s) were already written; the truncated artifact is the repair target. "
+                "Do not rewrite it; append only the missing remainder."
+            )
+        else:
+            changed_line = (
+                f"{len(changed_files)} file(s) were already written and failed quality gates; "
+                "rewrite only the failing changed artifact(s), not unrelated files."
+            )
     return (
         f"{original_message}\n\n"
         "MATERIALIZATION QUALITY REPAIR MODE:\n"

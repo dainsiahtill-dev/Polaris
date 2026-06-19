@@ -105,6 +105,34 @@ describe('DialoguePanel', () => {
       render(<DialoguePanel events={events} live={false} />);
       expect(screen.getByText(/任务数: 1/)).toBeInTheDocument();
     });
+
+    it('keeps a failed result when later events for the same task pass', () => {
+      const events: DialogueEvent[] = [
+        {
+          seq: 1,
+          eventId: 'event-fail',
+          speaker: 'System',
+          type: 'result',
+          content: 'Result: FAIL - L1-01 gate:integration_qa_passed=FAIL',
+          timestamp: '2026-06-19T02:02:29Z',
+          refs: { task_id: 'L1-01' },
+        },
+        {
+          seq: 2,
+          eventId: 'event-pass',
+          speaker: 'System',
+          type: 'result',
+          content: 'Result: PASS - L1-01 gate:wrong_product_guard=ok',
+          timestamp: '2026-06-19T02:02:30Z',
+          refs: { task_id: 'L1-01' },
+        },
+      ];
+
+      render(<DialoguePanel events={events} live={false} />);
+
+      expect(screen.getByText('结果: FAIL')).toBeInTheDocument();
+      expect(screen.getByText(/成功率: 0%/)).toBeInTheDocument();
+    });
   });
 
   describe('Clear Logs', () => {

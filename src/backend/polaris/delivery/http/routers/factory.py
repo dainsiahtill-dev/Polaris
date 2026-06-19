@@ -490,7 +490,7 @@ def _ensure_factory_runtime_ready(state: AppState, stages: list[str]) -> None:
     roles = _required_ready_roles_for_stages(stages, qa_enabled=_settings_qa_enabled(state.settings))
     if not roles:
         return
-    live_check = os.environ.get("POLARIS_FACTORY_LIVE_LLM_PREFLIGHT", "1").strip().lower() not in {
+    live_check = os.environ.get("POLARIS_FACTORY_LIVE_LLM_PREFLIGHT", "0").strip().lower() not in {
         "0",
         "false",
         "no",

@@ -302,7 +302,7 @@ export function RealtimeActivityPanel({
 
           {filteredLogs.map((log, index) => (
             <LogItem
-              key={log.id || index}
+              key={`${log.source || log.level || 'log'}-${log.id || 'no-id'}-${index}`}
               log={log}
               isExpanded={expandedLogs.has(log.id)}
               onToggle={() => toggleLogExpand(log.id)}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any
 from scripts.factory_bench import run_factory_bench as bench
 from scripts.factory_bench.run_factory_bench import (
     apply_factory_bench_gates,
+    discover_artifacts,
     map_factory_run_to_chain_results,
     run_factory_chain,
 )
@@ -56,6 +58,34 @@ def test_missing_qa_verdict_and_wrong_product_are_fail_closed() -> None:
     gates = {gate["gate"]: gate for gate in record["factory_gates"]}
     assert gates["qa_verdict_artifact_present"]["ok"] is False
     assert gates["wrong_product_guard"]["ok"] is False
+
+
+def test_discover_artifacts_accepts_current_qa_report_verdicts(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    runtime = tmp_path / "runtime"
+    workspace_qa = workspace / ".polaris" / "qa"
+    runtime_qa = runtime / "qa"
+    workspace_qa.mkdir(parents=True)
+    runtime_qa.mkdir(parents=True)
+    (workspace_qa / "latest.report.json").write_text(
+        json.dumps({"verdict": "PASS", "passed": True}),
+        encoding="utf-8",
+    )
+    (workspace_qa / "empty.report.json").write_text(
+        json.dumps({"notes": "not a verdict"}),
+        encoding="utf-8",
+    )
+    (runtime_qa / "report.json").write_text(
+        json.dumps({"passed": True}),
+        encoding="utf-8",
+    )
+
+    artifacts = discover_artifacts(workspace, runtime)
+
+    assert artifacts["verdict"] == [
+        "rt:qa/report.json",
+        "ws:.polaris/qa/latest.report.json",
+    ]
 
 
 def test_clean_chain_preserves_static_pass() -> None:
@@ -367,6 +397,41 @@ def test_main_marks_backend_session_failed_when_run_aborts(monkeypatch: Any, tmp
     assert completed[-1]["success"] is False
     assert completed[-1]["summary"]["failed"] == 1
     assert completed[-1]["summary"]["error"] == "simulated runner abort"
+
+
+def test_main_rejects_unknown_explicit_project_ids(
+    monkeypatch: Any,
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_factory_bench.py",
+            "--project-ids",
+            "L1-01,L2-01",
+            "--work-dir",
+            str(tmp_path),
+        ],
+    )
+    monkeypatch.setattr(
+        bench,
+        "load_projects",
+        lambda: [{"id": "L1-01", "level": 1, "title": "Known", "brief": "Build something"}],
+    )
+
+    def _unexpected_session(*_args: Any, **_kwargs: Any) -> str:
+        raise AssertionError("unknown explicit ids must fail before creating a bench session")
+
+    monkeypatch.setattr(bench, "_ensure_bench_session", _unexpected_session)
+
+    result = bench.main()
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "unknown project id(s): L2-01" in captured.out
+    assert "refusing to run partial explicit selection" in captured.out
 
 
 # --- run_factory_chain (API path) ---

@@ -229,6 +229,6 @@ async def publish_to_jetstream(
             payload=payload,
         )
         return True
-    except (RuntimeError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to publish to JetStream: %s", exc)
         return False

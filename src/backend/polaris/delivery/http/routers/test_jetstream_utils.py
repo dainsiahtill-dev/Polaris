@@ -13,6 +13,7 @@ SECURITY TESTS:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone
 
@@ -214,5 +215,23 @@ class TestNatJetStreamPublication:
             return None
 
         monkeypatch.setattr(messaging, "get_default_client", no_client)
+
+        assert await publish_to_jetstream("hp.runtime.test.event", {"event": "x"}) is False
+
+    @pytest.mark.asyncio
+    async def test_publish_timeout_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Nat-JetStream publish timeouts must not escape the bool-returning helper."""
+        import polaris.infrastructure.messaging as messaging
+
+        class TimeoutClient:
+            jetstream = object()
+
+            async def publish_js(self, **_: object) -> None:
+                raise asyncio.TimeoutError("publish timed out")
+
+        async def timeout_client() -> TimeoutClient:
+            return TimeoutClient()
+
+        monkeypatch.setattr(messaging, "get_default_client", timeout_client)
 
         assert await publish_to_jetstream("hp.runtime.test.event", {"event": "x"}) is False

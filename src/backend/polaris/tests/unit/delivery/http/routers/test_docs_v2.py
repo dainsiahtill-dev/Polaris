@@ -621,12 +621,18 @@ async def test_docs_init_dialogue_jetstream_starts_nat_channel_and_publishes_eve
 
 @pytest.mark.asyncio
 async def test_docs_init_dialogue_stream_headers(client: AsyncClient) -> None:
-    """Dialogue stream should return SSE headers.
+    """Legacy dialogue stream must fail closed instead of exposing SSE."""
+    response = await client.post(
+        "/v2/docs/init/dialogue/stream",
+        json={"message": "hello", "session_id": "docs-dialogue-legacy"},
+    )
 
-    Full SSE event consumption is skipped because testing async generators
-    with background tasks inside httpx test clients is non-trivial.
-    """
-    pytest.skip("SSE streaming test requires special async generator handling")
+    assert response.status_code == 410
+    assert "text/event-stream" not in response.headers.get("content-type", "")
+    data = response.json()
+    assert data["error"]["code"] == "SSE_REMOVED"
+    assert data["error"]["details"]["replacement"] == "/v2/docs/init/dialogue/jetstream"
+    assert data["error"]["details"]["transport"] == "nat-jetstream"
 
 
 # ---------------------------------------------------------------------------
@@ -712,12 +718,18 @@ async def test_docs_init_preview_jetstream_starts_nat_channel_and_publishes_even
 
 @pytest.mark.asyncio
 async def test_docs_init_preview_stream_headers(client: AsyncClient) -> None:
-    """Preview stream should return SSE headers.
+    """Legacy preview stream must fail closed instead of exposing SSE."""
+    response = await client.post(
+        "/v2/docs/init/preview/stream",
+        json={"mode": "minimal", "goal": "Build", "session_id": "docs-preview-legacy"},
+    )
 
-    Full SSE event consumption is skipped because testing async generators
-    with background tasks inside httpx test clients is non-trivial.
-    """
-    pytest.skip("SSE streaming test requires special async generator handling")
+    assert response.status_code == 410
+    assert "text/event-stream" not in response.headers.get("content-type", "")
+    data = response.json()
+    assert data["error"]["code"] == "SSE_REMOVED"
+    assert data["error"]["details"]["replacement"] == "/v2/docs/init/preview/jetstream"
+    assert data["error"]["details"]["transport"] == "nat-jetstream"
 
 
 # ---------------------------------------------------------------------------

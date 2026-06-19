@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Request
 from polaris.kernelone.storage import StorageLayout
+from polaris.kernelone.storage.io_paths import build_cache_root
 
 from ._shared import StructuredHTTPException, get_state, require_auth
 
@@ -41,7 +42,7 @@ def get_context_by_hash(request: Request, hash: str) -> dict[str, Any]:
     workspace = str(workspace_raw) if isinstance(workspace_raw, str) else workspace_raw
     workspace = workspace or "."
 
-    layout = StorageLayout(workspace=workspace)
+    layout = StorageLayout(workspace=workspace, runtime_base=build_cache_root("", workspace))
     shard = hash[:2]
     file_path = layout.get_path("runtime", f"contexts/{shard}/{hash}")
 

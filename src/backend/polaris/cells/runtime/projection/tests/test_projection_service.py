@@ -382,6 +382,89 @@ class TestRuntimeProjectionDataclass:
 
 
 class TestBuildSnapshotPayloadFromProjection:
+    def test_factory_latest_plan_populates_tasks_when_runtime_contract_missing(self, tmp_path: Path) -> None:
+        plan_dir = tmp_path / ".polaris" / "plans"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "latest.plan.json").write_text(
+            """
+            {
+              "generated_at": "2026-06-19T00:00:00Z",
+              "source": "factory",
+              "tasks": [
+                {
+                  "id": "TASK-1",
+                  "title": "实现本地记账 GUI",
+                  "goal": "交付可运行的 Tkinter 记账软件",
+                  "scope_paths": ["src/main.py"],
+                  "target_files": ["src/main.py"],
+                  "steps": ["实现入口", "实现界面"],
+                  "acceptance_criteria": ["python src/main.py 可启动"],
+                  "assigned_to": "Director"
+                }
+              ]
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        payload = build_snapshot_payload_from_projection(
+            RuntimeProjection(),
+            workspace=str(tmp_path),
+            cache_root=tmp_path,
+        )
+
+        assert payload["tasks"][0]["id"] == "TASK-1"
+        assert payload["tasks"][0]["title"] == "实现本地记账 GUI"
+        assert payload["tasks"][0]["assigned_to"] == "Director"
+
+    def test_factory_blueprints_enrich_latest_plan_tasks(self, tmp_path: Path) -> None:
+        plan_dir = tmp_path / ".polaris" / "plans"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "latest.plan.json").write_text(
+            """
+            {
+              "tasks": [
+                {
+                  "id": "TASK-1",
+                  "title": "实现本地记账 GUI",
+                  "goal": "交付可运行的 Tkinter 记账软件",
+                  "assigned_to": "Director"
+                }
+              ]
+            }
+            """,
+            encoding="utf-8",
+        )
+        blueprint_dir = tmp_path / ".polaris" / "blueprints"
+        blueprint_dir.mkdir(parents=True)
+        blueprint_path = blueprint_dir / "ce_TASK-1_20260619000000000000.json"
+        blueprint_path.write_text(
+            """
+            {
+              "blueprint_id": "ce_TASK-1_20260619000000000000",
+              "task_id": "TASK-1",
+              "title": "实现本地记账 GUI",
+              "summary": "Chief Engineer blueprint for TASK-1",
+              "status": "generated",
+              "target_files": ["src/main.py"],
+              "handoff_ready": true
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        payload = build_snapshot_payload_from_projection(
+            RuntimeProjection(),
+            workspace=str(tmp_path),
+            cache_root=tmp_path,
+        )
+
+        task = payload["tasks"][0]
+        assert task["blueprint_id"] == "ce_TASK-1_20260619000000000000"
+        assert task["runtime_blueprint_path"].endswith("ce_TASK-1_20260619000000000000.json")
+        assert task["blueprint_summary"] == "Chief Engineer blueprint for TASK-1"
+        assert task["handoff_ready"] is True
+
     def test_docs_ready_projection_overrides_stale_workspace_status(self, tmp_path: Path) -> None:
         (tmp_path / "docs").mkdir()
         write_workspace_status(

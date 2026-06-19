@@ -2257,6 +2257,12 @@ def evaluate_pm_task_quality(
                     out_of_scope.append(path)
                 if out_of_scope:
                     critical_issues.append(f"{task_id}: docs-stage scope violation ({', '.join(out_of_scope[:3])})")
+            if assigned_key == "director" and "target_files" in task:
+                target_files = _normalize_path_list(task.get("target_files") or [])
+                file_targets = [path for path in target_files if _is_file_like_pm_scope_path(path)]
+                file_scopes = [path for path in concrete_task_paths if _is_file_like_pm_scope_path(path)]
+                if not file_targets and not file_scopes:
+                    critical_issues.append(f"{task_id}: Director task requires file-level target_files or scope_paths")
 
         if docs_enabled:
             metadata_raw = task.get("metadata")

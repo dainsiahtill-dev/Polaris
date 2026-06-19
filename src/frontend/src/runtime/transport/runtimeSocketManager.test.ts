@@ -168,3 +168,39 @@ describe('runtimeSocketManager unsubscribe behavior', () => {
     ]);
   });
 });
+
+describe('runtimeSocketManager fast-open behavior', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    socket = createMockSocket();
+    socket.readyState = WebSocket.OPEN;
+    mockConnectWebSocket.mockReset();
+    mockConnectWebSocket.mockResolvedValue(socket as unknown as WebSocket);
+
+    const runtimeModule = await import('./runtimeSocketManager');
+    manager = runtimeModule.runtimeSocketManager;
+  });
+
+  afterEach(() => {
+    manager.close();
+    vi.clearAllMocks();
+  });
+
+  it('subscribes when the WebSocket is already open before handlers are attached', async () => {
+    manager.subscribeChannels([{ channel: 'runtime_events' }], ['pm']);
+
+    manager.start();
+    await flushMicrotasks();
+
+    expect(manager.getState().connected).toBe(true);
+    const sentMessages = parseSentMessages(socket);
+    expect(sentMessages).toContainEqual({
+      type: 'SUBSCRIBE',
+      protocol: 'runtime.v2',
+      channels: ['runtime_events'],
+      tail: 0,
+      cursor: 0,
+      roles: ['pm'],
+    });
+  });
+});

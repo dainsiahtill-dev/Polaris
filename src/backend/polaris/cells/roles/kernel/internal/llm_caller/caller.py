@@ -142,6 +142,8 @@ class LLMCaller:
         for new code. LLMCaller is maintained for backward compatibility.
     """
 
+    _emits_canonical_llm_events = True
+
     __slots__ = (
         "_cache",
         "_emit_deprecation_warning",
@@ -903,7 +905,6 @@ class LLMCaller:
             task_id=task_id,
             attempt=attempt,
             turn_round=turn_round,
-            event_emitter=self,
         )
 
     async def call_structured(
@@ -944,7 +945,6 @@ class LLMCaller:
             run_id=run_id,
             task_id=task_id,
             attempt=attempt,
-            event_emitter=self,
         )
 
     async def call_stream(
@@ -979,7 +979,6 @@ class LLMCaller:
             run_id=run_id,
             task_id=task_id,
             attempt=attempt,
-            event_emitter=self,
         ):
             yield event
 

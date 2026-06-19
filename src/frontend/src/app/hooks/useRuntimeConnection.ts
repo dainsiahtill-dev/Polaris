@@ -28,7 +28,7 @@ const RUNTIME_STREAM_CHANNELS = [
   'runtime_events',
   'event.file_edit',
 ] as const;
-const RUNTIME_LIVE_TAIL_LINES = 0;
+const RUNTIME_LIVE_TAIL_LINES = 200;
 
 function normalizeRoles(
   input: RuntimeRole[]

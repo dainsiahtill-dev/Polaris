@@ -1,8 +1,8 @@
 /**
  * Smoke tests for BenchPanel — verifies the panel renders the bench session
  * list, shows the live event stream, and reacts to status changes without
- * crashing. We do not assert SSE wiring here (covered by the
- * factoryService contract tests) — this test is about the visual layer.
+ * crashing. Transport wiring is covered by the Nat-JetStream factoryService
+ * contract tests — this test is about the visual layer.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';

@@ -64,13 +64,23 @@ _RUNTIME_ARTIFACT_GLOBS: dict[str, tuple[str, ...]] = {
         "contracts/chief_engineer.blueprint.json",
         "runs/*/contracts/chief_engineer.blueprint.json",
     ),
-    "verdict": ("runs/*/qa/integration_qa.result.json", "results/integration_qa.result.json"),
+    "verdict": (
+        "runs/*/qa/integration_qa.result.json",
+        "results/integration_qa.result.json",
+        "qa/report.json",
+        "workspace/qa/*.report.json",
+        "workspace/roles/qa/*/report.json",
+    ),
     "director_result": ("runs/*/results/director.result.json", "results/director.result.json"),
 }
 _WORKSPACE_ARTIFACT_GLOBS: dict[str, tuple[str, ...]] = {
     "plan": (".polaris/docs/product/plan.md", ".polaris/docs/product/requirements.md", ".polaris/docs/*.md"),
     "blueprint": (".polaris/blueprints/*",),
-    "verdict": (),
+    "verdict": (
+        ".polaris/qa/*.report.json",
+        ".polaris/roles/qa/*/report.json",
+        ".polaris/runtime/qa/report.json",
+    ),
     "director_result": (),
 }
 
@@ -101,15 +111,33 @@ def discover_artifacts(workspace: Path, runtime_dir: Path | None) -> dict[str, l
     for kind, patterns in _WORKSPACE_ARTIFACT_GLOBS.items():
         hits: list[str] = []
         for pattern in patterns:
-            hits.extend(f"ws:{p.relative_to(workspace)}" for p in workspace.glob(pattern) if p.is_file())
+            hits.extend(
+                f"ws:{p.relative_to(workspace)}"
+                for p in workspace.glob(pattern)
+                if p.is_file() and _is_valid_artifact_match(kind, p)
+            )
         found[kind] = sorted(set(hits))
     if runtime_dir is not None:
         for kind, patterns in _RUNTIME_ARTIFACT_GLOBS.items():
             hits = list(found.get(kind, []))
             for pattern in patterns:
-                hits.extend(f"rt:{p.relative_to(runtime_dir)}" for p in runtime_dir.glob(pattern) if p.is_file())
+                hits.extend(
+                    f"rt:{p.relative_to(runtime_dir)}"
+                    for p in runtime_dir.glob(pattern)
+                    if p.is_file() and _is_valid_artifact_match(kind, p)
+                )
             found[kind] = sorted(set(hits))
     return found
+
+
+def _is_valid_artifact_match(kind: str, path: Path) -> bool:
+    if kind != "verdict":
+        return True
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return isinstance(payload, dict) and ("verdict" in payload or "passed" in payload)
 
 
 def brief_goal_overlap(brief: str, goal: str) -> float:
@@ -973,8 +1001,19 @@ def main() -> int:
 
     projects = load_projects()
     if args.project_ids.strip():
-        wanted_ids = {s.strip() for s in args.project_ids.split(",") if s.strip()}
-        selected = [p for p in projects if p["id"] in wanted_ids]
+        wanted_ids = [s.strip() for s in args.project_ids.split(",") if s.strip()]
+        available_ids = {str(p["id"]) for p in projects}
+        missing_ids = [project_id for project_id in wanted_ids if project_id not in available_ids]
+        if missing_ids:
+            print(
+                "[factory-bench] unknown project id(s): "
+                + ", ".join(missing_ids)
+                + "; refusing to run partial explicit selection",
+                flush=True,
+            )
+            return 1
+        wanted_id_set = set(wanted_ids)
+        selected = [p for p in projects if p["id"] in wanted_id_set]
     else:
         wanted_levels = {int(s) for s in args.levels.split(",") if s.strip()}
         selected = [p for p in projects if int(p["level"]) in wanted_levels]

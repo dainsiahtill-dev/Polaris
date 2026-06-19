@@ -27,6 +27,7 @@ import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
 import { RuntimeErrorDialog } from '@/app/components/RuntimeErrorDialog';
 import { ChiefEngineerPage, DirectorPage, PMPage } from '@/app/pages';
 import { FactoryWorkspace } from '@/app/components/factory/FactoryWorkspace';
+import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
 import { ResidentWorkspace } from '@/app/components/resident';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
 import { RuntimeDiagnosticsWorkspace } from '@/app/components/RuntimeDiagnosticsWorkspace';
@@ -81,6 +82,7 @@ const InterventionCenter = lazy(() =>
 const RUN_ID_PREFIX = 'pm-';
 const TERMINAL_FACTORY_RUN_TOKENS = new Set(['completed', 'failed', 'error', 'blocked', 'timeout', 'cancelled', 'canceled']);
 const IDLE_FACTORY_RUN_TOKENS = new Set(['', 'idle', 'pending', 'waiting', 'stopped', 'unknown', 'none']);
+const BENCH_FACTORY_SYNC_INTERVAL_MS = 4_000;
 
 function parseIterationFromRunId(runId: string): number | null {
   const raw = runId.trim().toLowerCase();
@@ -189,6 +191,22 @@ function isFactoryRunActive(run: { status?: unknown; phase?: unknown } | null | 
   return !IDLE_FACTORY_RUN_TOKENS.has(status) || !IDLE_FACTORY_RUN_TOKENS.has(phase);
 }
 
+function readFactoryRunWorkspace(run: unknown): string {
+  if (!run || typeof run !== 'object') return '';
+  const metadata = (run as { metadata?: unknown }).metadata;
+  if (!metadata || typeof metadata !== 'object') return '';
+  const request = (metadata as { factory_start_request?: unknown }).factory_start_request;
+  if (!request || typeof request !== 'object') return '';
+  return String((request as { workspace?: unknown }).workspace || '').trim();
+}
+
+function isFactoryRunScopedToBenchWorkDir(run: unknown, benchWorkDir: string): boolean {
+  const runWorkspace = readFactoryRunWorkspace(run);
+  const normalizedBenchWorkDir = String(benchWorkDir || '').trim().replace(/\/+$/, '');
+  if (!runWorkspace || !normalizedBenchWorkDir) return false;
+  return runWorkspace === normalizedBenchWorkDir || runWorkspace.startsWith(`${normalizedBenchWorkDir}/`);
+}
+
 function AppContent() {
   const workspacePanelRef = useRef<ImperativePanelHandle>(null);
   const terminalPanelRef = useRef<ImperativePanelHandle>(null);
@@ -261,9 +279,10 @@ function AppContent() {
     pauseRun: pauseFactoryRun,
     resumeRun: resumeFactoryRun,
     retryRunFromCheckpoint: retryFactoryRunFromCheckpoint,
+    resumeLatestRun: resumeLatestFactoryRun,
     isLoading: factoryIsLoading,
   } = useFactory({ workspace });
-  const { events: factoryBenchEvents } = useFactoryBench({ autoSelect: 'newest' });
+  const { currentSession: factoryBenchSession, events: factoryBenchEvents } = useFactoryBench({ autoSelect: 'newest' });
   const factoryRuntimeActive = factoryIsLoading || isFactoryRunActive(factoryCurrentRun);
   const combinedProcessStreamEvents = useMemo(
     () => mergeProcessAndBenchLogs(processStreamEvents, factoryBenchEvents),
@@ -342,6 +361,43 @@ function AppContent() {
       return null;
     }
   }, []);
+
+  useEffect(() => {
+    const benchWorkDir = String(factoryBenchSession?.work_dir || '').trim();
+    if (!benchWorkDir) {
+      return;
+    }
+    if (isFactoryRunScopedToBenchWorkDir(factoryCurrentRun, benchWorkDir)) {
+      return;
+    }
+
+    let cancelled = false;
+    const syncLatestFactoryRun = async () => {
+      const run = await resumeLatestFactoryRun();
+      if (cancelled) return;
+      if (run) {
+        void refreshProgressSnapshot();
+      }
+    };
+
+    void syncLatestFactoryRun();
+    const intervalId = window.setInterval(() => {
+      void syncLatestFactoryRun();
+    }, BENCH_FACTORY_SYNC_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    factoryBenchSession?.session_id,
+    factoryBenchSession?.status,
+    factoryBenchSession?.updated_at,
+    factoryBenchSession?.work_dir,
+    factoryCurrentRun,
+    refreshProgressSnapshot,
+    resumeLatestFactoryRun,
+  ]);
 
   const {
     isStartingPM,
@@ -922,6 +978,11 @@ function AppContent() {
       <ErrorBoundaryClass onError={(error) => {
         notifyError(error.message || '发生未知错误');
       }}>
+        <BenchStatusStrip
+          websocketLive={live}
+          websocketReconnecting={reconnecting}
+          websocketAttemptCount={attemptCount}
+        />
         <FactoryWorkspace
           workspace={workspace}
           onBackToMain={handleBackToMain}
@@ -1260,6 +1321,7 @@ function AppContent() {
           <Panel defaultSize={30} minSize={20} maxSize={50} order={3}>
             <ContextSidebar
               dialogueEvents={dialogueEvents}
+              runtimeEvents={combinedProcessStreamEvents}
               live={live}
               dialogueLoading={!live && dialogueEvents.length === 0}
               onClearDialogueLogs={handleClearDialogueLogs}

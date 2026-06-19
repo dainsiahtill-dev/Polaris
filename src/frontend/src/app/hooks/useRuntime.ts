@@ -398,6 +398,9 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     const dataPromptTokens = eventData ? Number(eventData.prompt_tokens ?? 0) : 0;
     const dataCompletionTokens = eventData ? Number(eventData.completion_tokens ?? 0) : 0;
     const dataContextTokens = eventData ? Number(eventData.context_tokens_after ?? 0) : 0;
+    const dataContextSnapshotRef = eventData ? String(eventData.context_snapshot_ref || '').trim() : '';
+    const dataPromptHash = eventData ? String(eventData.prompt_hash || '').trim() : '';
+    const dataTurnId = eventData ? String(eventData.turn_id || '').trim() : '';
     const dataMetadata = eventData && eventData.metadata && typeof eventData.metadata === 'object'
       ? (eventData.metadata as Record<string, unknown>)
       : null;
@@ -551,6 +554,10 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       totalTokens: usageTotalTokens > 0 ? usageTotalTokens : undefined,
       contextTokens: safeContextTokens > 0 ? safeContextTokens : undefined,
       durationMs: dataDurationMs > 0 ? Math.round(dataDurationMs) : undefined,
+      // NEW fields for context viewer
+      contextSnapshotRef: dataContextSnapshotRef || undefined,
+      promptHash: dataPromptHash || undefined,
+      turnId: dataTurnId || undefined,
     };
 
     const compact = message.replace(/\s+/g, ' ').trim();

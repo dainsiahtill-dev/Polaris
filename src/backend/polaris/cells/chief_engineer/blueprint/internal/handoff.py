@@ -41,9 +41,7 @@ def build_handoff_decision(
     workspace Risk Register has open critical/blocker risks for the task.
     Fail-closed: a malformed blueprint evaluates to ``allowed=False``.
     """
-    resolved_blueprint_id = (
-        str(blueprint_id).strip() or str(blueprint.get("blueprint_id") or "").strip() or "unknown"
-    )
+    resolved_blueprint_id = str(blueprint_id).strip() or str(blueprint.get("blueprint_id") or "").strip() or "unknown"
     resolved_task_id = str(task_id).strip() or str(blueprint.get("task_id") or "").strip()
     risk_register = RiskRegister(workspace, ensure_directory=False)
     risks = risk_register.list(task_id=resolved_task_id) if resolved_task_id else risk_register.list()

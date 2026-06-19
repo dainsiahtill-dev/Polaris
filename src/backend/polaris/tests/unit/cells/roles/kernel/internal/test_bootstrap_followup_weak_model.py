@@ -269,6 +269,30 @@ def test_deterministic_fallback_fires_for_user_named_new_file(tmp_path: Path) ->
     assert decision.metadata.get("target_file") == "demo_app.py"
 
 
+def test_deterministic_fallback_prefers_structured_scope_over_design_mentions(tmp_path: Path) -> None:
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="t-structured-scope",
+        original_context=[
+            {
+                "role": "user",
+                "content": (
+                    "任务: 需求对齐与实现设计\n"
+                    "范围: docs/design.md, docs/\n"
+                    "执行步骤:\n"
+                    "- 定义模块划分：main.py（入口）、parser.py（解析）、evaluator.py（计算）、errors.py（异常）\n"
+                    "验收标准:\n"
+                    "- design.md 存在且包含模块接口定义\n"
+                ),
+            }
+        ],
+        bootstrap_receipt={"results": []},
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+    assert decision is not None
+    assert decision.metadata.get("target_file") == "docs/design.md"
+
+
 # ---------------------------------------------------------------------------
 # I3-r21 root fix: leaf-construction suppression (rank 2) + refuse-to-guess (rank 1)
 # ---------------------------------------------------------------------------

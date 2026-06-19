@@ -554,6 +554,7 @@ class LLMInvoker:
                                     "run_id": run_id,
                                     "workspace": self.workspace,
                                     "attempt": attempt,
+                                    "context_snapshot_ref": self._extract_context_snapshot_ref(fallback_request),
                                 },
                                 prepared,
                             ),
@@ -595,6 +596,7 @@ class LLMInvoker:
                             "run_id": run_id,
                             "workspace": self.workspace,
                             "attempt": attempt,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
                         },
                         prepared,
                     ),
@@ -652,6 +654,7 @@ class LLMInvoker:
                                 "attempt": attempt,
                                 "turn_round": turn_round,
                                 "native_tool_mode": prepared.native_tool_mode,
+                                "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
                             },
                             prepared,
                         ),
@@ -806,6 +809,7 @@ class LLMInvoker:
                             "run_id": run_id,
                             "workspace": self.workspace,
                             "attempt": attempt,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
                         },
                         prepared,
                     ),
@@ -906,6 +910,7 @@ class LLMInvoker:
                         "turn_round": turn_round,
                         # SSOT Fix: Pass context token count for context panel display
                         "context_tokens": int(prepared.context_result.token_estimate) if prepared.context_result else 0,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
                     },
                     prepared,
                 ),
@@ -924,7 +929,15 @@ class LLMInvoker:
                 error_message="call_cancelled",
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
-                metadata=_with_context_os_audit({"error_type": "CancelledError"}, prepared),
+                metadata=_with_context_os_audit(
+                    {
+                        "error_type": "CancelledError",
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
+                        if prepared
+                        else None,
+                    },
+                    prepared,
+                ),
             )
             raise
 
@@ -943,7 +956,15 @@ class LLMInvoker:
                 error_message=str(e),
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
-                metadata=_with_context_os_audit({"error_type": type(e).__name__}, prepared),
+                metadata=_with_context_os_audit(
+                    {
+                        "error_type": type(e).__name__,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
+                        if prepared
+                        else None,
+                    },
+                    prepared,
+                ),
             )
             return LLMResponse(
                 content="",
@@ -975,7 +996,15 @@ class LLMInvoker:
                 error_message=str(e),
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
-                metadata=_with_context_os_audit({"error_type": type(e).__name__}, prepared),
+                metadata=_with_context_os_audit(
+                    {
+                        "error_type": type(e).__name__,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
+                        if prepared
+                        else None,
+                    },
+                    prepared,
+                ),
             )
             return LLMResponse(
                 content="",

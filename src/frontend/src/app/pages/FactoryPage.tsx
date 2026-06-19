@@ -7,11 +7,12 @@
 import { ErrorBoundaryClass } from '@/app/components/ErrorBoundary';
 import { FactoryWorkspace } from '@/app/components/factory/FactoryWorkspace';
 import { BenchPanel } from '@/app/components/factory/BenchPanel';
+import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
 import { Toaster } from '@/app/components/ui/sonner';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
-import type { FactoryRunStatus, FactoryAuditEvent } from '@/hooks/useFactory';
+import type { FactoryRunStatus, FactoryAuditEvent, FactoryRunArtifact } from '@/hooks/useFactory';
 
 export interface FactoryPageProps {
   /** 工作区路径 */
@@ -36,10 +37,26 @@ export interface FactoryPageProps {
   currentRun?: FactoryRunStatus | null;
   /** 事件流 */
   events?: FactoryAuditEvent[];
+  /** Factory run artifacts */
+  artifacts?: FactoryRunArtifact[];
+  /** Markdown summary */
+  summaryMd?: string | null;
+  /** JSON summary */
+  summaryJson?: Record<string, unknown> | null;
+  /** Artifact loading error */
+  artifactsError?: string | null;
+  /** Artifact loading state */
+  isArtifactsLoading?: boolean;
   /** 启动回调 */
   onStart?: () => void;
   /** 取消回调 */
   onCancel?: () => void;
+  /** 暂停回调 */
+  onPause?: () => void;
+  /** 恢复回调 */
+  onResume?: () => void;
+  /** 从 checkpoint 重试回调 */
+  onRetryCheckpoint?: () => void;
   /** 是否加载中 */
   isLoading: boolean;
   /** WebSocket 连接状态 */
@@ -82,8 +99,16 @@ export function FactoryPage({
   fileEditEvents,
   currentRun,
   events,
+  artifacts,
+  summaryMd,
+  summaryJson,
+  artifactsError,
+  isArtifactsLoading,
   onStart,
   onCancel,
+  onPause,
+  onResume,
+  onRetryCheckpoint,
   isLoading,
   websocketLive,
   websocketReconnecting,
@@ -97,6 +122,11 @@ export function FactoryPage({
 }: FactoryPageProps) {
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
+      <BenchStatusStrip
+        websocketLive={websocketLive}
+        websocketReconnecting={websocketReconnecting}
+        websocketAttemptCount={websocketAttemptCount}
+      />
       <FactoryWorkspace
         workspace={workspace}
         onBackToMain={onBackToMain}
@@ -109,8 +139,16 @@ export function FactoryPage({
         fileEditEvents={fileEditEvents as Parameters<typeof FactoryWorkspace>[0]['fileEditEvents']}
         currentRun={currentRun}
         events={events}
+        artifacts={artifacts}
+        summaryMd={summaryMd}
+        summaryJson={summaryJson}
+        artifactsError={artifactsError}
+        isArtifactsLoading={isArtifactsLoading}
         onStart={onStart}
         onCancel={onCancel}
+        onPause={onPause}
+        onResume={onResume}
+        onRetryCheckpoint={onRetryCheckpoint}
         isLoading={isLoading}
       />
       <BenchPanel className="border-t border-white/10" />

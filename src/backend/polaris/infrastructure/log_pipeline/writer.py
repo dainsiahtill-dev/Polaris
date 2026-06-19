@@ -75,8 +75,21 @@ def _ensure_jetstream_support() -> bool:
 # Configuration
 # =============================================================================
 
-# Publish retry configuration
-PUBLISH_ENABLED = (os.environ.get("KERNELONE_JETSTREAM_PUBLISH", "0")) not in ("0", "false", "no")
+# Publish retry configuration.
+#
+# The module-level flag is intentionally false for offline/library imports.
+# FastAPI runtime startup enables the env switch so role-kernel log events are
+# published to the platform Nat-JetStream bus without forcing isolated tests to
+# connect to NATS.
+PUBLISH_ENABLED = False
+_JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
+
+
+def _jetstream_publish_enabled() -> bool:
+    raw = str(os.environ.get("KERNELONE_JETSTREAM_PUBLISH") or "").strip().lower()
+    if not raw:
+        return bool(PUBLISH_ENABLED)
+    return raw not in _JETSTREAM_PUBLISH_FALSE_VALUES
 
 
 # =============================================================================
@@ -284,7 +297,7 @@ class LogEventWriter:
             logger.debug("realtime fanout failed (best-effort): %s", exc)
 
         # Step 2: JetStream publishing (async, best-effort after disk write succeeds)
-        if PUBLISH_ENABLED and (_jetstream_available or _ensure_jetstream_support()):
+        if _jetstream_publish_enabled() and (_jetstream_available or _ensure_jetstream_support()):
             self._publish_to_jetstream(event)
 
     def _publish_to_jetstream(self, event: CanonicalLogEventV2) -> None:

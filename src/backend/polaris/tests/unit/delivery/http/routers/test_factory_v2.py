@@ -245,8 +245,9 @@ async def test_list_factory_runs_empty(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_factory_run_success(client: AsyncClient) -> None:
+async def test_start_factory_run_success(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """POST /v2/factory/runs should create and start a factory run."""
+    monkeypatch.delenv("POLARIS_FACTORY_LIVE_LLM_PREFLIGHT", raising=False)
     run = _make_factory_run(run_id="factory_new123", status="running")
 
     with (
@@ -297,14 +298,18 @@ async def test_start_factory_run_success(client: AsyncClient) -> None:
             "director",
             "qa",
         ]
-        assert mock_roles_ready.call_args.kwargs["live_check"] is True
+        assert mock_roles_ready.call_args.kwargs["live_check"] is False
         scheduled_coro = create_task_with_context_mock.call_args.args[0]
         assert scheduled_coro.cr_frame is None
 
 
 @pytest.mark.asyncio
-async def test_start_factory_run_from_architect_requires_architect_readiness(client: AsyncClient) -> None:
+async def test_start_factory_run_from_architect_requires_architect_readiness(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Full factory runs must fail closed when Architect LLM readiness is blocked."""
+    monkeypatch.delenv("POLARIS_FACTORY_LIVE_LLM_PREFLIGHT", raising=False)
     run = _make_factory_run(run_id="factory_architect123", status="running")
 
     with (
@@ -353,6 +358,53 @@ async def test_start_factory_run_from_architect_requires_architect_readiness(cli
         "director",
         "qa",
     ]
+    assert mock_roles_ready.call_args.kwargs["live_check"] is False
+    scheduled_coro = create_task_with_context_mock.call_args.args[0]
+    assert scheduled_coro.cr_frame is None
+
+
+@pytest.mark.asyncio
+async def test_start_factory_run_enables_live_llm_preflight_when_env_requests_it(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Factory start should only run live LLM probes when explicitly requested."""
+    monkeypatch.setenv("POLARIS_FACTORY_LIVE_LLM_PREFLIGHT", "1")
+    run = _make_factory_run(run_id="factory_live123", status="running")
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.factory.FactoryRunService",
+        ) as mock_svc_cls,
+        patch(
+            "polaris.delivery.http.routers.factory.sync_process_settings_environment",
+        ),
+        patch(
+            "polaris.delivery.http.routers.factory.save_persisted_settings",
+        ),
+        patch(
+            "polaris.delivery.http.routers.factory.create_task_with_context",
+        ) as create_task_with_context_mock,
+        patch("polaris.delivery.http.routers.factory.ensure_required_roles_ready") as mock_roles_ready,
+    ):
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+        mock_svc.create_run = AsyncMock(return_value=run)
+        mock_svc.start_run = AsyncMock(return_value=run)
+
+        response = await client.post(
+            "/v2/factory/runs",
+            json={
+                "workspace": ".",
+                "start_from": "pm",
+                "directive": "Build a thing",
+                "run_director": True,
+                "director_iterations": 1,
+                "loop": False,
+            },
+        )
+
+    assert response.status_code == 200
     assert mock_roles_ready.call_args.kwargs["live_check"] is True
     scheduled_coro = create_task_with_context_mock.call_args.args[0]
     assert scheduled_coro.cr_frame is None

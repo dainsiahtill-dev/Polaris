@@ -157,7 +157,11 @@ export function DirectorPage({
 
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
-      <BenchStatusStrip />
+      <BenchStatusStrip
+        websocketLive={websocketLive}
+        websocketReconnecting={websocketReconnecting}
+        websocketAttemptCount={websocketAttemptCount}
+      />
       <DirectorWorkspace
         workspace={workspace}
         onBackToMain={onBackToMain}

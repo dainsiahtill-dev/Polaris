@@ -24,6 +24,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _apply_deterministic_patch_residue_cleanup,
     _apply_deterministic_scaffold_marker_cleanup,
     _apply_deterministic_typescript_reexport_repair,
+    _build_empty_write_content_retry_message,
     _build_existing_workspace_task_evidence,
     _build_substantive_node_test_script,
     _can_accept_existing_workspace_scope,
@@ -31,6 +32,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _director_existing_scope_preflight_enabled,
     _emit_director_adapter_cognitive_receipt,
     _empty_write_content_retry_needed,
+    _extract_task_target_path_candidates,
     _finalize_claimed_execution,
     _is_overstrict_node_test_script_contract,
     _looks_like_typescript_reexport_failure,
@@ -85,6 +87,22 @@ def test_empty_write_content_retry_needed_only_for_blank_write() -> None:
     assert _empty_write_content_retry_needed([{"tool_name": "read_file", "status": "success"}]) is False
 
 
+def test_empty_write_retry_uses_concrete_scope_path_when_target_files_missing() -> None:
+    task = {
+        "subject": "实现交互式 CLI 入口与 REPL 循环",
+        "scope_paths": ["main.py"],
+    }
+
+    assert _extract_task_target_path_candidates(task) == ["main.py"]
+    message = _build_empty_write_content_retry_message(
+        task,
+        original_message="[mode:materialize]\n范围: main.py",
+        tool_results=[{"tool_name": "write_file", "arguments": {"file": "main.py", "content": ""}}],
+    )
+
+    assert "Allowed target files: main.py." in message
+
+
 @pytest.mark.asyncio
 async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_path: Any) -> None:
     adapter = _make_adapter(tmp_path)
@@ -94,10 +112,13 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
         metadata={"target_files": ["src/app.py"], "scope_paths": ["src/app.py"]},
     )
     seen_messages: list[str] = []
+    seen_contexts: list[dict[str, Any]] = []
 
     async def _dialogue(message: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        del args, kwargs
+        del args
         seen_messages.append(message)
+        raw_context = kwargs.get("context")
+        seen_contexts.append(raw_context if isinstance(raw_context, dict) else {})
         if len(seen_messages) == 1:
             return {
                 "content": "I will create src/app.py.",
@@ -160,6 +181,16 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
     )
     assert len(seen_messages) == 2
     assert "previous write tool call had blank content" in seen_messages[1]
+    assert seen_contexts[1]["_transaction_kernel_forced_tool_choice"] == {
+        "type": "function",
+        "function": {"name": "write_file"},
+    }
+    forced_defs = seen_contexts[1]["_transaction_kernel_forced_tool_definitions"]
+    assert forced_defs and forced_defs[0]["function"]["name"] == "write_file"
+    assert seen_contexts[1]["director_empty_write_retry"]["write_only_single_target"] == {
+        "tool": "write_file",
+        "target_file": "src/app.py",
+    }
     assert result.get("error_code") != "director_no_materialized_changes"
 
 
@@ -226,6 +257,32 @@ def test_validate_generated_output_rejects_todo_comment(tmp_path: Any) -> None:
 
     assert error is not None
     assert "generic/placeholder content detected" in error
+
+
+def test_validate_generated_output_allows_title_case_todo_product_heading(tmp_path: Any) -> None:
+    executor = DirectorPatchExecutor(str(tmp_path))
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "# Todo API\n\n"
+        "This FastAPI service implements authenticated todo creation, listing, completion, and deletion.\n",
+        encoding="utf-8",
+    )
+    test_file = tmp_path / "tests" / "test_e2e.py"
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    test_file.write_text(
+        "# Todo workflow coverage\ndef test_todo_create_and_complete_flow():\n    assert 'todo'.upper() == 'TODO'\n",
+        encoding="utf-8",
+    )
+
+    error = executor.validate_generated_output(
+        {
+            "subject": "Todo API integration verification",
+            "description": "Verify todo create and complete workflow with README instructions",
+        },
+        ["README.md", "tests/test_e2e.py"],
+    )
+
+    assert error is None
 
 
 # ---------------------------------------------------------------------------
@@ -1079,6 +1136,78 @@ class TestDirectorFailureClosure:
         assert result["success"] is True
         assert stage_labels == ["first_call"]
         assert "Error: no test specified" not in package_text
+        assert "package manifest check passed" in package_text
+        assert test_run.returncode == 0
+        assert "package manifest check passed" in test_run.stdout
+        assert "package.json" in result["changed_files"]
+
+    @pytest.mark.asyncio
+    async def test_execute_repairs_invalid_npm_test_script_shell_syntax_deterministically(
+        self,
+        tmp_path: Any,
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Create package manifest",
+            description="Create a package.json with a syntactically valid npm test script.",
+            metadata={
+                "target_files": ["package.json"],
+                "scope_paths": ["package.json"],
+                "steps": ["Create package manifest"],
+                "acceptance": ["npm test parses and exits 0"],
+            },
+        )
+        stage_labels: list[str] = []
+
+        async def _bad_package_dialogue(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args
+            stage_labels.append(str(kwargs.get("stage_label") or ""))
+            (tmp_path / "package.json").write_text(
+                """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node -e \\"console.log('unterminated npm script')"
+  }
+}
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            return {
+                "content": "Wrote package manifest.",
+                "success": True,
+                "tool_results": [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {"path": "package.json"},
+                    }
+                ],
+            }
+
+        adapter._invoke_role_dialogue_with_timeout = _bad_package_dialogue  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-package-invalid-script-deterministic-repair"},
+        )
+
+        package_text = (tmp_path / "package.json").read_text(encoding="utf-8")
+        quality_errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+        test_run = subprocess.run(
+            ["npm", "run", "test", "--", "--watch=false"],
+            cwd=tmp_path,
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+        )
+        assert result["success"] is True
+        assert stage_labels == ["first_call"]
+        assert quality_errors == []
+        assert "unterminated npm script" not in package_text
         assert "package manifest check passed" in package_text
         assert test_run.returncode == 0
         assert "package manifest check passed" in test_run.stdout
@@ -5349,6 +5478,7 @@ class TestQualityRepairMissingTargetContract:
                 content: str,
                 target_task_id: str,
                 update_task_progress: Any,
+                **_: Any,
             ) -> list[dict[str, Any]]:
                 return []
 
@@ -5455,6 +5585,7 @@ class TestQualityRepairMissingTargetContract:
                 content: str,
                 target_task_id: str,
                 update_task_progress: Any,
+                **_: Any,
             ) -> list[dict[str, Any]]:
                 del content, target_task_id, update_task_progress
                 return []
@@ -5540,7 +5671,7 @@ class TestQualityRepairMissingTargetContract:
                 return []
 
             @staticmethod
-            async def execute_tools(content, target_task_id, update_task_progress) -> list:
+            async def execute_tools(content, target_task_id, update_task_progress, **_) -> list:
                 del content, target_task_id, update_task_progress
                 return []
 
@@ -5600,10 +5731,16 @@ class TestQualityRepairMissingTargetContract:
             "file",
             "content",
         ]
-        for p in missing_targets:
-            assert p in adapter.repair_message, f"missing path {p} in repair message"
+        assert "SINGLE MISSING TARGET REPAIR" in adapter.repair_message
+        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
+            "tool": "write_file",
+            "target_file": missing_targets[0],
+        }
+        assert adapter.repair_context["director_quality_repair"]["repair_target_files"] == [missing_targets[0]]
+        assert missing_targets[0] in adapter.repair_message
         assert "MISSING TARGET FILES" in adapter.repair_message
         assert summary["missing_target_files"] == missing_targets
+        assert summary["repair_target_files"] == [missing_targets[0]]
 
     def test_repair_message_names_missing_targets_and_hides_changed_paths(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
@@ -5687,6 +5824,29 @@ class TestQualityRepairMissingTargetContract:
         )
         assert "MISSING TARGET FILES" not in message
         assert "0 file(s) were already written" in message
+
+    def test_semantic_quality_repair_allows_rewriting_failed_changed_artifact(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="输出 verification_report.md",
+            artifact_quality_errors=[
+                "Director output quality gate failed: no project-domain signal found in changed files; "
+                "expected one of ['task-1', 'task-2', 'readme', 'verification_report', 'task-3']"
+            ],
+            changed_files=["verification_report.md"],
+            missing_target_files=[],
+        )
+
+        assert "MISSING TARGET FILES" not in message
+        assert "must NOT be rewritten" not in message
+        assert "failed quality gates" in message
+        assert "rewrite only the failing changed artifact" in message
+        # The repair-specific changed-file line remains count-based; the
+        # original task contract may still legitimately name the target path.
+        assert "1 file(s) were already written and failed quality gates" in message
 
 
 class TestSyntaxRepairDirective:

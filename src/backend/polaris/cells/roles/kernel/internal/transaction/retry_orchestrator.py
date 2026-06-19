@@ -1234,17 +1234,21 @@ def _extract_deterministic_bootstrap_write_targets(
     bootstrap_receipt: Mapping[str, Any],
 ) -> list[str]:
     candidates: list[str] = []
-    candidates.extend(extract_failed_files_from_bootstrap_receipt(bootstrap_receipt))
     latest_user = extract_latest_user_message(original_context)
-    candidates.extend(
-        token.strip()
-        for token in re.findall(
-            r"\b[\w./\\-]+\.(?:json|md|toml|py|js|mjs|cjs|ts|tsx|jsx|css|html|ya?ml|txt)\b",
-            latest_user,
-            flags=re.IGNORECASE,
+    structured_targets = extract_target_files_from_message(latest_user)
+    if structured_targets:
+        candidates.extend(structured_targets)
+    else:
+        candidates.extend(extract_failed_files_from_bootstrap_receipt(bootstrap_receipt))
+        candidates.extend(
+            token.strip()
+            for token in re.findall(
+                r"\b[\w./\\-]+\.(?:json|md|toml|py|js|mjs|cjs|ts|tsx|jsx|css|html|ya?ml|txt)\b",
+                latest_user,
+                flags=re.IGNORECASE,
+            )
+            if token.strip()
         )
-        if token.strip()
-    )
     normalized: list[str] = []
     for candidate in candidates:
         target = _normalize_deterministic_bootstrap_target(candidate)

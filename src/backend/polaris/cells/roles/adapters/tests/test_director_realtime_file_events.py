@@ -201,6 +201,46 @@ async def test_markdown_patch_file_broadcasts_create_event(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_write_only_tool_fallback_rejects_read_calls_and_patch_blocks(tmp_path: Path) -> None:
+    executor = DirectorPatchExecutor(str(tmp_path))
+    response = (
+        '[TOOL_CALL]{"tool":"readFile","arguments":{"path":"src/hooks/useWeather.ts"}}[/TOOL_CALL]\n'
+        '[TOOL_CALL]{"tool":"write_file","arguments":{"file":"src/api/weatherApi.ts",'
+        '"content":"export const ok = true;\\n"}}[/TOOL_CALL]\n'
+        "src/ignored.ts\n```ts\nexport const ignored = true;\n```"
+    )
+
+    results = await executor.execute_tools(
+        response,
+        "task-write-only",
+        _progress_noop,
+        allowed_tool_names={"write_file"},
+        allow_patch_fallback=False,
+    )
+
+    assert [item["tool"] for item in results] == ["write_file"]
+    assert (tmp_path / "src" / "api" / "weatherApi.ts").read_text(encoding="utf-8") == "export const ok = true;\n"
+    assert not (tmp_path / "src" / "ignored.ts").exists()
+
+
+@pytest.mark.asyncio
+async def test_write_only_tool_fallback_does_not_apply_markdown_without_write_tool(tmp_path: Path) -> None:
+    executor = DirectorPatchExecutor(str(tmp_path))
+    response = "src/ignored.ts\n```ts\nexport const ignored = true;\n```"
+
+    results = await executor.execute_tools(
+        response,
+        "task-write-only",
+        _progress_noop,
+        allowed_tool_names={"write_file"},
+        allow_patch_fallback=False,
+    )
+
+    assert results == []
+    assert not (tmp_path / "src" / "ignored.ts").exists()
+
+
+@pytest.mark.asyncio
 async def test_markdown_patch_file_returns_receipt_and_persists_event_without_message_bus(tmp_path: Path) -> None:
     executor = DirectorPatchExecutor(str(tmp_path))
     response = "src/patch.ts\n```ts\nexport const patched = true;\n```"

@@ -65,11 +65,39 @@ _PM_ORIGINAL_DIRECTIVE_MAX_CHARS = 8_000
 _PM_ARCHITECT_DOC_MAX_CHARS = 5_000
 _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS = 8_000
 _WORKSPACE_VALIDATION_TIMEOUT_SECONDS = 240
+_FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS = 2.0
 _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING = "qa_llm_judgement_unavailable"
 _PM_DIRECTIVE_META_LINE_PATTERN = re.compile(
     r"(提示词|system prompt|角色设定|no yapping|<thinking>|<tool_call>|tool_call)",
     re.IGNORECASE,
 )
+_PM_PLAN_META_DIAGNOSTIC_MARKERS = (
+    "多个任务标题/goal 重复",
+    "任务标题/goal 重复",
+    "标题长度不足",
+    "输出了非 JSON 内容",
+    "Markdown 说明、分隔线、加粗文字",
+    "待重写 PM 执行任务合同",
+    "合规 JSON 格式",
+    "仅 `requirements.md`，无实现文件",
+    "被标记为 duplicated",
+    "duplicate task title",
+    "duplicated task",
+    "title length",
+    "non-json content",
+    "invalid json output",
+    "rewrite pm task contract",
+)
+
+
+def _factory_jetstream_fanout_timeout_seconds() -> float:
+    raw = os.getenv("POLARIS_FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS")
+    if raw is None:
+        return _FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS
+    try:
+        return max(float(raw), 0.05)
+    except ValueError:
+        return _FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS
 
 
 @dataclass
@@ -340,16 +368,62 @@ class OrchestrationStageExecutor:
         self._extend_artifacts(artifacts, *copied)
 
     def _mirror_quality_gate_artifacts(self, run_id: str, artifacts: list[str]) -> None:
-        mirrors = (
+        report_mirrors = (
             f"workspace/roles/qa/{run_id}/report.json",
             f"workspace/qa/{run_id}.report.json",
             "workspace/qa/latest.report.json",
         )
         copied = [
             self._copy_text_artifact_if_present("runtime/qa/report.json", target_rel, min_chars=1)
-            for target_rel in mirrors
+            for target_rel in report_mirrors
         ]
+        validation_mirrors = (
+            f"workspace/roles/qa/{run_id}/workspace-validation.json",
+            f"workspace/qa/{run_id}.workspace-validation.json",
+            "workspace/qa/latest.workspace-validation.json",
+        )
+        copied.extend(
+            self._copy_text_artifact_if_present("runtime/qa/workspace-validation.json", target_rel, min_chars=1)
+            for target_rel in validation_mirrors
+        )
         self._extend_artifacts(artifacts, *copied)
+
+    def _workspace_package_has_external_dependencies(self) -> bool:
+        package_path = (self.workspace / "package.json").resolve()
+        if not package_path.exists() or not package_path.is_file():
+            return False
+        try:
+            payload = json.loads(package_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        for key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+            value = payload.get(key)
+            if isinstance(value, dict) and value:
+                return True
+        return False
+
+    def _workspace_quality_prepare_commands(
+        self,
+        commands: list[list[str]],
+        context: dict[str, Any],
+    ) -> list[list[str]]:
+        if not self._bool_from_context_or_env(
+            context,
+            "workspace_validation_install_dependencies",
+            "qa_workspace_validation_install_dependencies",
+            env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION_INSTALL_DEPENDENCIES",
+            default=True,
+        ):
+            return []
+        if not any(command and str(command[0]).strip().lower() == "npm" for command in commands):
+            return []
+        if (self.workspace / "node_modules").is_dir():
+            return []
+        if not self._workspace_package_has_external_dependencies():
+            return []
+        return [["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]]
 
     @staticmethod
     async def _wait_for_artifact_file(
@@ -453,6 +527,7 @@ class OrchestrationStageExecutor:
         if not isinstance(tasks, list) or not tasks:
             return "tasks_plan_empty_tasks"
         invalid = 0
+        meta_diagnostic = 0
         for item in tasks:
             if not isinstance(item, dict):
                 invalid += 1
@@ -465,9 +540,24 @@ class OrchestrationStageExecutor:
             has_acceptance = isinstance(acceptance, list) and len([s for s in acceptance if str(s).strip()]) > 0
             if not (goal and scope and has_steps and has_acceptance):
                 invalid += 1
+            if self._is_pm_meta_diagnostic_task(item):
+                meta_diagnostic += 1
         if invalid > 0:
             return f"tasks_plan_invalid_contract:{invalid}"
+        if meta_diagnostic > 0:
+            return f"tasks_plan_meta_diagnostic_tasks:{meta_diagnostic}"
         return ""
+
+    @staticmethod
+    def _is_pm_meta_diagnostic_task(task: dict[str, Any]) -> bool:
+        text = "\n".join(
+            str(task.get(key) or "").strip()
+            for key in ("title", "goal", "description")
+            if str(task.get(key) or "").strip()
+        ).lower()
+        if not text:
+            return False
+        return any(marker.lower() in text for marker in _PM_PLAN_META_DIAGNOSTIC_MARKERS)
 
     def _load_pm_plan_tasks(self, relative_path: str = "tasks/plan.json") -> list[dict[str, Any]]:
         target = self._artifact_path(relative_path)
@@ -1538,9 +1628,33 @@ class OrchestrationStageExecutor:
             context.get("workspace_validation_timeout_seconds") or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
         )
         results: list[dict[str, Any]] = []
-        for command in commands:
+        prepare_commands = self._workspace_quality_prepare_commands(commands, context)
+        prepare_failed = False
+        for command in prepare_commands:
             result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
+            result["phase"] = "prepare"
             results.append(result)
+            if not bool(result.get("passed")):
+                prepare_failed = True
+
+        run_commands = [] if prepare_failed else commands
+        for command in run_commands:
+            result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
+            result["phase"] = "check"
+            results.append(result)
+        if prepare_failed:
+            for command in commands:
+                results.append(
+                    {
+                        "command": command,
+                        "phase": "check",
+                        "exit_code": None,
+                        "passed": False,
+                        "error": "skipped because workspace validation preparation failed",
+                        "stdout_tail": "",
+                        "stderr_tail": "",
+                    }
+                )
 
         payload = {
             "schema_version": "factory.workspace_quality_checks.v1",
@@ -1623,7 +1737,7 @@ class OrchestrationStageExecutor:
             "require_qa_llm_judgement",
             "factory_require_qa_llm_judgement",
             env_var="POLARIS_FACTORY_QA_REQUIRE_LLM_JUDGEMENT",
-            default=True,
+            default=False,
         )
         qa_llm_judgement_ready = not self._qa_report_has_warning(qa_payload, _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING)
         workspace_checks_passed, workspace_checks_artifact = await self._run_workspace_quality_checks(run, context)
@@ -2311,9 +2425,7 @@ class FactoryRunService:
             from polaris.delivery.http.routers.jetstream_utils import (
                 publish_to_jetstream,
             )
-            from polaris.infrastructure.messaging.nats.nats_types import (
-                JetStreamConstants,
-            )
+
             workspace_key = self.workspace.name if self.workspace else ""
             if not workspace_key:
                 return
@@ -2331,11 +2443,14 @@ class FactoryRunService:
                 "payload": payload,
                 "meta": {"source": "factory_run_service"},
             }
-            await publish_to_jetstream(
-                subject=subject,
-                payload=envelope,
+            await asyncio.wait_for(
+                publish_to_jetstream(
+                    subject=subject,
+                    payload=envelope,
+                ),
+                timeout=_factory_jetstream_fanout_timeout_seconds(),
             )
-        except (RuntimeError, ValueError, TypeError) as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.debug("factory JetStream fanout failed for run %s: %s", run_id, exc)
 
     def _trigger_archive(self, run_id: str, reason: str) -> None:

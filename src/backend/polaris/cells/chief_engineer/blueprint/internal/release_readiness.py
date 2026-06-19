@@ -106,9 +106,7 @@ def build_release_readiness(
             contract_blockers = max(0, decision.blocker_count - decision.open_blocker_risk_count)
             if contract_blockers > 0:
                 gate_blocked.append(blueprint_id)
-                blockers.append(
-                    f"quality_gate: blueprint {blueprint_id} has {contract_blockers} contract blocker(s)"
-                )
+                blockers.append(f"quality_gate: blueprint {blueprint_id} has {contract_blockers} contract blocker(s)")
     signals["quality_gate"] = {
         "assessed": len(blueprint_ids or []),
         "blocked": len(gate_blocked),

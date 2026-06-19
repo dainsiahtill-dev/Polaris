@@ -207,7 +207,7 @@ def test_runtime_ws_realtime_fanout_pushes_llm_stream_without_file_poll_delay(tm
         assert llm_payload.get("event", {}).get("message") == "realtime-llm"
 
 
-def test_runtime_ws_v2_subscribe_keeps_local_fanout_fallback(tmp_path, monkeypatch) -> None:
+def test_runtime_ws_v2_subscribe_requires_jetstream(tmp_path, monkeypatch) -> None:
     from polaris.infrastructure.messaging.nats.ws_consumer_manager import JetStreamConsumerManager
 
     async def _jetstream_unavailable(self) -> bool:
@@ -238,26 +238,9 @@ def test_runtime_ws_v2_subscribe_keeps_local_fanout_fallback(tmp_path, monkeypat
             }
         )
         subscribed_payload = ws.receive_json()
-        assert subscribed_payload.get("type") == "SUBSCRIBED"
-        assert subscribed_payload.get("payload", {}).get("jetstream") is False
-
-        writer = LogEventWriter(workspace=str(workspace), run_id=run_id)
-        writer.write_event(
-            message="v2-local-fanout-llm",
-            channel="llm",
-            domain="llm",
-            actor="pm",
-            raw={"stream_event": "content_chunk", "content": "hello"},
-        )
-
-        llm_payload = None
-        for _ in range(8):
-            payload = ws.receive_json()
-            if payload.get("type") == "llm_stream" and payload.get("channel") == "llm":
-                llm_payload = payload
-                break
-        assert llm_payload is not None
-        assert llm_payload.get("event", {}).get("message") == "v2-local-fanout-llm"
+        assert subscribed_payload.get("type") == "ERROR"
+        assert subscribed_payload.get("protocol") == "runtime.v2"
+        assert subscribed_payload.get("payload", {}).get("code") == "JETSTREAM_REQUIRED"
 
 
 def test_runtime_v2_workspace_key_uses_connection_workspace_context(tmp_path) -> None:

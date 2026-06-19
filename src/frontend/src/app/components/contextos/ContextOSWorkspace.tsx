@@ -59,6 +59,7 @@ import {
   type RoleInternalContext,
 } from './contextOSData';
 import { buildTelemetryFromStream, type ContextOSEvent } from './contextOSTelemetry';
+import { ContextViewerModal } from './ContextViewerModal';
 
 export interface ContextOSWorkspaceProps {
   workspace: string;
@@ -379,7 +380,7 @@ function ContextStructurePanel({ model, telemetry }: { model: ContextOSModel; te
   );
 }
 
-function RoleInternalPanel({ role }: { role: RoleCard }) {
+function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewContext: (ref: string) => void }) {
   const ctx = role.internalContext;
   const style = STATE_STYLES[ctx.state];
 
@@ -401,6 +402,11 @@ function RoleInternalPanel({ role }: { role: RoleCard }) {
 
   const displayedEvents = ctx.events.length;
   const hasTruncation = ctx.eventCount > displayedEvents;
+
+  // Collect LLM calls with context_snapshot_ref from events
+  const llmCalls = ctx.events
+    .filter((event) => event.contextSnapshotRef && (event.isCall || event.hasUsage))
+    .slice(0, 5);
 
   return (
     <div
@@ -477,6 +483,48 @@ function RoleInternalPanel({ role }: { role: RoleCard }) {
           highlight={ctx.totalTokens > 0}
         />
       </div>
+
+      {/* 最近 LLM 调用（带上下文查看） */}
+      {llmCalls.length > 0 && (
+        <div className="mb-3">
+          <div className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-wider text-text-dim">
+            <span>最近 LLM 调用</span>
+            <span className="font-mono normal-case text-text-dim">{llmCalls.length} 条</span>
+          </div>
+          <div className="space-y-1">
+            {llmCalls.map((event) => (
+              <div
+                key={event.id}
+                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-[11px] hover:bg-white/[0.03]"
+              >
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', event.category === 'error' ? 'bg-status-error' : 'bg-accent-secondary')} />
+                  <span className="truncate font-mono text-[10px] text-text-dim">{contextOSFormat.clock(event.ts)}</span>
+                  <span className="truncate text-text-muted" title={event.summary}>{event.summary || event.kind}</span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {event.totalTokens > 0 && (
+                    <span className="rounded bg-accent-secondary/10 px-1 font-mono text-[9px] text-accent-secondary">
+                      {contextOSFormat.tokens(event.totalTokens)} tok
+                    </span>
+                  )}
+                  {event.durationMs !== null && event.durationMs > 0 && (
+                    <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-muted">{event.durationMs}ms</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => event.contextSnapshotRef && onViewContext(event.contextSnapshotRef)}
+                    className="rounded bg-accent-secondary/15 px-1.5 py-0.5 text-[9px] text-accent-secondary hover:bg-accent-secondary/25 transition-colors"
+                    title="查看完整上下文"
+                  >
+                    查看完整上下文
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 最近事件 */}
       <div>
@@ -644,7 +692,6 @@ export function ContextOSWorkspace({
   qualityGate,
 }: ContextOSWorkspaceProps) {
   // 真实 ContextOS 遥测：直接派生自 useRuntime 经 WebSocket(/v2/ws/runtime) 实时推送的运行时流。
-  // 完全无轮询——这些 props 随 WS 事件到达即变化，组件随之重渲染。
   const telemetry = useMemo(
     () => buildTelemetryFromStream(llmStreamEvents, executionLogs, processStreamEvents),
     [llmStreamEvents, executionLogs, processStreamEvents],
@@ -667,6 +714,8 @@ export function ContextOSWorkspace({
 
   const [activeRole, setActiveRole] = useState<string | null>(null);
   const [showStructure, setShowStructure] = useState(false);
+  const [viewerHash, setViewerHash] = useState<string | null>(null);
+  const [viewerRole, setViewerRole] = useState<string>('');
 
   const wsTone = live ? 'success' : reconnecting ? 'warning' : 'error';
   const wsLabel = live ? 'WS LIVE' : reconnecting ? 'WS RECONNECT' : 'WS OFFLINE';
@@ -717,7 +766,10 @@ export function ContextOSWorkspace({
             </div>
             <div className="min-w-0">
               <h1 className="font-heading text-sm font-bold text-text-main">ContextOS 实时视图</h1>
-              <p className="truncate text-[10px] uppercase tracking-wider text-accent-secondary/70" title={workspace}>
+              <p
+              className="truncate text-[10px] uppercase tracking-wider text-accent-secondary/70"
+                title={workspace}
+              >
                 上下文操作系统 · {workspaceLabel(workspace, '未选定工作区')}
               </p>
             </div>
@@ -757,7 +809,7 @@ export function ContextOSWorkspace({
           >
             <span
               className="font-mono text-[10px]"
-              title="ContextOS 实时遥测（WebSocket /v2/ws/runtime 推送），时间为最近一条事件"
+              title="ContextOS 遥测：WebSocket /v2/ws/runtime，经 Nat-Jetstream 推送；时间为最近一条事件"
               data-testid="contextos-telemetry-freshness"
             >
               {model.telemetryActive
@@ -928,7 +980,13 @@ export function ContextOSWorkspace({
                 ))}
               </div>
               {activeRole && (
-                <RoleInternalPanel role={model.roles.find((r) => r.id === activeRole)!} />
+                <RoleInternalPanel
+                  role={model.roles.find((r) => r.id === activeRole)!}
+                  onViewContext={(hash) => {
+                    setViewerHash(hash);
+                    setViewerRole(activeRole);
+                  }}
+                />
               )}
             </SectionCard>
 
@@ -938,7 +996,7 @@ export function ContextOSWorkspace({
                 model.telemetryActive
                   ? activeRole
                     ? `实时事件流 · 仅 ${activeRole.toUpperCase()}`
-                    : '实时事件流 · WebSocket 推送'
+                    : '实时事件流 · Nat-Jetstream'
                   : activeRole
                     ? `决策与回执流 · 仅 ${activeRole.toUpperCase()}`
                     : '决策与回执流'
@@ -1040,6 +1098,18 @@ export function ContextOSWorkspace({
           </div>
         </div>
       </main>
+
+      {/* Context Viewer Modal */}
+      {viewerHash && (
+        <ContextViewerModal
+          contextSnapshotRef={viewerHash}
+          roleId={viewerRole}
+          onClose={() => {
+            setViewerHash(null);
+            setViewerRole('');
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -560,9 +560,13 @@ export function useFactory(options: UseFactoryOptions = {}) {
 
     const latestRuns = await fetchRuns(1);
     const latest = latestRuns[0] || null;
-    setCurrentRun(latest);
+    const latestRunId = latest?.run_id || '';
+    const sameLatestRun = Boolean(latestRunId && latestRunIdRef.current === latestRunId);
+    setCurrentRun((previous) => latest ? mergeRunEvidenceFields(latest, previous) : null);
     setEvents([]);
-    setArtifactsSnapshot(null);
+    if (!sameLatestRun) {
+      setArtifactsSnapshot(null);
+    }
     setArtifactsError(null);
 
     if (latest) {
@@ -572,11 +576,13 @@ export function useFactory(options: UseFactoryOptions = {}) {
         if (!connected) {
           await fetchRunStatus(latest.run_id);
         }
+      } else {
+        await fetchRunArtifacts(latest.run_id);
       }
     }
 
     return latest;
-  }, [autoResumeLatest, connectStream, fetchRunStatus, fetchRuns, workspace]);
+  }, [autoResumeLatest, connectStream, fetchRunArtifacts, fetchRunStatus, fetchRuns, workspace]);
 
   // Cleanup on unmount
   useEffect(() => {

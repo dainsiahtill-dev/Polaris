@@ -439,16 +439,23 @@ class RuntimeSocketManager {
     );
   }
 
+  private handleSocketOpen(socket: WebSocket): void {
+    if (this.ws !== socket || this.state.connected) {
+      return;
+    }
+    this.updateState({
+      connected: true,
+      reconnecting: false,
+      error: null,
+      attemptCount: 0,
+    });
+    this.startHeartbeat();
+    this.sendSubscribe();
+  }
+
   private setupSocketHandlers(socket: WebSocket): void {
     socket.onopen = () => {
-      this.updateState({
-        connected: true,
-        reconnecting: false,
-        error: null,
-        attemptCount: 0,
-      });
-      this.startHeartbeat();
-      this.sendSubscribe();
+      this.handleSocketOpen(socket);
     };
 
     socket.onmessage = (event) => {
@@ -469,6 +476,10 @@ class RuntimeSocketManager {
     socket.onerror = () => {
       socket.close();
     };
+
+    if (socket.readyState === WebSocket.OPEN) {
+      this.handleSocketOpen(socket);
+    }
   }
 
   private routeMessage(data: string): void {

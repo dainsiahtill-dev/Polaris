@@ -79,6 +79,29 @@ const speakerStyles = {
   },
 };
 
+const STATUS_RANK: Record<string, number> = {
+  ERROR: 4,
+  FAIL: 4,
+  FAILED: 4,
+  BLOCKED: 3,
+  SUCCESS: 2,
+  PASS: 2,
+};
+
+function normalizeStatus(status: string): string {
+  const raw = status.trim().toUpperCase();
+  return raw === 'FAILED' ? 'FAIL' : raw;
+}
+
+function mergeStatus(previous: string | undefined, next: string): string {
+  const normalizedNext = normalizeStatus(next);
+  if (!previous) return normalizedNext;
+  const normalizedPrevious = normalizeStatus(previous);
+  return (STATUS_RANK[normalizedNext] ?? 0) > (STATUS_RANK[normalizedPrevious] ?? 0)
+    ? normalizedNext
+    : normalizedPrevious;
+}
+
 export function DialoguePanel({
   events,
   live,
@@ -121,9 +144,7 @@ export function DialoguePanel({
     const extractStatus = (content: string) => {
       const match = content.match(/(SUCCESS|PASS|FAILED|FAIL|BLOCKED|ERROR)/i);
       if (!match?.[1]) return '';
-      const raw = match[1].toUpperCase();
-      if (raw === 'FAILED') return 'FAIL';
-      return raw;
+      return normalizeStatus(match[1]);
     };
 
     const extractReviewerFindings = (content: string) => {
@@ -174,7 +195,7 @@ export function DialoguePanel({
         if (title) group.title = title;
       }
       const status = extractStatus(event.content);
-      if (status) group.status = status;
+      if (status) group.status = mergeStatus(group.status, status);
 
       const findings = extractReviewerFindings(event.content);
       if (findings.length) group.reviewerFindings.push(...findings);
@@ -207,7 +228,7 @@ export function DialoguePanel({
       if (event.type === 'result' && taskId) {
         const match = event.content.match(/Result:\s*([A-Za-z]+)/);
         if (match?.[1]) {
-          resultByTaskId.set(taskId, match[1].toUpperCase());
+          resultByTaskId.set(taskId, mergeStatus(resultByTaskId.get(taskId), match[1]));
         }
       }
     });

@@ -87,9 +87,30 @@ def extract_target_file_from_invocation_args(invocation: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-def extract_target_files_from_message(message: str) -> list[str]:
-    """从用户消息中提取疑似目标文件路径。"""
-    raw = str(message or "")
+_DECLARED_TARGET_LINE_RE = re.compile(
+    r"^\s*(?:allowed\s+target\s+files|target\s+files|target_files|targets|目标文件|范围|scope)\s*[:：]\s*(?P<value>.+)$",
+    flags=re.IGNORECASE,
+)
+
+
+def _dedupe_normalized_paths(tokens: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for token in tokens:
+        normalized = str(token or "").strip().replace("\\", "/")
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(normalized)
+    return deduped
+
+
+def _extract_file_tokens_from_text(text: str) -> list[str]:
+    """Extract file-looking path tokens from one trusted text fragment."""
+    raw = str(text or "")
     if not raw:
         return []
     # 匹配带扩展名的文件路径
@@ -105,18 +126,23 @@ def extract_target_files_from_message(message: str) -> list[str]:
         flags=re.IGNORECASE,
     )
     tokens = ext_tokens + no_ext_tokens
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for token in tokens:
-        normalized = str(token or "").strip().replace("\\", "/")
-        if not normalized:
+    return _dedupe_normalized_paths(tokens)
+
+
+def extract_target_files_from_message(message: str) -> list[str]:
+    """从用户消息中提取疑似目标文件路径。"""
+    raw = str(message or "")
+    if not raw:
+        return []
+    declared_tokens: list[str] = []
+    for line in raw.splitlines():
+        match = _DECLARED_TARGET_LINE_RE.match(line)
+        if not match:
             continue
-        lowered = normalized.lower()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        deduped.append(normalized)
-    return deduped
+        declared_tokens.extend(_extract_file_tokens_from_text(match.group("value")))
+    if declared_tokens:
+        return _dedupe_normalized_paths(declared_tokens)
+    return _extract_file_tokens_from_text(raw)
 
 
 def normalize_path_token(path: str) -> str:
@@ -134,7 +160,12 @@ def normalize_path_token(path: str) -> str:
 
 
 def build_path_match_candidates(paths: list[str]) -> set[str]:
-    """构建路径匹配候选集（全路径 + basename）。"""
+    """构建路径匹配候选集。
+
+    A scoped path such as ``src/main.py`` must not authorize writing a
+    different root-level ``main.py``. Bare filenames remain flexible because
+    the user did not declare a directory.
+    """
     candidates: set[str] = set()
     for raw_path in paths:
         normalized = normalize_path_token(raw_path)
@@ -143,7 +174,7 @@ def build_path_match_candidates(paths: list[str]) -> set[str]:
         lowered = normalized.lower()
         candidates.add(lowered)
         basename = normalized.rsplit("/", 1)[-1].strip().lower()
-        if basename:
+        if basename and "/" not in normalized:
             candidates.add(basename)
     return candidates
 

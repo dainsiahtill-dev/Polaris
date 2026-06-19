@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -279,6 +280,19 @@ class TestBuildQaMessage:
         msg = adapter._build_qa_message("quality_gate", "Project X", review_result={})
         assert "no deterministic evidence" in msg
 
+    def test_json_repair_message_preserves_previous_output(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        msg = adapter._build_qa_json_repair_message(
+            "quality_gate",
+            "Project X",
+            review_result={"evidence": ["workspace_checks_passed=True"]},
+            previous_output="我先对工作区进行侦察，然后执行审查。",
+        )
+
+        assert "Return exactly one JSON object" in msg
+        assert "workspace_checks_passed=True" in msg
+        assert "我先对工作区进行侦察" in msg
+
 
 # ---------------------------------------------------------------------------
 # Review result parsing
@@ -303,6 +317,108 @@ class TestParseReviewResult:
         adapter = _make_adapter(tmp_path)
         result = adapter._parse_review_result("random text")
         assert result["parsed_json"] is False
+
+
+class TestQaExecute:
+    def test_cognitive_runtime_blocked_is_nonfatal_when_static_gate_passes(
+        self, tmp_path: Any, monkeypatch: Any
+    ) -> None:
+        adapter = _make_adapter(tmp_path)
+
+        async def fake_invoke_role_runtime_first(**kwargs: Any) -> dict[str, str]:
+            del kwargs
+            raise RuntimeError("cognitive_runtime_blocked:Blockers: ('Low probability - insufficient confidence',)")
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.qa_adapter.invoke_role_runtime_first",
+            fake_invoke_role_runtime_first,
+        )
+        monkeypatch.setattr(
+            adapter,
+            "_run_static_review",
+            lambda target, *, run_id="": {
+                "verdict": "PASS",
+                "score": 100,
+                "critical_issues": [],
+                "major_issues": [],
+                "warnings": [],
+                "evidence": ["static_passed=True"],
+                "suggestions": [],
+            },
+        )
+
+        result = asyncio.run(
+            adapter.execute(
+                "qa-task",
+                {"review_type": "quality_gate", "review_target": "Project quality gate"},
+                {"run_id": "run-1"},
+            )
+        )
+
+        assert result["success"] is True
+        assert result["critical_issues"] == []
+        assert "qa_llm_judgement_unavailable" in result["warnings"]
+
+    def test_retries_strict_json_when_llm_output_lacks_verdict(self, tmp_path: Any, monkeypatch: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        calls: list[str] = []
+        metadata_calls: list[dict[str, Any]] = []
+
+        async def fake_invoke_role_runtime_first(**kwargs: Any) -> dict[str, str]:
+            calls.append(str(kwargs.get("message") or ""))
+            context = kwargs.get("context") if isinstance(kwargs.get("context"), dict) else {}
+            metadata = context.get("metadata") if isinstance(context.get("metadata"), dict) else {}
+            metadata_calls.append(dict(metadata))
+            if len(calls) == 1:
+                return {"response": "我先对工作区进行侦察，然后按 QA 工作流执行审查 → 测试 → 报告。"}
+            return {
+                "response": json.dumps(
+                    {
+                        "verdict": "PASS",
+                        "score": 92,
+                        "critical_issues": [],
+                        "major_issues": [],
+                        "warnings": [],
+                        "evidence": ["workspace_checks_passed=True"],
+                        "suggestions": [],
+                    },
+                    ensure_ascii=False,
+                )
+            }
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.qa_adapter.invoke_role_runtime_first",
+            fake_invoke_role_runtime_first,
+        )
+        monkeypatch.setattr(
+            adapter,
+            "_run_static_review",
+            lambda target, *, run_id="": {
+                "verdict": "PASS",
+                "score": 100,
+                "critical_issues": [],
+                "major_issues": [],
+                "warnings": [],
+                "evidence": ["static_passed=True"],
+                "suggestions": [],
+            },
+        )
+
+        result = asyncio.run(
+            adapter.execute(
+                "qa-task",
+                {"review_type": "quality_gate", "review_target": "Project quality gate"},
+                {"run_id": "run-1"},
+            )
+        )
+
+        assert len(calls) == 2
+        assert "Return exactly one JSON object" in calls[1]
+        assert all(item.get("native_tool_mode") == "disabled" for item in metadata_calls)
+        assert all(item.get("response_format_mode") == "json" for item in metadata_calls)
+        assert all(item.get("qa_output_contract") == "json_only_verdict" for item in metadata_calls)
+        assert result["success"] is True
+        assert "qa_llm_judgement_unavailable" not in result["warnings"]
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 /**
  * Tests for useFactory hook — the factory events now flow through the
- * platform's unified WebSocket + NAT JetStream pipeline (no SSE, no
- * EventSource). We mock the transport's subscribeChannels and
+ * platform's unified WebSocket + NAT JetStream pipeline (no legacy HTTP
+ * event-stream client). We mock the transport's subscribeChannels and
  * registerMessageHandler instead of the legacy connectFactoryStream.
  */
 import { act, renderHook, waitFor } from '@testing-library/react';
@@ -143,7 +143,7 @@ describe('useFactory', () => {
   });
 
   it('starts a run and auto-connects the stream', async () => {
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
 
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
@@ -155,7 +155,7 @@ describe('useFactory', () => {
   });
 
   it('fetches artifacts and summary when a current run is available', async () => {
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
     });
@@ -165,7 +165,7 @@ describe('useFactory', () => {
   });
 
   it('replaces currentRun from status events and stops on done', async () => {
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
     });
@@ -232,7 +232,7 @@ describe('useFactory', () => {
     });
     expect(resumeFactoryRunMock).toHaveBeenCalledWith('run-1', undefined);
     await act(async () => {
-      await result.current.retryFromCheckpoint('run-1');
+      await result.current.retryRunFromCheckpoint('run-1');
     });
     expect(retryFactoryRunFromCheckpointMock).toHaveBeenCalledWith('run-1', undefined);
   });
@@ -249,7 +249,7 @@ describe('useFactory', () => {
       return () => {};
     });
 
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
     await act(async () => {
       const run = await result.current.startRun({ workspace: 'ws' });
       expect(run?.run_id).toBe('run-1');
@@ -266,7 +266,7 @@ describe('useFactory', () => {
     transportSubscribeMock.mockImplementation(() => {
       throw new Error('transient');
     });
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
     });
@@ -281,7 +281,7 @@ describe('useFactory', () => {
     transportSubscribeMock.mockImplementation(() => {
       throw new Error('transient');
     });
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
     await act(async () => {
       await result.current.startRun({ workspace: 'ws' });
     });
@@ -289,7 +289,7 @@ describe('useFactory', () => {
   });
 
   it('resumes the latest non-terminal run for the active workspace', async () => {
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
     await waitFor(() => {
       expect(result.current.currentRun?.run_id).toBe('run-1');
     });
@@ -301,7 +301,7 @@ describe('useFactory', () => {
       ok: true,
       data: [{ ...baseRun, status: 'cancelled', phase: 'cancelled' }],
     });
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
     await waitFor(() => {
       expect(result.current.currentRun?.status).toBe('cancelled');
     });
@@ -312,9 +312,79 @@ describe('useFactory', () => {
       ok: true,
       data: [{ ...baseRun, phase: 'completed', status: 'running' }],
     });
-    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
     await waitFor(() => {
       expect(result.current.currentRun?.phase).toBe('completed');
+    });
+  });
+
+  it('fetches artifacts when resuming a latest terminal run', async () => {
+    listFactoryRunsMock.mockResolvedValue({
+      ok: true,
+      data: [{ ...baseRun, status: 'completed', phase: 'completed' }],
+    });
+    getFactoryRunArtifactsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        run_id: 'run-1',
+        artifacts: [
+          {
+            name: 'ce_TASK-1.json',
+            path: 'runtime/blueprints/ce_TASK-1.json',
+            size: 128,
+            task_id: 'TASK-1',
+          },
+        ],
+        summary_md: '# Summary',
+        summary_json: null,
+      },
+    });
+
+    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.currentRun?.status).toBe('completed');
+    });
+    await waitFor(() => {
+      expect(result.current.artifacts).toHaveLength(1);
+    });
+    expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('run-1');
+    expect(transportSubscribeMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps artifacts when the same terminal latest run is resumed again', async () => {
+    listFactoryRunsMock.mockResolvedValue({
+      ok: true,
+      data: [{ ...baseRun, status: 'completed', phase: 'completed' }],
+    });
+    getFactoryRunArtifactsMock.mockResolvedValue({
+      ok: true,
+      data: {
+        run_id: 'run-1',
+        artifacts: [
+          {
+            name: 'ce_TASK-1.json',
+            path: 'runtime/blueprints/ce_TASK-1.json',
+            size: 128,
+            task_id: 'TASK-1',
+          },
+        ],
+        summary_md: '# Summary',
+        summary_json: null,
+      },
+    });
+
+    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
+    await waitFor(() => {
+      expect(result.current.artifacts).toHaveLength(1);
+    });
+
+    await act(async () => {
+      await result.current.resumeLatestRun();
+    });
+
+    await waitFor(() => {
+      expect(result.current.artifacts).toHaveLength(1);
     });
   });
 

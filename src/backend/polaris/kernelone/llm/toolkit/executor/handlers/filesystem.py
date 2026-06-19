@@ -843,6 +843,9 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
             )
             return {
                 "ok": False,
+                "error_type": "syntax",
+                "retryable": True,
+                "loop_break": False,
                 "error": f"Code syntax validation failed:\n{error_msg}",
                 "suggestion": (
                     "Use read_file() to inspect the exact file, then call edit_blocks "

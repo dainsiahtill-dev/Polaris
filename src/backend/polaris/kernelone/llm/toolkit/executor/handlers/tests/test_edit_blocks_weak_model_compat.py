@@ -520,6 +520,9 @@ def test_write_file_plain_js_error_keeps_narrow_edit_suggestion(tmp_path: Path) 
     bad_js = "const head = {\n  x: 1,\n  y: 2;\n};\n"
     result = _handle_write_file(ex, file="game.js", content=bad_js)
     assert result.get("ok") is False
+    assert result.get("error_type") == "syntax"
+    assert result.get("retryable") is True
+    assert result.get("loop_break") is False
     assert "Code syntax validation failed" in result.get("error", "")
     assert "edit_blocks" in result.get("suggestion", "")
     assert "append_to_file" not in result.get("suggestion", "")

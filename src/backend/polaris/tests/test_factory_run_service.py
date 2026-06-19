@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from polaris.cells.factory.pipeline.internal import factory_run_service as factory_service_module
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryConfig,
     FactoryRun,
@@ -268,6 +269,32 @@ class TestFactoryRunService:
         assert (run_dir / "artifacts").exists()
         assert (run_dir / "events").exists()
         assert (run_dir / "checkpoints").exists()
+
+    @pytest.mark.asyncio
+    async def test_append_event_jetstream_timeout_is_non_blocking(
+        self,
+        temp_workspace,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        import polaris.delivery.http.routers.jetstream_utils as jetstream_utils
+
+        service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
+        run = await service.create_run(FactoryConfig(name="test-run"))
+
+        async def slow_publish(**_: object) -> bool:
+            await asyncio.sleep(1)
+            return True
+
+        monkeypatch.setattr(jetstream_utils, "publish_to_jetstream", slow_publish)
+        monkeypatch.setattr(factory_service_module, "_FACTORY_JETSTREAM_FANOUT_TIMEOUT_SECONDS", 0.01)
+
+        started = asyncio.get_running_loop().time()
+        await service._append_event(run.id, {"type": "probe"})
+        elapsed = asyncio.get_running_loop().time() - started
+
+        assert elapsed < 0.2
+        events = await service.store.get_events(run.id)
+        assert any(event.get("type") == "probe" for event in events)
 
     @pytest.mark.asyncio
     async def test_start_run(self, temp_workspace):
@@ -1503,7 +1530,7 @@ class TestOrchestrationStageExecutor:
         assert f"workspace/roles/qa/{run.id}/report.json" in result.artifacts
 
     @pytest.mark.asyncio
-    async def test_quality_gate_fails_when_llm_judgement_unavailable_by_default(self, temp_workspace):
+    async def test_quality_gate_allows_llm_judgement_unavailable_by_default(self, temp_workspace):
         command_service = _CompletedCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
         run = FactoryRun(
@@ -1528,6 +1555,40 @@ class TestOrchestrationStageExecutor:
         )
 
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
+
+        assert result.status == "success"
+        assert "qa_llm_required=False" in str(result.output)
+        assert "qa_llm_judgement_ready=False" in str(result.output)
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_fails_when_llm_judgement_unavailable_and_explicitly_required(self, temp_workspace):
+        command_service = _CompletedCommandService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_quality_gate_llm_required_unavailable",
+            config=FactoryConfig(name="test-run", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        report_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/report.json"))
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(
+                {
+                    "passed": True,
+                    "score": 96,
+                    "critical_issue_count": 0,
+                    "warnings": ["qa_llm_judgement_unavailable"],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_quality_gate(
+            run,
+            context={"qa_target": "Quality gate", "qa_require_llm_judgement": True},
+        )
 
         assert result.status == "failed"
         assert "qa_llm_required=True" in str(result.output)
@@ -1596,6 +1657,48 @@ class TestOrchestrationStageExecutor:
         assert executor.commands_seen == [["npm", "test"], ["npm", "run", "build"]]
         assert "workspace_checks_passed=True" in str(result.output)
         assert "runtime/qa/workspace-validation.json" in result.artifacts
+        assert f"workspace/roles/qa/{run.id}/workspace-validation.json" in result.artifacts
+        assert "workspace/qa/latest.workspace-validation.json" in result.artifacts
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_installs_node_dependencies_before_scripts(self, temp_workspace):
+        command_service = _CompletedCommandService()
+        executor = _WorkspaceValidationStageExecutor(temp_workspace, command_service, exit_codes=[0, 0])
+        run = FactoryRun(
+            id="factory_test_quality_gate_npm_install",
+            config=FactoryConfig(name="test-run", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        (temp_workspace / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {"build": "vite build"},
+                    "dependencies": {"marked": "^12.0.0"},
+                    "devDependencies": {"vite": "^5.4.0"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        report_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/report.json"))
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps({"passed": True, "score": 92, "critical_issue_count": 0}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
+
+        assert result.status == "success"
+        assert executor.commands_seen == [
+            ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"],
+            ["npm", "run", "build"],
+        ]
+        validation_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/workspace-validation.json"))
+        payload = json.loads(validation_path.read_text(encoding="utf-8"))
+        assert payload["commands"][0]["phase"] == "prepare"
+        assert payload["commands"][1]["phase"] == "check"
 
     def test_workspace_quality_command_resolves_windows_cmd_shims(self, temp_workspace, monkeypatch):
         command_service = _CompletedCommandService()

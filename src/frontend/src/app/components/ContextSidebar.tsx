@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { MessageSquare, FileText, Brain, Database, Camera, Bot } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { DialoguePanel, DialogueEvent } from '@/app/components/DialoguePanel';
@@ -7,12 +7,14 @@ import { MemoryPanel } from '@/app/components/MemoryPanel';
 import { CognitionPanel } from '@/app/components/CognitionPanel';
 import { SnapshotPanel } from '@/app/components/SnapshotPanel';
 import type { ResidentStatusPayload } from '@/app/types/appContracts';
+import type { LogEntry } from '@/types/log';
 
 export type ContextTab = 'dialogue' | 'memos' | 'memory' | 'snapshot' | 'agi';
 
 interface ContextSidebarProps {
     // Dialogue Props
     dialogueEvents: DialogueEvent[];
+    runtimeEvents?: LogEntry[];
     live: boolean;
     dialogueLoading: boolean;
     onClearDialogueLogs?: () => void | Promise<void>;
@@ -56,6 +58,7 @@ interface AnthroState {
 
 export function ContextSidebar({
     dialogueEvents,
+    runtimeEvents = [],
     live,
     dialogueLoading,
     onClearDialogueLogs,
@@ -89,6 +92,10 @@ export function ContextSidebar({
         setUncontrolledActiveTab(tab);
         onActiveTabChange?.(tab);
     }, [onActiveTabChange]);
+    const visibleDialogueEvents = useMemo(
+        () => mergeDialogueAndRuntimeEvents(dialogueEvents, runtimeEvents),
+        [dialogueEvents, runtimeEvents],
+    );
 
     return (
         <div data-testid="context-sidebar" className="flex h-full glass-bubble border-l-0 overflow-hidden">
@@ -156,7 +163,7 @@ export function ContextSidebar({
                             </div>
                             <div className="flex-1 min-h-0 relative">
                                 <DialoguePanel
-                                    events={dialogueEvents}
+                                    events={visibleDialogueEvents}
                                     live={live}
                                     loading={dialogueLoading}
                                     onClearLogs={onClearDialogueLogs}
@@ -324,6 +331,95 @@ export function ContextSidebar({
     );
 }
 
+function mergeDialogueAndRuntimeEvents(
+    dialogueEvents: DialogueEvent[],
+    runtimeEvents: LogEntry[],
+): DialogueEvent[] {
+    const adaptedRuntimeEvents = runtimeEvents
+        .map((entry, index) => runtimeEventToDialogueEvent(entry, index))
+        .filter((event): event is DialogueEvent => event !== null);
+    return [...dialogueEvents, ...adaptedRuntimeEvents].slice(-300);
+}
+
+function runtimeEventToDialogueEvent(entry: LogEntry, index: number): DialogueEvent | null {
+    const message = String(entry.message || '').trim();
+    const title = String(entry.title || '').trim();
+    const details = String(entry.details || '').trim();
+    const contentParts = [title, message, details].filter(Boolean);
+    if (!contentParts.length) return null;
+
+    const meta = entry.meta && typeof entry.meta === 'object' ? entry.meta : {};
+    const taskId = firstStringValue(meta, ['task_id', 'taskId', 'project_id', 'projectId']);
+    const status = inferRuntimeResultStatus(entry);
+    const content = status
+        ? `Result: ${status} - ${contentParts.join(' · ')}`
+        : contentParts.join(' · ');
+
+    return {
+        seq: index,
+        eventId: entry.id,
+        speaker: inferRuntimeSpeaker(entry),
+        type: status ? 'result' : 'event',
+        content,
+        timestamp: entry.timestamp,
+        refs: {
+            task_id: taskId || undefined,
+            phase: firstStringValue(meta, ['phase', 'stage']) || undefined,
+        },
+        meta,
+    };
+}
+
+function firstStringValue(meta: Record<string, unknown>, keys: string[]): string {
+    for (const key of keys) {
+        const value = meta[key];
+        if (typeof value === 'string' && isMeaningfulRuntimeRef(value)) return value.trim();
+        if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+    }
+    return '';
+}
+
+function isMeaningfulRuntimeRef(value: string): boolean {
+    const token = value.trim().toLowerCase();
+    return Boolean(token) && token !== '-' && token !== 'unknown' && token !== 'none' && token !== 'null';
+}
+
+function inferRuntimeSpeaker(entry: LogEntry): DialogueEvent['speaker'] {
+    const source = `${entry.source || ''} ${entry.title || ''} ${entry.message || ''}`.toLowerCase();
+    if (source.includes('director')) return 'Director';
+    if (source.includes('qa') || source.includes('quality')) return 'QA';
+    if (source.includes('review')) return 'Reviewer';
+    if (source.includes('pm')) return 'PM';
+    return 'System';
+}
+
+function inferRuntimeResultStatus(entry: LogEntry): string {
+    const meta = entry.meta && typeof entry.meta === 'object' ? entry.meta : {};
+    const okValue = meta.ok;
+    if (typeof okValue === 'boolean') return okValue ? 'PASS' : 'FAIL';
+
+    const exitCodeValue = meta.exit_code ?? meta.exitCode;
+    if (typeof exitCodeValue === 'number' && Number.isFinite(exitCodeValue)) {
+        return exitCodeValue === 0 ? 'PASS' : 'FAIL';
+    }
+    if (typeof exitCodeValue === 'string' && exitCodeValue.trim()) {
+        const parsed = Number(exitCodeValue);
+        if (Number.isFinite(parsed)) return parsed === 0 ? 'PASS' : 'FAIL';
+    }
+
+    const token = `${entry.level || ''} ${entry.title || ''} ${entry.message || ''}`.toLowerCase();
+    const exitMatch = /\bexit(?:_code)?\s*[=:]\s*(-?\d+)\b/.exec(token);
+    if (exitMatch) {
+        const parsed = Number(exitMatch[1]);
+        if (Number.isFinite(parsed)) return parsed === 0 ? 'PASS' : 'FAIL';
+    }
+    if (entry.level === 'error' || token.includes('fail') || token.includes('failed')) return 'FAIL';
+    if (entry.level === 'success' || token.includes('=ok') || token.includes('pass') || token.includes('completed')) {
+        return 'PASS';
+    }
+    return '';
+}
+
 function AgiMetric({ label, value }: { label: string; value: string }) {
     return (
         <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
@@ -353,4 +449,3 @@ function TabButton({ active, onClick, icon, label, testId }: { active: boolean; 
         </button>
     );
 }
-

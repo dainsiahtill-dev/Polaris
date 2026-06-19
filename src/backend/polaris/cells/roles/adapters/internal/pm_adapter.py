@@ -113,8 +113,27 @@ _PM_SCOPE_PATH_SUFFIXES = {
     ".yml",
 }
 _PM_NON_PATH_SCOPE_RE = re.compile(r"[\s,，、；;：:。]|[\u4e00-\u9fff]")
+_PM_ROOT_WORKSPACE_HINT_RE = re.compile(
+    r"(?:工作区根|仓库根|项目根|workspace\s+root|repo(?:sitory)?\s+root|root\s+directory)",
+    re.IGNORECASE,
+)
+_PM_PYTHON_HINT_RE = re.compile(r"(?:\bpython\b|标准库|pytest|命令行|cli\b)", re.IGNORECASE)
+_PM_README_HINT_RE = re.compile(r"(?:\breadme(?:\.md)?\b|运行说明|说明如何运行)", re.IGNORECASE)
+_PM_SOURCE_FILE_HINT_RE = re.compile(
+    r"(?:源码|代码文件|真实代码文件|source\s+file|code\s+file|implementation|可运行)",
+    re.IGNORECASE,
+)
+_PM_BARE_FILENAME_HINT_RE = re.compile(r"`?([A-Za-z][A-Za-z0-9_-]{2,})(?:\.py)?`?")
+_PM_EXPLICIT_FILE_PATH_RE = re.compile(
+    r"(?<![A-Za-z0-9_./-])"
+    r"([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*"
+    r"\.(?:css|html|js|jsx|json|md|mjs|py|toml|ts|tsx|yaml|yml))"
+    r"(?![A-Za-z0-9_./-])",
+    re.IGNORECASE,
+)
 _PM_PROMPT_DIRECTIVE_MAX_CHARS = 18_000
 _PM_RETRY_DIRECTIVE_MAX_CHARS = 6_000
+_PM_CONTRACT_SCOPE_PATH_LIMIT = 6
 _PM_PLAN_DIRECTIVE_REDACTED = "[redacted planning context; source docs retained separately]"
 _PM_PLAN_FORBIDDEN_TEXT_REPLACEMENTS = (
     (re.compile(r"\byou\s+are\b", re.IGNORECASE), "operator context"),
@@ -144,6 +163,35 @@ _PM_SCHEMA_PLACEHOLDER_VALUES = {
     "task description",
     "untitled task",
 }
+_PM_META_DIAGNOSTIC_TITLES = {
+    "事实已补齐",
+    "任务数",
+    "当前任务数",
+    "待生成任务",
+    "待生成蓝图",
+}
+_PM_META_DIAGNOSTIC_TEXT_RE = re.compile(
+    r"(?:"
+    r"requirements\.md\s*已读取.*需求边界清晰|"
+    r"需求边界清晰.*requirements\.md\s*已读取|"
+    r"需新建\s*\d+\s*个任务.*依赖链|"
+    r"当前任务数\s*[:：]?\s*\d+|"
+    r"任务数\s*[:：]?\s*\d+"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+_PM_NON_DELIVERY_CONSTRAINT_TEXT_RE = re.compile(
+    r"(?:"
+    r"^无现有代码基\s*[,，]?\s*需从零构建$|"
+    r"验收维度强调|"
+    r"教学[/／]考核点|"
+    r"必须形成依赖链|"
+    r"避免并行冲突|"
+    r"^design$|"
+    r"^执行至少\s*\d+\s*组测试用例.*全部通过$"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _pm_text(value: Any) -> str:
@@ -217,9 +265,60 @@ def _pm_is_dependency_chain_text(value: Any) -> bool:
 
 def _pm_raw_task_is_dependency_chain(raw: dict[str, Any]) -> bool:
     return any(
-        _pm_is_dependency_chain_text(raw.get(key))
-        for key in ("title", "subject", "goal", "description", "backlog_ref")
+        _pm_is_dependency_chain_text(raw.get(key)) for key in ("title", "subject", "goal", "description", "backlog_ref")
     )
+
+
+def _pm_flatten_raw_path_values(value: Any) -> list[str]:
+    if isinstance(value, list | tuple | set):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [item.strip() for item in re.split(r"[,\n]", value) if item.strip()]
+    if value is None:
+        return []
+    token = str(value).strip()
+    return [token] if token else []
+
+
+def _pm_raw_task_has_explicit_concrete_target(raw: dict[str, Any]) -> bool:
+    candidates: list[str] = []
+    for key in ("target_files", "files"):
+        candidates.extend(_pm_flatten_raw_path_values(raw.get(key)))
+    inline_source = "\n".join(
+        str(raw.get(key) or "") for key in ("description", "goal", "scope") if raw.get(key) is not None
+    )
+    candidates.extend(_pm_extract_inline_list_field(inline_source, "target_files"))
+    concrete_targets, _scope_paths = _pm_split_concrete_targets_and_scopes(candidates)
+    return bool(concrete_targets)
+
+
+def _pm_raw_task_is_non_delivery_constraint(raw: dict[str, Any]) -> bool:
+    if _pm_raw_task_has_explicit_concrete_target(raw):
+        return False
+    text = "\n".join(
+        _pm_title_fragment(raw.get(key) or "")
+        for key in ("title", "subject", "goal", "description", "backlog_ref")
+        if raw.get(key) is not None
+    )
+    text_without_action = re.sub(r"^(?:实现|完成|补齐)\s*", "", text).strip()
+    return bool(
+        _PM_NON_DELIVERY_CONSTRAINT_TEXT_RE.search(text)
+        or _PM_NON_DELIVERY_CONSTRAINT_TEXT_RE.search(text_without_action)
+    )
+
+
+def _pm_raw_task_is_meta_diagnostic(raw: dict[str, Any]) -> bool:
+    title = _pm_title_fragment(raw.get("title") or raw.get("subject") or "")
+    title_without_action = re.sub(r"^(?:实现|完成|补齐)\s*", "", title).strip()
+    if title_without_action in _PM_META_DIAGNOSTIC_TITLES:
+        return True
+
+    text = "\n".join(
+        str(raw.get(key) or "")
+        for key in ("title", "subject", "goal", "description", "scope", "backlog_ref")
+        if raw.get(key) is not None
+    )
+    return bool(_PM_META_DIAGNOSTIC_TEXT_RE.search(text))
 
 
 def _pm_is_prompt_echo_response(text: str) -> bool:
@@ -303,6 +402,116 @@ def _pm_path_token_from_subject(subject: str) -> str:
     if ascii_tokens:
         return ascii_tokens[0]
     return "product"
+
+
+def _pm_is_concrete_target_file_path(path: str) -> bool:
+    token = str(path or "").strip().strip("'\"").replace("\\", "/").rstrip("/")
+    if not token:
+        return False
+    leaf = token.rsplit("/", 1)[-1]
+    return leaf in _PM_SCOPE_PATH_FILENAMES or Path(leaf).suffix.lower() in _PM_SCOPE_PATH_SUFFIXES
+
+
+def _pm_split_concrete_targets_and_scopes(paths: list[str]) -> tuple[list[str], list[str]]:
+    target_files: list[str] = []
+    scope_paths: list[str] = []
+    for path in paths:
+        token = str(path or "").strip()
+        if not token:
+            continue
+        if _pm_is_concrete_target_file_path(token):
+            if token not in target_files:
+                target_files.append(token)
+            continue
+        if token not in scope_paths:
+            scope_paths.append(token)
+    return target_files, scope_paths
+
+
+def _pm_normalize_explicit_file_path(value: str) -> str:
+    token = str(value or "").strip().strip("`'\"")
+    token = token.replace("\\", "/").lstrip("./")
+    if not token or token.startswith("/") or ".." in token.split("/"):
+        return ""
+    if not _pm_is_concrete_target_file_path(token):
+        return ""
+    if token.lower() == "readme.md":
+        return "README.md"
+    return token
+
+
+def _pm_extract_concrete_file_paths_from_text(text: str) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for match in _PM_EXPLICIT_FILE_PATH_RE.finditer(str(text or "")):
+        token = _pm_normalize_explicit_file_path(str(match.group(1) or ""))
+        key = token.lower()
+        if token and key not in seen:
+            paths.append(token)
+            seen.add(key)
+    return paths
+
+
+def _pm_append_unique_path(paths: list[str], path: str) -> None:
+    token = str(path or "").strip()
+    if not token:
+        return
+    lowered = {item.lower() for item in paths}
+    if token.lower() not in lowered:
+        paths.append(token)
+
+
+def _pm_root_source_filename_from_text(text: str) -> str:
+    source = str(text or "")
+    lower = source.lower()
+
+    if "calculator" in lower or "计算器" in source:
+        return "calculator.py"
+    if "guess" in lower and "number" in lower:
+        return "guess_number.py"
+
+    for match in _PM_BARE_FILENAME_HINT_RE.finditer(source):
+        stem = str(match.group(1) or "").strip().lower()
+        if not stem or stem in _STOPWORDS:
+            continue
+        if stem in {"readme", "pytest", "npm", "test", "tests", "python", "cli", "todo", "fixme", "stub"}:
+            continue
+        if stem in {"calculator", "calc"}:
+            return "calculator.py"
+        if stem in {"main", "app", "cli"}:
+            return f"{stem}.py"
+
+    if _PM_PYTHON_HINT_RE.search(source):
+        return "main.py"
+    return ""
+
+
+def _pm_root_workspace_target_files_from_context(
+    *,
+    title: str,
+    goal: str,
+    description: str,
+    directive: str,
+) -> list[str]:
+    combined = "\n".join(item for item in (title, goal, description, directive) if str(item or "").strip())
+    if not _PM_ROOT_WORKSPACE_HINT_RE.search(combined):
+        return []
+
+    task_text = "\n".join(item for item in (title, goal, description) if str(item or "").strip())
+    targets: list[str] = []
+    source_context = task_text or combined
+    for explicit_target in _pm_extract_concrete_file_paths_from_text(source_context):
+        _pm_append_unique_path(targets, explicit_target)
+
+    if _PM_SOURCE_FILE_HINT_RE.search(source_context):
+        source_file = _pm_root_source_filename_from_text(source_context + "\n" + directive)
+        if source_file:
+            _pm_append_unique_path(targets, source_file)
+
+    if _PM_README_HINT_RE.search(source_context):
+        _pm_append_unique_path(targets, "README.md")
+
+    return targets
 
 
 class PMAdapter(BaseRoleAdapter):
@@ -951,12 +1160,20 @@ class PMAdapter(BaseRoleAdapter):
 
         if raw_tasks:
             contracts: list[dict[str, Any]] = []
+            non_delivery_constraint_skips = 0
             for item in raw_tasks:
                 if not isinstance(item, dict):
                     continue
                 if _pm_raw_task_is_dependency_chain(item):
                     continue
+                if _pm_raw_task_is_meta_diagnostic(item):
+                    continue
+                if _pm_raw_task_is_non_delivery_constraint(item):
+                    non_delivery_constraint_skips += 1
+                    continue
                 contracts.append(self._normalize_task_contract(item, len(contracts) + 1, directive))
+            if non_delivery_constraint_skips >= 2 and len(contracts) < 2:
+                return []
             return self._apply_projection_contract_hint(
                 [item for item in contracts if item],
                 projection_hint=projection_hint,
@@ -1253,15 +1470,40 @@ class PMAdapter(BaseRoleAdapter):
         )
         inline_target_files = _pm_extract_inline_list_field(inline_field_source, "target_files")
         inline_scope_paths = _pm_extract_inline_list_field(inline_field_source, "scope_paths")
-        scope_values = raw.get("target_files") or inline_target_files
-        if not scope_values:
-            scope_values = raw.get("scope_paths") or inline_scope_paths or raw.get("scope")
-        scope_items = self._normalize_list(scope_values)
-        scope_items = self._normalize_scope_path_list(scope_items)
+        target_values = raw.get("target_files") or inline_target_files
+        scope_values = raw.get("scope_paths") or inline_scope_paths or raw.get("scope")
+        target_items = self._normalize_scope_path_list(self._normalize_list(target_values))
+        scope_items = self._normalize_scope_path_list(self._normalize_list(scope_values))
+        target_files, target_directory_scopes = _pm_split_concrete_targets_and_scopes(target_items)
+        scope_file_targets, _scope_directory_paths = _pm_split_concrete_targets_and_scopes(scope_items)
+        if not target_items and scope_file_targets:
+            target_files = [*target_files, *scope_file_targets]
+        root_workspace_targets = _pm_root_workspace_target_files_from_context(
+            title=title,
+            goal=goal,
+            description=description,
+            directive=directive,
+        )
+        if root_workspace_targets and not target_files:
+            target_files = [*target_files, *root_workspace_targets]
+
+        if target_items:
+            merged_scope_items = [
+                *target_files,
+                *scope_items,
+                *target_directory_scopes,
+            ]
+        else:
+            merged_scope_items = [
+                *scope_items,
+                *target_directory_scopes,
+                *target_files,
+            ]
+        scope_items = list(dict.fromkeys(item for item in merged_scope_items if item))
         if not scope_items:
             scope_items = self._infer_scope_from_title(title)
         scope_text = ", ".join(scope_items[:4]) if scope_items else "src/"
-        scope_paths = scope_items[:4] if scope_items else ["src/", "tests/"]
+        scope_paths = scope_items[:_PM_CONTRACT_SCOPE_PATH_LIMIT] if scope_items else ["src/", "tests/"]
 
         steps = self._normalize_list(raw.get("steps") or raw.get("execution_checklist"))
         if len(steps) < 2:
@@ -1322,7 +1564,7 @@ class PMAdapter(BaseRoleAdapter):
             "description": description or f"实现 {title}，并满足验收标准。",
             "scope": scope_text,
             "scope_paths": scope_paths,
-            "target_files": scope_paths,
+            "target_files": list(dict.fromkeys(target_files[:4])),
             "steps": steps,
             "acceptance": acceptance,
             "acceptance_criteria": acceptance,

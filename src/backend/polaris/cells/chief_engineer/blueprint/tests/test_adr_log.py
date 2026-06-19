@@ -124,22 +124,16 @@ class TestADRDecisionLog(unittest.TestCase):
 
     def test_double_supersede_does_not_remark(self) -> None:
         log = ADRDecisionLog(self.workspace)
-        first = log.register(
-            RegisterADRCommandV1(title="a", decision="d", owner="ce", workspace=self.workspace)
-        )
+        first = log.register(RegisterADRCommandV1(title="a", decision="d", owner="ce", workspace=self.workspace))
         log.register(
-            RegisterADRCommandV1(
-                title="b", decision="d", owner="ce", workspace=self.workspace, supersedes=first.adr_id
-            )
+            RegisterADRCommandV1(title="b", decision="d", owner="ce", workspace=self.workspace, supersedes=first.adr_id)
         )
         after_first = log.load(first.adr_id)
         assert after_first is not None
         history_len = len(after_first.history)
         # A second ADR superseding the already-superseded predecessor must be a no-op.
         log.register(
-            RegisterADRCommandV1(
-                title="c", decision="d", owner="ce", workspace=self.workspace, supersedes=first.adr_id
-            )
+            RegisterADRCommandV1(title="c", decision="d", owner="ce", workspace=self.workspace, supersedes=first.adr_id)
         )
         after_second = log.load(first.adr_id)
         assert after_second is not None

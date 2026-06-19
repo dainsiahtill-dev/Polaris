@@ -89,6 +89,12 @@ export interface RoleInternalContext {
   lastEventAt: number | null;
   currentTaskId: string | null;
   currentTaskTitle: string | null;
+  /** Reference to the most recent stored full context (click to fetch detail). */
+  latestContextSnapshotRef: string | null;
+  /** Most recent call ID for this role. */
+  latestCallId: string | null;
+  /** Most recent turn ID for this role. */
+  latestTurnId: string | null;
   detail: string;
 }
 
@@ -703,6 +709,12 @@ export function buildContextOSModel(input: {
         ? `${roleEvents.length} 事件`
         : '待命';
 
+    // Find the most recent call with a context snapshot ref
+    const lastCallWithSnapshot = roleEvents.find((event) => event.contextSnapshotRef);
+    const latestContextSnapshotRef = lastCallWithSnapshot ? lastCallWithSnapshot.contextSnapshotRef : null;
+    const latestCallId = lastCallWithSnapshot ? (lastCallWithSnapshot as any).callId || null : null;
+    const latestTurnId = lastCallWithSnapshot ? lastCallWithSnapshot.turnId : null;
+
     return {
       roleId: role.id,
       title: role.title,
@@ -723,6 +735,9 @@ export function buildContextOSModel(input: {
       lastEventAt,
       currentTaskId,
       currentTaskTitle,
+      latestContextSnapshotRef,
+      latestCallId,
+      latestTurnId,
       detail,
     };
   }

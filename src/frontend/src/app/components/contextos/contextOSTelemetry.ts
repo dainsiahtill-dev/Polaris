@@ -63,6 +63,12 @@ export interface ContextOSEvent {
   contextItems: number | null;
   /** 上下文 token 规模（context.build total_tokens 或 llm context_tokens_after）；缺失 null。 */
   contextTokens: number | null;
+  /** SHA-256 reference to the stored full context (post-compression messages). */
+  contextSnapshotRef: string | null;
+  /** SHA-256 of the serialized prompt (for integrity/audit). */
+  promptHash: string | null;
+  /** Correlates with the turn transaction this call belongs to. */
+  turnId: string | null;
   /** 是否为上下文装配 / 投影事件（按事件名/消息识别 context.build / prompt_context / projection）。 */
   isProjection: boolean;
   /** 是否为一次离散 LLM 调用（llm_completed / llm_failed 或旧版 invoke_done / invoke_error）。 */
@@ -324,6 +330,9 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const snapshotHash = nonEmptyString(meta['snapshot_hash']);
   const requestHash = nonEmptyString(meta['request_hash']);
   const contextHash = nonEmptyString(meta['context_hash']) || requestHash || null;
+  const contextSnapshotRef = nonEmptyString(meta['contextSnapshotRef']) || nonEmptyString(meta['context_snapshot_ref']);
+  const promptHash = nonEmptyString(meta['promptHash']) || nonEmptyString(meta['prompt_hash']);
+  const turnId = nonEmptyString(meta['turnId']) || nonEmptyString(meta['turn_id']);
 
   // 真实 per-call 用量（来自 journal `llm` 通道 raw.data，经 parseLlmStreamLine 注入 meta）。
   const usagePromptTokens = toFiniteOrNull(meta['promptTokens']) ?? 0;
@@ -387,6 +396,9 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     contextHash,
     contextItems,
     contextTokens,
+    contextSnapshotRef: contextSnapshotRef || null,
+    promptHash: promptHash || null,
+    turnId: turnId || null,
     isProjection,
     isCall,
     category,

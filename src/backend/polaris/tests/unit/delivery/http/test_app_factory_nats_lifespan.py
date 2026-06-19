@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -64,6 +65,30 @@ async def test_lifespan_skips_managed_nats_when_nats_disabled(
         pass
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_lifespan_enables_log_pipeline_jetstream_publish_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_lifespan_dependencies(monkeypatch)
+    monkeypatch.delenv("KERNELONE_JETSTREAM_PUBLISH", raising=False)
+
+    async def fake_ensure_local_nats_runtime(_url: str) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "polaris.infrastructure.messaging.nats.server_runtime.ensure_local_nats_runtime",
+        fake_ensure_local_nats_runtime,
+    )
+    settings = Settings(
+        workspace=str(tmp_path),
+        nats=NATSConfig(enabled=True, required=True, url="nats://127.0.0.1:4222"),
+    )
+
+    async with lifespan(_make_app(settings)):
+        assert os.environ["KERNELONE_JETSTREAM_PUBLISH"] == "1"
 
 
 @pytest.mark.asyncio

@@ -315,12 +315,38 @@ describe('PMWorkspace history panel', () => {
     expect(strip).toHaveTextContent('Qwen3-Max');
   });
 
-  it('auto-opens realtime activity when PM runtime events arrive', async () => {
+  it('keeps the task contract view when historical PM runtime events arrive while idle', async () => {
     render(
       <PMWorkspace
         tasks={[]}
         pmState={{}}
         pmRunning={false}
+        onBackToMain={vi.fn()}
+        onTogglePm={vi.fn()}
+        onRunPmOnce={vi.fn()}
+        workspace="C:/Temp/Product"
+        processStreamEvents={[
+          {
+            id: 'pm-live-1',
+            timestamp: '2026-05-23T00:00:00Z',
+            level: 'info',
+            source: 'Process',
+            message: 'PM live process event',
+          },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByTestId('pm-task-panel-mock')).toBeInTheDocument();
+    expect(screen.queryByTestId('pm-activity-panel-mock')).not.toBeInTheDocument();
+  });
+
+  it('auto-opens realtime activity when live PM runtime events arrive while running', async () => {
+    render(
+      <PMWorkspace
+        tasks={[]}
+        pmState={{}}
+        pmRunning={true}
         onBackToMain={vi.fn()}
         onTogglePm={vi.fn()}
         onRunPmOnce={vi.fn()}

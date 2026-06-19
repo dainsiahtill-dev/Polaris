@@ -1300,15 +1300,105 @@ const DIRECTOR_EXECUTION_BLOCKER_LABELS: Record<string, string> = {
 };
 
 const DIRECTOR_HARD_BLOCKER_ISSUES = new Set(Object.keys(DIRECTOR_EXECUTION_BLOCKER_LABELS));
+const DIRECTOR_STALE_QUEUE_BLOCKER_ISSUES = new Set(['director_no_tasks', 'director_no_ready_tasks']);
+const DIRECTOR_BLUEPRINT_BLOCKER_ISSUES = new Set([
+  'director_ready_tasks_missing_blueprints',
+  'director_ready_tasks_invalid_blueprints',
+]);
 
-function directorExecutionBlockers(diagnostics: DirectorDiagnosticsResponse | null): string[] {
+function isDirectorDiagnosticCompleted(diagnostics: DirectorDiagnosticsResponse | null): boolean {
+  if (!diagnostics) {
+    return false;
+  }
+  const total = Number(diagnostics.tasks?.total ?? 0);
+  const completed = Number(diagnostics.tasks?.completed ?? 0);
+  return total > 0 && completed >= total && diagnostics.status?.running !== true;
+}
+
+function effectiveDirectorMissingBlueprintTaskIds(
+  diagnostics: DirectorDiagnosticsResponse | null,
+  snapshotBlueprintTaskIds?: ReadonlySet<string>,
+): string[] {
+  return (diagnostics?.tasks?.missing_blueprint_task_ids || [])
+    .map((taskId) => String(taskId || '').trim())
+    .filter((taskId) => taskId.length > 0)
+    .filter((taskId) => !snapshotBlueprintTaskIds?.has(toTaskToken(taskId)));
+}
+
+function hasEffectiveDirectorInvalidBlueprints(diagnostics: DirectorDiagnosticsResponse | null): boolean {
+  if (!diagnostics) {
+    return false;
+  }
+  if ((diagnostics.tasks?.invalid_blueprint_task_ids || []).length > 0) {
+    return true;
+  }
+  const diagnosticIssues = [
+    ...(diagnostics.execution_blockers || []),
+    ...(diagnostics.issues || []),
+  ];
+  return diagnosticIssues.some((issue) => String(issue || '').trim() === 'director_ready_tasks_invalid_blueprints');
+}
+
+function canUseSnapshotReadyTasks(
+  diagnostics: DirectorDiagnosticsResponse | null,
+  snapshotReadyTaskCount = 0,
+  snapshotBlueprintTaskIds?: ReadonlySet<string>,
+): boolean {
+  if (!diagnostics || snapshotReadyTaskCount <= 0) {
+    return false;
+  }
+  if (
+    hasEffectiveDirectorInvalidBlueprints(diagnostics)
+    || effectiveDirectorMissingBlueprintTaskIds(diagnostics, snapshotBlueprintTaskIds).length > 0
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function filterDirectorQueueBlockers(
+  blockers: string[],
+  diagnostics: DirectorDiagnosticsResponse | null,
+  snapshotReadyTaskCount = 0,
+  snapshotBlueprintTaskIds?: ReadonlySet<string>,
+): string[] {
+  const suppressStaleQueueBlockers = canUseSnapshotReadyTasks(
+    diagnostics,
+    snapshotReadyTaskCount,
+    snapshotBlueprintTaskIds,
+  );
+  const suppressMissingBlueprintBlocker = Boolean(
+    diagnostics
+    && !hasEffectiveDirectorInvalidBlueprints(diagnostics)
+    && effectiveDirectorMissingBlueprintTaskIds(diagnostics, snapshotBlueprintTaskIds).length === 0,
+  );
+  return blockers.filter((issue) => {
+    if (suppressStaleQueueBlockers && DIRECTOR_STALE_QUEUE_BLOCKER_ISSUES.has(issue)) {
+      return false;
+    }
+    if (suppressMissingBlueprintBlocker && issue === 'director_ready_tasks_missing_blueprints') {
+      return false;
+    }
+    return true;
+  });
+}
+
+function directorExecutionBlockers(
+  diagnostics: DirectorDiagnosticsResponse | null,
+  snapshotReadyTaskCount = 0,
+  snapshotBlueprintTaskIds?: ReadonlySet<string>,
+): string[] {
   if (!diagnostics) {
     return [];
   }
+  if (isDirectorDiagnosticCompleted(diagnostics)) {
+    return [];
+  }
   if (Array.isArray(diagnostics.execution_blockers) && diagnostics.execution_blockers.length > 0) {
-    return diagnostics.execution_blockers
+    const blockers = diagnostics.execution_blockers
       .map((issue) => String(issue || '').trim())
       .filter((issue) => issue.length > 0);
+    return filterDirectorQueueBlockers(blockers, diagnostics, snapshotReadyTaskCount, snapshotBlueprintTaskIds);
   }
   if (diagnostics.status?.running) {
     return [];
@@ -1317,11 +1407,20 @@ function directorExecutionBlockers(diagnostics: DirectorDiagnosticsResponse | nu
   if (hasExplicitExecutionSignal && diagnostics.can_execute !== false) {
     return [];
   }
-  return (diagnostics.issues || []).filter((issue) => DIRECTOR_HARD_BLOCKER_ISSUES.has(issue));
+  return filterDirectorQueueBlockers(
+    (diagnostics.issues || []).filter((issue) => DIRECTOR_HARD_BLOCKER_ISSUES.has(issue)),
+    diagnostics,
+    snapshotReadyTaskCount,
+    snapshotBlueprintTaskIds,
+  );
 }
 
-function formatDirectorExecutionBlockReason(diagnostics: DirectorDiagnosticsResponse | null): string {
-  const blockers = directorExecutionBlockers(diagnostics);
+function formatDirectorExecutionBlockReason(
+  diagnostics: DirectorDiagnosticsResponse | null,
+  snapshotReadyTaskCount = 0,
+  snapshotBlueprintTaskIds?: ReadonlySet<string>,
+): string {
+  const blockers = directorExecutionBlockers(diagnostics, snapshotReadyTaskCount, snapshotBlueprintTaskIds);
   if (blockers.length === 0) {
     return '';
   }
@@ -1337,6 +1436,9 @@ function DirectorReadinessDiagnosticsStrip({
   onRefresh,
   compact = false,
   workspace,
+  snapshotReadyTaskCount = 0,
+  snapshotTaskTotal = 0,
+  snapshotBlueprintTaskIds,
 }: {
   diagnostics: DirectorDiagnosticsResponse | null;
   isLoading: boolean;
@@ -1344,11 +1446,47 @@ function DirectorReadinessDiagnosticsStrip({
   onRefresh: () => void;
   compact?: boolean;
   workspace: string;
+  snapshotReadyTaskCount?: number;
+  snapshotTaskTotal?: number;
+  snapshotBlueprintTaskIds?: ReadonlySet<string>;
 }) {
-  const issues = diagnostics?.issues || [];
-  const executionBlockers = directorExecutionBlockers(diagnostics);
-  const visibleIssues = [...new Set([...executionBlockers, ...issues])].slice(0, compact ? 1 : 3);
+  const completed = isDirectorDiagnosticCompleted(diagnostics);
+  const suppressStaleQueueIssues = canUseSnapshotReadyTasks(
+    diagnostics,
+    snapshotReadyTaskCount,
+    snapshotBlueprintTaskIds,
+  );
+  const effectiveMissingBlueprintTaskIds = effectiveDirectorMissingBlueprintTaskIds(
+    diagnostics,
+    snapshotBlueprintTaskIds,
+  );
+  const suppressMissingBlueprintIssue = Boolean(
+    diagnostics
+    && !hasEffectiveDirectorInvalidBlueprints(diagnostics)
+    && effectiveMissingBlueprintTaskIds.length === 0,
+  );
+  const issues = completed
+    ? (diagnostics?.issues || []).filter((issue) => !DIRECTOR_HARD_BLOCKER_ISSUES.has(issue))
+    : diagnostics?.issues || [];
+  const filteredIssues = issues.filter(
+    (issue) => (
+      (!suppressStaleQueueIssues || !DIRECTOR_STALE_QUEUE_BLOCKER_ISSUES.has(issue))
+      && (!suppressMissingBlueprintIssue || issue !== 'director_ready_tasks_missing_blueprints')
+    ),
+  );
+  const executionBlockers = directorExecutionBlockers(
+    diagnostics,
+    snapshotReadyTaskCount,
+    snapshotBlueprintTaskIds,
+  );
+  const visibleIssues = [...new Set([...executionBlockers, ...filteredIssues])].slice(0, compact ? 1 : 3);
   const blocked = executionBlockers.length > 0;
+  const stateLabel = completed ? 'completed' : blocked ? 'blocked' : 'ready';
+  const displayedReadyTaskCount = Math.max(diagnostics?.tasks.ready_to_execute ?? 0, snapshotReadyTaskCount);
+  const displayedTaskTotal = Math.max(diagnostics?.tasks.total ?? 0, snapshotTaskTotal);
+  const taskReadinessLabel = completed
+    ? `completed ${diagnostics?.tasks.completed ?? 0}/${diagnostics?.tasks.total ?? 0}`
+    : `ready ${displayedReadyTaskCount}/${displayedTaskTotal}`;
   const llmValues = diagnostics?.llm
     ? [
         diagnostics.llm.state || (diagnostics.llm.ok ? 'ready' : 'blocked'),
@@ -1397,10 +1535,10 @@ function DirectorReadinessDiagnosticsStrip({
                   data-testid="director-readiness-state"
                 >
                   {blocked ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
-                  {blocked ? 'blocked' : 'ready'}
+                  {stateLabel}
                 </div>
                 <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
-                  ready {diagnostics.tasks.ready_to_execute}/{diagnostics.tasks.total}
+                  {taskReadinessLabel}
                 </span>
                 <span className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
                   worker {diagnostics.workers.idle}/{diagnostics.workers.total} idle
@@ -1444,9 +1582,9 @@ function DirectorReadinessDiagnosticsStrip({
                 label="任务"
                 endpoint={diagnostics.tasks.source}
                 values={[
-                  `ready ${diagnostics.tasks.ready_to_execute}/${diagnostics.tasks.total}`,
-                  ...(diagnostics.tasks.missing_blueprint_task_ids?.length
-                    ? [`missing BP ${diagnostics.tasks.missing_blueprint_task_ids.length}`]
+                  taskReadinessLabel,
+                  ...(effectiveMissingBlueprintTaskIds.length
+                    ? [`missing BP ${effectiveMissingBlueprintTaskIds.length}`]
                     : []),
                   ...(diagnostics.tasks.invalid_blueprint_task_ids?.length
                     ? [`invalid BP ${diagnostics.tasks.invalid_blueprint_task_ids.length}`]
@@ -1681,11 +1819,11 @@ export function DirectorWorkspace({
     const eventCount = executionLogs.length + llmStreamEvents.length + processStreamEvents.length;
     const previousCount = lastRealtimeEventCountRef.current;
     lastRealtimeEventCountRef.current = eventCount;
-    if (eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
+    if (!directorRunning || eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
     if (activeView !== 'activity') {
       setActiveView('activity');
     }
-  }, [activeView, executionLogs.length, llmStreamEvents.length, processStreamEvents.length]);
+  }, [activeView, directorRunning, executionLogs.length, llmStreamEvents.length, processStreamEvents.length]);
 
   // 用户手动点击导航时记录偏好
   const handleViewChange = useCallback((view: DirectorActiveView) => {
@@ -2248,6 +2386,33 @@ export function DirectorWorkspace({
     executionTasks.forEach((task) => mapping.set(task.id, task));
     return mapping;
   }, [executionTasks]);
+  const snapshotReadyTaskCount = useMemo(
+    () =>
+      executionTasks.filter((task) =>
+        (task.status === 'pending' || task.status === 'running') &&
+        Boolean(String(task.blueprintId || task.blueprintPath || '').trim()),
+      ).length,
+    [executionTasks],
+  );
+  const snapshotBlueprintTaskIds = useMemo(() => {
+    const taskIds = new Set<string>();
+    for (const task of visibleTasks) {
+      const blueprintRef = readTaskString(task, [
+        'blueprint_id',
+        'blueprintId',
+        'blueprint_path',
+        'runtime_blueprint_path',
+      ]);
+      if (!blueprintRef) {
+        continue;
+      }
+      for (const candidate of resolveTaskIdentityCandidates(task)) {
+        taskIds.add(candidate);
+      }
+    }
+    return taskIds;
+  }, [visibleTasks]);
+  const snapshotTaskTotal = executionTasks.length;
   const directorStarting = Boolean(isStarting);
   const directorStopping = Boolean(isStopping);
   const isExecuting = directorRunning || directorStarting || directorStopping;
@@ -2602,8 +2767,12 @@ export function DirectorWorkspace({
   }, [onToggleDirector, workspace]);
 
   const directorDiagnosticExecutionReason = useMemo(
-    () => formatDirectorExecutionBlockReason(directorDiagnostics.data),
-    [directorDiagnostics.data],
+    () => formatDirectorExecutionBlockReason(
+      directorDiagnostics.data,
+      snapshotReadyTaskCount,
+      snapshotBlueprintTaskIds,
+    ),
+    [directorDiagnostics.data, snapshotBlueprintTaskIds, snapshotReadyTaskCount],
   );
   const executionBlockReasonForStart = factoryMode
     ? '工厂模式下由 Factory 编排 Director，不能在嵌入层直接启动。'
@@ -2972,6 +3141,9 @@ export function DirectorWorkspace({
             onRefresh={() => void loadDirectorDiagnostics()}
             compact
             workspace={workspace}
+            snapshotReadyTaskCount={snapshotReadyTaskCount}
+            snapshotTaskTotal={snapshotTaskTotal}
+            snapshotBlueprintTaskIds={snapshotBlueprintTaskIds}
           />
         </section>
       ) : (
@@ -2982,6 +3154,9 @@ export function DirectorWorkspace({
           onRefresh={() => void loadDirectorDiagnostics()}
           compact
           workspace={workspace}
+          snapshotReadyTaskCount={snapshotReadyTaskCount}
+          snapshotTaskTotal={snapshotTaskTotal}
+          snapshotBlueprintTaskIds={snapshotBlueprintTaskIds}
         />
       )}
       {directorRunEvidence.runId && (

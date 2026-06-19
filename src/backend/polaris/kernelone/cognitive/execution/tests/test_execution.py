@@ -5,9 +5,10 @@ from __future__ import annotations
 import pytest
 from polaris.kernelone.cognitive.execution.acting_handler import ActingPhaseHandler
 from polaris.kernelone.cognitive.execution.cautious_policy import CautiousExecutionPolicy, ExecutionPath
+from polaris.kernelone.cognitive.execution.pipeline import CognitivePipeline
 from polaris.kernelone.cognitive.execution.rollback_manager import RollbackManager
 from polaris.kernelone.cognitive.execution.thinking_engine import ThinkingPhaseEngine
-from polaris.kernelone.cognitive.perception.models import IntentGraph, IntentNode
+from polaris.kernelone.cognitive.perception.models import IntentGraph, IntentNode, UncertaintyAssessment
 from polaris.kernelone.cognitive.types import ClarityLevel, RiskLevel
 
 
@@ -110,6 +111,51 @@ async def test_thinking_phase_produces_output(thinking_engine, intent_graph_read
     output = await thinking_engine.run_thinking_phase(intent_graph_read, rec, None, None)
     assert output.confidence == 0.7
     assert ClarityLevel.CERTAIN <= output.clarity_level <= ClarityLevel.FULL_TRANSPARENT
+
+
+def test_acting_handler_only_accepts_explicit_actions(acting_handler):
+    assert acting_handler.can_execute_action("read README.md") is True
+    assert acting_handler.can_execute_action("[mode:materialize]\n范围: style.css") is False
+    assert acting_handler.can_execute_action("实现响应式 CSS 样式与布局") is False
+
+
+@pytest.mark.asyncio
+async def test_pipeline_does_not_execute_materialize_request_as_action(tmp_path):
+    pipeline = CognitivePipeline(workspace=str(tmp_path))
+    graph = IntentGraph(
+        graph_id="materialize_request",
+        nodes=(
+            IntentNode(
+                node_id="n1",
+                intent_type="unknown",
+                content="[mode:materialize]\n范围: style.css",
+                confidence=0.0,
+                source_event_id="test",
+            ),
+        ),
+        edges=(),
+        chains=(),
+        session_id="test",
+        created_at="2026-06-19",
+        updated_at="2026-06-19",
+    )
+    uncertainty = UncertaintyAssessment(
+        uncertainty_score=0.2,
+        confidence_lower=0.0,
+        confidence_upper=0.3,
+        recommended_action="thinking",
+    )
+
+    result = await pipeline.execute(
+        "[mode:materialize]\n范围: style.css",
+        graph,
+        uncertainty,
+    )
+
+    assert result.path_taken == ExecutionPath.THINKING
+    assert result.thinking_output is not None
+    assert result.acting_output is None
+    assert result.blocked is False
 
 
 @pytest.mark.asyncio

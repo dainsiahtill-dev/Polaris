@@ -335,6 +335,25 @@ def test_resolve_mutation_target_guard_violation_rejects_extra_out_of_scope_writ
     assert "snake_game/test_game.py" in violation
 
 
+def test_resolve_mutation_target_guard_violation_rejects_bare_basename_for_scoped_target() -> None:
+    context_message = "请仅修改 src/main.py，并继续落地"
+    invocations = [
+        {
+            "tool_name": "write_file",
+            "arguments": {"file": "main.py", "content": "print('wrong path')"},
+            "effect_type": ToolEffectType.WRITE,
+            "execution_mode": ToolExecutionMode.WRITE_SERIAL,
+        }
+    ]
+
+    violation = resolve_mutation_target_guard_violation(context_message, invocations)
+
+    assert isinstance(violation, str)
+    assert "mutation write target drift" in violation
+    assert "main.py" in violation
+    assert "src/main.py" in violation
+
+
 @pytest.mark.asyncio
 async def test_execute_turn_forces_retry_on_non_tool_decision_for_mutation(monkeypatch) -> None:
     controller = TurnTransactionController(

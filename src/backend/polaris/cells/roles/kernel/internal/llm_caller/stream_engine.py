@@ -117,6 +117,15 @@ class StreamEngine:
                 result["context_os_audit"] = dict(context_os_audit)
             return result
 
+        def _extract_context_snapshot_ref(request: Any) -> str | None:
+            """Extract context_snapshot_ref from an AIRequest's context dict, if present."""
+            ctx = getattr(request, "context", None)
+            if isinstance(ctx, dict):
+                ref = ctx.get("context_snapshot_ref")
+                if isinstance(ref, str) and ref.strip():
+                    return ref.strip()
+            return None
+
         def _current_slo(elapsed_ms: float) -> dict[str, Any]:
             return build_stream_slo_metrics(
                 elapsed_ms=elapsed_ms,
@@ -135,6 +144,7 @@ class StreamEngine:
                 "native_tool_mode": active_native_tool_mode,
                 "tool_protocol": active_tool_protocol,
                 "native_tool_calling_fallback": False,
+                "context_snapshot_ref": _extract_context_snapshot_ref(active_request),
             }
             payload.update(_current_slo(elapsed_ms))
             if error_type:
@@ -168,6 +178,7 @@ class StreamEngine:
                     "response_format_mode": prepared.response_format_mode,
                     "compression_applied": context_result.compression_applied if context_result else False,
                     "turn_round": turn_round,
+                    "context_snapshot_ref": _extract_context_snapshot_ref(prepared.ai_request),
                 }
             ),
         )
@@ -504,6 +515,7 @@ class StreamEngine:
                     "native_tool_calling_fallback": False,
                     "compression_applied": context_result.compression_applied if context_result else False,
                     "turn_round": turn_round,
+                    "context_snapshot_ref": _extract_context_snapshot_ref(active_request),
                     **_current_slo(elapsed_ms),
                 }
             ),

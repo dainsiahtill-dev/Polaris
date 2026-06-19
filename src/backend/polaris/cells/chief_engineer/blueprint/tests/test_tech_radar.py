@@ -88,9 +88,7 @@ class TestTechRadarLedger(unittest.TestCase):
             )
         )
         radar.register(
-            RegisterTechRadarCommandV1(
-                library="react", ring=TechRadarRing.ADOPT, owner="ce", workspace=self.workspace
-            )
+            RegisterTechRadarCommandV1(library="react", ring=TechRadarRing.ADOPT, owner="ce", workspace=self.workspace)
         )
         violations = radar.check_stack_policy(["React", "moment.js", "bower", "vue"])
         libs = {v.library for v in violations}
@@ -100,9 +98,7 @@ class TestTechRadarLedger(unittest.TestCase):
     def test_check_stack_policy_latest_ring_wins(self) -> None:
         radar = TechRadarLedger(self.workspace)
         first = radar.register(
-            RegisterTechRadarCommandV1(
-                library="webpack", ring=TechRadarRing.HOLD, owner="ce", workspace=self.workspace
-            )
+            RegisterTechRadarCommandV1(library="webpack", ring=TechRadarRing.HOLD, owner="ce", workspace=self.workspace)
         )
         # Move it back to adopt -> no longer a violation.
         radar.update_ring(
@@ -134,9 +130,7 @@ class TestTechRadarLedger(unittest.TestCase):
     def test_supersede_deprecates_predecessor(self) -> None:
         radar = TechRadarLedger(self.workspace)
         first = radar.register(
-            RegisterTechRadarCommandV1(
-                library="enzyme", ring=TechRadarRing.ADOPT, owner="ce", workspace=self.workspace
-            )
+            RegisterTechRadarCommandV1(library="enzyme", ring=TechRadarRing.ADOPT, owner="ce", workspace=self.workspace)
         )
         radar.register(
             RegisterTechRadarCommandV1(
@@ -154,9 +148,7 @@ class TestTechRadarLedger(unittest.TestCase):
     def test_load_tolerates_invalid_ring_on_disk(self) -> None:
         radar = TechRadarLedger(self.workspace)
         record = radar.register(
-            RegisterTechRadarCommandV1(
-                library="x", ring=TechRadarRing.ADOPT, owner="ce", workspace=self.workspace
-            )
+            RegisterTechRadarCommandV1(library="x", ring=TechRadarRing.ADOPT, owner="ce", workspace=self.workspace)
         )
         path = Path(resolve_logical_path(self.workspace, "runtime/tech_radar")) / f"{record.entry_id}.json"
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -172,9 +164,7 @@ class TestTechRadarLedger(unittest.TestCase):
         # independent of directory iteration order.
         radar = TechRadarLedger(self.workspace)
         a = radar.register(
-            RegisterTechRadarCommandV1(
-                library="samelib", ring=TechRadarRing.HOLD, owner="ce", workspace=self.workspace
-            )
+            RegisterTechRadarCommandV1(library="samelib", ring=TechRadarRing.HOLD, owner="ce", workspace=self.workspace)
         )
         b = radar.register(
             RegisterTechRadarCommandV1(
@@ -200,9 +190,7 @@ class TestTechRadarLedger(unittest.TestCase):
         self.assertEqual(radar.check_stack_policy(["samelib"]), violations)
 
     def test_build_event(self) -> None:
-        event = build_tech_radar_event(
-            entry_id="radar_x", workspace=self.workspace, action="ring:hold", actor="ce"
-        )
+        event = build_tech_radar_event(entry_id="radar_x", workspace=self.workspace, action="ring:hold", actor="ce")
         self.assertTrue(event.event_id.startswith("radarevt_"))
 
 

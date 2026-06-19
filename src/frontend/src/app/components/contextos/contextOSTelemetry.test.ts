@@ -219,6 +219,78 @@ describe('buildTelemetryFromStream', () => {
     expect(t.contextTokensLatest).toBe(3200);
   });
 
+  it('surfaces contextSnapshotRef, promptHash, and turnId from meta fields', () => {
+    const entry = logEntry({
+      id: 'llm-ctx-1',
+      timestamp: '2026-06-19T10:00:00Z',
+      level: 'success',
+      source: 'PM',
+      message: 'llm response completed',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'PM',
+        promptTokens: 1000,
+        completionTokens: 500,
+        totalTokens: 1500,
+        contextSnapshotRef: 'a1b2c3d4e5f6a7b8c9d0e1f2',
+        promptHash: 'f2e1d0c9b8a7',
+        turnId: 'turn-42',
+      },
+    });
+    const t = buildTelemetryFromStream([entry], [], []);
+    expect(t.events).toHaveLength(1);
+    const event = t.events[0];
+    expect(event.contextSnapshotRef).toBe('a1b2c3d4e5f6a7b8c9d0e1f2');
+    expect(event.promptHash).toBe('f2e1d0c9b8a7');
+    expect(event.turnId).toBe('turn-42');
+  });
+
+  it('accepts snake_case meta aliases for context snapshot fields', () => {
+    const entry = logEntry({
+      id: 'llm-ctx-2',
+      timestamp: '2026-06-19T10:00:01Z',
+      level: 'success',
+      source: 'Director',
+      message: 'llm response completed',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        context_snapshot_ref: 'abc123def456',
+        prompt_hash: 'hash789',
+        turn_id: 'turn-99',
+      },
+    });
+    const t = buildTelemetryFromStream([entry], [], []);
+    const event = t.events[0];
+    expect(event.contextSnapshotRef).toBe('abc123def456');
+    expect(event.promptHash).toBe('hash789');
+    expect(event.turnId).toBe('turn-99');
+  });
+
+  it('defaults contextSnapshotRef, promptHash, and turnId to null when absent', () => {
+    const entry = logEntry({
+      id: 'llm-plain',
+      timestamp: '2026-06-19T10:00:02Z',
+      level: 'success',
+      source: 'PM',
+      message: 'llm response completed',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'PM',
+        promptTokens: 100,
+        completionTokens: 50,
+      },
+    });
+    const t = buildTelemetryFromStream([entry], [], []);
+    const event = t.events[0];
+    expect(event.contextSnapshotRef).toBeNull();
+    expect(event.promptHash).toBeNull();
+    expect(event.turnId).toBeNull();
+  });
+
   it('classifies each event into the right category', () => {
     const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
     const byId = Object.fromEntries(t.events.map((e) => [e.id, e]));

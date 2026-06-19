@@ -191,9 +191,7 @@ def test_gate_on_stable_for_equal_rank(tmp_path: Path, monkeypatch: pytest.Monke
     assert result[0] is other
 
 
-def test_gate_on_empty_id_task_is_scored_and_survives(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_gate_on_empty_id_task_is_scored_and_survives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An empty-id task is scored by the cores (task_id="") and survives exactly once.
 
     The underlying scorer emits a ``WsjfScore`` for every dict, including one

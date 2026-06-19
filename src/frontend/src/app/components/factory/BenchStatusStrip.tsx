@@ -18,6 +18,9 @@ import type { FactoryBenchEvent, FactoryBenchSessionSummary } from '@/services/b
 
 interface BenchStatusStripProps {
   className?: string;
+  websocketLive?: boolean;
+  websocketReconnecting?: boolean;
+  websocketAttemptCount?: number;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -56,7 +59,12 @@ function lastBenchEvent(events: FactoryBenchEvent[]): FactoryBenchEvent | null {
   return null;
 }
 
-export function BenchStatusStrip({ className }: BenchStatusStripProps): JSX.Element | null {
+export function BenchStatusStrip({
+  className,
+  websocketLive,
+  websocketReconnecting = false,
+  websocketAttemptCount = 0,
+}: BenchStatusStripProps): JSX.Element | null {
   const { sessions, currentSession, events, isStreaming } = useFactoryBench({ autoSelect: 'newest' });
   const active = useMemo(
     () => (
@@ -87,6 +95,17 @@ export function BenchStatusStrip({ className }: BenchStatusStripProps): JSX.Elem
   const lastLabel = last
     ? `${last.type}${projectId ? ` · ${projectId}` : ''}${last.summary ? ` · ${last.summary}` : ''}`
     : '等待事件…';
+  const showWebsocketState = typeof websocketLive === 'boolean';
+  const websocketLabel = websocketReconnecting
+    ? `WS RECONNECTING${websocketAttemptCount > 0 ? ` #${websocketAttemptCount}` : ''}`
+    : websocketLive
+      ? 'WS LIVE'
+      : 'WS OFFLINE';
+  const websocketClass = websocketReconnecting
+    ? 'border-amber-400/30 bg-amber-400/10 text-amber-200'
+    : websocketLive
+      ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+      : 'border-rose-400/30 bg-rose-400/10 text-rose-200';
 
   return (
     <div
@@ -136,6 +155,21 @@ export function BenchStatusStrip({ className }: BenchStatusStripProps): JSX.Elem
       <span className="shrink-0 font-mono text-[10px] text-slate-600">
         {active.session_id}
       </span>
+
+      {showWebsocketState ? (
+        <span
+          className={cn(
+            'shrink-0 rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide',
+            websocketClass,
+          )}
+          data-testid="bench-strip-ws-status"
+          data-ws-live={websocketLive ? 'true' : 'false'}
+          data-ws-reconnecting={websocketReconnecting ? 'true' : 'false'}
+          data-ws-attempts={websocketAttemptCount}
+        >
+          {websocketLabel}
+        </span>
+      ) : null}
     </div>
   );
 }

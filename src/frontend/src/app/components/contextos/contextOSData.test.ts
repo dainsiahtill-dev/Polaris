@@ -265,6 +265,60 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(buildContextOSModel(baseInput({ telemetry: telemetryOf([], bigExec) })).telemetryWindowed).toBe(true);
   });
 
+  it('populates RoleInternalContext with latestContextSnapshotRef, latestCallId, and latestTurnId from WS telemetry', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({
+        id: 'c1',
+        timestamp: '2026-06-19T10:00:02Z',
+        level: 'success',
+        source: 'PM',
+        message: 'llm response completed',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'PM',
+          promptTokens: 1000,
+          completionTokens: 500,
+          contextSnapshotRef: 'a1b2c3d4e5f6a7b8c9d0e1f2',
+          promptHash: 'f2e1d0c9b8a7',
+          turnId: 'turn-42',
+        },
+      }),
+    ];
+    const telemetry = telemetryOf(llmStream, []);
+    const model = buildContextOSModel(baseInput({ telemetry }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+
+    expect(pm?.internalContext.latestContextSnapshotRef).toBe('a1b2c3d4e5f6a7b8c9d0e1f2');
+    expect(pm?.internalContext.latestTurnId).toBe('turn-42');
+  });
+
+  it('leaves latestContextSnapshotRef null when no event carries it', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({
+        id: 'c1',
+        timestamp: '2026-06-19T10:00:02Z',
+        level: 'success',
+        source: 'PM',
+        message: 'llm response completed',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'PM',
+          promptTokens: 100,
+          completionTokens: 50,
+        },
+      }),
+    ];
+    const telemetry = telemetryOf(llmStream, []);
+    const model = buildContextOSModel(baseInput({ telemetry }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+
+    expect(pm?.internalContext.latestContextSnapshotRef).toBeNull();
+    expect(pm?.internalContext.latestCallId).toBeNull();
+    expect(pm?.internalContext.latestTurnId).toBeNull();
+  });
+
   it('populates RoleInternalContext per role from live WS telemetry', () => {
     const model = buildContextOSModel(baseInput({ telemetry: telemetryOf() }));
     const pm = model.roles.find((r) => r.id === 'pm');

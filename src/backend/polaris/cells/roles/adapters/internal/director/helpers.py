@@ -99,8 +99,8 @@ def _seq_resolve_str(
 # -----------------------------------------------------------------------------
 
 _LOW_QUALITY_PATTERNS = (
-    re.compile(r"(?m)^\s*(?://|#|/\*|\*|<!--)\s*(?:TODO|FIXME|TBD)\b", re.IGNORECASE),
-    re.compile(r"(?m)^\s*(?:TODO|FIXME|TBD)\b(?::|\s*$)", re.IGNORECASE),
+    re.compile(r"(?m)^\s*(?://|#|/\*|\*|<!--)\s*(?:TODO|FIXME|TBD)\b"),
+    re.compile(r"(?m)^\s*(?:TODO|FIXME|TBD)\b(?::|\s*$)"),
     # "placeholder" as a CODE TOKEN is legitimate input-UI code: the HTML
     # attribute (placeholder="..."), object key (placeholder: ...), CSS
     # pseudo-element (::placeholder) / pseudo-class (:placeholder-shown),

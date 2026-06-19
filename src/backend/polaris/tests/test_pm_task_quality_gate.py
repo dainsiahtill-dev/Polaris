@@ -521,6 +521,42 @@ def test_unevidenced_prose_scope_still_rejected() -> None:
     assert report["ok"] is False
 
 
+def test_evaluate_pm_task_quality_rejects_director_tasks_with_empty_target_files() -> None:
+    payload = {
+        "tasks": [
+            {
+                "id": f"TASK-{index}",
+                "title": f"实现阶段 {index}",
+                "goal": f"完成 Markdown 预览器阶段 {index} 并可复现验证",
+                "description": "实现 Markdown 实时预览器相关能力。",
+                "assigned_to": "Director",
+                "scope_paths": ["src", "tests"],
+                "target_files": [],
+                "phase": "implementation",
+                "depends_on": [f"TASK-{index - 1}"] if index > 1 else [],
+                "execution_checklist": [
+                    "分析需要修改的真实文件",
+                    "实现功能并补充验证",
+                    "运行 `npm test` 并记录结果",
+                ],
+                "acceptance_criteria": [
+                    "执行 `npm test` 通过",
+                    "验证 `index.html`、`app.js` 和 `style.css` 已生成且非空",
+                ],
+                "backlog_ref": f"TASK-{index}",
+            }
+            for index in range(1, 11)
+        ]
+    }
+
+    report = evaluate_pm_task_quality(payload, docs_stage={})
+
+    issues = "\n".join(report.get("critical_issues") or [])
+    assert report["ok"] is False
+    assert "Director task requires file-level target_files or scope_paths" in issues
+    assert (report.get("score") or 100) < 100
+
+
 def test_unevidenced_bare_word_scope_still_rejected(tmp_path) -> None:
     """A bare English token with no sibling path and no existing dir stays invalid."""
     payload = {

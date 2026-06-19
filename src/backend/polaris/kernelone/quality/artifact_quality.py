@@ -7,6 +7,7 @@ import json
 import os
 import py_compile
 import re
+import shlex
 import shutil
 import subprocess
 from collections.abc import Iterable
@@ -464,6 +465,14 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
             )
         for script_name, script_value in scripts.items():
             script_text = str(script_value or "")
+            try:
+                shlex.split(script_text, posix=(os.name != "nt"))
+            except ValueError as exc:
+                errors.append(
+                    "Artifact quality scan failed: npm package manifest script "
+                    f"{str(script_name)!r} has invalid shell syntax in {relative_path}: {exc}"
+                )
+                continue
             if _PYTHON_COMMAND_IN_NPM_SCRIPT_RE.search(script_text):
                 errors.append(
                     "Artifact quality scan failed: npm package manifest contains "

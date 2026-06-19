@@ -305,6 +305,84 @@ Failed to parse action: 你是 Polaris PM，需要产出可执行任务合同。
         assert [item["id"] for item in result] == ["TASK-1", "TASK-2", "TASK-3"]
         assert all("→" not in item["title"] for item in result)
 
+    def test_json_meta_diagnostic_tasks_are_not_promoted_to_contracts(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        response = json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "title": "事实已补齐",
+                        "target_files": ["requirements.md"],
+                        "goal": "requirements.md 已读取，需求边界清晰。；满足需求: CLI 科学计算器",
+                    },
+                    {
+                        "id": "TASK-2",
+                        "title": "任务数",
+                        "scope": ["src", "tests"],
+                        "goal": "0 → 需新建 3 个任务形成依赖链。；满足需求: CLI 科学计算器",
+                    },
+                    {
+                        "id": "TASK-3",
+                        "title": "实现 CLI 科学计算器入口",
+                        "target_files": ["calculator.py"],
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+        result = adapter._extract_task_contracts(response, directive="CLI 科学计算器")
+
+        assert [item["id"] for item in result] == ["TASK-3"]
+        assert [item["title"] for item in result] == ["实现 CLI 科学计算器入口"]
+
+    def test_json_non_delivery_constraint_tasks_force_recovery(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        response = json.dumps(
+            {
+                "tasks": [
+                    {"id": "TASK-1", "title": "无现有代码基，需从零构建", "scope": ["src", "tests"]},
+                    {
+                        "id": "TASK-2",
+                        "title": "验收维度强调“基础字符串处理与条件/循环控制流”，实现需体现这些教学/考核点",
+                        "scope": ["src", "tests"],
+                    },
+                    {"id": "TASK-3", "title": "实现必须形成依赖链，避免并行冲突", "scope": ["src", "tests"]},
+                    {"id": "TASK-4", "title": "design", "scope": ["src/design", "tests"]},
+                    {"id": "TASK-5", "title": "实现calculator", "scope": ["src/calculator", "tests"]},
+                    {
+                        "id": "TASK-6",
+                        "title": "执行至少 5 组测试用例（含正常计算、括号优先级、除零、非法字符、空输入），全部通过",
+                        "scope": ["src", "tests"],
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+        assert adapter._extract_task_contracts(response, directive="CLI 科学计算器") == []
+
+    def test_json_test_implementation_with_explicit_target_is_preserved(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        response = json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "title": "执行至少 5 组测试用例并固化回归",
+                        "target_files": ["tests/test_calculator.py"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+        result = adapter._extract_task_contracts(response, directive="CLI 科学计算器")
+
+        assert [item["id"] for item in result] == ["TASK-1"]
+        assert result[0]["target_files"] == ["tests/test_calculator.py"]
+
 
 # ---------------------------------------------------------------------------
 # Task extraction from payload
@@ -517,7 +595,7 @@ class TestNormalizeTaskContract:
         result = adapter._normalize_task_contract(raw, 2, "")
 
         assert result["scope_paths"] == ["src/", "tests/"]
-        assert result["target_files"] == ["src/", "tests/"]
+        assert result["target_files"] == []
 
     def test_keeps_concrete_relative_scope_paths(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -535,31 +613,57 @@ class TestNormalizeTaskContract:
         raw = {
             "title": "README 编写与端到端验证",
             "description": (
-                '- **goal**: 交付运行说明文档，执行端到端测试。 '
+                "- **goal**: 交付运行说明文档，执行端到端测试。 "
                 '- **scope_paths**: [".", "tests"] '
                 '- **target_files**: ["README.md", "tests/test_calculator.py"] '
-                '- **steps**: 编写 README 与测试。'
+                "- **steps**: 编写 README 与测试。"
             ),
         }
 
         result = adapter._normalize_task_contract(raw, 3, "")
 
-        assert result["scope_paths"] == ["README.md", "tests/test_calculator.py"]
+        assert result["scope_paths"][:2] == ["README.md", "tests/test_calculator.py"]
         assert result["target_files"] == ["README.md", "tests/test_calculator.py"]
 
     def test_inline_target_files_accept_backticked_array(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         raw = {
             "title": "实现需求解析与工程骨架搭建",
-            "description": (
-                '- **target_files**: `["calculator.py", "README.md"]` '
-                "- **steps**: 创建实现与说明文档。"
-            ),
+            "description": ('- **target_files**: `["calculator.py", "README.md"]` - **steps**: 创建实现与说明文档。'),
         }
 
         result = adapter._normalize_task_contract(raw, 1, "")
 
         assert result["target_files"] == ["calculator.py", "README.md"]
+
+    def test_workspace_root_cli_requirement_uses_root_files_not_src_directory_targets(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+# Product Requirements — CLI 科学计算器
+
+## Goal
+- 实现一个命令行交互式计算器,支持 +、-、*、/ 及括号优先级的字符串解析与计算。
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。
+- 附 README.md 说明如何运行。
+""".strip()
+        raw = {
+            "id": "TASK-1",
+            "title": "实现关键约束",
+            "goal": "必须落盘真实代码文件到工作区根；创建 calculator.py、parser.py；附带 README.md；满足需求: CLI 科学计算器",
+            "target_files": ["src", "tests"],
+            "scope_paths": ["src", "tests"],
+        }
+
+        result = adapter._normalize_task_contract(raw, 1, directive)
+
+        assert result["target_files"] == ["calculator.py", "parser.py", "README.md"]
+        assert "src/" in result["scope_paths"]
+        assert "tests/" in result["scope_paths"]
+        assert "calculator.py" in result["scope_paths"]
+        assert "parser.py" in result["scope_paths"]
+        assert "README.md" in result["scope_paths"]
 
     def test_fallback_goal_does_not_echo_prompt_directive(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

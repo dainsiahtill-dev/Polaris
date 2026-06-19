@@ -207,6 +207,44 @@ def test_extract_target_files_includes_pyproject_toml() -> None:
     assert "infrastructure/config.py" in targets
 
 
+def test_extract_target_files_prefers_structured_scope_line_over_step_mentions() -> None:
+    message = (
+        "[mode:materialize]\n"
+        "范围: src/main.py, tests/test_cli.py, src/, tests/\n"
+        "执行步骤:\n"
+        "- 创建 main.py 作为程序入口，实现 REPL 交互循环\n"
+        "验收标准:\n"
+        "- python src/main.py 启动后进入交互模式\n"
+    )
+
+    targets = extract_target_files_from_message(message)
+
+    assert targets == ["src/main.py", "tests/test_cli.py"]
+
+
+def test_contract_retry_context_does_not_expand_scoped_target_to_bare_basename() -> None:
+    out = build_contract_retry_context(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "[mode:materialize]\n"
+                    "范围: src/main.py, tests/test_cli.py, src/, tests/\n"
+                    "执行步骤:\n"
+                    "- 创建 main.py 作为程序入口，实现 REPL 交互循环\n"
+                    "验收标准:\n"
+                    "- python src/main.py 启动后进入交互模式\n"
+                ),
+            }
+        ],
+        [{"name": "write_file"}, {"name": "read_file"}],
+    )
+
+    system = next(m["content"] for m in out if m["role"] == "system")
+    assert "Mutation target files detected from user request: src/main.py, tests/test_cli.py." in system
+    assert "src/main.py, tests/test_cli.py, main.py" not in system
+
+
 def test_retry_context_lists_all_detected_target_files_for_large_repair() -> None:
     targets = [
         "pyproject.toml",

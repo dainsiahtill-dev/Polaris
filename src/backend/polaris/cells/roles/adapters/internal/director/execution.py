@@ -108,6 +108,9 @@ class DirectorPatchExecutor:
         response: str,
         task_id: str,
         update_task_progress_fn: Any,
+        *,
+        allowed_tool_names: set[str] | None = None,
+        allow_patch_fallback: bool = True,
     ) -> list[dict[str, Any]]:
         """解析并执行工具调用
 
@@ -119,7 +122,9 @@ class DirectorPatchExecutor:
 
         tool_calls = parse_tool_calls(
             response,
-            allowed_tool_names={
+            allowed_tool_names=allowed_tool_names
+            if allowed_tool_names is not None
+            else {
                 "write_file",
                 "read_file",
                 "edit_file",
@@ -129,6 +134,8 @@ class DirectorPatchExecutor:
             },
         )
         if not tool_calls:
+            if not allow_patch_fallback:
+                return []
             return await self._execute_patch_file_format(response, task_id, update_task_progress_fn)
 
         results = []

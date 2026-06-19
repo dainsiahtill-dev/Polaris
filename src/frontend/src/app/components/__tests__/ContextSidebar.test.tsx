@@ -100,6 +100,64 @@ describe('ContextSidebar', () => {
       // Use getAllByText since offline appears in multiple places
       expect(screen.getAllByText(/离线/i)).toHaveLength(2);
     });
+
+    it('shows runtime stream events when dialogue events are empty', () => {
+      render(
+        <ContextSidebar
+          {...baseProps}
+          live={true}
+          runtimeEvents={[
+            {
+              id: 'bench-session-started',
+              timestamp: '2026-06-19T02:02:29.000Z',
+              level: 'success',
+              source: 'bench',
+              title: 'factory_bench.run.started',
+              message: 'factory-bench session started',
+              meta: { project_id: '-' },
+            },
+            {
+              id: 'bench-gate-1',
+              timestamp: '2026-06-19T02:02:30.000Z',
+              level: 'error',
+              source: 'bench',
+              title: 'factory_bench.gate.evaluated',
+              message: 'L1-01 gate:integration_qa_passed=FAIL',
+              meta: { project_id: 'L1-01', stage: 'quality_gate' },
+            },
+          ]}
+        />,
+      );
+
+      expect(screen.getAllByText(/L1-01/).length).toBeGreaterThan(0);
+      expect(screen.getByText(/integration_qa_passed=FAIL/)).toBeInTheDocument();
+      expect(screen.getByText(/总事件: 2/)).toBeInTheDocument();
+      expect(screen.getByText(/任务数: 1/)).toBeInTheDocument();
+      expect(screen.getByText(/成功率: 0%/)).toBeInTheDocument();
+    });
+
+    it('treats completed bench events with non-zero exit code as failures', () => {
+      render(
+        <ContextSidebar
+          {...baseProps}
+          live={true}
+          runtimeEvents={[
+            {
+              id: 'bench-project-completed',
+              timestamp: '2026-06-19T02:48:24.000Z',
+              level: 'success',
+              source: 'bench',
+              title: 'factory_bench.project.completed',
+              message: 'L2-07 exit=1 dur=329.6s',
+              meta: { project_id: 'L2-07', exit_code: 1 },
+            },
+          ]}
+        />,
+      );
+
+      expect(screen.getByText(/Result: FAIL - factory_bench.project.completed/)).toBeInTheDocument();
+      expect(screen.getByText(/成功率: 0%/)).toBeInTheDocument();
+    });
   });
 
   describe('AGI Tab Content', () => {

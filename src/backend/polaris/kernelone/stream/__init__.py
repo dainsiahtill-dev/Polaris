@@ -12,6 +12,7 @@ Design constraints:
 
 from __future__ import annotations
 
+from .backpressure_buffer import AsyncBackpressureBuffer
 from .ports import (
     AsyncByteStream,
     AsyncTextStream,
@@ -22,7 +23,6 @@ from .ports import (
     stream_from_async_gen,
     stream_from_sync_gen,
 )
-from .backpressure_buffer import AsyncBackpressureBuffer
 
 __all__ = [
     "AsyncBackpressureBuffer",

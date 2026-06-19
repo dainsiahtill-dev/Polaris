@@ -203,9 +203,7 @@ class TestPostMortemServiceSurface(unittest.TestCase):
                 workspace=self.workspace,
             )
         )
-        listed = list_post_mortems(
-            ListPostMortemsQueryV1(workspace=self.workspace, severity=IncidentSeverity.SEV2)
-        )
+        listed = list_post_mortems(ListPostMortemsQueryV1(workspace=self.workspace, severity=IncidentSeverity.SEV2))
         self.assertEqual([r.incident_id for r in listed], [record.incident_id])
         update_post_mortem_status(
             UpdatePostMortemStatusCommandV1(
