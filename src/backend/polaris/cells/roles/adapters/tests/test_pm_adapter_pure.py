@@ -702,6 +702,31 @@ class TestNormalizeTaskContract:
         assert result["target_files"] == ["README.md", "tests/test_calculator.py"]
         assert "tests/test_calculator.py" in result["scope_paths"]
 
+    def test_synthetic_root_cli_contracts_use_file_level_targets(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+# Product Requirements — CLI 科学计算器
+
+## Goal
+- 实现一个命令行交互式计算器,支持 +、-、*、/ 及括号优先级的字符串解析与计算,含输入校验与错误提示。
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。
+- 附 README.md 说明如何运行。
+- 关键验收维度: 基础字符串处理与条件/循环控制流。
+""".strip()
+
+        contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+        normalized, quality = adapter._evaluate_contract_quality(contracts)
+
+        assert quality["ok"] is True
+        assert int(quality["score"]) >= 80
+        assert [item["target_files"] for item in normalized] == [
+            ["calculator.py"],
+            ["calculator.py", "tests/test_calculator.py"],
+            ["README.md", "tests/test_calculator.py"],
+        ]
+
     def test_fallback_goal_does_not_echo_prompt_directive(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         raw = {"title": "**TASK-1"}

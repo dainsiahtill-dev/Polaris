@@ -997,6 +997,7 @@ async function startBackend(options = {}) {
 
   const backendEnv = buildPythonRuntimeEnv({
     ...process.env,
+    KERNELONE_CONTEXT_ADMIN_ENABLED: process.env.KERNELONE_CONTEXT_ADMIN_ENABLED || (app.isPackaged ? "0" : "1"),
     KERNELONE_DIRECTOR_RUNTIME_CODEGEN: process.env.KERNELONE_DIRECTOR_RUNTIME_CODEGEN || "1",
   }, python);
   if (backendEnv.KERNELONE_E2E_USE_REAL_SETTINGS === "1" && backendEnv.KERNELONE_HOME) {

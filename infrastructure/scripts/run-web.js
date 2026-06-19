@@ -259,6 +259,7 @@ async function main() {
     ...process.env,
     PYTHONUNBUFFERED: "1",
     PYTHONPATH: buildPythonPath(process.env, python),
+    KERNELONE_CONTEXT_ADMIN_ENABLED: process.env.KERNELONE_CONTEXT_ADMIN_ENABLED || "1",
     KERNELONE_BACKEND_PORT: String(backendPort),
     KERNELONE_BACKEND_TOKEN: token,
     KERNELONE_CORS_ORIGINS: corsArg,

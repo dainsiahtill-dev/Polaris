@@ -1071,6 +1071,13 @@ def main() -> int:
         summary=f"factory-bench session {bench_session_id or 'local'}: {len(selected)} project(s)",
         meta={"session_id": bench_session_id, "total": len(selected), "backend_url": bool(backend_url)},
     )
+    use_legacy_chain = bool(args.use_legacy_chain or args.director_dispatch_driver == "task-market")
+    if use_legacy_chain and not args.use_legacy_chain and args.director_dispatch_driver == "task-market":
+        print(
+            "[factory-bench] task-market dispatch requires the legacy subprocess chain; "
+            "using legacy chain for this run",
+            flush=True,
+        )
 
     for project in selected:
         pid = project["id"]
@@ -1087,7 +1094,7 @@ def main() -> int:
             meta={"session_id": bench_session_id, "title": project.get("title") or ""},
         )
         try:
-            if args.use_legacy_chain:
+            if use_legacy_chain:
                 chain = run_chain(
                     project,
                     workspace,
@@ -1165,7 +1172,7 @@ def main() -> int:
         )
         record["runtime_dir"] = str(runtime_dir) if runtime_dir else None
         record["chain"] = chain
-        if args.use_legacy_chain:
+        if use_legacy_chain:
             record["chain_results"] = read_chain_results(runtime_dir)
         else:
             record["chain_results"] = (

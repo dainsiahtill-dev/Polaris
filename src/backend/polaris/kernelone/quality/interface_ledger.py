@@ -26,8 +26,12 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
+from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
@@ -35,6 +39,31 @@ logger = logging.getLogger(__name__)
 
 _LEDGER_REL_PATH = "runtime/contracts/interface_ledger.json"
 _SCHEMA_VERSION = "interface-ledger/1"
+
+# In-process serialization for the load-modify-write below. ``write_json_atomic``
+# makes the FILE write atomic but NOT the read-modify-write, so without a guard two
+# concurrent CEConsumer fission threads (KERNELONE_TASK_MARKET_ROLE_POOLS includes
+# chief_engineer + concurrency>1) both load the same baseline and the later write
+# clobbers the earlier's first-writer-wins entries (lost write). Mirrors the guard
+# in ``file_ownership_ledger`` — see that module for the cross-process rationale.
+_PROCESS_LOCK = threading.Lock()
+
+
+@contextmanager
+def _ledger_write_lock(ledger_path: str) -> Iterator[None]:
+    """Serialize the whole load-modify-write of the ledger keyed by its path.
+
+    The thread lock serializes concurrent fission threads in this process; the
+    cross-process ``file_lock`` serializes other processes. It uses a DISTINCT
+    ``.rmw.lock`` sidecar — NOT the ``{path}.lock`` that ``write_json_atomic``
+    acquires internally — so the inner atomic write can still take its own lock
+    without self-deadlocking. Best-effort: a failed cross-process acquisition still
+    runs the body (degrading to the prior behaviour) rather than aborting fission.
+    """
+    with _PROCESS_LOCK, file_lock(f"{ledger_path}.rmw.lock") as acquired:
+        if not acquired:
+            logger.warning("interface ledger rmw lock not acquired (non-fatal); proceeding")
+        yield
 
 
 def _normalize_target(raw: Any) -> str:
@@ -101,34 +130,40 @@ def record_declared_interfaces(
     """
     if not steps:
         return
-    ledger = _load(workspace, cache_root)
-    files: dict[str, Any] = ledger["files"]
-    changed = False
-    for step in steps:
-        target = _normalize_target(step.get("target_file"))
-        if not target:
-            continue
-        identifiers = _string_list(step.get("interface_names"))
-        signatures = _string_list(step.get("signatures"))
-        if not identifiers and not signatures:
-            continue
-        entry = files.get(target)
-        if not isinstance(entry, dict):
-            entry = {"identifiers": [], "signatures": [], "declared_by": []}
-        entry["identifiers"] = _merge_names(_string_list(entry.get("identifiers")), identifiers)
-        entry["signatures"] = _merge_names(_string_list(entry.get("signatures")), signatures)
-        step_id = str(step.get("step_id") or "").strip()
-        if step_id:
-            entry["declared_by"] = _merge_names(_string_list(entry.get("declared_by")), [step_id])
-        files[target] = entry
-        changed = True
-    if not changed:
-        return
-    ledger["schema_version"] = _SCHEMA_VERSION
-    try:
-        write_json_atomic(_ledger_path(workspace, cache_root), ledger)
-    except OSError as exc:
-        logger.warning("interface ledger write failed (non-fatal): %s", exc)
+    ledger_path = _ledger_path(workspace, cache_root)
+    # Re-read UNDER the lock and merge at write time: the entire load-modify-write
+    # must be serialized, otherwise two concurrent fissions both load the same
+    # baseline and the later write clobbers the earlier's first-writer-wins entries
+    # (lost write) — mirrors the guard in ``file_ownership_ledger.record_file_owners``.
+    with _ledger_write_lock(ledger_path):
+        ledger = _load(workspace, cache_root)
+        files: dict[str, Any] = ledger["files"]
+        changed = False
+        for step in steps:
+            target = _normalize_target(step.get("target_file"))
+            if not target:
+                continue
+            identifiers = _string_list(step.get("interface_names"))
+            signatures = _string_list(step.get("signatures"))
+            if not identifiers and not signatures:
+                continue
+            entry = files.get(target)
+            if not isinstance(entry, dict):
+                entry = {"identifiers": [], "signatures": [], "declared_by": []}
+            entry["identifiers"] = _merge_names(_string_list(entry.get("identifiers")), identifiers)
+            entry["signatures"] = _merge_names(_string_list(entry.get("signatures")), signatures)
+            step_id = str(step.get("step_id") or "").strip()
+            if step_id:
+                entry["declared_by"] = _merge_names(_string_list(entry.get("declared_by")), [step_id])
+            files[target] = entry
+            changed = True
+        if not changed:
+            return
+        ledger["schema_version"] = _SCHEMA_VERSION
+        try:
+            write_json_atomic(ledger_path, ledger)
+        except OSError as exc:
+            logger.warning("interface ledger write failed (non-fatal): %s", exc)
 
 
 def read_declared_interfaces(

@@ -627,6 +627,15 @@ def _normalize_path(value: Any) -> str:
     return token.lower()
 
 
+def _canonical_pm_contract_output_path(value: str) -> str:
+    parts = [part for part in str(value or "").split("/") if part]
+    if not parts:
+        return ""
+    if parts[-1].lower() == "readme.md":
+        parts[-1] = "README.md"
+    return "/".join(parts)
+
+
 def _domain_path_roots(domain: str, scope_paths: dict[str, str]) -> set[str]:
     if domain == "tests":
         return {"tests"}
@@ -841,13 +850,14 @@ def _coerce_pm_path_to_workspace_relative(candidate: Any, workspace_full: Any) -
 
     relative = _workspace_relative_path(raw, workspace_full)
     if relative and _is_concrete_pm_scope_path(relative):
-        return relative, ""
+        return _canonical_pm_contract_output_path(relative), ""
 
     normalized_raw = raw.replace("\\", "/")
     is_absolute = os.path.isabs(raw) or bool(re.match(r"^[A-Za-z]:[\\/]", raw)) or normalized_raw.startswith("/")
     if not is_absolute:
         token = _normalize_path(raw)
-        return (token, "") if token and _is_concrete_pm_scope_path(token) else ("", "")
+        output_token = _canonical_pm_contract_output_path(token)
+        return (output_token, "") if output_token and _is_concrete_pm_scope_path(token) else ("", "")
 
     without_drive = re.sub(r"^[A-Za-z]:/", "", normalized_raw).strip("/")
     parts = [part for part in without_drive.split("/") if part]
@@ -875,7 +885,7 @@ def _coerce_pm_path_to_workspace_relative(candidate: Any, workspace_full: Any) -
             original_root = stripped_root
             if suffix_text and normalized_raw.lower().endswith("/" + suffix_text.lower()):
                 original_root = normalized_raw[: -len(suffix_text)].rstrip("/")
-            return token, original_root
+            return _canonical_pm_contract_output_path(token), original_root
     return "", ""
 
 

@@ -89,6 +89,61 @@ class TestMerge:
         assert declared["index.html"]["identifiers"] == ["game", "score", "restartBtn"]
 
 
+class TestConcurrentRecord:
+    """Regression: the load-modify-write must be serialized (mirrors the
+    file_ownership_ledger fix). Two concurrent CEConsumer fission threads both
+    load the same baseline; without a lock the later write clobbers the earlier's
+    declared identifiers (lost write) and the cross-file contract goes silently
+    incomplete — exactly the drift this ledger exists to prevent.
+    """
+
+    def test_two_concurrent_records_both_persist(self, tmp_path: Path) -> None:
+        import threading
+
+        ws = str(tmp_path)
+        start = threading.Barrier(2)
+
+        def _declare(step_id: str, target: str, name: str) -> None:
+            start.wait()
+            record_declared_interfaces(ws, ws, [{"step_id": step_id, "target_file": target, "interface_names": [name]}])
+
+        t1 = threading.Thread(target=_declare, args=("S1", "a.js", "alpha"))
+        t2 = threading.Thread(target=_declare, args=("S2", "b.js", "beta"))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        declared = read_declared_interfaces(ws, ws, ["a.js", "b.js"])
+        assert declared["a.js"]["identifiers"] == ["alpha"]
+        assert declared["b.js"]["identifiers"] == ["beta"]
+
+    def test_concurrent_same_file_unions_all_names(self, tmp_path: Path) -> None:
+        import threading
+
+        ws = str(tmp_path)
+        n = 8
+        start = threading.Barrier(n)
+
+        def _declare(idx: int) -> None:
+            start.wait()
+            record_declared_interfaces(
+                ws,
+                ws,
+                [{"step_id": f"S{idx}", "target_file": "shared.js", "interface_names": [f"sym{idx}"]}],
+            )
+
+        threads = [threading.Thread(target=_declare, args=(i,)) for i in range(n)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        identifiers = read_declared_interfaces(ws, ws, ["shared.js"])["shared.js"]["identifiers"]
+        # Every concurrent declaration must survive — no lost write under contention.
+        assert sorted(identifiers) == sorted(f"sym{i}" for i in range(n))
+
+
 class TestRenderAssumeContract:
     def test_empty_renders_nothing(self) -> None:
         assert render_assume_contract({}) == ""

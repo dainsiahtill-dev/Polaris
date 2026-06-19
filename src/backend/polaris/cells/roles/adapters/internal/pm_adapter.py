@@ -1721,6 +1721,8 @@ class PMAdapter(BaseRoleAdapter):
             return ""
 
         filename = parts[-1]
+        if filename.lower() == "readme.md":
+            return "/".join([*parts[:-1], "README.md"]) if parts[:-1] else "README.md"
         if token in _PM_SCOPE_PATH_FILENAMES or filename in _PM_SCOPE_PATH_FILENAMES:
             return token
         if Path(filename).suffix.lower() in _PM_SCOPE_PATH_SUFFIXES:
@@ -2224,6 +2226,80 @@ class PMAdapter(BaseRoleAdapter):
         if frontend_contracts:
             contracts = [
                 self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(frontend_contracts)
+            ]
+            return [item for item in contracts if isinstance(item, dict)]
+
+        root_workspace_targets = _pm_root_workspace_contract_targets_from_directive(directive)
+        if root_workspace_targets:
+            source_file, test_file, readme_file = root_workspace_targets
+            verification_targets = [target for target in (readme_file, test_file) if target]
+            root_contracts = [
+                {
+                    "id": "TASK-1",
+                    "title": f"实现 {domain_label} 可运行入口与核心解析模块",
+                    "goal": f"在工作区根交付 {domain_label} 的真实可运行代码文件。",
+                    "description": "建立命令行入口、核心解析/计算逻辑与错误处理骨架，禁止只写说明文档。",
+                    "scope": [source_file],
+                    "target_files": [source_file],
+                    "steps": [
+                        f"创建或更新 `{source_file}`，实现可运行 CLI 入口",
+                        "实现核心数据流、输入校验与错误提示",
+                        "运行语法检查确认入口文件可加载",
+                    ],
+                    "acceptance": [
+                        f"`{source_file}` 存在于工作区根且可执行",
+                        "运行核心命令可得到产品需求中的正常输出与错误输出",
+                    ],
+                    "phase": "requirements",
+                    "depends_on": [],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+                {
+                    "id": "TASK-2",
+                    "title": f"实现 {domain_label} 行为测试与边界验证",
+                    "goal": f"用自动化测试覆盖 {domain_label} 的核心行为与错误路径。",
+                    "description": "补齐测试文件，覆盖正常计算、优先级、括号、非法输入、除零等边界。",
+                    "scope": [source_file, test_file],
+                    "target_files": [source_file, test_file],
+                    "steps": [
+                        f"创建或更新 `{test_file}`，覆盖核心成功路径",
+                        "补充除零、非法字符、括号不匹配、退出命令等失败路径测试",
+                        "执行 `pytest -q` 并确保测试通过",
+                    ],
+                    "acceptance": [
+                        f"`{test_file}` 存在且包含可执行测试用例",
+                        "`pytest -q` 返回 PASS，并覆盖产品验收样例",
+                    ],
+                    "phase": "implementation",
+                    "depends_on": ["TASK-1"],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+                {
+                    "id": "TASK-3",
+                    "title": f"完善 {domain_label} README 与交付验收证据",
+                    "goal": f"交付 {domain_label} 的运行说明和可复现验收路径。",
+                    "description": "补齐 README 运行命令、示例输入输出、错误示例，并确认测试证据可复现。",
+                    "scope": verification_targets or [test_file],
+                    "target_files": verification_targets or [test_file],
+                    "steps": [
+                        "补充 README 运行命令、退出方式、正常示例与错误示例",
+                        "确认 README 示例与测试用例一致",
+                        "记录最终验证命令和结果",
+                    ],
+                    "acceptance": [
+                        "`README.md` 说明如何运行并包含示例输入输出",
+                        "`pytest -q` 返回 PASS，交付物包含源码、测试与文档",
+                    ],
+                    "phase": "verification",
+                    "depends_on": ["TASK-2"],
+                    "assigned_to": "Director",
+                    "metadata": dict(source_metadata),
+                },
+            ]
+            contracts = [
+                self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(root_contracts)
             ]
             return [item for item in contracts if isinstance(item, dict)]
 

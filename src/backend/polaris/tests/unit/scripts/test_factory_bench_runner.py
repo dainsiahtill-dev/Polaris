@@ -365,6 +365,53 @@ def test_run_chain_task_market_driver_plans_then_dispatches_market(
     assert "--fresh-market" in market_cmd
 
 
+def test_main_task_market_driver_uses_legacy_chain_without_explicit_flag(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_factory_bench.py",
+            "--project-ids",
+            "L1-01",
+            "--work-dir",
+            str(tmp_path),
+            "--director-dispatch-driver",
+            "task-market",
+        ],
+    )
+    monkeypatch.setattr(
+        bench,
+        "load_projects",
+        lambda: [{"id": "L1-01", "level": 1, "title": "Known", "brief": "Build something"}],
+    )
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "token")
+    monkeypatch.setattr(bench, "_push_bench_session_to_backend", lambda **_kwargs: "bench-task-market")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+
+    def _legacy_chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        calls.append("legacy")
+        raise KeyboardInterrupt()
+
+    def _http_chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        calls.append("http")
+        raise AssertionError("task-market dispatch must not use the HTTP factory runner path")
+
+    monkeypatch.setattr(bench, "run_chain", _legacy_chain)
+    monkeypatch.setattr(bench, "run_factory_chain", _http_chain)
+
+    result = bench.main()
+
+    assert result == 130
+    assert calls == ["legacy"]
+
+
 def test_main_marks_backend_session_failed_when_run_aborts(monkeypatch: Any, tmp_path: Path) -> None:
     completed: list[dict[str, Any]] = []
 
