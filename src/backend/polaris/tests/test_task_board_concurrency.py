@@ -101,3 +101,84 @@ def test_task_board_reopen_demotes_completed_task_back_to_pending(tmp_path) -> N
     assert child_after_reopen is not None
     assert parent.id in child_after_reopen.blocked_by
     assert child_after_reopen.status == TaskStatus.BLOCKED
+
+
+def test_task_board_failed_prerequisite_keeps_dependents_blocked(tmp_path) -> None:
+    """A FAILED prerequisite must NOT unblock its downstream dependents.
+
+    Only a SUCCESSFUL completion may flip BLOCKED -> PENDING. Otherwise workers
+    would pick up tasks whose dependency never produced its required artifacts,
+    violating the DAG dependency guarantee.
+    """
+    board = TaskBoard(str(tmp_path))
+    upstream = board.create(subject="failing-prerequisite")
+    downstream = board.create(subject="dependent-task", blocked_by=[upstream.id])
+
+    board.update_status(upstream.id, TaskStatus.FAILED)
+
+    downstream_after = board.get(downstream.id)
+    assert downstream_after is not None
+    assert downstream_after.status == TaskStatus.BLOCKED
+    assert upstream.id in downstream_after.blocked_by
+    assert all(t.id != downstream.id for t in board.list_ready())
+
+
+def test_task_board_cancelled_prerequisite_keeps_dependents_blocked(tmp_path) -> None:
+    """A CANCELLED prerequisite must also leave its dependents BLOCKED."""
+    board = TaskBoard(str(tmp_path))
+    upstream = board.create(subject="cancelled-prerequisite")
+    downstream = board.create(subject="dependent-task", blocked_by=[upstream.id])
+
+    board.update_status(upstream.id, TaskStatus.CANCELLED)
+
+    downstream_after = board.get(downstream.id)
+    assert downstream_after is not None
+    assert downstream_after.status == TaskStatus.BLOCKED
+    assert upstream.id in downstream_after.blocked_by
+
+
+def test_task_board_completed_prerequisite_unblocks_dependents(tmp_path) -> None:
+    """A SUCCESSFUL completion DOES unblock its downstream dependents."""
+    board = TaskBoard(str(tmp_path))
+    upstream = board.create(subject="successful-prerequisite")
+    downstream = board.create(subject="dependent-task", blocked_by=[upstream.id])
+
+    board.update_status(upstream.id, TaskStatus.COMPLETED)
+
+    downstream_after = board.get(downstream.id)
+    assert downstream_after is not None
+    assert downstream_after.status == TaskStatus.PENDING
+    assert upstream.id not in downstream_after.blocked_by
+    assert any(t.id == downstream.id for t in board.list_ready())
+
+
+def test_task_board_repeated_complete_is_idempotent_no_op(tmp_path) -> None:
+    """Re-applying the same terminal status must be a no-op.
+
+    Guards against clobbering the original completed_at, re-running dependency
+    unblocking, and appending a duplicate terminal event (e.g. an LLM tool
+    retry calling complete() twice).
+    """
+    board = TaskBoard(str(tmp_path))
+    task = board.create(subject="idempotent-complete")
+
+    first = board.update_status(task.id, TaskStatus.COMPLETED, result_summary="done")
+    assert first is not None
+    assert first.status == TaskStatus.COMPLETED
+    first_completed_at = first.completed_at
+    assert first_completed_at is not None
+
+    event_path = Path(resolve_runtime_path(str(tmp_path), "runtime/events/taskboard.terminal.events.jsonl"))
+    assert event_path.exists()
+    events_after_first = [line for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(events_after_first) == 1
+
+    second = board.update_status(task.id, TaskStatus.COMPLETED, result_summary="retry")
+    assert second is not None
+    assert second.status == TaskStatus.COMPLETED
+    # completed_at must be unchanged on the no-op re-entry.
+    assert second.completed_at == first_completed_at
+
+    events_after_second = [line for line in event_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    # No duplicate terminal event emitted.
+    assert len(events_after_second) == 1

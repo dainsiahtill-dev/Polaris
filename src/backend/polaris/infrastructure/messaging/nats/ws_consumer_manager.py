@@ -331,7 +331,7 @@ class JetStreamConsumerManager:
                 # Use a bounded pull wait so the task can observe cancellation.
                 msg = await asyncio.wait_for(
                     self._subscription.next_msg(),
-                    timeout=1.0,  # 1s interval for background polling
+                    timeout=1.0,  # Bounded wait so cancellation is observed promptly.
                 )
                 if msg:
                     try:

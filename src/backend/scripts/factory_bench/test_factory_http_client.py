@@ -4,19 +4,22 @@ import json
 import sys
 import unittest
 from email.message import Message
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend/scripts/factory_bench")
 
 from factory_http_client import (
+    _factory_event_payload,
     _http_get_json,
     _http_post_json,
+    _runtime_ws_url,
+    _status_from_factory_event,
     cancel_factory_run,
     get_audit_bundle,
     get_run_artifacts,
     get_run_status,
-    poll_run_until_terminal,
     start_factory_run,
+    wait_run_until_terminal,
 )
 
 
@@ -213,17 +216,39 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(req.full_url, "http://localhost:49977/v2/factory/runs/run-42")
         self.assertEqual(req.get_header("Authorization"), "Bearer t")
 
+    def test_get_run_status_with_workspace(self) -> None:
+        fake_resp = FakeHTTPResponse(json.dumps({"status": "running"}).encode("utf-8"))
+        with patch("urllib.request.urlopen", return_value=fake_resp) as mock_urlopen:
+            result = get_run_status(
+                "http://localhost:49977",
+                "run-42",
+                token="t",
+                workspace="/tmp/factory bench/L1-01",
+            )
+        self.assertEqual(result, {"status": "running"})
+        req = mock_urlopen.call_args[0][0]
+        self.assertEqual(
+            req.full_url,
+            "http://localhost:49977/v2/factory/runs/run-42?workspace=%2Ftmp%2Ffactory%20bench%2FL1-01",
+        )
+
     def test_cancel_factory_run(self) -> None:
         fake_resp = FakeHTTPResponse(json.dumps({"status": "cancelled"}).encode("utf-8"))
         with patch("urllib.request.urlopen", return_value=fake_resp) as mock_urlopen:
-            result = cancel_factory_run("http://localhost:49977", "run-42", reason="bench poll timeout", token="t")
+            result = cancel_factory_run(
+                "http://localhost:49977",
+                "run-42",
+                reason="bench event wait timeout",
+                token="t",
+                workspace="/tmp/ws",
+            )
         self.assertEqual(result, {"status": "cancelled"})
         req = mock_urlopen.call_args[0][0]
-        self.assertEqual(req.full_url, "http://localhost:49977/v2/factory/runs/run-42/control")
+        self.assertEqual(req.full_url, "http://localhost:49977/v2/factory/runs/run-42/control?workspace=%2Ftmp%2Fws")
         self.assertEqual(req.get_header("Authorization"), "Bearer t")
         body = json.loads(req.data.decode("utf-8"))
         self.assertEqual(body["action"], "cancel")
-        self.assertEqual(body["reason"], "bench poll timeout")
+        self.assertEqual(body["reason"], "bench event wait timeout")
 
     def test_get_audit_bundle(self) -> None:
         fake_resp = FakeHTTPResponse(json.dumps({"audit": "data"}).encode("utf-8"))
@@ -242,81 +267,87 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(req.full_url, "http://localhost:49977/v2/factory/runs/run-42/artifacts")
 
 
-class TestPollRunUntilTerminal(unittest.TestCase):
-    def test_poll_completes(self) -> None:
-        responses = [
-            {"status": "running"},
-            {"status": "completed", "result": "ok"},
-        ]
-        fake_resps = [FakeHTTPResponse(json.dumps(r).encode("utf-8")) for r in responses]
-        with patch("urllib.request.urlopen", side_effect=fake_resps) as mock_urlopen:
-            result = poll_run_until_terminal(
+class TestEventWaitUntilTerminal(unittest.TestCase):
+    def test_runtime_ws_url_encodes_workspace(self) -> None:
+        self.assertEqual(
+            _runtime_ws_url("http://localhost:49977", token="t", workspace="/tmp/factory bench/L1-01"),
+            "ws://localhost:49977/v2/ws/runtime?protocol=runtime.v2&token=t&workspace=%2Ftmp%2Ffactory%20bench%2FL1-01",
+        )
+
+    def test_factory_event_payload_accepts_pinned_channel(self) -> None:
+        message = {
+            "type": "EVENT",
+            "cursor": 12,
+            "event": {
+                "channel": "event.factory:run-42",
+                "run_id": "run-42",
+                "payload": {"type": "completed", "timestamp": "2026-06-19T00:00:00"},
+            },
+        }
+
+        result = _factory_event_payload(message, "run-42")
+
+        self.assertEqual(result, (12, {"type": "completed", "timestamp": "2026-06-19T00:00:00", "run_id": "run-42"}))
+
+    def test_factory_event_payload_rejects_other_run(self) -> None:
+        message = {
+            "type": "EVENT",
+            "event": {
+                "channel": "event.factory:run-99",
+                "run_id": "run-99",
+                "payload": {"type": "completed"},
+            },
+        }
+
+        self.assertIsNone(_factory_event_payload(message, "run-42"))
+
+    def test_status_from_factory_event_tracks_terminal_status(self) -> None:
+        status = _status_from_factory_event(
+            "run-42",
+            {"type": "stage_started", "stage": "director_dispatch"},
+            {},
+        )
+        self.assertEqual(status["status"], "running")
+        self.assertEqual(status["phase"], "director_dispatch")
+
+        completed = _status_from_factory_event("run-42", {"type": "completed"}, status)
+        self.assertEqual(completed["status"], "completed")
+
+    def test_wait_run_until_terminal_delegates_to_runtime_v2_waiter(self) -> None:
+        async def _fake_wait(
+            backend_url: str,
+            run_id: str,
+            *,
+            token: str = "",
+            workspace: str = "",
+            timeout_s: float = 5400.0,
+            on_status=None,
+            initial_status=None,
+        ):
+            self.assertEqual(backend_url, "http://localhost:49977")
+            self.assertEqual(run_id, "run-42")
+            self.assertEqual(token, "t")
+            self.assertEqual(workspace, "/tmp/ws")
+            self.assertEqual(timeout_s, 5.0)
+            self.assertEqual(initial_status, {"status": "running"})
+            if on_status is not None:
+                on_status({"run_id": run_id, "status": "completed"})
+            return {"run_id": run_id, "status": "completed"}
+
+        seen: list[dict[str, str]] = []
+        with patch("factory_http_client._wait_run_until_terminal_async", _fake_wait):
+            result = wait_run_until_terminal(
                 "http://localhost:49977",
                 "run-42",
                 token="t",
-                poll_interval_s=0.01,
+                workspace="/tmp/ws",
                 timeout_s=5.0,
+                initial_status={"status": "running"},
+                on_status=seen.append,
             )
-        self.assertEqual(result, {"status": "completed", "result": "ok"})
-        self.assertEqual(mock_urlopen.call_count, 2)
 
-    def test_poll_calls_on_status(self) -> None:
-        responses = [
-            {"status": "running"},
-            {"status": "failed", "error": "oops"},
-        ]
-        fake_resps = [FakeHTTPResponse(json.dumps(r).encode("utf-8")) for r in responses]
-        callback = MagicMock()
-        with patch("urllib.request.urlopen", side_effect=fake_resps):
-            result = poll_run_until_terminal(
-                "http://localhost:49977",
-                "run-42",
-                token="t",
-                poll_interval_s=0.01,
-                timeout_s=5.0,
-                on_status=callback,
-            )
-        self.assertEqual(result, {"status": "failed", "error": "oops"})
-        self.assertEqual(callback.call_count, 2)
-        callback.assert_any_call({"status": "running"})
-        callback.assert_any_call({"status": "failed", "error": "oops"})
-
-    def test_poll_timeout(self) -> None:
-        fake_resp = FakeHTTPResponse(json.dumps({"status": "running"}).encode("utf-8"))
-        with patch("urllib.request.urlopen", return_value=fake_resp):
-            result = poll_run_until_terminal(
-                "http://localhost:49977",
-                "run-42",
-                token="t",
-                poll_interval_s=0.01,
-                timeout_s=0.05,
-            )
-        self.assertIsNone(result)
-
-    def test_poll_none_then_timeout(self) -> None:
-        from urllib.error import URLError
-
-        with patch("urllib.request.urlopen", side_effect=URLError("network down")):
-            result = poll_run_until_terminal(
-                "http://localhost:49977",
-                "run-42",
-                token="t",
-                poll_interval_s=0.01,
-                timeout_s=0.05,
-            )
-        self.assertIsNone(result)
-
-    def test_poll_cancelled(self) -> None:
-        fake_resp = FakeHTTPResponse(json.dumps({"status": "cancelled"}).encode("utf-8"))
-        with patch("urllib.request.urlopen", return_value=fake_resp):
-            result = poll_run_until_terminal(
-                "http://localhost:49977",
-                "run-42",
-                token="t",
-                poll_interval_s=0.01,
-                timeout_s=5.0,
-            )
-        self.assertEqual(result, {"status": "cancelled"})
+        self.assertEqual(result, {"run_id": "run-42", "status": "completed"})
+        self.assertEqual(seen, [{"run_id": "run-42", "status": "completed"}])
 
 
 if __name__ == "__main__":

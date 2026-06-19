@@ -183,6 +183,13 @@ function FlowArrow({ active }: { active: boolean }) {
 
 function RoleHex({ role, selected, onSelect }: { role: RoleCard; selected: boolean; onSelect: () => void }) {
   const style = STATE_STYLES[role.state];
+  const ctx = role.internalContext;
+  const occupancyLabel = ctx.windowOccupancyTokens !== null
+    ? `~${contextOSFormat.tokens(ctx.windowOccupancyTokens)}`
+    : '无 usage';
+  const windowLabel = ctx.contextWindowTokens !== null
+    ? contextOSFormat.windowTokens(ctx.contextWindowTokens)
+    : '窗口未知';
   return (
     <button
       type="button"
@@ -190,7 +197,7 @@ function RoleHex({ role, selected, onSelect }: { role: RoleCard; selected: boole
       data-selected={selected}
       aria-pressed={selected}
       onClick={onSelect}
-      title={`${role.title} ${role.courtTitle} · ${role.tokensReal ? '真实 token 归因' : '事件归因'} · ${role.contextWindowDetail}`}
+      title={`${role.title} ${role.courtTitle} · ${ctx.windowOccupancyDetail} · ${role.contextWindowDetail}`}
       className={cn(
         'flex items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-all duration-300 hover:border-accent-secondary/40',
         style.ring,
@@ -206,6 +213,22 @@ function RoleHex({ role, selected, onSelect }: { role: RoleCard; selected: boole
           <span className="truncate text-xs font-semibold text-text-main">{role.title}</span>
         </div>
         <div className={cn('truncate font-mono text-[10px]', style.text)}>{role.detail}</div>
+        <div className="mt-1 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 font-mono text-[9px]">
+          <span
+            data-testid={`contextos-role-occupancy-${role.id}`}
+            className={cn('truncate', ctx.windowOccupancyTokens !== null ? 'text-accent-secondary' : 'text-text-dim')}
+            title={ctx.windowOccupancyDetail}
+          >
+            {occupancyLabel}
+          </span>
+          <span
+            data-testid={`contextos-role-window-${role.id}`}
+            className="shrink-0 rounded bg-white/5 px-1 text-text-muted"
+            title={role.contextWindowDetail}
+          >
+            / {windowLabel}
+          </span>
+        </div>
       </div>
     </button>
   );
@@ -333,8 +356,14 @@ function ContextStructurePanel({ model, telemetry }: { model: ContextOSModel; te
             <div className="space-y-1.5">
               {model.roles.map((role) => {
                 const ctx = role.internalContext;
+                const occupancyLabel = ctx.windowOccupancyTokens !== null
+                  ? `~${contextOSFormat.tokens(ctx.windowOccupancyTokens)}`
+                  : '无 usage';
+                const windowLabel = ctx.contextWindowTokens !== null
+                  ? contextOSFormat.windowTokens(ctx.contextWindowTokens)
+                  : '未知';
                 return (
-                  <div key={role.id} className="grid grid-cols-[72px_1fr_54px] items-center gap-2 rounded-md bg-white/[0.02] px-2 py-1.5 text-[10px]">
+                  <div key={role.id} className="grid grid-cols-[72px_minmax(0,1fr)_64px_58px] items-center gap-2 rounded-md bg-white/[0.02] px-2 py-1.5 text-[10px]">
                     <span className="truncate font-semibold text-text-main" title={role.title}>{role.title}</span>
                     <div className="min-w-0">
                       <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
@@ -347,7 +376,18 @@ function ContextStructurePanel({ model, telemetry }: { model: ContextOSModel; te
                         T{ctx.eventCount} · W{ctx.workingMemoryItems ?? 0}{ctx.workingMemoryEstimated ? '~' : ''} · P{ctx.projectionCount} · R{ctx.receiptCount}
                       </div>
                     </div>
-                    <span className={cn('text-right font-mono', STATE_STYLES[ctx.state].text)}>{ctx.eventCount}</span>
+                    <span
+                      className={cn('truncate text-right font-mono', ctx.windowOccupancyTokens !== null ? 'text-accent-secondary' : 'text-text-dim')}
+                      title={ctx.windowOccupancyDetail}
+                    >
+                      {occupancyLabel}
+                    </span>
+                    <span
+                      className="truncate text-right font-mono text-text-muted"
+                      title={ctx.contextWindowDetail}
+                    >
+                      {windowLabel}
+                    </span>
                   </div>
                 );
               })}
@@ -466,7 +506,7 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
       </div>
 
       {/* 统计卡 */}
-      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
         <RoleInternalStat
           label="活动"
           value={`${ctx.eventCount} · ${ctx.projectionCount}`}
@@ -482,6 +522,12 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
           value={ctx.contextWindowTokens !== null ? contextOSFormat.windowTokens(ctx.contextWindowTokens) : '未知'}
           sub={ctx.contextWindowDetail}
           highlight={ctx.contextWindowTokens !== null}
+        />
+        <RoleInternalStat
+          label="占用"
+          value={ctx.windowOccupancyTokens !== null ? `~${contextOSFormat.tokens(ctx.windowOccupancyTokens)}` : '—'}
+          sub={ctx.windowOccupancyLabel}
+          highlight={ctx.windowOccupancyTokens !== null}
         />
         <RoleInternalStat
           label="Token"
@@ -863,6 +909,7 @@ export function ContextOSWorkspace({
   const budgetWindowOccupancy = budgetWindowOccupancyTokens !== null
     ? Math.max(0, Math.min(1, budgetWindowOccupancyTokens / budgetWindowTokens))
     : 0;
+  const hasBudgetWindowUsage = budgetWindowOccupancyTokens !== null;
 
   const toggleRole = (roleId: string) => setActiveRole((prev) => (prev === roleId ? null : roleId));
 
@@ -1206,9 +1253,16 @@ export function ContextOSWorkspace({
                     <span className="flex min-w-0 items-center gap-1 text-text-muted">
                       <Gauge className="h-3 w-3 shrink-0" />
                       <span className="truncate">上下文窗口占用</span>
-                      <span className="shrink-0 rounded bg-white/5 px-1 text-[9px] text-text-dim">估算</span>
+                      <span
+                        className={cn(
+                          'shrink-0 rounded px-1 text-[9px]',
+                          hasBudgetWindowUsage ? 'bg-white/5 text-text-dim' : 'bg-status-warning/10 text-status-warning',
+                        )}
+                      >
+                        {hasBudgetWindowUsage ? budgetWindowOccupancyLabel : '未观测'}
+                      </span>
                     </span>
-                    <span className="font-mono text-text-main">{Math.round(budgetWindowOccupancy * 100)}%</span>
+                    <span className="font-mono text-text-main">{hasBudgetWindowUsage ? `${Math.round(budgetWindowOccupancy * 100)}%` : '—'}</span>
                   </div>
                   <div className="h-2 overflow-hidden rounded-full bg-white/5">
                     <div
@@ -1216,12 +1270,13 @@ export function ContextOSWorkspace({
                         'h-full rounded-full transition-all duration-500',
                         budgetWindowOccupancy > 0.85 ? 'bg-status-error' : budgetWindowOccupancy > 0.6 ? 'bg-status-warning' : 'bg-accent-secondary',
                       )}
-                      style={{ width: `${Math.max(2, Math.round(budgetWindowOccupancy * 100))}%` }}
+                      style={{ width: hasBudgetWindowUsage ? `${Math.max(2, Math.round(budgetWindowOccupancy * 100))}%` : '0%' }}
                     />
                   </div>
                   <div
                     className="flex items-center justify-end gap-1 text-right font-mono text-[9px] text-text-dim"
                     data-testid="contextos-window-source"
+                    data-usage-state={hasBudgetWindowUsage ? 'observed' : 'none'}
                     title={budgetWindowOccupancyDetail}
                   >
                     <span>{budgetWindowOccupancyTokens !== null ? `~${contextOSFormat.tokens(budgetWindowOccupancyTokens)}` : '无 usage'}</span>

@@ -619,6 +619,14 @@ class TaskBoard:
                 return None
 
             old_status = task.status
+
+            # Idempotency guard: re-applying the same terminal status is a no-op.
+            # Without this, a second complete()/fail() call would clobber the
+            # original completed_at, re-run dependency unblocking, and append a
+            # duplicate terminal event. Return the existing task untouched.
+            if old_status == next_status and old_status.is_terminal:
+                return copy.deepcopy(task)
+
             if old_status != next_status:
                 self._validate_transition(old_status, next_status)
 
@@ -637,8 +645,13 @@ class TaskBoard:
                 if evidence_refs:
                     task.evidence_refs.extend(evidence_refs)
 
-                # Dependency unblocking
-                self._unblock_dependent_tasks(task_id)
+                # Dependency unblocking: only a SUCCESSFUL completion may unblock
+                # downstream dependents. A FAILED/CANCELLED/TIMEOUT prerequisite
+                # must leave its dependents BLOCKED to preserve the DAG guarantee
+                # (otherwise workers would pick up tasks whose deps never produced
+                # the artifacts they require).
+                if next_status == TaskStatus.COMPLETED:
+                    self._unblock_dependent_tasks(task_id)
 
             self._save_task(task)
 

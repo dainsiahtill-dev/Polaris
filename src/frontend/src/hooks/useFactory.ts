@@ -84,6 +84,81 @@ function isTerminalRun(run: FactoryRunStatus | null): boolean {
   return Boolean(terminalRunToken(run));
 }
 
+function runStatusFromFactoryEvent(
+  runId: string,
+  payload: Record<string, unknown>,
+  previous: FactoryRunStatus | null
+): FactoryRunStatus | null {
+  const eventType = runToken(String(payload.type || payload.kind || ''));
+  if (!eventType) return null;
+  const timestamp = String(payload.timestamp || new Date().toISOString());
+  const stage = String(payload.stage || previous?.current_stage || previous?.phase || '').trim();
+  const result = (payload.result && typeof payload.result === 'object'
+    ? (payload.result as Record<string, unknown>)
+    : {}) as Record<string, unknown>;
+  const resultStatus = runToken(String(result.status || ''));
+
+  let status = previous?.status || 'running';
+  if (eventType === 'paused') {
+    status = 'paused';
+  } else if (eventType === 'cancelled' || eventType === 'canceled' || resultStatus === 'cancelled' || resultStatus === 'canceled') {
+    status = 'cancelled';
+  } else if (eventType === 'completed') {
+    status = 'completed';
+  } else if (eventType === 'failed' || resultStatus === 'failed') {
+    status = 'failed';
+  } else if (
+    eventType === 'started' ||
+    eventType === 'stage_started' ||
+    eventType === 'stage_heartbeat' ||
+    eventType === 'stage_completed' ||
+    eventType === 'metadata_updated' ||
+    eventType === 'resumed'
+  ) {
+    status = 'running';
+  }
+
+  const isTerminal = TERMINAL_FACTORY_RUN_STATUSES.has(runToken(status));
+  const progress = status === 'completed'
+    ? 100
+    : typeof previous?.progress === 'number'
+      ? previous.progress
+      : 0;
+  const failureDetail = String(payload.reason || payload.message || result.output || '').trim();
+
+  return {
+    run_id: runId,
+    phase: stage || previous?.phase || 'implementation',
+    status,
+    current_stage: stage || previous?.current_stage || null,
+    last_successful_stage: previous?.last_successful_stage ?? null,
+    progress,
+    roles: previous?.roles ?? {},
+    gates: previous?.gates ?? [],
+    failure: status === 'failed' || status === 'cancelled'
+      ? previous?.failure ?? {
+          failure_type: status === 'cancelled' ? 'cancelled' : 'runtime',
+          code: status === 'cancelled' ? 'FACTORY_RUN_CANCELLED' : 'FACTORY_RUN_FAILED',
+          detail: failureDetail || (status === 'cancelled' ? 'Factory run cancelled' : 'Factory run failed'),
+          phase: stage || previous?.phase || 'implementation',
+          recoverable: status !== 'cancelled',
+        }
+      : previous?.failure,
+    created_at: previous?.created_at || timestamp,
+    started_at: previous?.started_at || (eventType === 'started' ? timestamp : undefined),
+    updated_at: timestamp,
+    completed_at: isTerminal ? timestamp : previous?.completed_at,
+    summary_md: previous?.summary_md,
+    summary_json: previous?.summary_json,
+    metadata: {
+      ...(previous?.metadata ?? {}),
+      last_factory_event_type: eventType,
+    },
+    artifacts: previous?.artifacts,
+    artifacts_error: previous?.artifacts_error,
+  };
+}
+
 function mergeRunEvidenceFields(
   run: FactoryRunStatus,
   previous: FactoryRunStatus | null
@@ -374,7 +449,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
 
     const channel = `event.factory:${runId}`;
 
-    // Translate the runtime.v2 envelope (channel=event.factory) into the
+    // Translate the runtime.v2 envelope into the
     // factory event shape consumed by this hook. Factory events are
     // published to NAT JetStream by
     // ``FactoryRunService._append_event``; the platform's WebSocket's
@@ -385,62 +460,42 @@ export function useFactory(options: UseFactoryOptions = {}) {
       const envelope = (m.event && typeof m.event === 'object'
         ? (m.event as Record<string, unknown>)
         : m) as Record<string, unknown>;
-      if (envelope.channel !== 'event.factory') return;
+      const eventChannel = String(envelope.channel || '').trim();
+      if (eventChannel !== 'event.factory' && eventChannel !== channel) return;
       const payload = (envelope.payload && typeof envelope.payload === 'object'
         ? (envelope.payload as Record<string, unknown>)
         : {}) as Record<string, unknown>;
+      const eventRunId = String(envelope.run_id || payload.run_id || runId).trim();
+      if (eventRunId !== runId) return;
       const kind = String(envelope.kind || payload.type || '');
+      const factoryEvent: FactoryAuditEvent = {
+        type: String(payload.type || kind || 'unknown'),
+        timestamp: String(payload.timestamp || envelope.ts || new Date().toISOString()),
+        ...payload,
+        run_id: eventRunId,
+      } as FactoryAuditEvent;
+      setEvents((previous) => [...previous, factoryEvent].slice(-200));
 
-      if (
-        kind === 'stage_started' ||
-        kind === 'stage_completed' ||
-        kind.includes('status')
-      ) {
-        const run = payload as Partial<FactoryRunStatus>;
-        if (run.run_id) {
-          latestRunIdRef.current = run.run_id;
-          setCurrentRun((previous) => mergeRunEvidenceFields(run as FactoryRunStatus, previous));
-          queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(run.run_id), run as FactoryRunStatus);
-          if (isTerminalRun(run as FactoryRunStatus)) {
-            void fetchRunArtifacts(run.run_id);
-          }
-        }
-        return;
-      }
-      if (kind === 'event' || kind === 'audit' || kind === 'stage_event' || kind === '') {
-        const event: FactoryAuditEvent = {
-          type: String(payload.type || kind || 'unknown'),
-          timestamp: String(envelope.ts || new Date().toISOString()),
-          ...payload,
-        } as FactoryAuditEvent;
-        setEvents((previous) => [...previous, event].slice(-200));
-        return;
-      }
-      if (
-        kind === 'complete' ||
-        kind === 'done' ||
-        kind === 'run_completed' ||
-        kind === 'run_terminal'
-      ) {
-        const cached = queryClient.getQueryData<FactoryRunStatus>(
-          factoryRunKey(latestRunIdRef.current || runId),
-        );
-        const finalRun = (cached ?? ({} as FactoryRunStatus)) as FactoryRunStatus;
-        latestRunIdRef.current = finalRun.run_id || runId;
-        setCurrentRun((previous) => mergeRunEvidenceFields(finalRun, previous));
+      const cached = queryClient.getQueryData<FactoryRunStatus>(factoryRunKey(eventRunId)) || currentRun;
+      const runPatch = runStatusFromFactoryEvent(eventRunId, payload, cached);
+      if (!runPatch) return;
+
+      latestRunIdRef.current = eventRunId;
+      setCurrentRun((previous) => mergeRunEvidenceFields(runPatch, previous));
+      queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(eventRunId), runPatch);
+
+      if (isTerminalRun(runPatch)) {
         setIsStreaming(false);
-        queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(latestRunIdRef.current), finalRun);
         queryClient.invalidateQueries({ queryKey: factoryRunsKey });
-        void fetchRunArtifacts(latestRunIdRef.current);
-        const status = terminalRunToken(finalRun);
+        void fetchRunArtifacts(eventRunId);
+        const status = terminalRunToken(runPatch);
         if (status === 'completed') {
           toast.success('Factory Run 完成');
         } else if (FAILED_FACTORY_RUN_STATUSES.has(status)) {
-          toast.error(finalRun.failure?.detail || 'Factory Run 失败');
+          toast.error(runPatch.failure?.detail || 'Factory Run 失败');
         } else if (CANCELLED_FACTORY_RUN_STATUSES.has(status)) {
           toast.success('Factory Run 已取消');
         }
-        return;
       }
     };
 
@@ -468,7 +523,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
       setIsStreaming(false);
       return false;
     }
-  }, [clearReconnectTimer, fetchRunArtifacts, queryClient, factoryRunKey, factoryRunsKey, transport]);
+  }, [clearReconnectTimer, currentRun, fetchRunArtifacts, queryClient, factoryRunKey, factoryRunsKey, transport]);
 
   const startRun = useCallback(async (opts: FactoryStartOptions): Promise<FactoryRunStatus | null> => {
     setEvents([]);

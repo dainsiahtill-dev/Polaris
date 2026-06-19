@@ -206,6 +206,25 @@ describe('ContextOSWorkspace', () => {
     expect(screen.getByTestId('contextos-window-source').textContent).toContain('PM');
   });
 
+  it('renders missing role usage as missing while keeping each role window visible', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmRuntimeState={READY_LLM_WITH_WINDOWS}
+      />,
+    );
+
+    const source = screen.getByTestId('contextos-window-source');
+    expect(source).toHaveAttribute('data-usage-state', 'none');
+    expect(source.textContent).toContain('无 usage');
+    expect(source.textContent).toContain('32.8k');
+
+    expect(screen.getByTestId('contextos-role-occupancy-pm').textContent).toContain('无 usage');
+    expect(screen.getByTestId('contextos-role-window-pm').textContent).toContain('262k');
+    expect(screen.getByTestId('contextos-role-occupancy-director').textContent).toContain('无 usage');
+    expect(screen.getByTestId('contextos-role-window-director').textContent).toContain('32.8k');
+  });
+
   it('uses the selected role occupancy numerator instead of the global average', () => {
     const mixedRoleStream: LogEntry[] = [
       ...LLM_STREAM,
@@ -237,6 +256,11 @@ describe('ContextOSWorkspace', () => {
 
     const source = screen.getByTestId('contextos-window-source');
     expect(source.textContent).toContain('~1.4k'); // global average prompt: (1932 + 800) / 2
+    expect(source).toHaveAttribute('data-usage-state', 'observed');
+    expect(screen.getByTestId('contextos-role-occupancy-pm').textContent).toContain('~1.9k');
+    expect(screen.getByTestId('contextos-role-window-pm').textContent).toContain('262k');
+    expect(screen.getByTestId('contextos-role-occupancy-director').textContent).toContain('~800');
+    expect(screen.getByTestId('contextos-role-window-director').textContent).toContain('32.8k');
 
     fireEvent.click(screen.getByTestId('contextos-role-director'));
     expect(source.textContent).toContain('~800');
@@ -308,6 +332,22 @@ describe('ContextOSWorkspace', () => {
     expect(panel.textContent).toContain('pm planning call returned');
   });
 
+  it('shows role context windows in the structure panel without requiring usage events', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmRuntimeState={READY_LLM_WITH_WINDOWS}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('contextos-structure-toggle'));
+
+    const panel = screen.getByTestId('contextos-structure-panel');
+    expect(panel.textContent).toContain('无 usage');
+    expect(panel.textContent).toContain('262k');
+    expect(panel.textContent).toContain('32.8k');
+  });
+
   it('opens the per-role internal ContextOS panel when a role card is selected', () => {
     render(
       <ContextOSWorkspace
@@ -347,6 +387,33 @@ describe('ContextOSWorkspace', () => {
     // Toggle off.
     fireEvent.click(pmCard);
     expect(screen.queryByTestId('contextos-role-panel-pm')).toBeNull();
+  });
+
+  it('does not repeat the same recent LLM call when duplicated stream entries arrive', () => {
+    const duplicatedCall: LogEntry = {
+      ...LLM_STREAM[0],
+      meta: {
+        ...LLM_STREAM[0].meta,
+        contextSnapshotRef: 'same-context-snapshot-ref',
+        promptHash: 'same-prompt-hash',
+        turnId: 'same-turn',
+      },
+    };
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmStreamEvents={Array.from({ length: 5 }, (_, index) => ({
+          ...duplicatedCall,
+          id: `duplicated-call-${index}`,
+        }))}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('contextos-role-pm'));
+    const panel = screen.getByTestId('contextos-role-panel-pm');
+    expect(panel.textContent).toContain('最近 LLM 调用');
+    expect(screen.getAllByText('查看完整上下文')).toHaveLength(1);
+    expect(screen.getByTestId('contextos-role-occupancy-pm').textContent).toContain('~1.9k');
   });
 
   it('does not show a token header for a role with zero tokens', () => {

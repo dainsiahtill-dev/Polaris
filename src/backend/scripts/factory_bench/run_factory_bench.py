@@ -36,8 +36,8 @@ from scripts.factory_bench.factory_http_client import (
     _http_post_json as _shared_http_post_json,
     cancel_factory_run,
     get_audit_bundle,
-    poll_run_until_terminal,
     start_factory_run,
+    wait_run_until_terminal,
 )
 
 _FIXTURE = Path(__file__).resolve().parent / "projects_v1.json"
@@ -788,28 +788,31 @@ def run_factory_chain(
         if not run_id:
             return {"exit_code": -1, "duration_s": 0, "error": "start_failed"}
 
-        terminal_status = poll_run_until_terminal(
+        terminal_status = wait_run_until_terminal(
             backend_url,
             run_id,
             token=backend_token,
+            workspace=str(workspace),
             timeout_s=float(timeout_s),
             on_status=_on_status,
+            initial_status=start_response,
         )
         if terminal_status is None:
             cancel_factory_run(
                 backend_url,
                 run_id,
-                reason=f"factory-bench poll timeout after {timeout_s}s",
+                reason=f"factory-bench event wait timeout after {timeout_s}s",
                 token=backend_token,
+                workspace=str(workspace),
             )
             return {
                 "exit_code": -1,
                 "duration_s": round(time.time() - started, 1),
                 "run_id": run_id,
-                "error": "poll_timeout",
+                "error": "event_wait_timeout",
             }
 
-    audit_bundle = get_audit_bundle(backend_url, run_id, token=backend_token) or {}
+    audit_bundle = get_audit_bundle(backend_url, run_id, token=backend_token, workspace=str(workspace)) or {}
     chain_results = map_factory_run_to_chain_results(terminal_status, audit_bundle)
 
     # Read contract_goal from workspace tasks/plan.json if available

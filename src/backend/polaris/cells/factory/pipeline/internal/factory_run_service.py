@@ -27,7 +27,7 @@ from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
-from polaris.kernelone.storage import resolve_logical_path
+from polaris.kernelone.storage import resolve_logical_path, resolve_storage_roots
 from polaris.kernelone.utils import utc_now_iso
 
 logger = logging.getLogger(__name__)
@@ -2416,6 +2416,7 @@ class FactoryRunService:
 
     async def _append_event(self, run_id: str, event: dict[str, Any]) -> None:
         payload = dict(event)
+        payload.setdefault("run_id", run_id)
         payload.setdefault("event_id", f"evt_{uuid.uuid4().hex[:12]}")
         payload.setdefault("timestamp", self._now())
         await self.store.append_event(run_id, payload)
@@ -2428,16 +2429,24 @@ class FactoryRunService:
                 publish_to_jetstream,
             )
 
-            workspace_key = self.workspace.name if self.workspace else ""
+            workspace_key = ""
+            if self.workspace:
+                try:
+                    roots = resolve_storage_roots(str(self.workspace))
+                    workspace_key = str(getattr(roots, "workspace_key", "") or "").strip()
+                except (OSError, RuntimeError, ValueError) as exc:
+                    logger.debug("factory workspace key resolution failed for %s: %s", self.workspace, exc)
+                    workspace_key = self.workspace.name
             if not workspace_key:
                 return
             subject = f"hp.runtime.{workspace_key}.event.factory.{run_id}"
+            channel = f"event.factory:{run_id}"
             envelope = {
                 "schema_version": "runtime.v2",
                 "event_id": payload.get("event_id"),
                 "workspace_key": workspace_key,
                 "run_id": run_id,
-                "channel": "event.factory",
+                "channel": channel,
                 "kind": str(payload.get("type") or payload.get("kind") or "factory.event"),
                 "ts": payload.get("timestamp"),
                 "cursor": 0,

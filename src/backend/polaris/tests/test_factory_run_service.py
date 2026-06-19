@@ -19,7 +19,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
 from polaris.cells.factory.pipeline.internal.factory_store import FactoryStore
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import CommandResult
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path
+from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
 
 
 class FakeStageExecutor:
@@ -295,6 +295,34 @@ class TestFactoryRunService:
         assert elapsed < 0.2
         events = await service.store.get_events(run.id)
         assert any(event.get("type") == "probe" for event in events)
+
+    @pytest.mark.asyncio
+    async def test_append_event_publishes_canonical_workspace_subject(
+        self,
+        temp_workspace,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        import polaris.delivery.http.routers.jetstream_utils as jetstream_utils
+
+        published: list[dict[str, object]] = []
+        service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
+        run = await service.create_run(FactoryConfig(name="test-run"))
+
+        async def capture_publish(**kwargs: object) -> bool:
+            published.append(dict(kwargs))
+            return True
+
+        monkeypatch.setattr(jetstream_utils, "publish_to_jetstream", capture_publish)
+
+        await service._append_event(run.id, {"type": "stage_started", "stage": "director_dispatch"})
+
+        workspace_key = resolve_storage_roots(str(temp_workspace)).workspace_key
+        assert published
+        assert published[0]["subject"] == f"hp.runtime.{workspace_key}.event.factory.{run.id}"
+        payload = published[0]["payload"]
+        assert isinstance(payload, dict)
+        assert payload["channel"] == f"event.factory:{run.id}"
+        assert payload["workspace_key"] == workspace_key
 
     @pytest.mark.asyncio
     async def test_start_run(self, temp_workspace):

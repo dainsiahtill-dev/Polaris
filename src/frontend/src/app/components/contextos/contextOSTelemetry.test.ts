@@ -183,6 +183,22 @@ describe('buildTelemetryFromStream', () => {
     expect(t.estimatedCalls).toBe(0); // journal usage is real, never char-estimated
   });
 
+  it('deduplicates repeated copies of the same LLM completion before aggregating', () => {
+    const duplicated = Array.from({ length: 5 }, (_, index) => ({
+      ...LLM_COMPLETED,
+      id: `duplicate-id-${index}`,
+    }));
+    const t = buildTelemetryFromStream(duplicated, [], []);
+
+    expect(t.events).toHaveLength(1);
+    expect(t.parsedLines).toBe(1);
+    expect(t.totalCalls).toBe(1);
+    expect(t.totalTokens).toBe(3386);
+    expect(t.promptTokens).toBe(1932);
+    expect(t.completionTokens).toBe(1454);
+    expect(filterEventsForRole(t.events, 'pm')).toHaveLength(1);
+  });
+
   it('recovers real latency from meta.durationMs (raw.data.metadata.elapsed_ms)', () => {
     const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
     // latencies present: completed 71431ms, failed 1200ms → avg 36316 (rounded)

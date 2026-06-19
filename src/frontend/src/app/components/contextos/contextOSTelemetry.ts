@@ -439,7 +439,42 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   };
 }
 
+function eventDedupeKey(event: ContextOSEvent): string {
+  const stableRef = event.contextSnapshotRef || event.promptHash || event.turnId || '';
+  return [
+    event.mode,
+    event.name,
+    event.category,
+    event.actor,
+    event.workerId ?? '',
+    event.epoch > 0 ? String(event.epoch) : event.ts,
+    stableRef,
+    event.summary,
+    String(event.promptTokens),
+    String(event.completionTokens),
+    String(event.totalTokens),
+    String(event.durationMs ?? ''),
+    String(event.contextItems ?? ''),
+    String(event.contextTokens ?? ''),
+    event.error ?? '',
+  ].join('\u001f');
+}
+
+function dedupeEvents(events: ContextOSEvent[]): ContextOSEvent[] {
+  if (events.length <= 1) return events;
+  const seen = new Set<string>();
+  const deduped: ContextOSEvent[] = [];
+  for (const event of events) {
+    const key = eventDedupeKey(event);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(event);
+  }
+  return deduped;
+}
+
 function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOSTelemetry {
+  events = dedupeEvents(events);
   if (events.length === 0) return EMPTY_TELEMETRY;
 
   let totalCalls = 0;

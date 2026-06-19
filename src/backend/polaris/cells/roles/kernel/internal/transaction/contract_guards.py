@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from collections.abc import Mapping
@@ -26,6 +27,7 @@ from polaris.cells.roles.kernel.internal.transaction.constants import (
     TOOL_ALIASES,
     WRITE_TOOLS,
 )
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.write_authority import (
     is_authoritative_write_invocation as _is_authoritative_write_invocation,
@@ -34,6 +36,8 @@ from polaris.cells.roles.kernel.internal.transaction.write_authority import (
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
     BatchId,
+    FinalizeMode,
+    ToolBatch,
     ToolCallId,
     ToolEffectType,
     ToolExecutionMode,
@@ -41,6 +45,8 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
     TurnDecision,
     TurnDecisionKind,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 元数据提取
@@ -779,3 +785,89 @@ def is_safe_readonly_bootstrap_invocations(invocations: list[Any]) -> bool:
         if not is_safe_read_bootstrap_tool_name(tool_name):
             return False
     return True
+
+
+def apply_delivery_mode_filter(decision: TurnDecision, ledger: TurnLedger) -> TurnDecision:
+    """根据 delivery_contract 过滤决策中的 write tools。
+
+    PROPOSE_PATCH / ANALYZE_ONLY 模式下禁止 write tools。
+    若检测到 write tools，过滤后降级为 FINAL_ANSWER。
+
+    run 模式（``TurnTransactionController._execute_turn``）与 stream 模式
+    （``StreamOrchestrator.execute_turn_stream``）共用此实现，确保只读/提案
+    边界在两条路径上语义一致。
+    """
+    contract = ledger.delivery_contract
+    if contract.mode == DeliveryMode.MATERIALIZE_CHANGES:
+        return decision
+
+    tool_batch = decision.get("tool_batch")
+    if not tool_batch:
+        return decision
+
+    invocations = list(tool_batch.get("invocations", []) or [])
+    filtered = [inv for inv in invocations if not is_write_invocation(inv)]
+    dropped = len(invocations) - len(filtered)
+
+    if dropped == 0:
+        return decision
+
+    logger.warning(
+        "delivery-mode-filter: dropped %d write tool(s) in %s mode. turn_id=%s",
+        dropped,
+        contract.mode.value,
+        ledger.turn_id,
+    )
+    ledger.anomaly_flags.append(
+        {
+            "type": "DELIVERY_MODE_WRITE_TOOL_FILTERED",
+            "turn_id": ledger.turn_id,
+            "dropped_count": dropped,
+            "delivery_mode": contract.mode.value,
+            "original_tool_count": len(invocations),
+        }
+    )
+
+    if not filtered:
+        # 全部过滤完，降级为 FINAL_ANSWER
+        return TurnDecision(
+            turn_id=decision.get("turn_id"),
+            kind=TurnDecisionKind.FINAL_ANSWER,
+            visible_message=decision.get("visible_message", ""),
+            reasoning_summary=decision.get("reasoning_summary"),
+            tool_batch=None,
+            finalize_mode=FinalizeMode.NONE,
+            domain=decision.get("domain", "code"),
+            metadata={
+                **(decision.get("metadata") or {}),
+                "delivery_mode_filter_applied": True,
+                "dropped_write_tools": dropped,
+            },
+        )
+
+    # 部分过滤，重建 tool_batch
+    turn_id_val = decision.get("turn_id")
+    new_batch = ToolBatch(
+        batch_id=tool_batch.get("batch_id", BatchId(f"{turn_id_val}_filtered")),
+        invocations=filtered,
+        parallel_readonly=[
+            inv for inv in filtered if inv.get("execution_mode") == ToolExecutionMode.READONLY_PARALLEL
+        ],
+        readonly_serial=[inv for inv in filtered if inv.get("execution_mode") == ToolExecutionMode.READONLY_SERIAL],
+        serial_writes=[],
+        async_receipts=[inv for inv in filtered if inv.get("execution_mode") == ToolExecutionMode.ASYNC_RECEIPT],
+    )
+    return TurnDecision(
+        turn_id=turn_id_val,
+        kind=TurnDecisionKind.TOOL_BATCH,
+        visible_message=decision.get("visible_message", ""),
+        reasoning_summary=decision.get("reasoning_summary"),
+        tool_batch=new_batch,
+        finalize_mode=decision.get("finalize_mode"),
+        domain=decision.get("domain", "code"),
+        metadata={
+            **(decision.get("metadata") or {}),
+            "delivery_mode_filter_applied": True,
+            "dropped_write_tools": dropped,
+        },
+    )

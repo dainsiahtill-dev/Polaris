@@ -447,27 +447,49 @@ def _setup_run_factory_chain_mocks(
 ) -> Path:
     workspace = tmp_path / "L2-07"
     workspace.mkdir()
+    expected_workspace = str(workspace)
 
     def _fake_start_factory_run(_backend_url: str, _payload: dict[str, Any], token: str = "") -> dict[str, Any] | None:
         return start_response
 
-    def _fake_poll_run_until_terminal(
+    def _fake_wait_run_until_terminal(
         _backend_url: str,
         run_id: str,
         token: str = "",
+        workspace: str = "",
         on_status: Any = None,
         **_kwargs: Any,
     ) -> dict[str, Any] | None:
+        assert workspace == expected_workspace
         if on_status is not None and terminal_status is not None:
             on_status(terminal_status)
         return terminal_status
 
-    def _fake_get_audit_bundle(_backend_url: str, _run_id: str, token: str = "") -> dict[str, Any] | None:
+    def _fake_get_audit_bundle(
+        _backend_url: str,
+        _run_id: str,
+        token: str = "",
+        workspace: str = "",
+    ) -> dict[str, Any] | None:
+        assert workspace == expected_workspace
         return audit_bundle
 
+    def _fake_cancel_factory_run(
+        _backend_url: str,
+        _run_id: str,
+        *,
+        reason: str = "",
+        token: str = "",
+        workspace: str = "",
+    ) -> dict[str, Any]:
+        assert reason
+        assert workspace == expected_workspace
+        return {"status": "cancelled"}
+
     monkeypatch.setattr(bench, "start_factory_run", _fake_start_factory_run)
-    monkeypatch.setattr(bench, "poll_run_until_terminal", _fake_poll_run_until_terminal)
+    monkeypatch.setattr(bench, "wait_run_until_terminal", _fake_wait_run_until_terminal)
     monkeypatch.setattr(bench, "get_audit_bundle", _fake_get_audit_bundle)
+    monkeypatch.setattr(bench, "cancel_factory_run", _fake_cancel_factory_run)
 
     return workspace
 
@@ -528,7 +550,7 @@ def test_run_factory_chain_start_failure(monkeypatch: Any, tmp_path: Path) -> No
     assert result["error"] == "start_failed"
 
 
-def test_run_factory_chain_poll_timeout(monkeypatch: Any, tmp_path: Path) -> None:
+def test_run_factory_chain_event_wait_timeout(monkeypatch: Any, tmp_path: Path) -> None:
     workspace = _setup_run_factory_chain_mocks(
         monkeypatch,
         tmp_path,
@@ -548,7 +570,7 @@ def test_run_factory_chain_poll_timeout(monkeypatch: Any, tmp_path: Path) -> Non
 
     assert result["exit_code"] == -1
     assert result["run_id"] == "run-456"
-    assert result["error"] == "poll_timeout"
+    assert result["error"] == "event_wait_timeout"
 
 
 def test_run_factory_chain_failed_status(monkeypatch: Any, tmp_path: Path) -> None:

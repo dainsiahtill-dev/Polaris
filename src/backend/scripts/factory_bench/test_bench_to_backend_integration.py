@@ -1,10 +1,10 @@
-"""End-to-end integration test for bench -> Factory backend via /v2/factory/runs API.
+"""Integration test for bench -> Factory backend via /v2/factory/runs API.
 
 Runs a tiny in-process HTTP server that mimics the new Factory runs endpoints,
 then drives ``run_factory_chain`` from the bench and asserts that:
 
   * the mock backend receives the correct POST /v2/factory/runs payload,
-  * polling hits GET /v2/factory/runs/{run_id} until terminal,
+  * runtime.v2 event waiting is invoked for the created run,
   * the audit-bundle is fetched via GET /v2/factory/runs/{run_id}/audit-bundle,
   * ``chain_results`` carries ``qa_ran``, ``qa_passed``, ``exit_class``,
   * ``exit_code`` is 0 for completed+passed, 1 for failed.
@@ -24,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from unittest.mock import patch
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
@@ -41,11 +42,6 @@ class _MockFactoryRunsBackend(BaseHTTPRequestHandler):
     run_states: dict[str, dict[str, Any]] = {}
     # run_id -> audit bundle dict
     audit_bundles: dict[str, dict[str, Any]] = {}
-    # run_id -> number of status polls received
-    poll_counts: dict[str, int] = {}
-    # run_id -> target terminal status for auto-transition (default: "completed")
-    transition_targets: dict[str, str] = {}
-
     # Class-level counter for unique run_ids across tests
     _run_id_counter: int = 0
 
@@ -68,7 +64,6 @@ class _MockFactoryRunsBackend(BaseHTTPRequestHandler):
                 "status": "running",
                 "phase": "director_dispatch",
             }
-            self.poll_counts[run_id] = 0
             response_body = json.dumps({"run_id": run_id, "status": "running"}).encode("utf-8")
         elif path.startswith("/v2/factory/runs/") and path.endswith("/control"):
             run_id = path.split("/")[4]
@@ -100,16 +95,6 @@ class _MockFactoryRunsBackend(BaseHTTPRequestHandler):
             parts = path.split("/")
             run_id = parts[4] if len(parts) >= 5 else ""
             state = self.run_states.get(run_id, {"run_id": run_id, "status": "unknown"})
-            self.poll_counts[run_id] = self.poll_counts.get(run_id, 0) + 1
-            # Transition to the target terminal status on the second poll
-            # ONLY if the run was created by the POST handler (status="running")
-            # and not already in a terminal state.
-            current_status = state.get("status", "")
-            target = self.transition_targets.get(run_id, "completed")
-            if self.poll_counts.get(run_id, 0) >= 2 and current_status == "running":
-                state["status"] = target
-                if target in ("completed", "failed"):
-                    state["phase"] = "qa_gate"
             response_body = json.dumps(state).encode("utf-8")
         else:
             response_body = b"{}"
@@ -140,8 +125,6 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         _MockFactoryRunsBackend.received.clear()
         _MockFactoryRunsBackend.run_states.clear()
         _MockFactoryRunsBackend.audit_bundles.clear()
-        _MockFactoryRunsBackend.poll_counts.clear()
-        _MockFactoryRunsBackend.transition_targets.clear()
         _MockFactoryRunsBackend._run_id_counter = 0
 
         self.addCleanup(self._server.shutdown)
@@ -189,7 +172,7 @@ class TestFactoryRunsIntegration(unittest.TestCase):
 
         Asserts:
           - POST /v2/factory/runs is called with the workspace and directive.
-          - GET /v2/factory/runs/{run_id} is polled until terminal.
+          - runtime.v2 event waiting is called with the run id and workspace.
           - GET /v2/factory/runs/{run_id}/audit-bundle is fetched.
           - chain_results has qa_ran=True, qa_passed=True, exit_class="clean".
           - exit_code is 0.
@@ -205,14 +188,18 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         run_id = self._expected_run_id()
         self._setup_audit_bundle(run_id, qa_passed=True)
 
-        result = run_factory_chain(
-            project,
-            self.workspace,
-            backend_url=self.backend_url,
-            backend_token="",
-            timeout_s=30,
-            log_path=log_path,
-        )
+        with patch(
+            "scripts.factory_bench.run_factory_bench.wait_run_until_terminal",
+            return_value={"run_id": run_id, "status": "completed", "phase": "qa_gate"},
+        ) as wait_mock:
+            result = run_factory_chain(
+                project,
+                self.workspace,
+                backend_url=self.backend_url,
+                backend_token="",
+                timeout_s=30,
+                log_path=log_path,
+            )
 
         # --- backend contract assertions ---
         post_records = [
@@ -228,12 +215,16 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self.assertEqual(post_body.get("start_from"), "pm")
         self.assertEqual(post_body.get("loop"), False)
 
+        wait_mock.assert_called_once()
+        self.assertEqual(wait_mock.call_args.args[:2], (self.backend_url, run_id))
+        self.assertEqual(wait_mock.call_args.kwargs.get("workspace"), str(self.workspace))
+
         get_status_calls = [
             p
             for method, p, _ in _MockFactoryRunsBackend.received
             if method == "GET" and p.startswith("/v2/factory/runs/") and not p.endswith("/audit-bundle")
         ]
-        self.assertGreaterEqual(len(get_status_calls), 2, "expected at least 2 status polls")
+        self.assertEqual(len(get_status_calls), 0, "status GET must not be used for realtime waiting")
 
         get_audit_calls = [
             p for method, p, _ in _MockFactoryRunsBackend.received if method == "GET" and p.endswith("/audit-bundle")
@@ -261,16 +252,18 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         log_path = Path(self._tmp.name) / "chain.log"
         run_id = self._expected_run_id()
         self._setup_audit_bundle(run_id, qa_passed=False)
-        _MockFactoryRunsBackend.transition_targets[run_id] = "failed"
-
-        result = run_factory_chain(
-            project,
-            self.workspace,
-            backend_url=self.backend_url,
-            backend_token="",
-            timeout_s=30,
-            log_path=log_path,
-        )
+        with patch(
+            "scripts.factory_bench.run_factory_bench.wait_run_until_terminal",
+            return_value={"run_id": run_id, "status": "failed", "phase": "qa_gate"},
+        ):
+            result = run_factory_chain(
+                project,
+                self.workspace,
+                backend_url=self.backend_url,
+                backend_token="",
+                timeout_s=30,
+                log_path=log_path,
+            )
 
         chain_results = result.get("chain_results")
         self.assertIsInstance(chain_results, dict)
@@ -337,8 +330,8 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self.assertEqual(chain_results["qa_passed"], False)
         self.assertEqual(chain_results["exit_class"], "qa_failed")
 
-    def test_run_factory_chain_poll_timeout_non_terminal(self) -> None:
-        """When the backend never reaches a terminal state, poll times out."""
+    def test_run_factory_chain_event_wait_timeout_non_terminal(self) -> None:
+        """When runtime.v2 never delivers a terminal state, event waiting times out."""
         project = {
             "id": "L1-04",
             "title": "Never Ends",
@@ -348,32 +341,31 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         }
         log_path = Path(self._tmp.name) / "chain.log"
         run_id = self._expected_run_id()
-        _MockFactoryRunsBackend.transition_targets[run_id] = "running"
-
-        result = run_factory_chain(
-            project,
-            self.workspace,
-            backend_url=self.backend_url,
-            backend_token="",
-            timeout_s=0,
-            log_path=log_path,
-        )
+        with patch("scripts.factory_bench.run_factory_bench.wait_run_until_terminal", return_value=None):
+            result = run_factory_chain(
+                project,
+                self.workspace,
+                backend_url=self.backend_url,
+                backend_token="",
+                timeout_s=0,
+                log_path=log_path,
+            )
 
         self.assertEqual(result.get("exit_code"), -1)
-        self.assertEqual(result.get("error"), "poll_timeout")
+        self.assertEqual(result.get("error"), "event_wait_timeout")
         control_calls = [
             body
             for method, path, body in _MockFactoryRunsBackend.received
             if method == "POST" and path == f"/v2/factory/runs/{run_id}/control"
         ]
-        self.assertEqual(len(control_calls), 1, "poll timeout should cancel the backend run")
+        self.assertEqual(len(control_calls), 1, "event wait timeout should cancel the backend run")
         self.assertEqual(control_calls[0].get("action"), "cancel")
-        self.assertIn("poll timeout", str(control_calls[0].get("reason") or ""))
-        # No audit-bundle GET should have been attempted when poll times out
+        self.assertIn("event wait timeout", str(control_calls[0].get("reason") or ""))
+        # No audit-bundle GET should have been attempted when event waiting times out
         audit_calls = [
             p for method, p, _ in _MockFactoryRunsBackend.received if method == "GET" and p.endswith("/audit-bundle")
         ]
-        self.assertEqual(len(audit_calls), 0, "no audit-bundle GET expected when poll times out")
+        self.assertEqual(len(audit_calls), 0, "no audit-bundle GET expected when event waiting times out")
 
 
 if __name__ == "__main__":

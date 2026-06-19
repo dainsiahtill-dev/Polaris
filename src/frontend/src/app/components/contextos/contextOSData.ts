@@ -864,7 +864,7 @@ export function buildContextOSModel(input: {
     const tokens = roleTokens(role.key);
     const telemetryEvents = telemetryActive ? telemetryRoleEvents(telemetry, role.key) : 0;
     const speeches = speakerTokens(role.key === 'qa' ? ['QA', 'Reviewer'] : [role.title]);
-    // 只有拥有真实 usage 观测通道（目前仅 PM）的角色才以 token 归因；其余据实以事件数呈现，
+    // 只有拥有真实 usage 观测通道的角色才以 token 归因；其余据实以事件数呈现，
     // 不把「无 usage 通道」误读为真实零用量。
     const tokensReal = telemetryActive && telemetryRoleHasUsageChannel(telemetry, role.key) && tokens > 0;
     const detail = tokensReal
