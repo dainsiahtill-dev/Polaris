@@ -198,7 +198,7 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
       '/v2/director/runs/director-run-from-ce?workspace=C%3A%2FTemp%2FProduct',
     );
     expect(evidence).toHaveTextContent('RUNNING · queued=2');
-    expect(screen.getByTestId('chief-engineer-workbench-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
+    expect(screen.getByTestId('chief-engineer-workbench-run-evidence-realtime-push')).toHaveTextContent('实时推送');
 
     pmServiceMocks.getDirectorRun.mockResolvedValueOnce({
       ok: true,
@@ -214,7 +214,7 @@ describe('ChiefEngineerWorkbenchPanel RoleSession service bridge', () => {
 
     await waitFor(() => expect(pmServiceMocks.getDirectorRun).toHaveBeenCalledTimes(2));
     expect(evidence).toHaveTextContent('COMPLETED · queued=2');
-    expect(screen.queryByTestId('chief-engineer-workbench-run-evidence-auto-refresh')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('chief-engineer-workbench-run-evidence-realtime-push')).not.toBeInTheDocument();
   });
 
   it('cancels the Director run created from Chief Engineer workbench export', async () => {

@@ -194,7 +194,7 @@ describe('DirectorWorkbenchPanel RoleSession service bridge', () => {
       '/v2/director/runs/director-run-1?workspace=C%3A%2FTemp%2FProduct',
     );
     expect(evidence).toHaveTextContent('RUNNING · queued=5');
-    expect(screen.getByTestId('director-workbench-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
+    expect(screen.getByTestId('director-workbench-run-evidence-realtime-push')).toHaveTextContent('实时推送');
 
     pmServiceMocks.getDirectorRun.mockResolvedValueOnce({
       ok: true,
@@ -210,7 +210,7 @@ describe('DirectorWorkbenchPanel RoleSession service bridge', () => {
 
     await waitFor(() => expect(pmServiceMocks.getDirectorRun).toHaveBeenCalledTimes(2));
     expect(evidence).toHaveTextContent('COMPLETED · queued=5');
-    expect(screen.queryByTestId('director-workbench-run-evidence-auto-refresh')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('director-workbench-run-evidence-realtime-push')).not.toBeInTheDocument();
   });
 
   it('cancels the visible Director orchestration run from the workbench evidence strip', async () => {

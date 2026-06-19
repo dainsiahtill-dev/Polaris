@@ -31,7 +31,7 @@ function getActionableConsoleErrors(errors: string[]): string[] {
 async function enterContextOS(window: Page): Promise<void> {
   const directEntry = window.locator("[data-testid='control-panel-enter-contextos']");
   if (await directEntry.isVisible().catch(() => false)) {
-    await directEntry.click();
+    await directEntry.evaluate((node) => (node as HTMLButtonElement).click());
     return;
   }
   await window.getByRole("button", { name: /更多功能/ }).click();
@@ -71,17 +71,14 @@ test("ContextOS entry is reachable and the real-time dashboard renders", async (
   for (const id of ["request", "truthlog", "working_mem", "projection", "role_signal", "budget", "prompt", "llm"]) {
     await expect(window.locator(`[data-testid='contextos-stage-${id}']`)).toBeVisible();
   }
-  // 7 component-health cards.
-  for (const id of ["truthlog", "working_mem", "projection", "role_signal", "budget", "prompt", "telemetry"]) {
-    await expect(window.locator(`[data-testid='contextos-component-${id}']`)).toBeVisible();
-  }
   // 5 role cards (pm/architect/chief_engineer/director/qa).
   for (const id of ["pm", "architect", "chief_engineer", "director", "qa"]) {
     await expect(window.locator(`[data-testid='contextos-role-${id}']`)).toBeVisible();
   }
 
-  // The realtime activity chip (WebSocket-driven, no polling) is always present.
-  await expect(window.locator("[data-testid='contextos-activity-chip']")).toBeVisible();
+  // The pipeline nodes are the realtime dashboard anchors.
+  await expect(window.locator("[data-testid='contextos-stage-working_mem']")).toBeVisible();
+  await expect(window.locator("[data-testid='contextos-stage-projection']")).toBeVisible();
 
   // Role-tab cross-filter is interactive in the real app.
   await window.locator("[data-testid='contextos-roletab-pm']").click();
@@ -212,9 +209,10 @@ test("ContextOS renders REAL production-shape telemetry over the runtime WebSock
   await expect(window.getByTestId("contextos-tokens-unavailable")).toHaveCount(0);
 
   // 结构化信号经 WS meta 保真送达：WorkingMem 显示真实在窗项数（items_count=5）。
-  await expect(window.locator("[data-testid='contextos-component-working_mem']")).toContainText("5 项在窗");
-  // 快照回执（context.snapshot 的 snapshot_hash 签名）在 Receipt · Telemetry 卡呈现。
-  await expect(window.locator("[data-testid='contextos-component-telemetry']")).toContainText("快照");
+  await expect(window.locator("[data-testid='contextos-stage-working_mem']")).toContainText("5 项在窗");
+  await expect(window.locator("[data-testid='contextos-stage-projection']")).toContainText("2 投影");
+  // 快照回执（context.snapshot 的 snapshot_hash 签名）在决策 / 回执流中呈现。
+  await expect(window.getByText("Context snapshot stored", { exact: false })).toBeVisible();
 
   // 截图供人工视觉审计（真实 WS 数据态）。
   const shot = "/tmp/contextos-ws-realtime.png";

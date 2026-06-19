@@ -95,6 +95,20 @@ describe('ContextViewerModal', () => {
     expect(card.textContent).toContain('(估算)');
   });
 
+  it('renders message toggle and copy controls without nested buttons', async () => {
+    const payload = makePayload({
+      messages: [{ role: 'assistant', content: 'Hello world' }],
+    });
+    mockFetchOk(payload);
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    await waitFor(() => screen.getByTestId('contextos-msg-0'));
+
+    const card = screen.getByTestId('contextos-msg-0');
+    expect(card.querySelector('button button')).toBeNull();
+    expect(screen.getByTestId('contextos-msg-0-toggle')).toBeTruthy();
+    expect(screen.getByTestId('contextos-msg-0-copy')).toBeTruthy();
+  });
+
   it('filters messages via search input and shows match count', async () => {
     const payload = makePayload({
       messages: [

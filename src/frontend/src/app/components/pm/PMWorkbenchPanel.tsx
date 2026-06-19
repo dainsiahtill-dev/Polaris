@@ -75,7 +75,6 @@ interface ChiefEngineerHandoffDiagnosticsState {
 }
 
 const TERMINAL_PM_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled', 'blocked', 'timeout']);
-const RUN_EVIDENCE_REFRESH_INTERVAL_MS = 3000;
 
 function isTerminalPmRunStatus(status?: string | null): boolean {
   return TERMINAL_PM_RUN_STATUSES.has(String(status || '').trim().toLowerCase());
@@ -202,7 +201,7 @@ export function PMWorkbenchPanel({
     isExportingFactory,
     factoryRunEvidence,
     factoryRunCancelEvidence,
-    factoryRunAutoRefreshActive,
+    factoryRunRealtimePushActive,
     cancelFactoryRunDisabled,
     handleExportToFactory,
     handleRefreshFactoryRun,
@@ -566,7 +565,7 @@ export function PMWorkbenchPanel({
     workflowRunEvidence.loading ||
     workflowRunCancelEvidence.loading ||
     isTerminalPmRunStatus(workflowRunEvidence.data?.status);
-  const pmRunAutoRefreshActive = Boolean(workflowRunEvidence.runId)
+  const pmRunRealtimePushActive = Boolean(workflowRunEvidence.runId)
     && !workflowRunEvidence.loading
     && !workflowRunCancelEvidence.loading
     && !workflowRunEvidence.error
@@ -580,20 +579,6 @@ export function PMWorkbenchPanel({
   const directorHandoffLlmState = directorHandoffLlmLabel(directorHandoffDiagnostics);
   const chiefEngineerHandoffState = chiefEngineerHandoffLabel(chiefEngineerHandoffDiagnostics);
   const handoffDiagnosticsLoading = directorHandoffDiagnostics.loading || chiefEngineerHandoffDiagnostics.loading;
-
-  useEffect(() => {
-    const runId = String(workflowRunEvidence.runId || '').trim();
-    if (!runId || !pmRunAutoRefreshActive) {
-      return undefined;
-    }
-    const timer = window.setInterval(() => {
-      void loadPmRunEvidence(runId, {
-        preserveData: true,
-        preserveCancel: true,
-      });
-    }, RUN_EVIDENCE_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [loadPmRunEvidence, pmRunAutoRefreshActive, workflowRunEvidence.runId]);
 
   return (
     <div data-testid="pm-workbench-panel" className="flex flex-col h-full">
@@ -759,7 +744,7 @@ export function PMWorkbenchPanel({
           refreshTestId="pm-workbench-run-refresh"
           refreshDisabled={!workflowRunEvidence.runId || workflowRunEvidence.loading}
           refreshLoading={workflowRunEvidence.loading}
-          autoRefreshActive={pmRunAutoRefreshActive}
+          realtimePushActive={pmRunRealtimePushActive}
           onRefresh={handleRefreshPmRun}
           cancelTestId="pm-workbench-run-cancel"
           cancelDisabled={cancelPmRunDisabled}
@@ -782,7 +767,7 @@ export function PMWorkbenchPanel({
         testId="pm-workbench-factory-evidence"
         runEvidence={factoryRunEvidence}
         cancelEvidence={factoryRunCancelEvidence}
-        autoRefreshActive={factoryRunAutoRefreshActive}
+        realtimePushActive={factoryRunRealtimePushActive}
         cancelDisabled={cancelFactoryRunDisabled}
         onRefresh={handleRefreshFactoryRun}
         onCancel={() => { void handleCancelFactoryRun(); }}

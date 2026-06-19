@@ -68,6 +68,15 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 5. **修复范围允许双域**：Polaris 主仓 + C:/Temp 新项目
 6. **运行策略为"直到通过"**：不设轮次上限，持续循环，直到所有验收门禁 PASS
 7. **只能修改 Polaris**：绝对不能修改目标项目的任何代码
+8. **实时推送单轨制**：应用/前端实时状态只能走统一 Nat-JetStream + `/v2/ws/runtime` WebSocket；禁止新增或保留 SSE、HTTP 长轮询、`setInterval`/timer fetch 轮询、轮询兜底、文件轮询伪实时。HTTP 只允许用于初始快照、显式用户刷新、一次性命令/查询；测试代码可为等待异步完成而轮询状态端点，但不得作为产品实时链路。
+
+### 实时推送硬门禁
+
+- 首页主工作区、Factory 工作区、PM/ChiefEngineer/Director 工作区、ContextOS 实时视图必须通过同一套 Nat-JetStream runtime.v2 WebSocket 接收推送。
+- 禁止为了"兜底"并行保留第二套实时机制；发现双轨（SSE + WS、WS + HTTP polling、WS + 文件轮询）视为 P0。
+- 新增实时事件必须先定义 JetStream subject/channel 映射，再由 `RuntimeTransportProvider`/`runtimeSocketManager` 订阅；不得在组件内用 `setInterval` 调接口模拟实时。
+- 允许的非推送请求只有：页面加载初始 snapshot、用户点击刷新、命令提交后的单次确认、Playwright/pytest 等测试等待循环。
+- 审计时必须 grep `EventSource`、`text/event-stream`、`StreamingResponse`、`setInterval`、`pollInterval`、`polling`、`轮询`；命中产品实时路径即失败，除非有明确注释证明是 UI 动画/时钟/重连/测试等待而非数据刷新。
 
 ### 后端迁移承载规则
 
@@ -145,7 +154,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 ### C. PM 运行与质量门禁
 
 1. 进入 PM 工作区（enter-pm-workspace），点击单次督办（pm-workspace-run-once）
-2. 轮询 `/v2/pm/status`：必须出现 `running=true` 后再回到 `false`
+2. 测试等待 `/v2/pm/status`：必须观察到 `running=true` 后再回到 `false`（仅限 Playwright/pytest 等测试 harness 等待异步完成，禁止复用为产品实时方案）
 3. 校验 `/state/snapshot`：
    - `tasks` 数量 > 0
    - `completed_task_count` > 0
@@ -163,8 +172,8 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 ### D. Director 执行与工具审计
 
 1. 进入 Director 工作区（enter-director-workspace），点击执行（director-workspace-execute）
-2. 轮询 `/v2/director/status`：必须进入 RUNNING 再退出 RUNNING
-3. 轮询 `/v2/director/tasks`：必须存在 `metadata.pm_task_id` 关联任务
+2. 测试等待 `/v2/director/status`：必须进入 RUNNING 再退出 RUNNING（仅限 Playwright/pytest 等测试 harness 等待异步完成，禁止复用为产品实时方案）
+3. 测试读取 `/v2/director/tasks`：必须存在 `metadata.pm_task_id` 关联任务，不得把该读取包装成前端实时刷新循环
 
 4. **工具调用审计**：
    - 检查是否存在工具调用证据

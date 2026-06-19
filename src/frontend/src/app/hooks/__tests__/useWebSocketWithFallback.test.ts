@@ -260,6 +260,49 @@ describe('useWebSocketWithFallback', () => {
 
       expect(result.current.reconnectAttempt).toBe(0);
     });
+
+    it('should stop reconnecting after finite maxRetries across repeated closes', () => {
+      vi.useFakeTimers();
+      const { result } = renderHook(() =>
+        useWebSocketWithFallback({
+          url: 'ws://localhost:8080',
+          maxRetries: 2,
+          baseDelay: 1,
+          maxDelay: 1,
+        })
+      );
+
+      expect(MockWebSocket.instances).toHaveLength(1);
+
+      act(() => {
+        MockWebSocket.instances[0].onclose?.(new CloseEvent('close'));
+      });
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(MockWebSocket.instances).toHaveLength(2);
+      expect(result.current.reconnectAttempt).toBe(1);
+
+      act(() => {
+        MockWebSocket.instances[1].onclose?.(new CloseEvent('close'));
+      });
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(MockWebSocket.instances).toHaveLength(3);
+      expect(result.current.reconnectAttempt).toBe(2);
+
+      act(() => {
+        MockWebSocket.instances[2].onclose?.(new CloseEvent('close'));
+      });
+      act(() => {
+        vi.advanceTimersByTime(10);
+      });
+
+      expect(MockWebSocket.instances).toHaveLength(3);
+      expect(result.current.connectionState).toBe('disconnected');
+      expect(result.current.error).toContain('reconnect exhausted');
+    });
   });
 
   describe('Connection State Values', () => {

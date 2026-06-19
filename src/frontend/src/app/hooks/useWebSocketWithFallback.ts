@@ -2,8 +2,8 @@
  * WebSocket Hook
  *
  * 统一的 WebSocket 连接管理，支持自动重连。
- * Nat-JetStream runtime 只允许 WebSocket 实时链路；历史轮询配置
- * 仅作为兼容字段保留，不再执行。
+ * Nat-JetStream runtime 只允许 WebSocket 实时链路；旧兼容字段
+ * 仅保留配置形状，不再执行额外刷新循环。
  *
  * Features:
  * - 指数退避重连策略
@@ -154,7 +154,10 @@ export function useWebSocketWithFallback(
 
   // Refs for WebSocket and timers
   const wsRef = useRef<WebSocket | null>(null);
+  const connectWebSocketRef = useRef<() => void>(() => {});
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const retryConfigRef = useRef({ maxRetries, baseDelay, maxDelay });
 
   // Refs for tracking state without causing re-renders
   const isManualCloseRef = useRef(false);
@@ -194,6 +197,31 @@ export function useWebSocketWithFallback(
   }, [resetLegacyFallbackState, onFallbackEnd]);
 
   // ============================================================================
+  // Reconnection with Exponential Backoff
+  // ============================================================================
+
+  const scheduleReconnect = useCallback(() => {
+    if (isManualCloseRef.current) return;
+
+    const currentAttempt = reconnectAttemptRef.current;
+    const config = retryConfigRef.current;
+    if (currentAttempt >= config.maxRetries) {
+      markRealtimeUnavailable();
+      return;
+    }
+
+    const delay = calculateBackoffDelay(currentAttempt, config.baseDelay, config.maxDelay);
+
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      const nextAttempt = reconnectAttemptRef.current + 1;
+      reconnectAttemptRef.current = nextAttempt;
+      setReconnectAttempt(nextAttempt);
+      connectWebSocketRef.current();
+    }, delay);
+  }, [markRealtimeUnavailable]);
+
+  // ============================================================================
   // WebSocket Connection
   // ============================================================================
 
@@ -214,6 +242,7 @@ export function useWebSocketWithFallback(
 
       ws.onopen = () => {
         setConnectionState('connected');
+        reconnectAttemptRef.current = 0;
         setReconnectAttempt(0);
         isManualCloseRef.current = false;
         onConnect?.();
@@ -271,34 +300,9 @@ export function useWebSocketWithFallback(
     onConnect,
     onDisconnect,
     onError,
+    scheduleReconnect,
   ]);
-
-  // ============================================================================
-  // Reconnection with Exponential Backoff
-  // ============================================================================
-
-  const scheduleReconnect = useCallback(() => {
-    if (isManualCloseRef.current) return;
-    if (reconnectAttempt >= maxRetries) {
-      markRealtimeUnavailable();
-      return;
-    }
-
-    const delay = calculateBackoffDelay(reconnectAttempt, baseDelay, maxDelay);
-
-    reconnectTimerRef.current = setTimeout(() => {
-      reconnectTimerRef.current = null;
-      setReconnectAttempt((prev) => prev + 1);
-      connectWebSocket();
-    }, delay);
-  }, [
-    reconnectAttempt,
-    maxRetries,
-    baseDelay,
-    maxDelay,
-    connectWebSocket,
-    markRealtimeUnavailable,
-  ]);
+  connectWebSocketRef.current = connectWebSocket;
 
   // ============================================================================
   // Public API
@@ -359,6 +363,7 @@ export function useWebSocketWithFallback(
     stopFallbackPolling();
     clearReconnectTimer();
     closeWebSocket();
+    reconnectAttemptRef.current = 0;
     setReconnectAttempt(0);
     connectWebSocket();
   }, [
@@ -388,6 +393,11 @@ export function useWebSocketWithFallback(
   useEffect(() => {
     subscribedChannelsRef.current = initialChannels;
   }, [initialChannels]);
+
+  // Sync retry settings for socket callbacks created by older renders.
+  useEffect(() => {
+    retryConfigRef.current = { maxRetries, baseDelay, maxDelay };
+  }, [maxRetries, baseDelay, maxDelay]);
 
   // ============================================================================
   // Derived State

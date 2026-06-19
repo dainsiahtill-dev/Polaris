@@ -11,7 +11,7 @@ interface RoleFactoryRunEvidenceStripProps {
   testId: string;
   runEvidence: RoleSessionFactoryRunEvidence;
   cancelEvidence: RoleSessionFactoryRunCancelEvidence;
-  autoRefreshActive: boolean;
+  realtimePushActive: boolean;
   cancelDisabled: boolean;
   onRefresh: () => void;
   onCancel: () => void;
@@ -28,7 +28,7 @@ export function RoleFactoryRunEvidenceStrip({
   testId,
   runEvidence,
   cancelEvidence,
-  autoRefreshActive,
+  realtimePushActive,
   cancelDisabled,
   onRefresh,
   onCancel,
@@ -52,7 +52,7 @@ export function RoleFactoryRunEvidenceStrip({
       refreshTestId={`${testId}-refresh`}
       refreshDisabled={!runId || runEvidence.loading}
       refreshLoading={runEvidence.loading}
-      autoRefreshActive={autoRefreshActive}
+      realtimePushActive={realtimePushActive}
       onRefresh={onRefresh}
       cancelTestId={`${testId}-cancel`}
       cancelDisabled={cancelDisabled}

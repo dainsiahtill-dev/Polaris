@@ -168,10 +168,18 @@ class FactoryStore:
         if not run_file.exists():
             return None
 
-        content = await self._read_file(run_file)
-
-        data = json.loads(content)
-        return FactoryRun.from_dict(data)
+        try:
+            content = await self._read_file(run_file)
+            data = json.loads(content)
+            return FactoryRun.from_dict(data)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
+            logger.warning(
+                "factory_store: invalid run record skipped run_id=%s path=%s error=%s",
+                run_id,
+                run_file,
+                exc,
+            )
+            return None
 
     async def _read_file(self, file_path: Path) -> str:
         """异步文件读取 helper"""
@@ -201,7 +209,7 @@ class FactoryStore:
         """同步文件写入 helper（在线程池中执行）"""
         write_text_atomic(str(file_path), content)
 
-    async def append_event(self, run_id: str, event: dict) -> None:
+    async def append_event(self, run_id: str, event: dict[str, Any]) -> None:
         """Append event to audit log (JSONL format)"""
         event_file = self.get_run_dir(run_id) / "events" / "events.jsonl"
         event_file.parent.mkdir(parents=True, exist_ok=True)
@@ -233,7 +241,7 @@ class FactoryStore:
         finally:
             handle.close()
 
-    async def get_events(self, run_id: str) -> list[dict]:
+    async def get_events(self, run_id: str) -> list[dict[str, Any]]:
         """Get all events for a run"""
         event_file = self.get_run_dir(run_id) / "events" / "events.jsonl"
         if not event_file.exists():
@@ -241,11 +249,31 @@ class FactoryStore:
 
         lines = await self._read_lines(event_file)
 
-        events = []
-        for line in lines:
+        events: list[dict[str, Any]] = []
+        for line_number, line in enumerate(lines, start=1):
             line = line.strip()
-            if line:
-                events.append(json.loads(line))
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "factory_store: invalid event record skipped run_id=%s path=%s line=%s error=%s",
+                    run_id,
+                    event_file,
+                    line_number,
+                    exc,
+                )
+                continue
+            if not isinstance(payload, dict):
+                logger.warning(
+                    "factory_store: non-object event record skipped run_id=%s path=%s line=%s",
+                    run_id,
+                    event_file,
+                    line_number,
+                )
+                continue
+            events.append(payload)
 
         return events
 

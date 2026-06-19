@@ -63,7 +63,7 @@ describe('useFactoryBench', () => {
       return vi.fn();
     });
 
-    const { result } = renderHook(() => useFactoryBench({ pollIntervalMs: 60_000 }));
+    const { result } = renderHook(() => useFactoryBench());
 
     await waitFor(() => expect(result.current.currentSession?.session_id).toBe('bench-terminal'));
     expect(result.current.isStreaming).toBe(true);
@@ -71,7 +71,8 @@ describe('useFactoryBench', () => {
     act(() => {
       handler?.({
         event: {
-          channel: 'event.bench',
+          channel: 'event.bench:bench-terminal',
+          run_id: 'bench-terminal',
           kind: 'factory_bench.run.cancelled',
           ts: '2026-06-18T07:10:45Z',
           payload: {
@@ -100,12 +101,12 @@ describe('useFactoryBench', () => {
     runtimeTransportMock.subscribeChannels.mockReturnValue(unsubscribe);
     runtimeTransportMock.registerMessageHandler.mockReturnValue(unregisterHandler);
 
-    const { result, unmount } = renderHook(() => useFactoryBench({ pollIntervalMs: 60_000 }));
+    const { result, unmount } = renderHook(() => useFactoryBench());
 
     await waitFor(() => expect(result.current.currentSession?.session_id).toBe('bench-terminal'));
     expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledTimes(1);
     expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledWith([
-      { channel: 'event.bench:bench-terminal', tailLines: 0 },
+      { channel: 'event.bench', tailLines: 0 },
     ]);
 
     unmount();
@@ -113,5 +114,67 @@ describe('useFactoryBench', () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(unregisterHandler).toHaveBeenCalledTimes(1);
     expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledTimes(1);
+  });
+
+  it('auto-selects a newly announced bench session from Nat-JetStream without polling', async () => {
+    let handler: ((message: unknown) => void) | null = null;
+    runtimeTransportMock.registerMessageHandler.mockImplementation((nextHandler: (message: unknown) => void) => {
+      handler = nextHandler;
+      return vi.fn();
+    });
+    benchServiceMock.listBenchSessions.mockResolvedValueOnce({ ok: true, data: [] });
+    benchServiceMock.getBenchSession.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        session_id: 'bench-live',
+        work_dir: '/tmp/live',
+        project_ids: ['L1-01'],
+        total: 1,
+        completed: 0,
+        failed: 0,
+        status: 'running',
+        created_at: '2026-06-18T07:11:00Z',
+        updated_at: '2026-06-18T07:11:00Z',
+        metadata: {},
+        events_path: '/tmp/live/events.jsonl',
+        events: [],
+      },
+    });
+
+    const { result } = renderHook(() => useFactoryBench());
+
+    await waitFor(() => expect(handler).not.toBeNull());
+    act(() => {
+      handler?.({
+        event: {
+          channel: 'event.bench:bench-live',
+          run_id: 'bench-live',
+          kind: 'factory_bench.session.started',
+          ts: '2026-06-18T07:11:00Z',
+          payload: {
+            type: 'factory_bench.session.started',
+            session_id: 'bench-live',
+            summary: 'Factory bench session started: bench-live',
+            meta: {
+              session_id: 'bench-live',
+              work_dir: '/tmp/live',
+              project_ids: ['L1-01'],
+              total: 1,
+              completed: 0,
+              failed: 0,
+              status: 'running',
+              created_at: '2026-06-18T07:11:00Z',
+              updated_at: '2026-06-18T07:11:00Z',
+              metadata: {},
+            },
+          },
+        },
+      });
+    });
+
+    await waitFor(() => expect(result.current.sessions[0]?.session_id).toBe('bench-live'));
+    await waitFor(() => expect(result.current.currentSession?.session_id).toBe('bench-live'));
+    expect(benchServiceMock.listBenchSessions).toHaveBeenCalledTimes(1);
+    expect(benchServiceMock.getBenchSession).toHaveBeenCalledWith('bench-live');
   });
 });

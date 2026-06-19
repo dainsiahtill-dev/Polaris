@@ -374,8 +374,6 @@ export function useDirectorWorkspace({
     }
 
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-
     const syncTasks = async () => {
       try {
         const result = await listDirectorTaskFallbackRows(directorRunning, workspace);
@@ -384,20 +382,14 @@ export function useDirectorWorkspace({
         }
         setFallbackTasks(result.data as unknown as PmTask[]);
       } catch {
-        // Ignore polling errors and keep using live push data.
+        // Ignore snapshot errors and keep using live push data.
       }
     };
 
     void syncTasks();
-    timer = setInterval(() => {
-      void syncTasks();
-    }, directorRunning ? 1500 : 4000);
 
     return () => {
       cancelled = true;
-      if (timer) {
-        clearInterval(timer);
-      }
     };
   }, [workspace, directorRunning]);
 

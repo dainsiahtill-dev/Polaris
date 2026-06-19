@@ -320,7 +320,7 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
       '/v2/pm/runs/pm-run-1?workspace=C%3A%2FTemp%2FProduct',
     );
     expect(evidence).toHaveTextContent('RUNNING · architect');
-    expect(screen.getByTestId('pm-workbench-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
+    expect(screen.getByTestId('pm-workbench-run-evidence-realtime-push')).toHaveTextContent('实时推送');
 
     pmServiceMocks.getPmRun.mockResolvedValueOnce({
       ok: true,
@@ -336,7 +336,7 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
 
     await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledTimes(2));
     expect(evidence).toHaveTextContent('COMPLETED · architect');
-    expect(screen.queryByTestId('pm-workbench-run-evidence-auto-refresh')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('pm-workbench-run-evidence-realtime-push')).not.toBeInTheDocument();
   });
 
   it('launches PM orchestration through the typed /v2/pm/run service', async () => {

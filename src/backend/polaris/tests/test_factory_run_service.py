@@ -1530,7 +1530,7 @@ class TestOrchestrationStageExecutor:
         assert f"workspace/roles/qa/{run.id}/report.json" in result.artifacts
 
     @pytest.mark.asyncio
-    async def test_quality_gate_allows_llm_judgement_unavailable_by_default(self, temp_workspace):
+    async def test_quality_gate_fails_when_llm_judgement_unavailable_by_default(self, temp_workspace):
         command_service = _CompletedCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
         run = FactoryRun(
@@ -1556,9 +1556,10 @@ class TestOrchestrationStageExecutor:
 
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
 
-        assert result.status == "success"
-        assert "qa_llm_required=False" in str(result.output)
+        assert result.status == "failed"
+        assert "qa_llm_required=True" in str(result.output)
         assert "qa_llm_judgement_ready=False" in str(result.output)
+        assert "qa_gate_blocker=qa_llm_judgement_unavailable" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_fails_when_llm_judgement_unavailable_and_explicitly_required(self, temp_workspace):

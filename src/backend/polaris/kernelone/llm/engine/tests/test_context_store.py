@@ -427,6 +427,11 @@ class TestContextStoreInvokeFailure:
                 return _FakeProvider()
 
         async def _fake_invoke_with_timeout(coro: Any, timeout: Any = None) -> AIResponse:
+            del timeout
+            if hasattr(coro, "__await__"):
+                result = await coro
+                if isinstance(result, AIResponse):
+                    return result
             return AIResponse.success(output="provider-ok")
 
         return [
@@ -508,6 +513,9 @@ class TestWorkerIdPropagation:
     async def _fake_invoke_with_timeout(coro: Any, timeout: Any = None) -> Any:
         from polaris.kernelone.llm.engine.executor import AIResponse
 
+        del timeout
+        if hasattr(coro, "__await__"):
+            return await coro
         return AIResponse.success(output="provider-ok")
 
     @pytest.mark.asyncio

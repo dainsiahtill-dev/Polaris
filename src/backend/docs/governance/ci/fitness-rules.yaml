@@ -131,6 +131,26 @@ rules:
       - compare against `effects_allowed`
       - run docs/governance/ci/scripts/run_catalog_governance_gate.py --workspace . --mode fail-on-new --baseline polaris/tests/architecture/allowlists/catalog_governance_gate.baseline.json
 
+  - id: realtime_single_rail_no_polling
+    severity: blocker
+    description: >
+      Product realtime delivery must use the unified Nat-JetStream runtime.v2
+      WebSocket path only. SSE, EventSource, StreamingResponse event streams,
+      HTTP long-polling, timer-driven fetch polling, file polling, and polling
+      fallbacks are forbidden in application realtime surfaces.
+    evidence:
+      - AGENTS.md
+      - docs/AGENT_ARCHITECTURE_STANDARD.md
+      - polaris/delivery/ws/runtime_endpoint.py
+      - polaris/delivery/ws/endpoints/protocol_utils.py
+      - src/frontend/AGENTS.md
+    current_status: enforced_by_review_and_targeted_tests
+    desired_automation:
+      - grep product code for EventSource, text/event-stream, StreamingResponse
+      - grep frontend realtime surfaces for setInterval, pollInterval, polling, 轮询
+      - allow test harness waits, UI clocks/animations, WebSocket heartbeat, reconnect backoff, and explicit user refresh
+      - run targeted Playwright realtime audit for main, Factory, PM, ChiefEngineer, Director, and ContextOS
+
   - id: context_pack_is_primary_ai_entry
     severity: high
     description: >

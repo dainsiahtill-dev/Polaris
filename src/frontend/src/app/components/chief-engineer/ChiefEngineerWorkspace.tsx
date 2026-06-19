@@ -852,8 +852,6 @@ export function ChiefEngineerWorkspace({
     }
 
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-
     const syncDirectorWorkers = async () => {
       setDirectorWorkerLoading(true);
       try {
@@ -904,16 +902,9 @@ export function ChiefEngineerWorkspace({
 
     void syncDirectorTasks();
     void syncDirectorWorkers();
-    timer = setInterval(() => {
-      void syncDirectorTasks();
-      void syncDirectorWorkers();
-    }, directorRunning ? 2500 : 6000);
 
     return () => {
       cancelled = true;
-      if (timer) {
-        clearInterval(timer);
-      }
     };
   }, [workspace, directorRunning]);
 

@@ -151,7 +151,6 @@ describe('useLlmRuntimeGate', () => {
       workspace: 'C:/Temp/Product',
       live: true,
       llmStatus: initialStatus,
-      blockedRefreshIntervalMs: 60_000,
       fetchStatus,
     }));
 
@@ -180,7 +179,6 @@ describe('useLlmRuntimeGate', () => {
         workspace: 'C:/Temp/Product',
         live: true,
         llmStatus: status,
-        blockedRefreshIntervalMs: 60_000,
         fetchStatus,
       }),
       {
@@ -241,7 +239,6 @@ describe('useLlmRuntimeGate', () => {
       workspace: 'C:/Temp/Product',
       live: true,
       llmStatus: mockedBlockedStatus,
-      blockedRefreshIntervalMs: 60_000,
       fetchStatus,
     }));
 
@@ -286,7 +283,6 @@ describe('useLlmRuntimeGate', () => {
         workspace: 'C:/Temp/Product',
         live: true,
         llmStatus: status,
-        blockedRefreshIntervalMs: 60_000,
         fetchStatus,
       }),
       {

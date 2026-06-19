@@ -4,14 +4,13 @@
  *
  * Transport: the platform's unified WebSocket + NAT JetStream pipeline
  * (the same one the runtime event subsystem uses for log.llm / log.process
- * / etc.). We subscribe to ``event.bench:<session_id>`` via the existing
+ * / etc.). We subscribe to ``event.bench`` via the existing
  * ``RuntimeTransportProvider``; the bench subprocess publishes to NAT
  * JetStream subject ``hp.runtime.bench.<session_id>`` and the WebSocket's
  * JetStream consumer forwards every envelope to subscribers.
  *
- * There is one realtime path here: adding a new ``event.bench:<id>`` channel
- * in the WebSocket's subject builder is the only plumbing change needed on
- * the backend.
+ * There is one realtime path here: the wildcard ``event.bench`` channel is
+ * the live source, while HTTP is used only for explicit snapshot hydration.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -25,8 +24,6 @@ import {
 import { useRuntimeTransport } from '@/runtime/transport';
 
 export interface UseFactoryBenchOptions {
-  /** List-poll cadence. Default 4s. */
-  pollIntervalMs?: number;
   autoSelect?: 'newest' | 'none';
 }
 
@@ -59,15 +56,99 @@ function terminalStatusFromBenchEvent(eventType: string, meta: Record<string, un
 
 function isBenchEnvelope(payload: Record<string, unknown>): boolean {
   if (!payload) return false;
-  if (payload.channel === 'event.bench') return true;
+  if (typeof payload.channel === 'string' && payload.channel.startsWith('event.bench')) return true;
   if (typeof payload.kind === 'string' && payload.kind.startsWith('factory_bench.')) return true;
   return false;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function readStringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.map((item) => String(item || '').trim()).filter(Boolean);
+}
+
+function readObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function sessionIdFromEnvelope(
+  envelope: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): string | null {
+  const direct = readString(payload.session_id) || readString(payload.sessionId) || readString(envelope.run_id);
+  if (direct) return direct;
+  const channel = readString(envelope.channel);
+  if (channel?.startsWith('event.bench:')) {
+    return channel.slice('event.bench:'.length).trim() || null;
+  }
+  return null;
+}
+
+function benchEventFromEnvelope(
+  envelope: Record<string, unknown>,
+): FactoryBenchEvent | null {
+  if (!isBenchEnvelope(envelope)) return null;
+  const payload = readObject(envelope.payload);
+  if (!payload) return null;
+  const sessionId = sessionIdFromEnvelope(envelope, payload);
+  if (!sessionId) return null;
+  const meta = readObject(payload.meta) || {};
+  return {
+    seq: readNumber(payload.seq) ?? readNumber(envelope.cursor) ?? undefined,
+    type: String(payload.type || envelope.kind || 'bench.event'),
+    name: readString(payload.name),
+    actor: readString(payload.actor),
+    summary: readString(payload.summary),
+    ok: typeof payload.ok === 'boolean' ? payload.ok : null,
+    meta,
+    ts: readString(payload.ts) || readString(envelope.ts) || undefined,
+    session_id: sessionId,
+  };
+}
+
+function mergeSessionSummary(
+  existing: FactoryBenchSessionSummary | undefined,
+  event: FactoryBenchEvent,
+): FactoryBenchSessionSummary {
+  const meta = event.meta || {};
+  const projectIds = readStringArray(meta.project_ids) || existing?.project_ids || [];
+  const terminalStatus = terminalStatusFromBenchEvent(event.type, meta);
+  const status = terminalStatus || readString(meta.status) || existing?.status || 'running';
+  const eventTs = event.ts || new Date().toISOString();
+  const metadata = readObject(meta.metadata) || existing?.metadata || {};
+  return {
+    session_id: event.session_id || existing?.session_id || '',
+    work_dir: readString(meta.work_dir) || existing?.work_dir || '',
+    project_ids: projectIds,
+    total: readNumber(meta.total) ?? existing?.total ?? projectIds.length,
+    completed: readNumber(meta.completed) ?? existing?.completed ?? 0,
+    failed: readNumber(meta.failed) ?? existing?.failed ?? 0,
+    status,
+    created_at: readString(meta.created_at) || existing?.created_at || eventTs,
+    updated_at: readString(meta.updated_at) || eventTs,
+    completed_at: readString(meta.completed_at) || existing?.completed_at,
+    metadata,
+  };
 }
 
 export function useFactoryBench(
   options: UseFactoryBenchOptions = {},
 ): UseFactoryBenchResult {
-  const { pollIntervalMs = 4000, autoSelect = 'newest' } = options;
+  const { autoSelect = 'newest' } = options;
   const [sessions, setSessions] = useState<FactoryBenchSessionSummary[]>([]);
   const [currentSession, setCurrentSession] = useState<FactoryBenchSessionDetail | null>(null);
   const [events, setEvents] = useState<FactoryBenchEvent[]>([]);
@@ -76,11 +157,18 @@ export function useFactoryBench(
   const [error, setError] = useState<string | null>(null);
 
   const selectedSessionRef = useRef<string | null>(null);
-  const subscribedChannelRef = useRef<string | null>(null);
-  const unsubscribeChannelRef = useRef<(() => void) | null>(null);
-  const registeredHandlerRef = useRef<(() => void) | null>(null);
+  const currentSessionRef = useRef<FactoryBenchSessionDetail | null>(null);
+  const autoSelectRef = useRef(autoSelect);
 
   const { subscribeChannels, registerMessageHandler } = useRuntimeTransport();
+
+  useEffect(() => {
+    currentSessionRef.current = currentSession;
+  }, [currentSession]);
+
+  useEffect(() => {
+    autoSelectRef.current = autoSelect;
+  }, [autoSelect]);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -103,32 +191,10 @@ export function useFactoryBench(
     setIsLoading(false);
   }, []);
 
-  const cleanupRealtimeSubscription = useCallback(() => {
-    if (unsubscribeChannelRef.current) {
-      try {
-        unsubscribeChannelRef.current();
-      } catch {
-        // ignore — best-effort teardown
-      }
-      unsubscribeChannelRef.current = null;
-    }
-    subscribedChannelRef.current = null;
-
-    if (registeredHandlerRef.current) {
-      try {
-        registeredHandlerRef.current();
-      } catch {
-        // ignore — best-effort teardown
-      }
-      registeredHandlerRef.current = null;
-    }
-  }, []);
-
   const disconnect = useCallback(() => {
     selectedSessionRef.current = null;
-    cleanupRealtimeSubscription();
     setIsStreaming(false);
-  }, [cleanupRealtimeSubscription]);
+  }, []);
 
   const disconnectRef = useRef(disconnect);
 
@@ -136,116 +202,117 @@ export function useFactoryBench(
     disconnectRef.current = disconnect;
   }, [disconnect]);
 
-  const select = useCallback(
-    async (sessionId: string) => {
-      disconnect();
-      setCurrentSession(null);
-      setEvents([]);
+  const loadSessionDetail = useCallback(
+    async (sessionId: string, resetBeforeLoad: boolean) => {
       selectedSessionRef.current = sessionId;
+      if (resetBeforeLoad) {
+        setCurrentSession(null);
+        setEvents([]);
+      }
 
       // Initial fetch via the standard apiGet path (with Authorization header).
       const detailResult = await getBenchSession(sessionId);
+      if (selectedSessionRef.current !== sessionId) return;
       if (detailResult.ok && detailResult.data) {
         const detail = detailResult.data;
         setCurrentSession(detail);
-        setEvents((detail.events || []).slice(-MAX_EVENTS));
+        setEvents((prev) => {
+          const detailEvents = (detail.events || []).slice(-MAX_EVENTS);
+          if (resetBeforeLoad || detailEvents.length > 0) return detailEvents;
+          return prev;
+        });
+        setIsStreaming(!isTerminalStatus(detail.status));
       } else if (!detailResult.ok) {
         setError(detailResult.error || '加载Factory bench session失败');
+        setIsStreaming(false);
         return;
       }
+    },
+    [],
+  );
 
-      // Subscribe to the bench channel via the unified WS transport. The
-      // WebSocket's JetStream consumer subscribes to the corresponding
-      // subject ``hp.runtime.bench.<session_id>`` and forwards every
-      // envelope to the registered handler. This is the same pipeline
-      // log.llm / log.process / event.file_edit / etc. use.
-      const channel = `event.bench:${sessionId}`;
-      const subscriptions = [{ channel, tailLines: 0 }];
-      const unsubscribe = subscribeChannels(subscriptions);
-      subscribedChannelRef.current = channel;
-      unsubscribeChannelRef.current = unsubscribe;
+  const select = useCallback(
+    async (sessionId: string) => {
+      await loadSessionDetail(sessionId, true);
+    },
+    [loadSessionDetail],
+  );
 
-      const handler = (message: unknown) => {
-        if (!message || typeof message !== 'object') return;
-        const m = message as Record<string, unknown>;
-        // The runtime.v2 protocol delivers an ``EVENT`` message with
-        // ``event`` (envelope) inside.
-        const envelope = (m.event && typeof m.event === 'object'
-          ? (m.event as Record<string, unknown>)
-          : m);
-        if (!isBenchEnvelope(envelope)) return;
-        const payload = (envelope.payload && typeof envelope.payload === 'object'
-          ? (envelope.payload as Record<string, unknown>)
-          : null);
-        if (!payload) return;
-        const event: FactoryBenchEvent = {
-          seq: Number(envelope.cursor ?? 0) || undefined,
-          type: String(payload.type || envelope.kind || 'bench.event'),
-          name: typeof payload.name === 'string' ? payload.name : null,
-          actor: typeof payload.actor === 'string' ? payload.actor : null,
-          summary: typeof payload.summary === 'string' ? payload.summary : null,
-          ok: typeof payload.ok === 'boolean' ? payload.ok : null,
-          meta: (payload.meta && typeof payload.meta === 'object'
-            ? (payload.meta as Record<string, unknown>)
-            : {}),
-          ts: typeof envelope.ts === 'string' ? envelope.ts : undefined,
-          session_id: sessionId,
-        };
+  const selectRef = useRef(select);
+
+  useEffect(() => {
+    selectRef.current = select;
+  }, [select]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeChannels([{ channel: 'event.bench', tailLines: 0 }]);
+    const unregister = registerMessageHandler((message: unknown) => {
+      if (!message || typeof message !== 'object') return;
+      const m = message as Record<string, unknown>;
+      const envelope = (m.event && typeof m.event === 'object'
+        ? (m.event as Record<string, unknown>)
+        : m);
+      const event = benchEventFromEnvelope(envelope);
+      if (!event || !event.session_id) return;
+
+      let shouldAutoSelect = false;
+      setSessions((prev) => {
+        const existing = prev.find((session) => session.session_id === event.session_id);
+        const merged = mergeSessionSummary(existing, event);
+        const withoutCurrent = prev.filter((session) => session.session_id !== event.session_id);
+        return [merged, ...withoutCurrent];
+      });
+
+      const selectedSessionId = selectedSessionRef.current;
+      if (autoSelectRef.current === 'newest' && selectedSessionId !== event.session_id) {
+        const currentStatus = currentSessionRef.current?.status;
+        shouldAutoSelect = !selectedSessionId || isTerminalStatus(currentStatus);
+      }
+
+      if (selectedSessionId === event.session_id) {
         setEvents((prev) => {
           const next = prev.length >= MAX_EVENTS ? prev.slice(1) : prev.slice();
           next.push(event);
           return next;
         });
-        // Reflect counter / status updates from the bench service JSONL into
-        // the currentSession snapshot. The /state endpoint still serves
-        // counters, but the session detail already includes the most recent
-        // counter values from the initial fetch; subsequent counter changes
-        // also arrive via the same payload.meta.completed / failed fields.
         const terminalStatus = terminalStatusFromBenchEvent(event.type, event.meta || {});
-        if (
-          event.meta
-          && (
-            event.meta.completed !== undefined
-            || event.meta.failed !== undefined
-            || event.meta.status !== undefined
-            || event.meta.completed_at !== undefined
-            || terminalStatus
-          )
-        ) {
-          setCurrentSession((prev) => {
-            if (!prev) return prev;
-            return {
-              ...prev,
-              completed: Number(event.meta?.completed ?? prev.completed),
-              failed: Number(event.meta?.failed ?? prev.failed),
-              status: terminalStatus ?? prev.status,
-              completed_at: typeof event.meta?.completed_at === 'string' ? event.meta.completed_at : prev.completed_at,
-              updated_at: typeof event.ts === 'string' ? event.ts : prev.updated_at,
-            };
-          });
-        }
+        setCurrentSession((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            ...mergeSessionSummary(prev, event),
+            events: prev.events,
+            events_path: prev.events_path,
+          };
+        });
         if (terminalStatus) {
           setIsStreaming(false);
         }
-      };
-      const unregisterHandler = registerMessageHandler(handler);
-      registeredHandlerRef.current = unregisterHandler;
+      }
 
-      setIsStreaming(true);
-    },
-    [disconnect, subscribeChannels, registerMessageHandler],
-  );
+      if (shouldAutoSelect) {
+        const liveSummary = mergeSessionSummary(undefined, event);
+        const liveDetail: FactoryBenchSessionDetail = {
+          ...liveSummary,
+          events_path: '',
+          events: [event],
+        };
+        selectedSessionRef.current = event.session_id;
+        currentSessionRef.current = liveDetail;
+        setCurrentSession(liveDetail);
+        setEvents([event]);
+        setIsStreaming(!isTerminalStatus(liveSummary.status));
+        void loadSessionDetail(event.session_id, false);
+      }
+    });
 
-  useEffect(() => {
     void refresh();
-    const id = setInterval(() => {
-      void refresh();
-    }, pollIntervalMs);
     return () => {
-      clearInterval(id);
+      unregister();
+      unsubscribe();
       disconnectRef.current();
     };
-  }, [refresh, pollIntervalMs]);
+  }, [loadSessionDetail, refresh, registerMessageHandler, subscribeChannels]);
 
   useEffect(() => {
     if (autoSelect !== 'newest') return;

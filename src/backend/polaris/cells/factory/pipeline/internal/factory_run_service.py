@@ -1739,7 +1739,7 @@ class OrchestrationStageExecutor:
             "require_qa_llm_judgement",
             "factory_require_qa_llm_judgement",
             env_var="POLARIS_FACTORY_QA_REQUIRE_LLM_JUDGEMENT",
-            default=False,
+            default=True,
         )
         qa_llm_judgement_ready = not self._qa_report_has_warning(qa_payload, _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING)
         workspace_checks_passed, workspace_checks_artifact = await self._run_workspace_quality_checks(run, context)

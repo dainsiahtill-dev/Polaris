@@ -29,7 +29,6 @@ interface UseRoleSessionFactoryExportOptions {
 }
 
 const TERMINAL_FACTORY_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled', 'blocked', 'timeout']);
-const RUN_EVIDENCE_REFRESH_INTERVAL_MS = 3000;
 
 function runLifecycleToken(run?: FactoryRunStatus | null): string {
   const status = String(run?.status || '').trim().toLowerCase();
@@ -209,31 +208,17 @@ export function useRoleSessionFactoryExport({
     factoryRunEvidence.loading ||
     factoryRunCancelEvidence.loading ||
     isTerminalFactoryRun(factoryRunEvidence.data);
-  const factoryRunAutoRefreshActive = Boolean(factoryRunEvidence.runId)
+  const factoryRunRealtimePushActive = Boolean(factoryRunEvidence.runId)
     && !factoryRunEvidence.loading
     && !factoryRunCancelEvidence.loading
     && !factoryRunEvidence.error
     && !isTerminalFactoryRun(factoryRunEvidence.data);
 
-  useEffect(() => {
-    const runId = String(factoryRunEvidence.runId || '').trim();
-    if (!runId || !factoryRunAutoRefreshActive) {
-      return undefined;
-    }
-    const timer = window.setInterval(() => {
-      void loadFactoryRunEvidence(runId, {
-        preserveData: true,
-        preserveCancel: true,
-      });
-    }, RUN_EVIDENCE_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [factoryRunAutoRefreshActive, factoryRunEvidence.runId, loadFactoryRunEvidence]);
-
   return {
     isExportingFactory,
     factoryRunEvidence,
     factoryRunCancelEvidence,
-    factoryRunAutoRefreshActive,
+    factoryRunRealtimePushActive,
     cancelFactoryRunDisabled,
     handleExportToFactory,
     handleRefreshFactoryRun,

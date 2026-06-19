@@ -1,7 +1,8 @@
 /**
- * ConnectionStatusIndicator - WebSocket/Fallback 连接状态指示器
+ * ConnectionStatusIndicator - WebSocket 连接状态指示器
  *
- * 统一的连接状态 UI 组件，支持 WebSocket 和降级轮询两种模式。
+ * 统一的连接状态 UI 组件。Realtime 只允许 WebSocket；fallback 状态仅为旧接口兼容，
+ * 不代表存在 HTTP 轮询链路。
  * 提供清晰的视觉反馈，帮助用户理解当前连接状态。
  *
  * Features:
@@ -32,7 +33,7 @@ export interface ConnectionStatusIndicatorProps {
   connectionState: ConnectionState;
   /** 当前重连尝试次数 */
   reconnectAttempt?: number;
-  /** 降级轮询已执行次数 */
+  /** 旧接口兼容计数；WebSocket-only 模式下应为 0 */
   fallbackAttempt?: number;
   /** 是否显示文字标签 */
   showLabel?: boolean;
@@ -79,8 +80,8 @@ const STATUS_CONFIG = {
   fallback: {
     color: 'text-amber-500',
     bgColor: 'bg-amber-500',
-    label: '降级模式',
-    description: 'WebSocket 不可用，使用轮询保持连接',
+    label: '实时不可用',
+    description: 'WebSocket 不可用，等待重连',
     icon: Radio,
   },
 } as const;
@@ -137,8 +138,8 @@ export function ConnectionStatusIndicator({
     }
 
     if (connectionState === 'fallback') {
-      lines.push(`轮询次数: ${fallbackAttempt}`);
-      lines.push('数据更新可能延迟');
+      lines.push(`兼容计数: ${fallbackAttempt}`);
+      lines.push('实时推送暂不可用');
     }
 
     if (connectionState === 'disconnected' && reconnectAttempt > 0) {
@@ -222,10 +223,10 @@ export function ConnectionStatusIndicator({
             {connectionState === 'fallback' && (
               <>
                 <div className="text-amber-300 mt-1">
-                  轮询 #{fallbackAttempt}
+                  兼容状态 #{fallbackAttempt}
                 </div>
                 <div className="text-gray-400 text-[10px] mt-1">
-                  实时更新可能延迟
+                  等待 WebSocket 重连
                 </div>
               </>
             )}
@@ -331,7 +332,7 @@ export function ConnectionStatusBar({
 
         {connectionState === 'fallback' && (
           <span className="text-xs text-amber-600">
-            (轮询 {fallbackAttempt})
+            (等待重连 {fallbackAttempt})
           </span>
         )}
 
@@ -390,7 +391,7 @@ export function ConnectionStatusPanel({
       value: isWebSocketConnected
         ? 'WebSocket'
         : isFallbackActive
-          ? 'HTTP 轮询'
+          ? 'WebSocket 重连中'
           : '未连接',
       color: isWebSocketConnected
         ? 'text-green-600'
@@ -409,7 +410,7 @@ export function ConnectionStatusPanel({
       color: 'text-gray-600',
     },
     {
-      label: '轮询次数',
+      label: '兼容计数',
       value: String(fallbackAttempt),
       color: 'text-amber-600',
     },

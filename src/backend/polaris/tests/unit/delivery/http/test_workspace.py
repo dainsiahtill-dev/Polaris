@@ -81,7 +81,7 @@ def test_settings_with_workspace_override_returns_original_for_active_workspace(
 def test_workspace_values_match_case_insensitive_fs_treats_case_as_equal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """On case-insensitive FS (Darwin / Win / WSL), /Foo and /foo are equal."""
+    """On case-insensitive FS (Darwin / Win), /Foo and /foo are equal."""
     monkeypatch.setattr(workspace_module, "_CASE_INSENSITIVE_FS", True)
     # /Foo vs /foo should now be considered equal
     assert workspace_values_match("/tmp/Foo", "/tmp/foo") is True
@@ -95,16 +95,17 @@ def test_workspace_values_match_case_sensitive_fs_distinguishes_case(
     monkeypatch.setattr(workspace_module, "_CASE_INSENSITIVE_FS", False)
     # On case-sensitive FS the same string is equal, but case differs
     assert workspace_values_match("/tmp/Foo", "/tmp/Foo") is True
-    # Use tmp_path so the resolved comparison is real
-    # Two distinct real paths differing only by case — they must NOT match
-    # because on case-sensitive FS these resolve to different directories.
-    # We compare two sibling dirs that exist by symlink-trick; if symlinks
-    # are unavailable, skip. Otherwise, use literal distinct paths that
-    # resolve to themselves.
-    # On case-sensitive Linux, "/tmp/Foo" vs "/tmp/foo" are different paths.
-    # The resolver normalizes them to themselves (no symlink), so they remain distinct.
-    # We test via the literal unmatched pair using nonexistent-but-distinct strings.
+    assert workspace_values_match("/tmp/Foo", "/tmp/foo") is False
     assert workspace_values_match("/nonexistent_a", "/nonexistent_b") is False
+
+
+def test_is_case_insensitive_platform_does_not_fold_wsl_linux_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """WSL/Linux must stay case-sensitive by default instead of folding all paths."""
+    monkeypatch.setattr(workspace_module.sys, "platform", "linux")
+
+    assert workspace_module._is_case_insensitive_platform() is False
 
 
 def test_workspace_values_match_empty_or_none_returns_false() -> None:

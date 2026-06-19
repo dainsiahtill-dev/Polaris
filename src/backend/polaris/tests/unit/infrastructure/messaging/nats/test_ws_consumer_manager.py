@@ -251,6 +251,19 @@ def test_durable_token_can_prevent_client_id_collision() -> None:
     assert first._durable_name != second._durable_name
 
 
+def test_channel_filter_matches_runtime_channel_families() -> None:
+    matches = ws_consumer_manager._channel_matches_filter
+
+    assert matches("event.bench", "event.bench:bench-1") is True
+    assert matches("chat", "chat:session-1") is True
+    assert matches("event.factory", "event.factory:run-1") is True
+    assert matches("event.bench:bench-1", "event.bench:bench-1") is True
+
+    assert matches("event.bench:bench-1", "event.bench:bench-2") is False
+    assert matches("event.bench", "event.factory:run-1") is False
+    assert matches("llm", "event.bench:bench-1") is False
+
+
 @pytest.mark.asyncio
 async def test_queue_full_does_not_ack_dropped_jetstream_message(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = JetStreamConsumerManager(

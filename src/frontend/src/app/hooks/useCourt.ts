@@ -9,7 +9,7 @@
  * - 共享全局 WebSocket 连接，避免多连问题
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   getCourtTopology,
   getCourtState,
@@ -80,14 +80,14 @@ export function useCourtTopology() {
 }
 
 // ============================================================================
-// Court State (with shared WebSocket via RuntimeTransportProvider + polling fallback)
+// Court State (shared WebSocket via RuntimeTransportProvider; no polling fallback)
 // ============================================================================
 
-export function useCourtState(pollInterval = 3000) {
+export function useCourtState(options: { enabled?: boolean } = {}) {
+  const { enabled = true } = options;
   const [state, setState] = useState<CourtState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const {
     connected: transportConnected,
@@ -115,12 +115,14 @@ export function useCourtState(pollInterval = 3000) {
 
   // Subscribe to status channel via transport
   useEffect(() => {
+    if (!enabled) return undefined;
     const unsubscribe = subscribeChannels([{ channel: 'status' }]);
     return () => unsubscribe();
-  }, [subscribeChannels]);
+  }, [enabled, subscribeChannels]);
 
   // Register message handler for court state updates
   useEffect(() => {
+    if (!enabled) return undefined;
     const unregister = registerMessageHandler((message) => {
       try {
         const msg = message as Record<string, unknown>;
@@ -136,32 +138,19 @@ export function useCourtState(pollInterval = 3000) {
       }
     });
     return () => unregister();
-  }, [registerMessageHandler]);
+  }, [enabled, registerMessageHandler]);
 
   // Send STATUS command when connected
   useEffect(() => {
-    if (transportConnected) {
+    if (enabled && transportConnected) {
       sendCommand({ type: 'STATUS' });
     }
-  }, [transportConnected, sendCommand]);
+  }, [enabled, transportConnected, sendCommand]);
 
-  // Polling fallback when transport is not connected
+  // Initial snapshot only; all subsequent updates arrive through runtime.v2.
   useEffect(() => {
-    // 首先获取初始数据
-    fetchState();
-
-    // 如果 transport 未连接，启动轮询作为降级
-    if (!transportConnected) {
-      pollIntervalRef.current = setInterval(fetchState, pollInterval);
-    }
-
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-    };
-  }, [fetchState, pollInterval, transportConnected]);
+    void fetchState();
+  }, [fetchState]);
 
   return {
     state,

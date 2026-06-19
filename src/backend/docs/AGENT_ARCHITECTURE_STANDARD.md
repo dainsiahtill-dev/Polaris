@@ -136,9 +136,13 @@
 
 ## 8. 实时观测标准
 
-1. 实时推送以 NATS/JetStream 事件通道为主，避免轮询伪实时。
-2. 观测事件优先结构化 payload（禁止只靠 message 文本猜测状态）。
-3. LLM 生命周期（waiting/done/failed）和 Taskboard 状态必须由统一事件事实驱动。
+1. 实时推送必须使用统一 Nat-JetStream + `/v2/ws/runtime` WebSocket runtime.v2；禁止产品代码新增或保留 SSE、HTTP 长轮询、定时 HTTP 轮询、文件轮询伪实时、轮询兜底。
+2. HTTP 只允许用于初始快照、显式用户刷新、一次性 command/query；不得通过 `setInterval`、timer、后台 loop 调 HTTP 端点模拟实时。
+3. 新增实时事件必须先定义 JetStream subject/channel 映射，并通过 `delivery/ws` runtime.v2 subject builder 进入统一通道；前端统一通过 `RuntimeTransportProvider`/`runtimeSocketManager` 订阅。
+4. 观测事件优先结构化 payload（禁止只靠 message 文本猜测状态）。
+5. LLM 生命周期（waiting/done/failed）和 Taskboard 状态必须由统一事件事实驱动。
+6. 测试 harness 可以轮询状态端点等待异步完成，但不得把测试轮询包装为产品实时机制。
+7. 首页、Factory、PM、ChiefEngineer、Director、ContextOS 的实时显示变更必须以 Playwright 或等价浏览器审计证明：WebSocket 推送到达后页面无刷新更新。
 
 ---
 

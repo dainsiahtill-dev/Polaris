@@ -207,7 +207,6 @@ interface DirectorDiagnosticsState {
 }
 
 const DIRECTOR_TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled', 'blocked', 'timeout']);
-const DIRECTOR_RUN_EVIDENCE_REFRESH_INTERVAL_MS = 3000;
 
 interface LoadDirectorRunEvidenceOptions {
   preserveData?: boolean;
@@ -1819,11 +1818,11 @@ export function DirectorWorkspace({
     const eventCount = executionLogs.length + llmStreamEvents.length + processStreamEvents.length;
     const previousCount = lastRealtimeEventCountRef.current;
     lastRealtimeEventCountRef.current = eventCount;
-    if (eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
+    if (!directorRunning || eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
     if (activeView !== 'activity') {
       setActiveView('activity');
     }
-  }, [activeView, executionLogs.length, llmStreamEvents.length, processStreamEvents.length]);
+  }, [activeView, directorRunning, executionLogs.length, llmStreamEvents.length, processStreamEvents.length]);
 
   // 用户手动点击导航时记录偏好
   const handleViewChange = useCallback((view: DirectorActiveView) => {
@@ -1962,7 +1961,6 @@ export function DirectorWorkspace({
 
   useEffect(() => {
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
 
     const syncDiagnostics = async () => {
       if (cancelled) {
@@ -1972,17 +1970,9 @@ export function DirectorWorkspace({
     };
 
     void syncDiagnostics();
-    if (workspace) {
-      timer = setInterval(() => {
-        void syncDiagnostics();
-      }, directorRunning ? 2500 : 7000);
-    }
 
     return () => {
       cancelled = true;
-      if (timer) {
-        clearInterval(timer);
-      }
     };
   }, [directorRunning, loadDirectorDiagnostics, workspace]);
 
@@ -2010,8 +2000,6 @@ export function DirectorWorkspace({
     }
 
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-
     const syncTasks = async () => {
       try {
         const result = await listDirectorTaskFallbackRows(directorRunning, workspace);
@@ -2022,20 +2010,14 @@ export function DirectorWorkspace({
           setFallbackTasks(result.data as unknown as PmTask[]);
         }
       } catch {
-        // Ignore polling errors and keep using live push data.
+        // Ignore snapshot errors and keep using live push data.
       }
     };
 
     void syncTasks();
-    timer = setInterval(() => {
-      void syncTasks();
-    }, directorRunning ? 1500 : 4000);
 
     return () => {
       cancelled = true;
-      if (timer) {
-        clearInterval(timer);
-      }
     };
   }, [workspace, directorRunning]);
 
@@ -2053,8 +2035,6 @@ export function DirectorWorkspace({
     }
 
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-
     const syncWorkers = async () => {
       try {
         const result = await listDirectorWorkers(workspace);
@@ -2075,15 +2055,9 @@ export function DirectorWorkspace({
     };
 
     void syncWorkers();
-    timer = setInterval(() => {
-      void syncWorkers();
-    }, directorRunning ? 2500 : 6000);
 
     return () => {
       cancelled = true;
-      if (timer) {
-        clearInterval(timer);
-      }
     };
   }, [workspace, directorRunning]);
 
@@ -2922,26 +2896,7 @@ export function DirectorWorkspace({
     directorRunEvidence.loading ||
     directorRunCancelState.loading ||
     isDirectorRunTerminal(directorRunEvidence.data?.status);
-  const directorRunAutoRefreshActive = Boolean(directorRunEvidence.runId)
-    && !directorRunEvidence.loading
-    && !directorRunCancelState.loading
-    && !directorRunEvidence.error
-    && !isDirectorRunTerminal(directorRunEvidence.data?.status);
   const shouldShowSideAIDialogue = showAIDialogue && activeView !== 'workbench' && activeView !== 'strategy';
-
-  useEffect(() => {
-    const normalizedRunId = String(directorRunEvidence.runId || '').trim();
-    if (!normalizedRunId || !directorRunAutoRefreshActive) {
-      return undefined;
-    }
-    const timer = window.setInterval(() => {
-      void loadDirectorRunEvidence(normalizedRunId, {
-        preserveData: true,
-        preserveCancel: true,
-      });
-    }, DIRECTOR_RUN_EVIDENCE_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [directorRunAutoRefreshActive, directorRunEvidence.runId, loadDirectorRunEvidence]);
 
   return (
     <div data-testid="director-workspace" className="flex flex-col h-full bg-gradient-to-br from-[var(--ink-indigo)] via-[rgba(28,18,48,0.8)] to-[rgba(14,20,40,0.95)] text-slate-100 overflow-hidden">
@@ -3173,7 +3128,6 @@ export function DirectorWorkspace({
           refreshTestId="director-run-refresh"
           refreshDisabled={!directorRunEvidence.runId || directorRunEvidence.loading}
           refreshLoading={directorRunEvidence.loading}
-          autoRefreshActive={directorRunAutoRefreshActive}
           onRefresh={handleRefreshDirectorRun}
           cancelTestId="director-run-cancel"
           cancelDisabled={directorRunCancelDisabled}

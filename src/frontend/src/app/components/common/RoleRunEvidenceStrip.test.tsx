@@ -20,7 +20,7 @@ describe('RoleRunEvidenceStrip', () => {
         refreshTestId="run-refresh"
         refreshDisabled={false}
         refreshLoading={false}
-        autoRefreshActive
+        realtimePushActive
         onRefresh={onRefresh}
         cancelTestId="run-cancel"
         cancelDisabled={false}
@@ -42,7 +42,7 @@ describe('RoleRunEvidenceStrip', () => {
     );
     expect(evidence).toHaveTextContent('RUNNING · queued=3');
     expect(evidence).toHaveTextContent('Status: RUNNING');
-    expect(screen.getByTestId('run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
+    expect(screen.getByTestId('run-evidence-realtime-push')).toHaveTextContent('实时推送');
     expect(screen.getByTestId('run-cancel-result')).toHaveAttribute(
       'data-endpoint',
       '/v2/director/runs/run-1/cancel?workspace=C%3A%2FTemp%2FProduct',

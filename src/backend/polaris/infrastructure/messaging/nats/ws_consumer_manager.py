@@ -34,6 +34,22 @@ def _normalize_channel_filter(channel: str) -> str:
     return token
 
 
+def _channel_matches_filter(channel_filter: str, envelope_channel: str) -> bool:
+    """Return whether a runtime envelope channel satisfies one client filter."""
+    token = str(channel_filter or "").strip()
+    channel = str(envelope_channel or "").strip()
+    if not token or not channel:
+        return False
+    if token in {"*", "all"}:
+        return True
+    if channel == token:
+        return True
+    # Family subscriptions such as ``event.bench`` and ``chat`` are mapped to
+    # JetStream wildcard subjects, while envelopes keep their pinned channel
+    # identity (``event.bench:<session_id>`` / ``chat:<session_id>``).
+    return ":" not in token and channel.startswith(f"{token}:")
+
+
 def _normalize_durable_token(value: str) -> str:
     """Return a NATS durable-name-safe token with a deterministic fallback."""
     normalized = _DURABLE_TOKEN_PATTERN.sub("_", str(value or "").strip()).strip("_-")
@@ -303,7 +319,7 @@ class JetStreamConsumerManager:
     async def _consume_messages_loop(self) -> None:
         """Background task that continuously consumes messages from JetStream into internal queue.
 
-        This eliminates the short-timeout polling pattern (0.1s) and enables
+        This eliminates the old short-timeout foreground fetch loop and enables
         zero-latency message delivery. Messages are buffered in the internal queue
         and retrieved by next_message() with minimal delay.
         """
@@ -312,7 +328,7 @@ class JetStreamConsumerManager:
 
         while not self._closed:
             try:
-                # Use longer timeout for background polling to reduce CPU usage
+                # Use a bounded pull wait so the task can observe cancellation.
                 msg = await asyncio.wait_for(
                     self._subscription.next_msg(),
                     timeout=1.0,  # 1s interval for background polling
@@ -338,11 +354,9 @@ class JetStreamConsumerManager:
                             self._pending_acks[cursor] = msg
 
                         # Channel filtering (same logic as before)
-                        if (
-                            self.channels
-                            and "*" not in self.channels
-                            and "all" not in self.channels
-                            and envelope.channel not in self.channels
+                        if self.channels and not any(
+                            _channel_matches_filter(channel_filter, envelope.channel)
+                            for channel_filter in self.channels
                         ):
                             await msg.ack()
                             self._pending_acks.pop(cursor, None)

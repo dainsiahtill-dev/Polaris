@@ -355,94 +355,124 @@ async def run_my_feature(...) -> MyFeatureResponse:
 
 ---
 
-## 6. SSE Endpoints
+## 6. Realtime Endpoints
 
-### 6.1 Non-streaming vs streaming
+### 6.1 Canonical transport
 
-| Pattern | Use case | Return type |
-|---------|----------|-------------|
-| `response_model=...` | Standard request/response | Pydantic model |
-| `create_sse_response(...)` | Real-time streaming | `StreamingResponse` |
+Polaris product realtime delivery is single-rail:
 
-### 6.2 Create an SSE endpoint
+| Pattern | Use case | Allowed |
+|---------|----------|---------|
+| `response_model=...` | Standard request/response, initial snapshot, explicit user refresh | Yes |
+| Nat-JetStream + `/v2/ws/runtime` runtime.v2 | Realtime event delivery | Yes |
+| SSE / `EventSource` / `text/event-stream` / `StreamingResponse` | Product realtime streaming | No |
+| HTTP polling / long-polling / timer fetch loops | Product realtime updates | No |
+
+HTTP endpoints may create durable state, return snapshots, or accept commands.
+Realtime updates must be published as structured JetStream events and consumed
+through the shared runtime WebSocket.
+
+### 6.2 Publish a realtime event
 
 ```python
-# polaris/delivery/http/v2/my_feature.py
-import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
-from polaris.delivery.http.routers.sse_utils import (
-    create_sse_response,
-    sse_event_generator,
-)
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+
 from polaris.delivery.http.routers._shared import require_auth
+from polaris.delivery.http.routers.jetstream_utils import publish_to_jetstream
+from polaris.infrastructure.messaging.nats.nats_types import create_runtime_event
 
 router = APIRouter(prefix="/my-feature", tags=["My Feature"])
 
 
-@router.post("/stream", dependencies=[Depends(require_auth)])
-async def my_feature_stream(request: Request, payload: dict[str, Any]):
-    """Stream my feature results via SSE."""
-    message = str(payload.get("message") or "").strip()
-    if not message:
-        return create_sse_response(_error_sse_generator("message is required"))
-
-    async def _run_feature(queue: asyncio.Queue) -> None:
-        """Run feature logic and push events to queue."""
-        for i in range(3):
-            await queue.put({
-                "type": "chunk",
-                "data": {"index": i, "content": f"Chunk {i} for: {message}"},
-            })
-            await asyncio.sleep(0.1)
-        await queue.put({"type": "complete", "data": {}})
-
-    return create_sse_response(sse_event_generator(_run_feature, timeout=180.0))
+class MyFeatureRunRequest(BaseModel):
+    message: str = Field(..., min_length=1)
 
 
-async def _error_sse_generator(message: str) -> Any:
-    """SSE error event generator."""
-    yield f"event: error\ndata: {message}\n\n"
-    yield "event: complete\ndata: {}\n\n"
+@router.post("/runs", dependencies=[Depends(require_auth)])
+async def start_my_feature_run(payload: MyFeatureRunRequest) -> dict[str, Any]:
+    run_id = "feature-123"
+    event = create_runtime_event(
+        workspace_key="default",
+        run_id=run_id,
+        channel=f"event.my_feature:{run_id}",
+        kind="my_feature.started",
+        payload={
+            "type": "my_feature.started",
+            "run_id": run_id,
+            "summary": payload.message,
+        },
+        meta={"source": "my_feature"},
+    )
+    await publish_to_jetstream(
+        subject=f"hp.runtime.default.event.my_feature.{run_id}",
+        payload=event.to_dict(),
+    )
+    return {"run_id": run_id, "status": "running"}
 ```
 
-### 6.3 SSE event types convention
+When adding a new channel family, update the runtime.v2 subject builder so the
+logical channel maps to the canonical JetStream subject. Keep payloads structured;
+do not make clients infer state from prose-only messages.
 
-```python
-# Standard event types used across Polaris
-{
-    "type": "start",           # Stream started
-    "type": "chunk",           # Content chunk
-    "type": "thinking_chunk",  # Reasoning/thinking trace
-    "type": "error",           # Error occurred
-    "type": "complete",        # Stream finished
-    "type": "suite_start",     # Test suite started
-    "type": "suite_result",    # Test suite result
-    "type": "suite_complete",  # Test suite finished
+### 6.3 Client-side consumption
+
+Frontend code must subscribe through `RuntimeTransportProvider` /
+`runtimeSocketManager`, not `EventSource` or a feature-local WebSocket client.
+
+```typescript
+import { useEffect } from 'react';
+import { useRuntimeTransport } from '@/runtime/transport';
+
+export function useMyFeatureRun(runId: string | null): void {
+  const { subscribeChannels, registerMessageHandler } = useRuntimeTransport();
+
+  useEffect(() => {
+    if (!runId) return undefined;
+    const unsubscribe = subscribeChannels([
+      { channel: `event.my_feature:${runId}`, tailLines: 0 },
+    ]);
+    const unregister = registerMessageHandler((message) => {
+      const envelope = typeof message === 'object' && message !== null
+        ? (message as Record<string, unknown>).event
+        : null;
+      if (!envelope || typeof envelope !== 'object') return;
+      // Update React state from the structured payload here.
+    });
+    return () => {
+      unregister();
+      unsubscribe();
+    };
+  }, [registerMessageHandler, runId, subscribeChannels]);
 }
 ```
 
-### 6.4 Client-side consumption
+### 6.4 Forbidden realtime patterns
 
-```javascript
-const eventSource = new EventSource('/v2/my-feature/stream');
+Do not introduce these in product realtime paths:
 
-eventSource.addEventListener('chunk', (e) => {
-    const data = JSON.parse(e.data);
-    console.log('Received chunk:', data);
-});
+```python
+# Forbidden: product SSE streaming.
+from fastapi.responses import StreamingResponse
 
-eventSource.addEventListener('error', (e) => {
-    console.error('Stream error:', e.data);
-    eventSource.close();
-});
-
-eventSource.addEventListener('complete', (e) => {
-    console.log('Stream complete');
-    eventSource.close();
-});
+return StreamingResponse(generator(), media_type="text/event-stream")
 ```
+
+```typescript
+// Forbidden: polling-as-realtime.
+setInterval(() => {
+  void fetch('/v2/my-feature/status');
+}, 1000);
+
+// Forbidden: a second browser realtime transport.
+const source = new EventSource('/v2/my-feature/stream');
+```
+
+Allowed exceptions are test harness waits, UI clocks/animations, WebSocket
+heartbeat/reconnect timers, initial snapshot hydration, explicit user refresh,
+and one-shot command/query responses.
 
 ---
 
@@ -686,7 +716,7 @@ pytest polaris/tests/unit/delivery/http/ -v
 | Role restriction | `dependencies=[Depends(require_role([UserRole.ADMIN]))]` |
 | Error response | `raise StructuredHTTPException(status_code=..., code="...", message="...")` |
 | Response model | Define in `schemas/common.py`, use `response_model=...` |
-| SSE streaming | `create_sse_response(sse_event_generator(task_fn, timeout=180.0))` |
+| Realtime push | Publish structured JetStream event, subscribe via `/v2/ws/runtime` runtime.v2 |
 | Forward compat | `model_config = {"extra": "allow"}` on response models |
 | File I/O in async | `await asyncio.to_thread(sync_fn, ...)` |
 | UTF-8 files | `open(path, encoding="utf-8")` |

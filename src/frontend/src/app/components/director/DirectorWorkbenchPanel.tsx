@@ -53,7 +53,6 @@ interface LoadDirectorRunEvidenceOptions {
 }
 
 const TERMINAL_DIRECTOR_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'canceled', 'blocked', 'timeout']);
-const RUN_EVIDENCE_REFRESH_INTERVAL_MS = 3000;
 
 function isTerminalDirectorRunStatus(status?: string | null): boolean {
   return TERMINAL_DIRECTOR_RUN_STATUSES.has(String(status || '').trim().toLowerCase());
@@ -98,7 +97,7 @@ export function DirectorWorkbenchPanel({
     isExportingFactory,
     factoryRunEvidence,
     factoryRunCancelEvidence,
-    factoryRunAutoRefreshActive,
+    factoryRunRealtimePushActive,
     cancelFactoryRunDisabled,
     handleExportToFactory,
     handleRefreshFactoryRun,
@@ -343,25 +342,11 @@ export function DirectorWorkbenchPanel({
     workflowRunEvidence.loading ||
     workflowRunCancelEvidence.loading ||
     isTerminalDirectorRunStatus(workflowRunEvidence.data?.status);
-  const directorRunAutoRefreshActive = Boolean(workflowRunEvidence.runId)
+  const directorRunRealtimePushActive = Boolean(workflowRunEvidence.runId)
     && !workflowRunEvidence.loading
     && !workflowRunCancelEvidence.loading
     && !workflowRunEvidence.error
     && !isTerminalDirectorRunStatus(workflowRunEvidence.data?.status);
-
-  useEffect(() => {
-    const runId = String(workflowRunEvidence.runId || '').trim();
-    if (!runId || !directorRunAutoRefreshActive) {
-      return undefined;
-    }
-    const timer = window.setInterval(() => {
-      void loadDirectorRunEvidence(runId, {
-        preserveData: true,
-        preserveCancel: true,
-      });
-    }, RUN_EVIDENCE_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [directorRunAutoRefreshActive, loadDirectorRunEvidence, workflowRunEvidence.runId]);
 
   return (
     <div data-testid="director-workbench-panel" className="flex flex-col h-full">
@@ -441,7 +426,7 @@ export function DirectorWorkbenchPanel({
           refreshTestId="director-workbench-run-refresh"
           refreshDisabled={!workflowRunEvidence.runId || workflowRunEvidence.loading}
           refreshLoading={workflowRunEvidence.loading}
-          autoRefreshActive={directorRunAutoRefreshActive}
+          realtimePushActive={directorRunRealtimePushActive}
           onRefresh={handleRefreshDirectorRun}
           cancelTestId="director-workbench-run-cancel"
           cancelDisabled={cancelDirectorRunDisabled}
@@ -464,7 +449,7 @@ export function DirectorWorkbenchPanel({
         testId="director-workbench-factory-evidence"
         runEvidence={factoryRunEvidence}
         cancelEvidence={factoryRunCancelEvidence}
-        autoRefreshActive={factoryRunAutoRefreshActive}
+        realtimePushActive={factoryRunRealtimePushActive}
         cancelDisabled={cancelFactoryRunDisabled}
         onRefresh={handleRefreshFactoryRun}
         onCancel={() => { void handleCancelFactoryRun(); }}

@@ -2,11 +2,11 @@
  * useContextStoreStats — 拉取 /v2/context/admin/stats 的轻量 hook。
  *
  * 设计目标：
- *  - 默认每 30s 拉取一次（与后端 sweep_min_interval_seconds 默认 300s 错位，避免和 sweep 撞车）；
+ *  - 组件挂载 / workspace 切换时读取一次快照；
  *  - 若 admin 端点返回 404 / ADMIN_DISABLED → stats-disabled 状态（不视为错误，静默显示提示）；
  *  - 任何其他失败 → error 状态，保留上次成功数据便于渲染；
  *  - 手动刷新：返回的 refresh 函数触发立即拉取；
- *  - cleanup：组件卸载或 workspace 切换时取消在飞请求 + 清空定时器（fail-closed）。
+ *  - cleanup：组件卸载或 workspace 切换时取消在飞请求（fail-closed）。
  *
  * 注意：本 hook 是**只读**的——不调用 sweep，不修改后端状态。强制 sweep 由用户
  * 在面板上手动触发后由后端 admin 端点处理（sweep 按钮已接入 POST /v2/context/admin/sweep）。
@@ -35,9 +35,6 @@ export interface UseContextStoreStatsResult {
   triggerSweep: () => Promise<{ ok: boolean; error: string | null }>;
 }
 
-/** 默认拉取间隔。错位 sweep_min_interval_seconds（300s）→ 30s 一次的低频轮询对 on-read gate 无影响。 */
-const DEFAULT_POLL_INTERVAL_MS = 30_000;
-
 /** 单次请求超时。后端 admin stats 是 cheap stat snapshot，10s 足矣。 */
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -65,14 +62,12 @@ function readErrorPayload(body: string): ErrorPayload {
 
 export function useContextStoreStats(options: {
   workspace?: string | null;
-  pollIntervalMs?: number;
   enabled?: boolean;
 }): UseContextStoreStatsResult {
-  const { workspace, pollIntervalMs = DEFAULT_POLL_INTERVAL_MS, enabled = true } = options;
+  const { workspace, enabled = true } = options;
 
   const [state, setState] = useState<StatsFetchState>({ kind: 'idle' });
   const abortRef = useRef<AbortController | null>(null);
-  const timerRef = useRef<number | null>(null);
   /** 持续追踪「最近一次成功响应」——错误态用它做前次数据回填。
    * 之所以需要单独 ref：setState({kind:'loading'}) 后，prev 不再是 ready，
    * 而错误态又依赖 prev.kind === 'ready' 才能拿到数据，导致 previous 丢失。 */
@@ -147,7 +142,7 @@ export function useContextStoreStats(options: {
     }
   }, []);
 
-  // 主 effect：启动 / 暂停轮询；workspace 切换时立即拉一次新数据。
+  // 主 effect：workspace 切换时读取一次快照；无后台轮询。
   useEffect(() => {
     if (!enabled) {
       // 关闭时静默清空状态——保留之前的"最近一次"会误导用户。
@@ -157,17 +152,10 @@ export function useContextStoreStats(options: {
       return;
     }
     void fetchOnce();
-    timerRef.current = window.setInterval(() => {
-      void fetchOnce();
-    }, pollIntervalMs);
     return () => {
       abortRef.current?.abort();
-      if (timerRef.current !== null) {
-        window.clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
     };
-  }, [workspace, enabled, pollIntervalMs, fetchOnce]);
+  }, [workspace, enabled, fetchOnce]);
 
   const triggerSweep = useCallback(async (): Promise<{ ok: boolean; error: string | null }> => {
     try {

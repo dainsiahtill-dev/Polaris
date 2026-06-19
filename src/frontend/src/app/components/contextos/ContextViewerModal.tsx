@@ -391,39 +391,40 @@ function MessageCardBase({ message, index, onCopyMessage, copyState }: MessageCa
       data-testid={`contextos-msg-${index}`}
       data-role={message.role}
     >
-      <button
-        type="button"
-        onClick={() => setExpanded((prev) => !prev)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-white/[0.03] transition-colors"
-      >
-        <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded border', roleColorClass(message.role))}>
-          {roleIcon(message.role)}
-        </span>
-        <span className="text-[11px] font-semibold text-text-main">{roleLabel(message.role)}</span>
-        <span
-          className="ml-1 inline-flex items-center gap-0.5 rounded bg-black/30 px-1 py-0.5 font-mono text-[9px] text-text-dim"
-          title="按 1/3.5 字符估算（CJK 友好，略保守于后端 1/4）"
-        >
-          <Hash className="h-3 w-3" />
-          ~{tokens} tok <sup className="text-[7px] text-text-dim">(估算)</sup>
-        </span>
-        <span className="ml-auto font-mono text-[9px] text-text-dim">#{index + 1}</span>
+      <div className="flex w-full items-center gap-2 px-3 py-2 hover:bg-white/[0.03] transition-colors">
         <button
           type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleCopy();
-          }}
+          onClick={() => setExpanded((prev) => !prev)}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          data-testid={`contextos-msg-${index}-toggle`}
+        >
+          <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded border', roleColorClass(message.role))}>
+            {roleIcon(message.role)}
+          </span>
+          <span className="text-[11px] font-semibold text-text-main">{roleLabel(message.role)}</span>
+          <span
+            className="ml-1 inline-flex items-center gap-0.5 rounded bg-black/30 px-1 py-0.5 font-mono text-[9px] text-text-dim"
+            title="按 1/3.5 字符估算（CJK 友好，略保守于后端 1/4）"
+          >
+            <Hash className="h-3 w-3" />
+            ~{tokens} tok <sup className="text-[7px] text-text-dim">(估算)</sup>
+          </span>
+          <span className="ml-auto font-mono text-[9px] text-text-dim">#{index + 1}</span>
+          {needsTruncate && (
+            <span className="ml-1 text-[9px] text-text-dim">{expanded ? '收起' : '展开'}</span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={handleCopy}
           aria-label="复制此消息为 Markdown"
           className="flex h-6 w-6 items-center justify-center rounded text-text-dim hover:bg-white/10 hover:text-text-main"
           data-testid={`contextos-msg-${index}-copy`}
         >
           {copyState === 'done' ? <Check className="h-3.5 w-3.5 text-status-success" /> : <Copy className="h-3.5 w-3.5" />}
         </button>
-        {needsTruncate && (
-          <span className="ml-1 text-[9px] text-text-dim">{expanded ? '收起' : '展开'}</span>
-        )}
-      </button>
+      </div>
       <div className="px-3 py-2">
         {message.tool_calls && message.tool_calls.length > 0 && (
           <div className="mb-2 space-y-1">

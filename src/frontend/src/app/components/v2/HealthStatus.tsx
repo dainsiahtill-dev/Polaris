@@ -3,7 +3,7 @@
  *
  * Features:
  * - Green/yellow/red indicator based on /v2/health
- * - Auto-refresh every 30s
+ * - Initial/manual health check only
  * - Show detailed status on click
  */
 
@@ -11,12 +11,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useHealth } from '@/app/hooks/useV2Api';
 import { useV2ApiError } from '@/app/hooks/useV2ApiError';
 
-const REFRESH_INTERVAL_MS = 30000;
-
-export interface HealthStatusProps {
-  autoRefresh?: boolean;
-  refreshIntervalMs?: number;
-}
+export interface HealthStatusProps {}
 
 type HealthColor = 'green' | 'yellow' | 'red' | 'gray';
 
@@ -56,10 +51,7 @@ function healthLabel(color: HealthColor): string {
   }
 }
 
-export function HealthStatus({
-  autoRefresh = true,
-  refreshIntervalMs = REFRESH_INTERVAL_MS,
-}: HealthStatusProps): JSX.Element {
+export function HealthStatus(): JSX.Element {
   const { health, loading, error, check } = useHealth();
   const { apiError } = useV2ApiError();
   const [showDetails, setShowDetails] = useState(false);
@@ -74,18 +66,6 @@ export function HealthStatus({
   const handleRefresh = useCallback(() => {
     void check();
   }, [check]);
-
-  useEffect(() => {
-    if (!autoRefresh) return;
-
-    const interval = setInterval(() => {
-      void check();
-    }, refreshIntervalMs);
-
-    return () => {
-      clearInterval(interval);
-    };
-  }, [autoRefresh, refreshIntervalMs, check]);
 
   useEffect(() => {
     if (error) {

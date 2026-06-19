@@ -15,6 +15,20 @@ from polaris.kernelone.events.uep_publisher import UEPEventPublisher
 logger = logging.getLogger(__name__)
 
 _CANONICAL_LLM_EVENT_MARKER = "_emits_canonical_llm_events"
+_MAX_CONTENT_PREVIEW_CHARS = 2000
+
+
+def _build_content_preview_payload(payload: dict[str, Any], response_content: str) -> dict[str, Any] | None:
+    """Return bounded metadata for CONTENT_PREVIEW without full response duplication."""
+
+    content = response_content.strip()
+    if not content:
+        return None
+    preview_payload = {key: value for key, value in payload.items() if key not in {"response_content", "content"}}
+    preview_payload["content"] = content[:_MAX_CONTENT_PREVIEW_CHARS]
+    preview_payload["content_length"] = len(content)
+    preview_payload["truncated"] = len(content) > _MAX_CONTENT_PREVIEW_CHARS
+    return preview_payload
 
 
 class LLMEventEmitter:
@@ -268,10 +282,8 @@ class LLMEventEmitter:
             payload.setdefault("workspace", self.workspace)
             if response_content is not None:
                 payload["response_content"] = response_content
-                content_preview = response_content.strip()
-                if content_preview:
-                    preview_payload = dict(payload)
-                    preview_payload.setdefault("content", content_preview)
+                preview_payload = _build_content_preview_payload(payload, response_content)
+                if preview_payload is not None:
                     emit_llm_event(
                         event_type=LLMEventType.CONTENT_PREVIEW,
                         role=role,

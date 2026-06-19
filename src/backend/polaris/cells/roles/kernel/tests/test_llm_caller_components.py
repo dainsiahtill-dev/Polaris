@@ -135,10 +135,10 @@ async def async_generator(items: dict[str, Any]) -> Any:
 # ============ FinalizationCaller Tests ============
 
 
-@pytest.mark.asyncio
 class TestFinalizationCaller:
     """测试 FinalizationCaller."""
 
+    @pytest.mark.asyncio
     async def test_call_returns_dict(self) -> None:
         """call 应返回兼容 TransactionKernel 的字典."""
         invoker = Mock()
@@ -159,6 +159,7 @@ class TestFinalizationCaller:
         assert result["tool_calls"] == []
         assert result["model"] == "unknown"
 
+    @pytest.mark.asyncio
     async def test_call_raises_on_error(self) -> None:
         """LLM 返回 error 时应抛出 RuntimeError."""
         invoker = Mock()
@@ -552,7 +553,35 @@ class TestLLMEventEmitterEmitCallEndEvent:
             preview_kwargs = mock_emit.call_args_list[0].kwargs
             assert preview_kwargs["metadata"]["content"] == "公开模型输出片段"
             assert preview_kwargs["metadata"]["call_id"] == "call_1"
+            assert preview_kwargs["metadata"]["content_length"] == len("公开模型输出片段")
+            assert preview_kwargs["metadata"]["truncated"] is False
+            assert "response_content" not in preview_kwargs["metadata"]
             assert preview_kwargs["completion_tokens"] == 50
+            end_kwargs = mock_emit.call_args_list[1].kwargs
+            assert end_kwargs["metadata"]["response_content"] == "公开模型输出片段"
+
+    def test_response_content_preview_is_truncated_without_full_response_duplication(self) -> None:
+        """CONTENT_PREVIEW must be bounded and must not duplicate full response_content."""
+        emitter = LLMEventEmitter(workspace="/ws")
+        long_content = "x" * 2505
+        with patch("polaris.cells.roles.kernel.internal.events.emit_llm_event") as mock_emit:
+            emitter.emit_call_end_event(
+                event_emitter=None,
+                role="director",
+                run_id="run_1",
+                task_id="task_1",
+                attempt=0,
+                model="claude",
+                call_id="call_1",
+                completion_tokens=50,
+                response_content=long_content,
+            )
+
+            preview_metadata = mock_emit.call_args_list[0].kwargs["metadata"]
+            assert len(preview_metadata["content"]) == 2000
+            assert preview_metadata["content_length"] == len(long_content)
+            assert preview_metadata["truncated"] is True
+            assert "response_content" not in preview_metadata
 
     def test_custom_end_emitter_still_writes_canonical_event(self) -> None:
         """结束 override 不能吞掉 canonical 事件."""

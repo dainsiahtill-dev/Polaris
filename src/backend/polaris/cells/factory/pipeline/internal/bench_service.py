@@ -70,8 +70,8 @@ class FactoryBenchService:
 
     def __init__(self, root: Path | None = None) -> None:
         self._root = root or _sessions_root()
-        # In-memory per-session event sequence counter. Used by the /state
-        # polling endpoint to filter events strictly greater than ``since_seq``.
+        # In-memory per-session event sequence counter. Used by state snapshot
+        # readers to filter events strictly greater than ``since_seq``.
         # Reset on process restart (durable cursor in JSONL not needed — the
         # last appended line's position can be replayed if a client wants
         # to resume from a specific point).
@@ -122,7 +122,7 @@ class FactoryBenchService:
         payload = dict(event)
         payload.setdefault("ts", _now_iso())
         payload.setdefault("session_id", session_id)
-        # Per-session monotonic seq so polling clients can resume with
+        # Per-session monotonic seq so snapshot readers can resume with
         # ``since_seq``. Stored in the JSONL line itself (durable) and also
         # cached in-memory for cursor comparison.
         next_seq = self._seq_by_session.get(session_id, 0) + 1

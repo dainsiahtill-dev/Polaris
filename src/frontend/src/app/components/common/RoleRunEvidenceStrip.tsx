@@ -17,7 +17,7 @@ interface RoleRunEvidenceStripProps {
   refreshDisabled?: boolean;
   refreshLoading?: boolean;
   refreshLabel?: string;
-  autoRefreshActive?: boolean;
+  realtimePushActive?: boolean;
   onRefresh?: () => void;
   cancelTestId: string;
   cancelDisabled: boolean;
@@ -72,7 +72,7 @@ export function RoleRunEvidenceStrip({
   refreshDisabled = false,
   refreshLoading = false,
   refreshLabel = '刷新运行快照',
-  autoRefreshActive = false,
+  realtimePushActive = false,
   onRefresh,
   cancelTestId,
   cancelDisabled,
@@ -124,12 +124,12 @@ export function RoleRunEvidenceStrip({
         ) : null}
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {autoRefreshActive ? (
+        {realtimePushActive ? (
           <span
             className="rounded border border-emerald-500/15 bg-emerald-500/10 px-2 py-1 font-mono text-[10px] text-emerald-200"
-            data-testid={`${testId}-auto-refresh`}
+            data-testid={`${testId}-realtime-push`}
           >
-            自动刷新
+            实时推送
           </span>
         ) : null}
         {onRefresh ? (

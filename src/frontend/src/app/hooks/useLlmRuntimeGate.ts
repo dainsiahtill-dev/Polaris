@@ -28,7 +28,6 @@ interface UseLlmRuntimeGateOptions {
   workspace: string;
   live: boolean;
   llmStatus: LlmStatus | null;
-  blockedRefreshIntervalMs?: number;
   fetchStatus?: (workspace: string) => Promise<unknown>;
 }
 
@@ -235,7 +234,6 @@ export function useLlmRuntimeGate({
   workspace,
   live,
   llmStatus,
-  blockedRefreshIntervalMs = 15_000,
   fetchStatus = fetchLlmStatusPayload,
 }: UseLlmRuntimeGateOptions) {
   const [llmRuntimeState, setLlmRuntimeState] = useState<LlmRuntimeGateState>(EMPTY_LLM_RUNTIME_STATE);
@@ -310,27 +308,8 @@ export function useLlmRuntimeGate({
 
   useEffect(() => {
     if (!workspace || llmRuntimeState.state !== 'BLOCKED') return;
-
     void refreshLlmGate({ clearOnFailure: false });
-    const timer = window.setInterval(() => {
-      void refreshLlmGate({ clearOnFailure: false });
-    }, blockedRefreshIntervalMs);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [blockedRefreshIntervalMs, llmRuntimeState.state, refreshLlmGate, workspace]);
-
-  useEffect(() => {
-    if (!workspace || !live || !llmStatus) return;
-    const timer = window.setInterval(() => {
-      void refreshLlmGate({ clearOnFailure: false });
-    }, Math.max(blockedRefreshIntervalMs * 2, 30_000));
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [blockedRefreshIntervalMs, live, llmStatus, refreshLlmGate, workspace]);
+  }, [llmRuntimeState.state, refreshLlmGate, workspace]);
 
   return {
     llmRuntimeState,

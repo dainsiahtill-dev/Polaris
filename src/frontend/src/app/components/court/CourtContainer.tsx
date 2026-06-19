@@ -6,7 +6,7 @@
 
 import React, { useState, useMemo, useCallback } from 'react';
 import { CourtScene } from './CourtScene';
-import { useCourtTopology, useCourtState, useCourtWebSocket } from '../../hooks/useCourt';
+import { useCourtTopology, useCourtState } from '../../hooks/useCourt';
 import type { CourtTopologyNode, CourtActorState } from '../../types/court';
 
 interface CourtContainerProps {
@@ -26,16 +26,8 @@ export function CourtContainer({
   // 获取拓扑结构（静态，只获取一次）
   const { topology: topologyData, loading: topologyLoading } = useCourtTopology();
 
-  // 获取初始状态（HTTP轮询，作为fallback）
-  const { state: pollState } = useCourtState(enableRealtime ? 30000 : 3000);
-
-  // WebSocket 实时状态
-  const { state: wsState, connected: wsConnected } = useCourtWebSocket();
-
-  // 优先使用 WebSocket 状态，否则使用轮询状态
-  const courtState = useMemo(() => {
-    return wsState ?? pollState;
-  }, [wsState, pollState]);
+  // 获取初始状态；之后由 RuntimeTransportProvider 实时更新。
+  const { state: courtState, isWebSocketConnected } = useCourtState({ enabled: enableRealtime });
 
   // 相机模式和选中的角色
   const [cameraMode, setCameraMode] = useState(defaultCameraMode);
@@ -103,11 +95,11 @@ export function CourtContainer({
           <div className="flex items-center gap-2 text-xs">
             <div
               className={`w-2 h-2 rounded-full ${
-                wsConnected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'
+                isWebSocketConnected ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'
               }`}
             />
-            <span className={wsConnected ? 'text-green-400' : 'text-yellow-400'}>
-              {wsConnected ? '实时' : '轮询'}
+            <span className={isWebSocketConnected ? 'text-green-400' : 'text-yellow-400'}>
+              {isWebSocketConnected ? '实时' : '等待实时'}
             </span>
           </div>
         </div>

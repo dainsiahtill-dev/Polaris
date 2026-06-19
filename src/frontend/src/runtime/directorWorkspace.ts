@@ -397,7 +397,7 @@ export function useDirectorWorkspaceVM(
   const [fallbackTasks, setFallbackTasks] = useState<PmTask[]>([]);
   const [terminalOutput, setTerminalOutput] = useState<string>('');
   
-  // Polling for fallback tasks
+  // One-shot fallback task snapshot; live runtime tasks remain the source of truth.
   useEffect(() => {
     if (!workspace) {
       setFallbackTasks([]);
@@ -405,7 +405,6 @@ export function useDirectorWorkspaceVM(
     }
     
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
     
     const syncTasks = async () => {
       try {
@@ -413,16 +412,14 @@ export function useDirectorWorkspaceVM(
         if (!result.ok || !Array.isArray(result.data) || cancelled) return;
         setFallbackTasks(result.data as unknown as PmTask[]);
       } catch {
-        // Ignore polling errors
+        // Ignore snapshot errors
       }
     };
     
     void syncTasks();
-    timer = setInterval(() => { void syncTasks(); }, runtime.directorStatus?.running ? 1500 : 4000);
     
     return () => {
       cancelled = true;
-      if (timer) clearInterval(timer);
     };
   }, [workspace, runtime.directorStatus?.running]);
   

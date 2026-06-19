@@ -1597,6 +1597,25 @@ class FactoryBenchProgressRequest(BaseModel):
 _bench_service = FactoryBenchService()
 
 
+def _bench_session_event_meta(session_id: str, snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build the bench session fields every realtime bench event should carry."""
+    data = snapshot if snapshot is not None else (_bench_service.get_session(session_id) or {})
+    meta = {
+        "session_id": data.get("session_id") or session_id,
+        "work_dir": data.get("work_dir"),
+        "project_ids": data.get("project_ids"),
+        "total": data.get("total"),
+        "completed": data.get("completed"),
+        "failed": data.get("failed"),
+        "status": data.get("status"),
+        "created_at": data.get("created_at"),
+        "updated_at": data.get("updated_at"),
+        "completed_at": data.get("completed_at"),
+        "metadata": data.get("metadata"),
+    }
+    return {key: value for key, value in meta.items() if value is not None}
+
+
 async def _publish_factory_bench_event_to_jetstream(session_id: str, event: dict[str, Any]) -> bool:
     """Fan out a persisted factory-bench event on the unified runtime stream."""
     try:
@@ -1607,10 +1626,10 @@ async def _publish_factory_bench_event_to_jetstream(session_id: str, event: dict
         envelope = create_runtime_event(
             workspace_key="bench",
             run_id=session_id,
-            # The front-end subscribes to ``event.bench:<sid>`` (see
-            # useFactoryBench: ``const channel = `event.bench:${sid}`;``).
-            # The WS filter does exact-string channel match, so we have
-            # to publish on the same per-session channel.
+            # The front-end subscribes to the wildcard ``event.bench`` channel,
+            # which the runtime.v2 subject builder maps to
+            # ``hp.runtime.bench.>``. Keeping the envelope channel per-session
+            # lets consumers still filter or pin a single bench run.
             channel=f"event.bench:{session_id}",
             kind=str(event.get("type") or "bench.event"),
             payload=event,
@@ -1640,6 +1659,16 @@ async def start_factory_bench_session_v2(
         metadata=payload.metadata,
         session_id=payload.session_id,
     )
+    snapshot = _bench_service.get_session(sid) or {}
+    event = {
+        "type": "factory_bench.session.started",
+        "actor": "factory-bench",
+        "summary": f"Factory bench session started: {sid}",
+        "ok": True,
+        "meta": _bench_session_event_meta(sid, snapshot),
+    }
+    if _bench_service.append_event(sid, event):
+        await _publish_factory_bench_event_to_jetstream(sid, event)
     return FactoryBenchStartResponse(session_id=sid, status="running")
 
 
@@ -1681,7 +1710,7 @@ async def append_factory_bench_event_v2(
          with the canonical subject ``hp.runtime.bench.<session_id>``. This
          is the **only** real-time push path — the platform's existing
          ``JetStreamConsumerManager`` / WebSocket pipeline subscribes to
-         ``event.bench:<session_id>`` and forwards every envelope to the
+         ``event.bench`` and forwards every envelope to the
          client, the same way it already carries ``log.llm`` /
          ``log.process`` / etc.
     """
@@ -1725,6 +1754,7 @@ async def complete_factory_bench_session_v2(
         snapshot = _bench_service.get_session(session_id) or {}
         status = str(snapshot.get("status") or ("completed" if payload.success else "failed"))
         meta: dict[str, Any] = {
+            **_bench_session_event_meta(session_id, snapshot),
             "status": status,
             "total": snapshot.get("total"),
             "completed": snapshot.get("completed"),
@@ -1755,4 +1785,16 @@ async def update_factory_bench_progress_v2(
         completed=payload.completed,
         failed=payload.failed,
     )
-    return {"session_id": session_id, "updated": ok}
+    published = False
+    if ok:
+        snapshot = _bench_service.get_session(session_id) or {}
+        event = {
+            "type": "factory_bench.progress.updated",
+            "actor": "factory-bench",
+            "summary": "Factory bench progress updated",
+            "ok": True,
+            "meta": _bench_session_event_meta(session_id, snapshot),
+        }
+        _bench_service.append_event(session_id, event)
+        published = await _publish_factory_bench_event_to_jetstream(session_id, event)
+    return {"session_id": session_id, "updated": ok, "published": published}

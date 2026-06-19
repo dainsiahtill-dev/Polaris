@@ -105,6 +105,16 @@ class TestFactoryStore:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_get_run_corrupt_json_returns_none(self, tmp_store: FactoryStore) -> None:
+        run_dir = tmp_store.get_run_dir("run-corrupt")
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text("{not-json", encoding="utf-8")
+
+        result = await tmp_store.get_run("run-corrupt")
+
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_append_and_get_events(self, tmp_store: FactoryStore) -> None:
         await tmp_store.append_event("run-001", {"type": "start", "msg": "hello"})
         await tmp_store.append_event("run-001", {"type": "end", "msg": "bye"})
@@ -113,6 +123,19 @@ class TestFactoryStore:
         assert len(events) == 2
         assert events[0]["type"] == "start"
         assert events[1]["type"] == "end"
+
+    @pytest.mark.asyncio
+    async def test_get_events_skips_corrupt_jsonl_records(self, tmp_store: FactoryStore) -> None:
+        event_file = tmp_store.get_run_dir("run-corrupt-events") / "events" / "events.jsonl"
+        event_file.parent.mkdir(parents=True)
+        event_file.write_text(
+            '{"type": "start"}\n{not-json\n["not", "an", "object"]\n{"type": "end"}\n',
+            encoding="utf-8",
+        )
+
+        events = await tmp_store.get_events("run-corrupt-events")
+
+        assert [event["type"] for event in events] == ["start", "end"]
 
     @pytest.mark.asyncio
     async def test_get_events_empty(self, tmp_store: FactoryStore) -> None:

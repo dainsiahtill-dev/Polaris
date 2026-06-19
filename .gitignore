@@ -169,6 +169,8 @@ src/backend/debug_*
 
 src/backend/workspace/*
 src/backend/runtime/
+src/backend/audit/*.jsonl
+src/backend/audit/.key
 src/backend/.polaris/*
 src/backend/.kernelone/*
 
@@ -182,3 +184,6 @@ pytest-cache-files-*/
 .understand-anything
 .worktrees/*
 .codegraph
+runtime/
+audit/*.jsonl
+audit/.key

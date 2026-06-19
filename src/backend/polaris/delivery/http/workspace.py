@@ -15,27 +15,14 @@ def _is_case_insensitive_platform() -> bool:
     """Return True when the runtime platform treats path casing as case-insensitive.
 
     Used to decide whether workspace equality should ignore case. On macOS
-    (HFS+/APFS default) and Windows (NTFS) the filesystem reports the same
-    directory for ``/Foo`` and ``/foo``. WSL with the ``case=off`` drvfs mount
-    option behaves the same way. On case-sensitive filesystems (default
-    Linux ext4, etc.) the same strings refer to different paths and must NOT
-    be folded.
+    (HFS+/APFS default) and Windows (NTFS) the common filesystem semantics
+    are case-insensitive. Linux, including WSL Linux paths such as ``/home``,
+    remains case-sensitive by default and must not be folded globally.
     """
     if sys.platform == "darwin":
         return True
     if sys.platform.startswith("win") or sys.platform.startswith("cygwin"):
         return True
-    # WSL: detected via /proc/version when available. Treat WSL as
-    # case-insensitive by default because the default drvfs mount is
-    # case=off, which is what the platform heuristic here cares about.
-    proc_version = Path("/proc/version")
-    if proc_version.exists():
-        try:
-            text = proc_version.read_text(encoding="utf-8", errors="ignore").lower()
-        except OSError:
-            text = ""
-        if "microsoft" in text or "wsl" in text:
-            return True
     return False
 
 
@@ -115,11 +102,11 @@ def workspace_values_match(left: Any, right: Any) -> bool:
     """Return whether two workspace tokens identify the same workspace.
 
     Comparison is platform-aware: on case-insensitive filesystems
-    (macOS HFS+/APFS, Windows NTFS, WSL with ``case=off``) the two sides
-    are lowercased before equality so ``/Foo`` and ``/foo`` resolve to the
-    same directory and are treated as equal. On case-sensitive filesystems
-    (default Linux ext4, etc.) the original casing is preserved so
-    ``/Foo`` and ``/foo`` remain distinct.
+    (macOS HFS+/APFS, Windows NTFS) the two sides are lowercased before
+    equality so ``/Foo`` and ``/foo`` resolve to the same directory and are
+    treated as equal. On case-sensitive filesystems (default Linux ext4,
+    WSL Linux paths, etc.) the original casing is preserved so ``/Foo`` and
+    ``/foo`` remain distinct.
 
     Rationale: callers (HTTP routers, ACL filters, snapshot guards) pass
     workspace strings that may originate from user input, request bodies,

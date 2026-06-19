@@ -82,7 +82,6 @@ const InterventionCenter = lazy(() =>
 const RUN_ID_PREFIX = 'pm-';
 const TERMINAL_FACTORY_RUN_TOKENS = new Set(['completed', 'failed', 'error', 'blocked', 'timeout', 'cancelled', 'canceled']);
 const IDLE_FACTORY_RUN_TOKENS = new Set(['', 'idle', 'pending', 'waiting', 'stopped', 'unknown', 'none']);
-const BENCH_FACTORY_SYNC_INTERVAL_MS = 4_000;
 
 function parseIterationFromRunId(runId: string): number | null {
   const raw = runId.trim().toLowerCase();
@@ -371,24 +370,14 @@ function AppContent() {
       return;
     }
 
-    let cancelled = false;
     const syncLatestFactoryRun = async () => {
       const run = await resumeLatestFactoryRun();
-      if (cancelled) return;
       if (run) {
         void refreshProgressSnapshot();
       }
     };
 
     void syncLatestFactoryRun();
-    const intervalId = window.setInterval(() => {
-      void syncLatestFactoryRun();
-    }, BENCH_FACTORY_SYNC_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
   }, [
     factoryBenchSession?.session_id,
     factoryBenchSession?.status,
@@ -1206,6 +1195,12 @@ function AppContent() {
           llmStatus={llmStatusForBar}
           lancedbOk={lancedbStatus?.ok}
           fileEditEvents={fileEditEvents}
+        />
+
+        <BenchStatusStrip
+          websocketLive={live}
+          websocketReconnecting={reconnecting}
+          websocketAttemptCount={attemptCount}
         />
 
         {!floatingRuntimeSuppressed && (

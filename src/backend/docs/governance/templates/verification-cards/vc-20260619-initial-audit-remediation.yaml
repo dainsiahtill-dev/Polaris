@@ -1,0 +1,39 @@
+id: vc-20260619-initial-audit-remediation
+title: Initial Audit Remediation
+date: "2026-06-19"
+classification: pattern
+scope:
+  - frontend websocket reconnect lifecycle
+  - frontend ContextOS modal interaction semantics
+  - backend workspace path comparison
+  - backend LLM lifecycle event preview payloads
+  - factory QA LLM judgement gate
+assumption_register:
+  - assumption: WebSocket finite retry limits must be enforced from latest state across close callbacks.
+    evidence: useWebSocketWithFallback onclose schedules reconnect from a callback created by an older render.
+  - assumption: WSL is not globally case-insensitive; workspace equality must not fold Linux filesystem paths.
+    evidence: workspace_values_match currently relies on a module-level platform boolean.
+  - assumption: CONTENT_PREVIEW events must not duplicate full model output.
+    evidence: LLMEventEmitter copies response_content into preview metadata.
+  - assumption: ContextViewerModal must not nest buttons.
+    evidence: MessageCard uses a header button that contains the copy button.
+  - assumption: Factory QA should fail closed when LLM judgement is unavailable unless explicitly disabled.
+    evidence: qa_require_llm_judgement currently defaults false in the quality gate.
+pre_mortem:
+  likely_failure_points:
+    - React hook dependency cycles between connectWebSocket and scheduleReconnect.
+    - Path comparison tests overfitting to platform globals instead of value semantics.
+    - LLM preview tests accidentally weakening call-end metadata compatibility.
+    - Modal focus tests depending on DOM order after splitting controls.
+verification_plan:
+  commands:
+    - LC_ALL=C.UTF-8 git diff --check
+    - LC_ALL=C.UTF-8 npm run test -- src/frontend/src/app/hooks/__tests__/useWebSocketWithFallback.test.ts src/frontend/src/app/components/contextos/ContextViewerModal.test.tsx src/frontend/src/runtime/selectors.test.ts
+    - LC_ALL=C.UTF-8 npm run typecheck
+    - cd src/backend && LC_ALL=C.UTF-8 python -m pytest polaris/tests/unit/delivery/http/test_workspace.py polaris/kernelone/llm/engine/tests/test_context_store.py polaris/cells/roles/kernel/tests/test_llm_caller_components.py polaris/tests/test_factory_run_service.py -q
+expected_outcome:
+  - finite reconnect attempts stop deterministically
+  - WSL/Linux case-sensitive paths are not folded
+  - content previews are bounded and do not carry response_content
+  - modal interactive controls are siblings, not nested buttons
+  - backend pytest warnings are not caused by unawaited test coroutines

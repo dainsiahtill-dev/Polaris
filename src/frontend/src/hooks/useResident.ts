@@ -18,7 +18,6 @@ import type {
 interface UseResidentOptions {
   workspace?: string | null;
   liveResident?: ResidentStatusPayload | null;
-  autoRefreshMs?: number;
 }
 
 interface ResidentIdentityPatch {
@@ -65,7 +64,6 @@ function emptyDetails(workspace: string, liveResident?: ResidentStatusPayload | 
 
 export function useResident(options: UseResidentOptions = {}) {
   const workspace = String(options.workspace || '').trim();
-  const autoRefreshMs = options.autoRefreshMs ?? 15000;
   const [status, setStatus] = useState<ResidentStatusDetailsPayload | null>(
     emptyDetails(workspace, options.liveResident),
   );
@@ -143,16 +141,6 @@ export function useResident(options: UseResidentOptions = {}) {
       setGoalExecutions(newMap);
     }
   }, [status?.goal_executions]);
-
-  useEffect(() => {
-    if (!workspace || autoRefreshMs <= 0) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, autoRefreshMs);
-    return () => window.clearInterval(timer);
-  }, [autoRefreshMs, refresh, workspace]);
 
   const summary = useMemo(
     () => status ?? emptyDetails(workspace, options.liveResident),

@@ -11,7 +11,7 @@
  * - useHealth: health checks
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   roleChatService,
   conversationV2Service,
@@ -510,7 +510,6 @@ export function useHealth(): UseHealthResult {
   const [health, setHealth] = useState<HealthV2Response | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const check = useCallback(async () => {
     setLoading(true);

@@ -2,14 +2,12 @@
  * Factory-bench service — drives L1-L8 batch progress from the bench
  * subprocess into the Factory front-end panel.
  *
- * Transport: HTTP state snapshots plus Nat-JetStream/WebSocket fanout for
- * realtime event delivery, using the same fetch() + apiGet() pattern as the
- * rest of the platform for snapshot reads.
+ * Transport: HTTP state snapshots for explicit hydration plus
+ * Nat-JetStream/WebSocket fanout for realtime event delivery.
  *
  * Backend pipeline (matched to the platform's runtime event subsystem):
  *   bench subprocess → POST /events  (durable JSONL + NAT JetStream fanout)
  *   bench subprocess → POST /progress / POST /complete  (status updates)
- *   front-end        → GET  /state?since_seq=N  (poll-friendly snapshot)
  *   NAT JetStream    → hp.runtime.bench.{session_id}  (cross-tab fanout)
  */
 

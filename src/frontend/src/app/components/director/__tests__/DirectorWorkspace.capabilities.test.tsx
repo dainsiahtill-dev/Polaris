@@ -1736,7 +1736,7 @@ describe.sequential('Director capability desktop integration', () => {
       '/v2/director/runs/director-queue-run?workspace=C%3A%2FTemp%2FProduct',
     );
     expect(runEvidence).toHaveTextContent('queued · queued=2');
-    expect(screen.getByTestId('director-run-evidence-auto-refresh')).toHaveTextContent('自动刷新');
+    expect(screen.queryByTestId('director-run-evidence-realtime-push')).not.toBeInTheDocument();
 
     serviceMocks.getDirectorRun.mockResolvedValueOnce({
       ok: true,
