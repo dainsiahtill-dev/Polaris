@@ -1,6 +1,18 @@
 """Filesystem tool handlers.
 
 Handles file operations: read_file, write_file, edit_file, search_replace, append_to_file.
+
+This module is the canonical import path and the orchestrator for the
+filesystem handler family. It owns ``register_handlers``, the six tool handler
+bodies, the two ``edit_file`` mode helpers, and the FILE_WRITTEN event
+emission. The lower layers live in sibling modules and are re-exported here so
+that every previously-public AND privately-imported symbol still resolves from
+``...handlers.filesystem``:
+
+- ``filesystem_guards``    — pre/post-write content guards + post-write syntax gate
+- ``filesystem_io``        — transactional write primitives + path resolution / did-you-mean
+- ``filesystem_policy``    — Director write-policy gate (AGENTS.md scope reading/validation)
+- ``filesystem_editblocks``— edit-block heuristics (whole-file/prefix replacement detection)
 """
 
 from __future__ import annotations
@@ -16,6 +28,56 @@ from typing import TYPE_CHECKING, Any
 from polaris.kernelone.editing.editblock_engine import (
     parse_edit_blocks,
     validate_edit_blocks,
+)
+from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_editblocks import (
+    _JSON_EDIT_FILE_KEYS,
+    _JSON_EDIT_REPLACE_KEYS,
+    _coerce_line_no,
+    _drop_final_content_line,
+    _has_search_replace_markers,
+    _has_sufficient_whole_file_prefix_evidence,
+    _is_placeholder_search_text,
+    _looks_like_complete_file_replacement,
+    _normalize_block_input,
+    _normalize_edit_block_text,
+    _prefix_search_candidates,
+    _should_use_whole_file_placeholder_replacement,
+    _should_use_whole_file_prefix_replacement,
+    _strip_eof_delimiter_newline,
+    _synthesize_blocks_from_json_payload,
+    _synthesize_line_range_block,
+)
+from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_guards import (
+    _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO,
+    _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES,
+    _EDIT_FRAGMENT_DIRECTIVE_RE,
+    _EMPTY_WRITE_GUARD_EXTENSIONS,
+    _EMPTY_WRITE_SENTINEL_BASENAMES,
+    _destructive_shrink_error,
+    _looks_like_output_truncation,
+    _syntax_check_file,
+    attach_post_write_syntax_check,
+    is_blank_sentinel_write,
+    is_edit_fragment_write_violation,
+    is_empty_write_content_violation,
+)
+from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_io import (
+    _SUGGEST_BARE_NAME_MAX_DEPTH,
+    _SUGGEST_MAX_FILES,
+    _SUGGEST_MAX_RESULTS,
+    _not_found_error,
+    _resolve_case_variant_rel,
+    _resolve_workspace_rel,
+    _stage_temp_verify,
+    _suggest_similar_paths,
+    _write_temp_verify_rename,
+)
+from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_policy import (
+    _attach_director_policy_evidence,
+    _coerce_policy_scope_list,
+    _director_write_allowed_scope,
+    _read_workspace_agents_policy_text,
+    _validate_director_policy_for_write,
 )
 from polaris.kernelone.llm.toolkit.executor.utils import (
     BudgetExceededError,
@@ -38,66 +100,64 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Post-write syntax gate (Phase-1 A5, factory-bench L2-09 live evidence:
-# 167 lines of working snake-game JS killed by one `;` where a `,` belonged —
-# object literal at game.js:54. Zero-LLM checkers run AFTER a successful
-# write; the diagnostic rides back in the tool RESULT so the model fixes it
-# next turn. Writes are never blocked (progressive drafts stay legal) and
-# checker selection is extension-driven — no project-specific logic (§8).
-# ---------------------------------------------------------------------------
-
-
-def _syntax_check_file(absolute_path: str) -> dict[str, Any] | None:
-    """Delegate to the kernelone.quality single source of truth (shared with
-    the materialization artifact-quality scan)."""
-    from polaris.kernelone.quality import check_source_file_syntax
-
-    return check_source_file_syntax(absolute_path)
-
-
-def attach_post_write_syntax_check(result: dict[str, Any], absolute_path: str) -> dict[str, Any]:
-    """Attach syntax diagnostics to a SUCCESSFUL write/edit result."""
-    if not result.get("ok"):
-        return result
-    check = _syntax_check_file(absolute_path)
-    if check is None:
-        return result
-    if check.get("ok"):
-        result["syntax_check"] = "passed"
-        return result
-    result["syntax_check"] = "failed"
-    error_text = str(check.get("error", ""))
-    result["syntax_error"] = error_text
-    if _looks_like_output_truncation(error_text):
-        # The write was cut by the model's own output-token limit — a rewrite
-        # at the same limit truncates at the same place forever (live
-        # factory-bench L2-11 r6: index.html rewritten three times, 6.8-7.8KB,
-        # every copy truncated). Only appending the remainder converges.
-        result["suggestion"] = (
-            "The file was CUT OFF by the output limit — do NOT rewrite it. "
-            "Call append_to_file with ONLY the remaining content, continuing "
-            f"exactly after the file's current end: {error_text}"
-        )
-    else:
-        result["suggestion"] = (
-            "The file was written BUT it has a syntax error — fix it now with a "
-            "narrow edit_blocks line-range edit before doing anything else: "
-            f"{error_text}"
-        )
-    return result
-
-
-def _looks_like_output_truncation(error_text: str) -> bool:
-    """Truncation signatures from the kernelone.quality SSOT checker."""
-    lowered = str(error_text or "").lower()
-    return (
-        "unexpected end of input" in lowered
-        or "truncated/incomplete html" in lowered
-        or "was never closed" in lowered
-        or "unexpected eof" in lowered
-    )
+__all__ = [
+    "_DESTRUCTIVE_SHRINK_MAX_ADD_RATIO",
+    "_DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES",
+    "_EDIT_FRAGMENT_DIRECTIVE_RE",
+    "_EMPTY_WRITE_GUARD_EXTENSIONS",
+    "_EMPTY_WRITE_SENTINEL_BASENAMES",
+    "_JSON_EDIT_FILE_KEYS",
+    "_JSON_EDIT_REPLACE_KEYS",
+    "_SUGGEST_BARE_NAME_MAX_DEPTH",
+    "_SUGGEST_MAX_FILES",
+    "_SUGGEST_MAX_RESULTS",
+    "_attach_director_policy_evidence",
+    "_coerce_line_no",
+    "_coerce_policy_scope_list",
+    "_destructive_shrink_error",
+    "_director_write_allowed_scope",
+    "_drop_final_content_line",
+    "_edit_file_line_mode",
+    "_edit_file_replace_mode",
+    "_emit_file_written_event",
+    "_handle_append_to_file",
+    "_handle_edit_blocks",
+    "_handle_edit_file",
+    "_handle_read_file",
+    "_handle_search_replace",
+    "_handle_write_file",
+    "_has_search_replace_markers",
+    "_has_sufficient_whole_file_prefix_evidence",
+    "_is_placeholder_search_text",
+    "_looks_like_complete_file_replacement",
+    "_looks_like_output_truncation",
+    "_normalize_block_input",
+    "_normalize_edit_block_text",
+    "_not_found_error",
+    "_prefix_search_candidates",
+    "_read_workspace_agents_policy_text",
+    "_resolve_case_variant_rel",
+    "_resolve_message_bus",
+    "_resolve_workspace_rel",
+    "_should_use_whole_file_placeholder_replacement",
+    "_should_use_whole_file_prefix_replacement",
+    "_stage_temp_verify",
+    "_strip_eof_delimiter_newline",
+    "_suggest_similar_paths",
+    "_syntax_check_file",
+    "_synthesize_blocks_from_json_payload",
+    "_synthesize_line_range_block",
+    "_validate_director_policy_for_write",
+    "_write_temp_verify_rename",
+    "attach_post_write_syntax_check",
+    "is_blank_sentinel_write",
+    "is_edit_fragment_write_violation",
+    "is_empty_write_content_violation",
+    "json",
+    "register_handlers",
+    "tempfile",
+    "verify_written_code",
+]
 
 
 def register_handlers() -> dict[str, Any]:
@@ -113,603 +173,6 @@ def register_handlers() -> dict[str, Any]:
         "search_replace": _handle_search_replace,
         "append_to_file": _handle_append_to_file,
     }
-
-
-# Did-you-mean path suggestion bounds (weak-model ergonomics: a wrong guessed
-# path must come back with the correct candidates in the SAME error, otherwise
-# imprecise models loop on path guesses until the failure budget locks them out).
-_SUGGEST_MAX_FILES = 30000
-_SUGGEST_MAX_RESULTS = 5
-# Relevance gate (run20 forensics, 2026-06-11): a suggestion whose ONLY link
-# to the request is the basename routinely redirects weak models into editing
-# real but unrelated files — 10/18 run20 instances shipped exactly such a
-# suggested file as their final (wrong) patch. A candidate must corroborate
-# the request structurally: multi-component requests need at least one
-# directory component to match beyond the basename; bare-name requests only
-# accept shallow candidates (a bare conventional name means "the top-level
-# file", not a deep unrelated subtree). Zero relevant candidates falls back
-# to repo_rg/repo_tree exploration guidance — for a weak model, no hint beats
-# a wrong hint.
-_SUGGEST_BARE_NAME_MAX_DEPTH = 2
-
-# Destructive-shrink gate (Phase-1 A4 slice; run20 539→32-line overwrite,
-# phase1smoke5 live: 1403 lines of django expressions.py replaced by 17).
-# A bug fix is a NARROW edit; deleting a large block and writing back a
-# fraction of it guts real files while still "applying" cleanly. Thresholds
-# mirror the failure labeler's destructive_overwrite definition so the gate
-# and the metric agree. fail-closed: the model gets a retryable teaching
-# error telling it to narrow the range.
-_DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES = 100
-_DESTRUCTIVE_SHRINK_MAX_ADD_RATIO = 0.4
-
-# Wall 2 (2026-06-15): a write_file whose ``content`` is blank/whitespace on a
-# content-bearing target silently produced a 0-byte file that passed as a
-# successful write — .css/.html were never syntax-gated and an empty .js passes
-# the bracket check — so the step died ``director_no_materialized_changes`` with
-# NO recovery. Guard these extensions; the teaching error is recognised by
-# ``contract_guards`` as an argument-shape failure so the escalation/re-ask
-# ladder forces a real-content write instead of dead-lettering.
-_EMPTY_WRITE_GUARD_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".py",
-        ".pyw",
-        ".js",
-        ".mjs",
-        ".cjs",
-        ".ts",
-        ".tsx",
-        ".jsx",
-        ".go",
-        ".rs",
-        ".css",
-        ".scss",
-        ".less",
-        ".html",
-        ".htm",
-        ".md",
-        ".json",
-        ".vue",
-        ".svelte",
-    }
-)
-# Files that may LEGITIMATELY be empty — never flag these.
-_EMPTY_WRITE_SENTINEL_BASENAMES: frozenset[str] = frozenset({"__init__.py", "py.typed", ".gitkeep"})
-
-
-def is_empty_write_content_violation(rel: str, content: str) -> bool:
-    """True when a blank write to a content-bearing target is a Wall-2 violation.
-
-    The weak Director narrates the file body in prose/reasoning and emits
-    ``write_file`` with an empty ``content`` argument; that 0-byte write was
-    being accepted as authoritative. Sentinel files (``__init__.py`` /
-    ``py.typed`` / ``.gitkeep``) may legitimately be empty.
-    """
-    if content.strip():
-        return False
-    normalized = rel.replace("\\", "/")
-    basename = normalized.rsplit("/", 1)[-1]
-    if basename in _EMPTY_WRITE_SENTINEL_BASENAMES:
-        return False
-    return any(normalized.endswith(ext) for ext in _EMPTY_WRITE_GUARD_EXTENSIONS)
-
-
-def is_blank_sentinel_write(rel: str, content: str) -> bool:
-    """True when a blank write targets a legitimately-empty sentinel file.
-
-    An empty ``__init__.py`` / ``py.typed`` / ``.gitkeep`` is valid and often
-    REQUIRED (the Python package marker). The PreWriteGuard's EmptyCode syntax
-    check must skip these blanks, otherwise the marker never lands, the
-    materialization quality gate reports it "missing", and the weak Director
-    burns its budget in a repair read-loop and dead-letters (factory-bench
-    L4-19: empty ``backend/__init__.py`` blocked -> 0/3 successes). A NON-empty
-    sentinel still validates normally.
-    """
-    if content.strip():
-        return False
-    basename = rel.replace("\\", "/").rsplit("/", 1)[-1]
-    return basename in _EMPTY_WRITE_SENTINEL_BASENAMES
-
-
-# Line-anchored insertion directives a weak model sometimes emits as the ENTIRE
-# write_file content — treating a full-file write like an incremental edit. The
-# canonical live failure (L2-08 world-clock, 2026-06-16): app.js written as
-# "// 第 70 行之后添加\n}" — a 28-byte syntactically-broken stub that the syntax
-# gate rejects but the Director kept re-emitting (6x SyntaxError, no convergence).
-_EDIT_FRAGMENT_DIRECTIVE_RE = re.compile(
-    r"第\s*\d+\s*行\s*(之后|之前|后面|前面|后|前)?\s*(添加|插入|修改|替换)"
-    r"|在\s*第?\s*\d+\s*行"
-    r"|(?:insert|add|append|replace|change|modify)\b[^\n]{0,30}\bline\s+\d+"
-    r"|after\s+line\s+\d+"
-    r"|line\s+\d+\b[^\n]{0,20}(?:添加|插入|insert|add|append)",
-    re.IGNORECASE,
-)
-
-
-def is_edit_fragment_write_violation(rel: str, content: str) -> bool:
-    """True when write_file content is an edit fragment, not a complete file.
-
-    Weak models sometimes emit a line-anchored insertion directive (e.g.
-    ``// 第 70 行之后添加\\n}``) as the ENTIRE write_file content, treating a
-    full-file write like an incremental edit — producing a broken stub. Catch
-    only the unambiguous case: short content for a code target whose body is
-    dominated by such a directive. A real file body is far longer and is not an
-    insertion instruction; a false positive is recoverable (the Director simply
-    re-emits the full content), so the guard favours catching the failure.
-    """
-    text = (content or "").strip()
-    if not text or len(text) > 400:
-        return False
-    normalized = rel.replace("\\", "/")
-    if not any(normalized.endswith(ext) for ext in _EMPTY_WRITE_GUARD_EXTENSIONS):
-        return False
-    return _EDIT_FRAGMENT_DIRECTIVE_RE.search(text) is not None
-
-
-def _destructive_shrink_error(target: str, removed_lines: int, added_lines: int, *, tool_hint: str) -> dict[str, Any]:
-    return {
-        "ok": False,
-        "error": (
-            f"Destructive shrink rejected: this edit would replace {removed_lines} lines of "
-            f"{target} with only {added_lines} line(s). Large deletions disguised as edits "
-            "destroy working code."
-        ),
-        "suggestion": tool_hint,
-        "error_type": "destructive_shrink",
-        "retryable": True,
-    }
-
-
-def _suggest_similar_paths(self: AgentAccelToolExecutor, requested: str) -> list[str]:
-    """Find existing workspace files whose basename matches a not-found path.
-
-    Bounded ``os.walk`` basename scan (reuses the search fallback skip-dirs).
-    Candidates are ranked by how many trailing path components they share with
-    the requested path, so a request for ``src/django/core/checks/model_checks.py``
-    ranks the real ``django/core/checks/model_checks.py`` first.
-
-    Returns:
-        Workspace-relative paths (``/`` separators), at most ``_SUGGEST_MAX_RESULTS``.
-    """
-    from polaris.kernelone.llm.toolkit.executor.handlers.search import _FALLBACK_SKIP_DIRS
-
-    normalized = str(requested).replace("\\", "/").strip().strip("/")
-    basename = normalized.rsplit("/", 1)[-1].strip().lower()
-    if not basename:
-        return []
-    requested_parts = [part.lower() for part in normalized.split("/") if part and part != "."]
-
-    matches: list[tuple[int, int, str]] = []
-    scanned = 0
-    workspace_root = self.workspace
-    try:
-        for current_root, dirnames, filenames in os.walk(workspace_root):
-            dirnames[:] = [d for d in dirnames if d not in _FALLBACK_SKIP_DIRS]
-            for filename in filenames:
-                scanned += 1
-                if scanned > _SUGGEST_MAX_FILES:
-                    raise StopIteration
-                if filename.lower() != basename:
-                    continue
-                absolute = os.path.join(current_root, filename)
-                rel_path = os.path.relpath(absolute, workspace_root).replace("\\", "/")
-                candidate_parts = [part.lower() for part in rel_path.split("/") if part]
-                # Count consecutive matching components from the end (basename inclusive).
-                overlap = 0
-                for req_part, cand_part in zip(reversed(requested_parts), reversed(candidate_parts), strict=False):
-                    if req_part != cand_part:
-                        break
-                    overlap += 1
-                matches.append((-overlap, len(candidate_parts), rel_path))
-    except StopIteration:
-        pass
-    except OSError:
-        return []
-
-    matches.sort()
-    multi_component = len(requested_parts) >= 2
-    relevant: list[str] = []
-    for neg_overlap, depth, rel_path in matches:
-        if multi_component:
-            if -neg_overlap >= 2:
-                relevant.append(rel_path)
-        elif depth <= _SUGGEST_BARE_NAME_MAX_DEPTH:
-            relevant.append(rel_path)
-    return relevant[:_SUGGEST_MAX_RESULTS]
-
-
-def _resolve_case_variant_rel(workspace_root: str, rel: str) -> str | None:
-    """Return an existing same-directory path that differs from ``rel`` only by case.
-
-    RC-B (2026-06-16, L3-14 React-SPA live audit): weak models conflate file
-    casing and create case-variant duplicates — e.g. write ``src/App.jsx`` while
-    ``src/app.jsx`` already exists. That forks a split-brain pair on
-    case-sensitive Linux (and is outright unrepresentable on macOS/Windows). When
-    the exact path is absent but a case-only sibling exists in the same
-    directory, callers redirect the write to the existing file instead.
-
-    Returns the existing workspace-relative path (``/`` separators), or None.
-    """
-    normalized = str(rel).replace("\\", "/").strip().strip("/")
-    if not normalized:
-        return None
-    head, _, tail = normalized.rpartition("/")
-    if not tail:
-        return None
-    parent_abs = os.path.join(workspace_root, head) if head else workspace_root
-    try:
-        entries = os.listdir(parent_abs)
-    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError):
-        return None
-    tail_lower = tail.lower()
-    for entry in entries:
-        if entry != tail and entry.lower() == tail_lower:
-            try:
-                if os.path.isfile(os.path.join(parent_abs, entry)):
-                    return f"{head}/{entry}" if head else entry
-            except OSError:
-                return None
-    return None
-
-
-def _not_found_error(self: AgentAccelToolExecutor, requested: str) -> dict[str, Any]:
-    """Build a file-not-found error payload that hands the model corrected paths.
-
-    The 'Did you mean' candidates live in the error text itself so they survive
-    every downstream wrapper (failure budget, receipts, retry contexts).
-    """
-    candidates = _suggest_similar_paths(self, requested)
-    error = f"File not found: {requested}"
-    if candidates:
-        joined = ", ".join(candidates)
-        error += f". Did you mean: {joined}?"
-        suggestion = f"Call the tool again with one of these EXACT existing paths: {joined}"
-    else:
-        stem = str(requested).replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].strip()
-        search_hint = f'repo_rg("{stem}") or repo_tree()' if stem else "repo_tree() or repo_rg()"
-        suggestion = (
-            f"This path does not exist in the workspace. Use {search_hint} to locate "
-            "the right file first. Do not assume files exist - always verify with "
-            "exploration tools."
-        )
-    return {"ok": False, "error": error, "suggestion": suggestion}
-
-
-def _resolve_workspace_rel(self: AgentAccelToolExecutor, raw_path: str) -> tuple[str | None, dict[str, Any] | None]:
-    """Resolve a tool-supplied path to workspace-relative, with teaching errors.
-
-    Weak models hallucinate FOREIGN absolute paths (live capture, Qwen3.6:
-    ``/Users/joey/workspace/polaris/main.py`` on a Linux host) — the fs layer
-    raises ``UNSUPPORTED_PATH_PREFIX`` deep inside, which used to surface as an
-    unclassified error that burned the read failure budget and collateral-blocked
-    correct-path reads. Convert it into a did-you-mean not-found (basename scan)
-    so the model self-corrects in one step.
-
-    Returns:
-        ``(relative_path, None)`` on success, ``(None, error_payload)`` otherwise.
-    """
-    try:
-        target = resolve_workspace_path(self._kernel_fs, str(raw_path))
-        return to_workspace_relative_path(self._kernel_fs, target), None
-    except ValueError as exc:
-        payload = _not_found_error(self, str(raw_path))
-        if "UNSUPPORTED_PATH_PREFIX" in str(exc):
-            payload["error"] = (
-                f"Unsupported absolute path: {raw_path}. "
-                "Use a WORKSPACE-RELATIVE path (e.g. 'subdir/module.py'). " + str(payload["error"])
-            )
-        return None, payload
-
-
-def _write_temp_verify_rename(
-    target_path: str,
-    content: str,
-    *,
-    encoding: str = "utf-8",
-) -> dict[str, Any]:
-    """Transactional write: temp -> verify -> atomic rename.
-
-    Returns:
-        {"ok": True, "bytes_written": int} on success.
-        {"ok": False, "error": str} on failure (original file untouched).
-    """
-    parent = os.path.dirname(target_path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-
-    suffix = f".{os.path.basename(target_path)}.tmp"
-    tmp_path = ""
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding=encoding,
-            suffix=suffix,
-            dir=parent or ".",
-            delete=False,
-        ) as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
-
-        verify_result = verify_written_code(tmp_path, content)
-        if not verify_result.success:
-            with contextlib.suppress(OSError):
-                os.remove(tmp_path)
-            return {
-                "ok": False,
-                "error": f"Post-write verification failed: {verify_result.error}",
-            }
-
-        os.replace(tmp_path, target_path)
-        return {"ok": True, "bytes_written": len(content.encode(encoding, errors="replace"))}
-    except OSError as exc:
-        if tmp_path:
-            with contextlib.suppress(OSError):
-                os.remove(tmp_path)
-        return {"ok": False, "error": f"Failed to write file: {exc}"}
-
-
-def _stage_temp_verify(
-    target_path: str,
-    content: str,
-    *,
-    encoding: str = "utf-8",
-) -> dict[str, Any]:
-    """Stage half of a transactional write: temp -> verify (NO rename yet).
-
-    Used by multi-file commits that must verify EVERY target before any file is
-    moved into place, so a later failure never leaves earlier files half-applied.
-    On success returns ``{"ok": True, "tmp_path": str, "bytes_written": int}``; the
-    caller is responsible for committing (``os.replace``) or removing the temp.
-    """
-    parent = os.path.dirname(target_path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-
-    suffix = f".{os.path.basename(target_path)}.tmp"
-    tmp_path = ""
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding=encoding,
-            suffix=suffix,
-            dir=parent or ".",
-            delete=False,
-        ) as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
-
-        verify_result = verify_written_code(tmp_path, content)
-        if not verify_result.success:
-            with contextlib.suppress(OSError):
-                os.remove(tmp_path)
-            return {
-                "ok": False,
-                "error": f"Post-write verification failed: {verify_result.error}",
-            }
-
-        return {
-            "ok": True,
-            "tmp_path": tmp_path,
-            "bytes_written": len(content.encode(encoding, errors="replace")),
-        }
-    except OSError as exc:
-        if tmp_path:
-            with contextlib.suppress(OSError):
-                os.remove(tmp_path)
-        return {"ok": False, "error": f"Failed to write file: {exc}"}
-
-
-def _read_workspace_agents_policy_text(self: AgentAccelToolExecutor, rel: str = "") -> str:
-    """Read root and nested AGENTS.md files that apply to a workspace-relative path."""
-    normalized_rel = str(rel or "").replace("\\", "/").strip("/")
-    candidates = ["AGENTS.md"]
-    parent_parts = [part for part in normalized_rel.split("/")[:-1] if part]
-    for index in range(1, len(parent_parts) + 1):
-        candidates.append("/".join([*parent_parts[:index], "AGENTS.md"]))
-
-    texts: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        try:
-            if self._kernel_fs.workspace_exists(candidate) and self._kernel_fs.workspace_is_file(candidate):
-                texts.append(self._kernel_fs.workspace_read_text(candidate, encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, ValueError):
-            continue
-    return "\n".join(texts)
-
-
-def _coerce_policy_scope_list(value: Any) -> list[str]:
-    """Normalize an optional scope-like tool argument into a string list."""
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [value] if value.strip() else []
-    if isinstance(value, (list, tuple, set)):
-        return [str(item) for item in value if str(item or "").strip()]
-    return []
-
-
-def _director_write_allowed_scope(tool_kwargs: dict[str, Any] | None) -> list[str]:
-    """Extract an explicit Director write scope if the call carries one."""
-    kwargs = tool_kwargs or {}
-    for key in (
-        "allowed_scope",
-        "allowed_scope_paths",
-        "scope_paths",
-        "target_files",
-        "pm_target_files",
-        "act_files",
-    ):
-        scope = _coerce_policy_scope_list(kwargs.get(key))
-        if scope:
-            return scope
-    return []
-
-
-def _validate_director_policy_for_write(
-    self: AgentAccelToolExecutor,
-    *,
-    rel: str,
-    old_content: str,
-    new_content: str,
-    operation: str,
-    tool_kwargs: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Validate a pending workspace write and return structured policy evidence."""
-    from polaris.kernelone.llm.toolkit.write_policy import validate_tool_write_policy
-
-    normalized_rel = str(rel or "").replace("\\", "/").strip("/")
-    package_write = normalized_rel == "package.json" or normalized_rel.endswith("/package.json")
-    verdict = validate_tool_write_policy(
-        changed_files=[normalized_rel] if normalized_rel else [],
-        allowed_scope=_director_write_allowed_scope(tool_kwargs),
-        agents_md=_read_workspace_agents_policy_text(self, normalized_rel),
-        operation=operation,
-        package_before=old_content if package_write else None,
-        package_after=new_content if package_write else None,
-        require_change=True,
-    )
-    evidence = verdict.to_dict()
-    if verdict.allowed:
-        return {"ok": True, "director_policy": evidence}
-
-    reason = "; ".join(verdict.reasons) or "Director write policy denied the write"
-    return {
-        "ok": False,
-        "error": f"Director write policy denied: {reason}",
-        "error_type": "director_write_policy_denied",
-        "blocked": True,
-        "director_policy": evidence,
-    }
-
-
-def _attach_director_policy_evidence(result: dict[str, Any], evidence: dict[str, Any] | None) -> dict[str, Any]:
-    """Attach policy evidence to a tool result and its effect receipt."""
-    if not evidence:
-        return result
-    result["director_policy"] = evidence
-    receipt = result.get("effect_receipt")
-    if isinstance(receipt, dict):
-        receipt["director_policy"] = evidence
-    return result
-
-
-def _is_placeholder_search_text(search_text: str) -> bool:
-    """Return true when SEARCH is a model shorthand for a placeholder file."""
-    lines = [line.strip() for line in str(search_text or "").splitlines() if line.strip()]
-    if not lines or len(lines) > 3:
-        return False
-    compact = " ".join(lines).lower()
-    if len(compact) > 180:
-        return False
-    return bool(
-        re.search(
-            r"\b(todo|fixme|placeholder|not\s+implemented|implement(?:ation)?|stub|scaffold)\b",
-            compact,
-        )
-    )
-
-
-def _looks_like_complete_file_replacement(replace_text: str, rel: str) -> bool:
-    """Conservatively detect a complete file body rather than a tiny fragment."""
-    content = str(replace_text or "").strip()
-    if len(content) < 200:
-        return False
-    lines = [line for line in content.splitlines() if line.strip()]
-    if len(lines) < 8:
-        return False
-    suffix = os.path.splitext(rel)[1].lower()
-    if suffix in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"}:
-        return bool(
-            re.search(
-                r"^\s*(import|export|type|interface|class|function|const|let|var)\b",
-                content,
-                flags=re.MULTILINE,
-            )
-        )
-    if suffix in {".py", ".pyw"}:
-        return bool(re.search(r"^\s*(from|import|class|def)\b", content, flags=re.MULTILINE))
-    return True
-
-
-def _should_use_whole_file_placeholder_replacement(
-    *,
-    search_text: str,
-    replace_text: str,
-    rel: str,
-    block_count: int,
-) -> bool:
-    """Allow a controlled whole-file replacement for common LLM edit-block shorthand."""
-    return (
-        block_count == 1
-        and _is_placeholder_search_text(search_text)
-        and _looks_like_complete_file_replacement(replace_text, rel)
-    )
-
-
-def _normalize_edit_block_text(text: str) -> str:
-    return str(text or "").replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _drop_final_content_line(text: str) -> str:
-    candidate = text[:-1] if text.endswith("\n") else text
-    if "\n" not in candidate:
-        return ""
-    head, tail = candidate.rsplit("\n", 1)
-    if not tail.strip():
-        return ""
-    return f"{head}\n"
-
-
-def _prefix_search_candidates(search_text: str) -> list[str]:
-    normalized = _normalize_edit_block_text(search_text)
-    variants = [normalized]
-    marker_index = normalized.find("[truncated]")
-    if marker_index >= 0:
-        variants.append(normalized[:marker_index])
-
-    candidates: list[str] = []
-    seen: set[str] = set()
-    for variant in variants:
-        for candidate in (variant, _drop_final_content_line(variant)):
-            if not candidate or candidate in seen:
-                continue
-            seen.add(candidate)
-            candidates.append(candidate)
-    return candidates
-
-
-def _has_sufficient_whole_file_prefix_evidence(prefix: str) -> bool:
-    stripped = prefix.strip()
-    if len(stripped) < 200:
-        return False
-    non_empty_lines = [line for line in prefix.splitlines() if line.strip()]
-    return len(non_empty_lines) >= 8
-
-
-def _should_use_whole_file_prefix_replacement(
-    *,
-    current_text: str,
-    search_text: str,
-    replace_text: str,
-    rel: str,
-    block_count: int,
-) -> bool:
-    """Allow whole-file replacement when SEARCH is a verified file-prefix snapshot."""
-    suffix = os.path.splitext(rel)[1].lower()
-    if suffix not in {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".pyw"}:
-        return False
-    if block_count != 1 or not _looks_like_complete_file_replacement(replace_text, rel):
-        return False
-
-    current = _normalize_edit_block_text(current_text).lstrip("\ufeff")
-    for candidate in _prefix_search_candidates(search_text):
-        prefix = candidate.lstrip("\ufeff")
-        if _has_sufficient_whole_file_prefix_evidence(prefix) and current.startswith(prefix):
-            return True
-    return False
 
 
 def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
@@ -1268,233 +731,6 @@ def _handle_edit_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:
         return _edit_file_replace_mode(self, rel, file_content, search, replace or "", regex, tool_kwargs=kwargs)
 
     return {"ok": False, "error": "Must specify either line range (start_line/end_line) or search/replace"}
-
-
-def _normalize_block_input(text: Any) -> str:
-    """Make weak-model edit payloads parseable.
-
-    Two common low-precision-model artifacts are repaired:
-    - the whole payload wrapped in a Markdown code fence (```/```python);
-    - real newlines collapsed into literal ``\\n``/``\\t`` escapes (single-line JSON).
-    """
-    if not isinstance(text, str):
-        return ""
-    s = text
-    stripped = s.strip()
-    if stripped.startswith("```"):
-        fence_lines = stripped.splitlines()
-        if fence_lines and fence_lines[0].lstrip().startswith("```"):
-            fence_lines = fence_lines[1:]
-        if fence_lines and fence_lines[-1].strip().startswith("```"):
-            fence_lines = fence_lines[:-1]
-        s = "\n".join(fence_lines)
-    # Only unescape when the payload has no real newlines but does carry escaped ones —
-    # never mangle a payload that already contains genuine newlines (e.g. literal "\n"
-    # inside a string the model intends to write).
-    if "\n" not in s and "\\n" in s:
-        s = s.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
-    return s
-
-
-def _has_search_replace_markers(text: str) -> bool:
-    """True when the text already looks like SEARCH/REPLACE block(s)."""
-    if not text:
-        return False
-    return any(re.match(r"^\s*<{3,}\s*(SEARCH|ORIGINAL|SOURCE)\b", line) for line in text.splitlines())
-
-
-def _coerce_line_no(value: Any) -> int | None:
-    try:
-        return int(str(value).strip())
-    except (TypeError, ValueError):
-        return None
-
-
-def _synthesize_line_range_block(
-    self: AgentAccelToolExecutor,
-    file: str | None,
-    start: Any,
-    end: Any,
-    replacement: Any,
-) -> tuple[str | None, dict[str, Any] | None]:
-    """Build a SEARCH/REPLACE block from a line range (weak-model affordance).
-
-    Low-precision models reliably express edits as "replace lines start..end of FILE
-    with NEW CODE" but cannot reproduce exact SEARCH text. We read the EXACT current
-    lines ourselves (so the SEARCH text is guaranteed to match) and hand the synthesized
-    block to the normal validation/apply path. Returns (blocks_text, None) on success or
-    (None, error_dict) otherwise.
-    """
-    if not file:
-        return None, {"ok": False, "error": "line-range edit requires a 'file' argument."}
-    rel, resolve_error = _resolve_workspace_rel(self, str(file))
-    if rel is None:
-        return None, (resolve_error or {"ok": False, "error": f"Invalid path: {file}"})
-    if not self._kernel_fs.workspace_exists(rel):
-        return None, _not_found_error(self, str(file))
-    if not self._kernel_fs.workspace_is_file(rel):
-        return None, {"ok": False, "error": f"Path is not a file: {file}"}
-    try:
-        content = self._kernel_fs.workspace_read_text(rel, encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        return None, {"ok": False, "error": f"Failed to read {file}: {exc}"}
-
-    lines = content.splitlines(keepends=True)
-    total = len(lines)
-    start_no = _coerce_line_no(start)
-    end_no = _coerce_line_no(end)
-    if start_no is None or end_no is None:
-        return None, {"ok": False, "error": "line-range edit requires integer start and end line numbers."}
-    if start_no < 1 or end_no < 1 or start_no > end_no or start_no > total:
-        return None, {
-            "ok": False,
-            "error": f"Invalid line range [{start_no},{end_no}] for {file} (file has {total} lines).",
-        }
-    end_no = min(end_no, total)
-    search_text = "".join(lines[start_no - 1 : end_no])
-
-    repl = "" if replacement is None else str(replacement)
-    if not repl.strip():
-        return None, {
-            "ok": False,
-            "error": (
-                f"line-range edit for {file}[{start_no}:{end_no}] has no replacement code. "
-                "Provide the new code for those lines via 'replace' (or 'new_text'/'content')."
-            ),
-            "suggestion": "Pass the actual replacement source for the range; an empty replacement is rejected.",
-        }
-    # Preserve the trailing-newline shape of the replaced slice.
-    if search_text.endswith("\n") and not repl.endswith("\n"):
-        repl = repl + "\n"
-    removed_lines = end_no - start_no + 1
-    added_lines = len(repl.splitlines())
-    if (
-        removed_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
-        and added_lines <= removed_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO
-    ):
-        return None, _destructive_shrink_error(
-            f"{file}[{start_no}:{end_no}]",
-            removed_lines,
-            added_lines,
-            tool_hint=(
-                "Narrow start/end to ONLY the lines you are actually changing (a bug fix is "
-                "usually < 30 lines) and keep all surrounding code intact. Make several small "
-                "line-range edits if multiple spots need changes."
-            ),
-        )
-    # The block parser recognizes the divider/terminator only as a FULL line
-    # (``^={4,9}\s*$`` / ``^>{4,9}\s*REPLACE``). When the replaced range includes
-    # the file's LAST line and that line has no trailing newline, ``search_text``
-    # (and the replacement body) do not end on their own line, so ``====`` / the
-    # terminator get glued onto the final content line and the whole block is
-    # silently dropped. Append a delimiter newline so each body ends on its own
-    # line. This newline is a pure delimiter: ``_synthesize_line_range_search``
-    # below strips it back off at apply time so the bytes matched against / written
-    # to the file are unchanged.
-    search_body = search_text if search_text.endswith("\n") else search_text + "\n"
-    repl_body = repl if repl.endswith("\n") else repl + "\n"
-    block = f"<<<< SEARCH:{file}\n{search_body}====\n{repl_body}>>>> REPLACE\n"
-    return block, None
-
-
-def _strip_eof_delimiter_newline(search_text: str, replace_text: str, content: str) -> tuple[str, str]:
-    """Undo the delimiter newline a synthesized EOF block carries.
-
-    ``_synthesize_line_range_block`` appends a trailing ``\\n`` to the SEARCH (and
-    REPLACE) body so the ``====`` divider / ``>>>> REPLACE`` terminator land on
-    their own line even when the replaced range ends at a file whose last line has
-    no trailing newline. That newline is a pure parse delimiter, so it must be
-    removed before matching/writing or the SEARCH would no longer match the on-disk
-    slice (and a spurious trailing newline would be written). Trim a single trailing
-    ``\\n`` from both bodies only when the SEARCH does not match the content as-is but
-    its newline-trimmed form does — i.e. the genuine EOF case — leaving normal
-    newline-terminated edits untouched.
-    """
-    if not search_text.endswith("\n"):
-        return search_text, replace_text
-    if search_text in content:
-        return search_text, replace_text
-    trimmed_search = search_text[:-1]
-    if trimmed_search and trimmed_search in content:
-        trimmed_replace = replace_text[:-1] if replace_text.endswith("\n") else replace_text
-        return trimmed_search, trimmed_replace
-    return search_text, replace_text
-
-
-_JSON_EDIT_FILE_KEYS = (
-    "file",
-    "path",
-    "file_path",
-    "filepath",
-    "filename",
-    "target_file",
-    "target_path",
-)
-_JSON_EDIT_REPLACE_KEYS = ("replace", "new_text", "new_content", "replacement", "code", "content")
-
-
-def _synthesize_blocks_from_json_payload(
-    self: AgentAccelToolExecutor,
-    blocks_text: str,
-    default_file: str | None,
-) -> tuple[str | None, dict[str, Any] | None]:
-    """Recognize a JSON-encoded line-range edit (list or object) inside ``blocks``.
-
-    Live capture (phase1smoke6, qwen3.6): the model emitted a fully-correct
-    STRUCTURED edit as JSON inside the blocks argument —
-    ``[{"start_line":1019,"end_line":1020,"file":"django/db/models/expressions.py",
-    "replace":"..."}]`` — and the prose guard rejected it. Punishing structure
-    is link-level self-harm: normalize it into synthesized SEARCH/REPLACE blocks
-    through the SAME line-range path (shrink gate included).
-
-    Returns ``(blocks, None)`` on success, ``(None, error)`` when the payload is
-    line-range-shaped but invalid, and ``(None, None)`` when the payload is not
-    JSON-edit shaped at all (caller falls through to the normal parser).
-    """
-    candidate = blocks_text.strip()
-    # Live shape #4 (factory-bench L1-05): a leading YAML-ish label before the
-    # JSON — 'blocks: [ {"path": ..., "start": 1, ...} ]'. Strip one leading
-    # `word:` tag when JSON follows so the structured intent is recognized.
-    label_match = re.match(r"^[A-Za-z_]{1,16}\s*:\s*(?=[\[{])", candidate)
-    if label_match:
-        candidate = candidate[label_match.end() :].strip()
-    if not candidate or candidate[0] not in "[{":
-        return None, None
-    try:
-        parsed = json.loads(candidate)
-    except json.JSONDecodeError:
-        return None, None
-    items: list[Any] = parsed if isinstance(parsed, list) else [parsed]
-    if not items:
-        return None, None
-    synthesized: list[str] = []
-    for item in items:
-        if not isinstance(item, dict):
-            return None, None
-        start = item.get("start", item.get("start_line"))
-        end = item.get("end", item.get("end_line"))
-        if start is None or end is None:
-            # Nested-parameter-name shape (factory-bench L1-01 live capture):
-            # [{"blocks": "<payload>"}] — the model wrapped the ARGUMENT NAME
-            # inside the JSON. Unwrap single-item payloads and let the caller
-            # re-enter the normal pipeline (marker parse / prose guard).
-            inner = item.get("blocks")
-            if len(items) == 1 and isinstance(inner, str) and inner.strip():
-                return None, {"__unwrap_blocks__": inner, "__unwrap_file__": item.get("file") or default_file}
-            return None, None
-        item_file = next(
-            (str(item[key]) for key in _JSON_EDIT_FILE_KEYS if item.get(key)),
-            None,
-        ) or (str(default_file) if default_file else None)
-        replacement = next(
-            (item[key] for key in _JSON_EDIT_REPLACE_KEYS if item.get(key) is not None),
-            None,
-        )
-        block, err = _synthesize_line_range_block(self, item_file, start, end, replacement)
-        if err is not None:
-            return None, err
-        synthesized.append(block or "")
-    return "".join(synthesized), None
 
 
 def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]:

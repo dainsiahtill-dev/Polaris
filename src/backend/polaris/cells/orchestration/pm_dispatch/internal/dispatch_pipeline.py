@@ -11,7 +11,7 @@ isolation.  Validated by ``tests/test_pm_dispatch_no_delivery_import.py``.
 
 from __future__ import annotations
 
-import hashlib
+import hashlib  # noqa: F401 — preserved as a module attribute for surface parity
 import json
 import logging
 import os
@@ -25,26 +25,111 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# F15: a failed Director claim whose reason is one of these proves the bound
-# backend actually RAN the model (the failure is content/contention/payload, not
-# a dead endpoint), so it must NOT count toward a worker's backend-death streak.
-# The dead-backend signatures are instead: a raised exception (timeout / connection
-# / circuit-open) or ``missing_execution_evidence`` (empty LLM output).
-_BACKEND_ALIVE_REASONS: frozenset[str] = frozenset(
-    {"step_target_missing", "repair_shrank_file", "scope_conflict", "missing_blueprint"}
+
+def _load_dispatch_submodule(_modname: str) -> Any:
+    """Load a sibling ``internal.dispatch`` submodule, importable in isolation.
+
+    Tries the normal package import first (production path). Falls back to a
+    file-relative ``spec_from_file_location`` load when the parent package is a
+    bare stub with no usable ``__path__`` — the exact situation set up by
+    ``tests/test_pm_dispatch_no_delivery_import.py``, which loads this module by
+    file path under stubbed package parents. The loaded module is registered in
+    ``sys.modules`` under its full dotted name so any sibling that imports it via
+    a normal ``from ...dispatch.X import Y`` statement resolves from the cache.
+    """
+    import importlib
+    import importlib.util
+    import sys
+
+    full = f"polaris.cells.orchestration.pm_dispatch.internal.dispatch.{_modname}"
+    cached = sys.modules.get(full)
+    if cached is not None:
+        return cached
+    try:
+        return importlib.import_module(full)
+    except ModuleNotFoundError:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dispatch", f"{_modname}.py")
+        spec = importlib.util.spec_from_file_location(full, path)
+        if spec is None or spec.loader is None:  # pragma: no cover - defensive
+            raise
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[full] = module
+        spec.loader.exec_module(module)
+        return module
+
+
+# Load leaf submodules first so siblings that import them (e.g. integration_qa
+# imports the lazy loaders) resolve from sys.modules during bootstrap.
+_lazy_imports = _load_dispatch_submodule("_lazy_imports")
+_task_market_publish = _load_dispatch_submodule("task_market_publish")
+_worker_pool = _load_dispatch_submodule("worker_pool")
+_engine_dispatch = _load_dispatch_submodule("engine_dispatch")
+_integration_qa = _load_dispatch_submodule("integration_qa")
+
+# ---------------------------------------------------------------------------
+# Re-export every symbol moved into the .dispatch submodules so this module's
+# public AND privately-imported surface is byte-for-byte unchanged, and so the
+# canonical orchestrators below resolve their moved collaborators by bare name.
+# Names that tests monkeypatch on this module are intentionally NOT moved.
+# ---------------------------------------------------------------------------
+_get_chief_engineer_service = _lazy_imports._get_chief_engineer_service
+_get_workflow_runtime = _lazy_imports._get_workflow_runtime
+_get_task_market_requeue_services = _lazy_imports._get_task_market_requeue_services
+_get_shared_quality = _lazy_imports._get_shared_quality
+_get_cognitive_runtime_services = _lazy_imports._get_cognitive_runtime_services
+_get_io_utils = _lazy_imports._get_io_utils
+_get_tasks_utils = _lazy_imports._get_tasks_utils
+_get_shangshuling_port = _lazy_imports._get_shangshuling_port
+_get_traceability_safety = _lazy_imports._get_traceability_safety
+_TASK_MARKET_TERMINAL_STATUSES = _task_market_publish._TASK_MARKET_TERMINAL_STATUSES
+_TASK_ROUTE_DIRECT_TO_DIRECTOR = _task_market_publish._TASK_ROUTE_DIRECT_TO_DIRECTOR
+_TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED = _task_market_publish._TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
+_resolve_task_market_mode = _task_market_publish._resolve_task_market_mode
+_resolve_task_market_rollout_mode = _task_market_publish._resolve_task_market_rollout_mode
+_hash_payload = _task_market_publish._hash_payload
+_build_revision_context = _task_market_publish._build_revision_context
+_extract_task_dependencies = _task_market_publish._extract_task_dependencies
+_task_bool = _task_market_publish._task_bool
+_normalize_task_market_route = _task_market_publish._normalize_task_market_route
+_task_market_route_for_task = _task_market_publish._task_market_route_for_task
+_task_market_stage_for_route = _task_market_publish._task_market_stage_for_route
+_task_market_lineage_snapshot = _task_market_publish._task_market_lineage_snapshot
+_BACKEND_ALIVE_REASONS = _worker_pool._BACKEND_ALIVE_REASONS
+_pool_trace = _worker_pool._pool_trace
+_read_positive_int_env = _worker_pool._read_positive_int_env
+_read_bool_env = _worker_pool._read_bool_env
+_drive_role_workers = _worker_pool._drive_role_workers
+_drive_director_workers = _worker_pool._drive_director_workers
+_log_director_backend_distribution = _worker_pool._log_director_backend_distribution
+_nop_update_role_status = _engine_dispatch._nop_update_role_status
+_chief_engineer_preflight_block_reason = _engine_dispatch._chief_engineer_preflight_block_reason
+_build_chief_engineer_blocked_director_result = _engine_dispatch._build_chief_engineer_blocked_director_result
+_build_workflow_input = _engine_dispatch._build_workflow_input
+_build_director_workflow_result = _engine_dispatch._build_director_workflow_result
+_classify_integration_qa_evidence = _integration_qa._classify_integration_qa_evidence
+_context_snapshot_evidence = _integration_qa._context_snapshot_evidence
+_record_pm_dispatch_qa_cognitive_receipt = _integration_qa._record_pm_dispatch_qa_cognitive_receipt
+_attach_pm_dispatch_qa_cognitive_receipt = _integration_qa._attach_pm_dispatch_qa_cognitive_receipt
+run_integration_qa = _integration_qa.run_integration_qa
+_tasks_touch_docs_only = _integration_qa._tasks_touch_docs_only
+_build_post_dispatch_integration_qa_result = _integration_qa._build_post_dispatch_integration_qa_result
+_apply_post_dispatch_skip_reason = _integration_qa._apply_post_dispatch_skip_reason
+_resolve_verify_runner = _integration_qa._resolve_verify_runner
+_execute_post_dispatch_integration_qa = _integration_qa._execute_post_dispatch_integration_qa
+_integration_qa_failure_should_requeue = _integration_qa._integration_qa_failure_should_requeue
+_extract_task_id = _integration_qa._extract_task_id
+_is_director_assigned_task = _integration_qa._is_director_assigned_task
+_string_list_from_task = _integration_qa._string_list_from_task
+_string_list_from_result_field = _integration_qa._string_list_from_result_field
+_build_integration_qa_last_failure = _integration_qa._build_integration_qa_last_failure
+_resolve_integration_qa_requeue_target_ids = _integration_qa._resolve_integration_qa_requeue_target_ids
+_requeue_director_tasks_after_integration_qa_failure = (
+    _integration_qa._requeue_director_tasks_after_integration_qa_failure
 )
-_TASK_MARKET_TERMINAL_STATUSES: frozenset[str] = frozenset({"resolved", "rejected", "dead_letter"})
-
-
-def _pool_trace(msg: str) -> None:
-    """Emit a Director-pool trace to stderr (captured by run wrappers) when
-    ``KERNELONE_DIRECTOR_POOL_TRACE`` is set. INFO logs are suppressed by the
-    default WARNING root level in the bench runner, so this gives reliable
-    visibility into worker spawn / per-claim routing for multi-backend runs."""
-    if os.environ.get("KERNELONE_DIRECTOR_POOL_TRACE"):
-        import sys
-
-        print(f"[director-pool] {msg}", file=sys.stderr, flush=True)
+_persist_post_dispatch_integration_qa_result = _integration_qa._persist_post_dispatch_integration_qa_result
+_emit_post_dispatch_integration_qa_result = _integration_qa._emit_post_dispatch_integration_qa_result
+run_post_dispatch_integration_qa = _integration_qa.run_post_dispatch_integration_qa
+record_dispatch_status_to_shangshuling = _integration_qa.record_dispatch_status_to_shangshuling
 
 
 @dataclass(frozen=True)
@@ -64,31 +149,6 @@ class DispatchCallbacks:
     update_role_status: Callable[..., None] = field(default_factory=lambda: _nop_update_role_status)
 
 
-def _nop_update_role_status(role: str, *, status: str, running: bool, detail: str) -> None:
-    """No-op fallback when no callback is provided."""
-    pass
-
-
-def _get_chief_engineer_service() -> Callable:
-    """Lazy import for chief_engineer.blueprint to avoid module-level cross-Cell coupling."""
-    from polaris.cells.chief_engineer.blueprint.public.service import (
-        run_pre_dispatch_chief_engineer,
-    )
-
-    return run_pre_dispatch_chief_engineer
-
-
-def _get_workflow_runtime() -> tuple[type, type, Callable]:
-    """Lazy import for workflow_runtime to avoid module-level cross-Cell coupling."""
-    from polaris.cells.orchestration.workflow_runtime.public.service import (
-        PMWorkflowInput,
-        WorkflowSubmissionResult,
-        submit_pm_workflow_sync,
-    )
-
-    return PMWorkflowInput, WorkflowSubmissionResult, submit_pm_workflow_sync
-
-
 def _get_task_market_services() -> tuple[type, Callable]:
     """Lazy import for runtime.task_market to avoid module-level cross-Cell coupling."""
     from polaris.cells.runtime.task_market.public.contracts import (
@@ -99,18 +159,6 @@ def _get_task_market_services() -> tuple[type, Callable]:
     )
 
     return PublishTaskWorkItemCommandV1, get_task_market_service
-
-
-def _get_task_market_requeue_services() -> tuple[type, Callable]:
-    """Lazy import for supervisor requeue without widening module-level coupling."""
-    from polaris.cells.runtime.task_market.public.contracts import (
-        RequeueTaskCommandV1,
-    )
-    from polaris.cells.runtime.task_market.public.service import (
-        get_task_market_service,
-    )
-
-    return RequeueTaskCommandV1, get_task_market_service
 
 
 def _get_task_market_revision_services() -> tuple[type, type, type]:
@@ -131,659 +179,6 @@ def _get_task_market_consumers() -> tuple[type, type, type]:
     from polaris.cells.qa.audit_verdict.public.service import QAConsumer
 
     return CEConsumer, DirectorExecutionConsumer, QAConsumer
-
-
-def _get_shared_quality() -> tuple[Callable, Callable]:
-    """Lazy import for shared_quality to avoid circular imports."""
-    from polaris.cells.orchestration.pm_planning.public.service import (
-        detect_integration_verify_command,
-        run_integration_verify_runner,
-    )
-
-    return detect_integration_verify_command, run_integration_verify_runner
-
-
-def _classify_integration_qa_evidence(
-    *,
-    ran: bool,
-    passed: bool | None,
-    reason: str,
-    summary: str,
-    errors: list[str],
-) -> str:
-    """Classify integration QA evidence strength for audit consumers."""
-    if not ran:
-        return "not_run"
-    normalized_reason = str(reason or "").strip().lower()
-    normalized_summary = str(summary or "").strip().lower()
-    normalized_errors = " ".join(str(item or "").strip().lower() for item in errors)
-    if normalized_reason in {"docs_only", "docs_stage_docs_only"}:
-        return "not_run_docs_only"
-    if normalized_reason in {
-        "integration_qa_disabled",
-        "no_tasks",
-        "no_director_tasks",
-        "pending_director_tasks",
-        "incomplete_tasks",
-        "director_failures_present",
-    }:
-        return "not_run"
-    if "node static verification passed" in normalized_summary:
-        return "structural_fallback_passed" if passed is True else "structural_fallback_failed"
-    if (
-        "node dependencies are declared but not installed" in normalized_summary
-        or "node dependencies are declared but not installed" in normalized_errors
-    ):
-        return "blocked_missing_dependencies"
-    if "integration verification passed:" in normalized_summary:
-        return "real_command_passed" if passed is True else "real_command_failed"
-    if "integration verification failed:" in normalized_summary or normalized_errors:
-        return "real_command_failed" if passed is False else "unknown"
-    if normalized_reason == "integration_qa_error":
-        return "qa_error"
-    return "unknown"
-
-
-def _get_cognitive_runtime_services() -> tuple[type, type, Callable[[], Any]]:
-    """Lazy import for factory.cognitive_runtime public contracts."""
-    from polaris.cells.factory.cognitive_runtime.public import (
-        RecordRuntimeReceiptCommandV1,
-        ResolveContextCommandV1,
-        get_cognitive_runtime_public_service,
-    )
-
-    return RecordRuntimeReceiptCommandV1, ResolveContextCommandV1, get_cognitive_runtime_public_service
-
-
-def _context_snapshot_evidence(snapshot: Any) -> dict[str, Any]:
-    """Extract compact, stable Context OS evidence from a resolved snapshot."""
-    if snapshot is None:
-        return {}
-    context_os_summary = getattr(snapshot, "context_os_summary", {})
-    source_refs = getattr(snapshot, "source_refs", ())
-    return {
-        "workspace": str(getattr(snapshot, "workspace", "") or "").strip(),
-        "role": str(getattr(snapshot, "role", "") or "").strip(),
-        "run_id": str(getattr(snapshot, "run_id", "") or "").strip(),
-        "session_id": str(getattr(snapshot, "session_id", "") or "").strip(),
-        "mode": str(getattr(snapshot, "mode", "") or "").strip(),
-        "token_usage_estimate": int(getattr(snapshot, "token_usage_estimate", 0) or 0),
-        "source_refs": [str(item).strip() for item in source_refs if str(item).strip()],
-        "context_os_summary": dict(context_os_summary) if isinstance(context_os_summary, dict) else {},
-    }
-
-
-def _record_pm_dispatch_qa_cognitive_receipt(
-    *,
-    workspace_full: str,
-    run_id: str,
-    iteration: int,
-    result: dict[str, Any],
-    required: bool = True,
-    context_os_expected: bool = True,
-) -> dict[str, Any]:
-    """Record Cognitive Runtime evidence for PM dispatch integration QA."""
-    receipt_evidence: dict[str, Any] = {
-        "ok": False,
-        "required": bool(required),
-        "receipt_type": "qa_verification",
-        "source": "pm_dispatch",
-        "context_os_expected": bool(context_os_expected),
-    }
-    workspace = str(workspace_full or "").strip()
-    if not workspace:
-        receipt_evidence["error_message"] = "missing_workspace"
-        return receipt_evidence
-
-    trace_refs = [
-        str(item).strip()
-        for item in (result.get("result_path"), result.get("runtime_result_path"))
-        if str(item or "").strip()
-    ]
-    raw_errors = result.get("errors")
-    errors = [str(item).strip() for item in raw_errors if str(item).strip()] if isinstance(raw_errors, list) else []
-    raw_director_task_status = result.get("director_task_status")
-    director_task_status = dict(raw_director_task_status) if isinstance(raw_director_task_status, dict) else {}
-    status = "completed" if result.get("passed") is True else "skipped" if result.get("ran") is False else "failed"
-    should_resolve_context = bool(context_os_expected and result.get("ran") is True)
-    session_id = f"qa-{run_id or 'adhoc'}-{int(iteration or 0)}"
-    context_os_evidence: dict[str, Any] = {
-        "ok": False,
-        "required": should_resolve_context,
-        "skipped": not should_resolve_context,
-        "reason": "qa_not_run" if not should_resolve_context else "",
-    }
-    try:
-        receipt_command_type, resolve_context_command_type, get_cognitive_runtime_public_service = (
-            _get_cognitive_runtime_services()
-        )
-        service = get_cognitive_runtime_public_service()
-        try:
-            if should_resolve_context:
-                context_result = service.resolve_context(
-                    resolve_context_command_type(
-                        workspace=workspace,
-                        role="qa",
-                        query=str(result.get("summary") or result.get("reason") or "post-dispatch integration QA"),
-                        step=int(iteration or 0),
-                        run_id=str(run_id or "").strip() or "pm-dispatch",
-                        mode="pm_dispatch_integration_qa",
-                        session_id=session_id,
-                        sources_enabled=("runtime", "events", "contracts"),
-                        policy={
-                            "source": "pm_dispatch.integration_qa",
-                            "context_os_required": True,
-                            "evidence_grade": str(result.get("evidence_grade") or "").strip(),
-                        },
-                    )
-                )
-                if not bool(getattr(context_result, "ok", False)):
-                    context_os_evidence["error_message"] = (
-                        str(getattr(context_result, "error_message", "") or "").strip()
-                        or str(getattr(context_result, "error_code", "") or "").strip()
-                        or "context_os_resolve_failed"
-                    )
-                    receipt_evidence["context_os"] = context_os_evidence
-                    receipt_evidence["error_code"] = "qa_context_os_resolve_failed"
-                    receipt_evidence["error_message"] = context_os_evidence["error_message"]
-                    return receipt_evidence
-                context_os_evidence = {
-                    "ok": True,
-                    "required": True,
-                    "skipped": False,
-                    "snapshot": _context_snapshot_evidence(getattr(context_result, "snapshot", None)),
-                }
-            receipt_evidence["context_os"] = context_os_evidence
-            receipt_result = service.record_runtime_receipt(
-                receipt_command_type(
-                    workspace=workspace,
-                    receipt_type="qa_verification",
-                    session_id=session_id,
-                    run_id=str(run_id or "").strip() or None,
-                    trace_refs=tuple(trace_refs),
-                    payload={
-                        "source": "pm_dispatch.integration_qa",
-                        "role": "qa",
-                        "status": status,
-                        "reason": str(result.get("reason") or "").strip(),
-                        "summary": str(result.get("summary") or "").strip(),
-                        "ran": bool(result.get("ran") is True),
-                        "passed": result.get("passed"),
-                        "evidence_grade": str(result.get("evidence_grade") or "").strip(),
-                        "qa_path": str(result.get("qa_path") or "dispatch_pipeline"),
-                        "pm_iteration": int(iteration or 0),
-                        "director_task_status": director_task_status,
-                        "result_path": str(result.get("result_path") or "").strip(),
-                        "runtime_result_path": str(result.get("runtime_result_path") or "").strip(),
-                        "errors": errors,
-                        "context_os_expected": bool(context_os_expected),
-                        "context_os": context_os_evidence,
-                    },
-                    turn_envelope={
-                        "role": "qa",
-                        "session_id": session_id,
-                        "run_id": str(run_id or "").strip(),
-                        "task_id": "qa::post_dispatch_integration",
-                    },
-                )
-            )
-        finally:
-            service.close()
-    except (RuntimeError, ValueError, ImportError) as exc:
-        receipt_evidence["error_message"] = str(exc)
-        return receipt_evidence
-
-    if not bool(getattr(receipt_result, "ok", False)):
-        error_message = str(getattr(receipt_result, "error_message", "") or "").strip()
-        error_code = str(getattr(receipt_result, "error_code", "") or "").strip()
-        receipt_evidence["error_message"] = error_message or error_code
-        return receipt_evidence
-
-    receipt = getattr(receipt_result, "receipt", None)
-    receipt_id = str(getattr(receipt, "receipt_id", "") or "").strip()
-    if required and not receipt_id:
-        receipt_evidence["error_message"] = "qa_cognitive_runtime_receipt_missing_id"
-        return receipt_evidence
-    receipt_evidence["ok"] = True
-    if receipt_id:
-        receipt_evidence["receipt_id"] = receipt_id
-    return receipt_evidence
-
-
-def _attach_pm_dispatch_qa_cognitive_receipt(
-    *,
-    workspace_full: str,
-    run_id: str,
-    iteration: int,
-    result: dict[str, Any],
-) -> None:
-    """Attach Cognitive Runtime receipt evidence and fail closed when required."""
-    receipt = _record_pm_dispatch_qa_cognitive_receipt(
-        workspace_full=workspace_full,
-        run_id=run_id,
-        iteration=iteration,
-        result=result,
-    )
-    result["cognitive_runtime_required"] = True
-    result["context_os_expected"] = True
-    result["cognitive_runtime_receipt"] = receipt
-    if bool(receipt.get("ok")):
-        return
-
-    error_code = str(receipt.get("error_code") or "").strip()
-    error_message = str(receipt.get("error_message") or "qa_cognitive_runtime_receipt_failed").strip()
-    raw_errors = result.get("errors")
-    errors = list(raw_errors) if isinstance(raw_errors, list) else []
-    result["errors"] = [*errors, error_message]
-    result["passed"] = False
-    result["reason"] = (
-        error_code if error_code == "qa_context_os_resolve_failed" else "qa_cognitive_runtime_receipt_failed"
-    )
-    result["summary"] = f"QA Cognitive Runtime receipt failed: {error_message}"
-    result["evidence_grade"] = "qa_error"
-
-
-def _get_io_utils() -> tuple[Callable, Callable]:
-    """Lazy import for events to avoid circular imports."""
-    from polaris.kernelone.events import emit_dialogue, emit_event
-
-    return emit_event, emit_dialogue
-
-
-def _get_tasks_utils() -> tuple[Callable, Callable]:
-    """Return task utility functions from the Cell's own port module.
-
-    Delivery layer is intentionally never imported here; all pure logic
-    lives in ``pm_task_utils``.
-    """
-    from polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils import (
-        get_director_task_status_summary,
-        to_bool,
-    )
-
-    return get_director_task_status_summary, to_bool
-
-
-def _get_shangshuling_port() -> Any:
-    """Return the cell-local Shangshuling port."""
-    from polaris.cells.orchestration.pm_dispatch.internal.shangshuling_registry import (
-        get_shangshuling_port,
-    )
-
-    return get_shangshuling_port()
-
-
-def _get_traceability_safety() -> tuple[Any, Any, Any]:
-    """Lazy import for traceability safety helpers."""
-    from polaris.kernelone.traceability.internal.safety import (
-        safe_find_node,
-        safe_link,
-        safe_register_node,
-    )
-
-    return safe_find_node, safe_link, safe_register_node
-
-
-def _chief_engineer_preflight_block_reason(result: Any) -> str:
-    """Return a non-empty reason when CE preflight must block dispatch."""
-    if result is None:
-        return "chief_engineer_preflight_missing"
-    if not isinstance(result, dict):
-        return "chief_engineer_preflight_invalid_result"
-
-    explicit_reason = str(result.get("reason") or "").strip()
-    if bool(result.get("hard_failure")):
-        return explicit_reason or "chief_engineer_preflight_hard_failure"
-
-    status = str(result.get("status") or "").strip().lower()
-    if status in {"failed", "failure", "error", "blocked"}:
-        return explicit_reason or f"chief_engineer_preflight_{status}"
-
-    if result.get("ok") is False:
-        return explicit_reason or "chief_engineer_preflight_not_ok"
-    if result.get("success") is False:
-        return explicit_reason or "chief_engineer_preflight_unsuccessful"
-    if result.get("ran") is False:
-        return explicit_reason or "chief_engineer_preflight_not_run"
-
-    return ""
-
-
-def _build_chief_engineer_blocked_director_result(
-    *,
-    run_id: str,
-    task_count: int,
-    reason: str,
-    chief_engineer_result: Any,
-) -> dict[str, Any]:
-    """Build a Director-compatible blocked result for failed CE preflight."""
-    summary = ""
-    if isinstance(chief_engineer_result, dict):
-        summary = str(chief_engineer_result.get("summary") or "").strip()
-    if not summary:
-        summary = "ChiefEngineer preflight blocked dispatch"
-
-    return {
-        "run_id": run_id,
-        "status": "blocked",
-        "mode": "chief_engineer_preflight",
-        "summary": summary,
-        "successes": 0,
-        "failures": 0,
-        "blocked": int(task_count or 0),
-        "total": int(task_count or 0),
-        "hard_failure": True,
-        "dispatch_blocked": True,
-        "dispatch_anomaly": "chief_engineer_preflight_failed",
-        "preflight_reason": reason,
-    }
-
-
-def _resolve_task_market_mode() -> str:
-    """Resolve task-market mode to a stable internal value."""
-    rollout_mode = _resolve_task_market_rollout_mode()
-    if rollout_mode in {"mainline", "mainline-design", "mainline-full", "mainline-durable"}:
-        return "mainline"
-    if rollout_mode == "shadow":
-        return "shadow"
-    return "off"
-
-
-def _resolve_task_market_rollout_mode() -> str:
-    """Resolve task-market rollout phase from environment."""
-    raw_mode = str(os.environ.get("KERNELONE_TASK_MARKET_MODE", "off") or "off").strip().lower()
-    if raw_mode in {"off", "shadow", "mainline", "mainline-design", "mainline-full", "mainline-durable"}:
-        return raw_mode
-    if raw_mode == "mainline-exec":
-        # Preserve forward compatibility with docs that mention this phase.
-        return "mainline-full"
-    return "off"
-
-
-def _hash_payload(payload: Any) -> str:
-    try:
-        serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    except (TypeError, ValueError):
-        serialized = str(payload)
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
-
-def _build_revision_context(
-    *,
-    workspace_full: str,
-    run_id: str,
-    tasks: list[dict[str, Any]],
-    normalized: dict[str, Any] | None = None,
-    docs_stage: dict[str, Any] | None = None,
-) -> dict[str, str]:
-    normalized_payload = normalized if isinstance(normalized, dict) else {}
-    docs_payload = docs_stage if isinstance(docs_stage, dict) else {}
-    default_plan_id = (
-        str(normalized_payload.get("project_id") or normalized_payload.get("initiative_id") or "").strip()
-        or str(docs_payload.get("active_doc_path") or "").strip()
-        or f"workspace::{workspace_full}"
-    )
-    plan_id = str(normalized_payload.get("plan_id") or default_plan_id).strip()
-    task_projection: list[dict[str, Any]] = [
-        {
-            "id": str(task.get("id") or "").strip(),
-            "title": str(task.get("title") or "").strip(),
-            "goal": str(task.get("goal") or "").strip(),
-            "depends_on": task.get("depends_on") if isinstance(task.get("depends_on"), list) else [],
-            "scope_paths": task.get("scope_paths") if isinstance(task.get("scope_paths"), list) else [],
-            "target_files": task.get("target_files") if isinstance(task.get("target_files"), list) else [],
-        }
-        for task in tasks
-        if isinstance(task, dict)
-    ]
-    requirement_basis = {
-        "overall_goal": str(normalized_payload.get("overall_goal") or "").strip(),
-        "focus": str(normalized_payload.get("focus") or "").strip(),
-        "notes": str(normalized_payload.get("notes") or "").strip(),
-        "tasks": task_projection,
-        "docs_active_path": str(docs_payload.get("active_doc_path") or "").strip(),
-    }
-    requirement_digest = _hash_payload(requirement_basis)
-    constraint_basis = {
-        "docs_enabled": bool(docs_payload.get("enabled")),
-        "dispatch_task_count": len(task_projection),
-        "run_id": str(run_id or "").strip(),
-    }
-    constraint_digest = _hash_payload(constraint_basis)
-    plan_revision_id = str(normalized_payload.get("plan_revision_id") or "").strip() or f"rev-{requirement_digest[:12]}"
-    return {
-        "plan_id": plan_id,
-        "plan_revision_id": plan_revision_id,
-        "requirement_digest": requirement_digest,
-        "constraint_digest": constraint_digest,
-    }
-
-
-def _extract_task_dependencies(
-    task: dict[str, Any],
-    *,
-    known_task_ids: set[str] | None = None,
-) -> tuple[str, ...]:
-    raw_depends_on = task.get("depends_on")
-    if isinstance(raw_depends_on, list):
-        source = raw_depends_on
-    else:
-        raw_dependencies = task.get("dependencies")
-        source = raw_dependencies if isinstance(raw_dependencies, list) else []
-    normalized = [str(item).strip() for item in source if str(item).strip()]
-    deduped: list[str] = []
-    for item in normalized:
-        if item not in deduped:
-            deduped.append(item)
-    if known_task_ids is None:
-        return tuple(deduped)
-    # Planner dependency lists are unvalidated free text: a ref to a task id
-    # that is not in this plan can never resolve on the market, and the exec
-    # readiness gate would strand the task as permanently unclaimable.
-    dropped = [item for item in deduped if item not in known_task_ids]
-    if dropped:
-        logger.warning(
-            "task %s: dropping depends_on refs to unknown plan tasks %s",
-            str(task.get("id") or "").strip(),
-            dropped,
-        )
-    return tuple(item for item in deduped if item in known_task_ids)
-
-
-_TASK_ROUTE_DIRECT_TO_DIRECTOR = "direct_to_director"
-_TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED = "chief_blueprint_required"
-
-
-def _task_bool(value: Any) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        token = value.strip().lower()
-        if token in {"1", "true", "yes", "y", "on"}:
-            return True
-        if token in {"0", "false", "no", "n", "off"}:
-            return False
-    return None
-
-
-def _normalize_task_market_route(value: Any) -> str:
-    token = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if token in {
-        _TASK_ROUTE_DIRECT_TO_DIRECTOR,
-        "direct",
-        "director",
-        "director_direct",
-        "direct_director",
-        "pending_exec",
-        "exec",
-        "execution",
-    }:
-        return _TASK_ROUTE_DIRECT_TO_DIRECTOR
-    if token in {
-        _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED,
-        "chief",
-        "chief_engineer",
-        "chiefengineer",
-        "blueprint",
-        "blueprint_required",
-        "requires_blueprint",
-        "pending_design",
-        "design",
-    }:
-        return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
-    return ""
-
-
-def _task_market_route_for_task(task: dict[str, Any]) -> str:
-    metadata_raw = task.get("metadata")
-    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
-    for container in (task, metadata):
-        for key in (
-            "task_market_route",
-            "route",
-            "routing",
-            "dispatch_route",
-            "execution_route",
-            "handoff_route",
-        ):
-            route = _normalize_task_market_route(container.get(key))
-            if route:
-                return route
-        for key in (
-            "requires_blueprint",
-            "blueprint_required",
-            "chief_engineer_required",
-            "requires_chief_engineer",
-            "requires_design",
-        ):
-            explicit = _task_bool(container.get(key))
-            if explicit is True:
-                return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
-            if explicit is False:
-                return _TASK_ROUTE_DIRECT_TO_DIRECTOR
-
-    role_values = (
-        task.get("assigned_to"),
-        task.get("assignee"),
-        task.get("owner_role"),
-        task.get("role"),
-        metadata.get("assigned_to"),
-        metadata.get("owner_role"),
-        metadata.get("role"),
-    )
-    role_tokens = {str(value or "").strip().lower().replace(" ", "_") for value in role_values if str(value or "")}
-    if role_tokens & {"chief", "chief_engineer", "chiefengineer"}:
-        return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
-
-    # Mainline defaults to the governed design route. PM can still explicitly
-    # mark narrow, already-scoped work as direct_to_director.
-    return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
-
-
-def _task_market_stage_for_route(route: str) -> str:
-    if route == _TASK_ROUTE_DIRECT_TO_DIRECTOR:
-        return "pending_exec"
-    return "pending_design"
-
-
-def _sync_revision_and_change_order(
-    *,
-    service: Any,
-    workspace_full: str,
-    trace_id: str,
-    tasks: list[dict[str, Any]],
-    revision_context: dict[str, str],
-    source_role: str = "PM",
-    docs_stage: dict[str, Any] | None = None,
-) -> None:
-    """Best-effort revision registration and change-order submission."""
-    if not (
-        hasattr(service, "register_plan_revision")
-        and hasattr(service, "query_plan_revisions")
-        and hasattr(service, "submit_change_order")
-    ):
-        return
-    try:
-        register_cmd, change_order_cmd, query_cmd = _get_task_market_revision_services()
-    except (ImportError, RuntimeError, ValueError):
-        return
-
-    plan_id = str(revision_context.get("plan_id") or "").strip()
-    plan_revision_id = str(revision_context.get("plan_revision_id") or "").strip()
-    if not plan_id or not plan_revision_id:
-        return
-
-    try:
-        history = service.query_plan_revisions(query_cmd(workspace=workspace_full, plan_id=plan_id, limit=1))
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-        history = ()
-
-    latest = history[0] if history else {}
-    latest_revision_id = str((latest or {}).get("plan_revision_id") or "").strip()
-    if latest_revision_id == plan_revision_id:
-        return
-
-    service.register_plan_revision(
-        register_cmd(
-            workspace=workspace_full,
-            plan_id=plan_id,
-            plan_revision_id=plan_revision_id,
-            parent_revision_id=latest_revision_id,
-            source_role=source_role,
-            requirement_digest=revision_context.get("requirement_digest", ""),
-            constraint_digest=revision_context.get("constraint_digest", ""),
-            metadata={"registered_via": "pm_dispatch"},
-        )
-    )
-
-    if not latest_revision_id:
-        return
-
-    docs_payload = docs_stage if isinstance(docs_stage, dict) else {}
-    change_type = "doc_patch" if bool(docs_payload.get("enabled")) else "manual_task_edit"
-    affected_task_ids = tuple(
-        str(task.get("id") or "").strip()
-        for task in tasks
-        if isinstance(task, dict) and str(task.get("id") or "").strip()
-    )
-    service.submit_change_order(
-        change_order_cmd(
-            workspace=workspace_full,
-            plan_id=plan_id,
-            from_revision_id=latest_revision_id,
-            to_revision_id=plan_revision_id,
-            source_role=source_role,
-            change_type=change_type,
-            trace_id=trace_id,
-            summary="PM dispatch detected revision drift",
-            affected_task_ids=affected_task_ids,
-            metadata={"submitted_via": "pm_dispatch"},
-        )
-    )
-
-
-def _read_positive_int_env(name: str, *, default: int, minimum: int = 1, maximum: int = 3600) -> int:
-    raw = str(os.environ.get(name, "") or "").strip()
-    if not raw:
-        return default
-    try:
-        parsed = int(raw)
-    except ValueError:
-        return default
-    return max(minimum, min(maximum, parsed))
-
-
-def _read_bool_env(name: str, *, default: bool = False) -> bool:
-    raw = str(os.environ.get(name, "") or "").strip().lower()
-    if not raw:
-        return default
-    if raw in {"1", "true", "yes", "on"}:
-        return True
-    if raw in {"0", "false", "no", "off"}:
-        return False
-    return default
 
 
 def _endpoint_reachable(base_url: str, *, timeout: float = 4.0) -> bool:
@@ -913,409 +308,6 @@ def _build_director_worker_pool(
         )
 
     return _build_role_worker_pool("director", _director_factory, worker_suffix=worker_suffix)
-
-
-def _drive_role_workers(
-    role_id: str,
-    workers: list[tuple[Any, Any]],
-    *,
-    poll_interval: float = 0.05,
-    max_claims_per_worker: int = 256,
-    stall_seconds: float | None = None,
-) -> list[dict[str, Any]]:
-    """Continuously drain ready stage items across a ROLE's worker pool.
-
-    Role-agnostic (``role_id`` keys the per-worker provider/binding override); the
-    Director is just ``role_id="director"`` via the :func:`_drive_director_workers`
-    wrapper. F15 retirement, fairness yield, all-idle quorum and the stall watchdog
-    are unchanged and apply to any role.
-
-    Continuously drain ready exec steps across the Director worker pool.
-
-    Each worker runs its OWN poll loop and, the instant it finishes a step, it
-    immediately tries to claim the next ready leaf step — keeping every bound
-    backend at high load instead of idling at a per-cycle barrier. A worker only
-    stops when it claims nothing AND every sibling is simultaneously idle
-    (i.e. the market has no claimable exec step and none is mid-flight), at which
-    point control returns to the caller so CE/QA can advance the pipeline (fission
-    new parents, resolve steps) and unblock the next wave.
-
-    The market's per-step leasing guarantees workers claim DISTINCT leaf steps and
-    ``_exec_claim_ready`` keeps ``depends_on`` order, so parallelism is realised
-    across INDEPENDENT steps while the DAG is respected. Each worker sets a
-    thread-local provider override so its LLM calls route to the assigned backend;
-    every returned step is tagged with that backend for observability.
-
-    F15 resilience — a backend that dies MID-RUN must never freeze the pool: a
-    worker that keeps failing against a dead/hung endpoint RETIRES itself (Layer A)
-    so the steps it would otherwise monopolise requeue to a LIVE worker, and a
-    stall watchdog bounds the join (Layer B) so a worker stuck *inside* a hung
-    ``poll_once`` can never block the whole dispatch.
-
-    Args:
-        workers: ``(consumer, provider_id)`` pairs, one per bound backend.
-        poll_interval: idle back-off between empty polls while siblings still work.
-        max_claims_per_worker: defensive cap on claims per worker per drain so a
-            pathological always-ready market can never spin forever (the outer
-            cycle loop picks up any remainder).
-        stall_seconds: Layer-B watchdog deadline; when None (production), read from
-            ``KERNELONE_DIRECTOR_DRIVE_STALL_SECONDS`` (default 900s, floored at 30s
-            so a legitimately-slow all-workers-mid-turn window never false-fires).
-            Tests inject a small value directly to exercise the watchdog quickly.
-    """
-    import threading
-    import time
-
-    from polaris.kernelone.llm.runtime_config import (
-        clear_role_provider_override,
-        set_role_binding_override,
-        set_role_provider_override,
-    )
-
-    death_threshold = _read_positive_int_env(
-        "KERNELONE_DIRECTOR_WORKER_DEATH_THRESHOLD", default=3, minimum=1, maximum=100
-    )
-    stall_timeout = (
-        float(stall_seconds)
-        if stall_seconds is not None
-        else float(
-            _read_positive_int_env("KERNELONE_DIRECTOR_DRIVE_STALL_SECONDS", default=900, minimum=30, maximum=86400)
-        )
-    )
-
-    results: list[list[dict[str, Any]]] = [[] for _ in workers]
-    errors: list[BaseException] = []
-    # Per-worker "this worker raised at least one poll exception". Only a TOTAL
-    # failure (every worker errored and nothing was accomplished) re-raises to the
-    # caller's loop guard; a single transient poll blip on ONE backend while the
-    # market is otherwise drained must NOT crash the whole PM->CE->Director->QA
-    # mainline (see the docstring's F15 contract and the raise gate below).
-    errored = [False] * len(workers)
-    # Per-worker "my last poll returned nothing"; all-True under the lock means the
-    # whole pool is collectively idle and the drain is complete. Start False so a
-    # worker never declares the pool idle before any sibling has polled once.
-    # A retired (dead-backend) worker also sets its slot True so the pool can still
-    # reach the all-idle quorum and terminate without it. Retirement is per-cycle:
-    # the caller re-probes reachability and rebuilds the pool every cycle, so a
-    # backend that recovers rejoins next cycle and a still-dead one is health-checked
-    # out — no cross-cycle benching that would strand a recovered LLM.
-    idle = [False] * len(workers)
-    lock = threading.Lock()
-    stop = threading.Event()
-
-    _pool_trace(f"DRIVE: starting {len(workers)} worker thread(s)")
-
-    def _batch_shows_live_backend(batch: list[dict[str, Any]]) -> bool:
-        """True if the claim proves the bound backend ran (a resolved step or a
-        model-ran failure reason), as opposed to the empty-output dead signature."""
-        for row in batch:
-            if not isinstance(row, dict):
-                continue
-            if row.get("ok"):
-                return True
-            if row.get("reason") in _BACKEND_ALIVE_REASONS:
-                return True
-        return False
-
-    def _binding_provider_id(binding: Any) -> str:
-        return str(getattr(binding, "provider_id", binding) or "").strip()
-
-    def _binding_model(binding: Any) -> str:
-        return str(getattr(binding, "model", "") or "").strip()
-
-    def _binding_id(binding: Any) -> str:
-        return str(getattr(binding, "binding_id", "") or "").strip()
-
-    def _binding_slot_index(binding: Any) -> int | None:
-        raw = getattr(binding, "slot_index", None)
-        if raw is None:
-            return None
-        try:
-            return int(raw)
-        except (TypeError, ValueError):
-            return None
-
-    def _active_claim_snapshot(consumer: Any) -> tuple[str, float, float] | None:
-        snapshotter = getattr(consumer, "active_claim_watchdog_snapshot", None)
-        if not callable(snapshotter):
-            return None
-        try:
-            snapshot = snapshotter()
-        except (RuntimeError, TypeError, ValueError):
-            return None
-        if not isinstance(snapshot, dict):
-            return None
-        started_raw = snapshot.get("started_monotonic")
-        if not isinstance(started_raw, int | float):
-            return None
-        timeout_raw = snapshot.get("timeout_seconds", stall_timeout)
-        if timeout_raw is None:
-            timeout_raw = stall_timeout
-        try:
-            timeout_seconds = float(timeout_raw)
-        except (TypeError, ValueError):
-            timeout_seconds = stall_timeout
-        return (
-            str(snapshot.get("task_id") or "").strip(),
-            float(started_raw),
-            max(float(stall_timeout), timeout_seconds),
-        )
-
-    def _retire(index: int, provider_id: str, reason: str) -> None:
-        logger.warning("director worker w%d (%s) retired mid-cycle (F15): %s", index, provider_id, reason)
-        _pool_trace(f"w{index} ({provider_id}) RETIRED: {reason}")
-        with lock:
-            idle[index] = True  # count toward all-idle quorum so the pool can still terminate
-            if all(idle):
-                stop.set()
-
-    def _run(index: int, consumer: Any, binding: Any) -> None:
-        provider_id = _binding_provider_id(binding)
-        model = _binding_model(binding)
-        binding_id = _binding_id(binding)
-        slot_index = _binding_slot_index(binding)
-        if model:
-            set_role_binding_override(role_id, provider_id=provider_id, model=model, binding_id=binding_id)
-        else:
-            set_role_provider_override(role_id, provider_id)
-        backend_failures = 0
-        try:
-            claims = 0
-            while not stop.is_set() and claims < max_claims_per_worker:
-                try:
-                    batch = consumer.poll_once()
-                except Exception as exc:  # noqa: BLE001 — a transport error must not kill the whole pool
-                    errors.append(exc)
-                    errored[index] = True
-                    backend_failures += 1
-                    _pool_trace(f"w{index} ({provider_id}) poll raised ({backend_failures}/{death_threshold}): {exc}")
-                    if backend_failures >= death_threshold:
-                        _retire(index, provider_id, f"poll_exception:{exc}")
-                        return
-                    time.sleep(poll_interval)
-                    continue
-                if batch:
-                    ids = [r.get("task_id") for r in batch if isinstance(r, dict)]
-                    _pool_trace(f"w{index} ({provider_id}) claimed {ids}")
-                    for row in batch:
-                        if isinstance(row, dict):
-                            row.setdefault("_director_backend", provider_id)
-                            if model:
-                                row.setdefault("_director_model", model)
-                            if binding_id:
-                                row.setdefault("_director_binding_id", binding_id)
-                            if slot_index is not None:
-                                row.setdefault("_director_slot_index", slot_index)
-                    results[index].extend(batch)
-                    claims += len(batch)
-                    resolved = any(isinstance(r, dict) and r.get("ok") for r in batch)
-                    if _batch_shows_live_backend(batch):
-                        backend_failures = 0
-                    else:
-                        # Empty-output / no-evidence claim: the dead-backend signature.
-                        # Keep idle=False (we are NOT drained, the step just requeued) so a
-                        # transient all-idle race can't terminate the pool prematurely.
-                        backend_failures += 1
-                        _pool_trace(
-                            f"w{index} ({provider_id}) unproductive claim ({backend_failures}/{death_threshold}): {ids}"
-                        )
-                    with lock:
-                        idle[index] = False
-                    if backend_failures >= death_threshold:
-                        # Stop re-claiming so the requeued step(s) route to a LIVE worker.
-                        _retire(index, provider_id, "backend_unproductive_streak")
-                        return
-                    if resolved:
-                        continue  # real progress → immediately reach for the next step (high load)
-                    # Fairness: the claim requeued WITHOUT resolving (a failing/churning step).
-                    # An immediate re-poll here lets this worker monopolise that one requeued step
-                    # while idle siblings on OTHER backends starve (observed r43: gpu0 re-grabbed
-                    # js-skel 3× while LAN+gpu1 sat idle). Yield one poll_interval so an idle
-                    # sibling claims the requeued step next — spreading load across every backend
-                    # and retrying the step on a FRESH backend instead of re-failing it here.
-                    time.sleep(poll_interval)
-                    continue
-                # Nothing ready for me right now (a genuinely empty claim = market drained for me).
-                with lock:
-                    idle[index] = True
-                    pool_idle = all(idle)
-                if pool_idle:
-                    stop.set()  # market drained + no sibling mid-flight → yield to CE/QA
-                    return
-                time.sleep(poll_interval)  # a sibling is still executing; it may unblock a step
-        finally:
-            clear_role_provider_override(role_id)
-
-    threads = [
-        threading.Thread(target=_run, args=(i, consumer, binding), name=f"{role_id}-w{i}", daemon=True)
-        for i, (consumer, binding) in enumerate(workers)
-    ]
-    for thread in threads:
-        thread.start()
-
-    # Layer B backstop: bound the wait. Layer A only fires once poll_once RETURNS;
-    # if a worker is stuck INSIDE a hung poll_once (a socket blocked below the HTTP
-    # timeout, or an un-cancellable call) it never returns and an unbounded join
-    # would freeze the whole dispatch. Watch global forward progress (claimed rows);
-    # if nothing advances for stall_timeout, signal stop and abandon the stuck
-    # daemon thread — its lease expires and the step requeues to a live worker.
-    last_progress = 0
-    last_progress_ts = time.monotonic()
-    while any(thread.is_alive() for thread in threads):
-        if stop.is_set():
-            break
-        with lock:
-            progressed = sum(len(batch) for batch in results)
-        now = time.monotonic()
-        if progressed != last_progress:
-            last_progress = progressed
-            last_progress_ts = now
-        else:
-            active_claims = [
-                (index, provider_id, snapshot)
-                for index, (consumer, provider_id) in enumerate(workers)
-                if (snapshot := _active_claim_snapshot(consumer)) is not None
-            ]
-            fresh_active_claims = [
-                (index, provider_id, snapshot)
-                for index, provider_id, snapshot in active_claims
-                if now - snapshot[1] <= snapshot[2]
-            ]
-            if fresh_active_claims:
-                last_progress_ts = now
-                time.sleep(min(0.2, stall_timeout / 10.0))
-                continue
-            if active_claims:
-                index, provider_id, snapshot = max(active_claims, key=lambda item: now - item[2][1])
-                task_id, started_at, timeout_seconds = snapshot
-                age = now - started_at
-                logger.warning(
-                    "director drive active claim stalled %.0fs > %.0fs; retiring pool (F15 backstop): "
-                    "worker=w%d provider=%s task_id=%s",
-                    age,
-                    timeout_seconds,
-                    index,
-                    provider_id,
-                    task_id,
-                )
-                _pool_trace(
-                    f"DRIVE STALL: active claim {task_id or '<unknown>'} on w{index} "
-                    f"({provider_id}) age {age:.0f}s > {timeout_seconds:.0f}s; stopping"
-                )
-                stop.set()
-                break
-        if now - last_progress_ts > stall_timeout:
-            logger.warning(
-                "director drive stalled %.0fs with no claim progress; retiring pool (F15 backstop)",
-                now - last_progress_ts,
-            )
-            _pool_trace(f"DRIVE STALL: no progress {now - last_progress_ts:.0f}s > {stall_timeout:.0f}s; stopping")
-            stop.set()
-            break
-        time.sleep(min(0.2, stall_timeout / 10.0))
-
-    join_timeout = max(2.0, poll_interval * 4)
-    for thread in threads:
-        thread.join(timeout=join_timeout)
-
-    merged: list[dict[str, Any]] = []
-    for batch in results:
-        merged.extend(batch)
-    # Only surface an error to the caller's loop guard on TOTAL failure (EVERY worker
-    # errored and nothing was accomplished); a single backend blip on one worker —
-    # e.g. a transient poll exception while the market is otherwise drained (zero
-    # claimable work, so no ok=True rows) — must not crash a dispatch the rest of the
-    # pool carried. Gating on ``all(errored)`` makes the code match the comment: a
-    # raise needs both no success AND no surviving (non-erroring) worker.
-    any_success = any(isinstance(row, dict) and row.get("ok") for batch in results for row in batch)
-    if errors and not any_success and all(errored):
-        raise errors[0]
-    _log_director_backend_distribution(workers, merged)
-    return merged
-
-
-def _drive_director_workers(
-    workers: list[tuple[Any, Any]],
-    *,
-    poll_interval: float = 0.05,
-    max_claims_per_worker: int = 256,
-    stall_seconds: float | None = None,
-) -> list[dict[str, Any]]:
-    """Byte-identical Director facade over the role-generalized :func:`_drive_role_workers`."""
-    return _drive_role_workers(
-        "director",
-        workers,
-        poll_interval=poll_interval,
-        max_claims_per_worker=max_claims_per_worker,
-        stall_seconds=stall_seconds,
-    )
-
-
-def _log_director_backend_distribution(workers: list[tuple[Any, Any]], merged: list[dict[str, Any]]) -> None:
-    """Emit a one-line per-backend claim distribution so 4-Director load is visible."""
-    if not merged:
-        return
-    from polaris.kernelone.llm.runtime_config import get_provider_base_url
-
-    counts: dict[str, int] = {}
-    for row in merged:
-        if isinstance(row, dict):
-            pid = str(row.get("_director_backend") or "?")
-            counts[pid] = counts.get(pid, 0) + 1
-    bound = {str(getattr(binding, "provider_id", binding) or "").strip() for _c, binding in workers}
-    parts = []
-    for pid in sorted(bound | set(counts)):
-        try:
-            host = get_provider_base_url(pid) or pid
-        except (KeyError, RuntimeError, ValueError):
-            host = pid
-        parts.append(f"{host}={counts.get(pid, 0)}")
-    logger.info("director drain: %d step(s) across %d backend(s) | %s", len(merged), len(bound), " ".join(parts))
-
-
-def _task_market_lineage_snapshot(
-    *,
-    task_market_service: Any,
-    workspace_full: str,
-    published_id_set: set[str],
-) -> dict[str, Any]:
-    """Return task-market state scoped to this dispatch's published lineage."""
-    if not published_id_set or not hasattr(task_market_service, "query_status"):
-        return {"available": False, "reason": "query_status_unavailable"}
-
-    from polaris.cells.runtime.task_market.public.contracts import (
-        QueryTaskMarketStatusV1,
-    )
-
-    status_result = task_market_service.query_status(QueryTaskMarketStatusV1(workspace=workspace_full, limit=10_000))
-    terminal_status_by_task: dict[str, str] = {}
-    open_task_ids: list[str] = []
-    scoped_task_ids: list[str] = []
-    status_counts: dict[str, int] = {}
-    for row in status_result.items:
-        row_task_id = str(row.get("task_id") or "").strip()
-        row_status = str(row.get("status") or "").strip().lower()
-        row_lineage = {
-            row_task_id,
-            str(row.get("root_task_id") or "").strip(),
-            str(row.get("parent_task_id") or "").strip(),
-        }
-        if not (row_lineage & published_id_set) or not row_task_id:
-            continue
-        scoped_task_ids.append(row_task_id)
-        status_counts[row_status] = status_counts.get(row_status, 0) + 1
-        if row_status in _TASK_MARKET_TERMINAL_STATUSES:
-            terminal_status_by_task[row_task_id] = row_status
-        else:
-            open_task_ids.append(row_task_id)
-
-    return {
-        "available": True,
-        "scoped_task_ids": tuple(scoped_task_ids),
-        "open_task_ids": tuple(open_task_ids),
-        "terminal_status_by_task": terminal_status_by_task,
-        "status_counts": status_counts,
-    }
 
 
 def _run_inline_task_market_consumers(
@@ -1896,6 +888,82 @@ def _shadow_publish_dispatch_tasks_to_task_market(
             logger.debug("task_market shadow publish skipped: task_id=%s error=%s", task_id, exc)
 
 
+def _sync_revision_and_change_order(
+    *,
+    service: Any,
+    workspace_full: str,
+    trace_id: str,
+    tasks: list[dict[str, Any]],
+    revision_context: dict[str, str],
+    source_role: str = "PM",
+    docs_stage: dict[str, Any] | None = None,
+) -> None:
+    """Best-effort revision registration and change-order submission."""
+    if not (
+        hasattr(service, "register_plan_revision")
+        and hasattr(service, "query_plan_revisions")
+        and hasattr(service, "submit_change_order")
+    ):
+        return
+    try:
+        register_cmd, change_order_cmd, query_cmd = _get_task_market_revision_services()
+    except (ImportError, RuntimeError, ValueError):
+        return
+
+    plan_id = str(revision_context.get("plan_id") or "").strip()
+    plan_revision_id = str(revision_context.get("plan_revision_id") or "").strip()
+    if not plan_id or not plan_revision_id:
+        return
+
+    try:
+        history = service.query_plan_revisions(query_cmd(workspace=workspace_full, plan_id=plan_id, limit=1))
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        history = ()
+
+    latest = history[0] if history else {}
+    latest_revision_id = str((latest or {}).get("plan_revision_id") or "").strip()
+    if latest_revision_id == plan_revision_id:
+        return
+
+    service.register_plan_revision(
+        register_cmd(
+            workspace=workspace_full,
+            plan_id=plan_id,
+            plan_revision_id=plan_revision_id,
+            parent_revision_id=latest_revision_id,
+            source_role=source_role,
+            requirement_digest=revision_context.get("requirement_digest", ""),
+            constraint_digest=revision_context.get("constraint_digest", ""),
+            metadata={"registered_via": "pm_dispatch"},
+        )
+    )
+
+    if not latest_revision_id:
+        return
+
+    docs_payload = docs_stage if isinstance(docs_stage, dict) else {}
+    change_type = "doc_patch" if bool(docs_payload.get("enabled")) else "manual_task_edit"
+    affected_task_ids = tuple(
+        str(task.get("id") or "").strip()
+        for task in tasks
+        if isinstance(task, dict) and str(task.get("id") or "").strip()
+    )
+    service.submit_change_order(
+        change_order_cmd(
+            workspace=workspace_full,
+            plan_id=plan_id,
+            from_revision_id=latest_revision_id,
+            to_revision_id=plan_revision_id,
+            source_role=source_role,
+            change_type=change_type,
+            trace_id=trace_id,
+            summary="PM dispatch detected revision drift",
+            affected_task_ids=affected_task_ids,
+            metadata={"submitted_via": "pm_dispatch"},
+        )
+    )
+
+
 def resolve_director_dispatch_tasks(
     *,
     workspace_full: str,
@@ -1946,54 +1014,6 @@ def resolve_director_dispatch_tasks(
         return selected, meta
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
         return tasks, meta
-
-
-def record_dispatch_status_to_shangshuling(
-    *,
-    workspace_full: str,
-    status_updates: dict[str, str],
-    failure_info: dict[str, Any],
-    shangshuling_port: Any | None = None,
-) -> int:
-    """Record task dispatch status to shangshuling.
-
-    Args:
-        workspace_full: Workspace path
-        status_updates: Dict of task_id -> status
-        failure_info: Failure information to record
-        shangshuling_port: Optional pre-injected ShangshulingPort; when None,
-            the Cell-local registry port is loaded lazily.
-
-    Returns:
-        Number of records written
-    """
-    from polaris.cells.orchestration.pm_dispatch.internal.pm_task_utils import (
-        normalize_task_status,
-    )
-
-    if not isinstance(status_updates, dict) or not status_updates:
-        return 0
-
-    port = shangshuling_port if shangshuling_port is not None else _get_shangshuling_port()
-
-    recorded = 0
-    failure_payload = failure_info if isinstance(failure_info, dict) else {}
-    for task_id, raw_status in status_updates.items():
-        status = normalize_task_status(raw_status)
-        if status not in {"done", "failed", "blocked"}:
-            continue
-        success = status == "done"
-        try:
-            port.record_shangshuling_task_completion(
-                workspace_full,
-                task_id=task_id,
-                success=success,
-                metadata=failure_payload,
-            )
-            recorded += 1
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
-            logger.debug("Failed to record task completion for %s: %s", task_id, e)
-    return recorded
 
 
 def run_dispatch_pipeline(
@@ -2418,64 +1438,6 @@ def _resolve_workflow_submit_fn(explicit_submit_fn: Callable[..., Any] | None) -
     return _submit_pm_workflow_sync_resolve()
 
 
-def _build_workflow_input(
-    workflow_input_type: Any,
-    *,
-    workspace_full: str,
-    run_id: str,
-    iteration: int,
-    tasks: list[dict[str, Any]],
-) -> Any:
-    """Build the workflow submission input object."""
-    return workflow_input_type(
-        workspace=workspace_full,
-        run_id=run_id,
-        precomputed_payload={"tasks": tasks},
-        metadata={"iteration": int(iteration or 0)},
-    )
-
-
-def _build_director_workflow_result(
-    *,
-    run_id: str,
-    task_count: int,
-    workflow_result: Any,
-) -> dict[str, Any]:
-    """Normalize workflow submission outcome into Director result payload."""
-    submitted = bool(getattr(workflow_result, "submitted", False))
-    status = str(getattr(workflow_result, "status", "") or "").strip()
-    error_text = str(getattr(workflow_result, "error", "") or "").strip()
-    details = getattr(workflow_result, "details", {})
-    normalized_details = details if isinstance(details, dict) else {}
-
-    if not submitted:
-        return {
-            "run_id": run_id,
-            "status": status or "failed",
-            "mode": "workflow",
-            "workflow_id": str(getattr(workflow_result, "workflow_id", "") or "").strip(),
-            "workflow_run_id": str(getattr(workflow_result, "workflow_run_id", "") or "").strip(),
-            "summary": str(error_text or status).strip(),
-            "error": error_text,
-            "details": normalized_details,
-            "successes": 0,
-            "total": task_count,
-        }
-
-    return {
-        "run_id": run_id,
-        "status": "queued",
-        "mode": "workflow",
-        "workflow_id": str(getattr(workflow_result, "workflow_id", "") or "").strip(),
-        "workflow_run_id": str(getattr(workflow_result, "workflow_run_id", "") or "").strip(),
-        "summary": "Director workflow scheduled in Workflow",
-        "error": error_text,
-        "details": normalized_details,
-        "successes": task_count,
-        "total": task_count,
-    }
-
-
 def _emit_engine_dispatch_status(
     *,
     run_events: str,
@@ -2648,771 +1610,12 @@ def run_engine_dispatch(
     return result
 
 
-def run_integration_qa(
-    *,
-    workspace_full: str,
-    cache_root_full: str,
-    run_dir: str,
-    run_id: str,
-    iteration: int,
-    tasks: list[dict[str, Any]],
-    run_events: str,
-    dialogue_full: str,
-    docs_stage: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Run integration QA after dispatch.
-
-    Args:
-        workspace_full: Workspace path
-        cache_root_full: Cache root path
-        run_dir: Run directory
-        run_id: Run identifier
-        iteration: Iteration number
-        tasks: Dispatched tasks
-        run_events: Events file path
-        dialogue_full: Dialogue file path
-        docs_stage: Docs stage configuration
-
-    Returns:
-        Integration QA result dict
-    """
-    get_director_task_status_summary, to_bool = _get_tasks_utils()
-
-    enabled = to_bool(
-        os.environ.get("KERNELONE_INTEGRATION_QA_ENABLED", "1"),
-        True,
-    )
-
-    status_summary = get_director_task_status_summary(tasks)
-
-    result: dict[str, Any] = {
-        "schema_version": 1,
-        "enabled": enabled,
-        "ran": False,
-        "passed": None,
-        "reason": "",
-        "summary": "",
-        "errors": [],
-        "evidence_grade": "not_run",
-        "run_id": run_id,
-        "pm_iteration": int(iteration or 0),
-        "director_task_status": status_summary,
-        "cognitive_runtime_required": True,
-        "context_os_expected": True,
-        # Evidence-chain field: documents which QA path was used.
-        # Surviving path: dispatch_pipeline (Cell-local, lightweight).
-        # Deprecated path: QAWorkflow (temporal-activity-based, heavyweight).
-        "qa_path": "dispatch_pipeline",
-    }
-
-    if not enabled:
-        result["reason"] = "integration_qa_disabled"
-        result["summary"] = "Integration QA is disabled"
-        result["evidence_grade"] = _classify_integration_qa_evidence(
-            ran=False,
-            passed=None,
-            reason=str(result["reason"]),
-            summary=str(result["summary"]),
-            errors=[],
-        )
-        _attach_pm_dispatch_qa_cognitive_receipt(
-            workspace_full=workspace_full,
-            run_id=run_id,
-            iteration=iteration,
-            result=result,
-        )
-        return result
-
-    if not tasks:
-        result["reason"] = "no_tasks"
-        result["summary"] = "No tasks to verify"
-        result["evidence_grade"] = _classify_integration_qa_evidence(
-            ran=False,
-            passed=None,
-            reason=str(result["reason"]),
-            summary=str(result["summary"]),
-            errors=[],
-        )
-        _attach_pm_dispatch_qa_cognitive_receipt(
-            workspace_full=workspace_full,
-            run_id=run_id,
-            iteration=iteration,
-            result=result,
-        )
-        return result
-
-    all_done = all(str(task.get("status", "")).lower() in ("done", "completed", "success") for task in tasks)
-    if not all_done:
-        result["reason"] = "incomplete_tasks"
-        result["summary"] = "Not all tasks completed, skipping integration QA"
-        result["evidence_grade"] = _classify_integration_qa_evidence(
-            ran=False,
-            passed=None,
-            reason=str(result["reason"]),
-            summary=str(result["summary"]),
-            errors=[],
-        )
-        _attach_pm_dispatch_qa_cognitive_receipt(
-            workspace_full=workspace_full,
-            run_id=run_id,
-            iteration=iteration,
-            result=result,
-        )
-        return result
-
-    if _tasks_touch_docs_only(tasks):
-        result["reason"] = "docs_only"
-        result["summary"] = "All tasks are docs-only, skipping integration QA"
-        result["ran"] = True
-        result["passed"] = True
-        result["evidence_grade"] = _classify_integration_qa_evidence(
-            ran=True,
-            passed=True,
-            reason=str(result["reason"]),
-            summary=str(result["summary"]),
-            errors=[],
-        )
-        _attach_pm_dispatch_qa_cognitive_receipt(
-            workspace_full=workspace_full,
-            run_id=run_id,
-            iteration=iteration,
-            result=result,
-        )
-        return result
-
-    result["ran"] = True
-
-    try:
-        _, run_integration_verify_runner = _get_shared_quality()
-        passed, summary, errors = run_integration_verify_runner(workspace_full)
-        result["passed"] = passed
-        result["summary"] = summary
-        result["errors"] = errors
-        result["reason"] = "integration_qa_passed" if passed else "integration_qa_failed"
-        result["evidence_grade"] = _classify_integration_qa_evidence(
-            ran=True,
-            passed=bool(passed),
-            reason=str(result["reason"]),
-            summary=str(summary or ""),
-            errors=[str(item).strip() for item in (errors or []) if str(item).strip()],
-        )
-    except (OSError, RuntimeError, TypeError, ValueError) as exc:
-        result["passed"] = False
-        result["reason"] = "integration_qa_error"
-        result["summary"] = f"Integration QA error: {exc}"
-        result["errors"] = [str(exc)]
-        result["evidence_grade"] = _classify_integration_qa_evidence(
-            ran=True,
-            passed=False,
-            reason=str(result["reason"]),
-            summary=str(result["summary"]),
-            errors=[str(exc)],
-        )
-
-    _attach_pm_dispatch_qa_cognitive_receipt(
-        workspace_full=workspace_full,
-        run_id=run_id,
-        iteration=iteration,
-        result=result,
-    )
-    result["director_critique_feedback"] = _requeue_director_tasks_after_integration_qa_failure(
-        workspace_full=workspace_full,
-        result=result,
-        tasks=tasks,
-    )
-    return result
-
-
-def _tasks_touch_docs_only(tasks: Any) -> bool:
-    """Check if all tasks only touch docs.
-
-    Args:
-        tasks: List of tasks
-
-    Returns:
-        True if all tasks are docs-only
-    """
-    if not isinstance(tasks, list):
-        return False
-
-    director_task_count = 0
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-
-        owner = str(task.get("assigned_to") or "").strip().lower()
-        if owner and owner != "director":
-            continue
-
-        director_task_count += 1
-        touched: list[str] = []
-        for key in ("target_files", "context_files", "scope_paths", "scope"):
-            value = task.get(key)
-            if isinstance(value, str):
-                entries = [segment.strip() for segment in value.split(",") if segment.strip()]
-            elif isinstance(value, list):
-                entries = [str(item).strip() for item in value if str(item).strip()]
-            else:
-                entries = []
-            for item in entries:
-                token = str(item).strip().replace("\\", "/").lower()
-                token = token.lstrip("./")
-                if token:
-                    touched.append(token)
-
-        if touched:
-            for token in touched:
-                if token.startswith("workspace/docs/") or token.startswith("docs/"):
-                    continue
-                if token.endswith(".md") and "/docs/" in token:
-                    continue
-                return False
-            continue
-
-        task_type = str(task.get("type") or "").lower()
-        if "docs" not in task_type and "document" not in task_type:
-            return False
-    return director_task_count > 0
-
-
-def _build_post_dispatch_integration_qa_result(
-    *,
-    enabled: bool,
-    run_id: str,
-    iteration: int,
-    status_summary: dict[str, Any],
-    docs_stage_payload: dict[str, Any],
-) -> dict[str, Any]:
-    """Create the baseline integration QA result payload."""
-    return {
-        "schema_version": 1,
-        "enabled": enabled,
-        "ran": False,
-        "passed": None,
-        "reason": "",
-        "summary": "",
-        "errors": [],
-        "evidence_grade": "not_run",
-        "run_id": run_id,
-        "pm_iteration": int(iteration or 0),
-        "director_task_status": status_summary,
-        "result_path": "",
-        "runtime_result_path": "",
-        "cognitive_runtime_required": True,
-        "context_os_expected": True,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "docs_stage": {
-            "enabled": bool(docs_stage_payload.get("enabled")),
-            "active_doc_path": str(docs_stage_payload.get("active_doc_path") or "").strip(),
-        },
-        # Evidence-chain field: documents which QA path was used.
-        "qa_path": "dispatch_pipeline",
-    }
-
-
-def _apply_post_dispatch_skip_reason(
-    *,
-    result: dict[str, Any],
-    status_summary: dict[str, Any],
-    tasks: Any,
-    docs_stage_payload: dict[str, Any],
-) -> bool:
-    """Set a deterministic skip reason. Returns True when execution should stop."""
-    if not bool(result.get("enabled")):
-        result["reason"] = "integration_qa_disabled"
-        result["evidence_grade"] = _classify_integration_qa_evidence(
-            ran=False,
-            passed=None,
-            reason=str(result["reason"]),
-            summary=str(result.get("summary") or ""),
-            errors=[],
-        )
-        return True
-    if int(status_summary.get("total") or 0) <= 0:
-        result["reason"] = "no_director_tasks"
-        result["evidence_grade"] = _classify_integration_qa_evidence(
-            ran=False,
-            passed=None,
-            reason=str(result["reason"]),
-            summary=str(result.get("summary") or ""),
-            errors=[],
-        )
-        return True
-    if bool(docs_stage_payload.get("enabled")) and _tasks_touch_docs_only(tasks):
-        result["reason"] = "docs_stage_docs_only"
-        result["summary"] = "Integration QA skipped for docs-only stage tasks."
-        result["evidence_grade"] = _classify_integration_qa_evidence(
-            ran=False,
-            passed=None,
-            reason=str(result["reason"]),
-            summary=str(result["summary"]),
-            errors=[],
-        )
-        return True
-    if (
-        int(status_summary.get("todo") or 0)
-        + int(status_summary.get("in_progress") or 0)
-        + int(status_summary.get("review") or 0)
-        + int(status_summary.get("needs_continue") or 0)
-    ) > 0:
-        result["reason"] = "pending_director_tasks"
-        result["evidence_grade"] = _classify_integration_qa_evidence(
-            ran=False,
-            passed=None,
-            reason=str(result["reason"]),
-            summary=str(result.get("summary") or ""),
-            errors=[],
-        )
-        return True
-    if int(status_summary.get("failed") or 0) > 0 or int(status_summary.get("blocked") or 0) > 0:
-        done_count = int(status_summary.get("done") or 0)
-        if done_count > 0:
-            # Partial-evidence mode: at least one task completed, so run QA on
-            # the workspace as delivered instead of skipping evidence-free.
-            # Fail-closed is unchanged — the graded exit code still reflects
-            # the Director failures — but a real verdict artifact now exists,
-            # and falsely-failed tasks keep the reconciliation channel alive.
-            result["scope"] = "partial_completed_tasks"
-            result["scope_detail"] = {
-                "done": done_count,
-                "failed": int(status_summary.get("failed") or 0),
-                "blocked": int(status_summary.get("blocked") or 0),
-            }
-            return False
-        result["reason"] = "director_failures_present"
-        result["passed"] = False
-        result["summary"] = "Integration QA cannot run because Director produced failed or blocked tasks."
-        result["evidence_grade"] = _classify_integration_qa_evidence(
-            ran=False,
-            passed=False,
-            reason=str(result["reason"]),
-            summary=str(result["summary"]),
-            errors=[],
-        )
-        return True
-    return False
-
-
-def _resolve_verify_runner(
-    verify_runner: Callable[[str], tuple[bool, str, list[str]]] | None,
-) -> Callable[[str], tuple[bool, str, list[str]]]:
-    """Resolve the verify runner used by integration QA."""
-    if verify_runner is not None:
-        return verify_runner
-    from polaris.cells.orchestration.pm_planning.public.service import (
-        run_integration_verify_runner,
-    )
-
-    return run_integration_verify_runner
-
-
-def _execute_post_dispatch_integration_qa(
-    *,
-    workspace_full: str,
-    result: dict[str, Any],
-    verify_runner: Callable[[str], tuple[bool, str, list[str]]] | None,
-) -> None:
-    """Execute integration QA and mutate the result payload in place."""
-    resolved_verify_runner = _resolve_verify_runner(verify_runner)
-    result["ran"] = True
-    success, summary, errors = resolved_verify_runner(workspace_full)
-    result["passed"] = bool(success)
-    result["summary"] = str(summary or "").strip()
-    result["errors"] = [str(item).strip() for item in (errors or []) if str(item).strip()][:20]
-    result["reason"] = "integration_qa_passed" if success else "integration_qa_failed"
-    result["evidence_grade"] = _classify_integration_qa_evidence(
-        ran=True,
-        passed=bool(success),
-        reason=str(result["reason"]),
-        summary=str(result["summary"]),
-        errors=list(result["errors"]),
-    )
-
-
-def _integration_qa_failure_should_requeue(result: dict[str, Any]) -> bool:
-    if result.get("passed") is not False:
-        return False
-    if result.get("ran") is not True:
-        return False
-    return str(result.get("reason") or "").strip() in {
-        "integration_qa_failed",
-        "integration_qa_runtime_error",
-        "integration_qa_error",
-    }
-
-
-def _extract_task_id(task: Any) -> str:
-    if not isinstance(task, dict):
-        return ""
-    for key in ("id", "task_id", "pm_task_id"):
-        token = str(task.get(key) or "").strip()
-        if token:
-            return token
-    return ""
-
-
-def _is_director_assigned_task(task: dict[str, Any]) -> bool:
-    assigned_to = str(task.get("assigned_to") or task.get("assignee") or "").strip().lower()
-    return not assigned_to or assigned_to == "director"
-
-
-def _string_list_from_task(task: dict[str, Any], key: str) -> list[str]:
-    raw = task.get(key)
-    if not isinstance(raw, list):
-        return []
-    return [str(item).strip() for item in raw if str(item).strip()]
-
-
-def _string_list_from_result_field(raw: Any) -> list[str]:
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        token = raw.strip()
-        return [token] if token else []
-    if isinstance(raw, (list, tuple)):
-        return [str(item).strip() for item in raw if str(item).strip()]
-    token = str(raw).strip()
-    return [token] if token else []
-
-
-def _build_integration_qa_last_failure(
-    *,
-    result: dict[str, Any],
-    task: dict[str, Any],
-) -> dict[str, Any]:
-    errors = _string_list_from_result_field(result.get("errors"))
-    summary = str(result.get("summary") or "").strip()
-    message_parts = [summary, *errors]
-    error_message = " | ".join(part for part in message_parts if part).strip()
-    if not error_message:
-        error_message = str(result.get("reason") or "integration_qa_failed")
-    return {
-        "error_code": "INTEGRATION_QA_FAILED",
-        "error_message": error_message[:1200],
-        "source": "pm_dispatch.integration_qa",
-        "reason": str(result.get("reason") or ""),
-        "run_id": str(result.get("run_id") or ""),
-        "pm_iteration": int(result.get("pm_iteration") or 0),
-        "result_path": str(result.get("result_path") or ""),
-        "runtime_result_path": str(result.get("runtime_result_path") or ""),
-        "qa_path": str(result.get("qa_path") or "dispatch_pipeline"),
-        "evidence_grade": str(result.get("evidence_grade") or "unknown"),
-        "target_files": _string_list_from_task(task, "target_files"),
-        "acceptance_criteria": _string_list_from_task(task, "acceptance_criteria"),
-    }
-
-
-def _resolve_integration_qa_requeue_target_ids(
-    *,
-    task_market_service: Any,
-    workspace_full: str,
-    pm_task_id: str,
-) -> list[str]:
-    if not hasattr(task_market_service, "query_status"):
-        return [pm_task_id]
-    try:
-        from polaris.cells.runtime.task_market.public.contracts import QueryTaskMarketStatusV1
-
-        status_result = task_market_service.query_status(
-            QueryTaskMarketStatusV1(workspace=workspace_full, limit=10_000, include_payload=True)
-        )
-    except (ImportError, RuntimeError, TypeError, ValueError) as exc:
-        logger.debug("integration QA lineage lookup failed for %s: %s", pm_task_id, exc)
-        return [pm_task_id]
-
-    leaf_ids: list[str] = []
-    for row in getattr(status_result, "items", ()):
-        if not isinstance(row, dict):
-            continue
-        row_task_id = str(row.get("task_id") or "").strip()
-        if not row_task_id:
-            continue
-        lineage = {
-            row_task_id,
-            str(row.get("root_task_id") or "").strip(),
-            str(row.get("parent_task_id") or "").strip(),
-        }
-        if pm_task_id not in lineage:
-            continue
-        if bool(row.get("is_leaf", True)):
-            leaf_ids.append(row_task_id)
-
-    unique_leaf_ids = list(dict.fromkeys(leaf_ids))
-    return unique_leaf_ids or [pm_task_id]
-
-
-def _requeue_director_tasks_after_integration_qa_failure(
-    *,
-    workspace_full: str,
-    result: dict[str, Any],
-    tasks: Any,
-) -> dict[str, Any]:
-    feedback: dict[str, Any] = {
-        "attempted_task_ids": [],
-        "requeued_task_ids": [],
-        "skipped_task_ids": [],
-        "errors": [],
-    }
-    if not _integration_qa_failure_should_requeue(result):
-        return feedback
-    if not isinstance(tasks, list):
-        feedback["errors"].append("tasks_payload_not_list")
-        return feedback
-
-    try:
-        requeue_task_command_v1, get_task_market_service = _get_task_market_requeue_services()
-        task_market_service = get_task_market_service()
-    except (ImportError, RuntimeError, ValueError) as exc:
-        feedback["errors"].append(f"task_market_unavailable: {exc}")
-        return feedback
-
-    seen: set[str] = set()
-    for task in tasks:
-        if not isinstance(task, dict):
-            continue
-        if not _is_director_assigned_task(task):
-            continue
-        task_id = _extract_task_id(task)
-        if not task_id or task_id in seen:
-            continue
-        seen.add(task_id)
-        feedback["attempted_task_ids"].append(task_id)
-        last_failure = _build_integration_qa_last_failure(result=result, task=task)
-        target_task_ids = _resolve_integration_qa_requeue_target_ids(
-            task_market_service=task_market_service,
-            workspace_full=workspace_full,
-            pm_task_id=task_id,
-        )
-        for target_task_id in target_task_ids:
-            try:
-                requeue_result = task_market_service.requeue_task(
-                    requeue_task_command_v1(
-                        workspace=workspace_full,
-                        task_id=target_task_id,
-                        target_stage="pending_exec",
-                        reason=str(result.get("summary") or result.get("reason") or "integration_qa_failed"),
-                        metadata={
-                            "source": "pm_dispatch.integration_qa",
-                            "pm_task_id": task_id,
-                            "last_failure": last_failure,
-                        },
-                    )
-                )
-            except (RuntimeError, ValueError) as exc:
-                feedback["errors"].append(f"{target_task_id}: {exc}")
-                continue
-            if bool(getattr(requeue_result, "ok", False)):
-                feedback["requeued_task_ids"].append(target_task_id)
-            else:
-                feedback["skipped_task_ids"].append(target_task_id)
-                reason = str(
-                    getattr(requeue_result, "reason", "") or getattr(requeue_result, "error_message", "") or ""
-                )
-                if reason:
-                    feedback["errors"].append(f"{target_task_id}: {reason}")
-    return feedback
-
-
-def _persist_post_dispatch_integration_qa_result(
-    *,
-    run_dir: str,
-    workspace_full: str,
-    cache_root_full: str,
-    result: dict[str, Any],
-) -> None:
-    """Persist the integration QA result payload."""
-    from polaris.kernelone.fs.text_ops import write_json_atomic
-    from polaris.kernelone.storage.io_paths import resolve_artifact_path
-
-    result_path = os.path.join(run_dir, "qa", "integration_qa.result.json")
-    result["result_path"] = result_path
-    runtime_result_path = ""
-    if workspace_full:
-        runtime_result_path = resolve_artifact_path(
-            workspace_full,
-            cache_root_full,
-            "runtime/results/integration_qa.result.json",
-        )
-        result["runtime_result_path"] = runtime_result_path
-    os.makedirs(os.path.dirname(result_path), exist_ok=True)
-    write_json_atomic(result_path, result)
-    if runtime_result_path:
-        try:
-            write_json_atomic(runtime_result_path, result)
-        except (OSError, TypeError, ValueError) as exc:
-            raw_errors = result.get("errors")
-            errors = list(raw_errors) if isinstance(raw_errors, list) else []
-            result["errors"] = [*errors, f"qa_runtime_result_persist_failed: {exc}"]
-            write_json_atomic(result_path, result)
-
-
-def _emit_post_dispatch_integration_qa_result(
-    *,
-    run_events: str,
-    dialogue_full: str,
-    run_id: str,
-    iteration: int,
-    result: dict[str, Any],
-    emit_event: Callable[..., Any],
-    emit_dialogue: Callable[..., Any],
-) -> None:
-    """Emit integration QA completion events after the result is persisted."""
-    if result["ran"] is not True:
-        return
-
-    cognitive_runtime_receipt = (
-        result.get("cognitive_runtime_receipt") if isinstance(result.get("cognitive_runtime_receipt"), dict) else {}
-    )
-    emit_event(
-        run_events,
-        kind="status",
-        actor="QA",
-        name="integration_qa_complete",
-        refs={
-            "run_id": run_id,
-            "phase": "integration_qa",
-            "files": [result.get("result_path", "")],
-        },
-        summary=("Project integration QA passed" if result.get("passed") is True else "Project integration QA failed"),
-        ok=bool(result.get("passed") is True),
-        output={
-            "summary": result.get("summary"),
-            "reason": result.get("reason"),
-            "passed": bool(result.get("passed") is True),
-            "evidence_grade": str(result.get("evidence_grade") or "unknown"),
-            "errors_count": len(result.get("errors") or []),
-            "result_path": result.get("result_path"),
-            "runtime_result_path": result.get("runtime_result_path"),
-            "cognitive_runtime_receipt": cognitive_runtime_receipt,
-        },
-        error="" if result.get("passed") is True else "INTEGRATION_QA_FAILED",
-    )
-    emit_dialogue(
-        dialogue_full,
-        speaker="QA",
-        type="review",
-        text=(
-            f"Project integration QA: {'PASS' if result.get('passed') is True else 'FAIL'}; "
-            + str(result.get("summary") or "")
-        ).strip(),
-        summary="Project integration QA",
-        run_id=run_id,
-        pm_iteration=iteration,
-        refs={"phase": "integration_qa", "files": [result.get("result_path", "")]},
-        meta={
-            "passed": bool(result.get("passed") is True),
-            "reason": str(result.get("reason") or ""),
-            "evidence_grade": str(result.get("evidence_grade") or "unknown"),
-            "cognitive_runtime_receipt": cognitive_runtime_receipt,
-        },
-    )
-
-
-def run_post_dispatch_integration_qa(
-    *,
-    args: Any = None,
-    workspace_full: str,
-    cache_root_full: str,
-    run_dir: str,
-    run_id: str,
-    iteration: int,
-    tasks: Any,
-    run_events: str,
-    dialogue_full: str,
-    verify_runner: Callable[[str], tuple[bool, str, list[str]]] | None = None,
-    docs_stage: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Run project-level integration QA after task dispatch when all director tasks are done.
-
-    Args:
-        args: Optional CLI arguments carrying the integration_qa switch
-        workspace_full: Workspace path
-        cache_root_full: Cache root path
-        run_dir: Run directory
-        run_id: Run identifier
-        iteration: Iteration number
-        tasks: Tasks to verify
-        run_events: Events file path
-        dialogue_full: Dialogue file path
-        verify_runner: Optional custom verify runner function
-        docs_stage: Docs stage configuration
-
-    Returns:
-        Integration QA result dict
-    """
-    get_director_task_status_summary, to_bool = _get_tasks_utils()
-    emit_event, emit_dialogue = _get_io_utils()
-
-    enabled = to_bool(
-        getattr(args, "integration_qa", None),
-        default=to_bool(
-            os.environ.get("KERNELONE_INTEGRATION_QA_ENABLED", "1"),
-            default=True,
-        ),
-    )
-    status_summary = get_director_task_status_summary(tasks)
-    docs_stage_payload = docs_stage if isinstance(docs_stage, dict) else {}
-    result = _build_post_dispatch_integration_qa_result(
-        enabled=enabled,
-        run_id=run_id,
-        iteration=iteration,
-        status_summary=status_summary,
-        docs_stage_payload=docs_stage_payload,
-    )
-
-    should_skip = _apply_post_dispatch_skip_reason(
-        result=result,
-        status_summary=status_summary,
-        tasks=tasks,
-        docs_stage_payload=docs_stage_payload,
-    )
-    if not should_skip:
-        try:
-            _execute_post_dispatch_integration_qa(
-                workspace_full=workspace_full,
-                result=result,
-                verify_runner=verify_runner,
-            )
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            result["passed"] = False
-            result["reason"] = "integration_qa_runtime_error"
-            result["summary"] = f"Integration QA runtime error: {exc}"
-            result["errors"] = [str(exc)]
-
-    _persist_post_dispatch_integration_qa_result(
-        run_dir=run_dir,
-        workspace_full=workspace_full,
-        cache_root_full=cache_root_full,
-        result=result,
-    )
-    _attach_pm_dispatch_qa_cognitive_receipt(
-        workspace_full=workspace_full,
-        run_id=run_id,
-        iteration=iteration,
-        result=result,
-    )
-    result["director_critique_feedback"] = _requeue_director_tasks_after_integration_qa_failure(
-        workspace_full=workspace_full,
-        result=result,
-        tasks=tasks,
-    )
-    _persist_post_dispatch_integration_qa_result(
-        run_dir=run_dir,
-        workspace_full=workspace_full,
-        cache_root_full=cache_root_full,
-        result=result,
-    )
-    _emit_post_dispatch_integration_qa_result(
-        run_events=run_events,
-        dialogue_full=dialogue_full,
-        run_id=run_id,
-        iteration=iteration,
-        result=result,
-        emit_event=emit_event,
-        emit_dialogue=emit_dialogue,
-    )
-
-    return result
+def _submit_pm_workflow_sync_resolve() -> Callable:
+    """Lazily resolve submit_pm_workflow_sync and cache at module level."""
+    global submit_pm_workflow_sync
+    if submit_pm_workflow_sync is None:
+        _, _, submit_pm_workflow_sync = _get_workflow_runtime_ref()
+    return submit_pm_workflow_sync
 
 
 # Re-export lazy-loaded functions as module-level names so external tests can
@@ -3423,14 +1626,6 @@ submit_pm_workflow_sync = None  # type: ignore[assignment]
 
 run_pre_dispatch_chief_engineer = None  # type: ignore[assignment]
 """Re-exported from _get_chief_engineer_service() for test patchability."""
-
-
-def _submit_pm_workflow_sync_resolve() -> Callable:
-    """Lazily resolve submit_pm_workflow_sync and cache at module level."""
-    global submit_pm_workflow_sync
-    if submit_pm_workflow_sync is None:
-        _, _, submit_pm_workflow_sync = _get_workflow_runtime_ref()
-    return submit_pm_workflow_sync
 
 
 # Provide a module-level hook that tests can monkeypatch.

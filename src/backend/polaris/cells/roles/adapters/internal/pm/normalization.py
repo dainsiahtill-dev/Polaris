@@ -1,0 +1,522 @@
+"""PM 合同归一化 mixin：标题/路径/scope/projection 字段归一与结构化校验。
+
+本 mixin 由 :class:`PMAdapter` 组合；方法体与原 ``pm_adapter.py`` 100% 一致（无损迁移）。
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+from polaris.cells.orchestration.pm_planning.public.service import (
+    autofix_pm_contract_for_quality,
+    evaluate_pm_task_quality,
+)
+from polaris.kernelone.planning import (
+    Plan,
+    PlanStep,
+    StructuralPlanValidator,
+    ValidationResult,
+)
+
+from ._protocol import _PMAdapterMixinBase
+from .pm_text_utils import (
+    _ACTION_MARKERS,
+    _DEFAULT_PHASE_SEQUENCE,
+    _PM_CONTRACT_SCOPE_PATH_LIMIT,
+    _PM_NON_PATH_SCOPE_RE,
+    _PM_SCOPE_PATH_FILENAMES,
+    _PM_SCOPE_PATH_ROOTS,
+    _PM_SCOPE_PATH_SUFFIXES,
+    _STOPWORDS,
+    _pm_append_unique_path,
+    _pm_extract_inline_list_field,
+    _pm_extract_requirement_subject,
+    _pm_infer_test_target_file_for_contract,
+    _pm_is_placeholder_task_title,
+    _pm_root_workspace_target_files_from_context,
+    _pm_split_concrete_targets_and_scopes,
+    _pm_title_fragment,
+)
+
+
+class PMContractNormalizationMixin(_PMAdapterMixinBase):
+    """PM 合同归一化 mixin：标题/路径/scope/projection 字段归一与结构化校验。"""
+
+    def _normalize_task_contract(
+        self,
+        raw: dict[str, Any],
+        index: int,
+        directive: str,
+    ) -> dict[str, Any]:
+        title = _pm_title_fragment(raw.get("title") or raw.get("subject") or "")
+        if _pm_is_placeholder_task_title(title):
+            for candidate in (raw.get("goal"), raw.get("description"), raw.get("backlog_ref")):
+                candidate_text = _pm_title_fragment(candidate)
+                if candidate_text and not _pm_is_placeholder_task_title(candidate_text):
+                    title = re.split(r"[:：。.;；\n]", candidate_text, maxsplit=1)[0].strip()
+                    break
+            else:
+                title = _pm_extract_requirement_subject(directive) or f"项目交付任务 {index}"
+        title_lower = title.lower()
+        if not any(marker in title_lower for marker in _ACTION_MARKERS):
+            title = f"实现{title}"
+
+        description = str(raw.get("description") or "").strip()
+        goal = str(raw.get("goal") or "").strip()
+        if not goal:
+            goal = description or f"完成任务: {title}"
+            requirement_subject = _pm_extract_requirement_subject(directive)
+            if requirement_subject and requirement_subject not in goal:
+                goal = f"{goal}；满足需求: {requirement_subject}"
+
+        inline_field_source = "\n".join(
+            item
+            for item in (
+                str(raw.get("description") or ""),
+                str(raw.get("goal") or ""),
+                str(raw.get("scope") or ""),
+            )
+            if item.strip()
+        )
+        inline_target_files = _pm_extract_inline_list_field(inline_field_source, "target_files")
+        inline_scope_paths = _pm_extract_inline_list_field(inline_field_source, "scope_paths")
+        target_values = raw.get("target_files") or inline_target_files
+        scope_values = raw.get("scope_paths") or inline_scope_paths or raw.get("scope")
+        target_items = self._normalize_scope_path_list(self._normalize_list(target_values))
+        scope_items = self._normalize_scope_path_list(self._normalize_list(scope_values))
+        target_files, target_directory_scopes = _pm_split_concrete_targets_and_scopes(target_items)
+        scope_file_targets, _scope_directory_paths = _pm_split_concrete_targets_and_scopes(scope_items)
+        if not target_items and scope_file_targets:
+            target_files = [*target_files, *scope_file_targets]
+        root_workspace_targets = _pm_root_workspace_target_files_from_context(
+            title=title,
+            goal=goal,
+            description=description,
+            directive=directive,
+        )
+        if root_workspace_targets and not target_files:
+            target_files = [*target_files, *root_workspace_targets]
+
+        steps = self._normalize_list(raw.get("steps") or raw.get("execution_checklist"))
+        if len(steps) < 2:
+            steps = [
+                f"分析并定位 {title} 所需改动",
+                f"实现 {title} 并补充必要测试",
+                "运行验证命令并记录结果",
+            ]
+
+        acceptance = self._normalize_list(raw.get("acceptance") or raw.get("acceptance_criteria"))
+        if len(acceptance) < 2:
+            acceptance = [
+                "相关测试命令执行通过（如 `pytest`/`npm test`）",
+                "功能行为与预期一致并可复现验证",
+            ]
+
+        phase = str(raw.get("phase") or _DEFAULT_PHASE_SEQUENCE[(index - 1) % len(_DEFAULT_PHASE_SEQUENCE)]).strip()
+        raw_metadata_value = raw.get("metadata")
+        raw_metadata_for_test_inference: dict[str, Any] = (
+            raw_metadata_value if isinstance(raw_metadata_value, dict) else {}
+        )
+        inferred_test_target = ""
+        if not raw_metadata_for_test_inference.get("qa_rework_reason"):
+            inferred_test_target = _pm_infer_test_target_file_for_contract(
+                title=title,
+                goal=goal,
+                description=description,
+                steps=steps,
+                acceptance=acceptance,
+                phase=phase,
+                target_files=target_files,
+                directive=directive,
+            )
+        if inferred_test_target:
+            _pm_append_unique_path(target_files, inferred_test_target)
+
+        if target_items:
+            merged_scope_items = [
+                *target_files,
+                *scope_items,
+                *target_directory_scopes,
+            ]
+        else:
+            merged_scope_items = [
+                *scope_items,
+                *target_directory_scopes,
+                *target_files,
+            ]
+        scope_items = list(dict.fromkeys(item for item in merged_scope_items if item))
+        if not scope_items:
+            scope_items = self._infer_scope_from_title(title)
+        scope_text = ", ".join(scope_items[:4]) if scope_items else "src/"
+        scope_paths = scope_items[:_PM_CONTRACT_SCOPE_PATH_LIMIT] if scope_items else ["src/", "tests/"]
+
+        depends_on = self._normalize_list(raw.get("depends_on") or raw.get("dependencies"))
+        task_id = str(raw.get("id") or f"TASK-{index}").strip()
+        assigned_to = str(raw.get("assigned_to") or "Director").strip() or "Director"
+
+        _raw_meta = raw.get("metadata")
+        metadata: dict[str, Any] = dict(_raw_meta) if isinstance(_raw_meta, dict) else {}
+        execution_backend = str(raw.get("execution_backend") or metadata.get("execution_backend") or "").strip().lower()
+        if execution_backend:
+            metadata["execution_backend"] = execution_backend
+        _raw_proj = metadata.get("projection")
+        projection: dict[str, Any] = dict(_raw_proj) if isinstance(_raw_proj, dict) else {}
+        _raw_raw_proj = raw.get("projection")
+        raw_projection: dict[str, Any] = dict(_raw_raw_proj) if isinstance(_raw_raw_proj, dict) else {}
+        if raw_projection:
+            projection.update(raw_projection)
+        for source_key, target_key in (
+            ("projection_scenario", "scenario_id"),
+            ("scenario_id", "scenario_id"),
+            ("project_slug", "project_slug"),
+            ("experiment_id", "experiment_id"),
+            ("projection_experiment_id", "experiment_id"),
+            ("projection_requirement", "requirement"),
+            ("requirement_delta", "requirement"),
+            ("use_pm_llm", "use_pm_llm"),
+            ("run_verification", "run_verification"),
+            ("overwrite", "overwrite"),
+        ):
+            value = raw.get(source_key)
+            if value is None:
+                continue
+            token = str(value).strip() if isinstance(value, str) else value
+            if token == "":
+                continue
+            projection[target_key] = value
+        if projection:
+            metadata["projection"] = projection
+        normalized = {
+            "id": task_id,
+            "title": title,
+            "goal": goal,
+            "description": description or f"实现 {title}，并满足验收标准。",
+            "scope": scope_text,
+            "scope_paths": scope_paths,
+            "target_files": list(dict.fromkeys(target_files[:4])),
+            "steps": steps,
+            "acceptance": acceptance,
+            "acceptance_criteria": acceptance,
+            "phase": phase,
+            "depends_on": depends_on,
+            "assigned_to": assigned_to,
+            "execution_checklist": steps,
+            "backlog_ref": str(raw.get("backlog_ref") or task_id).strip() or task_id,
+            "metadata": metadata,
+        }
+        return normalized
+
+    @staticmethod
+    def _normalize_list(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in re.split(r"[,\n]", value) if item.strip()]
+        if isinstance(value, list):
+            items = []
+            for item in value:
+                token = str(item).strip()
+                if token:
+                    items.append(token)
+            return items
+        return []
+
+    @classmethod
+    def _normalize_scope_path_list(cls, values: list[str]) -> list[str]:
+        rows: list[str] = []
+        for value in values:
+            token = cls._normalize_scope_path_token(value)
+            if token and token not in rows:
+                rows.append(token)
+        return rows
+
+    @classmethod
+    def _normalize_scope_path_token(cls, value: str) -> str:
+        raw = str(value or "").strip().strip("'\"").replace("\\", "/")
+        if not raw:
+            return ""
+        if raw.startswith(("/", "~")) or re.match(r"^[A-Za-z]:[\\/]", raw):
+            return ""
+        if _PM_NON_PATH_SCOPE_RE.search(raw):
+            return ""
+
+        token = re.sub(r"/+", "/", raw.lstrip("./").strip("/"))
+        if not token or token in {".", "*", "**"}:
+            return ""
+        parts = [part for part in token.split("/") if part]
+        if any(part in {".", ".."} for part in parts):
+            return ""
+
+        filename = parts[-1]
+        if filename.lower() == "readme.md":
+            return "/".join([*parts[:-1], "README.md"]) if parts[:-1] else "README.md"
+        if token in _PM_SCOPE_PATH_FILENAMES or filename in _PM_SCOPE_PATH_FILENAMES:
+            return token
+        if Path(filename).suffix.lower() in _PM_SCOPE_PATH_SUFFIXES:
+            return token
+        if parts[0] in _PM_SCOPE_PATH_ROOTS and (len(parts) > 1 or raw.endswith("/")):
+            return f"{token}/" if raw.endswith("/") else token
+        if token.rstrip("/") in _PM_SCOPE_PATH_ROOTS:
+            return f"{token.rstrip('/')}/"
+        return ""
+
+    def _infer_scope_from_title(self, title: str) -> list[str]:
+        keyword_tokens = re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", title.lower())
+        normalized = [token for token in keyword_tokens if token not in _STOPWORDS]
+        if not normalized:
+            return ["src/", "tests/"]
+        first = normalized[0]
+        return [f"src/{first}", "tests/"]
+
+    def _derive_domain_token(self, directive: str) -> str:
+        workspace_name = Path(self.workspace).resolve().name.lower()
+        workspace_tokens = [token.strip() for token in re.split(r"[^a-z0-9]+", workspace_name) if token.strip()]
+        for token in workspace_tokens:
+            if len(token) < 3:
+                continue
+            if token in _STOPWORDS:
+                continue
+            return token
+
+        keyword_match = re.search(
+            r"(?:关键词|keywords?)\s*[:：]\s*([^\n]+)",
+            str(directive or ""),
+            flags=re.IGNORECASE,
+        )
+        if keyword_match:
+            keyword_tokens = re.findall(
+                r"[a-z][a-z0-9_-]{2,}",
+                str(keyword_match.group(1) or "").lower(),
+            )
+            for token in keyword_tokens:
+                if token in _STOPWORDS:
+                    continue
+                return token
+
+        text = str(directive or "").lower()
+        tokens = re.findall(r"[a-z][a-z0-9_-]{3,}", text)
+        for token in tokens:
+            if token in _STOPWORDS:
+                continue
+            return token
+        return "project"
+
+    def _extract_domain_keywords(self, directive: str, *, limit: int = 4) -> list[str]:
+        text = str(directive or "")
+        tokens: list[str] = []
+
+        keyword_hint_pattern = re.compile(r"(?:示例|关键词|keywords?)\s*[:：]\s*([^\n]+)", re.IGNORECASE)
+        for match in keyword_hint_pattern.finditer(text):
+            chunk = str(match.group(1) or "").lower()
+            for token in re.findall(r"[a-z][a-z0-9_-]{2,}", chunk):
+                if token in _STOPWORDS or token in tokens:
+                    continue
+                tokens.append(token)
+                if len(tokens) >= limit:
+                    return tokens
+
+        for token in re.findall(r"[a-z][a-z0-9_-]{2,}", text.lower()):
+            if token in _STOPWORDS or token in tokens:
+                continue
+            tokens.append(token)
+            if len(tokens) >= limit:
+                return tokens
+
+        fallback = self._derive_domain_token(directive)
+        if fallback and fallback not in tokens:
+            tokens.append(fallback)
+        return tokens[:limit]
+
+    @staticmethod
+    def _normalize_projection_project_slug(value: Any, *, default_value: str = "projection_lab") -> str:
+        token = re.sub(r"[^a-z0-9_]+", "_", str(value or "").strip().lower())
+        token = re.sub(r"_+", "_", token).strip("_")
+        return token or str(default_value or "projection_lab").strip()
+
+    def _extract_projection_contract_hint(
+        self,
+        *,
+        input_data: dict[str, Any],
+        context: dict[str, Any],
+        directive: str,
+    ) -> dict[str, Any]:
+        _raw_input_meta = input_data.get("metadata") if isinstance(input_data, dict) else None
+        input_metadata: dict[str, Any] = dict(_raw_input_meta) if isinstance(_raw_input_meta, dict) else {}
+        _raw_ctx_meta = context.get("metadata") if isinstance(context, dict) else None
+        context_metadata: dict[str, Any] = dict(_raw_ctx_meta) if isinstance(_raw_ctx_meta, dict) else {}
+
+        execution_backend = (
+            str(
+                input_data.get("execution_backend")
+                or input_metadata.get("execution_backend")
+                or context.get("execution_backend")
+                or context_metadata.get("execution_backend")
+                or ""
+            )
+            .strip()
+            .lower()
+        )
+        if execution_backend != "projection_generate":
+            return {}
+
+        projection: dict[str, Any] = {}
+        for payload in (
+            context_metadata.get("projection"),
+            context.get("projection"),
+            input_metadata.get("projection"),
+            input_data.get("projection"),
+        ):
+            if isinstance(payload, dict):
+                projection.update(payload)
+
+        for source in (input_data, input_metadata, context, context_metadata):
+            if not isinstance(source, dict):
+                continue
+            mapping = (
+                ("projection_scenario", "scenario_id"),
+                ("scenario_id", "scenario_id"),
+                ("project_slug", "project_slug"),
+                ("projection_requirement", "requirement"),
+                ("requirement_delta", "requirement"),
+                ("use_pm_llm", "use_pm_llm"),
+                ("run_verification", "run_verification"),
+                ("overwrite", "overwrite"),
+            )
+            for source_key, target_key in mapping:
+                value = source.get(source_key)
+                if value is None:
+                    continue
+                if isinstance(value, str) and not value.strip():
+                    continue
+                projection[target_key] = value
+
+        scenario_id = str(projection.get("scenario_id") or "").strip()
+        if not scenario_id:
+            return {}
+
+        projection["scenario_id"] = scenario_id
+        projection["project_slug"] = self._normalize_projection_project_slug(
+            projection.get("project_slug"),
+        )
+        projection["requirement"] = str(projection.get("requirement") or directive or "").strip()
+        projection["use_pm_llm"] = bool(projection.get("use_pm_llm", True))
+        projection["run_verification"] = bool(projection.get("run_verification", True))
+        projection["overwrite"] = bool(projection.get("overwrite", False))
+
+        return {
+            "execution_backend": execution_backend,
+            "projection": projection,
+        }
+
+    def _apply_projection_contract_hint(
+        self,
+        contracts: list[dict[str, Any]],
+        *,
+        projection_hint: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        if (
+            not projection_hint
+            or str(projection_hint.get("execution_backend") or "").strip().lower() != "projection_generate"
+        ):
+            return contracts
+
+        _raw_proj = projection_hint.get("projection") if isinstance(projection_hint, dict) else None
+        projection: dict[str, Any] = dict(_raw_proj) if isinstance(_raw_proj, dict) else {}
+        has_projection_generate = any(
+            str(item.get("execution_backend") or "").strip().lower() == "projection_generate"
+            or (
+                isinstance(item.get("metadata"), dict)
+                and str(item["metadata"].get("execution_backend") or "").strip().lower() == "projection_generate"
+            )
+            for item in contracts
+            if isinstance(item, dict)
+        )
+        normalized_contracts: list[dict[str, Any]] = []
+
+        for index, contract in enumerate(contracts):
+            if not isinstance(contract, dict):
+                continue
+            enriched = dict(contract)
+            _raw_enr_meta = enriched.get("metadata")
+            metadata: dict[str, Any] = dict(_raw_enr_meta) if isinstance(_raw_enr_meta, dict) else {}
+            _raw_proj = metadata.get("projection")
+            projection_payload: dict[str, Any] = dict(_raw_proj) if isinstance(_raw_proj, dict) else {}
+            if isinstance(enriched.get("projection"), dict):
+                projection_payload.update(enriched.get("projection") or {})
+
+            execution_backend = (
+                str(enriched.get("execution_backend") or metadata.get("execution_backend") or "").strip().lower()
+            )
+            if index == 0 and not has_projection_generate:
+                execution_backend = "projection_generate"
+            if execution_backend == "projection_generate":
+                projection_payload.update(projection)
+                metadata["projection"] = projection_payload
+                metadata["execution_backend"] = "projection_generate"
+                enriched["execution_backend"] = "projection_generate"
+            elif not execution_backend:
+                metadata["execution_backend"] = "code_edit"
+                enriched["execution_backend"] = "code_edit"
+
+            enriched["metadata"] = metadata
+            normalized_contracts.append(enriched)
+
+        return normalized_contracts
+
+    def _evaluate_contract_quality(
+        self,
+        contracts: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        payload = {"tasks": [dict(item) for item in contracts if isinstance(item, dict)]}
+        autofix_pm_contract_for_quality(
+            payload,
+            workspace_full=str(Path(self.workspace).resolve()),
+        )
+        quality = evaluate_pm_task_quality(payload, docs_stage={})
+        _raw_tasks = payload.get("tasks") if isinstance(payload, dict) else None
+        tasks: list[dict[str, Any]] = _raw_tasks if isinstance(_raw_tasks, list) else []
+        normalized = [item for item in tasks if isinstance(item, dict)]
+        return normalized, quality
+
+    def _validate_task_contracts(self, task_contracts: list[dict[str, Any]]) -> ValidationResult:
+        """Validate task contract dependencies using StructuralPlanValidator.
+
+        Args:
+            task_contracts: List of task contract dictionaries
+
+        Returns:
+            ValidationResult with is_valid and any violations found
+        """
+        if not task_contracts:
+            return ValidationResult(
+                is_valid=False,
+                violations=(),
+                suggestions=("At least one task is required",),
+            )
+
+        # Build PlanStep objects from task contracts
+        plan_steps: list[PlanStep] = []
+        for contract in task_contracts:
+            task_id = str(contract.get("id") or contract.get("title") or "unknown").strip()
+            depends_on = contract.get("depends_on") or []
+            if isinstance(depends_on, str):
+                depends_on = [d.strip() for d in depends_on.split(",") if d.strip()]
+            plan_steps.append(
+                PlanStep(
+                    id=task_id,
+                    description=str(contract.get("description") or contract.get("title") or ""),
+                    depends_on=tuple(depends_on),
+                    estimated_duration=None,
+                    metadata={},
+                )
+            )
+
+        # Build Plan and validate
+        plan = Plan(
+            steps=tuple(plan_steps),
+            max_duration=None,
+            metadata={},
+        )
+
+        validator = StructuralPlanValidator()
+        return validator.validate(plan)

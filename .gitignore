@@ -184,6 +184,6 @@ pytest-cache-files-*/
 .understand-anything
 .worktrees/*
 .codegraph
-runtime/
+/runtime/
 audit/*.jsonl
 audit/.key

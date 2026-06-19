@@ -36,8 +36,8 @@ from polaris.cells.orchestration.pm_planning.public.pipeline import (
     run_pm_planning_iteration,
 )
 from polaris.cells.orchestration.pm_planning.public.service import (
-    autofix_pm_contract_for_quality,
-    evaluate_pm_task_quality,
+    autofix_pm_contract_for_quality as autofix_pm_contract_for_quality,
+    evaluate_pm_task_quality as evaluate_pm_task_quality,
 )
 
 # Import from refactored app.orchestration modules (via public boundary)
@@ -73,6 +73,44 @@ from polaris.delivery.cli.pm.blocked_policy import (
 from polaris.delivery.cli.pm.config import PmRoleState
 from polaris.delivery.cli.pm.engine.core import EngineRuntimeConfig, PolarisEngine
 from polaris.delivery.cli.pm.orchestration.docs_pipeline import _sync_plan_to_runtime
+
+# Re-export pure helper clusters that were extracted into in-cell submodules so
+# callers/tests using ``orchestration_engine.<helper>`` keep resolving. The
+# canonical definitions live in the submodules below; these names stay bound
+# here for backward compatibility (lossless surface).
+from polaris.delivery.cli.pm.orchestration.exit_grading import (
+    build_chain_summary as build_chain_summary,
+    grade_director_exit_code as grade_director_exit_code,
+    grade_qa_exit_code as grade_qa_exit_code,
+)
+from polaris.delivery.cli.pm.orchestration.pm_failure_detail import (
+    _append_unique_schema_warning as _append_unique_schema_warning,
+    _build_pm_failure_detail as _build_pm_failure_detail,
+    _compact_pm_failure_text as _compact_pm_failure_text,
+    _downgrade_recovered_pm_invoke_error as _downgrade_recovered_pm_invoke_error,
+    _first_schema_warning as _first_schema_warning,
+    _mark_pm_invoke_terminal_failure as _mark_pm_invoke_terminal_failure,
+    _pm_invoke_failed as _pm_invoke_failed,
+)
+from polaris.delivery.cli.pm.orchestration.workflow_timeout import (
+    _DIRECTOR_WORKFLOW_TIMEOUT_MARGIN_SECONDS as _DIRECTOR_WORKFLOW_TIMEOUT_MARGIN_SECONDS,
+    _director_workflow_timeout_floor_seconds as _director_workflow_timeout_floor_seconds,
+    _pm_workflow_wait_timeout_seconds as _pm_workflow_wait_timeout_seconds,
+    _positive_timeout_int as _positive_timeout_int,
+)
+from polaris.delivery.cli.pm.orchestration.zero_task_fallback import (
+    _FALLBACK_WORKSPACE_FILE_EXTENSIONS as _FALLBACK_WORKSPACE_FILE_EXTENSIONS,
+    _FALLBACK_WORKSPACE_SKIP_DIRS as _FALLBACK_WORKSPACE_SKIP_DIRS,
+    _PM_TASK_QUALITY_DEFAULT_MODE as _PM_TASK_QUALITY_DEFAULT_MODE,
+    _PM_TASK_QUALITY_MODE_ENV as _PM_TASK_QUALITY_MODE_ENV,
+    _PM_TASK_QUALITY_MODES as _PM_TASK_QUALITY_MODES,
+    _PM_TASK_QUALITY_RETRIES_ENV as _PM_TASK_QUALITY_RETRIES_ENV,
+    _apply_quality_gate_to_requirements_fallback as _apply_quality_gate_to_requirements_fallback,
+    _apply_requirements_fallback_for_empty_tasks as _apply_requirements_fallback_for_empty_tasks,
+    _collect_workspace_file_candidates as _collect_workspace_file_candidates,
+    _extract_normalized_tasks as _extract_normalized_tasks,
+    _resolve_outer_pm_task_quality_mode as _resolve_outer_pm_task_quality_mode,
+)
 from polaris.delivery.cli.pm.orchestration_core import (
     archive_task_history,
     check_spin_guard,
@@ -91,7 +129,7 @@ from polaris.delivery.cli.pm.tasks import (
     build_resume_payload_from_last_tasks,
 )
 from polaris.delivery.cli.pm.tasks_utils import (
-    build_requirements_fallback_payload,
+    build_requirements_fallback_payload as build_requirements_fallback_payload,
 )
 from polaris.kernelone.constants import MAX_WORKFLOW_TIMEOUT_SECONDS
 from polaris.kernelone.events import emit_event, emit_llm_event, set_dialogue_seq
@@ -123,375 +161,8 @@ from polaris.kernelone.traceability.public.service import create_traceability_se
 logger = logging.getLogger(__name__)
 
 # Constants
-_PM_TASK_QUALITY_MODE_ENV = "KERNELONE_PM_TASK_QUALITY_MODE"
-_PM_TASK_QUALITY_RETRIES_ENV = "KERNELONE_PM_TASK_QUALITY_RETRIES"
-_PM_TASK_QUALITY_MODES = {"off", "warn", "strict"}
-_PM_TASK_QUALITY_DEFAULT_MODE = "strict"
 _ORCHESTRATION_RUNTIME_OPTIONS = set(SUPPORTED_ORCHESTRATION_RUNTIMES)
 _ORCHESTRATION_RUNTIME_DEFAULT = "workflow"
-_DIRECTOR_WORKFLOW_TIMEOUT_MARGIN_SECONDS = 300
-_FALLBACK_WORKSPACE_FILE_EXTENSIONS = {
-    ".py",
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".json",
-    ".toml",
-    ".yaml",
-    ".yml",
-    ".md",
-}
-
-
-def _positive_timeout_int(value: Any, default: int) -> int:
-    try:
-        return max(1, int(value))
-    except (TypeError, ValueError):
-        return max(1, int(default))
-
-
-def _director_workflow_timeout_floor_seconds(
-    director_config: dict[str, Any],
-    *,
-    task_count: int,
-) -> float:
-    """Return a PM workflow wait floor large enough for Director fan-out.
-
-    ``--director-result-timeout`` is a UI/process wait budget, not a safe upper
-    bound for the workflow handler itself. Real Codex-backed Director tasks can
-    exceed a small UI timeout when PM emits dependent tasks, so the runtime
-    budget must scale from the actual contract and Director phase limits.
-    """
-    normalized_task_count = max(1, int(task_count or 0))
-    mode = str(director_config.get("execution_mode") or "parallel").strip().lower()
-    if mode in {"serial", "sequential"}:
-        parallel_limit = 1
-    else:
-        parallel_limit = _positive_timeout_int(director_config.get("max_parallel_tasks"), 3)
-
-    dependency_depth = normalized_task_count
-    estimated_batches = max(1, (normalized_task_count + parallel_limit - 1) // parallel_limit)
-    batch_count = max(estimated_batches, dependency_depth if normalized_task_count > 1 else 1)
-
-    ready_seconds = _positive_timeout_int(director_config.get("ready_timeout_seconds"), 30)
-    claim_seconds = _positive_timeout_int(director_config.get("claim_timeout_seconds"), 30)
-    phase_seconds = _positive_timeout_int(director_config.get("phase_timeout_seconds"), 900)
-    complete_seconds = _positive_timeout_int(director_config.get("complete_timeout_seconds"), 30)
-    task_seconds = _positive_timeout_int(director_config.get("task_timeout_seconds"), MAX_WORKFLOW_TIMEOUT_SECONDS)
-    per_task_budget = min(
-        task_seconds,
-        claim_seconds + (5 * phase_seconds) + complete_seconds,
-    )
-
-    computed = ready_seconds + (batch_count * per_task_budget) + _DIRECTOR_WORKFLOW_TIMEOUT_MARGIN_SECONDS
-    return float(min(MAX_WORKFLOW_TIMEOUT_SECONDS, computed))
-
-
-def _pm_workflow_wait_timeout_seconds(
-    requested_timeout_seconds: float | None,
-    director_config: dict[str, Any],
-    *,
-    task_count: int,
-) -> float | None:
-    if requested_timeout_seconds is None:
-        return None
-    return max(
-        float(requested_timeout_seconds),
-        _director_workflow_timeout_floor_seconds(director_config, task_count=task_count),
-    )
-
-
-_FALLBACK_WORKSPACE_SKIP_DIRS = {
-    ".git",
-    ".polaris",
-    ".venv",
-    "venv",
-    "node_modules",
-    "dist",
-    "build",
-    "coverage",
-    "__pycache__",
-}
-
-
-def _extract_normalized_tasks(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_tasks = payload.get("tasks")
-    if not isinstance(raw_tasks, list):
-        return []
-    return cast("list[dict[str, Any]]", raw_tasks)
-
-
-def _collect_workspace_file_candidates(workspace_full: str, limit: int = 256) -> list[str]:
-    """Collect bounded workspace file paths for deterministic PM fallback grounding."""
-    root = os.path.abspath(str(workspace_full or "").strip())
-    if not root or not os.path.isdir(root):
-        return []
-    selected: list[str] = []
-    for current_dir, dir_names, file_names in os.walk(root):
-        dir_names[:] = [
-            name for name in sorted(dir_names) if name not in _FALLBACK_WORKSPACE_SKIP_DIRS and not name.startswith(".")
-        ]
-        rel_dir = os.path.relpath(current_dir, root)
-        depth = 0 if rel_dir == "." else len(rel_dir.split(os.sep))
-        if depth >= 6:
-            dir_names[:] = []
-        for file_name in sorted(file_names):
-            if len(selected) >= limit:
-                return selected
-            ext = os.path.splitext(file_name)[1].lower()
-            if ext not in _FALLBACK_WORKSPACE_FILE_EXTENSIONS:
-                continue
-            full_path = os.path.join(current_dir, file_name)
-            rel_path = os.path.relpath(full_path, root).replace(os.sep, "/")
-            selected.append(rel_path)
-    return selected
-
-
-def _apply_requirements_fallback_for_empty_tasks(
-    *,
-    exit_code: int,
-    normalized: dict[str, Any],
-    normalized_tasks: list[dict[str, Any]],
-    requirements: str,
-    iteration: int,
-    timestamp: str,
-    plan_text: str,
-    docs_stage: dict[str, Any],
-    run_id: str,
-    workspace_files: list[str] | None = None,
-) -> tuple[int, dict[str, Any], list[dict[str, Any]], bool]:
-    """Recover an empty PM task contract from requirements when possible."""
-    if not str(requirements or "").strip() or len(normalized_tasks) > 0:
-        return exit_code, normalized, normalized_tasks, False
-
-    original_exit_code = int(exit_code)
-    original_notes = str(normalized.get("notes") or "").strip()
-    raw_original_warnings = normalized.get("schema_warnings")
-    original_warnings: list[str] = (
-        [str(item) for item in raw_original_warnings if str(item).strip()]
-        if isinstance(raw_original_warnings, list)
-        else []
-    )
-
-    fallback_payload = build_requirements_fallback_payload(
-        requirements=requirements,
-        iteration=iteration,
-        timestamp=timestamp,
-        plan_text=plan_text,
-        docs_stage=docs_stage,
-        workspace_files=workspace_files,
-    )
-    if not isinstance(fallback_payload, dict):
-        return exit_code, normalized, normalized_tasks, False
-
-    fallback_payload["run_id"] = run_id
-    fallback_payload["pm_iteration"] = iteration
-    fallback_tasks = _extract_normalized_tasks(fallback_payload)
-
-    if original_notes:
-        fallback_notes = str(fallback_payload.get("notes") or "").strip()
-        recovery_label = "Recovered PM parse context"
-        if (
-            "invoke failed" in str(original_notes).lower()
-            or "provider invocation failed" in str(original_notes).lower()
-        ):
-            recovery_label = "Original PM provider failure context"
-        fallback_payload["notes"] = "; ".join(
-            part
-            for part in (
-                fallback_notes,
-                f"{recovery_label}: {original_notes}",
-            )
-            if part
-        )
-
-    if original_exit_code != 0 or original_warnings:
-        fallback_warnings = []
-        raw_fallback_warnings = fallback_payload.get("schema_warnings")
-        if isinstance(raw_fallback_warnings, list):
-            fallback_warnings = [str(item) for item in raw_fallback_warnings if str(item).strip()]
-        fallback_warnings.extend(original_warnings)
-        if original_exit_code != 0:
-            fallback_warnings.append(
-                f"PM planning failed with exit code {original_exit_code}; deterministic requirements fallback used."
-            )
-        fallback_payload["schema_warnings"] = fallback_warnings
-        fallback_payload["schema_warning_count"] = len(fallback_warnings)
-
-    recovered_exit_code = 0 if fallback_tasks else exit_code
-    return recovered_exit_code, fallback_payload, fallback_tasks, bool(fallback_tasks)
-
-
-def _resolve_outer_pm_task_quality_mode() -> str:
-    raw = str(os.environ.get(_PM_TASK_QUALITY_MODE_ENV, _PM_TASK_QUALITY_DEFAULT_MODE) or "").strip().lower()
-    if raw not in _PM_TASK_QUALITY_MODES:
-        return _PM_TASK_QUALITY_DEFAULT_MODE
-    return raw
-
-
-def _apply_quality_gate_to_requirements_fallback(
-    *,
-    normalized: dict[str, Any],
-    workspace_full: str,
-    docs_stage: dict[str, Any],
-) -> tuple[int, list[dict[str, Any]], dict[str, Any]]:
-    autofix_stats = autofix_pm_contract_for_quality(normalized, workspace_full=workspace_full)
-    quality_report = evaluate_pm_task_quality(
-        normalized,
-        docs_stage=docs_stage if isinstance(docs_stage, dict) else {},
-        workspace_full=workspace_full,
-    )
-    quality_mode = _resolve_outer_pm_task_quality_mode()
-    normalized["quality_gate"] = {
-        "mode": quality_mode,
-        "attempt": "requirements_fallback",
-        "max_attempts": "requirements_fallback",
-        "passed": bool(quality_report.get("ok")),
-        "score": int(quality_report.get("score") or 0),
-        "summary": str(quality_report.get("summary") or "").strip(),
-        "critical_issue_count": len(quality_report.get("critical_issues") or []),
-        "warning_count": len(quality_report.get("warnings") or []),
-    }
-
-    if not bool(quality_report.get("ok")):
-        raw_schema_warnings = normalized.get("schema_warnings")
-        schema_warnings = (
-            [str(item) for item in raw_schema_warnings if str(item).strip()]
-            if isinstance(raw_schema_warnings, list)
-            else []
-        )
-        for item in quality_report.get("critical_issues") or []:
-            token = str(item).strip()
-            if token:
-                schema_warnings.append(f"PM quality issue: {token}")
-        normalized["schema_warnings"] = schema_warnings
-        normalized["schema_warning_count"] = len(schema_warnings)
-        normalized["terminal_error_code"] = "PM_TASK_QUALITY_FAILED"
-        normalized["terminal_error"] = str(quality_report.get("summary") or "").strip()
-
-    exit_code = 0 if bool(quality_report.get("ok")) or quality_mode in {"off", "warn"} else 1
-    quality_payload = {
-        "autofix_stats": autofix_stats,
-        "quality": {
-            "ok": bool(quality_report.get("ok")),
-            "score": int(quality_report.get("score") or 0),
-            "summary": str(quality_report.get("summary") or "").strip(),
-            "critical_issues": list(quality_report.get("critical_issues") or [])[:8],
-            "warnings": list(quality_report.get("warnings") or [])[:8],
-        },
-    }
-    return exit_code, _extract_normalized_tasks(normalized), quality_payload
-
-
-def _downgrade_recovered_pm_invoke_error(
-    *,
-    pm_state: dict[str, Any],
-    pm_state_full: str,
-    timestamp: str,
-) -> bool:
-    """Deprecated guard: PM invoke failures must remain visible after fallback attempts.
-
-    A deterministic requirements fallback can be useful when the PM response is
-    empty or malformed, but it is not evidence that the configured runtime
-    provider is usable. Clearing ``PM_LLM_INVOKE_FAILED`` caused real provider
-    failures to appear as healthy fallback task generation in the UI.
-    """
-    error_code = str(pm_state.get("last_pm_error_code") or "").strip()
-    if error_code != "PM_LLM_INVOKE_FAILED":
-        return False
-
-    _ = (pm_state_full, timestamp)
-    return False
-
-
-def _pm_invoke_failed(pm_state: dict[str, Any], normalized: dict[str, Any]) -> bool:
-    """Return True when zero-task recovery would mask a PM provider failure."""
-    state_code = str(pm_state.get("last_pm_error_code") or "").strip()
-    if state_code == "PM_LLM_INVOKE_FAILED":
-        return True
-    notes = str(normalized.get("notes") or "").strip().lower()
-    warnings = normalized.get("schema_warnings")
-    warning_text = "\n".join(str(item) for item in warnings) if isinstance(warnings, list) else ""
-    combined = f"{notes}\n{warning_text}".lower()
-    return "pm invoke failed" in combined or "provider invocation failed" in combined
-
-
-def _append_unique_schema_warning(normalized: dict[str, Any], warning: str) -> None:
-    text = str(warning or "").strip()
-    if not text:
-        return
-    raw_warnings = normalized.get("schema_warnings")
-    schema_warnings = (
-        [str(item) for item in raw_warnings if str(item).strip()] if isinstance(raw_warnings, list) else []
-    )
-    if text not in schema_warnings:
-        schema_warnings.append(text)
-    normalized["schema_warnings"] = schema_warnings
-    normalized["schema_warning_count"] = len(schema_warnings)
-
-
-def _compact_pm_failure_text(value: Any, *, max_chars: int = 260) -> str:
-    text = " ".join(str(value or "").split())
-    if not text:
-        return ""
-    if len(text) <= max_chars:
-        return text
-    return text[: max(0, max_chars - 3)].rstrip() + "..."
-
-
-def _first_schema_warning(normalized: dict[str, Any]) -> str:
-    raw_warnings = normalized.get("schema_warnings")
-    if not isinstance(raw_warnings, list):
-        return ""
-    for warning in raw_warnings:
-        text = _compact_pm_failure_text(warning)
-        if text:
-            return text
-    return ""
-
-
-def _build_pm_failure_detail(
-    *,
-    pm_state: dict[str, Any],
-    normalized: dict[str, Any],
-    fallback: str,
-) -> str:
-    """Build a concise desktop-facing PM failure detail from persisted evidence."""
-
-    code = _compact_pm_failure_text(
-        normalized.get("terminal_error_code") or pm_state.get("last_pm_error_code"),
-        max_chars=80,
-    )
-    detail = _compact_pm_failure_text(
-        normalized.get("terminal_error")
-        or pm_state.get("last_pm_error_detail")
-        or _first_schema_warning(normalized)
-        or normalized.get("notes")
-        or fallback
-    )
-    if code and detail:
-        return f"{code}: {detail}"
-    return detail or code or fallback
-
-
-def _mark_pm_invoke_terminal_failure(
-    pm_state: dict[str, Any],
-    normalized: dict[str, Any],
-    *,
-    warning: str = "",
-) -> None:
-    """Annotate the PM contract so provider failures fail closed in UIs/tests."""
-
-    detail = str(
-        pm_state.get("last_pm_error_detail")
-        or normalized.get("terminal_error")
-        or normalized.get("notes")
-        or "PM runtime provider invocation failed"
-    ).strip()
-    normalized["terminal_error_code"] = "PM_LLM_INVOKE_FAILED"
-    normalized["terminal_error"] = detail
-    _append_unique_schema_warning(normalized, warning)
 
 
 def _resolve_orchestration_runtime(args: argparse.Namespace) -> str:
@@ -501,61 +172,6 @@ def _resolve_orchestration_runtime(args: argparse.Namespace) -> str:
         environ=os.environ,
     )
     return runtime if runtime in _ORCHESTRATION_RUNTIME_OPTIONS else _ORCHESTRATION_RUNTIME_DEFAULT
-
-
-def grade_director_exit_code(director_status: str, completed_count: int) -> int:
-    """Graded fail-closed exit for the Director phase.
-
-    0 = director not failed; 4 = partial progress (>=1 task succeeded but
-    failures/blocked present, integration QA evidence may be partial);
-    1 = zero-success hard failure. Codes 2 (stop condition) and 3
-    (manual/AGENTS confirmation) are reserved by run_once; any nonzero
-    value still trips --stop-on-failure.
-    """
-    if director_status in {"failed", "blocked"}:
-        return 4 if completed_count > 0 else 1
-    return 0
-
-
-def grade_qa_exit_code(director_status: str, current_exit_code: int) -> int:
-    """Exit grade once integration QA reports failure.
-
-    5 = Director fully succeeded but QA failed; otherwise preserve the graded
-    Director exit (4/1) instead of flattening everything back to 1.
-    """
-    return 5 if director_status == "success" else (current_exit_code or 1)
-
-
-def build_chain_summary(
-    *,
-    workflow_exit_code: int,
-    director_result: dict[str, Any],
-    integration_qa_result: Any,
-    qa_passed: bool,
-    qa_reason: str,
-    generated_at: str,
-) -> dict[str, Any]:
-    """Machine-readable chain outcome (schema chain-summary/1) for runners."""
-    exit_class_by_code = {0: "clean", 4: "director_partial", 5: "qa_failed"}
-    return {
-        "schema_version": "chain-summary/1",
-        "exit_code": int(workflow_exit_code),
-        "exit_class": exit_class_by_code.get(int(workflow_exit_code), "hard_failed"),
-        "planning_ok": True,
-        "director": {
-            "status": str(director_result.get("status") or ""),
-            "total": int(director_result.get("total") or 0),
-            "successes": int(director_result.get("successes") or 0),
-            "failures": int(director_result.get("failures") or 0),
-            "blocked": int(director_result.get("blocked") or 0),
-        },
-        "integration_qa": {
-            "ran": bool(isinstance(integration_qa_result, dict) and integration_qa_result.get("ran") is True),
-            "passed": bool(qa_passed),
-            "reason": qa_reason,
-        },
-        "generated_at": generated_at,
-    }
 
 
 def run_once(args: argparse.Namespace, iteration: int = 1) -> int:
