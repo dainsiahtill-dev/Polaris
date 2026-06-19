@@ -9,6 +9,9 @@ from polaris.cells.roles.kernel.internal.speculation.events import (
 from polaris.cells.roles.kernel.internal.speculation.metrics import (
     SpeculationMetrics,
 )
+from polaris.cells.roles.kernel.internal.speculation.models import (
+    CandidateToolCall,
+)
 
 
 def test_snapshot_counts_resolutions_and_saved_ms() -> None:
@@ -81,6 +84,50 @@ def test_emit_turn_summary_carries_full_snapshot() -> None:
     assert summary.metadata["adopted"] == 1
     assert summary.metadata["saved_ms_total"] == 42
     assert returned["saved_ms_total"] == 42
+
+
+def test_record_timeout_increments_timeout_ratio() -> None:
+    # Regression (Finding 1): a real deadline miss must increment the timeout
+    # counter so BudgetGovernor's ``timeout_ratio > 0.2`` backpressure can fire.
+    # Before the fix _timed_out_count only moved on a cancel reason containing
+    # "timeout", which never happens for real deadline misses -> ratio stayed 0.
+    m = SpeculationMetrics()
+    m.record_started(_candidate(), "k1")
+    m.record_timeout("task-1", "speculative tool timed out: timeout")
+
+    snap = m.snapshot()
+    assert snap["timed_out"] == 1
+    # A timeout also counts as a failure for total-volume accounting.
+    assert snap["failed"] == 1
+    assert m.timeout_ratio > 0.0
+    assert snap["timeout_ratio"] == 1.0
+
+
+def test_abandonment_ratio_includes_cancelled_and_failed() -> None:
+    # Regression (Finding 2): the denominator must be
+    # completed + abandoned + cancelled + failed (per the docstring contract),
+    # not just completed + abandoned. With completed=1, abandoned=2, cancelled=10
+    # the ratio is 2/13 ~= 0.15, not 2/3 ~= 0.67 (which over-fired down-tiering).
+    m = SpeculationMetrics()
+    m.record_completed("t-c", 5)
+    m.record_abandon("t-a1", "turn_drain")
+    m.record_abandon("t-a2", "turn_drain")
+    for i in range(10):
+        m.record_cancel(f"t-x{i}", "cancelled")
+
+    assert m.abandonment_ratio == 2 / 13
+    assert m.abandonment_ratio < 0.6  # below BudgetGovernor's down-tier threshold
+
+
+def _candidate() -> CandidateToolCall:
+    return CandidateToolCall(
+        candidate_id="c1",
+        stream_id="s1",
+        turn_id="turn-1",
+        tool_name="read_file",
+        stability_score=1.0,
+        parse_state="schema_valid",
+    )
 
 
 def test_sink_exception_does_not_break_emit() -> None:

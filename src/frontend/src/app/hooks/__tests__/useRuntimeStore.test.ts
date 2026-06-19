@@ -10,6 +10,7 @@ import { enableMapSet } from 'immer';
 import { useRuntimeStore } from '../useRuntimeStore';
 import type { BackendStatus, EngineStatus, LlmStatus, LanceDbStatus } from '@/app/types/appContracts';
 import type { DialogueEvent } from '@/app/components/DialoguePanel';
+import type { LogEntry } from '@/types/log';
 
 // Enable MapSet plugin for Immer
 enableMapSet();
@@ -342,6 +343,28 @@ describe('useRuntimeStore', () => {
 
       expect(result.current.executionLogs).toEqual(logs);
     });
+
+    it('deduplicates semantically identical execution logs even when ids differ', () => {
+      const { result } = renderHook(createStoreHook());
+      const base: LogEntry = {
+        id: 'runtime-a',
+        timestamp: '2026-06-19T12:00:00Z',
+        level: 'info',
+        source: 'PM',
+        message: 'Prompt Context Injection',
+        meta: { channel: 'runtime_events', streamEvent: 'prompt_context', role: 'PM' },
+      };
+
+      act(() => {
+        useRuntimeStore.getState().setExecutionLogs([
+          base,
+          { ...base, id: 'runtime-b' },
+        ]);
+      });
+
+      expect(result.current.executionLogs).toHaveLength(1);
+      expect(result.current.executionLogs[0].id).toBe('runtime-a');
+    });
   });
 
   describe('LLM Stream Events', () => {
@@ -380,6 +403,36 @@ describe('useRuntimeStore', () => {
 
       expect(result.current.llmStreamEvents).toHaveLength(180);
     });
+
+    it('deduplicates repeated LLM completions at the runtime store boundary', () => {
+      const { result } = renderHook(createStoreHook());
+      const base: LogEntry = {
+        id: 'llm-a',
+        timestamp: '2026-06-19T09:16:59Z',
+        level: 'success',
+        source: 'PM',
+        message: '任务已拆解，计划如下。',
+        details: 'model=MiniMax-M3 prompt=1932 completion=1454 40181ms',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'PM',
+          promptTokens: 1932,
+          completionTokens: 1454,
+          totalTokens: 3386,
+          durationMs: 40181,
+          contextSnapshotRef: 'same-context-snapshot',
+        },
+      };
+
+      act(() => {
+        useRuntimeStore.getState().appendLlmStreamEvent(base);
+        useRuntimeStore.getState().appendLlmStreamEvent({ ...base, id: 'llm-b' });
+      });
+
+      expect(result.current.llmStreamEvents).toHaveLength(1);
+      expect(result.current.llmStreamEvents[0].id).toBe('llm-a');
+    });
   });
 
   describe('Process Stream Events', () => {
@@ -417,6 +470,28 @@ describe('useRuntimeStore', () => {
       }
 
       expect(result.current.processStreamEvents).toHaveLength(240);
+    });
+
+    it('deduplicates repeated process stream events through setProcessStreamEvents', () => {
+      const { result } = renderHook(createStoreHook());
+      const base: LogEntry = {
+        id: 'proc-a',
+        timestamp: '2026-06-19T12:00:00Z',
+        level: 'info',
+        source: 'Factory Bench',
+        message: 'Factory bench run failed',
+        meta: { channel: 'process', bench_event_type: 'factory_bench.run.failed' },
+      };
+
+      act(() => {
+        useRuntimeStore.getState().setProcessStreamEvents([
+          base,
+          { ...base, id: 'proc-b' },
+        ]);
+      });
+
+      expect(result.current.processStreamEvents).toHaveLength(1);
+      expect(result.current.processStreamEvents[0].id).toBe('proc-a');
     });
   });
 

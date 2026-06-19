@@ -466,6 +466,22 @@ function buildLlmDedupKey(log: LogEntry, fallbackRunScope: string): string {
   return `${scopedRunId}:${log.id}`;
 }
 
+function withLlmRunScope(log: LogEntry, fallbackRunScope: string): LogEntry {
+  const scopedRunId = resolveLlmLogRunScope(log) || fallbackRunScope || 'global';
+  if (!scopedRunId || scopedRunId === 'global') return log;
+  const meta = Parsing.isRecord(log.meta) ? log.meta : {};
+  if (Parsing.toStringValue(meta.runId || meta.run_id || meta.workflowRunId || meta.workflow_run_id)) {
+    return log;
+  }
+  return {
+    ...log,
+    meta: {
+      ...meta,
+      runId: scopedRunId,
+    },
+  };
+}
+
 function normalizeStreamEventToken(value: unknown): string {
   return String(value || '').trim().toLowerCase();
 }
@@ -1421,7 +1437,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
                 seenLlmEventIdsRef.current = new Set(entries.slice(-2500));
               }
               return true;
-            });
+            }).map((log) => withLlmRunScope(log, llmRunScopeRef.current));
             if (uniqueLogs.length > 0) {
               const current = useRuntimeStore.getState().llmStreamEvents;
               setLlmStreamEvents([...current, ...uniqueLogs].slice(-180));
@@ -1512,7 +1528,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
                   const entries = Array.from(seenLlmEventIdsRef.current);
                   seenLlmEventIdsRef.current = new Set(entries.slice(-2500));
                 }
-                appendLlmStreamEvent(llmLog);
+                appendLlmStreamEvent(withLlmRunScope(llmLog, llmRunScopeRef.current));
               }
             }
           } else if (isProcessStreamChannel(channel)) {

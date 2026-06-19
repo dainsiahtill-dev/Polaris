@@ -117,6 +117,12 @@ class SpeculativeExecutor:
                 tool_result = receipts[0].results[0]
                 if tool_result.status == "success":
                     return tool_result.result
+                # A deadline miss surfaces as the TIMEOUT status. Raise the dedicated
+                # ShadowTimeoutError so the registry can count it toward the timeout
+                # ratio (real backpressure) instead of folding every deadline miss
+                # into the generic failed bucket, which left timeout_ratio inert.
+                if str(tool_result.status) == "timeout":
+                    raise ShadowTimeoutError(f"speculative tool timed out: {tool_result.status}")
                 raise ShadowExecutionError(f"speculative tool failed: {tool_result.status}")
             raise ShadowExecutionError("no results from speculative batch")
         except asyncio.CancelledError:
@@ -129,5 +135,16 @@ class SpeculativeExecutor:
 
 class ShadowExecutionError(Exception):
     """推测执行失败的统一异常类型."""
+
+    pass
+
+
+class ShadowTimeoutError(ShadowExecutionError):
+    """推测执行因超过 deadline 而失败的异常类型.
+
+    继承自 :class:`ShadowExecutionError`，因此既有 ``except ShadowExecutionError``
+    捕获路径行为不变；新增一个专门类型让上层（registry ``_runner``）能识别真实的
+    deadline miss 并据此累加超时计数，使 ``timeout_ratio`` 真正反映超时压力。
+    """
 
     pass

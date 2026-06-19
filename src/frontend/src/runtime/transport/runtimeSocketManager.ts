@@ -78,6 +78,7 @@ class RuntimeSocketManager {
 
   // WebSocket instance
   private ws: WebSocket | null = null;
+  private connectInFlight = false;
 
   // Connection state
   private state: ConnectionState = {
@@ -150,6 +151,7 @@ class RuntimeSocketManager {
    */
   close(): void {
     this.closed = true;
+    this.connectInFlight = false;
     this.clearReconnectTimer();
     this.clearBatchAckTimer();
     this.clearHeartbeat();
@@ -413,15 +415,24 @@ class RuntimeSocketManager {
   }
 
   private connect(): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    if (this.connectInFlight) {
+      return;
+    }
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
       return;
     }
 
+    this.connectInFlight = true;
     this.updateState({ reconnecting: true, error: null });
 
     connectWebSocket(this.state.attemptCount > 0).then(
       (socket) => {
+        this.connectInFlight = false;
         if (this.closed) {
+          socket.close();
+          return;
+        }
+        if (this.ws && this.ws !== socket && this.ws.readyState !== WebSocket.CLOSED) {
           socket.close();
           return;
         }
@@ -430,6 +441,7 @@ class RuntimeSocketManager {
         this.setupSocketHandlers(socket);
       },
       (error) => {
+        this.connectInFlight = false;
         this.updateState({
           reconnecting: false,
           error: error instanceof Error ? error.message : 'Failed to connect',

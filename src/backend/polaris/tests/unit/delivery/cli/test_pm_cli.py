@@ -535,6 +535,63 @@ class TestPmThinCli:
             pm_thin_main()
         assert exc_info.value.code == 0
 
+    def test_pm_thin_command_forwards_directive_and_start_from(self) -> None:
+        """FINDING 4 regression: --directive and --start-from must be forwarded
+        into the launched ServiceDefinition command, not silently dropped."""
+        from polaris.delivery.cli.pm.cli_thin import _build_pm_command
+
+        command = _build_pm_command("/tmp/ws", "Ship the feature", "architect")
+        assert command[:5] == [
+            sys.executable,
+            "-m",
+            "polaris.delivery.cli.pm.cli_thin",
+            "--workspace",
+            "/tmp/ws",
+        ]
+        assert "--directive" in command
+        assert command[command.index("--directive") + 1] == "Ship the feature"
+        assert "--start-from" in command
+        assert command[command.index("--start-from") + 1] == "architect"
+
+    def test_pm_thin_command_omits_absent_optional_flags(self) -> None:
+        """FINDING 4: optional flags must NOT appear when not supplied."""
+        from polaris.delivery.cli.pm.cli_thin import _build_pm_command
+
+        command = _build_pm_command("/tmp/ws", None, None)
+        assert "--directive" not in command
+        assert "--start-from" not in command
+
+    def test_pm_thin_main_forwards_directive_to_service_definition(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FINDING 4: main() must thread parsed --directive/--start-from through
+        run_pm_console into the built ServiceDefinition command."""
+        from polaris.delivery.cli.pm import cli_thin
+
+        captured: dict[str, Any] = {}
+
+        async def fake_run_pm_console(
+            workspace: str,
+            loop: bool,
+            directive: str | None,
+            start_from: str | None = None,
+        ) -> None:
+            captured["command"] = cli_thin._build_pm_command(workspace, directive, start_from)
+            captured["start_from"] = start_from
+            captured["directive"] = directive
+
+        monkeypatch.setattr(cli_thin, "run_pm_console", fake_run_pm_console)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["pm-thin", "--workspace", "/tmp/ws", "--directive", "Do it", "--start-from", "director"],
+        )
+
+        assert cli_thin.main() == 0
+        assert captured["directive"] == "Do it"
+        assert captured["start_from"] == "director"
+        assert "--directive" in captured["command"]
+        assert "--start-from" in captured["command"]
+        assert captured["command"][captured["command"].index("--start-from") + 1] == "director"
+
 
 # ---------------------------------------------------------------------------
 # Test: PM integration helpers

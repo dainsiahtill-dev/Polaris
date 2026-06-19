@@ -26,7 +26,6 @@ from polaris.kernelone.contracts.technical import (
     LockPort,
     LockReleaseResult,
 )
-from polaris.kernelone.utils.time_utils import utc_now as _utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +216,11 @@ class FileLockAdapter(LockPort):
         ttl_seconds: float,
     ) -> LockAcquireResult:
         path = self._lock_path(resource)
-        now = time.monotonic()
+        # Persisted timestamps must use wall-clock (epoch) time so they remain
+        # comparable across processes and survive reboots. monotonic() resets at
+        # boot and its reference is undefined, which would make leftover lock
+        # files appear never-expiring (permanent deadlock).
+        now = time.time()
 
         fh = self._lock_file(path, _LOCK_EX)
         if fh is None:
@@ -303,7 +306,7 @@ class FileLockAdapter(LockPort):
             if entry is None or entry.holder_id != holder_id:
                 return False
 
-            now = time.monotonic()
+            now = time.time()
             new_expires = max(entry.expires_at, now) + additional_seconds
             updated = _LockEntry(holder_id, entry.acquired_at, new_expires)
             return self._write_entry_atomic(fh, updated)
@@ -323,7 +326,10 @@ class FileLockAdapter(LockPort):
             entry = self._read_entry(fh)
             if entry is None:
                 return False
-            return time.monotonic() <= entry.expires_at
+            now = time.time()
+            expired = now > entry.expires_at
+            stale = (now - entry.acquired_at) > LOCK_STALE_THRESHOLD_SECONDS
+            return not expired and not stale
         finally:
             self._unlock_file(fh)
 

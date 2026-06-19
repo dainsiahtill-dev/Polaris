@@ -10,9 +10,10 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -88,6 +89,41 @@ _PM_PLAN_META_DIAGNOSTIC_MARKERS = (
     "invalid json output",
     "rewrite pm task contract",
 )
+
+_FACTORY_CANCEL_EVENTS_GUARD = threading.Lock()
+_FACTORY_CANCEL_EVENTS: dict[str, set[asyncio.Event]] = {}
+
+
+def _factory_cancel_key(workspace: str | Path, run_id: str) -> str:
+    return f"{Path(workspace).resolve()}::{str(run_id).strip()}"
+
+
+def _register_factory_cancel_event(workspace: str | Path, run_id: str) -> asyncio.Event:
+    event = asyncio.Event()
+    key = _factory_cancel_key(workspace, run_id)
+    with _FACTORY_CANCEL_EVENTS_GUARD:
+        events = _FACTORY_CANCEL_EVENTS.setdefault(key, set())
+        events.add(event)
+    return event
+
+
+def _unregister_factory_cancel_event(workspace: str | Path, run_id: str, event: asyncio.Event) -> None:
+    key = _factory_cancel_key(workspace, run_id)
+    with _FACTORY_CANCEL_EVENTS_GUARD:
+        events = _FACTORY_CANCEL_EVENTS.get(key)
+        if not events:
+            return
+        events.discard(event)
+        if not events:
+            _FACTORY_CANCEL_EVENTS.pop(key, None)
+
+
+def _signal_factory_cancel_event(workspace: str | Path, run_id: str) -> None:
+    key = _factory_cancel_key(workspace, run_id)
+    with _FACTORY_CANCEL_EVENTS_GUARD:
+        events = list(_FACTORY_CANCEL_EVENTS.get(key, set()))
+    for event in events:
+        event.set()
 
 
 def _factory_jetstream_fanout_timeout_seconds() -> float:
@@ -426,29 +462,12 @@ class OrchestrationStageExecutor:
         return [["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]]
 
     @staticmethod
-    async def _wait_for_artifact_file(
-        target: Path,
-        *,
-        timeout_seconds: float = 8.0,
-        poll_interval: float = 0.2,
-    ) -> bool:
-        """等待异步阶段产物落盘，避免完成信号与文件写入存在短暂竞态。"""
-        timeout = max(float(timeout_seconds or 0.0), 0.0)
-        interval = max(float(poll_interval or 0.0), 0.05)
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
-
-        while True:
-            try:
-                if target.exists() and target.is_file() and target.stat().st_size > 0:
-                    return True
-            except OSError:
-                pass
-            if timeout <= 0:
-                return False
-            if loop.time() >= deadline:
-                return False
-            await asyncio.sleep(interval)
+    def _artifact_file_ready(target: Path) -> bool:
+        """Return whether an expected stage artifact is present after upstream completion."""
+        try:
+            return target.exists() and target.is_file() and target.stat().st_size > 0
+        except OSError:
+            return False
 
     def _artifact_exists(self, relative_path: str, *, min_chars: int = 1) -> bool:
         target = self._artifact_path(relative_path)
@@ -804,10 +823,11 @@ class OrchestrationStageExecutor:
                 "run_director": False,
             },
         )
-        final_result = await self._poll_run_completion(
+        final_result = await self._wait_run_completion(
             service,
             command_result,
             timeout_seconds=int(context.get("timeout", 600)),
+            cancel_event=self._resolve_cancel_event(context),
             abort_checker=abort_checker,
         )
         if str(final_result.status or "").strip().lower() == "cancelled":
@@ -882,10 +902,11 @@ class OrchestrationStageExecutor:
                 "run_director": False,
             },
         )
-        final_result = await self._poll_run_completion(
+        final_result = await self._wait_run_completion(
             service,
             command_result,
             timeout_seconds=int(context.get("timeout", 600)),
+            cancel_event=self._resolve_cancel_event(context),
             abort_checker=abort_checker,
         )
         if str(final_result.status or "").strip().lower() == "cancelled":
@@ -1005,10 +1026,11 @@ class OrchestrationStageExecutor:
                 },
             },
         )
-        return await self._poll_run_completion(
+        return await self._wait_run_completion(
             service,
             command_result,
             timeout_seconds=recovery_timeout,
+            cancel_event=self._resolve_cancel_event(context),
             abort_checker=abort_checker,
         )
 
@@ -1213,25 +1235,26 @@ class OrchestrationStageExecutor:
                     },
                 )
                 last_command_result = command_result
-                polled_result = await self._poll_run_completion(
+                director_result = await self._wait_run_completion(
                     service,
                     command_result,
                     timeout_seconds=int(context.get("timeout", 600)),
+                    cancel_event=self._resolve_cancel_event(context),
                     abort_checker=abort_checker,
                 )
-                final_result = polled_result
-                if str(polled_result.status or "").strip().lower() == "cancelled":
+                final_result = director_result
+                if str(director_result.status or "").strip().lower() == "cancelled":
                     break
 
                 after_stats = self._read_taskboard_stats()
-                metadata_payload = polled_result.metadata if isinstance(polled_result.metadata, dict) else {}
+                metadata_payload = director_result.metadata if isinstance(director_result.metadata, dict) else {}
                 metadata_progress = self._metadata_indicates_execution(metadata_payload)
                 progress_made = self._has_director_progress(before_stats, after_stats) or metadata_progress
                 attempt_entry = {
                     "round": round_index,
                     "run_id": str(command_result.run_id or "").strip(),
-                    "status": str(polled_result.status or "").strip(),
-                    "message": str(polled_result.message or "").strip(),
+                    "status": str(director_result.status or "").strip(),
+                    "message": str(director_result.message or "").strip(),
                     "metadata": metadata_payload,
                     "taskboard_before": before_stats,
                     "taskboard_after": after_stats,
@@ -1240,14 +1263,14 @@ class OrchestrationStageExecutor:
                 }
                 attempts.append(attempt_entry)
 
-                if polled_result.status not in {"completed", "success"}:
+                if director_result.status not in {"completed", "success"}:
                     prior_successful_progress = any(
                         str(item.get("status") or "").strip().lower() in {"completed", "success"}
                         and bool(item.get("progress_made"))
                         for item in attempts[:-1]
                         if isinstance(item, dict)
                     )
-                    if self._is_director_no_materialized_changes(polled_result) and (prior_successful_progress):
+                    if self._is_director_no_materialized_changes(director_result) and (prior_successful_progress):
                         requires_taskboard_convergence = False
                         stage_signals.append(
                             {
@@ -1258,12 +1281,12 @@ class OrchestrationStageExecutor:
                                     "treating dispatch as idempotent and allowing QA to decide final quality"
                                 ),
                                 "requires_taskboard_convergence": False,
-                                "upstream_status": str(polled_result.status or "").strip(),
+                                "upstream_status": str(director_result.status or "").strip(),
                                 "round": round_index,
                             }
                         )
                         final_result = CommandResult(
-                            run_id=str(polled_result.run_id or command_result.run_id or ""),
+                            run_id=str(director_result.run_id or command_result.run_id or ""),
                             status="completed",
                             message=(
                                 "Director made no further materialized changes after prior evidence; "
@@ -1276,9 +1299,9 @@ class OrchestrationStageExecutor:
                         {
                             "code": "director.run_status_non_success",
                             "severity": "error",
-                            "detail": str(polled_result.message or "").strip()
-                            or str(polled_result.status or "unknown"),
-                            "upstream_status": str(polled_result.status or "").strip(),
+                            "detail": str(director_result.message or "").strip()
+                            or str(director_result.status or "unknown"),
+                            "upstream_status": str(director_result.status or "").strip(),
                             "round": round_index,
                         }
                     )
@@ -1692,10 +1715,11 @@ class OrchestrationStageExecutor:
                 "input": context.get("qa_input"),
             },
         )
-        final_result = await self._poll_run_completion(
+        final_result = await self._wait_run_completion(
             service,
             command_result,
             timeout_seconds=int(context.get("timeout", 600)),
+            cancel_event=self._resolve_cancel_event(context),
             abort_checker=abort_checker,
         )
         if str(final_result.status or "").strip().lower() == "cancelled":
@@ -1707,12 +1731,7 @@ class OrchestrationStageExecutor:
             )
 
         qa_report_path = self._artifact_path("runtime/qa/report.json")
-        report_ready = await self._wait_for_artifact_file(
-            qa_report_path,
-            timeout_seconds=float(context.get("artifact_wait_seconds", 8.0) or 8.0),
-            poll_interval=0.2,
-        )
-        if not report_ready:
+        if not self._artifact_file_ready(qa_report_path):
             raise RuntimeError(f"Quality gate report missing: {qa_report_path}")
         loaded: dict[str, Any] | Any = {}
         parse_error: Exception | None = None
@@ -1774,45 +1793,111 @@ class OrchestrationStageExecutor:
         settings = context.get("settings") or Settings(workspace=Path(self.workspace))
         return OrchestrationCommandService(settings)
 
-    async def _poll_run_completion(
+    async def _wait_run_completion(
         self,
         service: OrchestrationCommandService,
         initial_result: CommandResult,
         timeout_seconds: int = 300,
-        poll_interval: float = 2.0,
+        *,
+        cancel_event: asyncio.Event | None = None,
         abort_checker: Callable[[], Awaitable[str | None]] | None = None,
     ) -> CommandResult:
-        start_time = datetime.now(timezone.utc)
-        timeout = timedelta(seconds=timeout_seconds)
         terminal_statuses = {"completed", "failed", "cancelled", "timeout", "blocked"}
         run_id = str(initial_result.run_id or "").strip()
 
         if initial_result.status in terminal_statuses or not run_id:
             return initial_result
 
-        while datetime.now(timezone.utc) - start_time < timeout:
-            if abort_checker is not None:
-                try:
-                    abort_reason = await abort_checker()
-                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                    logger.debug("Factory abort checker failed for run %s: %s", run_id, exc)
-                    abort_reason = None
-                if abort_reason:
-                    return CommandResult(
-                        run_id=run_id,
-                        status="cancelled",
-                        message=f"Run cancelled: {abort_reason}",
-                    )
-            result = await service.query_run_status(run_id)
-            if result.status in terminal_statuses:
-                return result
-            await asyncio.sleep(poll_interval)
+        if abort_checker is not None:
+            try:
+                abort_reason = await abort_checker()
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("Factory abort checker failed for run %s: %s", run_id, exc)
+                abort_reason = None
+            if abort_reason:
+                return CommandResult(
+                    run_id=run_id,
+                    status="cancelled",
+                    message=f"Run cancelled: {abort_reason}",
+                )
 
-        return CommandResult(
-            run_id=run_id,
-            status="timeout",
-            message=f"Run timed out after {timeout_seconds} seconds",
+        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+            get_orchestration_service,
         )
+
+        orchestration_service = await get_orchestration_service()
+        active_runs = getattr(orchestration_service, "_active_runs", {})
+        active_task = active_runs.get(run_id) if isinstance(active_runs, dict) else None
+        if not isinstance(active_task, asyncio.Task):
+            return await service.query_run_status(run_id)
+
+        waiters: dict[asyncio.Future[Any], str] = {
+            asyncio.ensure_future(asyncio.shield(active_task)): "orchestration",
+            asyncio.create_task(asyncio.sleep(max(0.0, float(timeout_seconds)))): "timeout",
+        }
+        if cancel_event is not None:
+            waiters[asyncio.create_task(cancel_event.wait())] = "cancel"
+
+        try:
+            done, _pending = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+            completed_reason = ""
+            completed_waiter: asyncio.Future[Any] | None = None
+            for preferred_reason in ("cancel", "orchestration", "timeout"):
+                for waiter in done:
+                    if waiters.get(waiter) == preferred_reason:
+                        completed_reason = preferred_reason
+                        completed_waiter = waiter
+                        break
+                if completed_waiter is not None:
+                    break
+
+            if completed_reason == "cancel":
+                return CommandResult(
+                    run_id=run_id,
+                    status="cancelled",
+                    message="Run cancelled: factory_cancelled",
+                )
+
+            if completed_reason == "timeout":
+                return CommandResult(
+                    run_id=run_id,
+                    status="timeout",
+                    message=f"Run timed out after {timeout_seconds} seconds",
+                )
+
+            if completed_waiter is None:
+                return await service.query_run_status(run_id)
+
+            try:
+                completed_waiter.result()
+            except asyncio.CancelledError:
+                return CommandResult(
+                    run_id=run_id,
+                    status="cancelled",
+                    message="Run cancelled: orchestration_task_cancelled",
+                )
+            except (RuntimeError, ValueError, OSError, TypeError) as exc:
+                return CommandResult(
+                    run_id=run_id,
+                    status="failed",
+                    message=f"Run failed: {exc}",
+                )
+
+            return await service.query_run_status(run_id)
+        finally:
+            for waiter in waiters:
+                if waiter.done():
+                    continue
+                waiter.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.gather(*waiters.keys(), return_exceptions=True)
+
+    @staticmethod
+    def _resolve_cancel_event(context: dict[str, Any]) -> asyncio.Event | None:
+        event = context.get("_factory_cancel_event")
+        if isinstance(event, asyncio.Event):
+            return event
+        return None
 
     @staticmethod
     def _resolve_abort_checker(
@@ -1888,6 +1973,8 @@ class FactoryRunService:
         """Execute a single stage with durable lifecycle updates."""
         normalized_context = dict(context or {})
         normalized_context["_factory_abort_checker"] = self._build_abort_checker(run_id)
+        cancel_event = _register_factory_cancel_event(self.workspace, run_id)
+        normalized_context["_factory_cancel_event"] = cancel_event
         heartbeat_interval = self._resolve_heartbeat_interval_seconds(normalized_context)
 
         run_lock = self._get_run_lock(run_id)
@@ -1931,6 +2018,7 @@ class FactoryRunService:
             logger.error("Stage %s failed for run %s: %s", stage, run_id, exc)
             raise
         finally:
+            _unregister_factory_cancel_event(self.workspace, run_id, cancel_event)
             if heartbeat_task is not None:
                 heartbeat_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -2250,6 +2338,7 @@ class FactoryRunService:
                 },
             )
             logger.info("Run %s cancelled", run_id)
+            _signal_factory_cancel_event(self.workspace, run_id)
 
             # Trigger history archiving (async, non-blocking)
             self._trigger_archive(run_id, "cancelled")

@@ -235,7 +235,12 @@ class StreamingPatchBuffer:
         complete_blocks: list[PatchBlock] = []
         self._buffer.append(chunk)
 
-        current_text = "\n".join(self._buffer)
+        # Stream chunks split at arbitrary mid-line (even mid-token) boundaries,
+        # so they MUST be concatenated verbatim — joining with "\n" injects
+        # newlines the model never emitted and corrupts SEARCH/REPLACE bodies
+        # (the search no longer matches, or the spurious newline is written out).
+        # This mirrors _feed_normal's plain concatenation and the real byte stream.
+        current_text = "".join(self._buffer)
         replace_match = self._REPLACE_END_RE.search(current_text)
 
         if replace_match:
@@ -352,7 +357,9 @@ class StreamingPatchBuffer:
         incomplete_warnings: list[PatchBlock] = []
 
         if self._state == self.STATE_BUFFERING and self._buffer:
-            current_text = "\n".join(self._buffer)
+            # Verbatim concatenation — see _feed_buffering: "\n".join would
+            # corrupt the buffered patch with newlines the model never sent.
+            current_text = "".join(self._buffer)
             logger.warning(
                 "[StreamingPatchBuffer] 流结束，存在不完整的 PATCH 块: 缓冲了 %d 字符",
                 len(current_text),

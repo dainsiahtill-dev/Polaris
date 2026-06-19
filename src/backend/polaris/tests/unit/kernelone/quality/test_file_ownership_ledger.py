@@ -73,6 +73,58 @@ class TestRecordAndRead:
         record_file_owners(str(tmp_path), str(tmp_path), _steps(("S1", "main.js")), "P1")
 
 
+class TestConcurrentRecord:
+    def test_two_concurrent_records_both_persist(self, tmp_path: Path) -> None:
+        # Regression (Finding 4): the load-modify-write must be serialized. Two
+        # concurrent fissions claiming DIFFERENT files both load the same baseline;
+        # without a lock the later write clobbers the earlier's entries (lost write).
+        import threading
+
+        ws = str(tmp_path)
+        start = threading.Barrier(2)
+
+        def _claim(step_id: str, target: str, parent: str) -> None:
+            start.wait()
+            record_file_owners(ws, ws, _steps((step_id, target)), parent)
+
+        t1 = threading.Thread(target=_claim, args=("S1", "a.js", "P1"))
+        t2 = threading.Thread(target=_claim, args=("S2", "b.js", "P2"))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        owners = read_file_owners(ws, ws, ["a.js", "b.js"])
+        assert owners["a.js"]["owner_step_id"] == "S1"
+        assert owners["b.js"]["owner_step_id"] == "S2"
+
+    def test_concurrent_same_file_keeps_first_writer(self, tmp_path: Path) -> None:
+        # Many threads racing on the SAME file must converge to exactly one owner
+        # (first-writer-wins is preserved under contention, no lost write).
+        import threading
+
+        ws = str(tmp_path)
+        n = 8
+        start = threading.Barrier(n)
+
+        def _claim(idx: int) -> None:
+            start.wait()
+            record_file_owners(ws, ws, _steps((f"S{idx}", "shared.js")), f"P{idx}")
+
+        threads = [threading.Thread(target=_claim, args=(i,)) for i in range(n)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        owners = read_file_owners(ws, ws, ["shared.js"])
+        assert owners["shared.js"]["owner_step_id"].startswith("S")
+        # Exactly one owner recorded — re-claiming under the lock never reassigns.
+        winner = owners["shared.js"]["owner_step_id"]
+        record_file_owners(ws, ws, _steps(("S-late", "shared.js")), "P-late")
+        assert read_file_owners(ws, ws, ["shared.js"])["shared.js"]["owner_step_id"] == winner
+
+
 class TestRenderEditContract:
     def test_emits_read_and_edit_instruction_for_owned_file(self) -> None:
         block = render_edit_contract({"main.js": {"owner_step_id": "S4", "owner_parent": "PM-0001-1"}})

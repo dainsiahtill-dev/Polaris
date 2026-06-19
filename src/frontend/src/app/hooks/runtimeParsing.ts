@@ -40,6 +40,8 @@ const FILE_PATH_KEYS = ['filePath', 'file_path', 'filepath', 'path', 'file', 'fi
 const PATCH_KEYS = ['patch', 'diff', 'unified_diff', 'patch_text', 'diff_text'] as const;
 const TASK_ID_KEYS = ['taskId', 'task_id', 'pm_task_id', 'director_task_id'] as const;
 const EVENT_TOKEN_KEYS = ['event', 'name', 'kind', 'type', 'event_name'] as const;
+const LOG_REF_KEYS = ['contextSnapshotRef', 'context_snapshot_ref', 'promptHash', 'prompt_hash', 'turnId', 'turn_id', 'runId', 'run_id'] as const;
+const LOG_USAGE_KEYS = ['promptTokens', 'completionTokens', 'totalTokens', 'contextTokens', 'durationMs'] as const;
 
 function readFirstString(source: Record<string, unknown> | null | undefined, keys: readonly string[]): string {
   if (!source) return '';
@@ -71,6 +73,43 @@ function readTaskIdValue(source: Record<string, unknown> | null | undefined): st
 
 function readEventTokenValue(source: Record<string, unknown> | null | undefined): string {
   return readFirstString(source, EVENT_TOKEN_KEYS);
+}
+
+function normalizeLogMetaValue(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(Math.round(value));
+  if (typeof value === 'string') return value.trim();
+  return '';
+}
+
+function readFirstLogMetaValue(source: Record<string, unknown> | null | undefined, keys: readonly string[]): string {
+  if (!source) return '';
+  for (const key of keys) {
+    const value = normalizeLogMetaValue(source[key]);
+    if (value) return value;
+  }
+  return '';
+}
+
+export function logEntryDedupeKey(log: LogEntry): string {
+  const meta = isRecord(log.meta) ? log.meta : {};
+  const channel = readFirstLogMetaValue(meta, ['channel']);
+  const streamEvent = readFirstLogMetaValue(meta, ['streamEvent', 'stream_event', 'event', 'event_type']);
+  const role = readFirstLogMetaValue(meta, ['role', 'actor', 'source']) || String(log.source || '').trim();
+  const stableRef = readFirstLogMetaValue(meta, LOG_REF_KEYS);
+  const usage = LOG_USAGE_KEYS.map((key) => readFirstLogMetaValue(meta, [key])).join('/');
+  return [
+    channel,
+    streamEvent,
+    role,
+    stableRef,
+    String(log.timestamp || '').trim(),
+    String(log.level || '').trim(),
+    String(log.source || '').trim(),
+    String(log.title || '').trim(),
+    String(log.message || '').trim().replace(/\s+/g, ' '),
+    String(log.details || '').trim().replace(/\s+/g, ' '),
+    usage,
+  ].join('\u001f');
 }
 
 // ============================================================
@@ -681,10 +720,11 @@ export function normalizeActorLabel(raw: string): string {
 export function appendLogEntries(prev: LogEntry[], incoming: LogEntry[], limit: number): LogEntry[] {
   if (incoming.length <= 0) return prev;
   const merged = [...prev];
-  const seen = new Set(prev.map((item) => item.id));
+  const seen = new Set(prev.map((item) => logEntryDedupeKey(item)));
   for (const entry of incoming) {
-    if (seen.has(entry.id)) continue;
-    seen.add(entry.id);
+    const key = logEntryDedupeKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
     merged.push(entry);
   }
   return merged.slice(-limit);

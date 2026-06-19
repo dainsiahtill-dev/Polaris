@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -70,6 +71,26 @@ class TestAcquireFileLock:
         path = Path("/tmp/test_lock.json")
         async with _acquire_file_lock(path, timeout=1.0):
             pass  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_cancelled_waiter_does_not_leak_lock(self, tmp_path: Path) -> None:
+        path = tmp_path / "run.json"
+        path.write_text("{}", encoding="utf-8")
+
+        async def _wait_for_lock() -> None:
+            async with _acquire_file_lock(path, timeout=0.5):
+                pass
+
+        async with _acquire_file_lock(path, timeout=1.0):
+            waiter = asyncio.create_task(_wait_for_lock())
+            await asyncio.sleep(0.05)
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+
+        await asyncio.sleep(0.1)
+        async with _acquire_file_lock(path, timeout=1.0):
+            pass
 
 
 class TestFactoryStore:

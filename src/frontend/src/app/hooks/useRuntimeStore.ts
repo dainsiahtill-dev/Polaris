@@ -17,6 +17,7 @@ import type { QualityGateData } from '@/app/components/pm';
 import type { LogEntry } from '@/types/log';
 import { type PmTask } from '@/types/task';
 import type { TaskTraceEvent } from '../types/taskTrace';
+import { appendLogEntries } from './runtimeParsing';
 
 enableMapSet();
 
@@ -232,6 +233,10 @@ const initialState: Omit<RuntimeState,
 // Store Implementation
 // ============================================================================
 
+function normalizeLogEntries(logs: LogEntry[], limit: number): LogEntry[] {
+  return appendLogEntries([], logs, limit);
+}
+
 export const useRuntimeStore = create<RuntimeState>()(
   immer((set, get) => ({
     ...initialState,
@@ -265,27 +270,27 @@ export const useRuntimeStore = create<RuntimeState>()(
 
     appendExecutionLog: (log) =>
       set((s) => {
-        s.executionLogs = [...s.executionLogs, log].slice(-100);
+        s.executionLogs = appendLogEntries([...s.executionLogs], [log], 100);
       }),
 
     setExecutionLogs: (logs) =>
-      set({ executionLogs: logs.slice(-100) }),
+      set({ executionLogs: normalizeLogEntries(logs, 100) }),
 
     appendLlmStreamEvent: (log) =>
       set((s) => {
-        s.llmStreamEvents = [...s.llmStreamEvents, log].slice(-180);
+        s.llmStreamEvents = appendLogEntries([...s.llmStreamEvents], [log], 180);
       }),
 
     setLlmStreamEvents: (logs) =>
-      set({ llmStreamEvents: logs.slice(-180) }),
+      set({ llmStreamEvents: normalizeLogEntries(logs, 180) }),
 
     appendProcessStreamEvent: (log) =>
       set((s) => {
-        s.processStreamEvents = [...s.processStreamEvents, log].slice(-240);
+        s.processStreamEvents = appendLogEntries([...s.processStreamEvents], [log], 240);
       }),
 
     setProcessStreamEvents: (logs) =>
-      set({ processStreamEvents: logs.slice(-240) }),
+      set({ processStreamEvents: normalizeLogEntries(logs, 240) }),
 
     // Derived
     setQualityGate: (data) => set({ qualityGate: data }),

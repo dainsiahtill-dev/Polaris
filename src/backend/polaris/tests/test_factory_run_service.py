@@ -849,7 +849,7 @@ class _WorkspaceValidationStageExecutor(_TestStageExecutor):
 
 class TestOrchestrationStageExecutor:
     @pytest.mark.asyncio
-    async def test_poll_run_completion_short_circuits_immediate_failure(self, temp_workspace):
+    async def test_wait_run_completion_short_circuits_immediate_failure(self, temp_workspace):
         command_service = _ImmediateFailureCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
         initial = CommandResult(
@@ -859,13 +859,13 @@ class TestOrchestrationStageExecutor:
             reason_code="PM_RUN_FAILED",
         )
 
-        result = await executor._poll_run_completion(command_service, initial, timeout_seconds=60)
+        result = await executor._wait_run_completion(command_service, initial, timeout_seconds=60)
 
         assert result is initial
         assert command_service.queried is False
 
     @pytest.mark.asyncio
-    async def test_poll_run_completion_honors_abort_checker(self, temp_workspace):
+    async def test_wait_run_completion_honors_initial_abort_checker(self, temp_workspace):
         command_service = _NeverTerminalCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
         initial = CommandResult(
@@ -877,11 +877,10 @@ class TestOrchestrationStageExecutor:
         async def _abort_checker() -> str | None:
             return "operator stop"
 
-        result = await executor._poll_run_completion(
+        result = await executor._wait_run_completion(
             command_service,
             initial,
             timeout_seconds=60,
-            poll_interval=0.01,
             abort_checker=_abort_checker,
         )
 
@@ -902,8 +901,8 @@ class TestOrchestrationStageExecutor:
 
         captured: dict[str, int] = {}
 
-        async def _fake_poll(service, command_result, timeout_seconds, abort_checker):
-            del service, abort_checker
+        async def _fake_wait(service, command_result, timeout_seconds, cancel_event=None, abort_checker=None):
+            del service, cancel_event, abort_checker
             captured["timeout_seconds"] = int(timeout_seconds)
             return CommandResult(
                 run_id=command_result.run_id,
@@ -912,7 +911,7 @@ class TestOrchestrationStageExecutor:
                 metadata={},
             )
 
-        monkeypatch.setattr(executor, "_poll_run_completion", _fake_poll)
+        monkeypatch.setattr(executor, "_wait_run_completion", _fake_wait)
         monkeypatch.setattr(executor, "_ensure_docs_artifacts", lambda directive, summary: [])
         monkeypatch.setattr(executor, "_artifact_exists", lambda relative_path, min_chars=1: True)
 
@@ -934,8 +933,8 @@ class TestOrchestrationStageExecutor:
 
         captured: dict[str, int] = {}
 
-        async def _fake_poll(service, command_result, timeout_seconds, abort_checker):
-            del service, abort_checker
+        async def _fake_wait(service, command_result, timeout_seconds, cancel_event=None, abort_checker=None):
+            del service, cancel_event, abort_checker
             captured["timeout_seconds"] = int(timeout_seconds)
             return CommandResult(
                 run_id=command_result.run_id,
@@ -944,7 +943,7 @@ class TestOrchestrationStageExecutor:
                 metadata={},
             )
 
-        monkeypatch.setattr(executor, "_poll_run_completion", _fake_poll)
+        monkeypatch.setattr(executor, "_wait_run_completion", _fake_wait)
         monkeypatch.setattr(executor, "_validate_pm_plan_contract", lambda relative_path: None)
         monkeypatch.setattr(executor, "_artifact_exists", lambda relative_path, min_chars=1: True)
 
@@ -999,13 +998,13 @@ class TestOrchestrationStageExecutor:
             status=FactoryRunStatus.RUNNING,
             created_at=datetime.now(timezone.utc).isoformat(),
         )
-        poll_calls = 0
+        wait_calls = 0
 
-        async def _fake_poll(service, command_result, timeout_seconds, abort_checker):
-            nonlocal poll_calls
-            del service, timeout_seconds, abort_checker
-            poll_calls += 1
-            if poll_calls == 1:
+        async def _fake_wait(service, command_result, timeout_seconds, cancel_event=None, abort_checker=None):
+            nonlocal wait_calls
+            del service, timeout_seconds, cancel_event, abort_checker
+            wait_calls += 1
+            if wait_calls == 1:
                 return CommandResult(
                     run_id=command_result.run_id,
                     status="timeout",
@@ -1037,12 +1036,12 @@ class TestOrchestrationStageExecutor:
                 message="Run status: completed",
             )
 
-        monkeypatch.setattr(executor, "_poll_run_completion", _fake_poll)
+        monkeypatch.setattr(executor, "_wait_run_completion", _fake_wait)
 
         result = await executor._execute_pm_planning(run, context={"directive": "Plan implementation tasks"})
 
         assert result.status == "success"
-        assert poll_calls == 2
+        assert wait_calls == 2
         assert len(command_service.pm_calls) == 2
         second_options = command_service.pm_calls[1]["options"]
         assert isinstance(second_options, dict)

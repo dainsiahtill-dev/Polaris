@@ -447,6 +447,57 @@ def _write_temp_verify_rename(
         return {"ok": False, "error": f"Failed to write file: {exc}"}
 
 
+def _stage_temp_verify(
+    target_path: str,
+    content: str,
+    *,
+    encoding: str = "utf-8",
+) -> dict[str, Any]:
+    """Stage half of a transactional write: temp -> verify (NO rename yet).
+
+    Used by multi-file commits that must verify EVERY target before any file is
+    moved into place, so a later failure never leaves earlier files half-applied.
+    On success returns ``{"ok": True, "tmp_path": str, "bytes_written": int}``; the
+    caller is responsible for committing (``os.replace``) or removing the temp.
+    """
+    parent = os.path.dirname(target_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    suffix = f".{os.path.basename(target_path)}.tmp"
+    tmp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding=encoding,
+            suffix=suffix,
+            dir=parent or ".",
+            delete=False,
+        ) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+
+        verify_result = verify_written_code(tmp_path, content)
+        if not verify_result.success:
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path)
+            return {
+                "ok": False,
+                "error": f"Post-write verification failed: {verify_result.error}",
+            }
+
+        return {
+            "ok": True,
+            "tmp_path": tmp_path,
+            "bytes_written": len(content.encode(encoding, errors="replace")),
+        }
+    except OSError as exc:
+        if tmp_path:
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path)
+        return {"ok": False, "error": f"Failed to write file: {exc}"}
+
+
 def _read_workspace_agents_policy_text(self: AgentAccelToolExecutor, rel: str = "") -> str:
     """Read root and nested AGENTS.md files that apply to a workspace-relative path."""
     normalized_rel = str(rel or "").replace("\\", "/").strip("/")
@@ -1331,8 +1382,43 @@ def _synthesize_line_range_block(
                 "line-range edits if multiple spots need changes."
             ),
         )
-    block = f"<<<< SEARCH:{file}\n{search_text}====\n{repl}>>>> REPLACE\n"
+    # The block parser recognizes the divider/terminator only as a FULL line
+    # (``^={4,9}\s*$`` / ``^>{4,9}\s*REPLACE``). When the replaced range includes
+    # the file's LAST line and that line has no trailing newline, ``search_text``
+    # (and the replacement body) do not end on their own line, so ``====`` / the
+    # terminator get glued onto the final content line and the whole block is
+    # silently dropped. Append a delimiter newline so each body ends on its own
+    # line. This newline is a pure delimiter: ``_synthesize_line_range_search``
+    # below strips it back off at apply time so the bytes matched against / written
+    # to the file are unchanged.
+    search_body = search_text if search_text.endswith("\n") else search_text + "\n"
+    repl_body = repl if repl.endswith("\n") else repl + "\n"
+    block = f"<<<< SEARCH:{file}\n{search_body}====\n{repl_body}>>>> REPLACE\n"
     return block, None
+
+
+def _strip_eof_delimiter_newline(search_text: str, replace_text: str, content: str) -> tuple[str, str]:
+    """Undo the delimiter newline a synthesized EOF block carries.
+
+    ``_synthesize_line_range_block`` appends a trailing ``\\n`` to the SEARCH (and
+    REPLACE) body so the ``====`` divider / ``>>>> REPLACE`` terminator land on
+    their own line even when the replaced range ends at a file whose last line has
+    no trailing newline. That newline is a pure parse delimiter, so it must be
+    removed before matching/writing or the SEARCH would no longer match the on-disk
+    slice (and a spurious trailing newline would be written). Trim a single trailing
+    ``\\n`` from both bodies only when the SEARCH does not match the content as-is but
+    its newline-trimmed form does — i.e. the genuine EOF case — leaving normal
+    newline-terminated edits untouched.
+    """
+    if not search_text.endswith("\n"):
+        return search_text, replace_text
+    if search_text in content:
+        return search_text, replace_text
+    trimmed_search = search_text[:-1]
+    if trimmed_search and trimmed_search in content:
+        trimmed_replace = replace_text[:-1] if replace_text.endswith("\n") else replace_text
+        return trimmed_search, trimmed_replace
+    return search_text, replace_text
 
 
 _JSON_EDIT_FILE_KEYS = (
@@ -1687,7 +1773,11 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         code_extensions = {".py", ".pyw", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs"}
         is_code_file = any(block_rel.endswith(ext) for ext in code_extensions)
 
-        new_content, metadata = fuzzy_replace(current, block.search_text, block.replace_text)
+        # A synthesized EOF line-range block carries a trailing delimiter newline
+        # on its SEARCH/REPLACE bodies (so the divider/terminator parse); strip it
+        # back so matching/writing uses the exact on-disk slice (no spurious newline).
+        block_search, block_replace = _strip_eof_delimiter_newline(block.search_text, block.replace_text, current)
+        new_content, metadata = fuzzy_replace(current, block_search, block_replace)
 
         if metadata.get("success"):
             # Validate the RESULTING file, not the replace fragment. A SEARCH/REPLACE
@@ -1821,26 +1911,67 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         }
 
     # ========================================================================
-    # PHASE 2: EXECUTION - All blocks valid, now actually write files
+    # PHASE 2: EXECUTION - All blocks valid, now actually write files.
+    #
+    # Truly atomic across files: stage + verify EVERY target to a temp file
+    # first, and only os.replace() them into place once they ALL verify. If any
+    # target fails to stage/verify, remove all staged temps and commit nothing,
+    # so a later-file failure never leaves earlier files half-applied (which the
+    # previous per-file write-then-rename loop did, contradicting the two-phase
+    # commit contract in this handler's docstring).
     # ========================================================================
-    results = []
-    write_errors = []
-
+    pending: list[tuple[str, str, str, str]] = []  # (block_rel, full_path, original, new_content)
     for block_rel, (original, new_content) in file_contents.items():
         if original == new_content:
             continue  # No changes needed
-
         block_full_path = str(self._kernel_fs.resolve_workspace_path(block_rel))
-        write_result = _write_temp_verify_rename(block_full_path, new_content, encoding="utf-8")
-        if not write_result.get("ok"):
+        pending.append((block_rel, block_full_path, original, new_content))
+
+    staged: list[tuple[str, str, str, str, str]] = []  # (block_rel, tmp_path, full_path, original, new_content)
+    write_errors: list[dict[str, Any]] = []
+    for block_rel, block_full_path, original, new_content in pending:
+        stage_result = _stage_temp_verify(block_full_path, new_content, encoding="utf-8")
+        if not stage_result.get("ok"):
             write_errors.append(
                 {
                     "file": block_rel,
-                    "error": str(write_result.get("error", "Unknown write error")),
+                    "error": str(stage_result.get("error", "Unknown write error")),
                 }
             )
-            continue
+            break
+        staged.append((block_rel, str(stage_result["tmp_path"]), block_full_path, original, new_content))
 
+    if write_errors:
+        # Abort the whole commit: discard every staged temp, touch no target file.
+        for _block_rel, tmp_path, _full_path, _original, _new_content in staged:
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path)
+        return {
+            "ok": False,
+            "blocks_total": len(blocks),
+            "blocks_applied": len([r for r in validation_results if r.get("valid")]),
+            "files_modified": 0,
+            "results": [],
+            "validation_results": validation_results,
+            "write_errors": write_errors,
+            "error": (
+                f"Failed to write {len(write_errors)} file(s). No files were modified "
+                "(atomic multi-file commit aborted)."
+            ),
+        }
+
+    # All targets verified — commit them.
+    results: list[dict[str, Any]] = []
+    for block_rel, tmp_path, block_full_path, original, new_content in staged:
+        try:
+            os.replace(tmp_path, block_full_path)
+        except OSError as exc:
+            # Best-effort cleanup of the temp; this commit-time failure is rare
+            # (e.g. target became a directory) and cannot be rolled back safely.
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path)
+            write_errors.append({"file": block_rel, "error": f"Failed to commit file: {exc}"})
+            continue
         _emit_file_written_event(
             self,
             file_path=block_rel,
@@ -1869,8 +2000,6 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
     if write_errors:
         response["write_errors"] = write_errors
         response["error"] = f"Failed to write {len(write_errors)} file(s)"
-        # Note: At this point, some files may have been modified while others failed
-        # This is a partial failure scenario that should be handled by the caller
     else:
         response["effect_receipt"] = {
             "files_modified": [r["file"] for r in results],
@@ -1902,7 +2031,16 @@ def _edit_file_line_mode(
 
     # Default: replace entire file or append to end
     start = max(1, start_line) if start_line is not None else 1
-    end = min(total_lines, end_line) if end_line is not None else total_lines
+    if end_line is not None:
+        end = min(total_lines, end_line)
+    elif start_line is not None:
+        # Single-bound call (start without end) means a single-line edit, NOT
+        # "replace from start to EOF". Defaulting end to total_lines silently
+        # truncated every line from start to the end of the file. Reserve the
+        # whole-tail replacement for the explicit start_line-is-None case below.
+        end = min(total_lines, start)
+    else:
+        end = total_lines
 
     new_lines = [*lines, content] if start > total_lines else [*lines[: start - 1], content, *lines[end:]]
 

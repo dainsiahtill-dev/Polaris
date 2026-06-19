@@ -118,6 +118,46 @@ class TestFilePathCondition:
         assert result.matched is False
         assert "Invalid regex" in result.reason
 
+    def test_explicit_glob_prefix_nested_match(self, evaluator):
+        """回归：显式 glob: 前缀必须用去前缀后的模式匹配嵌套路径。
+
+        修复前 glob: 分支会被 ``Path(path).match(pattern)``（含前缀的完整串）
+        覆盖，导致所有 glob: 条件静默失败。
+        """
+        condition = PermissionCondition(
+            type=ConditionType.FILE_PATH,
+            pattern="glob:src/**/*.py",
+        )
+        context = EvaluationContext(
+            action="read",
+            target_path="src/app/main.py",
+        )
+
+        result = evaluator.evaluate(condition, context)
+
+        assert result.matched is True
+        assert "matched" in result.reason
+
+    def test_bare_pattern_no_unbound_local_error(self, evaluator):
+        """回归：裸模式（无 regex:/glob: 前缀）不得抛 UnboundLocalError。
+
+        修复前默认 glob 赋值嵌在 glob: elif 分支内，裸模式会让 matched 未绑定，
+        ``return ConditionResult(matched=matched, ...)`` 触发 UnboundLocalError。
+        """
+        condition = PermissionCondition(
+            type=ConditionType.FILE_PATH,
+            pattern="**/*.py",
+        )
+        context = EvaluationContext(
+            action="read",
+            target_path="lib/util/helpers.py",
+        )
+
+        result = evaluator.evaluate(condition, context)
+
+        assert result.matched is True
+        assert "matched" in result.reason
+
 
 class TestTimeRangeCondition:
     """测试时间范围条件评估"""
@@ -346,6 +386,26 @@ class TestEvaluateAll:
             action="read",
             target_path="src/fastapi_entrypoint.py",
             timestamp=datetime(2024, 1, 1, 14, 0),  # 14:00 超出时间范围
+        )
+
+        result = evaluator.evaluate_all(conditions, context, match_mode="all")
+
+        assert result.matched is False
+        assert "Some conditions failed" in result.reason
+
+    def test_all_mode_one_fails_is_not_matched(self, evaluator):
+        """回归：all 模式下只要一个条件失败就必须返回 not matched。
+
+        修复前 all 分支计算 all(...) 后被无 else 的 any(...) 覆盖，使 all 模式
+        退化为 any 模式——只要一个条件满足整体即通过，削弱 RBAC。
+        """
+        conditions = [
+            PermissionCondition(type=ConditionType.FILE_PATH, pattern="**/*.py"),  # 匹配
+            PermissionCondition(type=ConditionType.FILE_PATH, pattern="**/*.js"),  # 不匹配
+        ]
+        context = EvaluationContext(
+            action="read",
+            target_path="src/fastapi_entrypoint.py",
         )
 
         result = evaluator.evaluate_all(conditions, context, match_mode="all")

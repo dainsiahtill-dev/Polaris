@@ -476,6 +476,19 @@ export function useFactory(options: UseFactoryOptions = {}) {
       } as FactoryAuditEvent;
       setEvents((previous) => [...previous, factoryEvent].slice(-200));
 
+      if (payload.run_id && (payload.status || typeof payload.progress === 'number')) {
+        const run = payload as unknown as FactoryRunStatus;
+        latestRunIdRef.current = run.run_id;
+        setCurrentRun((previous) => mergeRunEvidenceFields(run, previous));
+        queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(run.run_id), run);
+        if (isTerminalRun(run)) {
+          setIsStreaming(false);
+          queryClient.invalidateQueries({ queryKey: factoryRunsKey });
+          void fetchRunArtifacts(run.run_id);
+        }
+        return;
+      }
+
       const cached = queryClient.getQueryData<FactoryRunStatus>(factoryRunKey(eventRunId)) || currentRun;
       const runPatch = runStatusFromFactoryEvent(eventRunId, payload, cached);
       if (!runPatch) return;

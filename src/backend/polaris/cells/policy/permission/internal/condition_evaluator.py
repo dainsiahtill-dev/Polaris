@@ -189,16 +189,16 @@ class PermissionConditionEvaluator:
 
         path = context.target_path
         pattern = condition.pattern or "*"
+        matched = False
 
         try:
             if pattern.startswith("regex:"):
                 regex = pattern[6:]
                 matched = bool(re.match(regex, path))
             elif pattern.startswith("glob:"):
-                glob_pattern = pattern[5:]
-                matched = Path(path).match(glob_pattern)
-
-                # Default: simple glob matching
+                matched = Path(path).match(pattern[5:])
+            else:
+                # Default: bare pattern treated as a glob pattern
                 matched = Path(path).match(pattern)
 
             return ConditionResult(
@@ -345,7 +345,7 @@ class PermissionConditionEvaluator:
         if match_mode == "all":
             matched = all(r.matched for r in results)
             reason = "All conditions matched" if matched else "Some conditions failed"
-            # any
+        else:
             matched = any(r.matched for r in results)
             reason = "At least one condition matched" if matched else "No conditions matched"
 

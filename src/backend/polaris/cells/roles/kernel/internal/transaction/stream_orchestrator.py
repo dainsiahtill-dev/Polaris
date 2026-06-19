@@ -1043,6 +1043,7 @@ class StreamOrchestrator:
         """流式执行turn的内部实现。"""
         from polaris.cells.roles.kernel.internal.kernel_guard import KernelGuardError
         from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            apply_delivery_mode_filter,
             has_available_write_tool,
             is_mutation_contract_violation,
         )

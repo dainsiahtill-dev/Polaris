@@ -34,7 +34,7 @@ class SpeculationMetrics:
     @property
     def abandonment_ratio(self) -> float:
         """计算废弃率 = abandoned / (completed + abandoned + cancelled + failed)."""
-        denominator = self._completed_count + self._abandoned_count
+        denominator = self._completed_count + self._abandoned_count + self._cancelled_count + self._failed_count
         if denominator == 0:
             return 0.0
         return self._abandoned_count / denominator
@@ -156,6 +156,26 @@ class SpeculationMetrics:
                 turn_id="",
                 task_id=task_id,
                 action="fail",
+                reason=error,
+            )
+        )
+
+    def record_timeout(self, task_id: str, error: str) -> None:
+        """登记一次真实的 deadline miss（推测任务超时）.
+
+        超时既计入失败桶（``failed``，用于 abandonment/总量统计），也累加专门的
+        ``timed_out`` 计数器，使 :attr:`timeout_ratio` 反映真实超时压力——
+        BudgetGovernor 的 ``timeout_ratio > 0.2`` 降级才能据此触发（此前所有 deadline
+        miss 都落进 ``record_failed`` 的 except 分支，``timed_out`` 恒为 0、背压失效）。
+        """
+        self._failed_count += 1
+        self._timed_out_count += 1
+        emit(
+            SpeculationEvent(
+                event_type="speculation.shadow.timed_out",
+                turn_id="",
+                task_id=task_id,
+                action="timeout",
                 reason=error,
             )
         )

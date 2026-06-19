@@ -29,6 +29,7 @@ from polaris.cells.roles.kernel.internal.speculation.task_group import (
     TurnScopedTaskGroup,
 )
 from polaris.cells.roles.kernel.internal.speculative_executor import (
+    ShadowTimeoutError,
     SpeculativeExecutor,
 )
 
@@ -218,6 +219,15 @@ class ShadowTaskRegistry:
                     record.finished_at = time.monotonic()
                     record.cancel_reason = str(exc) if str(exc) else "cancelled"
                     self._metrics.record_cancel(task_id, record.cancel_reason)
+                    raise
+                except ShadowTimeoutError as exc:
+                    # A real deadline miss: record it as a timeout (which also counts
+                    # as failed) so timeout_ratio reflects genuine timeouts and the
+                    # BudgetGovernor backpressure can actually fire.
+                    record.state = ShadowTaskState.FAILED
+                    record.error = repr(exc)
+                    record.finished_at = time.monotonic()
+                    self._metrics.record_timeout(task_id, record.error)
                     raise
                 except Exception as exc:
                     record.state = ShadowTaskState.FAILED

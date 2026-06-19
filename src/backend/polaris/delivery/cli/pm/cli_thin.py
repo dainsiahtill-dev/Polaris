@@ -81,20 +81,44 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def run_pm_console(workspace: str, loop: bool, directive: str | None) -> None:
+def _build_pm_command(
+    workspace: str,
+    directive: str | None,
+    start_from: str | None,
+) -> list[str]:
+    """Build the launched PM process command, forwarding optional flags.
+
+    ``--directive`` and ``--start-from`` are only appended when supplied so the
+    launched ``cli_thin`` process actually receives (and re-parses) them instead
+    of silently dropping the operator's intent.
+    """
+    command = [
+        sys.executable,
+        "-m",
+        "polaris.delivery.cli.pm.cli_thin",
+        "--workspace",
+        workspace,
+    ]
+    if directive:
+        command += ["--directive", directive]
+    if start_from:
+        command += ["--start-from", start_from]
+    return command
+
+
+async def run_pm_console(
+    workspace: str,
+    loop: bool,
+    directive: str | None,
+    start_from: str | None = None,
+) -> None:
     """Run PM in console mode."""
     RunMode, RuntimeOrchestrator, ServiceDefinition, _ = _bootstrap_backend_import_path()  # noqa: N806
 
     orchestrator = RuntimeOrchestrator()
     service_def = ServiceDefinition(
         name="pm",
-        command=[
-            sys.executable,
-            "-m",
-            "polaris.delivery.cli.pm.cli_thin",
-            "--workspace",
-            workspace,
-        ],
+        command=_build_pm_command(workspace, directive, start_from),
         workspace=Path(workspace),
         run_mode=RunMode.LOOP if loop else RunMode.SINGLE,
     )
@@ -112,7 +136,7 @@ def main() -> int:
 
     workspace = str(parsed.workspace or os.getcwd())
 
-    asyncio.run(run_pm_console(workspace, parsed.loop, parsed.directive))
+    asyncio.run(run_pm_console(workspace, parsed.loop, parsed.directive, parsed.start_from))
     return 0
 
 

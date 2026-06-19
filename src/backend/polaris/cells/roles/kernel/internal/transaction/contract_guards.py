@@ -850,9 +850,7 @@ def apply_delivery_mode_filter(decision: TurnDecision, ledger: TurnLedger) -> Tu
     new_batch = ToolBatch(
         batch_id=tool_batch.get("batch_id", BatchId(f"{turn_id_val}_filtered")),
         invocations=filtered,
-        parallel_readonly=[
-            inv for inv in filtered if inv.get("execution_mode") == ToolExecutionMode.READONLY_PARALLEL
-        ],
+        parallel_readonly=[inv for inv in filtered if inv.get("execution_mode") == ToolExecutionMode.READONLY_PARALLEL],
         readonly_serial=[inv for inv in filtered if inv.get("execution_mode") == ToolExecutionMode.READONLY_SERIAL],
         serial_writes=[],
         async_receipts=[inv for inv in filtered if inv.get("execution_mode") == ToolExecutionMode.ASYNC_RECEIPT],

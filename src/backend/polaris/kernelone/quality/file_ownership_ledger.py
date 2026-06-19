@@ -26,8 +26,12 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
+from polaris.kernelone.fs.jsonl.locking import file_lock
 from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.storage.io_paths import resolve_artifact_path
 
@@ -35,6 +39,37 @@ logger = logging.getLogger(__name__)
 
 _LEDGER_REL_PATH = "runtime/contracts/file_ownership_ledger.json"
 _SCHEMA_VERSION = "file-ownership-ledger/1"
+
+# In-process serialization. The cross-process file lock below is keyed by a lock
+# FILE created with O_CREAT|O_EXCL, which serializes other PROCESSES but does not
+# serialize threads in THIS process (the first thread creates the lock file, then
+# every sibling thread sees FileExistsError and spins until timeout). A thread lock
+# is therefore required in addition, to serialize the concurrent CEConsumer fission
+# threads (KERNELONE_TASK_MARKET_ROLE_POOLS includes chief_engineer + concurrency>1).
+_PROCESS_LOCK = threading.Lock()
+
+
+@contextmanager
+def _ledger_write_lock(ledger_path: str) -> Iterator[None]:
+    """Serialize the whole load-modify-write of the ledger keyed by its path.
+
+    Guards against concurrent fissions (CEConsumer threads, possibly across
+    processes) racing on read-modify-write: ``write_json_atomic`` makes the FILE
+    write atomic but NOT the read-modify-write, so without this guard two concurrent
+    writers both load the same baseline and the later write clobbers the earlier's
+    first-writer-wins entries (lost write). The thread lock serializes threads in
+    this process; the cross-process ``file_lock`` serializes other processes.
+
+    The cross-process lock uses a DISTINCT ``.rmw.lock`` sidecar — NOT the
+    ``{path}.lock`` that ``write_json_atomic`` acquires internally — so the inner
+    atomic write can still take its own lock without self-deadlocking. Best-effort:
+    a failed cross-process acquisition still runs the body (degrading to the prior
+    behaviour) rather than aborting fission.
+    """
+    with _PROCESS_LOCK, file_lock(f"{ledger_path}.rmw.lock") as acquired:
+        if not acquired:
+            logger.warning("file ownership ledger rmw lock not acquired (non-fatal); proceeding")
+        yield
 
 
 def _normalize_target(raw: Any) -> str:
@@ -77,27 +112,33 @@ def record_file_owners(
     """
     if not steps:
         return
-    ledger = _load(workspace, cache_root)
-    files: dict[str, Any] = ledger["files"]
     parent = str(parent_task_id or "").strip()
-    changed = False
-    for step in steps:
-        target = _normalize_target(step.get("target_file"))
-        step_id = str(step.get("step_id") or "").strip()
-        if not target or not step_id:
-            continue
-        entry = files.get(target)
-        if isinstance(entry, dict) and str(entry.get("owner_step_id") or "").strip():
-            continue  # first-writer-wins: never reassign an owned file
-        files[target] = {"owner_step_id": step_id, "owner_parent": parent}
-        changed = True
-    if not changed:
-        return
-    ledger["schema_version"] = _SCHEMA_VERSION
-    try:
-        write_json_atomic(_ledger_path(workspace, cache_root), ledger)
-    except OSError as exc:
-        logger.warning("file ownership ledger write failed (non-fatal): %s", exc)
+    ledger_path = _ledger_path(workspace, cache_root)
+    # Re-read UNDER the lock and add only still-absent keys at write time: the
+    # entire load-modify-write must be serialized, otherwise two concurrent
+    # fissions both load the same baseline and the later write clobbers the
+    # earlier's first-writer-wins entries (lost write).
+    with _ledger_write_lock(ledger_path):
+        ledger = _load(workspace, cache_root)
+        files: dict[str, Any] = ledger["files"]
+        changed = False
+        for step in steps:
+            target = _normalize_target(step.get("target_file"))
+            step_id = str(step.get("step_id") or "").strip()
+            if not target or not step_id:
+                continue
+            entry = files.get(target)
+            if isinstance(entry, dict) and str(entry.get("owner_step_id") or "").strip():
+                continue  # first-writer-wins: never reassign an owned file
+            files[target] = {"owner_step_id": step_id, "owner_parent": parent}
+            changed = True
+        if not changed:
+            return
+        ledger["schema_version"] = _SCHEMA_VERSION
+        try:
+            write_json_atomic(ledger_path, ledger)
+        except OSError as exc:
+            logger.warning("file ownership ledger write failed (non-fatal): %s", exc)
 
 
 def read_file_owners(

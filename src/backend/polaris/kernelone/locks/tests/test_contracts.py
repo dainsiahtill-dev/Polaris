@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 import tempfile
+import time
 
 import pytest
+from polaris.kernelone.constants import LOCK_STALE_THRESHOLD_SECONDS
 from polaris.kernelone.contracts.technical import LockOptions
 from polaris.kernelone.locks.contracts import FileLockAdapter
 
@@ -177,6 +181,67 @@ class TestFileLockAdapter:
         adapter = FileLockAdapter(lock_dir)
         result = await adapter.acquire("", "holder1", LockOptions(ttl_seconds=10))
         assert result.acquired is True
+
+    @pytest.mark.asyncio
+    async def test_persisted_timestamps_are_wall_clock(self, lock_dir: str) -> None:
+        """Regression: persisted expires_at must be wall-clock (epoch) seconds.
+
+        Before the fix, expires_at was stored as time.monotonic() whose
+        reference is undefined and resets at boot. We assert the persisted
+        value is close to a wall-clock epoch (time.time()) rather than a
+        process-uptime value, which is what causes cross-reboot deadlock.
+        """
+        adapter = FileLockAdapter(lock_dir)
+        before = time.time()
+        result = await adapter.acquire("resource1", "holder1", LockOptions(ttl_seconds=10))
+        after = time.time()
+        assert result.acquired is True
+
+        lock_path = os.path.join(lock_dir, "resource1.lock")
+        with open(lock_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+
+        # expires_at = acquired_at + ttl, so it must sit within the wall-clock
+        # window [before, after + ttl]. A monotonic value (process uptime) would
+        # be far smaller than current epoch and fail this bound.
+        assert before <= data["acquired_at"] <= after
+        assert before + 10 <= data["expires_at"] <= after + 10
+
+    @pytest.mark.asyncio
+    async def test_stale_pre_reboot_lock_is_reclaimable(self, lock_dir: str) -> None:
+        """Regression: a leftover lock from before a reboot must be reclaimable.
+
+        Simulate a state file persisted by a previous process/boot whose
+        acquired_at/expires_at are large monotonic-style values that, against
+        the current wall clock, are already expired/stale. The lock must be
+        reclaimable by a fresh holder rather than deadlocking forever.
+
+        Before the fix, comparisons used time.monotonic() (small after reboot)
+        vs a large persisted value, so expired/stale were both False forever
+        and is_held() returned True forever.
+        """
+        adapter = FileLockAdapter(lock_dir)
+        lock_path = os.path.join(lock_dir, "resource1.lock")
+
+        # Persisted wall-clock timestamps far in the past: well beyond TTL and
+        # the stale threshold, i.e. a dead holder that never released.
+        old = time.time() - (LOCK_STALE_THRESHOLD_SECONDS + 3600)
+        with open(lock_path, "w", encoding="utf-8") as fh:
+            json.dump(
+                {"holder_id": "dead_holder", "acquired_at": old, "expires_at": old + 10},
+                fh,
+            )
+
+        # The dead lock must not appear held...
+        assert await adapter.is_held("resource1") is False
+        # ...and a fresh holder must be able to reclaim it.
+        result = await adapter.acquire(
+            "resource1",
+            "holder_new",
+            LockOptions(ttl_seconds=10, timeout_seconds=0.5),
+        )
+        assert result.acquired is True
+        assert result.holder_id == "holder_new"
 
     @pytest.mark.asyncio
     async def test_timeout_wait(self, lock_dir: str) -> None:

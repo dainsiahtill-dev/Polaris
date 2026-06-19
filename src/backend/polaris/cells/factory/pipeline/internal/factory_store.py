@@ -63,6 +63,15 @@ def _acquire_lock_with_timeout(lock: threading.Lock, timeout: float) -> bool:
     return result
 
 
+def _release_acquired_lock_from_task(task: asyncio.Future[bool], lock: threading.Lock) -> None:
+    try:
+        acquired = bool(task.result())
+    except (asyncio.CancelledError, OSError, RuntimeError, ValueError):
+        return
+    if acquired:
+        lock.release()
+
+
 @asynccontextmanager
 async def _acquire_file_lock(file_path: Path, timeout: float = 5.0) -> Any:
     """Acquire/release a cross-loop lock without blocking the event loop.
@@ -84,13 +93,16 @@ async def _acquire_file_lock(file_path: Path, timeout: float = 5.0) -> Any:
     """
     lock = _get_run_file_lock(file_path)
 
+    acquire_task = asyncio.ensure_future(asyncio.to_thread(_acquire_lock_with_timeout, lock, timeout))
     try:
-        # Wrap in wait_for to apply timeout protection
-        await asyncio.wait_for(
-            asyncio.to_thread(_acquire_lock_with_timeout, lock, timeout),
-            timeout=timeout + 1.0,  # Slightly longer than lock timeout for safety margin
-        )
+        await asyncio.wait_for(asyncio.shield(acquire_task), timeout=timeout + 1.0)
+    except asyncio.CancelledError:
+        acquire_task.add_done_callback(lambda task: _release_acquired_lock_from_task(task, lock))
+        raise
+    except FileLockTimeoutError:
+        raise FileLockTimeoutError(file_path, timeout) from None
     except asyncio.TimeoutError:
+        acquire_task.add_done_callback(lambda task: _release_acquired_lock_from_task(task, lock))
         raise FileLockTimeoutError(file_path, timeout) from None
 
     try:

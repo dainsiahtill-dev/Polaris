@@ -10,22 +10,32 @@ Covers:
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
-
-import pytest
-
-from polaris.delivery.cli.director.cli_thin import create_parser as director_thin_create_parser, main as director_thin_main
 
 # Import cli_compat directly to bypass __init__.py circular import issues
 import importlib.util
 import sys
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+from polaris.delivery.cli.director.cli_thin import (
+    create_parser as director_thin_create_parser,
+    main as director_thin_main,
+)
 
 _compat_spec = importlib.util.spec_from_file_location(
     "cli_compat",
-    str(Path(__file__).resolve().parents[7] / "src" / "backend" / "polaris" / "delivery" / "cli" / "director" / "cli_compat.py"),
+    str(
+        Path(__file__).resolve().parents[7]
+        / "src"
+        / "backend"
+        / "polaris"
+        / "delivery"
+        / "cli"
+        / "director"
+        / "cli_compat.py"
+    ),
 )
 _cli_compat_mod = importlib.util.module_from_spec(_compat_spec)  # type: ignore[arg-type]
 sys.modules["cli_compat"] = _cli_compat_mod
@@ -85,17 +95,40 @@ class TestDirectorThinCli:
         args = director_thin_parser.parse_args(["--max-workers", "4"])
         assert args.max_workers == 4
 
-    def test_director_thin_parser_has_host(self, director_thin_parser: argparse.ArgumentParser) -> None:
-        """director-thin parser must accept --host."""
-        args = director_thin_parser.parse_args(["--host", "0.0.0.0"])
+    def test_director_thin_parser_serve_has_host(self, director_thin_parser: argparse.ArgumentParser) -> None:
+        """director-thin 'serve' subcommand must accept --host."""
+        args = director_thin_parser.parse_args(["serve", "--host", "0.0.0.0"])
+        assert args.task_command == "serve"
         assert args.host == "0.0.0.0"
 
-    def test_director_thin_parser_has_port(self, director_thin_parser: argparse.ArgumentParser) -> None:
-        """director-thin parser must accept --port."""
-        args = director_thin_parser.parse_args(["--port", "8080"])
+    def test_director_thin_parser_serve_has_port(self, director_thin_parser: argparse.ArgumentParser) -> None:
+        """director-thin 'serve' subcommand must accept --port."""
+        args = director_thin_parser.parse_args(["serve", "--port", "8080"])
+        assert args.task_command == "serve"
         assert args.port == 8080
 
-    def test_director_thin_parser_task_create_requires_subject(self, director_thin_parser: argparse.ArgumentParser) -> None:
+    def test_director_thin_parser_serve_defaults(self, director_thin_parser: argparse.ArgumentParser) -> None:
+        """director-thin 'serve' subcommand host/port defaults must be correct."""
+        args = director_thin_parser.parse_args(["serve"])
+        assert args.task_command == "serve"
+        assert args.host == "127.0.0.1"
+        assert args.port == 49978
+
+    def test_director_thin_parser_console_backend_distinct_dest(
+        self, director_thin_parser: argparse.ArgumentParser
+    ) -> None:
+        """FINDING 3 regression: explicit top-level --backend must survive the
+        console subcommand instead of being clobbered by the subparser default."""
+        args = director_thin_parser.parse_args(["--backend", "plain", "console"])
+        assert args.task_command == "console"
+        # Top-level choice is preserved (the subparser uses a distinct dest).
+        assert args.backend == "plain"
+        # Console-level backend is opt-in and unset here.
+        assert args.console_backend is None
+
+    def test_director_thin_parser_task_create_requires_subject(
+        self, director_thin_parser: argparse.ArgumentParser
+    ) -> None:
         """task create without --subject must fail."""
         with pytest.raises(SystemExit):
             director_thin_parser.parse_args(["task", "create"])
@@ -105,7 +138,8 @@ class TestDirectorThinCli:
         args = director_thin_parser.parse_args(
             ["task", "create", "--subject", "Fix bug", "--description", "A bug", "--priority", "high"]
         )
-        assert args.task_command == "create"
+        assert args.task_command == "task"
+        assert args.task_action == "create"
         assert args.subject == "Fix bug"
         assert args.description == "A bug"
         assert args.priority == "high"
@@ -117,10 +151,9 @@ class TestDirectorThinCli:
         assert args.backend == "auto"
         assert args.iterations == 1
         assert args.max_workers == 1
-        assert args.host == "127.0.0.1"
-        assert args.port == 49978
-        assert args.serve is None
         assert args.task_command is None
+        # 'serve' is no longer a top-level positional; it is a real subcommand.
+        assert not hasattr(args, "serve")
 
     def test_director_thin_main_help_exits_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """director-thin main(['--help']) must raise SystemExit(0)."""
@@ -134,24 +167,28 @@ class TestDirectorThinCli:
         create_calls: list[dict[str, Any]] = []
 
         async def fake_create_task(workspace: str, subject: str, description: str, priority: str) -> None:
-            create_calls.append({"workspace": workspace, "subject": subject, "description": description, "priority": priority})
+            create_calls.append(
+                {"workspace": workspace, "subject": subject, "description": description, "priority": priority}
+            )
 
         monkeypatch.setattr(
             "polaris.delivery.cli.director.cli_thin.create_task",
             fake_create_task,
         )
-        monkeypatch.setattr(sys, "argv", ["director-thin", "task", "create", "--subject", "Test", "--priority", "medium"])
+        monkeypatch.setattr(
+            sys, "argv", ["director-thin", "task", "create", "--subject", "Test", "--priority", "medium"]
+        )
         code = director_thin_main()
         assert code == 0
         assert len(create_calls) == 1
         assert create_calls[0]["subject"] == "Test"
 
-    def test_director_thin_main_serve_flag(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """director-thin server mode via explicit host/port must enter server mode.
+    def test_director_thin_main_serve_subcommand_reaches_server(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FINDING 1 regression: parsing REAL argv ['serve', ...] through the
+        real parser must reach run_director_server with the right host/port.
 
-        Note: The parser has a known design issue where the 'serve' positional
-        conflicts with the task subcommand parser. We test the dispatch logic
-        directly by setting parsed.serve.
+        This exercises the actual argparse path (no monkeypatched create_parser),
+        which the old 'serve' positional made unreachable (exit code 2).
         """
         server_calls: list[dict[str, Any]] = []
 
@@ -162,46 +199,88 @@ class TestDirectorThinCli:
             "polaris.delivery.cli.director.cli_thin.run_director_server",
             fake_run_director_server,
         )
-        # Simulate parsed args with serve set
-        import argparse
-        parsed = argparse.Namespace(
-            workspace="/tmp/ws",
-            host="0.0.0.0",
-            port=9000,
-            serve="serve",
-            task_command=None,
-            iterations=1,
-            max_workers=1,
-        )
         monkeypatch.setattr(
-            "polaris.delivery.cli.director.cli_thin.create_parser",
-            lambda: MagicMock(parse_args=lambda _: parsed),
+            sys,
+            "argv",
+            ["director-thin", "--workspace", "/tmp/ws", "serve", "--host", "0.0.0.0", "--port", "9000"],
         )
-        monkeypatch.setattr(sys, "argv", ["director-thin", "serve"])
         code = director_thin_main()
         assert code == 0
         assert len(server_calls) == 1
+        assert server_calls[0]["workspace"] == "/tmp/ws"
         assert server_calls[0]["host"] == "0.0.0.0"
         assert server_calls[0]["port"] == 9000
 
-    def test_director_thin_main_default_console_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """director-thin without serve or task must enter console mode."""
+    def test_director_thin_main_console_mode_success_returns_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FINDING 2: a successful console run must return 0."""
         console_calls: list[dict[str, Any]] = []
 
-        async def fake_run_director_console(workspace: str, iterations: int, max_workers: int) -> None:
+        async def fake_run_director_console(workspace: str, iterations: int, max_workers: int) -> bool:
             console_calls.append({"workspace": workspace, "iterations": iterations, "max_workers": max_workers})
+            return True
 
         monkeypatch.setattr(
             "polaris.delivery.cli.director.cli_thin.run_director_console",
             fake_run_director_console,
         )
-        monkeypatch.setattr(sys, "argv", ["director-thin", "--workspace", "/tmp/ws", "--iterations", "2", "--max-workers", "3"])
+        monkeypatch.setattr(
+            sys, "argv", ["director-thin", "--workspace", "/tmp/ws", "--iterations", "2", "--max-workers", "3"]
+        )
         code = director_thin_main()
         assert code == 0
         assert len(console_calls) == 1
         assert console_calls[0]["workspace"] == "/tmp/ws"
         assert console_calls[0]["iterations"] == 2
         assert console_calls[0]["max_workers"] == 3
+
+    def test_director_thin_main_console_mode_failure_returns_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FINDING 2 regression: a failed console iteration must fail closed (return 1)."""
+
+        async def fake_run_director_console(workspace: str, iterations: int, max_workers: int) -> bool:
+            return False
+
+        monkeypatch.setattr(
+            "polaris.delivery.cli.director.cli_thin.run_director_console",
+            fake_run_director_console,
+        )
+        monkeypatch.setattr(sys, "argv", ["director-thin", "--workspace", "/tmp/ws"])
+        assert director_thin_main() == 1
+
+    def test_director_thin_main_console_exception_returns_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FINDING 2 regression: an exception during the run must fail closed (return 1)."""
+
+        async def fake_run_director_console(workspace: str, iterations: int, max_workers: int) -> bool:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            "polaris.delivery.cli.director.cli_thin.run_director_console",
+            fake_run_director_console,
+        )
+        monkeypatch.setattr(sys, "argv", ["director-thin", "--workspace", "/tmp/ws"])
+        assert director_thin_main() == 1
+
+    def test_run_director_console_aggregates_iteration_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FINDING 2: run_director_console must return False if any iteration fails."""
+        from polaris.delivery.cli.director import cli_thin
+
+        results = [{"success": True}, {"success": False}]
+
+        class _FakeService:
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                pass
+
+            async def run_iteration(self, iteration: int = 1) -> dict[str, Any]:
+                return results[iteration - 1]
+
+        monkeypatch.setattr(
+            "polaris.delivery.cli.director.director_service.DirectorService",
+            _FakeService,
+        )
+
+        import asyncio
+
+        assert asyncio.run(cli_thin.run_director_console("/tmp/ws", 2, 1)) is False
+        assert asyncio.run(cli_thin.run_director_console("/tmp/ws", 1, 1)) is True
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +322,9 @@ class TestDirectorCompatCli:
         args = director_compat_parser.parse_args(["--port", "8080"])
         assert args.port == 8080
 
-    def test_director_compat_parser_task_create_requires_subject(self, director_compat_parser: argparse.ArgumentParser) -> None:
+    def test_director_compat_parser_task_create_requires_subject(
+        self, director_compat_parser: argparse.ArgumentParser
+    ) -> None:
         """task create without --subject must fail."""
         with pytest.raises(SystemExit):
             director_compat_parser.parse_args(["task", "create"])
@@ -285,14 +366,18 @@ class TestDirectorCompatCli:
         create_calls: list[dict[str, Any]] = []
 
         async def fake_create_task(workspace: str, subject: str, description: str, priority: str) -> None:
-            create_calls.append({"workspace": workspace, "subject": subject, "description": description, "priority": priority})
+            create_calls.append(
+                {"workspace": workspace, "subject": subject, "description": description, "priority": priority}
+            )
 
         monkeypatch.setattr(
             _cli_compat_mod,
             "create_task",
             fake_create_task,
         )
-        monkeypatch.setattr(sys, "argv", ["director-compat", "task", "create", "--subject", "Test", "--priority", "medium"])
+        monkeypatch.setattr(
+            sys, "argv", ["director-compat", "task", "create", "--subject", "Test", "--priority", "medium"]
+        )
         code = director_compat_main()
         assert code == 0
         assert len(create_calls) == 1
@@ -316,6 +401,7 @@ class TestDirectorCompatCli:
             fake_run_director_server,
         )
         import argparse
+
         parsed = argparse.Namespace(
             workspace="/tmp/ws",
             host="0.0.0.0",
@@ -349,7 +435,9 @@ class TestDirectorCompatCli:
             "run_director_console",
             fake_run_director_console,
         )
-        monkeypatch.setattr(sys, "argv", ["director-compat", "--workspace", "/tmp/ws", "--iterations", "2", "--max-workers", "3"])
+        monkeypatch.setattr(
+            sys, "argv", ["director-compat", "--workspace", "/tmp/ws", "--iterations", "2", "--max-workers", "3"]
+        )
         code = director_compat_main()
         assert code == 0
         assert len(console_calls) == 1
@@ -399,6 +487,7 @@ class TestDirectorCompatCli:
                 pass
 
         import polaris.cells.director.execution.public.contracts as _contracts_mod
+
         _contracts_mod.DirectorConfig = FakeConfig  # type: ignore[attr-defined]
 
         import asyncio
@@ -447,6 +536,7 @@ class TestDirectorCompatCli:
                 pass
 
         import polaris.cells.director.execution.public.contracts as _contracts_mod
+
         _contracts_mod.DirectorConfig = FakeConfig  # type: ignore[attr-defined]
 
         import asyncio

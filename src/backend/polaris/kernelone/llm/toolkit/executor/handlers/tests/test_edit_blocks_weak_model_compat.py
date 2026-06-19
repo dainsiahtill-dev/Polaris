@@ -12,6 +12,7 @@ from polaris.kernelone.llm.toolkit.executor import AgentAccelToolExecutor
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
     _coerce_line_no,
     _handle_edit_blocks,
+    _handle_edit_file,
     _handle_read_file,
     _handle_write_file,
     _has_search_replace_markers,
@@ -526,3 +527,111 @@ def test_write_file_plain_js_error_keeps_narrow_edit_suggestion(tmp_path: Path) 
     assert "Code syntax validation failed" in result.get("error", "")
     assert "edit_blocks" in result.get("suggestion", "")
     assert "append_to_file" not in result.get("suggestion", "")
+
+
+# ----- EOF (no trailing newline) line-range edits -----
+
+
+def test_line_range_edit_last_line_no_trailing_newline(tmp_path: Path) -> None:
+    """Finding 1 regression: editing the final line of a file whose last line has
+    no trailing newline must NOT silently drop the synthesized block.
+
+    Before the fix the divider ``====`` was glued onto the final content line
+    (``return self.content====``) so the parser's full-line divider regex never
+    matched, the block parsed to nothing, and the edit silently failed.
+    """
+    # File whose LAST line has no trailing newline.
+    source = "class C:\n    def value(self):\n        return self.content"
+    (tmp_path / "eof.py").write_text(source, encoding="utf-8")
+    assert not source.endswith("\n")
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+
+    result = _handle_edit_blocks(
+        ex,
+        file="eof.py",
+        start=3,
+        end=3,
+        replace="        return self.content or b''",
+    )
+
+    assert result.get("ok") is True, result
+    assert result.get("files_modified") == 1, result
+    text = (tmp_path / "eof.py").read_text(encoding="utf-8")
+    # Edit applied exactly to the final line.
+    assert text == "class C:\n    def value(self):\n        return self.content or b''"
+    # Delimiter newline was NOT written to disk (EOF shape preserved).
+    assert not text.endswith("\n")
+
+
+# ----- edit_file single-bound line edits -----
+
+
+def test_edit_file_start_line_without_end_edits_only_that_line(tmp_path: Path) -> None:
+    """Finding 2 regression: edit_file(start_line=N) with no end_line must edit
+    ONLY line N, not delete every line from N to EOF.
+
+    The tool prompt documents start_line/end_line as optional, so single-bound
+    calls are expected. Defaulting end to total_lines truncated the file tail.
+    """
+    body = "".join(f"line {n}\n" for n in range(1, 201))  # 200 lines
+    (tmp_path / "big.txt").write_text(body, encoding="utf-8")
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+
+    result = _handle_edit_file(ex, file="big.txt", start_line=10, content="x=1\n")
+
+    assert result.get("ok") is True, result
+    text = (tmp_path / "big.txt").read_text(encoding="utf-8")
+    out_lines = text.splitlines()
+    # The file did NOT shrink: still ~200 lines (tail preserved).
+    assert len(out_lines) == 200, len(out_lines)
+    assert out_lines[9] == "x=1"  # line 10 (0-indexed 9) replaced
+    assert out_lines[8] == "line 9"  # line 9 untouched
+    assert out_lines[10] == "line 11"  # line 11 untouched
+    assert out_lines[-1] == "line 200"  # EOF preserved
+
+
+# ----- Finding 3: atomic multi-file commit -----
+
+
+def test_edit_blocks_multifile_aborts_atomically_on_second_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Finding 3 regression: two-file edit where the 2nd file fails to stage must
+    leave the 1st file UNCHANGED on disk (no partial apply) and return ok:false.
+
+    Previously Phase 2 wrote+renamed each file in turn, so a later-file failure
+    committed earlier files while still reporting failure (partial apply).
+    """
+    from polaris.kernelone.llm.toolkit.executor.handlers import filesystem as fs
+
+    (tmp_path / "a.txt").write_text("alpha-original\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("beta-original\n", encoding="utf-8")
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+
+    blocks = (
+        "<<<< SEARCH:a.txt\nalpha-original\n====\nalpha-NEW\n>>>> REPLACE\n"
+        "<<<< SEARCH:b.txt\nbeta-original\n====\nbeta-NEW\n>>>> REPLACE\n"
+    )
+
+    real_stage = fs._stage_temp_verify
+    calls: list[str] = []
+
+    def flaky_stage(target_path: str, content: str, *, encoding: str = "utf-8"):
+        calls.append(target_path)
+        if target_path.endswith("b.txt"):
+            return {"ok": False, "error": "forced verify failure for b.txt"}
+        return real_stage(target_path, content, encoding=encoding)
+
+    monkeypatch.setattr(fs, "_stage_temp_verify", flaky_stage)
+
+    result = _handle_edit_blocks(ex, blocks=blocks)
+
+    assert result.get("ok") is False, result
+    assert result.get("files_modified") == 0, result
+    # The first (otherwise-valid) file must NOT have been committed.
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "alpha-original\n"
+    assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "beta-original\n"
+    # No leftover temp files in the workspace.
+    leftover = [p.name for p in tmp_path.iterdir() if ".tmp" in p.name]
+    assert leftover == [], leftover

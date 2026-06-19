@@ -82,38 +82,40 @@ def create_parser() -> argparse.ArgumentParser:
         help="Maximum parallel workers (default: 1)",
     )
 
-    # Server options
-    parser.add_argument(
-        "serve",
-        nargs="?",
-        help="Start as long-running server",
-    )
-    parser.add_argument(
+    # Subcommands
+    task_subparsers = parser.add_subparsers(dest="task_command", help="Subcommands")
+
+    # Server subcommand
+    serve_parser = task_subparsers.add_parser("serve", help="Start as long-running server")
+    serve_parser.add_argument(
         "--host",
         type=str,
         default="127.0.0.1",
         help="Server bind host (default: 127.0.0.1)",
     )
-    parser.add_argument(
+    serve_parser.add_argument(
         "--port",
         type=int,
         default=49978,
         help="Server port (default: 49978)",
     )
 
-    # Task subcommand
-    task_subparsers = parser.add_subparsers(dest="task_command", help="Task commands")
     console_parser = task_subparsers.add_parser("console", help="Open the unified role terminal console")
     console_parser.add_argument("--role", default="director", help="Role to run in the terminal console")
     console_parser.add_argument(
         "--backend",
+        dest="console_backend",
         choices=["auto", "plain"],
-        default="auto",
-        help="Terminal rendering backend (default: auto)",
+        default=None,
+        help="Terminal rendering backend (default: inherit top-level --backend)",
     )
     console_parser.add_argument("--session-id", help="Existing role session id")
     console_parser.add_argument("--session-title", help="Title for a new role session")
-    task_create = task_subparsers.add_parser("create", help="Create a new task")
+
+    # Task command group: ``task create --subject ...`` (matches the docstring).
+    task_parser = task_subparsers.add_parser("task", help="Task commands")
+    task_action_subparsers = task_parser.add_subparsers(dest="task_action", help="Task actions")
+    task_create = task_action_subparsers.add_parser("create", help="Create a new task")
     task_create.add_argument("--subject", required=True, help="Task subject")
     task_create.add_argument("--description", help="Task description")
     task_create.add_argument("--priority", choices=["low", "medium", "high"], default="medium", help="Task priority")
@@ -121,8 +123,13 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-async def run_director_console(workspace: str, iterations: int, max_workers: int) -> None:
-    """Run director in console mode."""
+async def run_director_console(workspace: str, iterations: int, max_workers: int) -> bool:
+    """Run director in console mode.
+
+    Returns:
+        ``True`` only if every iteration reported success; ``False`` otherwise.
+        Mirrors ``director_service.main`` fail-closed semantics (CLAUDE.md §5).
+    """
     from polaris.delivery.cli.director.director_service import DirectorService
 
     service = DirectorService(
@@ -130,9 +137,12 @@ async def run_director_console(workspace: str, iterations: int, max_workers: int
         max_workers=max_workers,
         execution_mode="parallel" if max_workers > 1 else "serial",
     )
+    ok = True
     for iteration in range(1, max(1, iterations) + 1):
         result = await service.run_iteration(iteration=iteration)
         logger.info("Director iteration result: %s", result)
+        ok = ok and bool(result.get("success", False))
+    return ok
 
 
 async def run_director_server(workspace: str, host: str, port: int) -> None:
@@ -189,29 +199,46 @@ def main() -> int:
 
     workspace = str(parsed.workspace or os.getcwd())
 
-    if parsed.task_command == "create":
-        asyncio.run(create_task(workspace, parsed.subject, parsed.description, parsed.priority))
+    if parsed.task_command == "task":
+        if getattr(parsed, "task_action", None) != "create":
+            parser.error("usage: director-thin task create --subject SUBJECT")
+        try:
+            asyncio.run(create_task(workspace, parsed.subject, parsed.description, parsed.priority))
+        except (RuntimeError, ValueError, OSError):
+            logger.exception("Director task creation failed")
+            return 1
         return 0
 
     if parsed.task_command == "console":
         from polaris.delivery.cli import terminal_console
 
+        # The console subparser's --backend is opt-in (dest="console_backend");
+        # fall back to the top-level --backend when it is not given explicitly.
+        resolved_backend = parsed.console_backend if parsed.console_backend is not None else parsed.backend
         return int(
             terminal_console.run_director_console(
                 workspace=str(Path(workspace).resolve()),
                 role=str(parsed.role or "director"),
-                backend=str(parsed.backend or "auto"),
+                backend=str(resolved_backend or "auto"),
                 session_id=parsed.session_id,
                 session_title=parsed.session_title,
             )
         )
 
-    if parsed.serve == "serve" or parsed.task_command == "serve":
-        asyncio.run(run_director_server(workspace, parsed.host, parsed.port))
+    if parsed.task_command == "serve":
+        try:
+            asyncio.run(run_director_server(workspace, parsed.host, parsed.port))
+        except (RuntimeError, ValueError, OSError):
+            logger.exception("Director server terminated abnormally")
+            return 1
         return 0
 
-    asyncio.run(run_director_console(workspace, parsed.iterations, parsed.max_workers))
-    return 0
+    try:
+        ok = asyncio.run(run_director_console(workspace, parsed.iterations, parsed.max_workers))
+    except (RuntimeError, ValueError, OSError):
+        logger.exception("Director console run failed")
+        return 1
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

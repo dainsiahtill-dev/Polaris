@@ -204,3 +204,40 @@ describe('runtimeSocketManager fast-open behavior', () => {
     });
   });
 });
+
+describe('runtimeSocketManager connection coalescing', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    socket = createMockSocket();
+    mockConnectWebSocket.mockReset();
+
+    const runtimeModule = await import('./runtimeSocketManager');
+    manager = runtimeModule.runtimeSocketManager;
+  });
+
+  afterEach(() => {
+    manager.close();
+    vi.clearAllMocks();
+  });
+
+  it('does not create a second WebSocket while the first connection is still pending', async () => {
+    let resolveSocket: ((value: WebSocket) => void) | null = null;
+    mockConnectWebSocket.mockReturnValue(
+      new Promise<WebSocket>((resolve) => {
+        resolveSocket = resolve;
+      }),
+    );
+
+    manager.start();
+    manager.start();
+
+    expect(mockConnectWebSocket).toHaveBeenCalledTimes(1);
+
+    resolveSocket?.(socket as unknown as WebSocket);
+    await flushMicrotasks();
+
+    socket.readyState = WebSocket.OPEN;
+    socket.onopen?.(new Event('open'));
+    expect(manager.getState().connected).toBe(true);
+  });
+});

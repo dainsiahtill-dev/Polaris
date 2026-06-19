@@ -482,6 +482,24 @@ class TurnTransactionController:
         2. 最近 3 轮历史用户消息中存在 MATERIALIZE_CHANGES 意图
         3. 无显式 [mode:analyze] 等降级指令
         """
+        # 条件 3：最新消息本身若是否定突变（如"不要修改"）或显式 analyze/propose
+        # 降级标记，则绝不继承历史 MATERIALIZE 意图——否则会覆盖用户当下明确的
+        # 降级请求并重新打开写入（fail-open）。复用 intent_classifier 的判定，
+        # 避免另造正则。
+        from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
+            _detect_explicit_mode_marker,
+            _is_negated_mutation,
+        )
+
+        if _is_negated_mutation(latest_user_request):
+            return None
+        explicit_marker = _detect_explicit_mode_marker(latest_user_request.lower())
+        if explicit_marker is not None and explicit_marker.mode in (
+            DeliveryMode.ANALYZE_ONLY,
+            DeliveryMode.PROPOSE_PATCH,
+        ):
+            return None
+
         continuation_shortcuts: tuple[str, ...] = (
             "继续",
             "开始",

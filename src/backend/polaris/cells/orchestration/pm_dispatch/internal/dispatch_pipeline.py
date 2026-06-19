@@ -984,6 +984,12 @@ def _drive_role_workers(
 
     results: list[list[dict[str, Any]]] = [[] for _ in workers]
     errors: list[BaseException] = []
+    # Per-worker "this worker raised at least one poll exception". Only a TOTAL
+    # failure (every worker errored and nothing was accomplished) re-raises to the
+    # caller's loop guard; a single transient poll blip on ONE backend while the
+    # market is otherwise drained must NOT crash the whole PM->CE->Director->QA
+    # mainline (see the docstring's F15 contract and the raise gate below).
+    errored = [False] * len(workers)
     # Per-worker "my last poll returned nothing"; all-True under the lock means the
     # whole pool is collectively idle and the drain is complete. Start False so a
     # worker never declares the pool idle before any sibling has polled once.
@@ -1079,6 +1085,7 @@ def _drive_role_workers(
                     batch = consumer.poll_once()
                 except Exception as exc:  # noqa: BLE001 — a transport error must not kill the whole pool
                     errors.append(exc)
+                    errored[index] = True
                     backend_failures += 1
                     _pool_trace(f"w{index} ({provider_id}) poll raised ({backend_failures}/{death_threshold}): {exc}")
                     if backend_failures >= death_threshold:
@@ -1213,11 +1220,14 @@ def _drive_role_workers(
     merged: list[dict[str, Any]] = []
     for batch in results:
         merged.extend(batch)
-    # Only surface an error to the caller's loop guard on TOTAL failure (every worker
-    # errored and nothing was accomplished); a single backend blip must not crash a
-    # dispatch that other backends carried.
+    # Only surface an error to the caller's loop guard on TOTAL failure (EVERY worker
+    # errored and nothing was accomplished); a single backend blip on one worker —
+    # e.g. a transient poll exception while the market is otherwise drained (zero
+    # claimable work, so no ok=True rows) — must not crash a dispatch the rest of the
+    # pool carried. Gating on ``all(errored)`` makes the code match the comment: a
+    # raise needs both no success AND no surviving (non-erroring) worker.
     any_success = any(isinstance(row, dict) and row.get("ok") for batch in results for row in batch)
-    if errors and not any_success:
+    if errors and not any_success and all(errored):
         raise errors[0]
     _log_director_backend_distribution(workers, merged)
     return merged

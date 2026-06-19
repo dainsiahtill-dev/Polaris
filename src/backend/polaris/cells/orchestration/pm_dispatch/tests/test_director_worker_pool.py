@@ -521,6 +521,62 @@ class TestF15MidRunResilience:
         assert elapsed < 0.05 * 2
 
 
+class TestTotalFailureRaiseGate:
+    """Finding 3: only a TOTAL failure (every worker errored, nothing accomplished)
+    re-raises. A transient poll blip on ONE worker while the market is otherwise
+    drained must NOT crash the whole PM->CE->Director->QA mainline loop."""
+
+    def teardown_method(self) -> None:
+        _teardown()
+
+    def test_drained_market_plus_one_transient_blip_does_not_raise(self, tmp_path: Path) -> None:
+        _install_config(
+            tmp_path,
+            {"provider_id": "prov-local", "model": "qwen", "provider_pool": ["prov-lan"], "concurrency": 2},
+        )
+
+        class _DrainedConsumer:
+            """Healthy backend with nothing to claim (market drained for it)."""
+
+            def poll_once(self) -> list[dict[str, Any]]:
+                return []
+
+        class _OneBlipConsumer:
+            """Raises exactly once (transient), then drains empty — below death_threshold."""
+
+            def __init__(self) -> None:
+                self._raised = False
+
+            def poll_once(self) -> list[dict[str, Any]]:
+                if not self._raised:
+                    self._raised = True
+                    raise RuntimeError("transient poll blip")
+                return []
+
+        workers: list[tuple[Any, str]] = [(_DrainedConsumer(), "prov-local"), (_OneBlipConsumer(), "prov-lan")]
+        # Must NOT raise: one worker drained cleanly, the other had a single blip.
+        merged = _drive_director_workers(workers, poll_interval=0.005)
+        assert merged == []
+
+    def test_every_worker_errors_still_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install_config(
+            tmp_path,
+            {"provider_id": "prov-local", "model": "qwen", "provider_pool": ["prov-lan"], "concurrency": 2},
+        )
+        monkeypatch.setenv("KERNELONE_DIRECTOR_WORKER_DEATH_THRESHOLD", "1")
+
+        class _BoomConsumer:
+            def poll_once(self) -> list[dict[str, Any]]:
+                raise RuntimeError("backend down")
+
+        workers: list[tuple[Any, str]] = [(_BoomConsumer(), "prov-local"), (_BoomConsumer(), "prov-lan")]
+        try:
+            _drive_director_workers(workers, poll_interval=0.005)
+            raise AssertionError("expected total failure to surface")
+        except RuntimeError as exc:
+            assert "backend down" in str(exc)
+
+
 class TestResilientPool:
     """Multi-LLM resilience: skip offline backends, auto-adjust the worker count."""
 
