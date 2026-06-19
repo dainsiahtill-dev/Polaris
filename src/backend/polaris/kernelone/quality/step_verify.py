@@ -23,6 +23,7 @@ lines removed; the missing information was literally a handful of bits.
 from __future__ import annotations
 
 import re
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,29 @@ def _strip_unquoted_natural_language_tail(value: str) -> str:
     return candidate
 
 
+def _rewrite_simple_bash_here_string_clause(clause: str) -> str:
+    marker_index = _first_unquoted_marker_index(clause, ("<<<",))
+    if marker_index is None:
+        return clause
+    command = clause[:marker_index].strip()
+    rhs = clause[marker_index + 3 :].strip()
+    if not command or not rhs:
+        return clause
+    try:
+        rhs_tokens = shlex.split(rhs, posix=True)
+    except ValueError:
+        return clause
+    if len(rhs_tokens) != 1:
+        return clause
+    return f"printf '%s\\n' {shlex.quote(rhs_tokens[0])} | {command}"
+
+
+def _normalize_bash_here_strings(value: str) -> str:
+    if "<<<" not in value:
+        return value
+    return " && ".join(_rewrite_simple_bash_here_string_clause(part) for part in value.split(" && "))
+
+
 def normalize_step_verify(raw_verify: Any) -> str:
     """Join array-shaped verify into one machine-runnable command.
 
@@ -98,7 +122,7 @@ def normalize_step_verify(raw_verify: Any) -> str:
     """
     if isinstance(raw_verify, (list, tuple)):
         raw_verify = " && ".join(str(part).strip() for part in raw_verify if str(part).strip())
-    return _strip_unquoted_natural_language_tail(str(raw_verify or "").strip())
+    return _normalize_bash_here_strings(_strip_unquoted_natural_language_tail(str(raw_verify or "").strip()))
 
 
 def split_verify_clauses(verify: str) -> list[str]:

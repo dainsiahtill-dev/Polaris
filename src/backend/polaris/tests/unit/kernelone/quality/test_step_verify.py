@@ -15,6 +15,7 @@ from polaris.kernelone.quality.step_verify import (
     collect_failing_clauses,
     first_failing_verify_clause,
     normalize_step_verify,
+    run_step_verify,
     split_verify_clauses,
     verify_has_structural_clause,
     verify_is_all_hollow,
@@ -65,6 +66,32 @@ class TestNormalize:
         assert normalize_step_verify(None) == ""
         assert normalize_step_verify([]) == ""
         assert normalize_step_verify(["", "  "]) == ""
+
+    def test_bash_here_string_rewrites_to_posix_pipe(self) -> None:
+        verify = 'python calculator.py <<< "1"'
+
+        assert normalize_step_verify(verify) == "printf '%s\\n' 1 | python calculator.py"
+
+    def test_bash_here_string_rewrites_inside_and_chain(self) -> None:
+        verify = 'python -c "print(1)" && python calculator.py <<< "2+3"'
+
+        assert normalize_step_verify(verify) == "python -c \"print(1)\" && printf '%s\\n' 2+3 | python calculator.py"
+
+    def test_quoted_here_string_marker_is_preserved(self) -> None:
+        verify = "python -c \"print('<<<')\""
+
+        assert normalize_step_verify(verify) == verify
+
+    def test_normalized_here_string_runs_under_bin_sh(self, tmp_path: Path) -> None:
+        (tmp_path / "read_stdin.py").write_text(
+            "import sys\nassert sys.stdin.readline().strip() == 'ok'\n",
+            encoding="utf-8",
+        )
+        verify = normalize_step_verify("python3 read_stdin.py <<< 'ok'")
+        outcome = run_step_verify(verify, cwd=str(tmp_path))
+
+        assert outcome is not None
+        assert outcome[0] == 0
 
 
 class TestClauseResidual:

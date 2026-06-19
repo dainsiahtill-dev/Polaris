@@ -77,6 +77,7 @@ def test_factory_status_response_contract_is_stable(client: TestClient, temp_wor
         "updated_at",
         "completed_at",
         "summary_md",
+        "metadata",
     }
 
 
