@@ -13,7 +13,7 @@
 import { useMemo } from 'react';
 import { Activity, CheckCircle2, CircleDashed, Hammer, Loader2, XCircle } from 'lucide-react';
 import { cn } from '@/app/components/ui/utils';
-import { useFactoryBench } from '@/hooks/useFactoryBench';
+import { useFactoryBench, type UseFactoryBenchResult } from '@/hooks/useFactoryBench';
 import type { FactoryBenchEvent, FactoryBenchSessionSummary } from '@/services/benchService';
 
 interface BenchStatusStripProps {
@@ -21,6 +21,7 @@ interface BenchStatusStripProps {
   websocketLive?: boolean;
   websocketReconnecting?: boolean;
   websocketAttemptCount?: number;
+  bench?: UseFactoryBenchResult;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -60,12 +61,28 @@ function lastBenchEvent(events: FactoryBenchEvent[]): FactoryBenchEvent | null {
 }
 
 export function BenchStatusStrip({
+  bench,
+  ...props
+}: BenchStatusStripProps): JSX.Element | null {
+  if (bench) {
+    return <BenchStatusStripView {...props} bench={bench} />;
+  }
+  return <BenchStatusStripSubscribed {...props} />;
+}
+
+function BenchStatusStripSubscribed(props: Omit<BenchStatusStripProps, 'bench'>): JSX.Element | null {
+  const bench = useFactoryBench({ autoSelect: 'newest' });
+  return <BenchStatusStripView {...props} bench={bench} />;
+}
+
+function BenchStatusStripView({
   className,
   websocketLive,
   websocketReconnecting = false,
   websocketAttemptCount = 0,
-}: BenchStatusStripProps): JSX.Element | null {
-  const { sessions, currentSession, events, isStreaming } = useFactoryBench({ autoSelect: 'newest' });
+  bench,
+}: Omit<BenchStatusStripProps, 'bench'> & { bench: UseFactoryBenchResult }): JSX.Element | null {
+  const { sessions, currentSession, events, isStreaming } = bench;
   const active = useMemo(
     () => (
       sessions.find((session) => session.session_id === currentSession?.session_id)

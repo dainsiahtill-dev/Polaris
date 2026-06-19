@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 _BACKEND_ALIVE_REASONS: frozenset[str] = frozenset(
     {"step_target_missing", "repair_shrank_file", "scope_conflict", "missing_blueprint"}
 )
+_TASK_MARKET_TERMINAL_STATUSES: frozenset[str] = frozenset({"resolved", "rejected", "dead_letter"})
 
 
 def _pool_trace(msg: str) -> None:
@@ -1272,6 +1273,51 @@ def _log_director_backend_distribution(workers: list[tuple[Any, Any]], merged: l
     logger.info("director drain: %d step(s) across %d backend(s) | %s", len(merged), len(bound), " ".join(parts))
 
 
+def _task_market_lineage_snapshot(
+    *,
+    task_market_service: Any,
+    workspace_full: str,
+    published_id_set: set[str],
+) -> dict[str, Any]:
+    """Return task-market state scoped to this dispatch's published lineage."""
+    if not published_id_set or not hasattr(task_market_service, "query_status"):
+        return {"available": False, "reason": "query_status_unavailable"}
+
+    from polaris.cells.runtime.task_market.public.contracts import (
+        QueryTaskMarketStatusV1,
+    )
+
+    status_result = task_market_service.query_status(QueryTaskMarketStatusV1(workspace=workspace_full, limit=10_000))
+    terminal_status_by_task: dict[str, str] = {}
+    open_task_ids: list[str] = []
+    scoped_task_ids: list[str] = []
+    status_counts: dict[str, int] = {}
+    for row in status_result.items:
+        row_task_id = str(row.get("task_id") or "").strip()
+        row_status = str(row.get("status") or "").strip().lower()
+        row_lineage = {
+            row_task_id,
+            str(row.get("root_task_id") or "").strip(),
+            str(row.get("parent_task_id") or "").strip(),
+        }
+        if not (row_lineage & published_id_set) or not row_task_id:
+            continue
+        scoped_task_ids.append(row_task_id)
+        status_counts[row_status] = status_counts.get(row_status, 0) + 1
+        if row_status in _TASK_MARKET_TERMINAL_STATUSES:
+            terminal_status_by_task[row_task_id] = row_status
+        else:
+            open_task_ids.append(row_task_id)
+
+    return {
+        "available": True,
+        "scoped_task_ids": tuple(scoped_task_ids),
+        "open_task_ids": tuple(open_task_ids),
+        "terminal_status_by_task": terminal_status_by_task,
+        "status_counts": status_counts,
+    }
+
+
 def _run_inline_task_market_consumers(
     *,
     workspace_full: str,
@@ -1304,9 +1350,9 @@ def _run_inline_task_market_consumers(
     worker_suffix = f"{iteration}-{_hash_payload(run_id)[:8]}"
     max_cycles = _read_positive_int_env(
         "KERNELONE_TASK_MARKET_MAINLINE_FULL_MAX_CYCLES",
-        default=2,
+        default=12,
         minimum=1,
-        maximum=20,
+        maximum=100,
     )
     design_timeout = _read_positive_int_env(
         "KERNELONE_TASK_MARKET_DESIGN_VISIBILITY_TIMEOUT_SECONDS",
@@ -1410,6 +1456,9 @@ def _run_inline_task_market_consumers(
     director_results: list[dict[str, Any]] = []
     qa_results: list[dict[str, Any]] = []
     terminal_status_by_task: dict[str, str] = {}
+    published_ids = tuple(dict.fromkeys(task_id for task_id in published_task_ids if task_id))
+    published_id_set = set(published_ids)
+    lineage_drain_snapshot: dict[str, Any] = {"available": False, "reason": "not_queried"}
     cycles_ran = 0
     loop_error = ""
 
@@ -1450,9 +1499,21 @@ def _run_inline_task_market_consumers(
         if not ce_cycle and not director_cycle and not qa_cycle:
             break
 
-    published_ids = tuple(dict.fromkeys(task_id for task_id in published_task_ids if task_id))
-    published_id_set = set(published_ids)
+        try:
+            _, get_task_market_service = _get_task_market_services()
+            task_market_service = get_task_market_service()
+            lineage_drain_snapshot = _task_market_lineage_snapshot(
+                task_market_service=task_market_service,
+                workspace_full=workspace_full,
+                published_id_set=published_id_set,
+            )
+            if bool(lineage_drain_snapshot.get("available")) and not lineage_drain_snapshot.get("open_task_ids"):
+                break
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            lineage_drain_snapshot = {"available": False, "reason": "lineage_snapshot_error", "error": str(exc)}
+
     reconciliation_result: dict[str, Any] = {"ok": False, "reason": "not_available"}
+    lineage_final_snapshot: dict[str, Any] = lineage_drain_snapshot
     try:
         _, get_task_market_service = _get_task_market_services()
         task_market_service = get_task_market_service()
@@ -1470,28 +1531,18 @@ def _run_inline_task_market_consumers(
         # (published ids + their fission descendants): the market store is
         # workspace-persistent, and an unscoped fold would let one
         # historical dead-letter row fail every later run forever.
-        if hasattr(task_market_service, "query_status"):
-            from polaris.cells.runtime.task_market.public.contracts import (
-                QueryTaskMarketStatusV1,
-            )
-
-            status_result = task_market_service.query_status(
-                QueryTaskMarketStatusV1(workspace=workspace_full, limit=10_000)
-            )
-            for row in status_result.items:
-                row_task_id = str(row.get("task_id") or "").strip()
-                row_status = str(row.get("status") or "").strip().lower()
-                row_lineage = {
-                    row_task_id,
-                    str(row.get("root_task_id") or "").strip(),
-                    str(row.get("parent_task_id") or "").strip(),
-                }
-                if not (row_lineage & published_id_set):
-                    continue
-                if row_task_id and row_status in {"resolved", "rejected", "dead_letter"}:
+        lineage_final_snapshot = _task_market_lineage_snapshot(
+            task_market_service=task_market_service,
+            workspace_full=workspace_full,
+            published_id_set=published_id_set,
+        )
+        if bool(lineage_final_snapshot.get("available")):
+            for row_task_id, row_status in dict(lineage_final_snapshot.get("terminal_status_by_task") or {}).items():
+                if row_task_id and row_status in _TASK_MARKET_TERMINAL_STATUSES:
                     terminal_status_by_task[row_task_id] = row_status
     except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
         reconciliation_result = {"ok": False, "reason": "reconcile_error", "error": str(exc)}
+        lineage_final_snapshot = {"available": False, "reason": "lineage_snapshot_error", "error": str(exc)}
 
     unresolved_ids = [task_id for task_id in published_ids if task_id not in terminal_status_by_task]
     rejected_ids = [
@@ -1521,6 +1572,8 @@ def _run_inline_task_market_consumers(
         "terminal_status_by_task": dict(terminal_status_by_task),
         "unresolved_task_ids": tuple(unresolved_ids),
         "rejected_task_ids": tuple(rejected_ids),
+        "open_task_ids": tuple(lineage_final_snapshot.get("open_task_ids") or ()),
+        "lineage_status_counts": dict(lineage_final_snapshot.get("status_counts") or {}),
         "ce_results": tuple(ce_results),
         "director_results": tuple(director_results),
         "qa_results": tuple(qa_results),

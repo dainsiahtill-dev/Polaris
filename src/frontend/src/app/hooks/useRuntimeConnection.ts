@@ -188,8 +188,14 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
   // which caused an infinite loop: connected=true → effect re-runs → reconnect()
   // → disconnect → reconnect → connected=true → effect re-runs → ...
   const prevWorkspaceRef = useRef<string>(workspace);
+  const hasInitializedWorkspaceRef = useRef(Boolean(workspace));
   useEffect(() => {
     if (!workspace) return;
+    if (!hasInitializedWorkspaceRef.current) {
+      hasInitializedWorkspaceRef.current = true;
+      prevWorkspaceRef.current = workspace;
+      return;
+    }
     if (workspace === prevWorkspaceRef.current) return;
     prevWorkspaceRef.current = workspace;
 

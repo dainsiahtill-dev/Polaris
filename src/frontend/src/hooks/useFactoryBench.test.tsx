@@ -123,23 +123,6 @@ describe('useFactoryBench', () => {
       return vi.fn();
     });
     benchServiceMock.listBenchSessions.mockResolvedValueOnce({ ok: true, data: [] });
-    benchServiceMock.getBenchSession.mockResolvedValueOnce({
-      ok: true,
-      data: {
-        session_id: 'bench-live',
-        work_dir: '/tmp/live',
-        project_ids: ['L1-01'],
-        total: 1,
-        completed: 0,
-        failed: 0,
-        status: 'running',
-        created_at: '2026-06-18T07:11:00Z',
-        updated_at: '2026-06-18T07:11:00Z',
-        metadata: {},
-        events_path: '/tmp/live/events.jsonl',
-        events: [],
-      },
-    });
 
     const { result } = renderHook(() => useFactoryBench());
 
@@ -175,6 +158,7 @@ describe('useFactoryBench', () => {
     await waitFor(() => expect(result.current.sessions[0]?.session_id).toBe('bench-live'));
     await waitFor(() => expect(result.current.currentSession?.session_id).toBe('bench-live'));
     expect(benchServiceMock.listBenchSessions).toHaveBeenCalledTimes(1);
-    expect(benchServiceMock.getBenchSession).toHaveBeenCalledWith('bench-live');
+    expect(benchServiceMock.getBenchSession).not.toHaveBeenCalledWith('bench-live');
+    expect(result.current.events[0]?.type).toBe('factory_bench.session.started');
   });
 });

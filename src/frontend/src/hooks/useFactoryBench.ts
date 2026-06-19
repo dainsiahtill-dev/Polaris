@@ -159,6 +159,7 @@ export function useFactoryBench(
   const selectedSessionRef = useRef<string | null>(null);
   const currentSessionRef = useRef<FactoryBenchSessionDetail | null>(null);
   const autoSelectRef = useRef(autoSelect);
+  const loadingSessionRef = useRef<string | null>(null);
 
   const { subscribeChannels, registerMessageHandler } = useRuntimeTransport();
 
@@ -204,28 +205,37 @@ export function useFactoryBench(
 
   const loadSessionDetail = useCallback(
     async (sessionId: string, resetBeforeLoad: boolean) => {
+      if (loadingSessionRef.current === sessionId) return;
+      if (!resetBeforeLoad && currentSessionRef.current?.session_id === sessionId) return;
+      loadingSessionRef.current = sessionId;
       selectedSessionRef.current = sessionId;
       if (resetBeforeLoad) {
         setCurrentSession(null);
         setEvents([]);
       }
 
-      // Initial fetch via the standard apiGet path (with Authorization header).
-      const detailResult = await getBenchSession(sessionId);
-      if (selectedSessionRef.current !== sessionId) return;
-      if (detailResult.ok && detailResult.data) {
-        const detail = detailResult.data;
-        setCurrentSession(detail);
-        setEvents((prev) => {
-          const detailEvents = (detail.events || []).slice(-MAX_EVENTS);
-          if (resetBeforeLoad || detailEvents.length > 0) return detailEvents;
-          return prev;
-        });
-        setIsStreaming(!isTerminalStatus(detail.status));
-      } else if (!detailResult.ok) {
-        setError(detailResult.error || '加载Factory bench session失败');
-        setIsStreaming(false);
-        return;
+      try {
+        // Initial fetch via the standard apiGet path (with Authorization header).
+        const detailResult = await getBenchSession(sessionId);
+        if (selectedSessionRef.current !== sessionId) return;
+        if (detailResult.ok && detailResult.data) {
+          const detail = detailResult.data;
+          setCurrentSession(detail);
+          setEvents((prev) => {
+            const detailEvents = (detail.events || []).slice(-MAX_EVENTS);
+            if (resetBeforeLoad || detailEvents.length > 0) return detailEvents;
+            return prev;
+          });
+          setIsStreaming(!isTerminalStatus(detail.status));
+        } else if (!detailResult.ok) {
+          setError(detailResult.error || '加载Factory bench session失败');
+          setIsStreaming(false);
+          return;
+        }
+      } finally {
+        if (loadingSessionRef.current === sessionId) {
+          loadingSessionRef.current = null;
+        }
       }
     },
     [],
@@ -302,7 +312,6 @@ export function useFactoryBench(
         setCurrentSession(liveDetail);
         setEvents([event]);
         setIsStreaming(!isTerminalStatus(liveSummary.status));
-        void loadSessionDetail(event.session_id, false);
       }
     });
 
@@ -312,7 +321,7 @@ export function useFactoryBench(
       unsubscribe();
       disconnectRef.current();
     };
-  }, [loadSessionDetail, refresh, registerMessageHandler, subscribeChannels]);
+  }, [refresh, registerMessageHandler, subscribeChannels]);
 
   useEffect(() => {
     if (autoSelect !== 'newest') return;
@@ -323,6 +332,8 @@ export function useFactoryBench(
       currentSession?.session_id === newest.session_id
     )
       return;
+    if (selectedSessionRef.current === newest.session_id) return;
+    if (currentSession && !isTerminalStatus(currentSession.status)) return;
     if (currentSession && currentSession.session_id === newest.session_id) return;
     void select(newest.session_id);
   }, [sessions, autoSelect, currentSession]);

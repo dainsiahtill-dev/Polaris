@@ -181,6 +181,40 @@ def test_build_forced_write_only_retry_tool_definitions_keeps_execute_command_wh
     assert strict_names == {"write_file", "execute_command"}
 
 
+def test_forced_edit_blocks_retry_adds_scoped_write_file_companion() -> None:
+    tool_definitions = [
+        {
+            "type": "function",
+            "function": {
+                "name": "edit_blocks",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file": {"type": "string", "enum": ["calculator.py"]},
+                        "blocks": {"type": "string"},
+                    },
+                    "required": ["file", "blocks"],
+                },
+            },
+        },
+        {"type": "function", "function": {"name": "execute_command"}},
+    ]
+
+    strict_definitions = build_forced_write_only_retry_tool_definitions(
+        tool_definitions,
+        "edit_blocks",
+        include_verification_tools=True,
+    )
+    strict_names = extract_allowed_tool_names_from_definitions(strict_definitions)
+    write_file_definition = next(
+        item for item in strict_definitions if item.get("function", {}).get("name") == "write_file"
+    )
+
+    assert strict_names == {"edit_blocks", "write_file", "execute_command"}
+    file_schema = write_file_definition["function"]["parameters"]["properties"]["file"]
+    assert file_schema["enum"] == ["calculator.py"]
+
+
 def test_bootstrap_followup_prefers_write_file_for_deterministic_scaffold() -> None:
     receipt = {
         "results": [

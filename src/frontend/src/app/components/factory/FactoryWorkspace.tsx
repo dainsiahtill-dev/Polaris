@@ -29,6 +29,7 @@ import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityP
 import { BenchStatusStrip } from '@/app/components/factory/BenchStatusStrip';
 import type { FileEditEvent } from '@/app/hooks/useRuntime';
 import type { FactoryAuditEvent, FactoryRunArtifact, FactoryRunStatus } from '@/hooks/useFactory';
+import type { UseFactoryBenchResult } from '@/hooks/useFactoryBench';
 import type { LogEntry } from '@/types/log';
 import { TaskStatus, type PmTask } from '@/types/task';
 
@@ -55,6 +56,7 @@ interface FactoryWorkspaceProps {
   onResume?: () => void;
   onRetryCheckpoint?: () => void;
   isLoading?: boolean;
+  bench?: UseFactoryBenchResult;
 }
 
 type FactoryPhase = 'idle' | 'planning' | 'executing' | 'verifying' | 'completed' | 'failed' | 'cancelled';
@@ -1100,6 +1102,7 @@ export function FactoryWorkspace({
   onResume,
   onRetryCheckpoint,
   isLoading = false,
+  bench,
 }: FactoryWorkspaceProps) {
   const factoryPhase = mapRunToFactoryPhase(currentRun);
   const workspacePhase = mapRunToWorkspacePhase(currentRun);
@@ -1288,7 +1291,7 @@ export function FactoryWorkspace({
         </div>
       </header>
 
-      <BenchStatusStrip />
+      <BenchStatusStrip bench={bench} />
 
       <main
         data-testid="factory-layered-layout"

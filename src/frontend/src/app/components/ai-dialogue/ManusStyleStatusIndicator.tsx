@@ -141,6 +141,7 @@ export function ManusStyleStatusIndicator({
     if (thinking) {
       setDisplayThinking('');
       let index = 0;
+      // UI-only typewriter animation; stream content is delivered by runtime WS.
       const timer = setInterval(() => {
         if (index < thinking.length) {
           setDisplayThinking(thinking.slice(0, index + 1));

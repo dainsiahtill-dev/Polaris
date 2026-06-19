@@ -285,6 +285,8 @@ export function useLlmRuntimeGate({
 }: UseLlmRuntimeGateOptions) {
   const [llmRuntimeState, setLlmRuntimeState] = useState<LlmRuntimeGateState>(EMPTY_LLM_RUNTIME_STATE);
   const canonicalReadyStateRef = useRef<LlmRuntimeGateState | null>(null);
+  const completedRefreshKeyRef = useRef<string>('');
+  const inFlightRefreshKeyRef = useRef<string>('');
 
   const clearLlmRuntimeState = useCallback(() => {
     setLlmRuntimeState(EMPTY_LLM_RUNTIME_STATE);
@@ -304,21 +306,40 @@ export function useLlmRuntimeGate({
     ));
   }, []);
 
-  const refreshLlmGate = useCallback(async (options: { clearOnFailure?: boolean } = {}) => {
+  const refreshLlmGate = useCallback(async (options: {
+    clearOnFailure?: boolean;
+    requestKey?: string;
+    force?: boolean;
+  } = {}) => {
     if (!workspace) {
       clearLlmRuntimeState();
       return null;
     }
 
+    const requestKey = options.requestKey || `llm-gate:${workspace}`;
+    if (!options.force && (
+      completedRefreshKeyRef.current === requestKey
+      || inFlightRefreshKeyRef.current === requestKey
+    )) {
+      return null;
+    }
+
+    inFlightRefreshKeyRef.current = requestKey;
     try {
       const payload = await fetchStatus(workspace);
       applyLlmStatusPayload(payload, 'canonical');
+      completedRefreshKeyRef.current = requestKey;
       return payload;
     } catch {
+      completedRefreshKeyRef.current = requestKey;
       if (options.clearOnFailure) {
         clearLlmRuntimeState();
       }
       return null;
+    } finally {
+      if (inFlightRefreshKeyRef.current === requestKey) {
+        inFlightRefreshKeyRef.current = '';
+      }
     }
   }, [applyLlmStatusPayload, clearLlmRuntimeState, fetchStatus, workspace]);
 
@@ -349,14 +370,24 @@ export function useLlmRuntimeGate({
   useEffect(() => {
     if (!workspace) return;
     if (!live || !llmStatus) {
-      void refreshLlmGate({ clearOnFailure: true });
+      void refreshLlmGate({
+        clearOnFailure: true,
+        requestKey: `missing:${workspace}`,
+      });
     }
   }, [live, llmStatus, refreshLlmGate, workspace]);
 
   useEffect(() => {
     if (!workspace || llmRuntimeState.state !== 'BLOCKED') return;
-    void refreshLlmGate({ clearOnFailure: false });
-  }, [llmRuntimeState.state, refreshLlmGate, workspace]);
+    const blockedSignature = llmRuntimeState.blockedRoles
+      .map((role) => `${role}:${roleBindingSignature(llmRuntimeState, role)}`)
+      .sort()
+      .join('|');
+    void refreshLlmGate({
+      clearOnFailure: false,
+      requestKey: `blocked:${workspace}:${blockedSignature}`,
+    });
+  }, [llmRuntimeState, refreshLlmGate, workspace]);
 
   return {
     llmRuntimeState,

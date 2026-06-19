@@ -229,6 +229,7 @@ function TypingMessage({
     if (!animate) return;
     if (visibleChars >= text.length) return;
 
+    // UI-only typewriter animation; runtime data still arrives via WebSocket.
     const timer = window.setInterval(() => {
       setVisibleChars((current) => {
         if (current >= text.length) return current;

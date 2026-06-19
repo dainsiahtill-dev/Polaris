@@ -60,6 +60,7 @@ export function EnhancedNotificationManager({
       if (notification.progress && notification.duration) {
         const duration = notification.duration;
         const startTime = Date.now();
+        // UI-only progress countdown for toast lifetime; not a data refresh loop.
         const interval = setInterval(() => {
           const elapsed = Date.now() - startTime;
           const newProgress = Math.max(0, 100 - (elapsed / duration) * 100);

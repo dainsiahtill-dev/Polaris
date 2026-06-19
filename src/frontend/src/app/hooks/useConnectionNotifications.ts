@@ -4,18 +4,17 @@
  * 职责:
  * - 监听 WebSocket 连接状态变化
  * - 在状态切换时显示 Toast 通知用户
- * - 支持降级模式、重连、恢复连接等场景
+ * - 支持重连、恢复连接等场景
  *
  * Features:
  * - 连接恢复通知
- * - 降级模式进入通知
  * - 断开连接警告
  * - 可选的重连按钮
  */
 
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import type { ConnectionState } from './useWebSocketWithFallback';
+import type { ConnectionState } from './connectionState';
 
 const RUNTIME_DISCONNECTED_TOAST_DELAY_MS = 4000;
 
@@ -34,8 +33,6 @@ export interface UseConnectionNotificationsOptions {
   notifications?: {
     /** 连接恢复消息 */
     restored?: { title: string; description: string };
-    /** 降级模式消息 */
-    fallback?: { title: string; description: string };
     /** 断开连接消息 */
     disconnected?: { title: string; description: string };
   };
@@ -49,10 +46,6 @@ const DEFAULT_NOTIFICATIONS = {
   restored: {
     title: '连接已恢复',
     description: '实时更新已恢复',
-  },
-  fallback: {
-    title: '网络降级模式',
-    description: '实时更新已暂停，将自动重连',
   },
   disconnected: {
     title: '连接已断开',
@@ -69,7 +62,6 @@ export function useConnectionNotifications(
 ): void {
   const {
     connectionState,
-    reconnect,
     enabled = true,
     notifications = {},
   } = options;
@@ -77,13 +69,11 @@ export function useConnectionNotifications(
   // Merge with defaults
   const messages = {
     restored: { ...DEFAULT_NOTIFICATIONS.restored, ...notifications.restored },
-    fallback: { ...DEFAULT_NOTIFICATIONS.fallback, ...notifications.fallback },
     disconnected: { ...DEFAULT_NOTIFICATIONS.disconnected, ...notifications.disconnected },
   };
 
   // Refs for tracking state changes
   const prevStateRef = useRef<ConnectionState>(connectionState);
-  const fallbackToastIdRef = useRef<string | number | null>(null);
   const disconnectedToastIdRef = useRef<string | number | null>(null);
 
   useEffect(() => {
@@ -111,72 +101,25 @@ export function useConnectionNotifications(
     }
 
     // =========================================================================
-    // State Transition: any -> fallback (Entering Fallback Mode)
-    // =========================================================================
-    if (connectionState === 'fallback') {
-      // Dismiss disconnected toast if exists
-      if (disconnectedToastIdRef.current) {
-        toast.dismiss(disconnectedToastIdRef.current);
-        disconnectedToastIdRef.current = null;
-      }
-
-      fallbackToastIdRef.current = toast.warning(messages.fallback.title, {
-        description: messages.fallback.description,
-        duration: 10000,
-        action: reconnect
-          ? {
-              label: '重连',
-              onClick: () => reconnect(),
-            }
-          : undefined,
-      });
-    }
-
-    // =========================================================================
-    // State Transition: connected/fallback -> disconnected (Lost Connection)
+    // State Transition: connected/connecting -> disconnected (Lost Connection)
     // =========================================================================
     if (
       connectionState === 'disconnected' &&
       prevState !== 'disconnected'
     ) {
-      // Dismiss fallback toast if exists
-      if (fallbackToastIdRef.current) {
-        toast.dismiss(fallbackToastIdRef.current);
-        fallbackToastIdRef.current = null;
-      }
-
       disconnectedToastIdRef.current = toast.error(messages.disconnected.title, {
         description: messages.disconnected.description,
         duration: 5000,
       });
     }
 
-    // =========================================================================
-    // State Transition: fallback -> connected (Fallback Recovered)
-    // =========================================================================
-    if (prevState === 'fallback' && connectionState === 'connected') {
-      // Dismiss fallback toast
-      if (fallbackToastIdRef.current) {
-        toast.dismiss(fallbackToastIdRef.current);
-        fallbackToastIdRef.current = null;
-      }
-
-      toast.success(messages.restored.title, {
-        description: messages.restored.description,
-        duration: 3000,
-      });
-    }
-
     // Update previous state
     prevStateRef.current = connectionState;
-  }, [connectionState, enabled, messages, reconnect]);
+  }, [connectionState, enabled, messages]);
 
   // Cleanup toasts on unmount
   useEffect(() => {
     return () => {
-      if (fallbackToastIdRef.current) {
-        toast.dismiss(fallbackToastIdRef.current);
-      }
       if (disconnectedToastIdRef.current) {
         toast.dismiss(disconnectedToastIdRef.current);
       }

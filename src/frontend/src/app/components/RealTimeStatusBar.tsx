@@ -52,6 +52,7 @@ export function RealTimeStatusBar({
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
+    // UI-only clock tick for elapsed-time display; no network request is made.
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);

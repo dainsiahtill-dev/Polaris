@@ -257,7 +257,7 @@ function AppContent() {
     taskTraceMap,
   } = useRuntime({ roles: ['pm', 'chief_engineer', 'director', 'qa'], workspace });
 
-  // Connection status notifications (WebSocket fallback alerts)
+  // Connection status notifications for the unified runtime WebSocket.
   useRuntimeConnectionNotifications({
     live,
     reconnecting,
@@ -281,7 +281,8 @@ function AppContent() {
     resumeLatestRun: resumeLatestFactoryRun,
     isLoading: factoryIsLoading,
   } = useFactory({ workspace });
-  const { currentSession: factoryBenchSession, events: factoryBenchEvents } = useFactoryBench({ autoSelect: 'newest' });
+  const factoryBench = useFactoryBench({ autoSelect: 'newest' });
+  const { currentSession: factoryBenchSession, events: factoryBenchEvents } = factoryBench;
   const factoryRuntimeActive = factoryIsLoading || isFactoryRunActive(factoryCurrentRun);
   const combinedProcessStreamEvents = useMemo(
     () => mergeProcessAndBenchLogs(processStreamEvents, factoryBenchEvents),
@@ -941,6 +942,7 @@ function AppContent() {
         notifyError(error.message || '发生未知错误');
       }}>
         <BenchStatusStrip
+          bench={factoryBench}
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}
@@ -968,6 +970,7 @@ function AppContent() {
           onResume={() => factoryCurrentRun && resumeFactoryRun(factoryCurrentRun.run_id, 'operator resume')}
           onRetryCheckpoint={() => factoryCurrentRun && retryFactoryRunFromCheckpoint(factoryCurrentRun.run_id, 'operator retry')}
           isLoading={factoryIsLoading}
+          bench={factoryBench}
         />
         <LlmRuntimeOverlay
           activeView={activeRoleView}
@@ -1171,6 +1174,7 @@ function AppContent() {
         />
 
         <BenchStatusStrip
+          bench={factoryBench}
           websocketLive={live}
           websocketReconnecting={reconnecting}
           websocketAttemptCount={attemptCount}

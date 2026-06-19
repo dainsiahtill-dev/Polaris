@@ -80,7 +80,7 @@ export function useCourtTopology() {
 }
 
 // ============================================================================
-// Court State (shared WebSocket via RuntimeTransportProvider; no polling fallback)
+// Court State (shared WebSocket via RuntimeTransportProvider only)
 // ============================================================================
 
 export function useCourtState(options: { enabled?: boolean } = {}) {

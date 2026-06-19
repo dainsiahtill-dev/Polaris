@@ -50,10 +50,11 @@ export async function getBackendInfo(): Promise<BackendInfo> {
   }
   if (!window.polaris?.getBackendInfo) {
     const devBackend = (window as WindowWithDevBackend).__DEV_BACKEND__;
+    const storedBase = localStorage.getItem("polaris.baseUrl");
     const explicitBase =
       devBackend?.baseUrl ||
-      localStorage.getItem("polaris.baseUrl") ||
-      getEnvBackendUrl();
+      getEnvBackendUrl() ||
+      (isViteWebDevMode ? null : storedBase);
     const fallbackBase =
       explicitBase ||
       (isViteWebDevMode ? null : getDefaultBackendUrl());

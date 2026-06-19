@@ -1,12 +1,11 @@
 /**
  * ConnectionStatusIndicator - WebSocket 连接状态指示器
  *
- * 统一的连接状态 UI 组件。Realtime 只允许 WebSocket；fallback 状态仅为旧接口兼容，
- * 不代表存在 HTTP 轮询链路。
+ * 统一的连接状态 UI 组件。Realtime 只允许统一的 Nat-JetStream WebSocket。
  * 提供清晰的视觉反馈，帮助用户理解当前连接状态。
  *
  * Features:
- * - 三色状态指示 (绿=连接, 黄=降级, 红=断开)
+ * - 三色状态指示 (绿=连接, 黄=连接中, 红=断开)
  * - 可配置显示内容
  * - 支持 tooltip 显示详细信息
  * - 响应式设计
@@ -20,9 +19,8 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
-  Radio,
 } from 'lucide-react';
-import type { ConnectionState } from '../hooks/useWebSocketWithFallback';
+import type { ConnectionState } from '../hooks/connectionState';
 
 // ============================================================================
 // Types
@@ -33,8 +31,6 @@ export interface ConnectionStatusIndicatorProps {
   connectionState: ConnectionState;
   /** 当前重连尝试次数 */
   reconnectAttempt?: number;
-  /** 旧接口兼容计数；WebSocket-only 模式下应为 0 */
-  fallbackAttempt?: number;
   /** 是否显示文字标签 */
   showLabel?: boolean;
   /** 是否显示详细信息（tooltip） */
@@ -77,13 +73,6 @@ const STATUS_CONFIG = {
     description: '连接已断开，正在重连',
     icon: XCircle,
   },
-  fallback: {
-    color: 'text-amber-500',
-    bgColor: 'bg-amber-500',
-    label: '实时不可用',
-    description: 'WebSocket 不可用，等待重连',
-    icon: Radio,
-  },
 } as const;
 
 const SIZE_CLASSES = {
@@ -114,7 +103,6 @@ const SIZE_CLASSES = {
 export function ConnectionStatusIndicator({
   connectionState,
   reconnectAttempt = 0,
-  fallbackAttempt = 0,
   showLabel = true,
   showDetails = true,
   className = '',
@@ -137,17 +125,12 @@ export function ConnectionStatusIndicator({
       lines.push(`重试次数: ${reconnectAttempt}`);
     }
 
-    if (connectionState === 'fallback') {
-      lines.push(`兼容计数: ${fallbackAttempt}`);
-      lines.push('实时推送暂不可用');
-    }
-
     if (connectionState === 'disconnected' && reconnectAttempt > 0) {
       lines.push(`已重试 ${reconnectAttempt} 次`);
     }
 
     return lines.join('\n');
-  }, [config.description, connectionState, reconnectAttempt, fallbackAttempt]);
+  }, [config.description, connectionState, reconnectAttempt]);
 
   const handleClick = useCallback(() => {
     onClick?.();
@@ -164,7 +147,7 @@ export function ConnectionStatusIndicator({
   // Determine if should pulse
   const shouldPulse =
     pulse &&
-    (connectionState === 'connecting' || connectionState === 'fallback');
+    connectionState === 'connecting';
 
   return (
     <div
@@ -179,7 +162,7 @@ export function ConnectionStatusIndicator({
     >
       {/* Status Indicator */}
       <div className={`relative ${sizeClasses.container}`}>
-        {/* Pulse Ring (for connecting/fallback states) */}
+        {/* Pulse Ring (for connecting state) */}
         {shouldPulse && (
           <span
             className={`absolute inline-flex h-full w-full rounded-full ${config.bgColor} opacity-75 animate-ping`}
@@ -218,17 +201,6 @@ export function ConnectionStatusIndicator({
               <div className="text-yellow-300 mt-1">
                 重试 #{reconnectAttempt}
               </div>
-            )}
-
-            {connectionState === 'fallback' && (
-              <>
-                <div className="text-amber-300 mt-1">
-                  兼容状态 #{fallbackAttempt}
-                </div>
-                <div className="text-gray-400 text-[10px] mt-1">
-                  等待 WebSocket 重连
-                </div>
-              </>
             )}
 
             {connectionState === 'disconnected' && reconnectAttempt > 0 && (
@@ -294,7 +266,6 @@ export function StatusDot({
 export interface ConnectionStatusBarProps {
   connectionState: ConnectionState;
   reconnectAttempt?: number;
-  fallbackAttempt?: number;
   error?: string | null;
   onReconnect?: () => void;
 }
@@ -302,7 +273,6 @@ export interface ConnectionStatusBarProps {
 export function ConnectionStatusBar({
   connectionState,
   reconnectAttempt = 0,
-  fallbackAttempt = 0,
   error,
   onReconnect,
 }: ConnectionStatusBarProps): React.ReactElement {
@@ -313,8 +283,8 @@ export function ConnectionStatusBar({
       className={`flex items-center justify-between px-3 py-1.5 rounded-md border ${
         connectionState === 'connected'
           ? 'bg-green-50 border-green-200'
-          : connectionState === 'fallback'
-            ? 'bg-amber-50 border-amber-200'
+          : connectionState === 'connecting'
+            ? 'bg-yellow-50 border-yellow-200'
             : 'bg-red-50 border-red-200'
       }`}
     >
@@ -330,12 +300,6 @@ export function ConnectionStatusBar({
           </span>
         )}
 
-        {connectionState === 'fallback' && (
-          <span className="text-xs text-amber-600">
-            (等待重连 {fallbackAttempt})
-          </span>
-        )}
-
         {error && (
           <span className="text-xs text-red-500 truncate max-w-[200px]">
             {error}
@@ -343,9 +307,7 @@ export function ConnectionStatusBar({
         )}
       </div>
 
-      {(connectionState === 'disconnected' ||
-        connectionState === 'fallback') &&
-        onReconnect && (
+      {connectionState === 'disconnected' && onReconnect && (
           <button
             onClick={onReconnect}
             className="flex items-center gap-1 px-2 py-0.5 text-xs bg-gray-100 hover:bg-gray-200 rounded transition-colors"
@@ -365,9 +327,7 @@ export function ConnectionStatusBar({
 export interface ConnectionStatusPanelProps {
   connectionState: ConnectionState;
   isWebSocketConnected: boolean;
-  isFallbackActive: boolean;
   reconnectAttempt: number;
-  fallbackAttempt: number;
   error: string | null;
   onReconnect: () => void;
   onDisconnect: () => void;
@@ -376,9 +336,7 @@ export interface ConnectionStatusPanelProps {
 export function ConnectionStatusPanel({
   connectionState,
   isWebSocketConnected,
-  isFallbackActive,
   reconnectAttempt,
-  fallbackAttempt,
   error,
   onReconnect,
   onDisconnect,
@@ -390,13 +348,13 @@ export function ConnectionStatusPanel({
       label: '连接模式',
       value: isWebSocketConnected
         ? 'WebSocket'
-        : isFallbackActive
-          ? 'WebSocket 重连中'
+        : connectionState === 'connecting'
+          ? 'WebSocket 连接中'
           : '未连接',
       color: isWebSocketConnected
         ? 'text-green-600'
-        : isFallbackActive
-          ? 'text-amber-600'
+        : connectionState === 'connecting'
+          ? 'text-yellow-600'
           : 'text-gray-500',
     },
     {
@@ -408,11 +366,6 @@ export function ConnectionStatusPanel({
       label: '重连次数',
       value: String(reconnectAttempt),
       color: 'text-gray-600',
-    },
-    {
-      label: '兼容计数',
-      value: String(fallbackAttempt),
-      color: 'text-amber-600',
     },
   ];
 

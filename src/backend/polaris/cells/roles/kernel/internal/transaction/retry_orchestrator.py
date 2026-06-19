@@ -1008,6 +1008,7 @@ def build_forced_write_only_retry_tool_definitions(
     if include_verification_tools and "execute_command" not in _forbidden:
         companion_tool_names.add("execute_command")
     narrowed: list[dict] = []
+    has_write_file_definition = False
     for raw_item in tool_definitions:
         if not isinstance(raw_item, Mapping):
             continue
@@ -1016,10 +1017,74 @@ def build_forced_write_only_retry_tool_definitions(
         if tool_name in _forbidden:
             continue
         if tool_name in companion_tool_names:
+            if tool_name == "write_file":
+                has_write_file_definition = True
             narrowed.append(item)
+    if "write_file" in companion_tool_names and "write_file" not in _forbidden and not has_write_file_definition:
+        narrowed.append(_build_scoped_write_file_tool_definition(tool_definitions))
     if narrowed:
         return narrowed
     return [item for item in tool_definitions if extract_tool_name_from_definition(item) not in _forbidden]
+
+
+def _extract_file_schema_from_tool_definition(definition: Mapping[str, Any]) -> dict[str, Any] | None:
+    function_payload = definition.get("function")
+    parameters = (
+        function_payload.get("parameters") if isinstance(function_payload, Mapping) else definition.get("parameters")
+    )
+    if not isinstance(parameters, Mapping):
+        return None
+    properties = parameters.get("properties")
+    if not isinstance(properties, Mapping):
+        return None
+    file_schema = properties.get("file") or properties.get("path")
+    if isinstance(file_schema, Mapping):
+        return dict(file_schema)
+    return None
+
+
+def _build_scoped_write_file_tool_definition(tool_definitions: list[dict]) -> dict[str, Any]:
+    file_schema: dict[str, Any] = {
+        "type": "string",
+        "description": "Workspace-relative path of the file to write.",
+    }
+    for raw_definition in tool_definitions:
+        if not isinstance(raw_definition, Mapping):
+            continue
+        candidate = _extract_file_schema_from_tool_definition(raw_definition)
+        if not candidate:
+            continue
+        enum_values = candidate.get("enum")
+        if isinstance(enum_values, list) and enum_values:
+            file_schema["enum"] = list(enum_values)
+            break
+    return {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": (
+                "Write the complete UTF-8 file body to the scoped target file. "
+                "Use only when replacing a small generated leaf target after reading it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": file_schema,
+                    "content": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Complete non-empty UTF-8 file content.",
+                    },
+                    "encoding": {
+                        "type": "string",
+                        "enum": ["utf-8"],
+                        "default": "utf-8",
+                    },
+                },
+                "required": ["file", "content"],
+            },
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2319,11 +2384,12 @@ class RetryOrchestrator:
             if bootstrap_receipt is None:
                 raise RuntimeError("single_batch_contract_violation_retry_failed: bootstrap read receipt missing")
             failed_bootstrap_files = extract_failed_files_from_bootstrap_receipt(bootstrap_receipt)
+            followup_candidate_tool_names = set(allowed_retry_tool_names) | set(strict_allowed_retry_tool_names)
             followup_forced_write_tool_name: str | None
             if _should_force_leaf_bootstrap_followup_write_file(
                 original_context=context,
                 bootstrap_receipt=bootstrap_receipt,
-                allowed_tool_names=allowed_retry_tool_names,
+                allowed_tool_names=followup_candidate_tool_names,
             ):
                 followup_forced_write_tool_name = "write_file"
                 logger.warning(
@@ -2332,7 +2398,7 @@ class RetryOrchestrator:
                 )
             else:
                 followup_forced_write_tool_name = select_bootstrap_followup_write_tool_name(
-                    allowed_tool_names=allowed_retry_tool_names,
+                    allowed_tool_names=followup_candidate_tool_names,
                     default_write_tool_name=forced_write_tool_name,
                     bootstrap_receipt=bootstrap_receipt,
                     failed_bootstrap_files=failed_bootstrap_files,

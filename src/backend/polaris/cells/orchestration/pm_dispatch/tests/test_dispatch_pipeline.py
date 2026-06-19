@@ -385,6 +385,101 @@ def test_run_inline_task_market_consumers_mainline_full_success(monkeypatch) -> 
     assert result["terminal_status_by_task"]["T01"] == "resolved"
 
 
+def test_run_inline_task_market_consumers_drains_past_legacy_two_cycles(monkeypatch) -> None:
+    monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "mainline-full")
+    monkeypatch.delenv("KERNELONE_TASK_MARKET_MAINLINE_FULL_MAX_CYCLES", raising=False)
+
+    class _FakeStatus:
+        def __init__(self, items: list[dict[str, object]]) -> None:
+            self.items = tuple(items)
+
+    class _FakeService:
+        def __init__(self) -> None:
+            self.query_calls = 0
+
+        def reconcile_parent_statuses(self, _workspace: str) -> dict[str, object]:
+            return {"updated": 1, "updated_parent_ids": ("PARENT",)}
+
+        def query_status(self, _query: object) -> _FakeStatus:
+            self.query_calls += 1
+            if self.query_calls == 1:
+                parent_status = "pending_exec"
+                child_statuses = ("resolved", "pending_exec", "pending_exec")
+            elif self.query_calls == 2:
+                parent_status = "pending_exec"
+                child_statuses = ("resolved", "resolved", "pending_exec")
+            else:
+                parent_status = "resolved"
+                child_statuses = ("resolved", "resolved", "resolved")
+            items: list[dict[str, object]] = [
+                {"task_id": "PARENT", "status": parent_status, "root_task_id": "PARENT", "parent_task_id": ""}
+            ]
+            for index, status in enumerate(child_statuses, start=1):
+                items.append(
+                    {
+                        "task_id": f"PARENT-{index}",
+                        "status": status,
+                        "root_task_id": "PARENT",
+                        "parent_task_id": "PARENT",
+                    }
+                )
+            return _FakeStatus(items)
+
+    service = _FakeService()
+
+    class _FakeCEConsumer:
+        def __init__(self, **_kwargs) -> None:
+            self._called = False
+
+        def poll_once(self) -> list[dict[str, object]]:
+            if self._called:
+                return []
+            self._called = True
+            return [{"task_id": "PARENT", "ok": True, "status": "pending_exec"}]
+
+    class _FakeDirectorConsumer:
+        def __init__(self, **_kwargs) -> None:
+            self._calls = 0
+
+        def poll_once(self) -> list[dict[str, object]]:
+            self._calls += 1
+            if self._calls <= 3:
+                return [{"task_id": f"PARENT-{self._calls}", "ok": True, "status": "pending_qa"}]
+            return []
+
+    class _FakeQAConsumer:
+        def __init__(self, **_kwargs) -> None:
+            self._calls = 0
+
+        def poll_once(self) -> list[dict[str, object]]:
+            self._calls += 1
+            if self._calls <= 3:
+                return [{"task_id": f"PARENT-{self._calls}", "ok": True, "status": "resolved"}]
+            return []
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._get_task_market_consumers",
+        lambda: (_FakeCEConsumer, _FakeDirectorConsumer, _FakeQAConsumer),
+    )
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._get_task_market_services",
+        lambda: (object, lambda: service),
+    )
+
+    result = _run_inline_task_market_consumers(
+        workspace_full="/workspace",
+        run_id="run-legacy-two-cycle-regression",
+        iteration=1,
+        published_task_ids=("PARENT",),
+    )
+    assert result["enabled"] is True
+    assert result["ok"] is True
+    assert result["reason"] == "mainline_full_complete"
+    assert result["cycles_ran"] == 3
+    assert result["open_task_ids"] == ()
+    assert result["terminal_status_by_task"]["PARENT"] == "resolved"
+
+
 def test_run_inline_task_market_consumers_terminal_fold_is_lineage_scoped(monkeypatch, tmp_path) -> None:
     """The market store is workspace-persistent: a dead-letter row left by a
     PREVIOUS run must not fold into this run's terminal report and flip it
