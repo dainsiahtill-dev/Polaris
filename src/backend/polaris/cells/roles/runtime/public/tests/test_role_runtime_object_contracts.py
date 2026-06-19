@@ -69,7 +69,11 @@ from polaris.cells.qa.audit_verdict.public.contracts import (
     TracebackFrameV1,
     VisualQaAuditResultV1,
 )
-from polaris.cells.roles.runtime.public import contracts as runtime_contracts, service as runtime_service
+from polaris.cells.roles.runtime.public import (
+    capability_commands as runtime_capability_commands,
+    contracts as runtime_contracts,
+    service as runtime_service,
+)
 from polaris.cells.roles.runtime.public.contracts import (
     AssembleRoleRuntimeChainCommandV1,
     ExecuteRoleCapabilityInvocationCommandV1,
@@ -1495,9 +1499,12 @@ def test_capability_ports_reject_unscoped_role_capabilities() -> None:
 
 
 def test_runtime_role_scope_checks_do_not_keep_empty_allowed_roles_compatibility() -> None:
+    # ``capability_commands`` holds the role-scope checks after the lossless
+    # split of ``service.py``; scan it too so the invariant keeps its coverage.
     sources = (
         Path(runtime_contracts.__file__).read_text(encoding="utf-8"),
         Path(runtime_service.__file__).read_text(encoding="utf-8"),
+        Path(runtime_capability_commands.__file__).read_text(encoding="utf-8"),
     )
     forbidden_patterns = (
         "if capability.allowed_roles and",
@@ -1975,7 +1982,9 @@ def test_role_capability_invocation_result_rejects_failed_allowed_true() -> None
 
 
 def test_capability_invocation_failure_helper_does_not_use_allowed_for_capability_availability() -> None:
-    service_path = Path(runtime_service.__file__)
+    # The stateless capability-command handlers (including this helper) live in
+    # ``capability_commands`` after the lossless split of ``service.py``.
+    service_path = Path(runtime_capability_commands.__file__)
     service_tree = ast.parse(service_path.read_text(encoding="utf-8"))
 
     helper_defs = [

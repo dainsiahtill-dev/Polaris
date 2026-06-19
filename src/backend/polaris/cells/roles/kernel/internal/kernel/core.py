@@ -26,12 +26,28 @@ import time
 import uuid
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass  # noqa: F401 - backward-compat re-export (moved to commit_protocol)
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.context_gateway import ContextGatewayConfig, ContextRequest
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
+from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
+    ValidationReport,
+    _build_turn_history_and_events,
+    _commit_turn_to_snapshot,
+    _execute_commit_protocol,
+    _post_commit_seal,
+    _pre_commit_validate,
+)
+from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
+    _MATERIALIZE_DELIVERY_MODE_MARKERS,
+    _MATERIALIZE_DELIVERY_MODE_VALUES,
+    _context_requests_materialize_delivery,
+    _ensure_context_delivery_mode_marker,
+    _latest_user_content_preview,
+    _text_requests_materialize_delivery,
+)
 from polaris.cells.roles.kernel.internal.kernel.error_handler import (
     KernelEventEmitter,
     LLMEventType,
@@ -40,6 +56,16 @@ from polaris.cells.roles.kernel.internal.kernel.helpers import (
     quality_result_to_dict,
 )
 from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestions_for_error
+from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
+    _CONTEXT_EXPENSIVE_TOOL_NAMES,
+    _CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS,
+    _apply_runtime_tool_policy,
+    _cognitive_runtime_blocked_tools,
+    _filter_cognitive_blocked_tool_definitions,
+    _iter_tool_policy_values,
+    _normalize_tool_policy_name,
+    _runtime_tool_policy_from_context,
+)
 from polaris.cells.roles.kernel.internal.llm_caller import LLMCaller
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser, ToolCallResult
@@ -60,7 +86,9 @@ from polaris.cells.roles.profile.public.service import (
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 from polaris.infrastructure.log_pipeline.writer import LogEventWriter, get_writer
 from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
-from polaris.kernelone.context.context_os.models_v2 import TranscriptEventV2 as TranscriptEvent
+from polaris.kernelone.context.context_os.models_v2 import (  # noqa: F401 - backward-compat re-export (moved to commit_protocol)
+    TranscriptEventV2 as TranscriptEvent,
+)
 from polaris.kernelone.events.uep_publisher import UEPEventPublisher
 from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.trace import get_tracer
@@ -84,81 +112,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS = frozenset(
-    {
-        "compact_context",
-        "update_session_state",
-    }
-)
-_CONTEXT_EXPENSIVE_TOOL_NAMES = frozenset({"read_file"})
 ContextGatewayConfigFactory = Callable[[str, RoleProfile, RoleTurnRequest], ContextGatewayConfig | None]
-_MATERIALIZE_DELIVERY_MODE_VALUES = frozenset({"materialize", "materialize_changes"})
-_MATERIALIZE_DELIVERY_MODE_MARKERS = frozenset({"[mode:materialize]", "[mode:materialize_changes]"})
-
-
-@dataclass(frozen=True)
-class ValidationReport:
-    """Pre-commit validation report.
-
-    Records the result of all validation checks before durable commit.
-    """
-
-    passed: bool
-    checks: dict[str, bool]
-    errors: list[str]
-
-
-def _context_requests_materialize_delivery(context_override: Any) -> bool:
-    if not isinstance(context_override, dict):
-        return False
-    value = context_override.get("delivery_mode")
-    if value is None:
-        metadata = context_override.get("metadata")
-        if isinstance(metadata, dict):
-            value = metadata.get("delivery_mode")
-    return str(value or "").strip().lower() in _MATERIALIZE_DELIVERY_MODE_VALUES
-
-
-def _text_requests_materialize_delivery(text: Any) -> bool:
-    lowered = str(text or "").lower()
-    return any(marker in lowered for marker in _MATERIALIZE_DELIVERY_MODE_MARKERS)
-
-
-def _ensure_context_delivery_mode_marker(
-    messages: list[dict[str, Any]],
-    context_override: Any,
-    source_message: Any = None,
-) -> list[dict[str, Any]]:
-    """Restore the materialize marker after ContextOS projection when needed."""
-
-    if not _context_requests_materialize_delivery(context_override) and not _text_requests_materialize_delivery(
-        source_message
-    ):
-        return messages
-    for index in range(len(messages) - 1, -1, -1):
-        message = messages[index]
-        if str(message.get("role") or "").lower() != "user":
-            continue
-        content = message.get("content")
-        if not isinstance(content, str):
-            continue
-        if _text_requests_materialize_delivery(content):
-            return messages
-        patched_messages = list(messages)
-        patched_messages[index] = {**message, "content": f"[mode:materialize]\n{content}"}
-        return patched_messages
-    return messages
-
-
-def _latest_user_content_preview(messages: list[dict[str, Any]]) -> str:
-    for message in reversed(messages):
-        if not isinstance(message, dict):
-            continue
-        if str(message.get("role") or "").strip().lower() != "user":
-            continue
-        content = str(message.get("content") or "")
-        return content[:160]
-    return ""
 
 
 def _turn_id_component(value: Any) -> str:
@@ -417,155 +371,61 @@ class RoleExecutionKernel:
         message = str(getattr(request, "message", "") or "").lower()
         return "[mode:propose]" in message and "do not call tools" in message
 
-    @classmethod
-    def _cognitive_runtime_blocked_tools(cls, request: RoleTurnRequest) -> frozenset[str]:
-        """Return canonical tool names blocked by Cognitive Runtime mainline policy."""
-        values: list[Any] = []
-        metadata = getattr(request, "metadata", None)
-        if isinstance(metadata, dict):
-            policy = metadata.get("cognitive_tool_policy")
-            if isinstance(policy, dict):
-                values.extend(cls._iter_tool_policy_values(policy.get("blocked_tools")))
-            values.extend(cls._iter_tool_policy_values(metadata.get("cognitive_runtime_blocked_tools")))
+    @staticmethod
+    def _cognitive_runtime_blocked_tools(request: RoleTurnRequest) -> frozenset[str]:
+        """Return canonical tool names blocked by Cognitive Runtime mainline policy.
 
-        context_override = getattr(request, "context_override", None)
-        if isinstance(context_override, dict):
-            guidance = context_override.get("cognitive_guidance")
-            if isinstance(guidance, dict):
-                values.extend(cls._iter_tool_policy_values(guidance.get("blocked_tools")))
-            policy = context_override.get("cognitive_tool_policy")
-            if isinstance(policy, dict):
-                values.extend(cls._iter_tool_policy_values(policy.get("blocked_tools")))
-
-        normalized: set[str] = set()
-        for value in values:
-            tool_name = cls._normalize_tool_policy_name(value)
-            if tool_name:
-                normalized.add(tool_name)
-        return frozenset(normalized)
+        Delegates to :mod:`polaris.cells.roles.kernel.internal.kernel.tool_policy`.
+        """
+        return _cognitive_runtime_blocked_tools(request)
 
     @staticmethod
     def _iter_tool_policy_values(raw_value: Any) -> tuple[Any, ...]:
-        if isinstance(raw_value, (list, tuple, set, frozenset)):
-            return tuple(raw_value)
-        if isinstance(raw_value, str):
-            return (raw_value,)
-        return ()
+        return _iter_tool_policy_values(raw_value)
 
     @staticmethod
     def _normalize_tool_policy_name(raw_name: Any) -> str:
-        token = str(raw_name or "").strip()
-        if not token:
-            return ""
-        try:
-            from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
+        return _normalize_tool_policy_name(raw_name)
 
-            return str(normalize_tool_name(token) or token).strip().lower()
-        except (ImportError, RuntimeError, ValueError):
-            return token.lower()
-
-    @classmethod
+    @staticmethod
     def _filter_cognitive_blocked_tool_definitions(
-        cls,
         tool_definitions: list[dict[str, Any]],
         blocked_tools: frozenset[str],
     ) -> list[dict[str, Any]]:
-        """Remove tools disallowed by Cognitive Runtime from native LLM schemas."""
-        if not tool_definitions or not blocked_tools:
-            return tool_definitions
-        filtered: list[dict[str, Any]] = []
-        for definition in tool_definitions:
-            schema_name = ""
-            if isinstance(definition, dict):
-                function_payload = definition.get("function")
-                if isinstance(function_payload, dict):
-                    schema_name = str(function_payload.get("name") or "").strip()
-                else:
-                    schema_name = str(definition.get("name") or "").strip()
-            if cls._normalize_tool_policy_name(schema_name) in blocked_tools:
-                continue
-            filtered.append(definition)
-        return filtered
+        """Remove tools disallowed by Cognitive Runtime from native LLM schemas.
 
-    @classmethod
+        Delegates to :mod:`polaris.cells.roles.kernel.internal.kernel.tool_policy`.
+        """
+        return _filter_cognitive_blocked_tool_definitions(tool_definitions, blocked_tools)
+
+    @staticmethod
     def _runtime_tool_policy_from_context(
-        cls,
         context_result: Any,
     ) -> tuple[frozenset[str], dict[str, Any]]:
         """Derive tool-surface reductions from ContextGateway decision hints.
 
         ContextGateway decisions may only reduce the tool surface. They never
-        grant access to tools outside the role profile whitelist.
+        grant access to tools outside the role profile whitelist. Delegates to
+        :mod:`polaris.cells.roles.kernel.internal.kernel.tool_policy`.
         """
+        return _runtime_tool_policy_from_context(context_result)
 
-        metadata = getattr(context_result, "metadata", None)
-        metadata_payload = metadata if isinstance(metadata, dict) else {}
-        hints = metadata_payload.get("context_decision_hints")
-        hints_payload = hints if isinstance(hints, dict) else {}
-
-        suppress_expensive_context_tools = bool(
-            hints_payload.get("suppress_expensive_context_tools") or metadata_payload.get("budget_pressure_detected")
-        )
-        suppress_mutating_tools = bool(hints_payload.get("suppress_mutating_tools"))
-        blocked: set[str] = set()
-
-        if suppress_expensive_context_tools:
-            blocked.update(_CONTEXT_EXPENSIVE_TOOL_NAMES)
-
-        if suppress_mutating_tools:
-            try:
-                from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
-
-                for spec in ToolSpecRegistry.get_write_tools() + ToolSpecRegistry.get_exec_tools():
-                    tool_name = cls._normalize_tool_policy_name(spec.canonical_name)
-                    if tool_name and tool_name not in _CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS:
-                        blocked.add(tool_name)
-            except (ImportError, RuntimeError, ValueError):
-                blocked.update(
-                    {
-                        "append_to_file",
-                        "apply_patch",
-                        "background_run",
-                        "edit_blocks",
-                        "edit_file",
-                        "execute_command",
-                        "precision_edit",
-                        "repo_apply_diff",
-                        "search_replace",
-                        "write_file",
-                    }
-                )
-
-        audit = {
-            "context_tool_policy_applied": bool(blocked),
-            "context_blocked_tools": sorted(blocked),
-            "context_decision_hints": dict(hints_payload),
-        }
-        return frozenset(blocked), audit
-
-    @classmethod
+    @staticmethod
     def _apply_runtime_tool_policy(
-        cls,
         *,
         request: RoleTurnRequest,
         context_result: Any,
         tool_definitions: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        cognitive_blocked_tools = cls._cognitive_runtime_blocked_tools(request)
-        filtered = cls._filter_cognitive_blocked_tool_definitions(
-            tool_definitions,
-            cognitive_blocked_tools,
+        """Apply Cognitive-Runtime + ContextGateway tool-surface reductions.
+
+        Delegates to :mod:`polaris.cells.roles.kernel.internal.kernel.tool_policy`.
+        """
+        return _apply_runtime_tool_policy(
+            request=request,
+            context_result=context_result,
+            tool_definitions=tool_definitions,
         )
-        context_blocked_tools, context_audit = cls._runtime_tool_policy_from_context(context_result)
-        filtered = cls._filter_cognitive_blocked_tool_definitions(
-            filtered,
-            context_blocked_tools,
-        )
-        return filtered, {
-            **context_audit,
-            "cognitive_tool_policy_applied": bool(cognitive_blocked_tools),
-            "cognitive_blocked_tools": sorted(cognitive_blocked_tools),
-        }
 
     def _create_transaction_kernel(
         self,
@@ -937,58 +797,10 @@ class RoleExecutionKernel:
     ) -> ValidationReport:
         """Pre-commit validation: verify turn invariants before durable write.
 
-        Returns a ValidationReport with pass/fail status and detailed checks.
+        Delegates to
+        :mod:`polaris.cells.roles.kernel.internal.kernel.commit_protocol`.
         """
-        checks: dict[str, bool] = {}
-        errors: list[str] = []
-
-        # 1. single_decision: ledger must have exactly 1 decision
-        if ledger is not None:
-            decision_count = len(ledger.decisions)
-            checks["single_decision"] = decision_count == 1
-            if not checks["single_decision"]:
-                errors.append(f"expected 1 decision, got {decision_count}")
-        else:
-            checks["single_decision"] = True  # no ledger = no decision to validate
-
-        # 2. single_tool_batch: at most 1 tool batch
-        if ledger is not None:
-            checks["single_tool_batch"] = ledger.tool_batch_count <= 1
-            if not checks["single_tool_batch"]:
-                errors.append(f"expected <=1 tool batch, got {ledger.tool_batch_count}")
-        else:
-            checks["single_tool_batch"] = True
-
-        # 3. no_hidden_continuation: check state_history for duplicate DECISION_REQUESTED
-        if ledger is not None:
-            decision_requests = sum(1 for state, _ts in ledger.state_history if state == "DECISION_REQUESTED")
-            checks["no_hidden_continuation"] = decision_requests <= 1
-            if not checks["no_hidden_continuation"]:
-                errors.append(f"DECISION_REQUESTED appeared {decision_requests} times")
-        else:
-            checks["no_hidden_continuation"] = True
-
-        # 4. receipts_integrity: all tool calls have receipts
-        if ledger is not None and ledger.tool_executions:
-            checks["receipts_integrity"] = len(ledger.tool_executions) > 0
-        else:
-            checks["receipts_integrity"] = True
-
-        # 5. artifact_refs_valid: placeholder (would validate artifact references)
-        checks["artifact_refs_valid"] = True
-
-        # 6. budget_balance: basic check (placeholder for full budget validation)
-        checks["budget_balance"] = True
-
-        # 7. outcome_status_legal: snapshot version check
-        checks["outcome_status_legal"] = isinstance(snapshot.get("version", 0), int)
-
-        all_passed = all(checks.values())
-        return ValidationReport(
-            passed=all_passed,
-            checks=checks,
-            errors=errors,
-        )
+        return _pre_commit_validate(ledger, snapshot, turn_id)
 
     @staticmethod
     def _execute_commit_protocol(
@@ -1000,69 +812,19 @@ class RoleExecutionKernel:
         ledger: TurnLedger | None,
         snapshot: dict[str, Any],
     ) -> CommitReceipt:
-        """Execute the durable commit protocol.
+        """Execute the durable commit protocol (critical section).
 
-        This is the critical section: truthlog append + snapshot materialization.
-        Must remain synchronous and consistent.
+        Delegates to
+        :mod:`polaris.cells.roles.kernel.internal.kernel.commit_protocol`.
         """
-        transcript_log: list[dict[str, Any]] = snapshot.get("transcript_log") or []
-        if not isinstance(transcript_log, list):
-            transcript_log = []
-
-        base_sequence = len(transcript_log)
-        for idx, meta in enumerate(turn_events_metadata):
-            if not isinstance(meta, dict):
-                continue
-            seq = base_sequence + idx
-            event = TranscriptEvent(
-                event_id=str(meta.get("event_id") or f"{turn_id}_{idx}"),
-                sequence=seq,
-                role=str(meta.get("role") or ""),
-                kind=str(meta.get("kind") or ""),
-                route="",
-                content=str(meta.get("content") or ""),
-                source_turns=(f"t{seq}",),
-            )
-            transcript_log.append(event.to_dict())
-
-        snapshot["transcript_log"] = transcript_log
-        snapshot["version"] = int(snapshot.get("version", 0)) + 1
-        snapshot["last_updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-        working_state = snapshot.get("working_state")
-        if not isinstance(working_state, dict):
-            working_state = {}
-            snapshot["working_state"] = working_state
-
-        if tool_results:
-            working_state["last_tool_results"] = list(tool_results)
-
-        # Merge TurnLedger data into policy_verdicts (single truth source)
-        if ledger is not None:
-            policy_verdicts: dict[str, Any] = snapshot.setdefault("policy_verdicts", {})
-            if ledger.decisions:
-                policy_verdicts["decisions"] = list(ledger.decisions)
-            if ledger.tool_executions:
-                policy_verdicts["tool_executions"] = list(ledger.tool_executions)
-            if ledger.llm_calls:
-                policy_verdicts["llm_calls"] = list(ledger.llm_calls)
-            if ledger.anomaly_flags:
-                policy_verdicts["anomaly_flags"] = list(ledger.anomaly_flags)
-
-        # Mark this turn as committed
-        snapshot["last_commit_turn_id"] = turn_id
-
-        # Build commit receipt
-        from polaris.cells.roles.kernel.public.turn_contracts import CommitReceipt, TurnId
-
-        truthlog_start = base_sequence
-        truthlog_end = len(transcript_log)
-        return CommitReceipt(
-            turn_id=TurnId(turn_id),
-            snapshot_id=str(snapshot.get("snapshot_id", "")),
-            truthlog_seq_range=(truthlog_start, truthlog_end),
-            sealed_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            validation_passed=True,
+        return _execute_commit_protocol(
+            request,
+            turn_id,
+            turn_history,
+            turn_events_metadata,
+            tool_results,
+            ledger,
+            snapshot,
         )
 
     @staticmethod
@@ -1074,22 +836,10 @@ class RoleExecutionKernel:
     ) -> SealedTurn:
         """Post-commit seal: generate immutable turn seal.
 
-        This creates the final SealedTurn that represents durable truth.
+        Delegates to
+        :mod:`polaris.cells.roles.kernel.internal.kernel.commit_protocol`.
         """
-        from polaris.cells.roles.kernel.public.turn_contracts import (
-            OutcomeStatus,
-            ResolutionCode,
-            SealedTurn,
-        )
-
-        return SealedTurn(
-            turn_id=commit_receipt.turn_id,
-            commit_receipt=commit_receipt,
-            outcome_status=OutcomeStatus(outcome_status),
-            resolution_code=ResolutionCode(resolution_code),
-            sealed_at=commit_receipt.sealed_at,
-            parent_snapshot_id=parent_snapshot_id,
-        )
+        return _post_commit_seal(commit_receipt, outcome_status, resolution_code, parent_snapshot_id)
 
     @staticmethod
     def _commit_turn_to_snapshot(
@@ -1102,64 +852,17 @@ class RoleExecutionKernel:
     ) -> CommitReceipt | None:
         """Merge turn history, events, and ledger data into the ContextOS snapshot.
 
-        Phase 1 hardened version: three-stage durable commit protocol.
-        1. Pre-commit validation
-        2. Durable commit (critical section)
-        3. Post-commit seal
-
-        Args:
-            request: The turn request carrying ``context_override``.
-            turn_id: Unique identifier for the current turn.
-            turn_history: Ordered (role, content) pairs for the turn.
-            turn_events_metadata: Metadata dicts for each transcript event.
-            tool_results: Tool execution results produced this turn.
-            ledger: Optional ``TurnLedger`` whose decisions / tool executions /
-                LLM calls / anomaly flags are merged into
-                ``snapshot["policy_verdicts"]``.
-
-        Returns:
-            CommitReceipt if commit succeeded, None if skipped or failed.
+        Phase 1 hardened version: three-stage durable commit protocol. Delegates
+        to :mod:`polaris.cells.roles.kernel.internal.kernel.commit_protocol`.
         """
-        context_override = getattr(request, "context_override", None)
-        if not isinstance(context_override, dict):
-            return None
-
-        snapshot = context_override.get("context_os_snapshot")
-        if not isinstance(snapshot, dict):
-            return None
-
-        # Idempotency guard – skip if this turn was already committed.
-        if snapshot.get("last_commit_turn_id") == turn_id:
-            return None
-
-        # Stage 1: Pre-commit validation
-        validation_report = RoleExecutionKernel._pre_commit_validate(
-            ledger=ledger,
-            snapshot=snapshot,
-            turn_id=turn_id,
+        return _commit_turn_to_snapshot(
+            request,
+            turn_id,
+            turn_history,
+            turn_events_metadata,
+            tool_results,
+            ledger,
         )
-        if not validation_report.passed:
-            logger.warning(
-                "Pre-commit validation failed for turn %s: %s",
-                turn_id,
-                "; ".join(validation_report.errors),
-            )
-            return None
-
-        # Stage 2: Execute durable commit protocol (critical section)
-        commit_receipt = RoleExecutionKernel._execute_commit_protocol(
-            request=request,
-            turn_id=turn_id,
-            turn_history=turn_history,
-            turn_events_metadata=turn_events_metadata,
-            tool_results=tool_results,
-            ledger=ledger,
-            snapshot=snapshot,
-        )
-
-        # Stage 3: Post-commit seal (can be enhanced later)
-        # For now, just return the receipt; seal is created by caller if needed
-        return commit_receipt
 
     @staticmethod
     def _build_turn_history_and_events(
@@ -1172,62 +875,16 @@ class RoleExecutionKernel:
     ) -> tuple[list[tuple[str, str]], list[dict[str, Any]]]:
         """Build turn_history and turn_events_metadata for ContextOS persistence.
 
-        These fields are critical for SessionContinuityEngine to rebuild the
-        ContextOS snapshot across turns. Without them, the snapshot stays stale
-        and the LLM continues with the previous turn's task.
+        Delegates to
+        :mod:`polaris.cells.roles.kernel.internal.kernel.commit_protocol`.
         """
-        import json
-
-        turn_history: list[tuple[str, str]] = []
-        turn_events_metadata: list[dict[str, Any]] = []
-        user_message = str(getattr(request, "message", "") or "").strip()
-
-        if user_message:
-            turn_history.append(("user", user_message))
-            turn_events_metadata.append(
-                {
-                    "role": "user",
-                    "content": user_message,
-                    "event_id": f"user_{turn_id}",
-                    "kind": "user_turn",
-                }
-            )
-
-        assistant_content = str(visible_content or "").strip()
-        if assistant_content:
-            turn_history.append(("assistant", assistant_content))
-            turn_events_metadata.append(
-                {
-                    "role": "assistant",
-                    "content": assistant_content,
-                    "event_id": f"assistant_{turn_id}",
-                    "kind": "assistant_turn",
-                }
-            )
-
-        for tr in tool_results:
-            if not isinstance(tr, dict):
-                continue
-            tool_name = str(tr.get("tool") or "tool").strip() or "tool"
-            result_value = tr.get("result")
-            if result_value is not None:
-                result_text = json.dumps(result_value, ensure_ascii=False)
-            else:
-                error_text = str(tr.get("error") or "").strip()
-                result_text = f"Error: {error_text}" if error_text else ""
-            if result_text:
-                turn_history.append(("tool", result_text))
-                turn_events_metadata.append(
-                    {
-                        "role": "tool",
-                        "content": result_text,
-                        "event_id": f"tool_{tr.get('call_id', turn_id)}",
-                        "kind": "tool_result",
-                        "tool": tool_name,
-                    }
-                )
-
-        return turn_history, turn_events_metadata
+        return _build_turn_history_and_events(
+            turn_id=turn_id,
+            request=request,
+            visible_content=visible_content,
+            thinking=thinking,
+            tool_results=tool_results,
+        )
 
     async def _execute_transaction_kernel_turn(
         self,
@@ -2810,6 +2467,14 @@ class RoleExecutionKernel:
 _get_suggestions_for_error = get_suggestions_for_error
 
 __all__ = [
+    # Backward-compat re-exports moved to sibling in-cell modules
+    # (commit_protocol / delivery_mode / tool_policy). They remain importable
+    # from this module's namespace to preserve the original public surface.
+    "_CONTEXT_EXPENSIVE_TOOL_NAMES",
+    "_CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS",
+    "_MATERIALIZE_DELIVERY_MODE_MARKERS",
+    "_MATERIALIZE_DELIVERY_MODE_VALUES",
     "RoleExecutionKernel",
+    "ValidationReport",
     "get_suggestions_for_error",
 ]

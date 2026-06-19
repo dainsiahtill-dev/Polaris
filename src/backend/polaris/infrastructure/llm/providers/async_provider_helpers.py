@@ -55,9 +55,7 @@ class ExtractOutputFn(Protocol):
 class UsageFromResponseFn(Protocol):
     """Protocol for extracting usage from provider response."""
 
-    def __call__(
-        self, prompt: str, output: str, data: dict[str, Any]
-    ) -> Usage: ...
+    def __call__(self, prompt: str, output: str, data: dict[str, Any]) -> Usage: ...
 
 
 # ---------------------------------------------------------------------------
@@ -129,9 +127,7 @@ async def async_invoke_with_retry(
                 )
 
             try:
-                result = await client._post_json_impl(
-                    url, headers, payload, timeout=float(timeout)
-                )
+                result = await client._post_json_impl(url, headers, payload, timeout=float(timeout))
 
                 if result.status_code >= 400:
                     error_body = result.text
@@ -143,28 +139,15 @@ async def async_invoke_with_retry(
                     )
 
                     # Context overflow self-heal
-                    if (
-                        result.status_code == 400
-                        and overflow_heal_attempts < 3
-                    ):
-                        healed = _shrink_max_tokens_for_context_overflow(
-                            payload, error_body
-                        )
-                        if (
-                            not healed
-                            and overflow_heal_attempts > 0
-                            and "maximum context length" in (error_body or "")
-                        ):
+                    if result.status_code == 400 and overflow_heal_attempts < 3:
+                        healed = _shrink_max_tokens_for_context_overflow(payload, error_body)
+                        if not healed and overflow_heal_attempts > 0 and "maximum context length" in (error_body or ""):
                             try:
-                                current_max = int(
-                                    payload.get("max_tokens") or 0
-                                )
+                                current_max = int(payload.get("max_tokens") or 0)
                             except (TypeError, ValueError):
                                 current_max = 0
                             if current_max > 128:
-                                payload["max_tokens"] = max(
-                                    64, current_max // 2
-                                )
+                                payload["max_tokens"] = max(64, current_max // 2)
                                 logger.warning(
                                     "[async-provider-helpers] context overflow heal #%s: halving max_tokens -> %s",
                                     overflow_heal_attempts + 1,
@@ -198,9 +181,7 @@ async def async_invoke_with_retry(
                 data = _parse_json(result.text)
                 latency_ms = int((_clock.time() - start) * 1000)
                 output = extract_output(data)
-                finalized = LLMResponseParser.finalize_response(
-                    data, visible_text=output
-                )
+                finalized = LLMResponseParser.finalize_response(data, visible_text=output)
                 usage = usage_from_response(prompt, finalized.output, data)
                 await breaker.on_success()
 
@@ -378,9 +359,7 @@ def _build_backoff_seconds(
     return delay + jitter
 
 
-def _shrink_max_tokens_for_context_overflow(
-    payload: dict[str, Any], error_body: str
-) -> bool:
+def _shrink_max_tokens_for_context_overflow(payload: dict[str, Any], error_body: str) -> bool:
     """Try to shrink max_tokens when context window is exceeded."""
     import re
 

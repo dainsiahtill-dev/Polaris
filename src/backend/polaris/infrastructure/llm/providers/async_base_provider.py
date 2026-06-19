@@ -13,8 +13,8 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.llm.providers.base_provider import (
-    ProviderInfo,
     ProviderConfigValidationResult,
+    ProviderInfo,
     ValidationResult,
 )
 
@@ -65,16 +65,12 @@ class AsyncBaseProvider(ABC):
         ...
 
     @abstractmethod
-    async def invoke(
-        self, prompt: str, model: str, config: dict[str, Any]
-    ) -> InvokeResult:
+    async def invoke(self, prompt: str, model: str, config: dict[str, Any]) -> InvokeResult:
         """Invoke the model with a prompt (async)."""
         ...
 
     @abstractmethod
-    def invoke_stream(
-        self, prompt: str, model: str, config: dict[str, Any]
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]) -> AsyncGenerator[dict[str, Any], None]:
         """Stream invoke results as structured events (async generator).
 
         Yields dicts with keys:

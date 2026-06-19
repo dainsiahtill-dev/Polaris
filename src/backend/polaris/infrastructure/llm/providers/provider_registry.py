@@ -17,13 +17,14 @@ from polaris.kernelone.llm.providers.registry import (
 )
 
 from .anthropic_compat_provider import AnthropicCompatProvider
+from .async_ollama_provider import AsyncOllamaProvider
+from .async_provider_adapter import AsyncProviderClassAdapter
 from .codex_cli_provider import CodexCLIProvider
 from .codex_sdk_provider import CodexSDKProvider
 from .gemini_api_provider import GeminiAPIProvider
 from .gemini_cli_provider import GeminiCLIProvider
 from .kimi_provider import KimiProvider
 from .minimax_provider import MiniMaxProvider
-from .ollama_provider import OllamaProvider
 from .openai_compat_provider import OpenAICompatProvider
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,11 @@ class ProviderManager:
         self.register_provider("minimax", MiniMaxProvider)
         self.register_provider("kimi", KimiProvider)
         self.register_provider("gemini_api", GeminiAPIProvider)
-        self.register_provider("ollama", OllamaProvider)
+
+        # Register async Ollama provider (with sync adapter)
+        ollama_async_adapter = AsyncProviderClassAdapter.create(AsyncOllamaProvider)
+        self.register_provider("ollama", ollama_async_adapter)
+
         self.register_provider("openai_compat", OpenAICompatProvider)
         self.register_provider("anthropic_compat", AnthropicCompatProvider)
 

@@ -17,7 +17,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 # ---------------------------------------------------------------------------
 # Design DTOs
 # ---------------------------------------------------------------------------
@@ -33,17 +32,11 @@ class DesignResultSchema(BaseModel):
         ..., description="Document type classification"
     )
     title: str = Field(..., description="Human-readable title")
-    status: Literal["completed", "failed"] = Field(
-        ..., description="Processing status"
-    )
+    status: Literal["completed", "failed"] = Field(..., description="Processing status")
     content_length: int = Field(default=0, description="Byte length of content")
-    output_path: str = Field(
-        default="", description="File system path where document was written"
-    )
+    output_path: str = Field(default="", description="File system path where document was written")
     error: str = Field(default="", description="Error message if failed")
-    metadata: dict[str, str | int | float | bool] = Field(
-        default_factory=dict, description="Design metadata"
-    )
+    metadata: dict[str, str | int | float | bool] = Field(default_factory=dict, description="Design metadata")
 
 
 # ---------------------------------------------------------------------------
@@ -57,19 +50,11 @@ class BlueprintResultSchema(BaseModel):
     model_config = {"frozen": True}
 
     blueprint_id: str = Field(..., description="Blueprint identifier")
-    design_ids: list[str] = Field(
-        default_factory=list, description="Included design IDs"
-    )
+    design_ids: list[str] = Field(default_factory=list, description="Included design IDs")
     summary: str = Field(..., description="Blueprint summary")
-    recommendation_paths: list[str] = Field(
-        default_factory=list, description="Recommendation file paths"
-    )
-    status: Literal["ready", "incomplete", "failed"] = Field(
-        default="ready", description="Blueprint status"
-    )
-    metadata: dict[str, str | int | float | bool] = Field(
-        default_factory=dict, description="Blueprint metadata"
-    )
+    recommendation_paths: list[str] = Field(default_factory=list, description="Recommendation file paths")
+    status: Literal["ready", "incomplete", "failed"] = Field(default="ready", description="Blueprint status")
+    metadata: dict[str, str | int | float | bool] = Field(default_factory=dict, description="Blueprint metadata")
 
 
 # ---------------------------------------------------------------------------
@@ -84,12 +69,8 @@ class ArchitectDesignLifecycleResult(BaseModel):
 
     success: bool = Field(..., description="Whether lifecycle completed")
     workspace: str = Field(..., description="Workspace path")
-    designs: list[DesignResultSchema] = Field(
-        default_factory=list, description="Design results"
-    )
-    blueprint: BlueprintResultSchema | None = Field(
-        default=None, description="Compiled blueprint"
-    )
+    designs: list[DesignResultSchema] = Field(default_factory=list, description="Design results")
+    blueprint: BlueprintResultSchema | None = Field(default=None, description="Compiled blueprint")
     handoff_package: dict[str, str | int | float | bool | list[str]] = Field(
         default_factory=dict, description="Handoff artifact"
     )
@@ -107,16 +88,10 @@ class ArchitectDesignConfig(BaseModel):
     model_config = {"populate_by_name": True}
 
     workspace: str = Field(..., description="Workspace path")
-    docs_dir: str = Field(
-        default="docs/product", description="Documentation directory"
-    )
+    docs_dir: str = Field(default="docs/product", description="Documentation directory")
     objective: str = Field(default="", description="Design objective")
-    constraints: dict[str, str | int | float | bool] = Field(
-        default_factory=dict, description="Design constraints"
-    )
-    context: dict[str, str | int | float | bool] = Field(
-        default_factory=dict, description="Additional context"
-    )
+    constraints: dict[str, str | int | float | bool] = Field(default_factory=dict, description="Design constraints")
+    context: dict[str, str | int | float | bool] = Field(default_factory=dict, description="Additional context")
 
 
 # ---------------------------------------------------------------------------
@@ -131,12 +106,8 @@ class ArchitectContextSchema(BaseModel):
 
     workspace: str = Field(..., description="Workspace path")
     objective: str = Field(..., description="Design objective")
-    constraints: dict[str, str | int | float | bool] = Field(
-        default_factory=dict, description="Merged constraints"
-    )
-    context: dict[str, str | int | float | bool] = Field(
-        default_factory=dict, description="Merged context"
-    )
+    constraints: dict[str, str | int | float | bool] = Field(default_factory=dict, description="Merged constraints")
+    context: dict[str, str | int | float | bool] = Field(default_factory=dict, description="Merged context")
 
 
 # ---------------------------------------------------------------------------
@@ -151,15 +122,9 @@ class RequirementsInput(BaseModel):
 
     goal: str = Field(..., description="Design goal / objective")
     in_scope: list[str] = Field(default_factory=list, description="Items in scope")
-    out_of_scope: list[str] = Field(
-        default_factory=list, description="Items out of scope"
-    )
-    constraints: list[str] = Field(
-        default_factory=list, description="Design constraints"
-    )
-    definition_of_done: list[str] = Field(
-        default_factory=list, description="Acceptance criteria"
-    )
+    out_of_scope: list[str] = Field(default_factory=list, description="Items out of scope")
+    constraints: list[str] = Field(default_factory=list, description="Design constraints")
+    definition_of_done: list[str] = Field(default_factory=list, description="Acceptance criteria")
     backlog: list[str] = Field(default_factory=list, description="Backlog items")
 
 

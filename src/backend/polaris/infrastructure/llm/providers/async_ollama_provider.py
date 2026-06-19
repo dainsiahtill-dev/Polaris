@@ -33,7 +33,6 @@ from polaris.kernelone.llm.types import (
 )
 from polaris.kernelone.runtime.shared_types import (
     normalize_timeout_seconds,
-    timeout_seconds_or_none,
 )
 
 from .async_base_provider import AsyncBaseProvider
@@ -413,7 +412,9 @@ class AsyncOllamaProvider(AsyncBaseProvider):
 
         return payload
 
-    async def invoke_stream(self, prompt: str, model: str, config: dict[str, Any]) -> AsyncGenerator[dict[str, Any], None]:
+    async def invoke_stream(
+        self, prompt: str, model: str, config: dict[str, Any]
+    ) -> AsyncGenerator[dict[str, Any], None]:
         base = self._base_url(config)
         timeout = _timeout_seconds(config, 60)
         api_path = str(config.get("api_path") or "").strip()

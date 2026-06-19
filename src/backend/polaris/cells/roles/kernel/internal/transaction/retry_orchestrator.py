@@ -5,19 +5,44 @@
 - retry 上下文构建
 - bootstrap read 执行
 - 主重试循环
+
+本文件保持为 ``transaction`` 的规范入口（canonical）：``RetryOrchestrator``
+与两个 Protocol 仍物理定义在此处。重试策略 / read-loop 界 / 工具定义筛选 /
+上下文构建 / bootstrap follow-up 五块已无损拆分到同包子模块，并在此 re-export
+（包括测试依赖的私有 ``_``-前缀符号与常量），原导入路径保持不变。
+
+CRITICAL: ``_READ_BOOTSTRAP_PROGRESS`` 这一唯一可变模块级缓存（the stall
+ceiling，live-incident-critical）由 ``read_bootstrap_progress`` 独家持有；此处
+re-export 的是同一实例引用，绝不复制。
 """
 
 from __future__ import annotations
 
-import json
+import json  # noqa: F401  (lossless re-export: top-level name at original path)
 import logging
-import os
-import re
+import os  # noqa: F401  (lossless re-export: top-level name at original path)
+import re  # noqa: F401  (lossless re-export: top-level name at original path)
 from collections.abc import Callable, Mapping
-from pathlib import Path
+from pathlib import Path  # noqa: F401  (lossless re-export: top-level name at original path)
 from typing import Any, Protocol, cast
 
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
+from polaris.cells.roles.kernel.internal.transaction.bootstrap_followup import (
+    _DEFAULT_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS,
+    _LEAF_BOOTSTRAP_WRITE_FILE_EXTS,
+    _LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS_ENV,
+    _bootstrap_successful_file_contents,
+    _extract_decision_invocations,
+    _extract_declared_step_card,
+    _extract_deterministic_bootstrap_write_targets,
+    _normalize_deterministic_bootstrap_target,
+    _read_leaf_write_file_max_chars,
+    _should_force_leaf_bootstrap_followup_write_file,
+    _synthesize_deterministic_bootstrap_write_content,
+    _synthesize_deterministic_dag_service_content,
+    build_deterministic_bootstrap_followup_write_decision,
+    merge_bootstrap_receipt_into_result,
+)
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     build_context_target_bootstrap_decision,
@@ -34,10 +59,70 @@ from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     requires_verification_intent,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.read_bootstrap_progress import (
+    _FINGERPRINT_SKIP_DIRS,
+    _FINGERPRINT_SOURCE_EXTS,
+    _MAX_STALLED_READ_BOOTSTRAPS,
+    _READ_BOOTSTRAP_PROGRESS,
+    _READ_BOOTSTRAP_PROGRESS_MAX_KEYS,
+    _WRITE_ONLY_SINGLE_TARGET_REPAIR_MARKER,
+    _clear_read_bootstrap_progress,
+    _read_bootstrap_makes_no_progress,
+    _requires_write_only_single_target_repair,
+    _resolve_materialization_workspace,
+    _should_bootstrap_original_read_batch,
+    _workspace_materialization_fingerprint,
+)
 from polaris.cells.roles.kernel.internal.transaction.receipt_utils import (
     merge_batch_receipts,
     normalize_batch_receipts,
     record_receipts_to_ledger,
+)
+from polaris.cells.roles.kernel.internal.transaction.retry_context_builders import (
+    _BOOTSTRAP_READ_MAX_CHARS_ENV,
+    _BOOTSTRAP_READ_TOTAL_CHARS_ENV,
+    _DEFAULT_BOOTSTRAP_READ_CONTENT_MAX_CHARS,
+    _DEFAULT_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS,
+    _bootstrap_read_content_max_chars,
+    _bootstrap_read_content_total_chars,
+    _extract_latest_assistant_message,
+    _read_positive_int_env,
+    append_retry_enforcement_hint,
+    build_contract_retry_context,
+    build_retry_write_after_bootstrap_context,
+    extract_failed_files_from_bootstrap_receipt,
+)
+from polaris.cells.roles.kernel.internal.transaction.retry_escalation_policy import (
+    _DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS,
+    _DEFAULT_RETRY_ESCALATION_TEMPERATURE,
+    _DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS,
+    _ESCALATION_START_ATTEMPT_INDEX,
+    _LINE_RANGE_EDIT_BLOCKS_PARAMETERS,
+    _RETRY_CREATE_OUTPUT_FLOOR_ENV,
+    _RETRY_ESCALATION_TEMPERATURE_ENV,
+    _RETRY_OUTPUT_FLOOR_ENV,
+    narrow_edit_blocks_schema_to_line_range,
+    resolve_escalation_temperature,
+    resolve_retry_create_output_floor,
+    resolve_retry_escalation,
+    resolve_retry_model_override,
+    resolve_retry_output_floor,
+    resolve_retry_temperature_override,
+)
+from polaris.cells.roles.kernel.internal.transaction.retry_tool_definitions import (
+    _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS,
+    _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_TYPES,
+    _BOOTSTRAP_WHOLE_FILE_MAX_CHARS,
+    _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS,
+    _build_scoped_write_file_tool_definition,
+    _extract_file_schema_from_tool_definition,
+    bootstrap_receipt_contains_whole_file_edit_error,
+    bootstrap_receipt_contains_whole_file_replacement_marker,
+    build_forced_write_only_retry_tool_definitions,
+    build_retry_tool_definitions_for_mutation,
+    detect_creation_mode,
+    select_bootstrap_followup_write_tool_name,
+    select_retry_forced_write_tool_name,
 )
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_allowed_tool_names_from_definitions,
@@ -61,1684 +146,91 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 
 logger = logging.getLogger(__name__)
 
-_BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS: tuple[str, ...] = (
-    "audit-seed",
-    "planning scenario",
-    "build verification completed",
-    "test verification completed",
-    "notimplemented",
-    "not implemented",
-    "todo:",
-    "fixme:",
-)
-# Whole-file replacement is only plausible for genuinely SMALL scaffold/seed
-# content. Real-world large source files contain the markers above as ordinary
-# code ("NotImplemented" comparison protocol, "TODO:" comments), and forcing
-# write_file on them makes a weak model regenerate the entire file — observed
-# live (phase1smoke django-15213): 600s LLM timeout, dead session.
-_BOOTSTRAP_WHOLE_FILE_MAX_CHARS = 4000
-_BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_TYPES = frozenset({"new_file_via_edit_blocks"})
-_BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS: tuple[str, ...] = (
-    "whole-file write, not edit",
-    "whole-file write",
-)
-_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS_ENV = "KERNELONE_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS"
-_DEFAULT_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS = 12_000
-_LEAF_BOOTSTRAP_WRITE_FILE_EXTS = frozenset(
-    {
-        ".py",
-        ".js",
-        ".mjs",
-        ".cjs",
-        ".ts",
-        ".tsx",
-        ".jsx",
-        ".md",
-        ".txt",
-        ".json",
-        ".toml",
-        ".yaml",
-        ".yml",
-        ".css",
-        ".html",
-    }
-)
-
-
-# ---------------------------------------------------------------------------
-# 模型覆盖与上下文构建
-# ---------------------------------------------------------------------------
-
-
-def resolve_retry_model_override(retry_llm_call_ordinal: int) -> str | None:
-    """Resolve optional retry model override from environment.
-
-    KERNELONE_TRANSACTION_KERNEL_RETRY_MODELS:
-        Comma-separated model list used when retry LLM calls reach threshold.
-    KERNELONE_TRANSACTION_KERNEL_RETRY_MODEL_START:
-        1-based retry LLM call ordinal to start model override (default: 3).
-    """
-    if retry_llm_call_ordinal <= 0:
-        return None
-    raw_models = str(os.environ.get("KERNELONE_TRANSACTION_KERNEL_RETRY_MODELS", "") or "").strip()
-    if not raw_models:
-        return None
-    candidates = [item.strip() for item in raw_models.split(",") if item and item.strip()]
-    if not candidates:
-        return None
-    raw_start = str(os.environ.get("KERNELONE_TRANSACTION_KERNEL_RETRY_MODEL_START", "3") or "").strip()
-    try:
-        start_ordinal = max(1, int(raw_start))
-    except ValueError:
-        start_ordinal = 3
-    if retry_llm_call_ordinal < start_ordinal:
-        return None
-    model_index = min(retry_llm_call_ordinal - start_ordinal, len(candidates) - 1)
-    selected = candidates[model_index]
-    return selected or None
-
-
-_LINE_RANGE_EDIT_BLOCKS_PARAMETERS: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "file": {
-            "type": "string",
-            "description": "Workspace-relative path of the file to edit.",
-        },
-        "start": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "First line to replace (1-based, inclusive — reuse the range you already read).",
-        },
-        "end": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Last line to replace (1-based, inclusive).",
-        },
-        "replace": {
-            "type": "string",
-            "minLength": 1,
-            "description": "The COMPLETE new source code for lines start..end (code only, no prose).",
-        },
-    },
-    "required": ["file", "start", "end", "replace"],
-}
-
-
-def narrow_edit_blocks_schema_to_line_range(tool_definitions: list[dict]) -> list[dict]:
-    """Rewrite the ``edit_blocks`` schema to the line-range-only form (ADR-0090).
-
-    Under named tool forcing, guided decoding constrains ARGUMENTS to the
-    declared JSON schema. With the full schema weak models dump prose into
-    ``blocks`` ("No valid edit blocks found" — observed live). Removing
-    ``blocks`` and requiring file/start/end/replace makes the only generable
-    output a concrete line-range replacement — the easy form the model already
-    used for ``repo_read_slice``.
-    """
-    narrowed: list[dict] = []
-    for definition in tool_definitions:
-        if not isinstance(definition, dict):
-            narrowed.append(definition)
-            continue
-        function_payload = definition.get("function")
-        name = (
-            str(function_payload.get("name") or "").strip()
-            if isinstance(function_payload, dict)
-            else str(definition.get("name") or "").strip()
-        )
-        if name != "edit_blocks":
-            narrowed.append(definition)
-            continue
-        rewritten = dict(definition)
-        rewritten_function = dict(function_payload) if isinstance(function_payload, dict) else {"name": "edit_blocks"}
-        rewritten_function["description"] = (
-            "Replace lines [start, end] of `file` with `replace` (the complete new "
-            "code for that range). Line numbers are 1-based inclusive — reuse the "
-            "exact range you already read via repo_read_slice/read_file."
-        )
-        narrowed_parameters = dict(_LINE_RANGE_EDIT_BLOCKS_PARAMETERS)
-        # Fix-11 composability: a step-pinned `file` enum (single-target fission
-        # step) must survive the wholesale line-range rewrite — losing it at the
-        # most-forced attempt would reopen the wrong-file escape exactly when
-        # guided decoding is strictest.
-        source_parameters = function_payload.get("parameters") if isinstance(function_payload, dict) else None
-        source_properties = source_parameters.get("properties") if isinstance(source_parameters, dict) else None
-        source_file_schema = source_properties.get("file") if isinstance(source_properties, dict) else None
-        if isinstance(source_file_schema, dict) and isinstance(source_file_schema.get("enum"), list):
-            narrowed_properties = dict(narrowed_parameters["properties"])
-            narrowed_properties["file"] = {
-                **narrowed_properties["file"],
-                "enum": list(source_file_schema["enum"]),
-            }
-            narrowed_parameters["properties"] = narrowed_properties
-        rewritten_function["parameters"] = narrowed_parameters
-        rewritten["function"] = rewritten_function
-        narrowed.append(rewritten)
-    return narrowed
-
-
-# ADR-0090 W2.6: escalation phase boundary — attempts below this index keep the
-# profile decoding defaults (prompt steering only); attempts at/after it are the
-# "transcribe what you already decided" phase (write-only tools, forced names).
-_ESCALATION_START_ATTEMPT_INDEX = 2
-_RETRY_ESCALATION_TEMPERATURE_ENV = "KERNELONE_RETRY_ESCALATION_TEMPERATURE"
-_DEFAULT_RETRY_ESCALATION_TEMPERATURE = 0.2
-
-# F24 (2026-06-16): progress-aware read-loop bound — the CORRECT version of the
-# reverted F21. F21's raw count-based ceiling regressed L2 because it could not
-# tell normal read-then-write convergence (L2: reads 3-5x, but WRITES files
-# between reads) from a pathological stall (L3-14/L4-19: reads forever, 0 new
-# files). F24 only forces the write escalation after consecutive read-only
-# bootstraps that materialise NO new bytes — normal flows change the fingerprint
-# and never trip it; a genuine stall does. Safe default: if the workspace cannot
-# be measured, never force (== original always-bootstrap behaviour, no regression).
-_MAX_STALLED_READ_BOOTSTRAPS = 2
-_READ_BOOTSTRAP_PROGRESS: dict[str, tuple[tuple[int, int] | None, int]] = {}
-_READ_BOOTSTRAP_PROGRESS_MAX_KEYS = 512
-_WRITE_ONLY_SINGLE_TARGET_REPAIR_MARKER = "[director_quality_repair:write_only_single_target]"
-_FINGERPRINT_SOURCE_EXTS = (
-    ".py",
-    ".js",
-    ".jsx",
-    ".ts",
-    ".tsx",
-    ".html",
-    ".css",
-    ".vue",
-    ".svelte",
-    ".go",
-    ".rs",
-    ".json",
-)
-_FINGERPRINT_SKIP_DIRS = frozenset(
-    {".git", ".polaris", "runtime", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".next"}
-)
-
-
-def _workspace_materialization_fingerprint(workspace: str) -> tuple[int, int] | None:
-    """Return (source_file_count, total_bytes), or None when unmeasurable.
-
-    The 'did the Director write anything new' signal. None (CWD-style ``.`` or a
-    missing dir) means the caller must NOT force — measuring the wrong tree is
-    worse than indulging another read.
-    """
-    ws = str(workspace or "").strip()
-    if not ws or ws == "." or not os.path.isdir(ws):
-        return None
-    file_count = 0
-    total_bytes = 0
-    try:
-        for current_root, dirnames, filenames in os.walk(ws):
-            dirnames[:] = [d for d in dirnames if d not in _FINGERPRINT_SKIP_DIRS and not d.startswith(".")]
-            for name in filenames:
-                if not name.endswith(_FINGERPRINT_SOURCE_EXTS):
-                    continue
-                file_count += 1
-                try:
-                    total_bytes += os.path.getsize(os.path.join(current_root, name))
-                except OSError:
-                    continue
-            if file_count > 5000:
-                break
-    except OSError:
-        return None
-    return (file_count, total_bytes)
-
-
-def _read_bootstrap_makes_no_progress(turn_id: str, workspace: str) -> bool:
-    """True when read-only bootstraps for a step have stalled (no new materialization).
-
-    Returns True only after ``_MAX_STALLED_READ_BOOTSTRAPS`` consecutive read-only
-    bootstraps with an UNCHANGED workspace fingerprint. Any new materialization
-    resets the streak, so normal read-then-write convergence never trips it.
-    Unmeasurable workspace -> always False (safe default == original behaviour).
-    """
-    fingerprint = _workspace_materialization_fingerprint(workspace)
-    if fingerprint is None:
-        return False
-    if len(_READ_BOOTSTRAP_PROGRESS) > _READ_BOOTSTRAP_PROGRESS_MAX_KEYS:
-        _READ_BOOTSTRAP_PROGRESS.clear()
-    last_fingerprint, stalled = _READ_BOOTSTRAP_PROGRESS.get(turn_id, (None, 0))
-    stalled = stalled + 1 if (last_fingerprint is not None and fingerprint == last_fingerprint) else 0
-    _READ_BOOTSTRAP_PROGRESS[turn_id] = (fingerprint, stalled)
-    return stalled >= _MAX_STALLED_READ_BOOTSTRAPS
-
-
-def _clear_read_bootstrap_progress(turn_id: str) -> None:
-    """Reset a step's read-bootstrap progress once it converges to a write."""
-    _READ_BOOTSTRAP_PROGRESS.pop(turn_id, None)
-
-
-def _requires_write_only_single_target_repair(context: list[dict]) -> bool:
-    """Return True for Director quality repair of exactly one missing target."""
-    latest_user_request = extract_latest_user_message(context).lower()
-    return _WRITE_ONLY_SINGLE_TARGET_REPAIR_MARKER in latest_user_request
-
-
-def _should_bootstrap_original_read_batch(
-    *,
-    context: list[dict],
-    turn_id: str,
-    config: Any,
-    original_bootstrap_invocations: list[Any],
-) -> bool:
-    """Decide whether an original read-only violating batch may be executed."""
-    if not original_bootstrap_invocations:
-        return False
-    if not is_safe_readonly_bootstrap_invocations(original_bootstrap_invocations):
-        return False
-    if _requires_write_only_single_target_repair(context):
-        logger.warning(
-            "mutation-contract READ-ONLY bootstrap blocked by single-target write-only repair: turn_id=%s tools=%s",
-            turn_id,
-            [extract_invocation_tool_name(inv) for inv in original_bootstrap_invocations],
-        )
-        return False
-    progress_workspace = _resolve_materialization_workspace(config)
-    if _read_bootstrap_makes_no_progress(turn_id, progress_workspace):
-        logger.warning(
-            "mutation-contract READ-ONLY bootstrap stalled (no new materialization) "
-            "-> forcing write escalation: turn_id=%s",
-            turn_id,
-        )
-        return False
-    return True
-
-
-def _resolve_materialization_workspace(config: Any) -> str:
-    """Resolve the workspace for the F24 fingerprint / forced-write targeting.
-
-    F32 (2026-06-16): ``config.workspace`` is sometimes the literal CWD marker
-    ``"."`` (truthy), which short-circuited the ``or KERNELONE_WORKSPACE``
-    fallback in the old inline resolution. ``"."`` is UNMEASURABLE
-    (``_workspace_materialization_fingerprint`` returns None), so F24 silently
-    never fired and read-only bootstraps ran unbounded — factory-bench L4-23:
-    6 consecutive read-only bootstraps, SAME turn_id, NO interspersed writes,
-    yet ``_read_bootstrap_makes_no_progress`` returned False every time and the
-    write escalation never engaged. Treat ``"."``/empty as unset so the real
-    workspace (``KERNELONE_WORKSPACE``) is used and the fingerprint is measurable.
-    """
-    cfg_ws = str(getattr(config, "workspace", "") or "").strip()
-    if cfg_ws and cfg_ws != ".":
-        return cfg_ws
-    return str(os.environ.get("KERNELONE_WORKSPACE", "") or "").strip() or "."
-
-
-_RETRY_OUTPUT_FLOOR_ENV = "KERNELONE_RETRY_OUTPUT_FLOOR_TOKENS"
-_DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS = 2500
-
-_RETRY_CREATE_OUTPUT_FLOOR_ENV = "KERNELONE_RETRY_CREATE_OUTPUT_FLOOR_TOKENS"
-_DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS = 7000
-
-
-def resolve_escalation_temperature() -> float | None:
-    """ADR-0090 W2.6: deterministic sampling temperature for escalated writes.
-
-    fix5 evidence (qwen3.6-int4, django-15213): temperature=0.92 drove run-to-run
-    localization flips under forced-write pressure (correct file in diag5e vs a
-    hallucinated Flask edit in fix5). Escalated/forced attempts are transcription
-    work — "write what you already read" — not exploration, so they should sample
-    near-deterministically.
-
-    Env ``KERNELONE_RETRY_ESCALATION_TEMPERATURE``: float clamped to [0, 2];
-    ``off``/``none``/``disabled``/empty/negative disables the override (returns
-    ``None`` → profile temperature is kept). Unset → 0.2.
-    """
-    raw = os.environ.get(_RETRY_ESCALATION_TEMPERATURE_ENV)
-    if raw is None:
-        return _DEFAULT_RETRY_ESCALATION_TEMPERATURE
-    text = raw.strip().lower()
-    if text in {"", "off", "none", "disabled", "false"}:
-        return None
-    try:
-        value = float(text)
-    except ValueError:
-        return _DEFAULT_RETRY_ESCALATION_TEMPERATURE
-    if value < 0:
-        return None
-    return min(value, 2.0)
-
-
-def resolve_retry_output_floor() -> int | None:
-    """I3-r22 (F10): reserved reasoning-sized OUTPUT floor for retry/re-ask calls.
-
-    The mutation-contract retry re-injects up to 16000 chars of bootstrap file
-    content into a 16384-token local-Director window. With only the default
-    ``max_tokens`` and no reserved-output floor, the prompt fills the window and
-    ``clamp_output_tokens_to_window`` collapses the generation budget toward its
-    256-token floor — a reasoning model then exhausts the budget mid-thought
-    (live r22 main.js: ``finish_reason=length, reasoning_chars=633``) and emits
-    no visible write. Passing this floor as the retry call's requested output
-    tokens makes ``TokenBudgetManager.enforce`` RESERVE it and COMPRESS the
-    (bulky, mostly-verbatim) prompt to fit, instead of starving the output.
-
-    Retry-path-local: it rides the same context_override channel the temperature
-    override uses, so the main-turn budget is untouched. Respects the model's
-    hard window by shrinking the input, never raising the window.
-
-    Env ``KERNELONE_RETRY_OUTPUT_FLOOR_TOKENS``: positive int; ``off``/``none``/
-    ``disabled``/empty/non-positive disables the floor (returns ``None`` → legacy
-    behavior). Unset → 2500.
-    """
-    raw = os.environ.get(_RETRY_OUTPUT_FLOOR_ENV)
-    if raw is None:
-        return _DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS
-    text = raw.strip().lower()
-    if text in {"", "off", "none", "disabled", "false"}:
-        return None
-    try:
-        value = int(text)
-    except ValueError:
-        return _DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS
-    if value <= 0:
-        return None
-    return value
-
-
-def resolve_retry_create_output_floor() -> int | None:
-    """F16 follow-up (Wall 2, 2026-06-15): a LARGER reserved output floor for a
-    pure-create forced write.
-
-    A from-scratch create has nothing to read, so the retry prompt is small — but
-    the model must emit a COMPLETE file body in ONE shot. The standard floor (sized
-    for an edit re-ask, ~2500) is shared with reasoning_content and truncates a
-    several-hundred-line body (finish_reason=length) → the write lands empty/partial
-    → director_no_materialized_changes. Selected ONLY at the pure-create site (there
-    is no injected read content to evict), so reserving more output is safe. Env
-    ``KERNELONE_RETRY_CREATE_OUTPUT_FLOOR_TOKENS``; ``off``/``none``/``disabled``/
-    empty/non-positive disables (falls back to the standard floor). Unset → 7000.
-    """
-    raw = os.environ.get(_RETRY_CREATE_OUTPUT_FLOOR_ENV)
-    if raw is None:
-        return _DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS
-    text = raw.strip().lower()
-    if text in {"", "off", "none", "disabled", "false"}:
-        return None
-    try:
-        value = int(text)
-    except ValueError:
-        return _DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS
-    if value <= 0:
-        return None
-    return value
-
-
-def resolve_retry_temperature_override(*, attempt_index: int, force_write_immediately: bool = False) -> float | None:
-    """Phase-aware decoding: low temperature only for escalated retry attempts.
-
-    Attempts 1-2 (index 0-1) keep the profile temperature — they still choose
-    tools freely and benefit from exploration. From the escalation phase on
-    (write-only set / forced tool name) the task is deterministic transcription.
-
-    F16: from-scratch creates (``force_write_immediately``) start the escalation
-    one attempt earlier, so the low-temp transcription phase shifts with it to
-    stay aligned with the forced-write phase in ``resolve_retry_escalation``.
-    """
-    escalation_start = 1 if force_write_immediately else _ESCALATION_START_ATTEMPT_INDEX
-    if attempt_index < escalation_start:
-        return None
-    return resolve_escalation_temperature()
-
-
-def resolve_retry_escalation(
-    *,
-    attempt_index: int,
-    max_retry_attempts: int,
-    strict_tool_definitions: list[dict] | None,
-    forced_write_tool_name: str | None,
-    force_write_immediately: bool = False,
-) -> tuple[list[dict] | None, Any | None]:
-    """ADR-0090: API-level escalation ladder for mutation-contract retries.
-
-    Prompt-level MANDATORY hints are exactly what weak models ignore (observed
-    live: qwen emitted ``repo_rg`` through four "must write" retries because the
-    write-INCLUSIVE tool set still offered read tools). Guided decoding at the
-    API level cannot be ignored:
-
-    - attempts 1-2: write-inclusive set, prompt steering only (unchanged);
-    - attempt 3+: WRITE-ONLY tool definitions — the narrowed-set batch guard
-      rejects any read batch, and providers with strict tool grammars cannot
-      generate one;
-    - final attempt: force the selected write tool by name (OpenAI-style
-      ``{"type": "function", "function": {"name": ...}}``); when that tool is
-      ``edit_blocks``, its schema is simultaneously narrowed to the line-range
-      form so guided decoding can only produce a concrete replacement.
-
-    F16 (2026-06-15): a from-scratch create (``force_write_immediately``) never
-    gets the weak model to emit the write tool spontaneously — live, qwen burned
-    three ``execute_command`` retries per turn before the forced rung, tripping
-    the circuit breaker into a dead-letter. Creation steps bring the escalation
-    phase forward one attempt: narrow to write-only AND force the selected tool
-    by name from the FIRST retry escalation (index 1), keeping retry attempt 1
-    (index 0) as the single free exploration shot. Edit-existing steps are
-    byte-for-byte unchanged (``force_write_immediately`` defaults False).
-
-    Returns ``(tool_definitions_override, tool_choice_override)`` — ``None``
-    members mean "keep the attempt's defaults".
-    """
-    escalation_start = 1 if force_write_immediately else _ESCALATION_START_ATTEMPT_INDEX
-    if attempt_index < escalation_start or not strict_tool_definitions:
-        return None, None
-    definitions_override = strict_tool_definitions
-    tool_choice_override: Any | None = None
-    force_from_index = escalation_start if force_write_immediately else max_retry_attempts - 1
-    if attempt_index >= force_from_index and forced_write_tool_name:
-        tool_choice_override = {
-            "type": "function",
-            "function": {"name": forced_write_tool_name},
-        }
-        if forced_write_tool_name == "edit_blocks":
-            definitions_override = narrow_edit_blocks_schema_to_line_range(strict_tool_definitions)
-    return definitions_override, tool_choice_override
-
-
-def _extract_latest_assistant_message(context: list[dict]) -> str:
-    """Return the most recent assistant message content (the model's own analysis).
-
-    Weak models often narrate the fix in prose without emitting an edit tool call.
-    Surfacing that prior analysis back into the retry lets the model transcribe its
-    OWN plan into a concrete edit instead of re-deriving (or re-narrating) it.
-    """
-    for message in reversed(context):
-        if not isinstance(message, Mapping):
-            continue
-        if str(message.get("role") or "").strip().lower() != "assistant":
-            continue
-        content = str(message.get("content") or "").strip()
-        if content:
-            return content
-    return ""
-
-
-def build_contract_retry_context(
-    context: list[dict],
-    tool_definitions: list[dict],
-    *,
-    forced_write_tool_name: str | None = None,
-) -> list[dict]:
-    """构建突变合约违反后的 retry 上下文。"""
-    latest_user = extract_latest_user_message(context)
-    latest_assistant = _extract_latest_assistant_message(context)
-    raw_target_file_tokens = extract_target_files_from_message(latest_user)
-    target_file_tokens: list[str] = []
-    for token in raw_target_file_tokens:
-        normalized = token.replace("\\", "/")
-        name = normalized.rsplit("/", 1)[-1]
-        suffix = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-        if "/" not in normalized and suffix == "js" and name[:1].isupper():
-            continue
-        target_file_tokens.append(token)
-    write_candidates = set(WRITE_TOOLS)
-    write_tools: list[str] = []
-    for item in tool_definitions:
-        if not isinstance(item, Mapping):
-            continue
-        function_payload = item.get("function")
-        if isinstance(function_payload, Mapping):
-            tool_name = str(function_payload.get("name") or "").strip()
-        else:
-            tool_name = str(item.get("name") or "").strip()
-        if tool_name and tool_name in write_candidates and tool_name not in write_tools:
-            write_tools.append(tool_name)
-
-    retry_lines = [
-        "RETRY CONTRACT: The previous tool batch was rejected because it did not include any write tool",
-        "while the user explicitly requested code/file modification.",
-        "You must replan now and emit ONE valid tool batch before finalization.",
-        "HARD GATE: never return plain-text-only completion for a mutation request.",
-    ]
-    if write_tools:
-        retry_lines.append("Allowed write tools in this turn: " + ", ".join(write_tools) + ".")
-        retry_lines.append("Include at least one of the allowed write tools in the emitted batch.")
-        retry_lines.append(
-            "Do not guess precision_edit/search_replace search text. "
-            "For create-file or whole-file replacement tasks, prefer write_file. "
-            "For existing targeted edits, prefer edit_blocks or edit_file after verifying exact content."
-        )
-    # Weak-model EASIEST-PATH: the line-range form of edit_blocks removes the hardest
-    # task (reproducing exact SEARCH text). Steer low-precision models there explicitly.
-    if "edit_blocks" in write_tools:
-        retry_lines.append(
-            "EASIEST EDIT (no exact-match needed): call edit_blocks with `file`, `start` and `end` "
-            "(1-based inclusive line numbers — reuse the range you already read via repo_read_slice) "
-            "and `replace` = the FULL new source for those lines. The tool reads the current lines itself, "
-            "so you do NOT need to copy the original text."
-        )
-    # Narration->edit transcription: if the model already analysed the fix in prose,
-    # feed that analysis back and demand a transcription, not a re-explanation.
-    if latest_assistant and len(latest_assistant.strip()) > 40:
-        analysis_snippet = latest_assistant.strip()[:1200]
-        retry_lines.append(
-            "You ALREADY analysed the fix in your previous message:\n---\n"
-            + analysis_snippet
-            + "\n---\nDo NOT re-explain. Transcribe THAT plan into ONE concrete edit tool call now."
-        )
-    if forced_write_tool_name:
-        retry_lines.append(f"MANDATORY: your batch must include write tool `{forced_write_tool_name}`.")
-        retry_lines.append("Do not output read/list-only batches; the emitted batch must include this write tool.")
-    if target_file_tokens:
-        retry_lines.append(
-            "Mutation target files detected from user request: "
-            + ", ".join(target_file_tokens)
-            + ". Ensure one write call touches at least one target file. "
-            "Only write these target files; acceptance criteria, verification commands, test names, and command "
-            "output paths are not authorization to create or modify extra files."
-        )
-
-    retry_mode_guard = (
-        "RETRY MODE ACTIVE: discard any previous staged workflow (e.g., understand-first/read-first).\n"
-        "Output a single valid TOOL_BATCH immediately under the constraints below.\n"
-        "Do not emit plain-text-only response."
-    )
-    retry_context: list[dict[str, str]] = [
-        {
-            "role": "system",
-            "content": "\n".join([retry_mode_guard, *retry_lines]),
-        }
-    ]
-    if latest_user:
-        retry_context.append({"role": "user", "content": latest_user})
-    else:
-        for item in context:
-            if not isinstance(item, Mapping):
-                continue
-            role = str(item.get("role") or "").strip()
-            content = str(item.get("content") or "")
-            if role in {"system", "user"} and content:
-                retry_context.append({"role": role, "content": content})
-        if not retry_context:
-            retry_context.append({"role": "user", "content": ""})
-    return retry_context
-
-
-def append_retry_enforcement_hint(
-    retry_context: list[dict],
-    *,
-    allowed_tool_names: set[str],
-    reason: str,
-    forced_write_tool_name: str | None = None,
-) -> list[dict]:
-    """向 retry 上下文追加强制约束提示。"""
-    rendered_allowed = ", ".join(sorted(allowed_tool_names)) if allowed_tool_names else "<none>"
-    forced_tool_detail = ""
-    if forced_write_tool_name == "write_file":
-        forced_tool_detail = (
-            "\nwrite_file requires args.file and args.content. "
-            "The content value must be the non-empty complete file body; "
-            "do not put code in prose, analysis, or reasoning text."
-        )
-    elif forced_write_tool_name == "edit_blocks":
-        forced_tool_detail = (
-            "\nedit_blocks requires non-empty args. Easiest valid form: "
-            '{"file": "<target file>", "start": <first line>, "end": <last line>, '
-            '"replace": "<complete replacement source lines>"}. '
-            "Do not emit empty arguments, prose, analysis, or a whole new filename plus full file body."
-        )
-    reason_text = str(reason or "")
-    reason_lower = reason_text.lower()
-    if forced_write_tool_name == "edit_blocks" and "validation failed" in reason_lower and "search" in reason_lower:
-        forced_tool_detail += (
-            " Previous SEARCH/REPLACE text did not match the current file. "
-            "Do not retry SEARCH/REPLACE blocks; use the line-range form with file/start/end/replace."
-        )
-    target_file_tokens = extract_target_files_from_message(extract_latest_user_message(retry_context))
-    target_file_detail = ""
-    if target_file_tokens:
-        target_file_detail = (
-            "\nOnly write these target files: "
-            + ", ".join(target_file_tokens)
-            + ". Acceptance criteria, verification commands, test names, and command output paths are "
-            "not authorization to create or modify extra files."
-        )
-    enforcement_hint = {
-        "role": "system",
-        "content": (
-            "RETRY ENFORCEMENT: previous retry output is still invalid.\n"
-            f"Reason: {reason}\n"
-            f"Allowed tools for this retry scope: {rendered_allowed}\n"
-            "You MUST emit one TOOL_BATCH that uses only allowed tools, and includes at least one write tool.\n"
-            "INVALID retry outputs: read_file-only, list_directory-only, execute_command-only.\n"
-            "VALID retry output must include a write tool call.\n"
-            + (f"MANDATORY write tool for this retry: {forced_write_tool_name}." if forced_write_tool_name else "")
-            + forced_tool_detail
-            + target_file_detail
-        ),
-    }
-    return [*retry_context, enforcement_hint]
-
-
-# ---------------------------------------------------------------------------
-# 工具定义筛选
-# ---------------------------------------------------------------------------
-
-
-def build_retry_tool_definitions_for_mutation(
-    *,
-    latest_user_request: str,
-    tool_definitions: list[dict],
-    requires_mutation: bool | None = None,
-    forbidden_tool_names: set[str] | None = None,
-) -> list[dict]:
-    """Builds narrowed tool definitions for a mutation-contract retry.
-
-    Critically, this function respects a ``forbidden_tool_names`` set so
-    that benchmark-level or case-level forbidden tools (e.g. execute_command)
-    are never smuggled back in during retry escalation.
-    """
-    if requires_mutation is None:
-        requires_mutation = requires_mutation_intent(latest_user_request)
-    if not requires_mutation:
-        return list(tool_definitions)
-
-    _forbidden: set[str] = forbidden_tool_names or set()
-
-    write_candidates = set(WRITE_TOOLS)
-    read_context_candidates = {
-        "read_file",
-        "list_directory",
-        "repo_rg",
-        "repo_glob",
-    }
-    # Only add verification tools that are NOT forbidden by the benchmark case.
-    verification_candidates = {t for t in {"execute_command"} if t not in _forbidden}
-    narrowed: list[dict] = []
-    has_write = False
-    selected_tool_names: set[str] = set()
-    for raw_item in tool_definitions:
-        if not isinstance(raw_item, Mapping):
-            continue
-        item = dict(raw_item)
-        tool_name = extract_tool_name_from_definition(item)
-        # Never include globally forbidden tools.
-        if tool_name in _forbidden:
-            continue
-        if tool_name in write_candidates:
-            narrowed.append(item)
-            has_write = True
-            selected_tool_names.add(tool_name)
-    if has_write:
-        for raw_item in tool_definitions:
-            if not isinstance(raw_item, Mapping):
-                continue
-            item = dict(raw_item)
-            tool_name = extract_tool_name_from_definition(item)
-            if tool_name in _forbidden:
-                continue
-            if tool_name and tool_name in read_context_candidates and tool_name not in selected_tool_names:
-                narrowed.append(item)
-                selected_tool_names.add(tool_name)
-        for raw_item in tool_definitions:
-            if not isinstance(raw_item, Mapping):
-                continue
-            item = dict(raw_item)
-            tool_name = extract_tool_name_from_definition(item)
-            if tool_name in _forbidden:
-                continue
-            if tool_name and tool_name in verification_candidates and tool_name not in selected_tool_names:
-                narrowed.append(item)
-                selected_tool_names.add(tool_name)
-    if has_write and narrowed:
-        return narrowed
-    return [item for item in tool_definitions if extract_tool_name_from_definition(item) not in _forbidden]
-
-
-def detect_creation_mode(
-    workspace: str,
-    target_files: tuple[str, ...] | list[str] = (),
-) -> bool:
-    """Return True when at least one target file does not yet exist on disk.
-
-    A from-scratch creation step has nothing to read, so the weak model's
-    instinct to explore (``execute_command`` / ``read_file``) before writing is
-    pure waste — live forensics (L2-12 brick-breaker, 2026-06-15) show qwen
-    never emits the write tool spontaneously for a create, burning the retry
-    budget until the circuit breaker dead-letters the step. Callers use this to
-    force the write tool by name earlier in the escalation ladder (F16). ANY
-    missing target flips to creation mode (a partially-created set must not lock
-    the remaining missing files back onto an edit-only tool).
-    """
-    if not (workspace and target_files):
-        return False
-    normalized = [stripped for target in target_files if (stripped := str(target).strip())]
-    # The message extractor yields BOTH "README.md" and the bare stem "README"
-    # for a single mention; the extension-less stem never exists on disk and
-    # would wrongly flag an edit-to-existing task as a create (forcing a
-    # destructive whole-file overwrite). Drop any stem that another, longer
-    # token extends with a file extension — genuinely distinct targets stay.
-    candidates = [
-        token for token in normalized if not any(other.startswith(f"{token}.") for other in normalized)
-    ] or normalized
-    try:
-        return any(not os.path.exists(os.path.join(workspace, token)) for token in candidates)
-    except OSError:
-        return False
-
-
-def select_retry_forced_write_tool_name(
-    tool_definitions: list[dict],
-    *,
-    workspace: str = "",
-    target_files: tuple[str, ...] | list[str] = (),
-) -> str | None:
-    # Prefer tools that are robust when the retry context is incomplete. The
-    # retry path is entered after a failed/non-mutating first attempt, so forcing
-    # precision_edit first is brittle: it requires exact pre-read search text and
-    # commonly degenerates into guessed no-match replacements. Whole-file and
-    # block-edit tools are safer general recovery choices; append remains last
-    # because it can leave stale placeholder code in place.
-    #
-    # Target-existence awareness (factory-bench L1-05 round 6, 2026-06-12):
-    # the final escalation forces the tool BY NAME via tool_choice — guided
-    # decoding then physically cannot emit anything else. Forcing edit_blocks
-    # for a CREATION task (no target exists yet) locks weak models into the
-    # "edit_blocks cannot create new files → use write_file" teaching loop
-    # forever. When every known target is missing, write_file leads.
-    # ANY missing target flips to creation mode (round-7 live: the model created
-    # quotes.json first, then the remaining three missing files must not be
-    # locked back onto edit_blocks). write_file handles existing files too — the
-    # destructive-shrink gate guards against gutting them.
-    creation_mode = detect_creation_mode(workspace, target_files)
-    if creation_mode:
-        priority_order = (
-            "write_file",
-            "create_file",
-            "edit_blocks",
-            "edit_file",
-            "search_replace",
-            "repo_apply_diff",
-            "precision_edit",
-            "append_to_file",
-        )
-        available = extract_allowed_tool_names_from_definitions(tool_definitions)
-        for tool_name in priority_order:
-            if tool_name in available:
-                return tool_name
-        return None
-    priority_order = (
-        "edit_blocks",
-        "write_file",
-        "edit_file",
-        "search_replace",
-        "repo_apply_diff",
-        "precision_edit",
-        "create_file",
-        "append_to_file",
-    )
-    available = extract_allowed_tool_names_from_definitions(tool_definitions)
-    for tool_name in priority_order:
-        if tool_name in available:
-            return tool_name
-    return None
-
-
-def bootstrap_receipt_contains_whole_file_replacement_marker(bootstrap_receipt: Mapping[str, Any]) -> bool:
-    """Return True when bootstrap content is scaffold-like enough to replace whole files.
-
-    The marker check is intentionally narrow. It targets deterministic seed /
-    placeholder output that should be replaced wholesale by Director, while
-    avoiding a blanket escalation from precise edits to full-file overwrites.
-
-    Phase-1 live fix (2026-06-11, phase1smoke django-15213): real-world large
-    source files contain these markers as ordinary code (``NotImplemented``
-    comparison protocol, ``TODO:`` comments — django expressions.py has both),
-    which silently escalated the follow-up to a forced ``write_file``
-    whole-file regeneration; a 27B-int4 model cannot regenerate an 1800-line
-    file inside the LLM timeout, so the stream hit the 600s ceiling and the
-    session died. The marker scan is therefore gated by total content size:
-    only genuinely small scaffold content qualifies.
-    """
-    marker_candidates: list[str] = []
-    for item in list(bootstrap_receipt.get("results", []) or []):
-        if not isinstance(item, Mapping):
-            continue
-        status = str(item.get("status") or "").strip().lower()
-        if status and status != "success":
-            continue
-        payload = item.get("result")
-        if isinstance(payload, Mapping):
-            for key in ("content", "text", "body", "data"):
-                value = payload.get(key)
-                if isinstance(value, str) and value:
-                    marker_candidates.append(value)
-        elif isinstance(payload, str) and payload:
-            marker_candidates.append(payload)
-    combined = "\n".join(marker_candidates)
-    if len(combined) > _BOOTSTRAP_WHOLE_FILE_MAX_CHARS:
-        return False
-    lowered = combined.lower()
-    return any(marker in lowered for marker in _BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS)
-
-
-def bootstrap_receipt_contains_whole_file_edit_error(bootstrap_receipt: Mapping[str, Any]) -> bool:
-    """Return True when edit_blocks rejected a new-file whole-file write."""
-    for item in list(bootstrap_receipt.get("results", []) or []):
-        if not isinstance(item, Mapping):
-            continue
-        tool_name = str(item.get("tool_name") or item.get("name") or "").strip().lower()
-        payload = item.get("result")
-        error_parts: list[str] = []
-
-        if isinstance(payload, Mapping):
-            error_type = str(payload.get("error_type") or "").strip().lower()
-            if error_type in _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_TYPES:
-                return True
-            for key in ("error", "message", "stderr", "details", "reason"):
-                value = payload.get(key)
-                if isinstance(value, str) and value:
-                    error_parts.append(value)
-        elif isinstance(payload, str) and payload:
-            error_parts.append(payload)
-
-        for key in ("error", "message"):
-            value = item.get(key)
-            if isinstance(value, str) and value:
-                error_parts.append(value)
-
-        combined = "\n".join(error_parts).lower()
-        if not combined:
-            continue
-        if "whole-file write, not edit" in combined:
-            return True
-        if tool_name == "edit_blocks" and all(
-            fragment in combined for fragment in ("full file content", "not an edit")
-        ):
-            return True
-        if tool_name == "edit_blocks" and any(
-            fragment in combined for fragment in _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS
-        ):
-            return True
-    return False
-
-
-def select_bootstrap_followup_write_tool_name(
-    *,
-    allowed_tool_names: set[str],
-    default_write_tool_name: str | None,
-    bootstrap_receipt: Mapping[str, Any],
-    failed_bootstrap_files: list[str],
-) -> str | None:
-    """Select the write tool for the post-bootstrap implementation stage."""
-    if failed_bootstrap_files:
-        for creation_candidate in ("write_file", "create_file", "append_to_file"):
-            if creation_candidate in allowed_tool_names:
-                return creation_candidate
-        return default_write_tool_name
-
-    if bootstrap_receipt_contains_whole_file_edit_error(bootstrap_receipt):
-        for creation_candidate in ("write_file", "create_file", "append_to_file"):
-            if creation_candidate in allowed_tool_names:
-                return creation_candidate
-        return default_write_tool_name
-
-    if bootstrap_receipt_contains_whole_file_replacement_marker(bootstrap_receipt):
-        for replacement_candidate in ("write_file", "edit_file", "repo_apply_diff", "edit_blocks"):
-            if replacement_candidate in allowed_tool_names:
-                return replacement_candidate
-
-    return default_write_tool_name
-
-
-def build_forced_write_only_retry_tool_definitions(
-    tool_definitions: list[dict],
-    forced_write_tool_name: str | None,
-    *,
-    include_verification_tools: bool = False,
-    forbidden_tool_names: set[str] | None = None,
-) -> list[dict]:
-    """Builds the strict forced-write tool definitions.
-
-    Respects ``forbidden_tool_names`` so that benchmark-forbidden tools
-    (e.g. execute_command) are never included even when verification is enabled.
-    """
-    _forbidden: set[str] = forbidden_tool_names or set()
-    if not forced_write_tool_name:
-        return [item for item in tool_definitions if extract_tool_name_from_definition(item) not in _forbidden]
-    companion_tool_names: set[str] = {forced_write_tool_name}
-    if forced_write_tool_name in {"repo_apply_diff"}:
-        companion_tool_names.update({"read_file", "repo_read_head"})
-    if forced_write_tool_name == "edit_blocks":
-        # New-file deadlock fix (factory-bench L1-03/L1-02 live, 2026-06-12):
-        # edit_blocks cannot create files and its teaching error tells the
-        # model to use write_file — but the narrowed set used to exclude it,
-        # locking weak models onto an impossible tool until the circuit
-        # breaker killed the task. Offer write_file alongside; the final
-        # attempt's named tool_choice still forces edit_blocks for existing-
-        # file edits, and the batch contract guard still requires a write.
-        companion_tool_names.add("write_file")
-    if include_verification_tools and "execute_command" not in _forbidden:
-        companion_tool_names.add("execute_command")
-    narrowed: list[dict] = []
-    has_write_file_definition = False
-    for raw_item in tool_definitions:
-        if not isinstance(raw_item, Mapping):
-            continue
-        item = dict(raw_item)
-        tool_name = extract_tool_name_from_definition(item)
-        if tool_name in _forbidden:
-            continue
-        if tool_name in companion_tool_names:
-            if tool_name == "write_file":
-                has_write_file_definition = True
-            narrowed.append(item)
-    if "write_file" in companion_tool_names and "write_file" not in _forbidden and not has_write_file_definition:
-        narrowed.append(_build_scoped_write_file_tool_definition(tool_definitions))
-    if narrowed:
-        return narrowed
-    return [item for item in tool_definitions if extract_tool_name_from_definition(item) not in _forbidden]
-
-
-def _extract_file_schema_from_tool_definition(definition: Mapping[str, Any]) -> dict[str, Any] | None:
-    function_payload = definition.get("function")
-    parameters = (
-        function_payload.get("parameters") if isinstance(function_payload, Mapping) else definition.get("parameters")
-    )
-    if not isinstance(parameters, Mapping):
-        return None
-    properties = parameters.get("properties")
-    if not isinstance(properties, Mapping):
-        return None
-    file_schema = properties.get("file") or properties.get("path")
-    if isinstance(file_schema, Mapping):
-        return dict(file_schema)
-    return None
-
-
-def _build_scoped_write_file_tool_definition(tool_definitions: list[dict]) -> dict[str, Any]:
-    file_schema: dict[str, Any] = {
-        "type": "string",
-        "description": "Workspace-relative path of the file to write.",
-    }
-    for raw_definition in tool_definitions:
-        if not isinstance(raw_definition, Mapping):
-            continue
-        candidate = _extract_file_schema_from_tool_definition(raw_definition)
-        if not candidate:
-            continue
-        enum_values = candidate.get("enum")
-        if isinstance(enum_values, list) and enum_values:
-            file_schema["enum"] = list(enum_values)
-            break
-    return {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": (
-                "Write the complete UTF-8 file body to the scoped target file. "
-                "Use only when replacing a small generated leaf target after reading it."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "file": file_schema,
-                    "content": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "Complete non-empty UTF-8 file content.",
-                    },
-                    "encoding": {
-                        "type": "string",
-                        "enum": ["utf-8"],
-                        "default": "utf-8",
-                    },
-                },
-                "required": ["file", "content"],
-            },
-        },
-    }
-
-
-# ---------------------------------------------------------------------------
-# Bootstrap 上下文构建
-# ---------------------------------------------------------------------------
-
-
-# Per-file and total budgets for REAL file content carried into the bootstrap
-# follow-up write context. The previous 1200-char JSON fragment made correct
-# SEARCH/REPLACE transcription impossible by construction — the model was forced
-# to write a file it could not see.
+# Lossless re-export surface: every moved symbol (public AND the private
+# ``_``-prefixed functions/constants that tests and in-cell consumers import
+# from this canonical path) is named here so static linters keep the imports
+# above and the original import path stays byte-compatible. The bodies live in
+# the cohesive submodules; this is purely the compatibility surface.
 #
-# I3-r22/r23 (F10): the 16000/9000 defaults were sized for large cloud windows.
-# On a 16384-token LOCAL Director they inject ~4000 tokens of verbatim read
-# content — the dominant input cost — which fills the window and collapses the
-# output budget so the model truncates mid-reasoning and emits no write (live
-# main.js empty-output dead-letter). Sized for the small window here and made
-# env-tunable so a large-window provider can restore the bigger budget.
-_DEFAULT_BOOTSTRAP_READ_CONTENT_MAX_CHARS = 5000
-_DEFAULT_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS = 6000
-_BOOTSTRAP_READ_MAX_CHARS_ENV = "KERNELONE_BOOTSTRAP_READ_MAX_CHARS"
-_BOOTSTRAP_READ_TOTAL_CHARS_ENV = "KERNELONE_BOOTSTRAP_READ_TOTAL_CHARS"
-
-
-def _read_positive_int_env(env_name: str, default: int) -> int:
-    raw = os.environ.get(env_name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw.strip())
-    except (AttributeError, ValueError):
-        return default
-    return value if value > 0 else default
-
-
-def _bootstrap_read_content_max_chars() -> int:
-    return _read_positive_int_env(_BOOTSTRAP_READ_MAX_CHARS_ENV, _DEFAULT_BOOTSTRAP_READ_CONTENT_MAX_CHARS)
-
-
-def _bootstrap_read_content_total_chars() -> int:
-    return _read_positive_int_env(_BOOTSTRAP_READ_TOTAL_CHARS_ENV, _DEFAULT_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS)
-
-
-def build_retry_write_after_bootstrap_context(
-    *,
-    original_context: list[dict],
-    bootstrap_receipt: Mapping[str, Any],
-    forced_write_tool_name: str | None,
-    from_scratch_create: bool = False,
-) -> list[dict]:
-    latest_user = extract_latest_user_message(original_context)
-    summary_lines: list[str] = []
-    successful_files: list[str] = []
-    failed_files: list[str] = []
-    content_chars_used = 0
-    bootstrap_total_chars = _bootstrap_read_content_total_chars()
-    bootstrap_max_chars = _bootstrap_read_content_max_chars()
-    for item in list(bootstrap_receipt.get("results", []) or []):
-        if not isinstance(item, Mapping):
-            continue
-        tool_name = str(item.get("tool_name") or "unknown").strip()
-        status = str(item.get("status") or "").strip().lower()
-        payload = item.get("result")
-        # Prefer the REAL file content for read receipts: the model must be able
-        # to transcribe exact lines into its write call.
-        file_content = ""
-        if status == "success" and isinstance(payload, Mapping):
-            raw_content = payload.get("content")
-            if not isinstance(raw_content, str):
-                inner = payload.get("result")
-                if isinstance(inner, Mapping):
-                    raw_content = inner.get("content")
-            if isinstance(raw_content, str) and raw_content.strip():
-                file_content = raw_content
-        if file_content and content_chars_used < bootstrap_total_chars:
-            budget = min(
-                bootstrap_max_chars,
-                bootstrap_total_chars - content_chars_used,
-            )
-            if len(file_content) > budget:
-                file_content = file_content[:budget] + "\n...[content truncated]"
-            content_chars_used += len(file_content)
-            payload_text = "exact file content follows:\n```\n" + file_content + "\n```"
-        else:
-            if isinstance(payload, Mapping):
-                try:
-                    payload_text = json.dumps(dict(payload), ensure_ascii=False)
-                except (TypeError, ValueError):
-                    payload_text = str(payload)
-            else:
-                payload_text = str(payload or "")
-            payload_text = payload_text.strip()
-            if len(payload_text) > 1200:
-                payload_text = payload_text[:1200] + " ...[truncated]"
-        resolved_file = ""
-        if isinstance(payload, Mapping):
-            resolved_file = str(payload.get("file") or payload.get("path") or "").strip()
-        if not resolved_file:
-            from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
-                extract_target_file_from_invocation_args,
-            )
-
-            resolved_file = extract_target_file_from_invocation_args({"arguments": item.get("arguments")})
-        if status == "success":
-            summary_lines.append(f"- {tool_name}: {payload_text}")
-            if resolved_file and resolved_file not in successful_files:
-                successful_files.append(resolved_file)
-        else:
-            summary_lines.append(f"- {tool_name}: ERROR {payload_text}")
-            if resolved_file and resolved_file not in failed_files:
-                failed_files.append(resolved_file)
-
-    forced_line = (
-        f"Mandatory write tool: {forced_write_tool_name}."
-        if forced_write_tool_name
-        else "Mandatory: include at least one write tool."
-    )
-    summary_block = "\n".join(summary_lines) if summary_lines else "- (no readable bootstrap receipts)"
-    retry_system = (
-        "WRITE RETRY MODE: bootstrap read context has been collected.\n"
-        "Now emit exactly one TOOL_BATCH for implementation (write stage), no extra read-only exploration.\n"
-        f"{forced_line}\n"
-        "If you cannot determine exact patch, still emit a write-tool call with best-effort scoped edit arguments.\n"
-        "Bootstrap read summary:\n"
-        f"{summary_block}"
-    )
-    # C3 (2026-06-16 deliberation): on a from-scratch CREATE the real write
-    # target does not exist on disk yet, so it can never appear in
-    # successful_files (which only collects files the bootstrap successfully
-    # READ). Emitting this steer there points a weak Director at the adjacent
-    # context files it happened to read instead of the new target it must
-    # create -> 0 correct-file output (write-convergence wall). Suppress it for
-    # creates; keep it for edit-existing turns where the target IS among the
-    # read files. Guard-only + default-False keeps the edit-existing path
-    # byte-for-byte (floor-inert). NOTE: deliberately do NOT inject a positive
-    # target steer here -- that re-creates the r21 wrong-file clobber
-    # (F21/F22/F25 revert class) on multi-file leaf steps whose user message
-    # names every sibling file.
-    if successful_files and not from_scratch_create:
-        retry_system += (
-            "\nWrite targets must be selected from successfully-read files only: " + ", ".join(successful_files) + "."
-        )
-    if failed_files:
-        retry_system += "\nDo NOT edit unresolved paths (read failed): " + ", ".join(failed_files) + "."
-        retry_system += "\nFor unresolved files that must be newly created, use write_file/create_file/append_to_file instead of edit_file."
-    if forced_write_tool_name == "write_file":
-        retry_system += (
-            "\nUse write_file for a complete production implementation of the selected target file. "
-            "Do not preserve deterministic scaffold, audit seed, TODO, or placeholder-only code."
-        )
-    return [
-        {"role": "system", "content": retry_system},
-        {"role": "user", "content": latest_user},
-    ]
-
-
-def extract_failed_files_from_bootstrap_receipt(bootstrap_receipt: Mapping[str, Any]) -> list[str]:
-    failed_files: list[str] = []
-    for item in list(bootstrap_receipt.get("results", []) or []):
-        if not isinstance(item, Mapping):
-            continue
-        status = str(item.get("status") or "").strip().lower()
-        if status == "success":
-            continue
-        payload = item.get("result")
-        resolved_file = ""
-        if isinstance(payload, Mapping):
-            resolved_file = str(payload.get("file") or payload.get("path") or "").strip()
-        if not resolved_file:
-            from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
-                extract_target_file_from_invocation_args,
-            )
-
-            resolved_file = extract_target_file_from_invocation_args({"arguments": item.get("arguments")})
-        if not resolved_file:
-            error_text = str(item.get("error") or payload or "").strip()
-            match = re.search(r"file not found:\s*([^\s|]+)", error_text, flags=re.IGNORECASE)
-            if match:
-                resolved_file = str(match.group(1) or "").strip()
-        if resolved_file and resolved_file not in failed_files:
-            failed_files.append(resolved_file)
-    return failed_files
-
-
-def _normalize_deterministic_bootstrap_target(value: Any) -> str:
-    path = str(value or "").strip().strip("'\"").replace("\\", "/")
-    while path.startswith("./"):
-        path = path[2:]
-    if not path or path.startswith("../") or path.startswith("/") or re.match(r"^[A-Za-z]:", path):
-        return ""
-    if any(ch in path for ch in ("*", "?")):
-        return ""
-    if "/" not in path and "." not in path and path.lower() not in {"readme", "agents"}:
-        return ""
-    if path.lower() == "readme":
-        return "README.md"
-    if path.lower() == "agents":
-        return "AGENTS.md"
-    return path
-
-
-def _extract_declared_step_card(original_context: list[dict]) -> dict[str, Any] | None:
-    """Return the executing construction-step card carried in the turn context.
-
-    A CE-fissioned leaf step is dispatched with its blueprint card injected as
-    ``context_override["construction_step"]`` (director_consumer:802); the same
-    message list is handed to the retry orchestrator as ``original_context``.
-    Locating that card lets the deterministic write fallback honor the step's
-    single declared ``target_file`` instead of guessing one from a prompt scrape,
-    and lets it recognize a leaf-construction turn (where a placeholder write can
-    never satisfy a real verify and only poisons the rightful owner step).
-    """
-    for message in reversed(original_context or []):
-        if not isinstance(message, dict):
-            continue
-        for source in (
-            message,
-            message.get("context"),
-            message.get("metadata"),
-            message.get("context_override"),
-        ):
-            if not isinstance(source, dict):
-                continue
-            step = source.get("construction_step")
-            if isinstance(step, dict) and step:
-                return step
-    return None
-
-
-def _extract_deterministic_bootstrap_write_targets(
-    *,
-    original_context: list[dict],
-    bootstrap_receipt: Mapping[str, Any],
-) -> list[str]:
-    candidates: list[str] = []
-    latest_user = extract_latest_user_message(original_context)
-    structured_targets = extract_target_files_from_message(latest_user)
-    if structured_targets:
-        candidates.extend(structured_targets)
-    else:
-        candidates.extend(extract_failed_files_from_bootstrap_receipt(bootstrap_receipt))
-        candidates.extend(
-            token.strip()
-            for token in re.findall(
-                r"\b[\w./\\-]+\.(?:json|md|toml|py|js|mjs|cjs|ts|tsx|jsx|css|html|ya?ml|txt)\b",
-                latest_user,
-                flags=re.IGNORECASE,
-            )
-            if token.strip()
-        )
-    normalized: list[str] = []
-    for candidate in candidates:
-        target = _normalize_deterministic_bootstrap_target(candidate)
-        if target and target not in normalized:
-            normalized.append(target)
-    return normalized
-
-
-def _bootstrap_successful_file_contents(bootstrap_receipt: Mapping[str, Any]) -> dict[str, str]:
-    contents: dict[str, str] = {}
-    for item in list(bootstrap_receipt.get("results", []) or []):
-        if not isinstance(item, Mapping):
-            continue
-        status = str(item.get("status") or "").strip().lower()
-        if status and status != "success":
-            continue
-        payload = item.get("result")
-        file_path = ""
-        content = ""
-        if isinstance(payload, Mapping):
-            for key in ("file", "path", "relative_path"):
-                value = str(payload.get(key) or "").strip()
-                if value:
-                    file_path = value
-                    break
-            for key in ("content", "text", "body", "data"):
-                content_value = payload.get(key)
-                if isinstance(content_value, str):
-                    content = content_value
-                    break
-        if not file_path:
-            from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
-                extract_target_file_from_invocation_args,
-            )
-
-            file_path = extract_target_file_from_invocation_args({"arguments": item.get("arguments")})
-        normalized = _normalize_deterministic_bootstrap_target(file_path)
-        if normalized and content and normalized not in contents:
-            contents[normalized] = content
-    return contents
-
-
-def _read_leaf_write_file_max_chars() -> int:
-    raw = os.environ.get(_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS_ENV)
-    if raw is None:
-        return _DEFAULT_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS
-    try:
-        parsed = int(str(raw).strip())
-    except ValueError:
-        return _DEFAULT_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS
-    return max(1, parsed)
-
-
-def _should_force_leaf_bootstrap_followup_write_file(
-    *,
-    original_context: list[dict],
-    bootstrap_receipt: Mapping[str, Any],
-    allowed_tool_names: set[str],
-) -> bool:
-    """Prefer whole-file rewrite for small generated leaf targets after a read.
-
-    This is deliberately narrower than the deterministic scaffold fallback:
-    it never synthesizes content. It only asks the LLM to use ``write_file`` for
-    the single declared leaf target after the platform has injected that file's
-    current content into the bootstrap follow-up context.
-    """
-    if "write_file" not in allowed_tool_names:
-        return False
-    declared_step = _extract_declared_step_card(original_context)
-    if declared_step is None:
-        return False
-    target = _normalize_deterministic_bootstrap_target(declared_step.get("target_file"))
-    if not target:
-        return False
-    suffix = Path(target).suffix.lower()
-    if suffix and suffix not in _LEAF_BOOTSTRAP_WRITE_FILE_EXTS:
-        return False
-    contents = _bootstrap_successful_file_contents(bootstrap_receipt)
-    content = contents.get(target)
-    if not isinstance(content, str) or not content:
-        return False
-    return len(content) <= _read_leaf_write_file_max_chars()
-
-
-def _synthesize_deterministic_bootstrap_write_content(relative_path: str, latest_user: str) -> str:
-    path = str(relative_path or "").strip().replace("\\", "/")
-    lowered = path.lower()
-    lowered_user = latest_user.lower()
-    project_label = "workspace"
-    label_match = re.search(r"\b([A-Za-z][A-Za-z0-9_-]{2,})\b", latest_user)
-    if label_match:
-        project_label = label_match.group(1).lower().replace("_", "-")
-    if lowered == "package.json":
-        payload = {
-            "name": project_label if project_label not in {"create", "implement", "build"} else "workspace-app",
-            "version": "1.0.0",
-            "type": "module",
-            "scripts": {
-                "build": "node -e \"const fs=require('fs'); if(!fs.existsSync('package.json')) throw new Error('missing package.json'); console.log('package build check passed');\"",
-                "test": "node -e \"const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); if(!pkg.name||!pkg.version) throw new Error('invalid package manifest'); console.log('package manifest check passed');\" --",
-            },
-            "dependencies": {},
-            "devDependencies": {},
-        }
-        return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-    if lowered == "tsconfig.json":
-        return (
-            json.dumps(
-                {
-                    "compilerOptions": {
-                        "target": "ES2022",
-                        "module": "ES2022",
-                        "moduleResolution": "Bundler",
-                        "strict": True,
-                        "skipLibCheck": True,
-                        "outDir": "dist",
-                    },
-                    "include": ["src/**/*.ts", "tests/**/*.ts"],
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n"
-        )
-    if lowered == "pyproject.toml":
-        return (
-            "[project]\n"
-            f'name = "{project_label if project_label != "workspace" else "workspace-app"}"\n'
-            'version = "0.1.0"\n'
-            'description = "Generated workspace package for Polaris execution validation."\n'
-        )
-    if lowered.endswith((".md", ".txt")):
-        title = "Agent Guide" if lowered.endswith("agents.md") else "Workspace Guide"
-        return (
-            f"# {title}\n\n"
-            "This file records the runnable workspace contract for Polaris execution.\n\n"
-            "## Verification\n\n"
-            "- Project files are generated with UTF-8 text encoding.\n"
-            "- Build and test commands must return concrete pass/fail results.\n"
-        )
-    if lowered.endswith("dag.service.ts") or ("dag" in lowered_user and "dependency" in lowered_user):
-        return _synthesize_deterministic_dag_service_content()
-    if lowered.endswith((".ts", ".tsx")):
-        return (
-            "export interface WorkspaceArtifactStatus {\n"
-            "  ready: boolean;\n"
-            "  source: string;\n"
-            "}\n\n"
-            "export const workspaceArtifactStatus: WorkspaceArtifactStatus = {\n"
-            "  ready: true,\n"
-            "  source: 'polaris-deterministic-bootstrap',\n"
-            "};\n\n"
-            "export function describeWorkspaceArtifact(): string {\n"
-            "  return workspaceArtifactStatus.ready ? 'verified artifact' : 'unverified artifact';\n"
-            "}\n"
-        )
-    if lowered.endswith((".js", ".mjs", ".cjs")):
-        return (
-            "export const workspaceArtifactStatus = {\n"
-            "  ready: true,\n"
-            "  source: 'polaris-deterministic-bootstrap',\n"
-            "};\n\n"
-            "export function describeWorkspaceArtifact() {\n"
-            "  return workspaceArtifactStatus.ready ? 'verified artifact' : 'unverified artifact';\n"
-            "}\n"
-        )
-    if lowered.endswith(".py"):
-        return "from __future__ import annotations\n\n\ndef workspace_artifact_ready() -> bool:\n    return True\n"
-    return "workspace_artifact_ready=true\n"
-
-
-def _synthesize_deterministic_dag_service_content() -> str:
-    return (
-        "export interface TaskDependencyNode {\n"
-        "  id: string;\n"
-        "  dependencies?: readonly string[];\n"
-        "  predecessorIds?: readonly string[];\n"
-        "}\n\n"
-        "export interface DagValidationResult {\n"
-        "  valid: boolean;\n"
-        "  statusCode: 200 | 400;\n"
-        "  errors: string[];\n"
-        "  missingReferenceIds: string[];\n"
-        "  cycle: string[];\n"
-        "}\n\n"
-        "export class DagValidationError extends Error {\n"
-        "  readonly statusCode = 400;\n"
-        "  readonly result: DagValidationResult;\n\n"
-        "  constructor(result: DagValidationResult) {\n"
-        "    super(result.errors.join('; '));\n"
-        "    this.name = 'DagValidationError';\n"
-        "    this.result = result;\n"
-        "  }\n"
-        "}\n\n"
-        "function dependencyIdsFor(node: TaskDependencyNode): readonly string[] {\n"
-        "  return node.dependencies ?? node.predecessorIds ?? [];\n"
-        "}\n\n"
-        "export class DagService {\n"
-        "  validateTaskGraph(nodes: readonly TaskDependencyNode[]): DagValidationResult {\n"
-        "    const byId = new Map(nodes.map((node) => [node.id, node]));\n"
-        "    const missingReferenceIds: string[] = [];\n\n"
-        "    for (const node of nodes) {\n"
-        "      for (const dependencyId of dependencyIdsFor(node)) {\n"
-        "        if (!byId.has(dependencyId)) {\n"
-        "          missingReferenceIds.push(dependencyId);\n"
-        "        }\n"
-        "      }\n"
-        "    }\n\n"
-        "    const visited = new Set<string>();\n"
-        "    const visiting = new Set<string>();\n"
-        "    const stack: string[] = [];\n"
-        "    let cycle: string[] = [];\n\n"
-        "    const visit = (taskId: string): boolean => {\n"
-        "      if (visiting.has(taskId)) {\n"
-        "        const start = stack.indexOf(taskId);\n"
-        "        cycle = [...stack.slice(start < 0 ? 0 : start), taskId];\n"
-        "        return true;\n"
-        "      }\n"
-        "      if (visited.has(taskId)) {\n"
-        "        return false;\n"
-        "      }\n"
-        "      visited.add(taskId);\n"
-        "      visiting.add(taskId);\n"
-        "      stack.push(taskId);\n"
-        "      const node = byId.get(taskId);\n"
-        "      if (node) {\n"
-        "        for (const dependencyId of dependencyIdsFor(node)) {\n"
-        "          if (byId.has(dependencyId) && visit(dependencyId)) {\n"
-        "            return true;\n"
-        "          }\n"
-        "        }\n"
-        "      }\n"
-        "      visiting.delete(taskId);\n"
-        "      stack.pop();\n"
-        "      return false;\n"
-        "    };\n\n"
-        "    for (const node of nodes) {\n"
-        "      if (visit(node.id)) {\n"
-        "        break;\n"
-        "      }\n"
-        "    }\n\n"
-        "    const errors: string[] = [];\n"
-        "    if (missingReferenceIds.length > 0) {\n"
-        "      errors.push(`Missing task dependency references: ${missingReferenceIds.join(', ')}`);\n"
-        "    }\n"
-        "    if (cycle.length > 0) {\n"
-        "      errors.push(`Circular task dependency detected: ${cycle.join(' -> ')}`);\n"
-        "    }\n\n"
-        "    return {\n"
-        "      valid: errors.length === 0,\n"
-        "      statusCode: errors.length === 0 ? 200 : 400,\n"
-        "      errors,\n"
-        "      missingReferenceIds,\n"
-        "      cycle,\n"
-        "    };\n"
-        "  }\n\n"
-        "  assertTaskGraph(nodes: readonly TaskDependencyNode[]): void {\n"
-        "    const result = this.validateTaskGraph(nodes);\n"
-        "    if (!result.valid) {\n"
-        "      throw new DagValidationError(result);\n"
-        "    }\n"
-        "  }\n"
-        "}\n"
-    )
-
-
-def _extract_decision_invocations(decision: Any | None) -> list[Any]:
-    """Pull invocations from a TurnDecision-like object or mapping (defensive)."""
-    if decision is None:
-        return []
-    tool_batch = decision.get("tool_batch") if hasattr(decision, "get") else getattr(decision, "tool_batch", None)
-    if tool_batch is None:
-        return []
-    if isinstance(tool_batch, Mapping):
-        return list(tool_batch.get("invocations", []) or [])
-    return list(getattr(tool_batch, "invocations", []) or [])
-
-
-def merge_bootstrap_receipt_into_result(result: Any, bootstrap_receipt: Mapping[str, Any] | None) -> Any:
-    """Prepend bootstrap READ receipts into the turn result's batch receipt.
-
-    The session reducer and the next-turn WorkingMemory only see
-    ``turn_result.batch_receipt`` (each inner turn's LLM context is rebuilt from
-    scratch) — without this merge the bootstrap reads are invisible to subsequent
-    turns and weak models rewrite files from pretraining memory (hallucinated
-    SEARCH text).
-    """
-    if not isinstance(result, dict) or not isinstance(bootstrap_receipt, Mapping):
-        return result
-    bootstrap_results = [item for item in list(bootstrap_receipt.get("results", []) or []) if isinstance(item, Mapping)]
-    if not bootstrap_results:
-        return result
-    existing = result.get("batch_receipt")
-    if isinstance(existing, Mapping):
-        merged = dict(existing)
-        merged["results"] = [*bootstrap_results, *list(merged.get("results", []) or [])]
-        merged["success_count"] = int(merged.get("success_count", 0) or 0) + sum(
-            1 for item in bootstrap_results if str(item.get("status") or "").strip().lower() == "success"
-        )
-        return {**result, "batch_receipt": merged}
-    if existing is None:
-        return {**result, "batch_receipt": dict(bootstrap_receipt)}
-    # Unknown receipt object shape — leave untouched rather than corrupt it.
-    return result
-
-
-def build_deterministic_bootstrap_followup_write_decision(
-    *,
-    turn_id: str,
-    original_context: list[dict],
-    bootstrap_receipt: Mapping[str, Any],
-    allowed_tool_names: set[str],
-    workspace: str = ".",
-) -> TurnDecision | None:
-    if "write_file" not in allowed_tool_names:
-        return None
-    # I3-r21 root fix (rank 2): a CE-fissioned LEAF construction step carries its
-    # blueprint card in the turn context. Such a step has a single declared
-    # target_file and a machine verify clause that a synthesized placeholder can
-    # NEVER satisfy (e.g. `node --check && grep -q 'class Paddle'`). Worse, the
-    # placeholder plants the file BEFORE its rightful owner step runs; the
-    # file-ownership ledger then tells the owner "the file exists, read+EDIT it",
-    # and the weak model stalls on a meaningless stub (live r21: PM-0001-1-S3
-    # main.js, 3/3 director_no_materialized_changes, ~1470s). For leaf steps the
-    # write fallback is pure poison — suppress it entirely and keep only the READ
-    # bootstrap path. Honest no_materialized_changes is fail-closed and strictly
-    # better than a stub that dead-locks the owner.
-    declared_step = _extract_declared_step_card(original_context)
-    if declared_step is not None:
-        logger.info(
-            "deterministic bootstrap write fallback suppressed for leaf construction step "
-            "(turn_id=%s declared_target=%s): READ bootstrap only, model must emit a real write",
-            turn_id,
-            str(declared_step.get("target_file") or ""),
-        )
-        return None
-    targets = _extract_deterministic_bootstrap_write_targets(
-        original_context=original_context,
-        bootstrap_receipt=bootstrap_receipt,
-    )
-    if not targets:
-        return None
-    latest_user = extract_latest_user_message(original_context)
-    # The synthesized templates are SCAFFOLDING content (package.json/tsconfig/
-    # stub modules). In repo-fix contexts they are pure poison: overwriting an
-    # existing source file destroys it, and creating files the user never named
-    # (failed-read paths leak into the candidate list) plants off-task artifacts
-    # that reinforce weak-model task drift. Only create NEW files the user
-    # explicitly named.
-    workspace_root = Path(str(workspace or ".").strip() or ".")
-    viable_targets: list[str] = []
-    for candidate_target in targets:
-        if candidate_target not in latest_user:
-            continue
-        try:
-            if (workspace_root / candidate_target).exists():
-                continue
-        except OSError:
-            continue
-        viable_targets.append(candidate_target)
-    if not viable_targets:
-        logger.warning(
-            "deterministic bootstrap write fallback skipped: no safe user-named non-existing target (candidates=%s)",
-            targets[:5],
-        )
-        return None
-    # I3-r21 root fix (rank 1): with NO single declared target (non-leaf / repo-fix
-    # context), multiple user-named non-existing files are ambiguous. Picking
-    # viable_targets[0] is the bug that wrote main.js while readme.md was the step's
-    # target. Refuse to guess — a wrong-file write is worse than no write.
-    if len(viable_targets) > 1:
-        logger.warning(
-            "deterministic bootstrap write fallback skipped: %d viable targets, refusing to guess (%s)",
-            len(viable_targets),
-            viable_targets[:5],
-        )
-        return None
-    target = viable_targets[0]
-    content = _synthesize_deterministic_bootstrap_write_content(target, latest_user)
-    invocation = ToolInvocation(
-        call_id=ToolCallId(f"{turn_id}:deterministic-write:1"),
-        tool_name="write_file",
-        arguments={"file": target, "content": content},
-        effect_type=ToolEffectType.WRITE,
-        execution_mode=ToolExecutionMode.WRITE_SERIAL,
-    )
-    batch = ToolBatch(
-        batch_id=BatchId(f"{turn_id}:deterministic-write"),
-        invocations=[invocation],
-        serial_writes=[invocation],
-    )
-    return TurnDecision(
-        turn_id=TurnId(turn_id),
-        kind=TurnDecisionKind.TOOL_BATCH,
-        visible_message="",
-        reasoning_summary="deterministic bootstrap follow-up write_file fallback",
-        tool_batch=batch,
-        finalize_mode=FinalizeMode.NONE,
-        domain="code",
-        metadata={
-            "deterministic_recovery": "bootstrap_followup_write_file",
-            "target_file": target,
-        },
-    )
+# CRITICAL: ``_READ_BOOTSTRAP_PROGRESS`` is the single live-incident-critical
+# mutable cache — it is the SAME dict instance defined in
+# ``read_bootstrap_progress``; ``.clear()`` / mutation through either name hits
+# one object. NEVER rebind it to a copy here.
+__all__ = [
+    "WRITE_TOOLS",
+    "_BOOTSTRAP_READ_MAX_CHARS_ENV",
+    "_BOOTSTRAP_READ_TOTAL_CHARS_ENV",
+    "_BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS",
+    "_BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_TYPES",
+    "_BOOTSTRAP_WHOLE_FILE_MAX_CHARS",
+    "_BOOTSTRAP_WHOLE_FILE_REPLACEMENT_MARKERS",
+    "_DEFAULT_BOOTSTRAP_READ_CONTENT_MAX_CHARS",
+    "_DEFAULT_BOOTSTRAP_READ_CONTENT_TOTAL_CHARS",
+    "_DEFAULT_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS",
+    "_DEFAULT_RETRY_CREATE_OUTPUT_FLOOR_TOKENS",
+    "_DEFAULT_RETRY_ESCALATION_TEMPERATURE",
+    "_DEFAULT_RETRY_OUTPUT_FLOOR_TOKENS",
+    "_ESCALATION_START_ATTEMPT_INDEX",
+    "_FINGERPRINT_SKIP_DIRS",
+    "_FINGERPRINT_SOURCE_EXTS",
+    "_LEAF_BOOTSTRAP_WRITE_FILE_EXTS",
+    "_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS_ENV",
+    "_LINE_RANGE_EDIT_BLOCKS_PARAMETERS",
+    "_MAX_STALLED_READ_BOOTSTRAPS",
+    "_READ_BOOTSTRAP_PROGRESS",
+    "_READ_BOOTSTRAP_PROGRESS_MAX_KEYS",
+    "_RETRY_CREATE_OUTPUT_FLOOR_ENV",
+    "_RETRY_ESCALATION_TEMPERATURE_ENV",
+    "_RETRY_OUTPUT_FLOOR_ENV",
+    "_WRITE_ONLY_SINGLE_TARGET_REPAIR_MARKER",
+    "DevelopmentRuntimeProtocol",
+    "FinalizeMode",
+    "RetryOrchestrator",
+    "ToolCallId",
+    "WorkflowRuntimeProtocol",
+    "_bootstrap_read_content_max_chars",
+    "_bootstrap_read_content_total_chars",
+    "_bootstrap_successful_file_contents",
+    "_build_scoped_write_file_tool_definition",
+    "_clear_read_bootstrap_progress",
+    "_extract_decision_invocations",
+    "_extract_declared_step_card",
+    "_extract_deterministic_bootstrap_write_targets",
+    "_extract_file_schema_from_tool_definition",
+    "_extract_latest_assistant_message",
+    "_normalize_deterministic_bootstrap_target",
+    "_read_bootstrap_makes_no_progress",
+    "_read_leaf_write_file_max_chars",
+    "_read_positive_int_env",
+    "_requires_write_only_single_target_repair",
+    "_resolve_materialization_workspace",
+    "_should_bootstrap_original_read_batch",
+    "_should_force_leaf_bootstrap_followup_write_file",
+    "_synthesize_deterministic_bootstrap_write_content",
+    "_synthesize_deterministic_dag_service_content",
+    "_workspace_materialization_fingerprint",
+    "append_retry_enforcement_hint",
+    "bootstrap_receipt_contains_whole_file_edit_error",
+    "bootstrap_receipt_contains_whole_file_replacement_marker",
+    "build_contract_retry_context",
+    "build_deterministic_bootstrap_followup_write_decision",
+    "build_forced_write_only_retry_tool_definitions",
+    "build_retry_tool_definitions_for_mutation",
+    "build_retry_write_after_bootstrap_context",
+    "detect_creation_mode",
+    "extract_failed_files_from_bootstrap_receipt",
+    "extract_tool_name_from_definition",
+    "merge_bootstrap_receipt_into_result",
+    "narrow_edit_blocks_schema_to_line_range",
+    "resolve_escalation_temperature",
+    "resolve_retry_create_output_floor",
+    "resolve_retry_escalation",
+    "resolve_retry_model_override",
+    "resolve_retry_output_floor",
+    "resolve_retry_temperature_override",
+    "select_bootstrap_followup_write_tool_name",
+    "select_retry_forced_write_tool_name",
+]
 
 
 # ---------------------------------------------------------------------------

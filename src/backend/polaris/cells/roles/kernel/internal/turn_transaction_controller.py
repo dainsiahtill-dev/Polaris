@@ -55,16 +55,11 @@ import asyncio
 import contextlib
 import logging
 import os
-import re
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
-from contextvars import ContextVar
-from dataclasses import asdict, is_dataclass, replace
-from typing import Any, cast
-from uuid import uuid4
+from typing import Any
 
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
-from polaris.cells.roles.kernel.internal.kernel_guard import KernelGuard, KernelGuardError
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.speculation.chain_speculator import ChainSpeculator
 from polaris.cells.roles.kernel.internal.speculation.metrics import SpeculationMetrics
@@ -75,11 +70,22 @@ from polaris.cells.roles.kernel.internal.speculation.task_group import TurnScope
 from polaris.cells.roles.kernel.internal.speculative_executor import SpeculativeExecutor
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
-from polaris.cells.roles.kernel.internal.transaction import constants as tx_constants
+from polaris.cells.roles.kernel.internal.transaction import (
+    adaptive_session_state,
+    constants as tx_constants,
+    correlation,
+    delivery_intent_resolver,
+    kernel_guard_asserts,
+)
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     has_available_write_tool,
     has_successful_recon_execution,
     is_mutation_contract_violation,
+)
+from polaris.cells.roles.kernel.internal.transaction.correlation import (
+    _TURN_PARENT_SPAN_ID_CONTEXT,
+    _TURN_REQUEST_ID_CONTEXT,
+    _TURN_SPAN_ID_CONTEXT,
 )
 from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
     build_corrective_context,
@@ -90,11 +96,15 @@ from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
     DeliveryMode,
 )
+from polaris.cells.roles.kernel.internal.transaction.delivery_intent_resolver import (
+    _EXPLICIT_MATERIALIZE_MODE_MARKERS,
+    enforce_explicit_materialize_delivery_marker as _enforce_explicit_materialize_delivery_marker,
+    has_explicit_materialize_delivery_marker as _has_explicit_materialize_delivery_marker,
+)
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     detect_inline_patch_escape,
-    resolve_delivery_mode,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.modification_contract import ModificationContract
@@ -122,37 +132,25 @@ from polaris.cells.roles.kernel.public.turn_events import (
     TurnEvent,
     TurnPhaseEvent,
 )
-from polaris.cells.storage.layout.public.service import resolve_polaris_roots
 
 logger = logging.getLogger(__name__)
 
-_EXPLICIT_MATERIALIZE_MODE_MARKERS = ("[mode:materialize]", "[mode:materialize_changes]")
-
-
-def _has_explicit_materialize_delivery_marker(user_message: str) -> bool:
-    lowered = str(user_message or "").lower()
-    return any(marker in lowered for marker in _EXPLICIT_MATERIALIZE_MODE_MARKERS)
-
-
-def _enforce_explicit_materialize_delivery_marker(
-    user_message: str,
-    contract: DeliveryContract,
-) -> DeliveryContract:
-    """Make an explicit materialize marker authoritative over classifier output."""
-
-    if not _has_explicit_materialize_delivery_marker(user_message):
-        return contract
-    if contract.mode == DeliveryMode.MATERIALIZE_CHANGES:
-        return contract
-    return DeliveryContract(
-        mode=DeliveryMode.MATERIALIZE_CHANGES,
-        requires_mutation=True,
-        requires_verification=contract.requires_verification,
-        allow_inline_code=False,
-        allow_patch_proposal=False,
-        enrichment=contract.enrichment,
-    )
-
+# Backward-compatible re-exports. Canonical homes:
+#   transaction.delivery_intent_resolver — materialize-marker helpers
+#   transaction.correlation              — correlation ContextVars
+# Listed in __all__ so they remain importable from this module (tests import
+# ``_enforce_explicit_materialize_delivery_marker`` here) and so ruff treats the
+# imports as intentional re-exports rather than unused.
+__all__ = [
+    "_EXPLICIT_MATERIALIZE_MODE_MARKERS",
+    "_TURN_PARENT_SPAN_ID_CONTEXT",
+    "_TURN_REQUEST_ID_CONTEXT",
+    "_TURN_SPAN_ID_CONTEXT",
+    "TransactionConfig",
+    "TurnTransactionController",
+    "_enforce_explicit_materialize_delivery_marker",
+    "_has_explicit_materialize_delivery_marker",
+]
 
 _MONITORING_METRIC_KEYS: tuple[str, ...] = (
     "transaction_kernel.violation_count",
@@ -162,10 +160,6 @@ _MONITORING_METRIC_KEYS: tuple[str, ...] = (
     "speculative.hit_rate",
     "speculative.false_positive_rate",
 )
-
-_TURN_REQUEST_ID_CONTEXT: ContextVar[str | None] = ContextVar("_turn_request_id_context", default=None)
-_TURN_SPAN_ID_CONTEXT: ContextVar[str | None] = ContextVar("_turn_span_id_context", default=None)
-_TURN_PARENT_SPAN_ID_CONTEXT: ContextVar[str | None] = ContextVar("_turn_parent_span_id_context", default=None)
 
 
 class TurnTransactionController:
@@ -423,52 +417,12 @@ class TurnTransactionController:
     @staticmethod
     def _detect_target_files_known(context: list[dict]) -> bool:
         """检测上下文中是否包含明确的文件路径信息。"""
-        for message in context:
-            if not isinstance(message, Mapping):
-                continue
-            content = str(message.get("content") or "")
-            # 简单启发式：包含常见代码文件扩展名或路径分隔符
-            code_extensions = (
-                ".py",
-                ".ts",
-                ".tsx",
-                ".js",
-                ".jsx",
-                ".java",
-                ".go",
-                ".rs",
-                ".cpp",
-                ".c",
-                ".h",
-                ".md",
-                ".json",
-                ".yaml",
-                ".yml",
-                ".toml",
-            )
-            if any(ext in content for ext in code_extensions):
-                return True
-            # 检测路径模式
-            if "/" in content or "\\" in content:
-                # 排除URL
-                lines = content.splitlines()
-                for line in lines:
-                    stripped = line.strip()
-                    if stripped.startswith("http://") or stripped.startswith("https://"):
-                        continue
-                    if "/" in stripped or "\\" in stripped:
-                        parts = stripped.replace("\\", "/").split("/")
-                        for part in parts:
-                            if part and "." in part and not part.startswith("."):
-                                return True
-        return False
+        return delivery_intent_resolver.detect_target_files_known(context)
 
     @staticmethod
     def _is_refusal_response(response: RawLLMResponse) -> bool:
         """检测 LLM 响应是否为拒绝执行（refusal）."""
-        from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import is_refusal_response
-
-        return is_refusal_response(response)
+        return delivery_intent_resolver.is_refusal_response(response)
 
     @staticmethod
     def _inherit_materialize_from_history(context: list[dict], latest_user_request: str) -> DeliveryContract | None:
@@ -482,80 +436,7 @@ class TurnTransactionController:
         2. 最近 3 轮历史用户消息中存在 MATERIALIZE_CHANGES 意图
         3. 无显式 [mode:analyze] 等降级指令
         """
-        # 条件 3：最新消息本身若是否定突变（如"不要修改"）或显式 analyze/propose
-        # 降级标记，则绝不继承历史 MATERIALIZE 意图——否则会覆盖用户当下明确的
-        # 降级请求并重新打开写入（fail-open）。复用 intent_classifier 的判定，
-        # 避免另造正则。
-        from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
-            _detect_explicit_mode_marker,
-            _is_negated_mutation,
-        )
-
-        if _is_negated_mutation(latest_user_request):
-            return None
-        explicit_marker = _detect_explicit_mode_marker(latest_user_request.lower())
-        if explicit_marker is not None and explicit_marker.mode in (
-            DeliveryMode.ANALYZE_ONLY,
-            DeliveryMode.PROPOSE_PATCH,
-        ):
-            return None
-
-        continuation_shortcuts: tuple[str, ...] = (
-            "继续",
-            "开始",
-            "ok",
-            "好",
-            "行",
-            "可以",
-            "执行",
-            "落实",
-            "动手",
-            "搞",
-            "冲",
-            "推进",
-            "next",
-            "go",
-            "yes",
-            "yeah",
-            " proceed",
-            "do it",
-            "let's go",
-            "开始吧",
-            "那就开始",
-        )
-        lowered_latest = latest_user_request.lower().strip()
-        is_shortcut = len(latest_user_request) <= 20 or any(
-            marker in lowered_latest for marker in continuation_shortcuts
-        )
-        if not is_shortcut:
-            return None
-
-        # 检查最近 3 轮历史用户消息
-        user_messages: list[str] = []
-        for msg in reversed(context):
-            if not isinstance(msg, Mapping):
-                continue
-            role = str(msg.get("role") or "").strip().lower()
-            if role != "user":
-                continue
-            content = str(msg.get("content") or "").strip()
-            if content and content != latest_user_request:
-                user_messages.append(content)
-                if len(user_messages) >= 3:
-                    break
-
-        for historical_msg in user_messages:
-            historical_contract = resolve_delivery_mode(historical_msg)
-            if historical_contract.mode == DeliveryMode.MATERIALIZE_CHANGES:
-                # 继承历史意图，但保留最新消息中可能的 verification 要求
-                return DeliveryContract(
-                    mode=DeliveryMode.MATERIALIZE_CHANGES,
-                    requires_mutation=True,
-                    requires_verification=historical_contract.requires_verification,
-                    allow_inline_code=False,
-                    allow_patch_proposal=False,
-                )
-        return None
+        return delivery_intent_resolver.inherit_materialize_from_history(context, latest_user_request)
 
     @staticmethod
     def _apply_delivery_mode_filter(decision: TurnDecision, ledger: TurnLedger) -> TurnDecision:
@@ -567,11 +448,7 @@ class TurnTransactionController:
         实现统一委托给 ``contract_guards.apply_delivery_mode_filter``，使 run 模式
         与 stream 模式共用同一只读/提案边界语义。
         """
-        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
-            apply_delivery_mode_filter,
-        )
-
-        return apply_delivery_mode_filter(decision, ledger)
+        return delivery_intent_resolver.apply_delivery_mode_filter(decision, ledger)
 
     async def _drain_speculative_tasks(
         self,
@@ -604,21 +481,18 @@ class TurnTransactionController:
         tool_batch_count: int | None,
         ledger: TurnLedger,
     ) -> None:
-        try:
-            KernelGuard.assert_single_decision(turn_id, decision_count, tool_batch_count)
-            ledger.record_kernel_guard_assert(True)
-        except KernelGuardError:
-            ledger.record_kernel_guard_assert(False)
-            raise
+        kernel_guard_asserts.guard_assert_single_decision(
+            turn_id=turn_id,
+            decision_count=decision_count,
+            tool_batch_count=tool_batch_count,
+            ledger=ledger,
+        )
 
     @staticmethod
     def _guard_assert_single_tool_batch(*, turn_id: str, tool_batch_count: int, ledger: TurnLedger) -> None:
-        try:
-            KernelGuard.assert_single_tool_batch(turn_id, tool_batch_count)
-            ledger.record_kernel_guard_assert(True)
-        except KernelGuardError:
-            ledger.record_kernel_guard_assert(False)
-            raise
+        kernel_guard_asserts.guard_assert_single_tool_batch(
+            turn_id=turn_id, tool_batch_count=tool_batch_count, ledger=ledger
+        )
 
     @staticmethod
     def _guard_assert_no_hidden_continuation(
@@ -627,21 +501,17 @@ class TurnTransactionController:
         state_trajectory: list[str] | tuple[str, ...],
         ledger: TurnLedger,
     ) -> None:
-        try:
-            KernelGuard.assert_no_hidden_continuation(turn_id, state_trajectory)
-            ledger.record_kernel_guard_assert(True)
-        except KernelGuardError:
-            ledger.record_kernel_guard_assert(False)
-            raise
+        kernel_guard_asserts.guard_assert_no_hidden_continuation(
+            turn_id=turn_id, state_trajectory=state_trajectory, ledger=ledger
+        )
 
     @staticmethod
     def _guard_assert_no_finalization_tool_calls(
         *, turn_id: str, tool_calls: list[Any] | None, ledger: TurnLedger
     ) -> None:
-        # Soft guard: no longer raises KernelGuardError, but records anomaly flags
-        # and metrics. We still record assert pass for telemetry consistency.
-        KernelGuard.assert_no_finalization_tool_calls(turn_id, tool_calls, ledger=ledger)
-        ledger.record_kernel_guard_assert(True)
+        kernel_guard_asserts.guard_assert_no_finalization_tool_calls(
+            turn_id=turn_id, tool_calls=tool_calls, ledger=ledger
+        )
 
     def on_event(self, handler: Callable[[TurnEvent], None]) -> None:
         """注册事件处理器"""
@@ -650,12 +520,12 @@ class TurnTransactionController:
     @staticmethod
     def _generate_turn_request_id() -> str:
         """生成单次 execute_stream 调用内稳定的 request id。"""
-        return f"turnreq_{uuid4().hex}"
+        return correlation.generate_turn_request_id()
 
     @staticmethod
     def _generate_span_id(*, prefix: str = "span") -> str:
         """生成 span id。"""
-        return f"{prefix}_{uuid4().hex}"
+        return correlation.generate_span_id(prefix=prefix)
 
     @classmethod
     def _attach_event_correlation(
@@ -667,69 +537,22 @@ class TurnTransactionController:
         parent_span_id: str | None,
     ) -> TurnEvent:
         """给事件附加 correlation 信息（request/span/parent_span）。"""
-        has_request_field = hasattr(event, "turn_request_id")
-        has_span_field = hasattr(event, "span_id")
-        has_parent_span_field = hasattr(event, "parent_span_id")
-        if not any((has_request_field, has_span_field, has_parent_span_field)):
-            return event
-
-        updates: dict[str, Any] = {}
-
-        if (
-            has_request_field
-            and turn_request_id is not None
-            and getattr(event, "turn_request_id", None) != turn_request_id
-        ):
-            updates["turn_request_id"] = turn_request_id
-
-        if has_span_field:
-            current_span = getattr(event, "span_id", None)
-            if not current_span:
-                updates["span_id"] = cls._generate_span_id(prefix="span")
-
-        if has_parent_span_field:
-            current_parent = getattr(event, "parent_span_id", None)
-            resolved_parent = parent_span_id or turn_span_id
-            if not current_parent and resolved_parent:
-                updates["parent_span_id"] = resolved_parent
-
-        if not updates:
-            return event
-        return cast(TurnEvent, replace(cast(Any, event), **updates))
+        return correlation.attach_event_correlation(
+            event,
+            turn_request_id=turn_request_id,
+            turn_span_id=turn_span_id,
+            parent_span_id=parent_span_id,
+        )
 
     @staticmethod
     def _resolve_workspace_for_truthlog(context: list[dict]) -> str:
         """Resolve workspace path for turn truthlog persistence."""
-        for message in reversed(context):
-            if not isinstance(message, Mapping):
-                continue
-
-            metadata = message.get("metadata")
-            if isinstance(metadata, Mapping):
-                workspace = str(metadata.get("workspace", "") or metadata.get("cwd", "")).strip()
-                if workspace:
-                    return os.path.abspath(workspace)
-
-            workspace_direct = str(message.get("workspace", "") or message.get("cwd", "")).strip()
-            if workspace_direct:
-                return os.path.abspath(workspace_direct)
-
-        env_workspace = str(os.environ.get("KERNELONE_WORKSPACE", "")).strip()
-        if env_workspace:
-            return os.path.abspath(env_workspace)
-        return os.path.abspath(os.getcwd())
+        return correlation.resolve_workspace_for_truthlog(context)
 
     @classmethod
     def _build_turn_truthlog_recorder(cls, context: list[dict]) -> TurnTruthLogRecorder | None:
         """Build per-turn truthlog recorder. Failures are non-fatal for turn execution."""
-        try:
-            workspace = cls._resolve_workspace_for_truthlog(context)
-            runtime_root = resolve_polaris_roots(workspace).runtime_root
-            log_path = os.path.join(runtime_root, "events", "kernel.turn.truthlog.events.jsonl")
-            return TurnTruthLogRecorder(log_path)
-        except (OSError, RuntimeError, ValueError) as exc:
-            logger.warning("turn truthlog recorder init failed: %s", exc)
-            return None
+        return correlation.build_turn_truthlog_recorder(context)
 
     @staticmethod
     async def _record_turn_truthlog_event(
@@ -740,36 +563,17 @@ class TurnTransactionController:
         turn_request_id_fallback: str,
     ) -> None:
         """Best-effort append of one turn event into TruthLog."""
-        if is_dataclass(event) and not isinstance(event, type):
-            payload: Any = asdict(event)  # type: ignore[arg-type]  # is_dataclass narrows to DataclassInstance
-        else:
-            payload = {"repr": repr(event)}
-
-        event_turn_id = str(getattr(event, "turn_id", turn_id_fallback) or turn_id_fallback)
-        event_request_id = str(getattr(event, "turn_request_id", turn_request_id_fallback) or turn_request_id_fallback)
-        event_type = type(event).__name__
-
-        try:
-            await recorder.record(
-                turn_id=event_turn_id,
-                turn_request_id=event_request_id,
-                event_type=event_type,
-                payload=payload,
-            )
-        except (OSError, RuntimeError, ValueError, TypeError) as exc:
-            logger.warning("turn truthlog record failed: %s", exc)
+        await correlation.record_turn_truthlog_event(
+            recorder,
+            event=event,
+            turn_id_fallback=turn_id_fallback,
+            turn_request_id_fallback=turn_request_id_fallback,
+        )
 
     @staticmethod
     async def _shutdown_turn_truthlog_recorder(recorder: TurnTruthLogRecorder) -> None:
         """Best-effort flush and shutdown for TruthLog recorder."""
-        try:
-            await recorder.flush()
-        except (OSError, RuntimeError, ValueError, TypeError) as exc:
-            logger.warning("turn truthlog flush failed: %s", exc)
-        try:
-            await recorder.shutdown()
-        except (OSError, RuntimeError, ValueError, TypeError) as exc:
-            logger.warning("turn truthlog shutdown failed: %s", exc)
+        await correlation.shutdown_turn_truthlog_recorder(recorder)
 
     def _emit_phase_event(self, event: TurnEvent) -> None:
         """发送事件"""
@@ -822,11 +626,7 @@ class TurnTransactionController:
 
         委托给 intent_classifier.classify_intent_regex 以消除代码重复。
         """
-        from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
-            classify_intent_regex,
-        )
-
-        return classify_intent_regex(message)
+        return delivery_intent_resolver.classify_user_intent(message)
 
     async def _requires_mutation_intent_hybrid(self, message: str) -> bool:
         """Async hybrid version of _requires_mutation_intent.
@@ -834,39 +634,12 @@ class TurnTransactionController:
         统一委托 CognitiveGateway（Embedding -> SLM -> Regex 级联瀑布），
         不再保留本地 hybrid 路径，确保全系统意图分类单一真相来源。
         """
-        from polaris.cells.roles.kernel.internal.transaction.cognitive_gateway import (
-            CognitiveGateway,
-        )
-        from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
-            _is_negated_mutation,
-        )
-
-        if _is_negated_mutation(message):
-            return False
-
-        gateway = CognitiveGateway.get_default_instance_sync()
-        if gateway is not None:
-            intent = await gateway.classify_intent(message)
-        else:
-            # Gateway 尚未初始化：同步回退到纯 regex（零依赖、零延迟）
-            from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
-                classify_intent_regex,
-            )
-
-            intent = classify_intent_regex(message)
-        return intent in {"STRONG_MUTATION", "DEBUG_AND_FIX", "DEVOPS", "WEAK_MUTATION"}
+        return await delivery_intent_resolver.requires_mutation_intent_hybrid(message)
 
     @classmethod
     def _requires_mutation_intent(cls, message: str) -> bool:
         """判定用户请求是否要求代码/文件突变（需要写工具）。"""
-        from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
-            _is_negated_mutation,
-        )
-
-        if _is_negated_mutation(message):
-            return False
-        intent = cls._classify_user_intent(message)
-        return intent in {"STRONG_MUTATION", "DEBUG_AND_FIX", "DEVOPS", "WEAK_MUTATION"}
+        return delivery_intent_resolver.requires_mutation_intent(message)
 
     @staticmethod
     async def _resolve_delivery_mode_hybrid(user_message: str) -> DeliveryContract:
@@ -875,29 +648,12 @@ class TurnTransactionController:
         先尝试 CognitiveGateway（统一级联入口），若不可用则回退到
         本地 regex 规则引擎。保证永远有返回值。
         """
-        try:
-            from polaris.cells.roles.kernel.internal.transaction.cognitive_gateway import (
-                CognitiveGateway,
-            )
-
-            gateway = CognitiveGateway.get_default_instance_sync()
-            if gateway is not None:
-                return await gateway.resolve_delivery_mode(user_message)
-        except (ImportError, AttributeError, RuntimeError, asyncio.TimeoutError, OSError):
-            pass
-        # Gateway 未初始化或失败：回退到 regex
-        return resolve_delivery_mode(user_message)
+        return await delivery_intent_resolver.resolve_delivery_mode_hybrid(user_message)
 
     @classmethod
     def _requires_verification_intent(cls, message: str) -> bool:
         """判定用户请求是否要求验证/测试（需要 test/verify 类工具）。"""
-        latest_user = str(message or "")
-        lowered = latest_user.lower()
-        if any(marker in latest_user for marker in ("验证", "校验", "测试")):
-            return True
-        if re.search(r"\b(verify|validation|validate|test|pytest|check)\b", lowered):
-            return True
-        return cls._classify_user_intent(message) == "TESTING"
+        return delivery_intent_resolver.requires_verification_intent(message)
 
     # ---------------------------------------------------------------------------
     # Backward-compat proxies (tests monkeypatch these on the controller instance)
@@ -1912,30 +1668,7 @@ class TurnTransactionController:
         Returns:
             Model name to use, or None for default model
         """
-        complexity_weights = {
-            "low": 0.3,
-            "medium": 0.5,
-            "high": 0.7,
-            "complex": 0.9,
-        }
-        weight = complexity_weights.get(task_complexity, 0.5)
-
-        recent_failures = [outcome for outcome in self._turn_outcome_history[-10:] if not outcome.get("success", True)]
-
-        if len(recent_failures) >= 3:
-            logger.info(
-                "adaptive_model_routing: %d recent failures, prioritizing reliability",
-                len(recent_failures),
-            )
-            return None
-
-        if weight >= 0.7:
-            logger.debug(
-                "adaptive_model_routing: high complexity=%s, considering premium model",
-                task_complexity,
-            )
-
-        return None
+        return adaptive_session_state.select_model_for_task(self._turn_outcome_history, task_complexity)
 
     def _estimate_task_complexity(self, context: list[dict]) -> str:
         """Estimate task complexity from context.
@@ -1946,17 +1679,7 @@ class TurnTransactionController:
         Returns:
             Complexity level: low/medium/high/complex
         """
-        total_chars = sum(len(str(msg.get("content", ""))) for msg in context if isinstance(msg, dict))
-        tool_definitions_count = len(context) // 3 if context else 0
-        has_multi_turn = len(context) > 4
-
-        if total_chars > 10000 or tool_definitions_count > 20:
-            return "complex"
-        elif total_chars > 5000 or tool_definitions_count > 10 or has_multi_turn:
-            return "high"
-        elif total_chars > 1500:
-            return "medium"
-        return "low"
+        return adaptive_session_state.estimate_task_complexity(context)
 
     # ---------------------------------------------------------------------------
     # Phase 3.2: Cross-Turn Learning
@@ -1979,25 +1702,15 @@ class TurnTransactionController:
             tokens_used: Total tokens consumed
             cost: Total cost incurred
         """
-        outcome = {
-            "turn_id": turn_id,
-            "success": success,
-            "error": error,
-            "tokens_used": tokens_used,
-            "cost": cost,
-        }
-
-        self._turn_outcome_history.append(outcome)
-        if len(self._turn_outcome_history) > self._max_outcome_history:
-            self._turn_outcome_history = self._turn_outcome_history[-self._max_outcome_history :]
-
-        if not success and error:
-            logger.info(
-                "turn_outcome_recorded: turn_id=%s failed=%s error=%s",
-                turn_id,
-                not success,
-                error[:100] if error else None,
-            )
+        self._turn_outcome_history = adaptive_session_state.record_turn_outcome(
+            self._turn_outcome_history,
+            self._max_outcome_history,
+            turn_id=turn_id,
+            success=success,
+            error=error,
+            tokens_used=tokens_used,
+            cost=cost,
+        )
 
     def _learn_from_history(self, error_pattern: str) -> list[str]:
         """Phase 3.2: Generate correction hints based on failure patterns.
@@ -2008,24 +1721,7 @@ class TurnTransactionController:
         Returns:
             List of correction hints
         """
-        relevant_failures = [
-            outcome
-            for outcome in self._turn_outcome_history[-20:]
-            if not outcome.get("success", True) and error_pattern.lower() in str(outcome.get("error", "")).lower()
-        ]
-
-        hints: list[str] = []
-        if len(relevant_failures) >= 2:
-            if "timeout" in error_pattern.lower():
-                hints.append("Consider breaking down into smaller steps")
-            elif "syntax" in error_pattern.lower():
-                hints.append("Check syntax before applying changes")
-            elif "not found" in error_pattern.lower():
-                hints.append("Ensure all dependencies are available first")
-            elif "permission" in error_pattern.lower():
-                hints.append("Verify file permissions before writing")
-
-        return hints
+        return adaptive_session_state.learn_from_history(self._turn_outcome_history, error_pattern)
 
     def _get_learned_constraints(self) -> dict[str, Any]:
         """Phase 3.2: Get constraints learned from turn history.
@@ -2033,15 +1729,7 @@ class TurnTransactionController:
         Returns:
             Dict of learned constraints for this session
         """
-        recent_outcomes = self._turn_outcome_history[-20:]
-        failed_outcomes = [o for o in recent_outcomes if not o.get("success", True)]
-
-        return {
-            "failure_count": len(failed_outcomes),
-            "total_turns": len(recent_outcomes),
-            "recent_errors": [o.get("error") for o in failed_outcomes[-5:] if o.get("error")],
-            "should_defer_complexity": len(failed_outcomes) >= 3,
-        }
+        return adaptive_session_state.get_learned_constraints(self._turn_outcome_history)
 
     # ---------------------------------------------------------------------------
     # Phase 3.3: Budget-Aware Execution
@@ -2062,11 +1750,7 @@ class TurnTransactionController:
         self._session_cost_budget = cost_budget
         self._session_tokens_used = 0
         self._session_cost_used = 0.0
-        logger.debug(
-            "budget_initialized: token_budget=%s cost_budget=%s",
-            token_budget or "unlimited",
-            cost_budget or "unlimited",
-        )
+        adaptive_session_state.log_session_budget_initialized(token_budget, cost_budget)
 
     def _track_token_usage(self, tokens: int, cost: float = 0.0) -> None:
         """Phase 3.3: Track token and cost usage.
@@ -2084,30 +1768,12 @@ class TurnTransactionController:
         Returns:
             Budget status with warnings if approaching limits
         """
-        status: dict[str, Any] = {
-            "tokens_used": self._session_tokens_used,
-            "tokens_budget": self._session_token_budget,
-            "cost_used": self._session_cost_used,
-            "cost_budget": self._session_cost_budget,
-            "token_warning": False,
-            "cost_warning": False,
-            "token_exceeded": False,
-            "cost_exceeded": False,
-        }
-
-        if self._session_token_budget > 0:
-            token_ratio = self._session_tokens_used / self._session_token_budget
-            status["token_ratio"] = round(token_ratio, 3)
-            status["token_warning"] = token_ratio >= 0.8
-            status["token_exceeded"] = token_ratio >= 1.0
-
-        if self._session_cost_budget > 0:
-            cost_ratio = self._session_cost_used / self._session_cost_budget
-            status["cost_ratio"] = round(cost_ratio, 3)
-            status["cost_warning"] = cost_ratio >= 0.8
-            status["cost_exceeded"] = cost_ratio >= 1.0
-
-        return status
+        return adaptive_session_state.check_budget(
+            session_tokens_used=self._session_tokens_used,
+            session_token_budget=self._session_token_budget,
+            session_cost_used=self._session_cost_used,
+            session_cost_budget=self._session_cost_budget,
+        )
 
     # ---------------------------------------------------------------------------
     # Final answer handler（保留在 Facade，因需调用 _build_turn_result）
