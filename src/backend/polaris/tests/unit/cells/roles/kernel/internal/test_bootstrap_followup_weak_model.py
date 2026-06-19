@@ -19,6 +19,7 @@ import pytest
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
     RetryOrchestrator,
+    _should_force_leaf_bootstrap_followup_write_file,
     build_deterministic_bootstrap_followup_write_decision,
     build_retry_write_after_bootstrap_context,
     merge_bootstrap_receipt_into_result,
@@ -333,6 +334,87 @@ def test_leaf_construction_step_suppresses_write_fallback(tmp_path: Path) -> Non
         workspace=str(tmp_path),
     )
     assert decision is None
+
+
+def test_leaf_small_bootstrap_target_forces_write_file_followup() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "success",
+                "result": {
+                    "file": "calculator.py",
+                    "content": "def main():\n    print('placeholder')\n",
+                },
+                "arguments": {"file": "calculator.py"},
+            }
+        ]
+    }
+
+    assert (
+        _should_force_leaf_bootstrap_followup_write_file(
+            original_context=_leaf_step_context(
+                "calculator.py",
+                verify="python calculator.py",
+                named_files="calculator.py README.md",
+            ),
+            bootstrap_receipt=receipt,
+            allowed_tool_names={"edit_blocks", "write_file"},
+        )
+        is True
+    )
+
+
+def test_leaf_large_bootstrap_target_keeps_edit_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS", "100")
+    receipt = {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "success",
+                "result": {
+                    "file": "large_module.py",
+                    "content": "print('real code')\n" * 20,
+                },
+                "arguments": {"file": "large_module.py"},
+            }
+        ]
+    }
+
+    assert (
+        _should_force_leaf_bootstrap_followup_write_file(
+            original_context=_leaf_step_context(
+                "large_module.py",
+                verify="python -m py_compile large_module.py",
+                named_files="large_module.py",
+            ),
+            bootstrap_receipt=receipt,
+            allowed_tool_names={"edit_blocks", "write_file"},
+        )
+        is False
+    )
+
+
+def test_non_leaf_bootstrap_target_does_not_force_write_file() -> None:
+    receipt = {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "success",
+                "result": {"file": "calculator.py", "content": "def main():\n    pass\n"},
+                "arguments": {"file": "calculator.py"},
+            }
+        ]
+    }
+
+    assert (
+        _should_force_leaf_bootstrap_followup_write_file(
+            original_context=[{"role": "user", "content": "edit calculator.py"}],
+            bootstrap_receipt=receipt,
+            allowed_tool_names={"edit_blocks", "write_file"},
+        )
+        is False
+    )
 
 
 def test_non_leaf_refuses_to_guess_among_multiple_targets(tmp_path: Path) -> None:

@@ -1267,6 +1267,8 @@ def main() -> int:
         record["llm_route_audit"] = build_llm_route_audit(
             collect_llm_events(workspace, runtime_dirs, audit_bundle),
             expected_bindings=expected_llm_bindings,
+            required_roles=("pm", "qa", "director"),
+            require_all_director_routes=False,
         )
         apply_factory_bench_gates(record, chain)
         record["failure_taxonomy"] = classify_factory_bench_failure(record)

@@ -82,6 +82,27 @@ _BOOTSTRAP_WHOLE_FILE_EDIT_ERROR_FRAGMENTS: tuple[str, ...] = (
     "whole-file write, not edit",
     "whole-file write",
 )
+_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS_ENV = "KERNELONE_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS"
+_DEFAULT_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS = 12_000
+_LEAF_BOOTSTRAP_WRITE_FILE_EXTS = frozenset(
+    {
+        ".py",
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".md",
+        ".txt",
+        ".json",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".css",
+        ".html",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1257,6 +1278,82 @@ def _extract_deterministic_bootstrap_write_targets(
     return normalized
 
 
+def _bootstrap_successful_file_contents(bootstrap_receipt: Mapping[str, Any]) -> dict[str, str]:
+    contents: dict[str, str] = {}
+    for item in list(bootstrap_receipt.get("results", []) or []):
+        if not isinstance(item, Mapping):
+            continue
+        status = str(item.get("status") or "").strip().lower()
+        if status and status != "success":
+            continue
+        payload = item.get("result")
+        file_path = ""
+        content = ""
+        if isinstance(payload, Mapping):
+            for key in ("file", "path", "relative_path"):
+                value = str(payload.get(key) or "").strip()
+                if value:
+                    file_path = value
+                    break
+            for key in ("content", "text", "body", "data"):
+                content_value = payload.get(key)
+                if isinstance(content_value, str):
+                    content = content_value
+                    break
+        if not file_path:
+            from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+                extract_target_file_from_invocation_args,
+            )
+
+            file_path = extract_target_file_from_invocation_args({"arguments": item.get("arguments")})
+        normalized = _normalize_deterministic_bootstrap_target(file_path)
+        if normalized and content and normalized not in contents:
+            contents[normalized] = content
+    return contents
+
+
+def _read_leaf_write_file_max_chars() -> int:
+    raw = os.environ.get(_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS_ENV)
+    if raw is None:
+        return _DEFAULT_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS
+    try:
+        parsed = int(str(raw).strip())
+    except ValueError:
+        return _DEFAULT_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS
+    return max(1, parsed)
+
+
+def _should_force_leaf_bootstrap_followup_write_file(
+    *,
+    original_context: list[dict],
+    bootstrap_receipt: Mapping[str, Any],
+    allowed_tool_names: set[str],
+) -> bool:
+    """Prefer whole-file rewrite for small generated leaf targets after a read.
+
+    This is deliberately narrower than the deterministic scaffold fallback:
+    it never synthesizes content. It only asks the LLM to use ``write_file`` for
+    the single declared leaf target after the platform has injected that file's
+    current content into the bootstrap follow-up context.
+    """
+    if "write_file" not in allowed_tool_names:
+        return False
+    declared_step = _extract_declared_step_card(original_context)
+    if declared_step is None:
+        return False
+    target = _normalize_deterministic_bootstrap_target(declared_step.get("target_file"))
+    if not target:
+        return False
+    suffix = Path(target).suffix.lower()
+    if suffix and suffix not in _LEAF_BOOTSTRAP_WRITE_FILE_EXTS:
+        return False
+    contents = _bootstrap_successful_file_contents(bootstrap_receipt)
+    content = contents.get(target)
+    if not isinstance(content, str) or not content:
+        return False
+    return len(content) <= _read_leaf_write_file_max_chars()
+
+
 def _synthesize_deterministic_bootstrap_write_content(relative_path: str, latest_user: str) -> str:
     path = str(relative_path or "").strip().replace("\\", "/")
     lowered = path.lower()
@@ -2222,12 +2319,24 @@ class RetryOrchestrator:
             if bootstrap_receipt is None:
                 raise RuntimeError("single_batch_contract_violation_retry_failed: bootstrap read receipt missing")
             failed_bootstrap_files = extract_failed_files_from_bootstrap_receipt(bootstrap_receipt)
-            followup_forced_write_tool_name = select_bootstrap_followup_write_tool_name(
-                allowed_tool_names=allowed_retry_tool_names,
-                default_write_tool_name=forced_write_tool_name,
+            followup_forced_write_tool_name: str | None
+            if _should_force_leaf_bootstrap_followup_write_file(
+                original_context=context,
                 bootstrap_receipt=bootstrap_receipt,
-                failed_bootstrap_files=failed_bootstrap_files,
-            )
+                allowed_tool_names=allowed_retry_tool_names,
+            ):
+                followup_forced_write_tool_name = "write_file"
+                logger.warning(
+                    "mutation-contract bootstrap-followup forcing write_file for small leaf target: turn_id=%s",
+                    turn_id,
+                )
+            else:
+                followup_forced_write_tool_name = select_bootstrap_followup_write_tool_name(
+                    allowed_tool_names=allowed_retry_tool_names,
+                    default_write_tool_name=forced_write_tool_name,
+                    bootstrap_receipt=bootstrap_receipt,
+                    failed_bootstrap_files=failed_bootstrap_files,
+                )
             write_context = build_retry_write_after_bootstrap_context(
                 original_context=context,
                 bootstrap_receipt=bootstrap_receipt,

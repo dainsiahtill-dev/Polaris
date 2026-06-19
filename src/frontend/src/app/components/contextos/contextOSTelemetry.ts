@@ -441,6 +441,18 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
 
 function eventDedupeKey(event: ContextOSEvent): string {
   const stableRef = event.contextSnapshotRef || event.promptHash || event.turnId || '';
+  if (stableRef && (event.isCall || event.hasUsage)) {
+    return [
+      'llm-call',
+      event.actor,
+      event.workerId ?? '',
+      stableRef,
+      String(event.promptTokens),
+      String(event.completionTokens),
+      String(event.totalTokens),
+      event.error ?? '',
+    ].join('\u001f');
+  }
   return [
     event.mode,
     event.name,

@@ -126,11 +126,13 @@ class TestConcurrentRecord:
 
 
 class TestRenderEditContract:
-    def test_emits_read_and_edit_instruction_for_owned_file(self) -> None:
+    def test_emits_director_read_and_edit_instruction_for_owned_file(self) -> None:
         block = render_edit_contract({"main.js": {"owner_step_id": "S4", "owner_parent": "PM-0001-1"}})
         assert "main.js" in block
         assert "S4" in block  # names the owner so the model knows what exists
-        assert "read_file" in block or "read" in block
+        assert "不得调用 read_file" in block
+        assert "后续 Director" in block
+        assert "construction_steps" in block
 
     def test_does_not_instruct_model_to_declare_cross_parent_depends_on(self) -> None:
         # The model must NOT hand-write a cross-parent owner into depends_on:

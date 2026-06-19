@@ -13,9 +13,10 @@ const DEFAULT_RENDERER_PORT = 5173;
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const rendererPortRaw = Number(process.env.KERNELONE_RENDERER_PORT || DEFAULT_RENDERER_PORT);
 const rendererPort = Number.isFinite(rendererPortRaw) && rendererPortRaw > 0 ? rendererPortRaw : DEFAULT_RENDERER_PORT;
-const backendPort = process.env.KERNELONE_BACKEND_PORT || String(DEFAULT_BACKEND_PORT);
-const backendHttpTarget = `http://127.0.0.1:${backendPort}`;
-const backendWsTarget = `ws://127.0.0.1:${backendPort}`;
+const backendHost = process.env.KERNELONE_BACKEND_HOST || process.env.VITE_BACKEND_HOST || "127.0.0.1";
+const backendPort = process.env.KERNELONE_BACKEND_PORT || process.env.VITE_BACKEND_PORT || String(DEFAULT_BACKEND_PORT);
+const backendHttpTarget = `http://${backendHost}:${backendPort}`;
+const backendWsTarget = `ws://${backendHost}:${backendPort}`;
 
 function getNodeModulePackageName(normalizedId: string): string | null {
   const marker = "/node_modules/";
@@ -156,9 +157,18 @@ export default defineConfig({
         target: backendWsTarget,
         ws: true,
       },
+      "/settings": {
+        target: backendHttpTarget,
+        changeOrigin: true,
+      },
+      "/files": {
+        target: backendHttpTarget,
+        changeOrigin: true,
+      },
       "/v2": {
         target: backendHttpTarget,
         changeOrigin: true,
+        ws: true,
       },
     },
   },

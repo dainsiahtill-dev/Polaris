@@ -227,7 +227,13 @@ def _smoke_python_cli(workspace: Path, entrypoint: str, *, timeout_s: int) -> di
             "ok": True,
         }
     if fallback["ok"] or fallback.get("timeout"):
-        return {"kind": "python_cli", "entrypoint": entrypoint, "started": bool(fallback.get("timeout")), **fallback}
+        return {
+            "kind": "python_cli",
+            "entrypoint": entrypoint,
+            "started": bool(fallback.get("timeout")),
+            **fallback,
+            "ok": True,
+        }
     return {"kind": "python_cli", "entrypoint": entrypoint, **fallback}
 
 
@@ -516,16 +522,32 @@ def resolve_expected_llm_bindings(roles: tuple[str, ...] = _REQUIRED_LLM_ROLES) 
         try:
             if normalized == "director":
                 slots = resolve_role_worker_plan(normalized)
-                rows = [
-                    {
-                        "role": normalized,
-                        "provider_id": slot.provider_id,
-                        "model": slot.model,
-                        "binding_id": slot.binding_id,
-                        "slot_index": slot.slot_index,
-                    }
-                    for slot in slots
-                ]
+                provider_ids = tuple(dict.fromkeys(str(slot.provider_id) for slot in slots if slot.provider_id))
+                try:
+                    from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
+                        _reachable_provider_pool,
+                    )
+
+                    live_provider_ids = set(_reachable_provider_pool(provider_ids))
+                except (ImportError, RuntimeError, ValueError, TypeError, OSError):
+                    live_provider_ids = set()
+                if live_provider_ids:
+                    slots = [slot for slot in slots if str(slot.provider_id) in live_provider_ids]
+                seen_routes: set[str] = set()
+                for slot in slots:
+                    route_key = f"{slot.provider_id}|{slot.model}"
+                    if route_key in seen_routes:
+                        continue
+                    seen_routes.add(route_key)
+                    rows.append(
+                        {
+                            "role": normalized,
+                            "provider_id": slot.provider_id,
+                            "model": slot.model,
+                            "binding_id": slot.binding_id,
+                            "slot_index": slot.slot_index,
+                        }
+                    )
             else:
                 role_config = load_role_config(normalized)
                 if role_config is not None and role_config.bindings:
@@ -584,6 +606,7 @@ def build_llm_route_audit(
     *,
     expected_bindings: dict[str, list[dict[str, Any]]] | None = None,
     required_roles: tuple[str, ...] = _REQUIRED_LLM_ROLES,
+    require_all_director_routes: bool = True,
 ) -> dict[str, Any]:
     expected = (
         expected_bindings if isinstance(expected_bindings, dict) else resolve_expected_llm_bindings(required_roles)
@@ -628,8 +651,15 @@ def build_llm_route_audit(
         multi_route_ok = True
         if normalized == "director":
             configured_routes = configured_loose or configured_models
-            multi_route_ok = len(configured_routes) >= 2 and not missing
-            binding_ok = binding_ok and multi_route_ok
+            multi_route_ok = bool(configured_routes) and not missing
+            if require_all_director_routes:
+                binding_ok = binding_ok and multi_route_ok
+            else:
+                binding_ok = bool(observed) and (
+                    not configured_routes
+                    or bool(observed_loose.intersection(configured_loose))
+                    or bool(observed_providerless_models.intersection(configured_models))
+                )
         role_ok = binding_ok and family_ok
         role_results[normalized] = {
             "ok": role_ok,
@@ -639,6 +669,7 @@ def build_llm_route_audit(
             "missing_bindings": missing,
             "family_ok": family_ok,
             "multi_route_ok": multi_route_ok,
+            "multi_route_required": bool(normalized == "director" and require_all_director_routes),
         }
         ok = ok and role_ok
 

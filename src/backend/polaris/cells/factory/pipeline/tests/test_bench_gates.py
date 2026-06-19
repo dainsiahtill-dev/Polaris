@@ -55,6 +55,28 @@ def test_real_run_gate_accepts_required_arg_cli_usage_screen(tmp_path: Path) -> 
     assert gate["entrypoint"]["usage_screen"] is True
 
 
+def test_real_run_gate_accepts_interactive_cli_that_starts_and_waits(tmp_path: Path) -> None:
+    (tmp_path / "calculator.py").write_text(
+        "from __future__ import annotations\n"
+        "import sys\n"
+        "import time\n"
+        "if __name__ == '__main__':\n"
+        "    if '--help' in sys.argv:\n"
+        "        raise SystemExit(2)\n"
+        "    print('Interactive Calculator')\n"
+        "    print('>>> ', end='', flush=True)\n"
+        "    time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    record = {"code_files": ["calculator.py"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=2)
+
+    assert gate["ok"] is True
+    assert gate["requirements"]["entrypoint_smoke"]["ok"] is True
+    assert gate["entrypoint"]["started"] is True
+
+
 def test_real_run_gate_starts_static_web_entrypoint(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text("<html><body><h1>ok</h1></body></html>", encoding="utf-8")
     (tmp_path / "app.js").write_text("const answer = 42;\n", encoding="utf-8")
@@ -242,6 +264,89 @@ def test_llm_route_audit_fails_when_a_director_route_is_unobserved() -> None:
 
     assert audit["ok"] is False
     assert audit["roles"]["director"]["multi_route_ok"] is False
+    assert audit["roles"]["director"]["missing_bindings"]
+
+
+def test_llm_route_audit_accepts_single_live_director_route() -> None:
+    expected = {
+        "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": ""}],
+        "chief_engineer": [{"role": "chief_engineer", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": ""}],
+        "qa": [{"role": "qa", "provider_id": "minimax-a", "model": "MiniMax-M3", "binding_id": ""}],
+        "director": [
+            {"role": "director", "provider_id": "qwen-gpu1", "model": "qwen3.6-27b-gpu1", "binding_id": "d1"},
+        ],
+    }
+    events = [
+        {
+            "event": "llm_call_end",
+            "role": "pm",
+            "provider_id": "kimi-a",
+            "model": "kimi-k2",
+            "terminal": True,
+            "invocation": True,
+        },
+        {
+            "event": "llm_call_end",
+            "role": "chief_engineer",
+            "provider_id": "kimi-a",
+            "model": "kimi-k2",
+            "terminal": True,
+            "invocation": True,
+        },
+        {
+            "event": "llm_call_end",
+            "role": "qa",
+            "provider_id": "minimax-a",
+            "model": "MiniMax-M3",
+            "terminal": True,
+            "invocation": True,
+        },
+        {
+            "event": "llm_call_end",
+            "role": "director",
+            "model": "qwen3.6-27b-gpu1",
+            "terminal": True,
+            "invocation": True,
+        },
+    ]
+
+    audit = build_llm_route_audit(events, expected_bindings=expected)
+
+    assert audit["ok"] is True
+    assert audit["roles"]["director"]["multi_route_ok"] is True
+
+
+def test_llm_route_audit_can_relax_director_route_coverage_for_serial_bench() -> None:
+    expected = {
+        "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-for-coding", "binding_id": "pm0"}],
+        "qa": [{"role": "qa", "provider_id": "minimax-a", "model": "MiniMax-M3", "binding_id": "qa0"}],
+        "director": [
+            {"role": "director", "provider_id": "qwen-a", "model": "qwen3.6-27b-gpu0", "binding_id": "d0"},
+            {"role": "director", "provider_id": "qwen-b", "model": "qwen3.6-27b-gpu1", "binding_id": "d1"},
+        ],
+    }
+    events = [
+        {"event": "llm_call_end", "role": "pm", "model": "kimi-for-coding", "terminal": True, "invocation": True},
+        {"event": "llm_call_end", "role": "qa", "model": "MiniMax-M3", "terminal": True, "invocation": True},
+        {
+            "event": "llm_call_end",
+            "role": "director",
+            "model": "qwen3.6-27b-gpu1",
+            "terminal": True,
+            "invocation": True,
+        },
+    ]
+
+    audit = build_llm_route_audit(
+        events,
+        expected_bindings=expected,
+        required_roles=("pm", "qa", "director"),
+        require_all_director_routes=False,
+    )
+
+    assert audit["ok"] is True
+    assert audit["roles"]["director"]["multi_route_ok"] is False
+    assert audit["roles"]["director"]["multi_route_required"] is False
     assert audit["roles"]["director"]["missing_bindings"]
 
 

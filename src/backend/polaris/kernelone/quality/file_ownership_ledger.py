@@ -180,14 +180,18 @@ def render_edit_contract(owned_by_other: dict[str, dict[str, str]]) -> str:
         return ""
     lines = [
         "\n## 跨父文件归属契约(已被前序任务创建,必须在其基础上修改而非重写)",
-        "以下文件已由前序步骤创建并拥有。对这些文件,你必须先用 read_file 读取既有内容,"
-        "在其基础上 EDIT/扩展(严禁 write_file 从零重写,否则会抹掉前序逻辑导致产物整体无法运行)。"
+        "以下文件已由前序步骤创建并拥有。你当前只是拆分 construction_steps,不得调用 read_file、"
+        "repo_tree 或任何工具；必须只输出 JSON。对这些文件,请在生成的步骤 title/verify 中声明"
+        "由后续 Director 先读取既有内容再 EDIT/扩展,严禁从零重写,否则会抹掉前序逻辑导致产物整体无法运行。"
         "市场会自动把本步排在属主步骤之后执行,你无需(也不要)在 depends_on 里手写跨父属主步——"
         "depends_on 只能引用本父任务内部的 step_id。",
     ]
     for target in sorted(owned_by_other):
         owner = owned_by_other[target].get("owner_step_id", "")
-        lines.append(f"- {target}(已由属主步骤 {owner} 创建):read 后在其上修改,严禁重写。")
+        lines.append(
+            f"- {target}(已由属主步骤 {owner} 创建):在 construction_steps 中要求后续 Director "
+            "read 后在其上 edit/扩展,严禁重写。"
+        )
     return "\n".join(lines)
 
 

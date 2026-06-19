@@ -414,6 +414,10 @@ class TestFissionExtraction:
         assert steps[0]["step_id"] == "PM-9-S1"
         assert len(captured_commands) == 1
         command = captured_commands[0]
+        assert "不要读取文件" in command.user_message
+        assert "不要调用任何工具" in command.user_message
+        assert "不要输出 tool_call" in command.user_message
+        assert "只把后续 Director 应执行的步骤写成 JSON" in command.user_message
         assert command.context["cognitive_runtime_approval_mode"] == "auto_accept"
         assert command.context["cognitive_runtime_approval_scope"] == "chief_engineer_step_fission_preflight"
         assert command.metadata["cognitive_runtime_approval_mode"] == "auto_accept"

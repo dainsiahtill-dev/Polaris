@@ -23,6 +23,7 @@ from polaris.kernelone.context.session_continuity import (
     history_pairs_to_messages,
     messages_to_history_pairs,
 )
+from sqlalchemy.exc import SQLAlchemyError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -57,7 +58,7 @@ def resolve_session_override(session_id: str) -> dict[str, Any] | None:
 
             cfg: dict[str, Any] = json.loads(raw)  # type: ignore[arg-type]
             return cfg.get("strategy_override") or None
-    except (RuntimeError, ValueError):
+    except (AttributeError, ImportError, LookupError, OSError, RuntimeError, SQLAlchemyError, TypeError, ValueError):
         # Session service may not be initialized; degrade gracefully.
         return None
 
@@ -241,7 +242,7 @@ async def persist_session_turn_state(
                 session_id,
                 context_config=persisted_ctx,
             )
-    except (RuntimeError, ValueError):
+    except (AttributeError, ImportError, LookupError, OSError, RuntimeError, SQLAlchemyError, TypeError, ValueError):
         logger.warning("Failed to persist role session turn state for %s", session_id, exc_info=True)
 
 

@@ -201,6 +201,7 @@ from polaris.kernelone.context.runtime_feature_flags import (
 
 # Skill system: prefer KernelOne implementation, keep Cells layer for backward compat
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
+from sqlalchemy.exc import SQLAlchemyError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -6391,7 +6392,16 @@ class RoleRuntimeService(IRoleRuntime):
                     evidence["handoff_skipped_reason"] = "no_session_id"
             finally:
                 service.close()
-        except (RuntimeError, ValueError) as exc:
+        except (
+            AttributeError,
+            ImportError,
+            LookupError,
+            OSError,
+            RuntimeError,
+            SQLAlchemyError,
+            TypeError,
+            ValueError,
+        ) as exc:
             evidence["error_message"] = str(exc)
             if required:
                 raise

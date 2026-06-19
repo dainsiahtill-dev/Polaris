@@ -405,6 +405,7 @@ describe('ContextOSWorkspace', () => {
         llmStreamEvents={Array.from({ length: 5 }, (_, index) => ({
           ...duplicatedCall,
           id: `duplicated-call-${index}`,
+          timestamp: new Date(Date.parse(duplicatedCall.timestamp) + index).toISOString(),
         }))}
       />,
     );

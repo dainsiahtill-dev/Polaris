@@ -554,6 +554,8 @@ class CEConsumer:
         }
         message = (
             "按「弱执行者蓝图纪律」把下面这个任务裂变为 construction_steps。\n"
+            "你是拆分者,不是执行者: 不要读取文件,不要调用任何工具,不要输出 tool_call; "
+            "只把后续 Director 应执行的步骤写成 JSON。\n"
             '只输出 JSON: {"construction_steps": [{"step_id", "target_file"(单文件), '
             '"est_lines"(整数,≤120), "signatures"(函数/类签名清单), '
             '"interface_names"(跨文件接口统一定名), "verify"(机器可执行判据), '

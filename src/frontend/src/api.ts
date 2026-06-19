@@ -29,10 +29,20 @@ function getDefaultBackendUrl(): string {
   return `http://${host}:${port}`;
 }
 
+function getEnvBackendUrl(): string | null {
+  const url = import.meta.env.VITE_BACKEND_URL;
+  return typeof url === "string" && url.trim() ? url.trim().replace(/\/+$/, "") : null;
+}
+
 function getEnvBackendToken(): string | null {
   const token = import.meta.env.VITE_BACKEND_TOKEN;
   return typeof token === "string" && token.trim() ? token.trim() : null;
 }
+
+const isViteWebDevMode =
+  import.meta.env.DEV &&
+  typeof window !== "undefined" &&
+  !window.polaris?.getBackendInfo;
 
 export async function getBackendInfo(): Promise<BackendInfo> {
   if (cachedInfo) {
@@ -40,10 +50,13 @@ export async function getBackendInfo(): Promise<BackendInfo> {
   }
   if (!window.polaris?.getBackendInfo) {
     const devBackend = (window as WindowWithDevBackend).__DEV_BACKEND__;
-    const fallbackBase =
+    const explicitBase =
       devBackend?.baseUrl ||
       localStorage.getItem("polaris.baseUrl") ||
-      getDefaultBackendUrl();
+      getEnvBackendUrl();
+    const fallbackBase =
+      explicitBase ||
+      (isViteWebDevMode ? null : getDefaultBackendUrl());
     const fallbackToken =
       devBackend?.token ||
       getEnvBackendToken() ||
@@ -81,9 +94,12 @@ export async function openPath(targetPath: string): Promise<{ ok: boolean; error
   return window.polaris.openPath(targetPath);
 }
 
-const isViteDevMode = typeof window !== 'undefined' && (window as unknown as { __DEV_BACKEND__?: unknown }).__DEV_BACKEND__ !== undefined;
-
 const DEFAULT_TIMEOUT_MS = 30000;
+
+function getSameOriginWebSocketBaseUrl(): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}`;
+}
 
 export async function apiFetch(
   path: string,
@@ -104,7 +120,7 @@ export async function apiFetch(
     if (info.token) {
       headers.set("Authorization", `Bearer ${info.token}`);
     }
-    const url = (isViteDevMode && !info.baseUrl) ? path : `${info.baseUrl}${path}`;
+    const url = info.baseUrl ? `${info.baseUrl}${path}` : path;
     return fetch(url, {
       ...fetchOptions,
       cache: fetchOptions.cache ?? 'no-store',
@@ -150,11 +166,9 @@ export async function connectWebSocket(_forceRefresh = false): Promise<WebSocket
     clearBackendInfoCache();
     info = await getBackendInfo();
   }
-  if (!info.baseUrl) {
-    throw new Error("Backend baseUrl missing.");
-  }
-  const wsUrl =
-    info.baseUrl.replace(/^http/, "ws") +
-    `/v2/ws/runtime?token=${encodeURIComponent(info.token || "")}`;
+  const wsBaseUrl = info.baseUrl
+    ? info.baseUrl.replace(/^http/, "ws")
+    : getSameOriginWebSocketBaseUrl();
+  const wsUrl = `${wsBaseUrl}/v2/ws/runtime?token=${encodeURIComponent(info.token || "")}`;
   return new WebSocket(wsUrl);
 }

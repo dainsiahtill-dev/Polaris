@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, NoReturn, cast
 
 import pytest
@@ -197,6 +198,81 @@ async def test_persist_session_turn_state_uses_session_continuity_engine_policy(
     finally:
         db.close()
         engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_persist_session_turn_state_degrades_when_session_store_uninitialized(monkeypatch) -> None:
+    import polaris.cells.roles.session.public as session_public_module
+
+    class _BrokenRoleSessionService:
+        def __enter__(self) -> _BrokenRoleSessionService:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def get_session(self, _session_id: str) -> NoReturn:
+            raise LookupError("no such table: conversations")
+
+    monkeypatch.setattr(session_public_module, "RoleSessionService", _BrokenRoleSessionService)
+
+    await RoleRuntimeService._persist_session_turn_state(
+        ExecuteRoleSessionCommandV1(
+            role="director",
+            session_id="director-task-1",
+            workspace="C:/repo",
+            user_message="materialize",
+            context={},
+            stream=False,
+        ),
+        turn_history=[("assistant", "done")],
+    )
+
+
+def test_cognitive_runtime_shadow_artifacts_degrade_when_handoff_store_uninitialized(monkeypatch) -> None:
+    import polaris.cells.factory.cognitive_runtime.public.service as cognitive_service_module
+
+    class _FakeCognitiveRuntimeService:
+        def record_runtime_receipt(self, _command: object) -> object:
+            return SimpleNamespace(ok=True, receipt=SimpleNamespace(receipt_id="receipt-1"))
+
+        def export_handoff_pack(self, _command: object) -> NoReturn:
+            raise LookupError("no such table: conversations")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        cognitive_service_module,
+        "get_cognitive_runtime_public_service",
+        lambda: _FakeCognitiveRuntimeService(),
+    )
+
+    runtime = RoleRuntimeService()
+    evidence = runtime._emit_cognitive_runtime_shadow_artifacts(
+        source="test",
+        workspace="C:/repo",
+        role="director",
+        task_id="task-1",
+        session_id="director-task-1",
+        run_id="run-1",
+        result=RoleExecutionResultV1(
+            ok=True,
+            status="ok",
+            role="director",
+            workspace="C:/repo",
+            task_id="task-1",
+            session_id="director-task-1",
+            run_id="run-1",
+            output="done",
+        ),
+        metadata={},
+        context={},
+    )
+
+    assert evidence["receipt_recorded"] is True
+    assert evidence["handoff_exported"] is False
+    assert "no such table" in str(evidence.get("error_message") or "")
 
 
 @pytest.mark.asyncio
