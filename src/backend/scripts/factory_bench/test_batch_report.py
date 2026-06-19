@@ -6,7 +6,7 @@ import json
 import unittest
 from pathlib import Path
 
-from scripts.factory_bench.batch_report import _aggregate, _classify_chain_log, main
+from scripts.factory_bench.batch_report import _aggregate, _classify_chain_log, _update_history, main
 
 
 def _write_audit(work_dir: Path, records: list[dict]) -> None:
@@ -32,6 +32,8 @@ def _record(pid: str, all_passed: bool, task_market_ok: bool, dur: float, chain_
             {"check": "py_compile", "ok": True, "detail": "ok"},
             {"check": "min_files:2", "ok": True, "detail": "ok"},
         ],
+        "real_run_gate": {"ok": all_passed},
+        "llm_route_audit": {"ok": all_passed},
     }
     return r
 
@@ -59,6 +61,27 @@ class TestBatchReport(unittest.TestCase):
             self.assertEqual(report["wall"]["max_s"], 200.0)
             self.assertEqual(report["wall"]["sum_s"], 300.0)
             self.assertEqual(report["by_level"], {2: {"total": 2, "passed": 1}})
+            self.assertEqual(report["real_run_gate"]["passed"], 1)
+            self.assertEqual(report["llm_route_audit"]["passed"], 1)
+
+    def test_aggregate_prefers_structured_failure_taxonomy(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            record = _record("L2-C", all_passed=False, task_market_ok=False, dur=10.0)
+            record["failure_taxonomy"] = {
+                "ok": False,
+                "category": "target_project_baseline",
+                "root_cause_signature": "target_project_baseline:real_run_gate.entrypoint_smoke",
+            }
+            report = _aggregate([record], d)
+            self.assertEqual(
+                report["root_cause_tally"].get(
+                    "[target_project_baseline ] target_project_baseline:real_run_gate.entrypoint_smoke"
+                ),
+                1,
+            )
 
     def test_classify_chain_log_picks_attribution_categories(self) -> None:
         import tempfile
@@ -120,6 +143,21 @@ class TestBatchReport(unittest.TestCase):
             self.assertIn("L2: 1/1", out)
             self.assertIn("single_batch_contract_violation", out)
             self.assertIn("42.0", out)
+            self.assertIn("real-run gate", out)
+
+    def test_update_history_tracks_new_root_cause_streak(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            history_path = Path(td) / "root_cause_history.json"
+            report = {"root_cause_tally": {"[llm_output              ] llm_output:llm_route_audit": 1}}
+            first = _update_history(report, history_path, batch_id="b1")
+            self.assertEqual(first["last_new_root_causes"], ["[llm_output              ] llm_output:llm_route_audit"])
+            self.assertEqual(first["streak_without_new_common_root_causes"], 0)
+
+            second = _update_history(report, history_path, batch_id="b2")
+            self.assertEqual(second["last_new_root_causes"], [])
+            self.assertEqual(second["streak_without_new_common_root_causes"], 1)
 
 
 if __name__ == "__main__":

@@ -322,8 +322,12 @@ class UnifiedBenchmarkRunner:
                     mode=mode,
                     sandbox_base=sandbox_base,
                 )
-            except (RuntimeError, ValueError) as exc:
-                # Create error result for failed execution
+            except Exception as exc:  # noqa: BLE001 - per-case fail-safe boundary
+                # Record any per-case failure (I/O errors during materialization,
+                # collector import/type errors, judge errors, etc.) and continue
+                # with the remaining cases. BaseException-level interruptions
+                # (KeyboardInterrupt / SystemExit / asyncio.CancelledError) still
+                # propagate so the suite can be aborted intentionally.
                 result = BenchmarkRunResult(
                     case_id=case.case_id,
                     passed=False,
@@ -417,8 +421,14 @@ class UnifiedBenchmarkRunner:
             mode=mode,
         )
 
-        # Judge the observation
-        verdict = self._judge.judge(case, observed)
+        # Judge the observation. Pass the materialized workspace's real file
+        # listing as known_paths so the hallucinated-paths validator has a
+        # ground truth to check against instead of short-circuiting vacuously.
+        verdict = self._judge.judge(
+            case,
+            observed,
+            workspace_files=self.list_workspace_files(sandbox_workspace),
+        )
 
         duration_ms = int((time.perf_counter() - start) * 1000)
 

@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request
 from polaris.cells.llm.evaluation.public.service import load_llm_test_index
 from polaris.delivery.http.schemas.common import PMChatPingResponse, PMChatStatusResponse
-from polaris.delivery.http.workspace import active_workspace_value
+from polaris.delivery.http.workspace import active_workspace_value, requested_or_active_workspace
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
 
@@ -23,6 +23,25 @@ def _workspace_value(settings: Any) -> str:
     return active_workspace_value(settings)
 
 
+def _context_workspace(payload: dict[str, Any]) -> str:
+    """Read an explicit workspace from a PM-chat payload context."""
+    context = payload.get("context")
+    if not isinstance(context, dict):
+        return ""
+    workspace = context.get("workspace")
+    return workspace.strip() if isinstance(workspace, str) else ""
+
+
+def _workspace_for_pm_request(settings: Any, requested: str = "", payload: dict[str, Any] | None = None) -> str:
+    """Resolve workspace from query/body context before falling back to active desktop state.
+
+    Mirrors ``role_chat._workspace_for_role_request`` so a client setting
+    ``context.workspace`` (or a ``workspace`` query param) is honored instead of
+    being silently ignored and run against the wrong workspace.
+    """
+    return requested_or_active_workspace(settings, requested or _context_workspace(payload or {}))
+
+
 @router.get("/v2/pm/chat/ping", response_model=PMChatPingResponse, dependencies=[Depends(require_auth)])
 def pm_chat_ping() -> dict[str, str]:
     """Health check for the PM chat router."""
@@ -30,14 +49,14 @@ def pm_chat_ping() -> dict[str, str]:
 
 
 @router.post("/v2/pm/chat", dependencies=[Depends(require_auth)])
-async def pm_chat(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+async def pm_chat(request: Request, payload: dict[str, Any], workspace: str = "") -> dict[str, Any]:
     """Chat with the PM role LLM (non-streaming).
 
     Returns:
         Response, thinking trace, and model metadata.
     """
     state = get_state(request)
-    workspace = _workspace_value(state.settings)
+    workspace = _workspace_for_pm_request(state.settings, workspace, payload)
 
     message = str(payload.get("message") or "").strip()
     if not message:

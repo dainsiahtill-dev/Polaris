@@ -430,7 +430,10 @@ def invoke_role_runtime_provider(
             model,
             fallback_model,
         )
-        adapter.record_provider_failure(resolved_type)
+        # Do NOT record the primary failure here: one logical invocation must
+        # increment the consecutive-failure eviction counter at most once. The
+        # final ``if not ok`` below covers the both-failed case, and a
+        # fallback success must leave the eviction counter untouched.
         ok, result, error, elapsed_ms = _invoke_with_model(fallback_model, invoke_cfg)
         if ok:
             model = fallback_model  # use fallback model in result

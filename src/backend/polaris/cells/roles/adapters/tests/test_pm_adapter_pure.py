@@ -665,6 +665,43 @@ class TestNormalizeTaskContract:
         assert "parser.py" in result["scope_paths"]
         assert "README.md" in result["scope_paths"]
 
+    def test_implementation_task_default_test_wording_does_not_add_test_target(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        raw = {
+            "id": "TASK-2",
+            "title": "核心计算引擎与输入校验实现",
+            "target_files": ["calculator.py"],
+            "phase": "implementation",
+        }
+
+        result = adapter._normalize_task_contract(raw, 2, "CLI 科学计算器")
+
+        assert result["target_files"] == ["calculator.py"]
+
+    def test_verification_task_adds_test_target_for_root_cli_project(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+# Product Requirements — CLI 科学计算器
+
+## Goal
+- 实现一个命令行交互式计算器,支持 +、-、*、/ 及括号优先级的字符串解析与计算。
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根。
+- 附 README.md 说明如何运行。
+""".strip()
+        raw = {
+            "id": "TASK-3",
+            "title": "README 完善与端到端验证",
+            "target_files": ["README.md"],
+            "phase": "verification",
+        }
+
+        result = adapter._normalize_task_contract(raw, 3, directive)
+
+        assert result["target_files"] == ["README.md", "tests/test_calculator.py"]
+        assert "tests/test_calculator.py" in result["scope_paths"]
+
     def test_fallback_goal_does_not_echo_prompt_directive(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         raw = {"title": "**TASK-1"}

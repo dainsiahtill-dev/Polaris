@@ -64,6 +64,49 @@ class TestEvaluateDefinitionOfReady:
         assert result["ok"] is False
         assert "valid_dependencies" in result["tasks"][0]["missing"]
 
+    def test_dangling_depends_on_not_ready(self) -> None:
+        # Dependencies emitted under ``depends_on`` (as the PM/dispatch pipeline
+        # does) must be validated; a dangling ref must mark the task not-ready.
+        tasks = [
+            {
+                "id": "t1",
+                "title": "Build login",
+                "goal": "Create a login form",
+                "acceptance_criteria": ["verify login returns 200"],
+                "scope_paths": ["src/auth/login.py"],
+                "estimated_effort": 2,
+                "depends_on": ["does-not-exist"],
+            }
+        ]
+        result = evaluate_definition_of_ready(tasks)
+        assert result["ok"] is False
+        assert result["tasks"][0]["has_valid_dependencies"] is False
+        assert "valid_dependencies" in result["tasks"][0]["missing"]
+
+    def test_known_depends_on_is_ready(self) -> None:
+        tasks = [
+            {
+                "id": "t1",
+                "title": "Build auth core",
+                "goal": "Core auth",
+                "acceptance_criteria": ["verify src/auth/core.py exists"],
+                "scope_paths": ["src/auth/core.py"],
+                "estimated_effort": 2,
+            },
+            {
+                "id": "t2",
+                "title": "Build login",
+                "goal": "Login page",
+                "acceptance_criteria": ["verify login returns 200"],
+                "scope_paths": ["src/auth/login.py"],
+                "estimated_effort": 1,
+                "depends_on": ["t1"],
+            },
+        ]
+        result = evaluate_definition_of_ready(tasks)
+        assert result["ok"] is True
+        assert result["ready_count"] == 2
+
     def test_known_dependency_is_ready(self) -> None:
         tasks = [
             {

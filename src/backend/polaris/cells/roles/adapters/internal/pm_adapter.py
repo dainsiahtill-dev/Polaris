@@ -118,6 +118,10 @@ _PM_ROOT_WORKSPACE_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 _PM_PYTHON_HINT_RE = re.compile(r"(?:\bpython\b|标准库|pytest|命令行|cli\b)", re.IGNORECASE)
+_PM_TEST_CONTRACT_HINT_RE = re.compile(
+    r"(?:\btests?\b|\btesting\b|\bpytest\b|\bnpm\s+test\b|单元测试|集成测试|测试|验证|验收|回归)",
+    re.IGNORECASE,
+)
 _PM_README_HINT_RE = re.compile(r"(?:\breadme(?:\.md)?\b|运行说明|说明如何运行)", re.IGNORECASE)
 _PM_SOURCE_FILE_HINT_RE = re.compile(
     r"(?:源码|代码文件|真实代码文件|source\s+file|code\s+file|implementation|可运行)",
@@ -512,6 +516,87 @@ def _pm_root_workspace_target_files_from_context(
         _pm_append_unique_path(targets, "README.md")
 
     return targets
+
+
+def _pm_target_files_include_tests(target_files: list[str]) -> bool:
+    for path in target_files:
+        lowered = str(path or "").replace("\\", "/").lower()
+        if not lowered:
+            continue
+        if lowered.startswith("tests/") or "/tests/" in lowered:
+            return True
+        filename = lowered.rsplit("/", 1)[-1]
+        if filename.startswith("test_") or ".test." in filename or filename.endswith("_test.py"):
+            return True
+    return False
+
+
+def _pm_infer_test_target_file_for_contract(
+    *,
+    title: str,
+    goal: str,
+    description: str,
+    steps: list[str],
+    acceptance: list[str],
+    phase: str,
+    target_files: list[str],
+    directive: str,
+) -> str:
+    if _pm_target_files_include_tests(target_files):
+        return ""
+
+    del steps, acceptance
+    explicit_hint_text = "\n".join([title, goal, description, phase])
+    phase_token = str(phase or "").strip().lower()
+    if phase_token not in {"verification", "validation", "verify", "qa", "test", "testing"} and not (
+        _PM_TEST_CONTRACT_HINT_RE.search(explicit_hint_text)
+    ):
+        return ""
+
+    source_candidates = [
+        path
+        for path in target_files
+        if path.lower().endswith((".py", ".js", ".jsx", ".ts", ".tsx")) and not _pm_target_files_include_tests([path])
+    ]
+    source_file = (
+        source_candidates[0]
+        if source_candidates
+        else _pm_root_source_filename_from_text("\n".join([title, goal, description, directive]))
+    )
+    if source_file:
+        source_leaf = source_file.rsplit("/", 1)[-1]
+        stem = Path(source_leaf).stem
+        suffix = Path(source_leaf).suffix.lower()
+        if suffix == ".py":
+            return f"tests/test_{stem}.py"
+        if suffix in {".ts", ".tsx"}:
+            return f"tests/{stem}.test.ts"
+        if suffix in {".js", ".jsx", ".mjs"}:
+            return f"tests/{stem}.test.js"
+
+    domain = _pm_path_token_from_subject(_pm_extract_requirement_subject(directive) or title)
+    return f"tests/test_{domain}.py"
+
+
+def _pm_root_workspace_contract_targets_from_directive(directive: str) -> tuple[str, str, str] | None:
+    text = str(directive or "")
+    if not _PM_ROOT_WORKSPACE_HINT_RE.search(text):
+        return None
+    source_file = _pm_root_source_filename_from_text(text)
+    if not source_file:
+        return None
+    test_file = _pm_infer_test_target_file_for_contract(
+        title="verification",
+        goal="verification",
+        description="verification",
+        steps=[],
+        acceptance=[],
+        phase="verification",
+        target_files=[source_file],
+        directive=text,
+    )
+    readme_file = "README.md" if _PM_README_HINT_RE.search(text) else ""
+    return source_file, test_file, readme_file
 
 
 class PMAdapter(BaseRoleAdapter):
@@ -1487,6 +1572,41 @@ class PMAdapter(BaseRoleAdapter):
         if root_workspace_targets and not target_files:
             target_files = [*target_files, *root_workspace_targets]
 
+        steps = self._normalize_list(raw.get("steps") or raw.get("execution_checklist"))
+        if len(steps) < 2:
+            steps = [
+                f"分析并定位 {title} 所需改动",
+                f"实现 {title} 并补充必要测试",
+                "运行验证命令并记录结果",
+            ]
+
+        acceptance = self._normalize_list(raw.get("acceptance") or raw.get("acceptance_criteria"))
+        if len(acceptance) < 2:
+            acceptance = [
+                "相关测试命令执行通过（如 `pytest`/`npm test`）",
+                "功能行为与预期一致并可复现验证",
+            ]
+
+        phase = str(raw.get("phase") or _DEFAULT_PHASE_SEQUENCE[(index - 1) % len(_DEFAULT_PHASE_SEQUENCE)]).strip()
+        raw_metadata_value = raw.get("metadata")
+        raw_metadata_for_test_inference: dict[str, Any] = (
+            raw_metadata_value if isinstance(raw_metadata_value, dict) else {}
+        )
+        inferred_test_target = ""
+        if not raw_metadata_for_test_inference.get("qa_rework_reason"):
+            inferred_test_target = _pm_infer_test_target_file_for_contract(
+                title=title,
+                goal=goal,
+                description=description,
+                steps=steps,
+                acceptance=acceptance,
+                phase=phase,
+                target_files=target_files,
+                directive=directive,
+            )
+        if inferred_test_target:
+            _pm_append_unique_path(target_files, inferred_test_target)
+
         if target_items:
             merged_scope_items = [
                 *target_files,
@@ -1505,23 +1625,7 @@ class PMAdapter(BaseRoleAdapter):
         scope_text = ", ".join(scope_items[:4]) if scope_items else "src/"
         scope_paths = scope_items[:_PM_CONTRACT_SCOPE_PATH_LIMIT] if scope_items else ["src/", "tests/"]
 
-        steps = self._normalize_list(raw.get("steps") or raw.get("execution_checklist"))
-        if len(steps) < 2:
-            steps = [
-                f"分析并定位 {title} 所需改动",
-                f"实现 {title} 并补充必要测试",
-                "运行验证命令并记录结果",
-            ]
-
-        acceptance = self._normalize_list(raw.get("acceptance") or raw.get("acceptance_criteria"))
-        if len(acceptance) < 2:
-            acceptance = [
-                "相关测试命令执行通过（如 `pytest`/`npm test`）",
-                "功能行为与预期一致并可复现验证",
-            ]
-
         depends_on = self._normalize_list(raw.get("depends_on") or raw.get("dependencies"))
-        phase = str(raw.get("phase") or _DEFAULT_PHASE_SEQUENCE[(index - 1) % len(_DEFAULT_PHASE_SEQUENCE)]).strip()
         task_id = str(raw.get("id") or f"TASK-{index}").strip()
         assigned_to = str(raw.get("assigned_to") or "Director").strip() or "Director"
 

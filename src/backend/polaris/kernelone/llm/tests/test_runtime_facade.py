@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from polaris.kernelone.llm.runtime import KernelLLM
+from polaris.kernelone.llm.runtime import KernelLLM, invoke_role_runtime_provider
 
 
 class _FakeAdapter:
@@ -93,3 +93,73 @@ async def test_kernel_llm_invoke_stream_delegates_to_canonical_executor(
     assert request.options == {"temperature": 0.1}
     assert events[0].chunk == "partial"
     assert events[-1].done is True
+
+
+class _ProviderInvokeResult:
+    def __init__(self, ok: bool, output: str = "", error: str = "") -> None:
+        self.ok = ok
+        self.output = output
+        self.error = error
+        self.latency_ms = 1
+        self.usage = None
+
+
+class _EvictionAdapter:
+    """Adapter recording every provider failure, with model-keyed invoke outcomes."""
+
+    def __init__(self, *, ok_models: set[str]) -> None:
+        self._ok_models = ok_models
+        self.failures: list[str] = []
+
+    def get_role_model(self, role: str) -> tuple[str, str]:
+        return "prov", "primary-model"
+
+    def load_provider_config(self, *, workspace: str, provider_id: str) -> dict[str, Any]:
+        return {"type": "fake"}
+
+    def get_provider_instance(self, provider_type: str) -> Any:
+        ok_models = self._ok_models
+
+        class _Provider:
+            def invoke(self, prompt: str, model: str, cfg: dict[str, Any]) -> _ProviderInvokeResult:
+                if model in ok_models:
+                    return _ProviderInvokeResult(ok=True, output="done")
+                return _ProviderInvokeResult(ok=False, error="provider_error")
+
+        return _Provider()
+
+    def record_provider_failure(self, provider_type: str) -> None:
+        self.failures.append(provider_type)
+
+
+def test_fallback_success_records_no_eviction_failure() -> None:
+    # Primary fails, fallback succeeds: a single logical invocation must NOT
+    # leave any eviction failure on the consecutive-failure counter.
+    adapter = _EvictionAdapter(ok_models={"fallback-model"})
+    result = invoke_role_runtime_provider(
+        role="director",
+        workspace=".",
+        prompt="hi",
+        fallback_model="fallback-model",
+        timeout=5,
+        adapter=adapter,
+    )
+    assert result.ok is True
+    assert result.model == "fallback-model"
+    assert adapter.failures == []
+
+
+def test_primary_and_fallback_failure_records_exactly_one() -> None:
+    # Both primary and fallback fail: exactly ONE eviction failure recorded,
+    # not two (one per logical invocation, not per attempt).
+    adapter = _EvictionAdapter(ok_models=set())
+    result = invoke_role_runtime_provider(
+        role="director",
+        workspace=".",
+        prompt="hi",
+        fallback_model="fallback-model",
+        timeout=5,
+        adapter=adapter,
+    )
+    assert result.ok is False
+    assert adapter.failures == ["fake"]

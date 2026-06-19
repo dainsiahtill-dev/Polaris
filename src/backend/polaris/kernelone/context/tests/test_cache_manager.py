@@ -461,3 +461,52 @@ class TestSingletonManager:
         finally:
             os.chdir(cwd)
             clear_cache_manager(workspace)
+
+
+class TestSessionContinuityExpiryEviction:
+    """Regression: expiring one session-continuity entry must not wipe others."""
+
+    @pytest.mark.asyncio
+    async def test_expired_entry_does_not_clear_unrelated_entries(self, cache_manager: KernelOneCacheManager) -> None:
+        """When a single looked-up entry is expired, only that key is evicted.
+
+        Before the fix, _get_session_continuity called
+        ``self._session_continuity.clear()`` on expiry, wiping valid unexpired
+        entries for every other session on any one TTL lapse.
+        """
+        now = time.time()
+
+        # Entry A is already expired (created in the past beyond its TTL).
+        cache_manager._session_continuity.put(
+            "session:A",
+            CacheEntry(
+                key="session:A",
+                value="value-A",
+                tier=CacheTier.SESSION_CONTINUITY,
+                created_at=now - 100.0,
+                last_accessed=now - 100.0,
+                ttl_seconds=10.0,
+            ),
+        )
+        # Entry B is fresh and must survive.
+        cache_manager._session_continuity.put(
+            "session:B",
+            CacheEntry(
+                key="session:B",
+                value="value-B",
+                tier=CacheTier.SESSION_CONTINUITY,
+                created_at=now,
+                last_accessed=now,
+                ttl_seconds=600.0,
+            ),
+        )
+
+        # Looking up the expired A must return None and evict only A.
+        result_a = await cache_manager._get_session_continuity("session:A")
+        assert result_a is None
+        assert cache_manager._session_continuity.get("session:A") is None
+
+        # B must remain cached and retrievable.
+        assert cache_manager._session_continuity.get("session:B") is not None
+        result_b = await cache_manager._get_session_continuity("session:B")
+        assert result_b == "value-B"

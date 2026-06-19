@@ -113,3 +113,43 @@ def test_cleanup_flushes_targeted_paths_without_dropping_failed_buffer(
     assert flushed_paths == [retained_path]
     assert retained_path in ops._JSONL_BUFFER
     assert removable_path not in ops._JSONL_BUFFER
+
+
+def test_insert_eviction_flushes_pending_lines_and_clears_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: insert-time eviction must flush pending lines (no data loss)
+    and remove the evicted path from _JSONL_LAST_ACCESS (no unbounded growth).
+
+    Before the fix, _BoundedJsonlBuffer._evict_if_needed popped the oldest path
+    without flushing its unflushed ``lines`` to disk, silently dropping JSONL
+    records, and never removed the path's _JSONL_LAST_ACCESS entry.
+    """
+    # Bound the buffer to a single path so the next distinct path evicts it.
+    small_buffer = ops._BoundedJsonlBuffer(max_size=1)
+    monkeypatch.setattr(ops, "_JSONL_BUFFER", small_buffer)
+    monkeypatch.setattr(ops, "_JSONL_MAX_PATHS", 1)
+
+    oldest_path = str(tmp_path / "oldest.jsonl")
+    pending_line = json.dumps({"seq": 1, "marker": "do-not-lose"}, ensure_ascii=False) + "\n"
+
+    # Seed the oldest path with an unflushed line and a recorded access time.
+    small_buffer[oldest_path] = {"lines": [pending_line], "last_flush": 0.0}
+    ops._JSONL_LAST_ACCESS[oldest_path] = time.time()
+
+    assert oldest_path in small_buffer
+    assert oldest_path in ops._JSONL_LAST_ACCESS
+
+    # Insert a new distinct path -> triggers eviction of the oldest path.
+    new_path = str(tmp_path / "new.jsonl")
+    small_buffer[new_path] = {"lines": [], "last_flush": time.time()}
+
+    # The oldest path must have been evicted from both the buffer and the
+    # access-time map.
+    assert oldest_path not in small_buffer
+    assert oldest_path not in ops._JSONL_LAST_ACCESS
+
+    # Its pending line must have been flushed to disk, not lost.
+    flushed = Path(oldest_path).read_text(encoding="utf-8")
+    assert json.loads(flushed.strip()) == {"seq": 1, "marker": "do-not-lose"}

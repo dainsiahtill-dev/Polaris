@@ -78,14 +78,17 @@ class InMemoryArtifactStorage:
         with self._lock:
             content_bytes = len(content.encode("utf-8"))
 
-            # Evict if needed before storing
-            self._evict_if_needed_locked(content_bytes)
-
-            # If artifact already exists, remove its size first
+            # If artifact already exists, remove its old copy first so eviction
+            # sees an accurate count/size for the in-progress replacement.
+            # Replacing an existing key does not grow the count, and the old
+            # content must not be double-counted against the size limit.
             if artifact_id in self._artifacts:
                 old_artifact = self._artifacts[artifact_id]
                 self._current_size_bytes -= len(old_artifact["content"].encode("utf-8"))
                 del self._artifacts[artifact_id]
+
+            # Evict if needed before storing
+            self._evict_if_needed_locked(content_bytes)
 
             # Store the artifact
             artifact = {

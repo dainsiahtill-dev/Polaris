@@ -19,6 +19,7 @@ import argparse
 import json
 import re
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -54,11 +55,33 @@ def _classify_chain_log(chain_log: Path) -> Counter[str]:
     return counts
 
 
+def _record_root_cause(record: dict) -> str:
+    taxonomy = record.get("failure_taxonomy")
+    if not isinstance(taxonomy, dict) or taxonomy.get("ok"):
+        return ""
+    signature = str(taxonomy.get("root_cause_signature") or "").strip()
+    category = str(taxonomy.get("category") or "unknown").strip() or "unknown"
+    if not signature or signature == "pass":
+        return ""
+    return f"[{category:24}] {signature}"
+
+
+def _task_turn_passed(record: dict) -> bool:
+    chain = record.get("chain") or {}
+    if not isinstance(chain, dict):
+        return False
+    if "task_market_exit_code" in chain:
+        return chain.get("task_market_exit_code") == 0
+    return chain.get("exit_code") == 0
+
+
 def _aggregate(records: list[dict], work_dir: Path) -> dict:
     """Compute the 4 fields across all projects in the work-dir."""
     total_steps_attempted = 0
     total_steps_passed = 0
     runnable = 0
+    real_run_passed = 0
+    llm_route_passed = 0
     wall_per_project: list[tuple[str, float | None]] = []
     root_cause_tally: Counter[str] = Counter()
 
@@ -69,13 +92,17 @@ def _aggregate(records: list[dict], work_dir: Path) -> dict:
         # project's checks list AND the chain's task_market_exit_code 0).
         checks = r.get("checks") or []
         total_steps_attempted += len(checks) + 1  # +1 for the task_market turn
-        task_market_ok = (r.get("chain") or {}).get("task_market_exit_code") == 0
+        task_market_ok = _task_turn_passed(r)
         passed_checks = sum(1 for c in checks if c.get("ok"))
         total_steps_passed += passed_checks + (1 if task_market_ok else 0)
 
         # (b) 可运行率: all_checks_passed is the runnable gate per the rubric §4.1
         if r.get("all_checks_passed"):
             runnable += 1
+        if isinstance(r.get("real_run_gate"), dict) and r["real_run_gate"].get("ok"):
+            real_run_passed += 1
+        if isinstance(r.get("llm_route_audit"), dict) and r["llm_route_audit"].get("ok"):
+            llm_route_passed += 1
 
         # (c) 墙钟: chain.duration_s is the per-project wall
         dur = (r.get("chain") or {}).get("duration_s")
@@ -83,6 +110,9 @@ def _aggregate(records: list[dict], work_dir: Path) -> dict:
 
         # (d) 根因清单: scan the per-project chain.log via the attribution sigs
         # (preferred); fall back to the top-level chain.log at work_dir level.
+        record_signature = _record_root_cause(r)
+        if record_signature:
+            root_cause_tally[record_signature] += 1
         chain_log = work_dir / f"{pid}.chain.log"
         root_cause_tally.update(_classify_chain_log(chain_log))
 
@@ -104,6 +134,16 @@ def _aggregate(records: list[dict], work_dir: Path) -> dict:
             "total": len(records),
             "rate": round(runnable / len(records), 3) if records else 0.0,
         },
+        "real_run_gate": {
+            "passed": real_run_passed,
+            "total": len(records),
+            "rate": round(real_run_passed / len(records), 3) if records else 0.0,
+        },
+        "llm_route_audit": {
+            "passed": llm_route_passed,
+            "total": len(records),
+            "rate": round(llm_route_passed / len(records), 3) if records else 0.0,
+        },
         "wall": {
             "per_project": wall_per_project,
             "max_s": wall_max,
@@ -112,6 +152,49 @@ def _aggregate(records: list[dict], work_dir: Path) -> dict:
         "root_cause_tally": dict(sorted(root_cause_tally.items(), key=lambda kv: -kv[1])),
         "by_level": _by_level(records),
     }
+
+
+def _current_root_causes(report: dict) -> set[str]:
+    tally = report.get("root_cause_tally")
+    if not isinstance(tally, dict):
+        return set()
+    return {str(key) for key, value in tally.items() if int(value or 0) > 0}
+
+
+def _update_history(report: dict, history_path: Path, *, batch_id: str = "") -> dict:
+    if history_path.is_file():
+        try:
+            history = json.loads(history_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            history = {}
+    else:
+        history = {}
+    seen = {str(item) for item in history.get("seen_root_causes") or []}
+    current = _current_root_causes(report)
+    new_root_causes = sorted(current - seen)
+    streak = int(history.get("streak_without_new_common_root_causes") or 0)
+    streak = streak + 1 if not new_root_causes else 0
+    batch = {
+        "batch_id": batch_id or f"batch-{int(time.time())}",
+        "root_causes": sorted(current),
+        "new_root_causes": new_root_causes,
+        "runnable_rate": report.get("runnable", {}).get("rate"),
+        "real_run_rate": report.get("real_run_gate", {}).get("rate"),
+        "llm_route_rate": report.get("llm_route_audit", {}).get("rate"),
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    batches = list(history.get("batches") or [])
+    batches.append(batch)
+    updated = {
+        "schema_version": "factory-bench-root-cause-history/1",
+        "seen_root_causes": sorted(seen | current),
+        "last_new_root_causes": new_root_causes,
+        "streak_without_new_common_root_causes": streak,
+        "batches": batches[-100:],
+    }
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return updated
 
 
 def _by_level(records: list[dict]) -> dict[int, dict]:
@@ -139,6 +222,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Factory-bench 4-field batch report.")
     parser.add_argument("work_dir", help="Path to a run_factory_bench work-dir.")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    parser.add_argument("--history", default="", help="Optional root-cause history JSON path to update.")
+    parser.add_argument("--batch-id", default="", help="Stable batch id stored when --history is used.")
     args = parser.parse_args(argv)
 
     work_dir = Path(args.work_dir).resolve()
@@ -151,6 +236,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no records in {work_dir}/factory_audits.json", file=sys.stderr)
         return 1
     report = _aggregate(records, work_dir)
+    if args.history:
+        report["root_cause_history"] = _update_history(
+            report,
+            Path(args.history).resolve(),
+            batch_id=str(args.batch_id or ""),
+        )
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -169,6 +260,14 @@ def main(argv: list[str] | None = None) -> int:
         f"({report['runnable']['passed']}/{report['runnable']['total']} all_checks_passed)"
     )
     print(
+        f"    real-run gate  : {report['real_run_gate']['rate']:.3f}  "
+        f"({report['real_run_gate']['passed']}/{report['real_run_gate']['total']})"
+    )
+    print(
+        f"    LLM route audit: {report['llm_route_audit']['rate']:.3f}  "
+        f"({report['llm_route_audit']['passed']}/{report['llm_route_audit']['total']})"
+    )
+    print(
         f"(c) 墙钟 max       : {report['wall']['max_s']}s  "
         f"sum={report['wall']['sum_s']}s  per_project={report['wall']['per_project']}"
     )
@@ -179,6 +278,13 @@ def main(argv: list[str] | None = None) -> int:
         print("    by_level:")
         for lvl, b in sorted(report["by_level"].items()):
             print(f"      L{lvl}: {b['passed']}/{b['total']}")
+    history = report.get("root_cause_history")
+    if isinstance(history, dict):
+        print(
+            "    new-root streak : "
+            f"{history.get('streak_without_new_common_root_causes')} "
+            f"new={history.get('last_new_root_causes')}"
+        )
     return 0
 
 

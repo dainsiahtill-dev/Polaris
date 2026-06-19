@@ -216,6 +216,48 @@ async def test_pm_chat_prefers_active_workspace_path(client: AsyncClient, mock_s
     assert mock_generate.await_args.kwargs["workspace"] == "C:/Temp/Product"
 
 
+@pytest.mark.asyncio
+async def test_pm_chat_honors_request_context_workspace(client: AsyncClient, mock_settings: Settings) -> None:
+    """PM chat should bind to a per-request context.workspace over the active one."""
+    mock_settings.workspace = "/projects/A"
+    mock_settings.workspace_path = "/projects/A"
+
+    with patch(
+        "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
+        new_callable=AsyncMock,
+        return_value={"response": "ok", "role": "pm", "model": "x", "provider": "y"},
+    ) as mock_generate:
+        response = await client.post(
+            "/v2/pm/chat",
+            json={"message": "hello", "context": {"workspace": "/projects/B"}},
+        )
+
+    assert response.status_code == 200
+    assert mock_generate.await_args is not None
+    assert mock_generate.await_args.kwargs["workspace"] == "/projects/B"
+
+
+@pytest.mark.asyncio
+async def test_pm_chat_honors_workspace_query_param(client: AsyncClient, mock_settings: Settings) -> None:
+    """PM chat should bind to an explicit ?workspace= query param over the active one."""
+    mock_settings.workspace = "/projects/A"
+    mock_settings.workspace_path = "/projects/A"
+
+    with patch(
+        "polaris.delivery.http.routers.pm_chat.execute_role_chat_nonstreaming",
+        new_callable=AsyncMock,
+        return_value={"response": "ok", "role": "pm", "model": "x", "provider": "y"},
+    ) as mock_generate:
+        response = await client.post(
+            "/v2/pm/chat?workspace=/projects/C",
+            json={"message": "hello"},
+        )
+
+    assert response.status_code == 200
+    assert mock_generate.await_args is not None
+    assert mock_generate.await_args.kwargs["workspace"] == "/projects/C"
+
+
 # ---------------------------------------------------------------------------
 # POST /v2/pm/chat/stream
 # ---------------------------------------------------------------------------

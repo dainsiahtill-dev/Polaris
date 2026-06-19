@@ -28,6 +28,14 @@ from typing import Any, Callable
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
+from polaris.cells.factory.pipeline.internal.bench_gates import (
+    aggregate_goal_audit,
+    build_llm_route_audit,
+    build_real_run_gate,
+    classify_factory_bench_failure,
+    collect_llm_events,
+    resolve_expected_llm_bindings,
+)
 from polaris.kernelone.benchmark.factory_audit import (
     aggregate_factory_audits,
     build_factory_audit_record,
@@ -647,7 +655,7 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
         chain_results = {}
     chain_state = str(record.get("chain_state") or "")
     chain_exit_code = chain.get("exit_code")
-    return [
+    gates = [
         _bench_gate(
             "plan_artifact_present",
             bool(record.get("has_plan_doc")),
@@ -683,6 +691,25 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
             ),
         ),
     ]
+    real_run_gate = record.get("real_run_gate")
+    if isinstance(real_run_gate, dict):
+        gates.append(
+            _bench_gate(
+                "real_run_gate",
+                bool(real_run_gate.get("ok")),
+                str(real_run_gate.get("summary") or "real run gate missing summary"),
+            )
+        )
+    llm_route_audit = record.get("llm_route_audit")
+    if isinstance(llm_route_audit, dict):
+        gates.append(
+            _bench_gate(
+                "llm_route_audit",
+                bool(llm_route_audit.get("ok")),
+                str(llm_route_audit.get("summary") or "LLM route audit missing summary"),
+            )
+        )
+    return gates
 
 
 def apply_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> None:
@@ -987,6 +1014,12 @@ def main() -> int:
         action="store_true",
         help="Use the legacy subprocess-based chain runner instead of the Factory HTTP API",
     )
+    ap.add_argument(
+        "--real-run-timeout",
+        type=int,
+        default=60,
+        help="seconds for each generated project's dependency/build/entrypoint real-run gate",
+    )
     args = ap.parse_args()
 
     projects = load_projects()
@@ -1016,6 +1049,7 @@ def main() -> int:
     records: list[dict[str, Any]] = []
     run_errors: list[str] = []
     failed = 0
+    expected_llm_bindings = resolve_expected_llm_bindings()
     bench_session_id = os.environ.get("FACTORY_BENCH_SESSION_ID") or ""
     backend_url = _resolve_backend_url()
     backend_token = _resolve_backend_token()
@@ -1161,7 +1195,18 @@ def main() -> int:
         record["wrong_product_suspect"] = bool(contract_goal and best_other > max(0.18, own_overlap + 0.1))
         record["wrong_product_match"] = best_other_id if record["wrong_product_suspect"] else ""
         record["chain_state"] = grade_chain_state(record["chain_results"], chain.get("exit_code"))
+        audit_bundle = chain.get("audit_bundle") if isinstance(chain.get("audit_bundle"), dict) else {}
+        record["real_run_gate"] = build_real_run_gate(
+            workspace,
+            record,
+            timeout_s=int(args.real_run_timeout),
+        )
+        record["llm_route_audit"] = build_llm_route_audit(
+            collect_llm_events(workspace, runtime_dir, audit_bundle),
+            expected_bindings=expected_llm_bindings,
+        )
         apply_factory_bench_gates(record, chain)
+        record["failure_taxonomy"] = classify_factory_bench_failure(record)
         records.append(record)
         status = "PASS" if record["all_checks_passed"] else "FAIL"
         print(
@@ -1197,6 +1242,25 @@ def main() -> int:
                     "detail": gate.get("detail") or "",
                 },
             )
+        _emit_bench_event(
+            workspace=base,
+            project_id=pid,
+            level=int(project.get("level") or 0),
+            name="project.audit",
+            summary=(
+                f"{pid} audit={status} real_run={bool(record['real_run_gate'].get('ok'))} "
+                f"llm_route={bool(record['llm_route_audit'].get('ok'))} "
+                f"root={record['failure_taxonomy'].get('root_cause_signature')}"
+            ),
+            meta={
+                "session_id": bench_session_id,
+                "project_id": pid,
+                "status": status.lower(),
+                "real_run_gate": record["real_run_gate"],
+                "llm_route_audit": record["llm_route_audit"],
+                "failure_taxonomy": record["failure_taxonomy"],
+            },
+        )
         # Push live counters so the front-end sees ``X/Y 通过`` update
         # immediately, not only at run.completed.
         if backend_url and bench_session_id:
@@ -1225,6 +1289,7 @@ def main() -> int:
                 break
 
     agg = aggregate_factory_audits(records)
+    goal_audit = aggregate_goal_audit(records)
     run_success = failed < args.max_failed and agg["all_checks_passed"] == agg["total"]
     _emit_bench_event(
         workspace=base,
@@ -1238,6 +1303,7 @@ def main() -> int:
             "passed": agg["all_checks_passed"],
             "failed": agg["total"] - agg["all_checks_passed"],
             "by_level": agg["by_level"],
+            "goal_audit": goal_audit,
         },
     )
     if backend_url and bench_session_id:
@@ -1246,6 +1312,7 @@ def main() -> int:
             "passed": agg["all_checks_passed"],
             "failed": agg["total"] - agg["all_checks_passed"],
             "by_level": agg["by_level"],
+            "goal_audit": goal_audit,
         }
         if run_errors:
             complete_summary["error"] = "; ".join(run_errors)

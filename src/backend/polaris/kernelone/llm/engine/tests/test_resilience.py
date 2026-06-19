@@ -19,9 +19,33 @@ from polaris.kernelone.llm.engine.resilience import (
     RetryConfig,
     TimeoutConfig,
     calculate_backoff_with_jitter,
+    extract_status_code_from_error,
     is_retryable,
     retry_with_jitter,
 )
+
+
+class TestExtractStatusCodeFromError:
+    def test_embedded_number_not_misread_as_status(self) -> None:
+        # "1503 ms" must not be parsed as a 503 server error.
+        error = ConnectionError("connection reset after 1503 ms")
+        assert extract_status_code_from_error(error) is None
+
+    def test_embedded_correlation_id_not_misread(self) -> None:
+        error = RuntimeError("correlation 40340x failed")
+        assert extract_status_code_from_error(error) is None
+
+    def test_structured_status_code_takes_precedence_over_message(self) -> None:
+        class _StatusError(Exception):
+            status_code = 429
+
+        # Message contains "503" but the structured 429 must win.
+        error = _StatusError("upstream returned 503 occasionally")
+        assert extract_status_code_from_error(error) == 429
+
+    def test_standalone_status_token_parsed_from_message(self) -> None:
+        error = RuntimeError("HTTP 429 Too Many Requests")
+        assert extract_status_code_from_error(error) == 429
 
 
 class TestIsRetryableByCategory:

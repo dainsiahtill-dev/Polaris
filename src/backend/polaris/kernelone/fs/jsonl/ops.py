@@ -105,7 +105,22 @@ class _BoundedJsonlBuffer:
     def _evict_if_needed(self) -> None:
         while len(self._data) >= self._max_size and self._access_order:
             oldest_key = self._access_order.pop(0)
-            self._data.pop(oldest_key, None)
+            state = self._data.pop(oldest_key, None)
+            # Flush any pending lines before dropping the entry to prevent
+            # silent data loss (mirrors the TTL cleanup flush-before-remove
+            # discipline). The caller already holds _JSONL_BUFFER_LOCK, so we
+            # flush directly via _flush_jsonl_path (file IO + file lock only)
+            # rather than re-entering the buffer lock.
+            if isinstance(state, dict):
+                lines = state.get("lines") or []
+                if lines:
+                    _flush_jsonl_path(
+                        oldest_key,
+                        list(lines),
+                        DEFAULT_LOCK_TIMEOUT_SECONDS,
+                    )
+            # Drop the evicted path's access-time entry to bound growth.
+            _JSONL_LAST_ACCESS.pop(oldest_key, None)
 
 
 _JSONL_BUFFER: _BoundedJsonlBuffer = _BoundedJsonlBuffer(max_size=_JSONL_MAX_PATHS)

@@ -27,6 +27,7 @@ import functools
 import json
 import logging
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -99,8 +100,17 @@ def is_retryable(status_code: int | None) -> bool:
     return status_code >= 500  # Server errors may be transient
 
 
+_STATUS_CODE_MESSAGE_PATTERN = re.compile(r"\b(401|403|429|500|502|503|504)\b")
+
+
 def extract_status_code_from_error(error: Exception) -> int | None:
     """Extract HTTP status code from exception if available.
+
+    Prefers the structured ``.status_code`` attribute so a real status is never
+    overridden by a number embedded in the message. Only when no structured
+    code is present is the message parsed, and then with a word-boundary regex
+    rather than a bare substring match so embedded numbers (e.g. ``"1503 ms"``
+    or ``"correlation 40340x"``) are not misread as a status code.
 
     Args:
         error: Exception to inspect.
@@ -108,16 +118,18 @@ def extract_status_code_from_error(error: Exception) -> int | None:
     Returns:
         Status code if found, None otherwise.
     """
-    error_str = str(error)
+    # Structured status code takes precedence over message parsing.
+    status_code = getattr(error, "status_code", None)
+    if status_code is not None:
+        try:
+            return int(status_code)
+        except (TypeError, ValueError):
+            pass
 
-    # Check for common status code patterns in error messages
-    for code in (401, 403, 429, 500, 502, 503, 504):
-        if str(code) in error_str:
-            return code
-
-    # Check for response objects with status_code attribute
-    if hasattr(error, "status_code"):
-        return int(error.status_code)
+    # Fall back to a precise, word-boundary-anchored message scan.
+    match = _STATUS_CODE_MESSAGE_PATTERN.search(str(error))
+    if match is not None:
+        return int(match.group(1))
 
     return None
 

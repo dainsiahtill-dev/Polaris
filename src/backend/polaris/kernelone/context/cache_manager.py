@@ -469,7 +469,9 @@ class TieredAssetCacheManager:
             self._stats.misses_session_continuity += 1
             return None
         if entry.is_expired():
-            self._session_continuity.clear()
+            # Evict only the expired key; clearing the entire tier would wipe
+            # valid, unexpired entries for all other sessions.
+            self._session_continuity.pop(key, None)
             self._stats.misses_session_continuity += 1
             return None
         entry.touch()

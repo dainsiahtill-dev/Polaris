@@ -98,6 +98,20 @@ def test_clean_chain_preserves_static_pass() -> None:
     assert all(gate["ok"] for gate in record["factory_gates"])
 
 
+def test_real_run_and_llm_route_gates_are_fail_closed_when_present() -> None:
+    record = _record(
+        real_run_gate={"ok": True, "summary": "real run gate passed"},
+        llm_route_audit={"ok": False, "summary": "LLM route audit failed: director"},
+    )
+
+    apply_factory_bench_gates(record, chain={"exit_code": 0})
+
+    gates = {gate["gate"]: gate for gate in record["factory_gates"]}
+    assert gates["real_run_gate"]["ok"] is True
+    assert gates["llm_route_audit"]["ok"] is False
+    assert record["all_checks_passed"] is False
+
+
 # --- map_factory_run_to_chain_results ---
 
 

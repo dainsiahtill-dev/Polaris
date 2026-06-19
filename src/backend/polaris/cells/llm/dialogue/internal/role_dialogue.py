@@ -1025,6 +1025,11 @@ class RoleOutputParser:
                     elif expected_type == "string" and not isinstance(value, str):
                         errors.append(f"Field {field} should be string")
 
+                # Enum conformance: honestly reflect declared enum membership.
+                enum = prop_schema.get("enum")
+                if enum is not None and value not in enum:
+                    errors.append(f"Field {field} must be one of {enum}, got {value!r}")
+
         return errors
 
 

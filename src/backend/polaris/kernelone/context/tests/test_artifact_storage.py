@@ -578,3 +578,130 @@ class TestArtifactStoragePort:
 
         for method in required_methods:
             assert hasattr(ArtifactStoragePort, method), f"Missing method: {method}"
+
+
+class TestReplaceDoesNotEvictUnrelated:
+    """Regression: re-storing an existing artifact must not evict others."""
+
+    def test_restore_existing_key_keeps_full_store_intact(self) -> None:
+        """Replacing an existing key in a full store must not evict an
+        unrelated LRU artifact, since replacing does not grow the count.
+
+        Before the fix, ``store`` called ``_evict_if_needed_locked`` before
+        removing the old copy, so the count loop (>= max_artifacts) evicted an
+        unrelated LRU artifact even though the count would not actually grow.
+        """
+        max_artifacts = 100
+        storage = InMemoryArtifactStorage(max_artifacts=max_artifacts)
+
+        # Fill the store to capacity. "art-1" is the oldest (LRU front) entry
+        # and would be the eviction victim; "A" is stored last so that it is
+        # NOT the front, isolating the count-loop bug.
+        for index in range(1, max_artifacts):
+            storage.store(
+                artifact_id=f"art-{index}",
+                content=f"content-{index}",
+                artifact_type="code",
+                mime_type="text/plain",
+                token_count=1,
+                char_count=9,
+                peek=f"content-{index}",
+                keys=(),
+                source_event_ids=(),
+                restore_tool="read_artifact",
+            )
+        storage.store(
+            artifact_id="A",
+            content="original-A",
+            artifact_type="code",
+            mime_type="text/plain",
+            token_count=1,
+            char_count=10,
+            peek="original-A",
+            keys=(),
+            source_event_ids=(),
+            restore_tool="read_artifact",
+        )
+
+        assert storage.get_stats().total_artifacts == max_artifacts
+        assert storage.exists("A") is True
+        # "art-1" is the oldest entry and would be the wrongful eviction victim.
+        assert storage.exists("art-1") is True
+
+        # Re-store "A" with new content. This is a replacement, not a growth.
+        storage.store(
+            artifact_id="A",
+            content="updated-A-content",
+            artifact_type="code",
+            mime_type="text/plain",
+            token_count=1,
+            char_count=17,
+            peek="updated-A-content",
+            keys=(),
+            source_event_ids=(),
+            restore_tool="read_artifact",
+        )
+
+        # No unrelated artifact should have been evicted; count stays the same.
+        assert storage.get_stats().total_artifacts == max_artifacts
+        assert storage.exists("A") is True
+        assert storage.exists("art-1") is True
+        updated = storage.retrieve("A")
+        assert updated is not None
+        assert updated["content"] == "updated-A-content"
+
+    def test_restore_existing_key_does_not_double_count_size(self) -> None:
+        """Replacing an existing artifact must not trigger a spurious
+        size-based eviction by double-counting the old content's bytes.
+        """
+        # Size budget fits exactly two ~50-byte artifacts but not three.
+        storage = InMemoryArtifactStorage(max_artifacts=1000, max_size_bytes=120)
+
+        # Store "B" first so it is the LRU front; "A" is stored last. When "A"
+        # is replaced, the unfixed code double-counts A's old bytes and evicts
+        # the front entry "B".
+        storage.store(
+            artifact_id="B",
+            content="b" * 50,
+            artifact_type="code",
+            mime_type="text/plain",
+            token_count=1,
+            char_count=50,
+            peek="b",
+            keys=(),
+            source_event_ids=(),
+            restore_tool="read_artifact",
+        )
+        storage.store(
+            artifact_id="A",
+            content="a" * 50,
+            artifact_type="code",
+            mime_type="text/plain",
+            token_count=1,
+            char_count=50,
+            peek="a",
+            keys=(),
+            source_event_ids=(),
+            restore_tool="read_artifact",
+        )
+        assert storage.exists("A") is True
+        assert storage.exists("B") is True
+
+        # Re-store "A" with same-sized content. Net size change is zero, so no
+        # eviction should occur. The old fix-less code double-counted A's old
+        # bytes and evicted B.
+        storage.store(
+            artifact_id="A",
+            content="c" * 50,
+            artifact_type="code",
+            mime_type="text/plain",
+            token_count=1,
+            char_count=50,
+            peek="c",
+            keys=(),
+            source_event_ids=(),
+            restore_tool="read_artifact",
+        )
+
+        assert storage.exists("A") is True
+        assert storage.exists("B") is True

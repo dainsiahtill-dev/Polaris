@@ -155,6 +155,20 @@ def _has_concrete_scope(task: Mapping[str, Any]) -> bool:
     return any(_is_concrete_pm_scope_path(path) for path in scope_paths)
 
 
+def _collect_dependency_refs(task: Mapping[str, Any]) -> list[str]:
+    """Collect dependency refs with the same precedence as dependency_validator.
+
+    Mirrors ``dependency_validator._normalize_dep_list``: read ``depends_on``
+    first and fall back to ``dependencies``. The PM/dispatch pipeline emits
+    dependencies under ``depends_on``; reading only ``dependencies`` would let a
+    task with dangling/cyclic ``depends_on`` refs pass the DoR gate (fail-open).
+    """
+    raw = task.get("depends_on")
+    if not isinstance(raw, list):
+        raw = task.get("dependencies")
+    return _coerce_string_list(raw)
+
+
 def _has_risk_assessment(task: Mapping[str, Any]) -> bool:
     """Return True when the task explicitly links risk or contains risk text."""
     for field_name in _RISK_FIELD_NAMES:
@@ -202,7 +216,7 @@ def _evaluate_task_dor(
     has_estimate = _has_estimate(task)
     has_risk_assessment = _has_risk_assessment(task)
 
-    dependency_refs = _coerce_string_list(task.get("dependencies"))
+    dependency_refs = _collect_dependency_refs(task)
     unknown = [ref for ref in dependency_refs if ref not in known_ids] if dependency_refs else []
     has_valid_dependencies = len(unknown) == 0
 
