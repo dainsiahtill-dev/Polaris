@@ -94,6 +94,17 @@ async def client(mock_settings: Settings, mock_app_state: AppState) -> AsyncIter
             yield ac
 
 
+@pytest.mark.asyncio
+async def test_app_factory_mounts_context_router_once(client: AsyncClient) -> None:
+    """The live app must expose /v2/context, not /v2/v2/context."""
+    response = await client.get("/openapi.json")
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+
+    assert "/v2/context/admin/stats" in paths
+    assert "/v2/v2/context/admin/stats" not in paths
+
+
 def _pm_startup_diagnostics(
     *,
     workspace: str = ".",

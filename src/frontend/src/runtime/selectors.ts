@@ -16,6 +16,7 @@ import type {
 
 type RuntimeRoleView = Pick<RuntimeRoleState, 'state' | 'task_id' | 'task_title' | 'detail' | 'updated_at'>;
 type BlockedRuntimeTask = RuntimeTaskNode & { state: 'blocked' };
+const FULL_CHAIN_RUNTIME_ROLES = ['pm', 'chief_engineer', 'director', 'qa'] as const;
 
 function createIdleRoleView(): RuntimeRoleView {
   return {
@@ -108,24 +109,31 @@ function mapSeverity(level: LogEntry['level']): EventSeverity {
 function mapRoleType(source: string): RoleType | null {
   const token = source.trim().toLowerCase();
   if (token === 'pm' || token.includes('pm')) return 'PM';
+  if (
+    token === 'ce'
+    || token.includes('chief')
+    || token.includes('engineer')
+    || token.includes('chief_engineer')
+    || token.includes('chiefengineer')
+  ) return 'ChiefEngineer';
   if (token.includes('director')) return 'Director';
   if (token === 'qa' || token.includes('qa')) return 'QA';
   return null;
 }
 
 export function useCurrentPhase(): Phase | null {
-  const runtime = useRuntime({ roles: ['pm', 'director', 'qa'] });
+  const runtime = useRuntime({ roles: [...FULL_CHAIN_RUNTIME_ROLES] });
   return normalizePhase(runtime.currentPhase);
 }
 
 export function useRoles(): Record<RoleType, RuntimeRoleView> {
-  const runtime = useRuntime({ roles: ['pm', 'director', 'qa'] });
+  const runtime = useRuntime({ roles: [...FULL_CHAIN_RUNTIME_ROLES] });
   const roles = runtime.engineStatus?.roles ?? {};
 
   return useMemo(() => {
     const now = new Date().toISOString();
-    const toRoleView = (key: string, fallback: unknown): RuntimeRoleView => {
-      const payload = roles[key];
+    const toRoleView = (keys: string[], fallback: unknown): RuntimeRoleView => {
+      const payload = keys.map((key) => roles[key]).find((value) => value && typeof value === 'object');
       if (!payload || typeof payload !== 'object') {
         return {
           ...createIdleRoleView(),
@@ -144,10 +152,13 @@ export function useRoles(): Record<RoleType, RuntimeRoleView> {
     };
 
     return {
-      PM: toRoleView('PM', runtime.pmStatus?.running ? 'planning' : 'idle'),
-      ChiefEngineer: createIdleRoleView(),
-      Director: toRoleView('Director', runtime.directorStatus?.running ? 'executing' : 'idle'),
-      QA: toRoleView('QA', 'idle'),
+      PM: toRoleView(['PM', 'pm'], runtime.pmStatus?.running ? 'planning' : 'idle'),
+      ChiefEngineer: toRoleView(
+        ['ChiefEngineer', 'chief_engineer', 'chiefEngineer', 'chief engineer', 'CE', 'ce'],
+        'idle'
+      ),
+      Director: toRoleView(['Director', 'director'], runtime.directorStatus?.running ? 'executing' : 'idle'),
+      QA: toRoleView(['QA', 'qa'], 'idle'),
     };
   }, [roles, runtime.pmStatus?.running, runtime.directorStatus?.running]);
 }
@@ -158,7 +169,7 @@ export function useRoleState(role: RoleType): RuntimeRoleView {
 }
 
 export function useWorkers(): RuntimeWorkerState[] {
-  const runtime = useRuntime({ roles: ['pm', 'director', 'qa'] });
+  const runtime = useRuntime({ roles: [...FULL_CHAIN_RUNTIME_ROLES] });
 
   return useMemo(() => {
     const now = new Date().toISOString();
@@ -172,7 +183,7 @@ export function useWorkers(): RuntimeWorkerState[] {
 }
 
 export function useTasks(): RuntimeTaskNode[] {
-  const runtime = useRuntime({ roles: ['pm', 'director', 'qa'] });
+  const runtime = useRuntime({ roles: [...FULL_CHAIN_RUNTIME_ROLES] });
 
   return useMemo(() => {
     return runtime.tasks.map((task) => {
@@ -212,7 +223,7 @@ export function useSummary(): RuntimeSummary {
 }
 
 export function useRuntimeEvents(): RuntimeEventV2[] {
-  const runtime = useRuntime({ roles: ['pm', 'director', 'qa'] });
+  const runtime = useRuntime({ roles: [...FULL_CHAIN_RUNTIME_ROLES] });
   const phase = normalizePhase(runtime.currentPhase) ?? 'pending';
 
   return useMemo(() => {

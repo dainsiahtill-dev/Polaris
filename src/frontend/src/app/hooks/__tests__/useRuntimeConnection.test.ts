@@ -255,13 +255,12 @@ describe('useRuntimeConnection', () => {
       expect(unsubscribe).not.toHaveBeenCalled();
     });
 
-    it('should use default roles when not specified', () => {
+    it('should subscribe to the full PM to CE to Director to QA role chain by default', () => {
       const { result } = renderHook(() =>
         useRuntimeConnection({ autoConnect: false, workspace: '/test' })
       );
 
-      // Default roles should be ['pm', 'director', 'qa']
-      expect(result.current.rolesRef.current).toEqual(['director', 'pm', 'qa']);
+      expect(result.current.rolesRef.current).toEqual(['chief_engineer', 'director', 'pm', 'qa']);
     });
 
     it('should respect custom roles', () => {

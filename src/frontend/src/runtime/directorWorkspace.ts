@@ -391,7 +391,7 @@ export function useDirectorWorkspaceVM(
   workspace: string,
   onToggleDirector: () => void,
 ): DirectorWorkspaceVM {
-  const runtime = useRuntime({ roles: ['director', 'qa'] });
+  const runtime = useRuntime({ roles: ['pm', 'chief_engineer', 'director', 'qa'] });
   
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [fallbackTasks, setFallbackTasks] = useState<PmTask[]>([]);

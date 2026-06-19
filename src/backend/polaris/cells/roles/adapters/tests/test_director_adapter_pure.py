@@ -5462,6 +5462,23 @@ class TestQualityRepairMissingTargetContract:
         task = {"target_files": ["readme.md"]}
         assert _missing_declared_target_files(task, str(tmp_path)) == []
 
+    def test_satisfied_declared_target_missing_errors_are_filtered(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _filter_satisfied_declared_target_missing_errors,
+        )
+
+        (tmp_path / "records.json").write_text("[]\n", encoding="utf-8")
+
+        errors = _filter_satisfied_declared_target_missing_errors(
+            [
+                "Artifact quality scan failed: declared target file missing 'records.json'",
+                "Artifact quality scan failed: unresolved relative import './router' in src/main.tsx",
+            ],
+            str(tmp_path),
+        )
+
+        assert errors == ["Artifact quality scan failed: unresolved relative import './router' in src/main.tsx"]
+
     @pytest.mark.asyncio
     async def test_quality_repair_retry_targets_unresolved_relative_import(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

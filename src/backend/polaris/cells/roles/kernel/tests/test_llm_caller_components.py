@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import warnings
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -383,6 +385,22 @@ class TestLLMEventEmitterInit:
         emitter = LLMEventEmitter(workspace="/ws")
         assert emitter.workspace == "/ws"
 
+    def test_publish_uep_lifecycle_event_without_loop_does_not_leak_warning(self) -> None:
+        """无运行中 event loop 时不应创建未 await 的 coroutine."""
+        emitter = LLMEventEmitter(workspace="/ws")
+
+        with warnings.catch_warnings(record=True) as captured:
+            warnings.simplefilter("always")
+            emitter.publish_uep_lifecycle_event(
+                role="director",
+                run_id="run_1",
+                event_type="call_start",
+            )
+            gc.collect()
+
+        warning_messages = [str(item.message) for item in captured]
+        assert not any("was never awaited" in message for message in warning_messages)
+
 
 class TestLLMEventEmitterEmitCallStartEvent:
     """测试 emit_call_start_event."""
@@ -512,6 +530,29 @@ class TestLLMEventEmitterEmitCallEndEvent:
             mock_emit.assert_called_once()
             kwargs = mock_emit.call_args.kwargs
             assert kwargs["completion_tokens"] == 50
+
+    def test_response_content_emits_content_preview_before_end_event(self) -> None:
+        """response_content 应进入实时内容预览，而不是只留在 call_end metadata."""
+        emitter = LLMEventEmitter(workspace="/ws")
+        with patch("polaris.cells.roles.kernel.internal.events.emit_llm_event") as mock_emit:
+            emitter.emit_call_end_event(
+                event_emitter=None,
+                role="director",
+                run_id="run_1",
+                task_id="task_1",
+                attempt=0,
+                model="claude",
+                call_id="call_1",
+                completion_tokens=50,
+                response_content="公开模型输出片段",
+            )
+
+            event_types = [call.kwargs["event_type"] for call in mock_emit.call_args_list]
+            assert event_types == ["content_preview", "llm_call_end"]
+            preview_kwargs = mock_emit.call_args_list[0].kwargs
+            assert preview_kwargs["metadata"]["content"] == "公开模型输出片段"
+            assert preview_kwargs["metadata"]["call_id"] == "call_1"
+            assert preview_kwargs["completion_tokens"] == 50
 
     def test_custom_end_emitter_still_writes_canonical_event(self) -> None:
         """结束 override 不能吞掉 canonical 事件."""

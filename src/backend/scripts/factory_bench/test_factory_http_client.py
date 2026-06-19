@@ -11,6 +11,7 @@ sys.path.insert(0, "/home/dains/Documents/polaris/src/backend/scripts/factory_be
 from factory_http_client import (
     _http_get_json,
     _http_post_json,
+    cancel_factory_run,
     get_audit_bundle,
     get_run_artifacts,
     get_run_status,
@@ -211,6 +212,18 @@ class TestHelpers(unittest.TestCase):
         req = mock_urlopen.call_args[0][0]
         self.assertEqual(req.full_url, "http://localhost:49977/v2/factory/runs/run-42")
         self.assertEqual(req.get_header("Authorization"), "Bearer t")
+
+    def test_cancel_factory_run(self) -> None:
+        fake_resp = FakeHTTPResponse(json.dumps({"status": "cancelled"}).encode("utf-8"))
+        with patch("urllib.request.urlopen", return_value=fake_resp) as mock_urlopen:
+            result = cancel_factory_run("http://localhost:49977", "run-42", reason="bench poll timeout", token="t")
+        self.assertEqual(result, {"status": "cancelled"})
+        req = mock_urlopen.call_args[0][0]
+        self.assertEqual(req.full_url, "http://localhost:49977/v2/factory/runs/run-42/control")
+        self.assertEqual(req.get_header("Authorization"), "Bearer t")
+        body = json.loads(req.data.decode("utf-8"))
+        self.assertEqual(body["action"], "cancel")
+        self.assertEqual(body["reason"], "bench poll timeout")
 
     def test_get_audit_bundle(self) -> None:
         fake_resp = FakeHTTPResponse(json.dumps({"audit": "data"}).encode("utf-8"))

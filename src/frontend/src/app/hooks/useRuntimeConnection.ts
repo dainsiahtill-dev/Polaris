@@ -13,6 +13,7 @@ import { useRuntimeTransport } from '@/runtime/transport';
 import { useSettings } from '@/hooks';
 
 type RuntimeRole = 'pm' | 'chief_engineer' | 'director' | 'qa';
+const DEFAULT_RUNTIME_ROLES: RuntimeRole[] = ['pm', 'chief_engineer', 'director', 'qa'];
 
 interface UseRuntimeConnectionOptions {
   roles?: RuntimeRole[];
@@ -53,7 +54,7 @@ function areRolesEqual(
  */
 export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) {
   const {
-    roles = ['pm', 'director', 'qa'],
+    roles = DEFAULT_RUNTIME_ROLES,
     autoConnect = true,
     workspace: workspaceProp,
   } = options;

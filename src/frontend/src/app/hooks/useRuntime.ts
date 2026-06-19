@@ -140,6 +140,13 @@ export interface UseRuntimeResult {
   updateSubscription: (roles: ('pm' | 'chief_engineer' | 'director' | 'qa')[]) => void;
 }
 
+const DEFAULT_RUNTIME_ROLES: Array<'pm' | 'chief_engineer' | 'director' | 'qa'> = [
+  'pm',
+  'chief_engineer',
+  'director',
+  'qa',
+];
+
 // ============================================================================
 // Pure Parsing Functions (moved from useRuntime.ts)
 // ============================================================================
@@ -291,8 +298,12 @@ function streamEventLabel(eventType: string): string {
   switch (eventType) {
     case 'thinking_chunk':
       return '思考流';
+    case 'thinking_preview':
+      return '思考预览';
     case 'content_chunk':
       return '输出流';
+    case 'content_preview':
+      return '输出预览';
     case 'tool_call':
       return '工具调用';
     case 'tool_result':
@@ -305,7 +316,12 @@ function streamEventLabel(eventType: string): string {
 }
 
 function isChunkEvent(eventType: string): boolean {
-  return eventType === 'thinking_chunk' || eventType === 'content_chunk';
+  return (
+    eventType === 'thinking_chunk'
+    || eventType === 'content_chunk'
+    || eventType === 'thinking_preview'
+    || eventType === 'content_preview'
+  );
 }
 
 function buildLlmMergeKey(log: LogEntry): string {
@@ -403,6 +419,45 @@ function readToolResult(toolPayload: Record<string, unknown> | null): Record<str
   return firstRecord(toolPayload?.result, toolPayload?.output);
 }
 
+function readLlmContentText(
+  rawObj: Record<string, unknown> | null,
+  eventData: Record<string, unknown> | null,
+  parsed: Record<string, unknown>,
+): string {
+  const metadata = firstRecord(eventData?.metadata, rawObj?.metadata, parsed.metadata);
+  const extraFields = firstRecord(metadata?.extra_fields, metadata?.extraFields);
+  const candidates = [
+    rawObj?.response_content,
+    eventData?.response_content,
+    metadata?.response_content,
+    extraFields?.response_content,
+    rawObj?.content,
+    rawObj?.preview,
+    parsed.content,
+    parsed.preview,
+    parsed.response_content,
+    eventData?.content,
+    eventData?.preview,
+    eventData?.summary,
+    metadata?.content,
+    metadata?.preview,
+    metadata?.summary,
+    extraFields?.content,
+    extraFields?.preview,
+    extraFields?.summary,
+    rawObj?.message,
+    parsed.message,
+    eventData?.message,
+    metadata?.message,
+    extraFields?.message,
+  ];
+  for (const candidate of candidates) {
+    const token = String(candidate || '').trim();
+    if (token) return token;
+  }
+  return '';
+}
+
 function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
   const raw = String(line || '').trim();
   if (!raw) return null;
@@ -455,15 +510,13 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
 
     // 真实 per-call 用量与时延：journal `llm` 通道在 raw.data 携带 prompt/completion tokens、
     // context_tokens_after，以及 raw.data.metadata.elapsed_ms（真实时延）。这些是实时遥测的核心信号。
-    const dataPromptTokens = eventData ? Number(eventData.prompt_tokens ?? 0) : 0;
-    const dataCompletionTokens = eventData ? Number(eventData.completion_tokens ?? 0) : 0;
-    const dataContextTokens = eventData ? Number(eventData.context_tokens_after ?? 0) : 0;
-    const dataContextSnapshotRef = eventData ? String(eventData.context_snapshot_ref || '').trim() : '';
-    const dataPromptHash = eventData ? String(eventData.prompt_hash || '').trim() : '';
-    const dataTurnId = eventData ? String(eventData.turn_id || '').trim() : '';
-    const dataMetadata = eventData && eventData.metadata && typeof eventData.metadata === 'object'
-      ? (eventData.metadata as Record<string, unknown>)
-      : null;
+    const dataMetadata = firstRecord(eventData?.metadata, rawObj?.metadata, parsed.metadata);
+    const dataPromptTokens = Number(eventData?.prompt_tokens ?? dataMetadata?.prompt_tokens ?? 0);
+    const dataCompletionTokens = Number(eventData?.completion_tokens ?? dataMetadata?.completion_tokens ?? 0);
+    const dataContextTokens = Number(eventData?.context_tokens_after ?? dataMetadata?.context_tokens_after ?? 0);
+    const dataContextSnapshotRef = String(eventData?.context_snapshot_ref || dataMetadata?.context_snapshot_ref || '').trim();
+    const dataPromptHash = String(eventData?.prompt_hash || dataMetadata?.prompt_hash || '').trim();
+    const dataTurnId = String(eventData?.turn_id || dataMetadata?.turn_id || '').trim();
     const dataElapsedMs = dataMetadata ? Number(dataMetadata.elapsed_ms ?? 0) : 0;
     const dataDurationMs = dataDuration && Number.isFinite(Number(dataDuration)) && Number(dataDuration) > 0
       ? Number(dataDuration)
@@ -476,12 +529,12 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     const normalizedEvent = streamEvent || eventToken;
     const toolPayload = extractToolPayload(rawObj, eventData, parsed);
 
-    if (normalizedEvent === 'thinking_chunk') {
-      message = rawContent || thinking || 'LLM thinking';
+    if (normalizedEvent === 'thinking_chunk' || normalizedEvent === 'thinking_preview') {
+      message = readLlmContentText(rawObj, eventData, parsed) || rawContent || thinking || 'LLM thinking';
       level = 'thinking';
       details = modelName ? `model=${modelName}` : '';
-    } else if (normalizedEvent === 'content_chunk') {
-      message = rawContent || thinking || 'LLM output';
+    } else if (normalizedEvent === 'content_chunk' || normalizedEvent === 'content_preview') {
+      message = readLlmContentText(rawObj, eventData, parsed) || rawContent || thinking || 'LLM output';
       level = 'info';
       details = modelName ? `model=${modelName}` : '';
     } else if (normalizedEvent === 'tool_call') {
@@ -498,15 +551,16 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       const resultObj = readToolResult(toolPayload);
       details = resultObj ? String(resultObj.error || resultObj.message || '') : '';
       level = status === 'failed' ? 'error' : 'tool';
-    } else if (normalizedEvent === 'llm_waiting' || eventToken === 'llm_call_start') {
+    } else if (normalizedEvent === 'llm_waiting' || normalizedEvent === 'call_start' || eventToken === 'llm_call_start') {
       // 规范 LLM 生命周期（journal `llm` 通道）：等待响应 = 一次调用的开始。
       message = `正在请求 ${modelName || dataBackend || 'LLM'} 响应…`;
       details = modelName ? `model=${modelName}` : '';
       level = 'thinking';
-    } else if (normalizedEvent === 'llm_completed' || eventToken === 'llm_call_end') {
+    } else if (normalizedEvent === 'llm_completed' || normalizedEvent === 'call_end' || eventToken === 'llm_call_end') {
       // 规范 LLM 生命周期：调用成功完成，携带真实 prompt/completion tokens 与时延。
       const baseMsg = String(parsed.message || '').trim();
-      message = baseMsg || dataSummary || (safeCompletionTokens > 0 ? 'LLM 响应已返回' : 'LLM 响应已完成');
+      const responseContent = readLlmContentText(rawObj, eventData, parsed);
+      message = responseContent || dataSummary || baseMsg || (safeCompletionTokens > 0 ? 'LLM 响应已返回' : 'LLM 响应已完成');
       const detailTokens = [
         modelName ? `model=${modelName}` : '',
         safePromptTokens > 0 ? `prompt=${safePromptTokens}` : '',
@@ -863,7 +917,7 @@ function parseQualityGateEvent(raw: Record<string, unknown>): QualityGateData | 
 
 export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
   const {
-    roles = ['pm', 'director', 'qa'],
+    roles = DEFAULT_RUNTIME_ROLES,
     baseUrl,
     autoConnect = true,
     maxRetries = Infinity,

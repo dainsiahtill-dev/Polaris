@@ -493,6 +493,29 @@ describe('FactoryWorkspace', () => {
     expect(activity).toHaveAttribute('data-process-count', '1');
   });
 
+  it('passes file edit events as tool activity into the operations monitor', () => {
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        currentRun={null}
+        events={[]}
+        fileEditEvents={[
+          {
+            id: 'file-1',
+            timestamp: '2026-05-23T00:00:03Z',
+            filePath: 'calculator.py',
+            operation: 'create',
+            contentSize: 1200,
+            taskId: 'TASK-1',
+            addedLines: 42,
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByTestId('realtime-activity-mock')).toHaveAttribute('data-execution-count', '1');
+  });
+
   it('shows pause and cancel buttons for a running run', () => {
     const onPause = vi.fn();
     render(

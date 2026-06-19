@@ -1,7 +1,7 @@
 /**
  * useWebSocketWithFallback Hook Tests
  *
- * 测试 WebSocket 降级策略 Hook 的核心功能：
+ * 测试 WebSocket-only Hook 的核心功能：
  * - 状态转换
  * - 订阅管理
  * - 消息发送
@@ -27,9 +27,11 @@ class MockWebSocket {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
+  static instances: MockWebSocket[] = [];
 
   constructor(url: string) {
     this.url = url;
+    MockWebSocket.instances.push(this);
   }
 
   send = vi.fn();
@@ -45,9 +47,10 @@ const originalWebSocket = global.WebSocket;
 describe('useWebSocketWithFallback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    MockWebSocket.instances = [];
     mockFetch.mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ type: 'fallback_poll', data: 'test' }),
+      json: () => Promise.resolve({ type: 'legacy_poll_removed', data: 'test' }),
     });
     global.fetch = mockFetch as unknown as typeof fetch;
     global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
@@ -174,8 +177,8 @@ describe('useWebSocketWithFallback', () => {
     });
   });
 
-  describe('Fallback Configuration', () => {
-    it('should use provided fallback configuration', () => {
+  describe('Legacy Fallback Configuration', () => {
+    it('should ignore provided fallback configuration in WebSocket-only mode', () => {
       const fallbackEndpoint = '/api/poll';
       const fallbackInterval = 3000;
 
@@ -191,7 +194,7 @@ describe('useWebSocketWithFallback', () => {
       expect(result.current.isFallbackActive).toBe(false);
     });
 
-    it('should track fallback attempt count', () => {
+    it('should keep fallback attempt count at zero', () => {
       const { result } = renderHook(() =>
         useWebSocketWithFallback({
           autoConnect: false,
@@ -201,6 +204,37 @@ describe('useWebSocketWithFallback', () => {
 
       // Initially 0
       expect(result.current.fallbackAttempt).toBe(0);
+    });
+
+    it('should not start HTTP polling when reconnect retries are exhausted', () => {
+      vi.useFakeTimers();
+      const onFallbackStart = vi.fn();
+      const { result } = renderHook(() =>
+        useWebSocketWithFallback({
+          url: 'ws://localhost:8080',
+          fallbackEndpoint: '/api/poll',
+          maxRetries: 0,
+          onFallbackStart,
+        })
+      );
+
+      const socket = MockWebSocket.instances[0];
+      expect(socket).toBeDefined();
+
+      act(() => {
+        socket.onclose?.(new CloseEvent('close'));
+      });
+
+      expect(result.current.connectionState).toBe('disconnected');
+      expect(result.current.isConnected).toBe(false);
+      expect(result.current.isFallbackActive).toBe(false);
+      expect(result.current.fallbackAttempt).toBe(0);
+      expect(onFallbackStart).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 
@@ -246,7 +280,7 @@ describe('useWebSocketWithFallback', () => {
       );
 
       // When disconnected, isConnected should be false
-      expect(result.current.isConnected).toBe(result.current.connectionState === 'connected' || result.current.connectionState === 'fallback');
+      expect(result.current.isConnected).toBe(result.current.connectionState === 'connected');
     });
 
     it('should correctly identify WebSocket connection status', () => {

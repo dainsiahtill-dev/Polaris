@@ -101,11 +101,62 @@ function streamEventToken(log: LogEntry): string {
 }
 
 function isThinkingStreamEvent(token: string): boolean {
-  return token === 'thinking_chunk' || token === 'content_chunk';
+  return (
+    token === 'thinking_chunk'
+    || token === 'content_chunk'
+    || token === 'thinking_preview'
+    || token === 'content_preview'
+    || token === 'llm_waiting'
+    || token === 'call_start'
+    || token === 'llm_call_start'
+    || token === 'llm_completed'
+    || token === 'llm_failed'
+    || token === 'call_end'
+    || token === 'llm_call_end'
+    || token === 'llm_call_error'
+    || token === 'invoke_done'
+    || token === 'invoke_error'
+  );
 }
 
 function isToolStreamEvent(token: string): boolean {
-  return token === 'tool_call' || token === 'tool_result';
+  return (
+    token === 'tool_call'
+    || token === 'tool_result'
+    || token === 'tool_start'
+    || token === 'tool_end'
+    || token === 'tool_error'
+    || token === 'tool_execution'
+    || token === 'tool_executed'
+    || token === 'file_written'
+    || token === 'file_created'
+    || token === 'file_modified'
+    || token === 'file_deleted'
+    || token === 'artifact_created'
+    || token === 'delivery_artifact'
+  );
+}
+
+function thinkingSignalPriority(log: LogEntry): number {
+  const token = streamEventToken(log);
+  if (token === 'thinking_chunk' || token === 'content_chunk') return 0;
+  if (token === 'thinking_preview' || token === 'content_preview') return 1;
+  if (log.level === 'thinking' && !token) return 2;
+  if (token === 'llm_waiting' || token === 'call_start' || token === 'llm_call_start') return 4;
+  if (token === 'llm_completed' || token === 'call_end' || token === 'llm_call_end') return 5;
+  return 3;
+}
+
+function sortLogsForView(logs: LogEntry[], view: ActivityView): LogEntry[] {
+  const sorted = [...logs];
+  sorted.sort((a, b) => {
+    if (view === 'thinking') {
+      const priorityDelta = thinkingSignalPriority(a) - thinkingSignalPriority(b);
+      if (priorityDelta !== 0) return priorityDelta;
+    }
+    return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+  });
+  return sorted;
 }
 
 function activityLogMatchesView(log: LogEntry, view: ActivityView): boolean {
@@ -183,7 +234,7 @@ export function RealtimeActivityPanel({
 
   // 过滤日志
   const filteredLogs = useMemo(() => {
-    return filterLogsForView(allLogs, activeView);
+    return sortLogsForView(filterLogsForView(allLogs, activeView), activeView);
   }, [allLogs, activeView]);
 
   useEffect(() => {
@@ -356,6 +407,25 @@ function ViewTab({ icon, label, active, onClick, color }: ViewTabProps) {
   );
 }
 
+function readMetaString(meta: Record<string, unknown> | null, keys: string[]): string {
+  if (!meta) return '';
+  for (const key of keys) {
+    const value = meta[key];
+    const token = String(value || '').trim();
+    if (token) return token;
+  }
+  return '';
+}
+
+function evidenceChipsForLog(log: LogEntry): string[] {
+  const meta = log.meta && typeof log.meta === 'object' ? (log.meta as Record<string, unknown>) : null;
+  const tool = readMetaString(meta, ['tool', 'tool_name', 'name']);
+  const path = readMetaString(meta, ['path', 'file', 'filePath', 'file_path', 'target', 'targetPath', 'target_path']);
+  const operation = readMetaString(meta, ['operation', 'op', 'action']);
+  const chips = [tool, path, operation].filter((chip) => chip.length > 0);
+  return Array.from(new Set(chips)).slice(0, 4);
+}
+
 interface LogItemProps {
   log: LogEntry & { source?: string };
   isExpanded: boolean;
@@ -367,16 +437,33 @@ function LogItem({ log, isExpanded, onToggle, role }: LogItemProps) {
   const level = log.level || 'info';
   const streamToken = streamEventToken(log);
   const colors = LOG_LEVEL_COLORS[level] || LOG_LEVEL_COLORS.info;
+  const evidenceChips = evidenceChipsForLog(log);
   const time = new Date(log.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const eventBadgeLabel =
     streamToken === 'thinking_chunk'
       ? '思考流'
+      : streamToken === 'thinking_preview'
+      ? '思考预览'
       : streamToken === 'content_chunk'
       ? '输出流'
+      : streamToken === 'content_preview'
+      ? '输出预览'
+      : streamToken === 'llm_waiting' || streamToken === 'call_start' || streamToken === 'llm_call_start'
+      ? '等待响应'
       : streamToken === 'tool_call'
       ? '工具调用'
       : streamToken === 'tool_result'
       ? '工具结果'
+      : streamToken === 'file_written' || streamToken === 'file_created'
+      ? '文件写入'
+      : streamToken === 'file_modified'
+      ? '文件修改'
+      : streamToken === 'file_deleted'
+      ? '文件删除'
+      : streamToken === 'artifact_created' || streamToken === 'delivery_artifact'
+      ? '交付物'
+      : isToolStreamEvent(streamToken)
+      ? '工具事件'
       : '';
 
   return (
@@ -393,16 +480,20 @@ function LogItem({ log, isExpanded, onToggle, role }: LogItemProps) {
       >
         <div className={cn('mt-0.5', colors.icon)}>
           {streamToken === 'thinking_chunk' && <Brain className="w-4 h-4" />}
+          {streamToken === 'thinking_preview' && <Brain className="w-4 h-4" />}
           {streamToken === 'content_chunk' && <Terminal className="w-4 h-4" />}
+          {streamToken === 'content_preview' && <Terminal className="w-4 h-4" />}
           {streamToken === 'tool_call' && <Wrench className="w-4 h-4" />}
           {streamToken === 'tool_result' && <CheckCircle2 className="w-4 h-4" />}
+          {isToolStreamEvent(streamToken) && streamToken !== 'tool_call' && streamToken !== 'tool_result' && <Wrench className="w-4 h-4" />}
+          {streamToken && !isToolStreamEvent(streamToken) && level === 'tool' && <Wrench className="w-4 h-4" />}
           {!streamToken && level === 'thinking' && <Brain className="w-4 h-4" />}
           {!streamToken && level === 'tool' && <Wrench className="w-4 h-4" />}
-          {level === 'exec' && <Play className="w-4 h-4" />}
-          {level === 'success' && <CheckCircle2 className="w-4 h-4" />}
-          {level === 'warning' && <AlertCircle className="w-4 h-4" />}
-          {level === 'error' && <AlertCircle className="w-4 h-4" />}
-          {level === 'info' && <Activity className="w-4 h-4" />}
+          {!streamToken && level === 'exec' && <Play className="w-4 h-4" />}
+          {!streamToken && level === 'success' && <CheckCircle2 className="w-4 h-4" />}
+          {!streamToken && level === 'warning' && <AlertCircle className="w-4 h-4" />}
+          {!streamToken && level === 'error' && <AlertCircle className="w-4 h-4" />}
+          {!streamToken && level === 'info' && <Activity className="w-4 h-4" />}
         </div>
 
         <div className="flex-1 min-w-0">
@@ -444,6 +535,19 @@ function LogItem({ log, isExpanded, onToggle, role }: LogItemProps) {
                   className={cn('px-1.5 py-0.5 text-[10px] rounded border', ROLE_ACTIVITY_THEMES[role].tag)}
                 >
                   {tag}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {evidenceChips.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {evidenceChips.map((chip) => (
+                <span
+                  key={chip}
+                  className="rounded border border-white/10 bg-black/20 px-1.5 py-0.5 font-mono text-[10px] text-slate-300"
+                >
+                  {chip}
                 </span>
               ))}
             </div>

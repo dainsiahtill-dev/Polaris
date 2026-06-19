@@ -124,6 +124,20 @@ def get_run_status(
     return _http_get_json(f"{backend_url}/v2/factory/runs/{run_id}", token=token)
 
 
+def cancel_factory_run(
+    backend_url: str,
+    run_id: str,
+    *,
+    reason: str = "",
+    token: str = "",
+) -> dict[str, Any] | None:
+    payload = {
+        "action": "cancel",
+        "reason": reason or "factory-bench cancelled run",
+    }
+    return _http_post_json(f"{backend_url}/v2/factory/runs/{run_id}/control", payload, token=token)
+
+
 def get_audit_bundle(
     backend_url: str,
     run_id: str,

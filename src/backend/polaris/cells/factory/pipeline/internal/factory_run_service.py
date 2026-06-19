@@ -1248,6 +1248,7 @@ class OrchestrationStageExecutor:
                         if isinstance(item, dict)
                     )
                     if self._is_director_no_materialized_changes(polled_result) and (prior_successful_progress):
+                        requires_taskboard_convergence = False
                         stage_signals.append(
                             {
                                 "code": "director.idempotent_no_materialized_changes",
@@ -1256,6 +1257,7 @@ class OrchestrationStageExecutor:
                                     "Director reported no materialized changes after prior execution evidence; "
                                     "treating dispatch as idempotent and allowing QA to decide final quality"
                                 ),
+                                "requires_taskboard_convergence": False,
                                 "upstream_status": str(polled_result.status or "").strip(),
                                 "round": round_index,
                             }

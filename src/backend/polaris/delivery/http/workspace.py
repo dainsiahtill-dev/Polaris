@@ -3,11 +3,43 @@
 from __future__ import annotations
 
 import os
+import sys
 from contextlib import suppress
 from copy import copy
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
+
+
+def _is_case_insensitive_platform() -> bool:
+    """Return True when the runtime platform treats path casing as case-insensitive.
+
+    Used to decide whether workspace equality should ignore case. On macOS
+    (HFS+/APFS default) and Windows (NTFS) the filesystem reports the same
+    directory for ``/Foo`` and ``/foo``. WSL with the ``case=off`` drvfs mount
+    option behaves the same way. On case-sensitive filesystems (default
+    Linux ext4, etc.) the same strings refer to different paths and must NOT
+    be folded.
+    """
+    if sys.platform == "darwin":
+        return True
+    if sys.platform.startswith("win") or sys.platform.startswith("cygwin"):
+        return True
+    # WSL: detected via /proc/version when available. Treat WSL as
+    # case-insensitive by default because the default drvfs mount is
+    # case=off, which is what the platform heuristic here cares about.
+    proc_version = Path("/proc/version")
+    if proc_version.exists():
+        try:
+            text = proc_version.read_text(encoding="utf-8", errors="ignore").lower()
+        except OSError:
+            text = ""
+        if "microsoft" in text or "wsl" in text:
+            return True
+    return False
+
+
+_CASE_INSENSITIVE_FS = _is_case_insensitive_platform()
 
 
 def _workspace_text(value: Any) -> str:
@@ -80,13 +112,31 @@ def comparable_workspace_value(value: Any) -> str:
 
 
 def workspace_values_match(left: Any, right: Any) -> bool:
-    """Return whether two workspace tokens identify the same workspace."""
+    """Return whether two workspace tokens identify the same workspace.
+
+    Comparison is platform-aware: on case-insensitive filesystems
+    (macOS HFS+/APFS, Windows NTFS, WSL with ``case=off``) the two sides
+    are lowercased before equality so ``/Foo`` and ``/foo`` resolve to the
+    same directory and are treated as equal. On case-sensitive filesystems
+    (default Linux ext4, etc.) the original casing is preserved so
+    ``/Foo`` and ``/foo`` remain distinct.
+
+    Rationale: callers (HTTP routers, ACL filters, snapshot guards) pass
+    workspace strings that may originate from user input, request bodies,
+    or persisted canonical paths. ``Path.resolve()`` keeps the supplied
+    case, so naive ``str.lower()``/``.casefold()`` on every platform would
+    falsely unify distinct directories on case-sensitive filesystems
+    (e.g. two project folders whose names differ only by case). The
+    platform gate here matches the actual underlying filesystem semantics.
+    """
 
     left_value = comparable_workspace_value(left)
     right_value = comparable_workspace_value(right)
     if not left_value or not right_value:
         return False
-    return left_value.casefold() == right_value.casefold()
+    if _CASE_INSENSITIVE_FS:
+        return left_value.lower() == right_value.lower()
+    return left_value == right_value
 
 
 __all__ = [

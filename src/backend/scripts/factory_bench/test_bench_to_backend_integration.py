@@ -70,6 +70,14 @@ class _MockFactoryRunsBackend(BaseHTTPRequestHandler):
             }
             self.poll_counts[run_id] = 0
             response_body = json.dumps({"run_id": run_id, "status": "running"}).encode("utf-8")
+        elif path.startswith("/v2/factory/runs/") and path.endswith("/control"):
+            run_id = path.split("/")[4]
+            state = self.run_states.setdefault(run_id, {"run_id": run_id})
+            if body.get("action") == "cancel":
+                state["status"] = "cancelled"
+                state["phase"] = "cancelled"
+                state["failure"] = {"detail": body.get("reason") or ""}
+            response_body = json.dumps(state).encode("utf-8")
         else:
             response_body = b"{}"
 
@@ -353,6 +361,14 @@ class TestFactoryRunsIntegration(unittest.TestCase):
 
         self.assertEqual(result.get("exit_code"), -1)
         self.assertEqual(result.get("error"), "poll_timeout")
+        control_calls = [
+            body
+            for method, path, body in _MockFactoryRunsBackend.received
+            if method == "POST" and path == f"/v2/factory/runs/{run_id}/control"
+        ]
+        self.assertEqual(len(control_calls), 1, "poll timeout should cancel the backend run")
+        self.assertEqual(control_calls[0].get("action"), "cancel")
+        self.assertIn("poll timeout", str(control_calls[0].get("reason") or ""))
         # No audit-bundle GET should have been attempted when poll times out
         audit_calls = [
             p for method, p, _ in _MockFactoryRunsBackend.received if method == "GET" and p.endswith("/audit-bundle")

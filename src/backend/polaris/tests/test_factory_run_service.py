@@ -1363,7 +1363,7 @@ class TestOrchestrationStageExecutor:
         assert "dispatch/log.json" in result.artifacts
 
     @pytest.mark.asyncio
-    async def test_director_stage_no_materialized_changes_still_requires_taskboard_convergence(
+    async def test_director_stage_no_materialized_changes_after_progress_allows_qa_verdict(
         self,
         temp_workspace,
     ):
@@ -1423,8 +1423,8 @@ class TestOrchestrationStageExecutor:
             context={"director_max_rounds": 2},
         )
 
-        assert result.status == "failed"
-        assert "error_code=director.taskboard_not_converged" in str(result.output)
+        assert result.status == "success"
+        assert "error_code=none" in str(result.output)
         signal_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/signals/director_dispatch.signals.json"))
         payload = json.loads(signal_path.read_text(encoding="utf-8"))
         rows = payload.get("signals") if isinstance(payload, dict) else []

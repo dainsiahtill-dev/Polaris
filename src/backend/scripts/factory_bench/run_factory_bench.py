@@ -34,6 +34,7 @@ from polaris.kernelone.benchmark.factory_audit import (
 )
 from scripts.factory_bench.factory_http_client import (
     _http_post_json as _shared_http_post_json,
+    cancel_factory_run,
     get_audit_bundle,
     poll_run_until_terminal,
     start_factory_run,
@@ -795,6 +796,12 @@ def run_factory_chain(
             on_status=_on_status,
         )
         if terminal_status is None:
+            cancel_factory_run(
+                backend_url,
+                run_id,
+                reason=f"factory-bench poll timeout after {timeout_s}s",
+                token=backend_token,
+            )
             return {
                 "exit_code": -1,
                 "duration_s": round(time.time() - started, 1),

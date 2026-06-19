@@ -1542,6 +1542,11 @@ async def _execute_standard_llm_flow(
         task_id=target_task_id,
         all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
     )
+    _adapter_workspace = str(getattr(adapter, "workspace", "") or "")
+    artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
+        artifact_quality_errors,
+        _adapter_workspace,
+    )
     # Progress-aware repair budget: the base budget is 2 attempts, but while
     # an attempt makes measurable progress on EITHER dimension — fewer missing
     # declared targets OR fewer quality errors overall — the loop keeps going
@@ -1549,7 +1554,6 @@ async def _execute_standard_llm_flow(
     # (3→2→1) was cut one file short by the fixed budget. L2-11 r6: an attempt
     # repaired the truncated index.html (errors 2→1, real progress) but the
     # missing-only metric (1→1) still cut the loop before diff.test.html.
-    _adapter_workspace = str(getattr(adapter, "workspace", "") or "")
     prev_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
     prev_error_count = len(artifact_quality_errors)
     for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
@@ -1809,6 +1813,10 @@ async def _execute_standard_llm_flow(
             adapter,
             task_id=target_task_id,
             all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+        )
+        artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
+            artifact_quality_errors,
+            str(getattr(adapter, "workspace", "") or ""),
         )
         if artifact_quality_errors:
             semantic_quality_error = "Director output quality gate failed after semantic repair: " + "; ".join(
@@ -5590,6 +5598,39 @@ def _parse_missing_declared_target_files(artifact_quality_errors: list[str]) -> 
         if normalized:
             paths.append(normalized)
     return _dedupe_preserve_order(paths)
+
+
+def _filter_satisfied_declared_target_missing_errors(
+    artifact_quality_errors: list[str],
+    workspace_full: str,
+) -> list[str]:
+    """Drop stale declared-target-missing errors after repair/smoke side effects.
+
+    Some validation steps can materialize declared files after the initial
+    quality scan, for example a Python runtime smoke import that initializes a
+    JSON store. Those side effects should not leave an old "file missing" error
+    in the repair loop, but every other quality error must remain fail-closed.
+    """
+
+    workspace = str(workspace_full or "").strip()
+    if not artifact_quality_errors or not workspace:
+        return list(artifact_quality_errors)
+    root = Path(workspace)
+    if not root.is_dir():
+        return list(artifact_quality_errors)
+
+    filtered: list[str] = []
+    for error in artifact_quality_errors:
+        text = str(error or "")
+        match = _DECLARED_TARGET_FILE_MISSING_ERROR_RE.search(text)
+        if not match:
+            filtered.append(error)
+            continue
+        normalized = _normalize_declared_task_path(match.group("path"))
+        if normalized and _workspace_path_exists_case_insensitive(root, normalized):
+            continue
+        filtered.append(error)
+    return filtered
 
 
 def _parse_typescript_return_object_semicolon_paths(artifact_quality_errors: list[str]) -> list[str]:

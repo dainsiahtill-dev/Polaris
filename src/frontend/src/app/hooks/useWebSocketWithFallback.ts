@@ -1,24 +1,21 @@
 /**
- * WebSocket with Fallback Hook
+ * WebSocket Hook
  *
- * 统一的 WebSocket 连接管理，支持自动重连和 HTTP 轮询降级策略。
- * 当 WebSocket 断开连接时，自动切换到轮询模式以保持数据同步。
+ * 统一的 WebSocket 连接管理，支持自动重连。
+ * Nat-JetStream runtime 只允许 WebSocket 实时链路；历史轮询配置
+ * 仅作为兼容字段保留，不再执行。
  *
  * Features:
  * - 指数退避重连策略
- * - WebSocket 断开后自动降级到 HTTP 轮询
- * - WebSocket 恢复后自动切回
  * - 频道订阅管理
  * - 完整的连接状态追踪
  *
  * Architecture Note:
- * - 优先使用 WebSocket 获取实时数据
- * - 降级时使用指定的 fallbackEndpoint 进行轮询
- * - 避免与 RuntimeTransportProvider 重复建设
+ * - 使用 Nat-JetStream WebSocket 获取实时数据
+ * - 避免与 RuntimeTransportProvider 重复建设第二套实时链路
  */
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { devLogger } from '@/app/utils/devLogger';
 
 // ============================================================================
 // Types
@@ -54,16 +51,16 @@ export interface UseWebSocketWithFallbackOptions {
   onDisconnect?: () => void;
   /** 错误回调 */
   onError?: (error: Error) => void;
-  /** 降级开始回调 */
+  /** Legacy compatibility callback; WebSocket-only mode never starts fallback. */
   onFallbackStart?: () => void;
-  /** 降级结束回调 */
+  /** Legacy compatibility callback; kept for existing call sites. */
   onFallbackEnd?: () => void;
 
-  /** 降级轮询端点 (HTTP) */
+  /** Legacy compatibility option; ignored in WebSocket-only mode. */
   fallbackEndpoint?: string;
-  /** 轮询间隔 (ms)，默认 5000 */
+  /** Legacy compatibility option; ignored in WebSocket-only mode. */
   fallbackInterval?: number;
-  /** 最大轮询次数，超过后停止降级 */
+  /** Legacy compatibility option; ignored in WebSocket-only mode. */
   maxFallbackAttempts?: number;
 
   /** 最大重连次数，默认无限 */
@@ -81,15 +78,15 @@ export interface UseWebSocketWithFallbackOptions {
 export interface UseWebSocketWithFallbackReturn {
   /** 当前连接状态 */
   connectionState: ConnectionState;
-  /** 是否已连接 (WebSocket 或 Fallback) */
+  /** 是否已连接 WebSocket */
   isConnected: boolean;
   /** 是否使用 WebSocket */
   isWebSocketConnected: boolean;
-  /** 是否使用降级轮询 */
+  /** 兼容旧接口；Nat-JetStream WebSocket-only 模式下始终为 false */
   isFallbackActive: boolean;
   /** 当前重连尝试次数 */
   reconnectAttempt: number;
-  /** 降级轮询已执行次数 */
+  /** 兼容旧接口；Nat-JetStream WebSocket-only 模式下始终为 0 */
   fallbackAttempt: number;
   /** 错误信息 */
   error: string | null;
@@ -112,8 +109,6 @@ export interface UseWebSocketWithFallbackReturn {
 
 const DEFAULT_BASE_DELAY = 1000;
 const DEFAULT_MAX_DELAY = 30000;
-const DEFAULT_FALLBACK_INTERVAL = 5000;
-const MAX_FALLBACK_ATTEMPTS = Infinity;
 
 // ============================================================================
 // Helper Functions
@@ -144,11 +139,7 @@ export function useWebSocketWithFallback(
     onConnect,
     onDisconnect,
     onError,
-    onFallbackStart,
     onFallbackEnd,
-    fallbackEndpoint,
-    fallbackInterval = DEFAULT_FALLBACK_INTERVAL,
-    maxFallbackAttempts = MAX_FALLBACK_ATTEMPTS,
     maxRetries = Infinity,
     baseDelay = DEFAULT_BASE_DELAY,
     maxDelay = DEFAULT_MAX_DELAY,
@@ -164,11 +155,9 @@ export function useWebSocketWithFallback(
   // Refs for WebSocket and timers
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Refs for tracking state without causing re-renders
   const isManualCloseRef = useRef(false);
-  const isFallbackActiveRef = useRef(false);
   const subscribedChannelsRef = useRef<ChannelSubscription[]>(initialChannels);
 
   // ============================================================================
@@ -182,12 +171,7 @@ export function useWebSocketWithFallback(
     }
   }, []);
 
-  const clearFallbackTimer = useCallback(() => {
-    if (fallbackTimerRef.current) {
-      clearInterval(fallbackTimerRef.current);
-      fallbackTimerRef.current = null;
-    }
-    isFallbackActiveRef.current = false;
+  const resetLegacyFallbackState = useCallback(() => {
     setFallbackAttempt(0);
   }, []);
 
@@ -198,67 +182,16 @@ export function useWebSocketWithFallback(
     }
   }, []);
 
-  // ============================================================================
-  // Fallback Polling
-  // ============================================================================
-
-  const startFallbackPolling = useCallback(() => {
-    if (!fallbackEndpoint || isFallbackActiveRef.current) return;
-
-    isFallbackActiveRef.current = true;
-    setConnectionState('fallback');
-    onFallbackStart?.();
-
-    let attempts = 0;
-
-    fallbackTimerRef.current = setInterval(async () => {
-      attempts++;
-
-      // Check if max attempts reached
-      if (attempts >= maxFallbackAttempts) {
-        clearFallbackTimer();
-        setError('Fallback polling exhausted');
-        return;
-      }
-
-      setFallbackAttempt(attempts);
-
-      try {
-        const response = await fetch(fallbackEndpoint);
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        // Try to parse as WebSocketMessage
-        const message: WebSocketMessage = {
-          type: 'fallback_poll',
-          ...(typeof data === 'object' && data !== null ? data : { data }),
-        };
-
-        onMessage?.(message);
-      } catch (err) {
-        // Silent failure, continue polling
-        devLogger.debug('[WebSocket Fallback] Poll failed:', err);
-      }
-    }, fallbackInterval);
-  }, [
-    fallbackEndpoint,
-    fallbackInterval,
-    maxFallbackAttempts,
-    onMessage,
-    onFallbackStart,
-    clearFallbackTimer,
-  ]);
+  const markRealtimeUnavailable = useCallback(() => {
+    resetLegacyFallbackState();
+    setConnectionState('disconnected');
+    setError('WebSocket reconnect exhausted; Nat-JetStream WebSocket is required');
+  }, [resetLegacyFallbackState]);
 
   const stopFallbackPolling = useCallback(() => {
-    if (isFallbackActiveRef.current) {
-      clearFallbackTimer();
-      onFallbackEnd?.();
-    }
-  }, [clearFallbackTimer, onFallbackEnd]);
+    resetLegacyFallbackState();
+    onFallbackEnd?.();
+  }, [resetLegacyFallbackState, onFallbackEnd]);
 
   // ============================================================================
   // WebSocket Connection
@@ -331,8 +264,6 @@ export function useWebSocketWithFallback(
       setError(errorMessage);
       onError?.(new Error(errorMessage));
 
-      // Start fallback polling on connection failure
-      startFallbackPolling();
     }
   }, [
     url,
@@ -340,7 +271,6 @@ export function useWebSocketWithFallback(
     onConnect,
     onDisconnect,
     onError,
-    startFallbackPolling,
   ]);
 
   // ============================================================================
@@ -350,8 +280,7 @@ export function useWebSocketWithFallback(
   const scheduleReconnect = useCallback(() => {
     if (isManualCloseRef.current) return;
     if (reconnectAttempt >= maxRetries) {
-      // Max retries exhausted, switch to fallback
-      startFallbackPolling();
+      markRealtimeUnavailable();
       return;
     }
 
@@ -368,7 +297,7 @@ export function useWebSocketWithFallback(
     baseDelay,
     maxDelay,
     connectWebSocket,
-    startFallbackPolling,
+    markRealtimeUnavailable,
   ]);
 
   // ============================================================================
@@ -420,10 +349,10 @@ export function useWebSocketWithFallback(
   const disconnect = useCallback(() => {
     isManualCloseRef.current = true;
     clearReconnectTimer();
-    clearFallbackTimer();
+    resetLegacyFallbackState();
     closeWebSocket();
     setConnectionState('disconnected');
-  }, [clearReconnectTimer, clearFallbackTimer, closeWebSocket]);
+  }, [clearReconnectTimer, resetLegacyFallbackState, closeWebSocket]);
 
   const reconnect = useCallback(() => {
     isManualCloseRef.current = false;
@@ -465,8 +394,8 @@ export function useWebSocketWithFallback(
   // ============================================================================
 
   const isWebSocketConnected = connectionState === 'connected';
-  const isFallbackActive = connectionState === 'fallback';
-  const isConnected = connectionState === 'connected' || connectionState === 'fallback';
+  const isFallbackActive = false;
+  const isConnected = connectionState === 'connected';
 
   // ============================================================================
   // Return Value
@@ -508,7 +437,7 @@ export function useWebSocketWithFallback(
 // Specialized Hooks
 // ============================================================================
 
-/** Court 状态 WebSocket Hook with Fallback */
+/** Court 状态 WebSocket Hook，legacy fallback options are ignored. */
 export function useCourtWebSocketWithFallback(
   options: {
     fallbackEndpoint?: string;
@@ -516,7 +445,7 @@ export function useCourtWebSocketWithFallback(
     onCourtStateChange?: (state: Record<string, unknown>) => void;
   } = {}
 ): UseWebSocketWithFallbackReturn & { courtState: Record<string, unknown> | null } {
-  const { fallbackEndpoint, fallbackInterval, onCourtStateChange } = options;
+  const { onCourtStateChange } = options;
   const [courtState, setCourtState] = useState<Record<string, unknown> | null>(null);
 
   const handleMessage = useCallback(
@@ -528,10 +457,6 @@ export function useCourtWebSocketWithFallback(
         const state = message.court_state as Record<string, unknown>;
         setCourtState(state);
         onCourtStateChange?.(state);
-      } else if (message.type === 'fallback_poll' && message.court_state) {
-        const state = message.court_state as Record<string, unknown>;
-        setCourtState(state);
-        onCourtStateChange?.(state);
       }
     },
     [onCourtStateChange]
@@ -539,8 +464,6 @@ export function useCourtWebSocketWithFallback(
 
   const ws = useWebSocketWithFallback({
     channels: [{ channel: 'status' }],
-    fallbackEndpoint,
-    fallbackInterval,
     onMessage: handleMessage,
   });
 
@@ -550,7 +473,7 @@ export function useCourtWebSocketWithFallback(
   };
 }
 
-/** Runtime 日志 WebSocket Hook with Fallback */
+/** Runtime 日志 WebSocket Hook，legacy fallback options are ignored. */
 export function useRuntimeWebSocketWithFallback(
   options: {
     channels?: string[];
@@ -563,8 +486,6 @@ export function useRuntimeWebSocketWithFallback(
   const {
     channels = ['runtime'],
     tailLines = 100,
-    fallbackEndpoint,
-    fallbackInterval,
     onLogMessage,
   } = options;
 
@@ -575,8 +496,6 @@ export function useRuntimeWebSocketWithFallback(
 
   const ws = useWebSocketWithFallback({
     channels: channelSubscriptions,
-    fallbackEndpoint,
-    fallbackInterval,
     onMessage: onLogMessage,
   });
 

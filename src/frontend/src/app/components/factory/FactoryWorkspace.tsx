@@ -229,6 +229,40 @@ function toActivityLogs(events: FactoryAuditEvent[]): LogEntry[] {
   });
 }
 
+function toFileEditActivityLogs(events: FileEditEvent[]): LogEntry[] {
+  return events.map((event) => {
+    const lineStats = [
+      typeof event.addedLines === 'number' ? `+${event.addedLines}` : '',
+      typeof event.deletedLines === 'number' ? `-${event.deletedLines}` : '',
+      typeof event.modifiedLines === 'number' ? `~${event.modifiedLines}` : '',
+    ].filter(Boolean);
+    const details = [
+      `path=${event.filePath}`,
+      event.taskId ? `task=${event.taskId}` : '',
+      event.contentSize > 0 ? `bytes=${event.contentSize}` : '',
+      lineStats.length > 0 ? `lines=${lineStats.join(' ')}` : '',
+    ].filter(Boolean).join(' ');
+
+    return {
+      id: `file-edit-${event.id}`,
+      timestamp: event.timestamp,
+      level: 'tool' as const,
+      source: 'Director',
+      title: '文件工具',
+      message: `${event.operation === 'create' ? '创建' : event.operation === 'delete' ? '删除' : '修改'} ${event.filePath}`,
+      details: details || undefined,
+      meta: {
+        channel: event.sourceChannel || 'event.file_edit',
+        streamEvent: 'tool_result',
+        tool: event.operation === 'delete' ? 'delete_file' : 'write_file',
+        filePath: event.filePath,
+        taskId: event.taskId,
+      },
+      tags: [event.operation, event.taskId].filter((value): value is string => Boolean(value)),
+    };
+  });
+}
+
 function formatBytes(size?: number): string {
   if (typeof size !== 'number' || Number.isNaN(size) || size < 0) {
     return 'size n/a';
@@ -1024,9 +1058,10 @@ export function FactoryWorkspace({
     [directorWorkflowTasks, pmWorkflowTasks]
   );
   const activityLogs = useMemo(() => toActivityLogs(events), [events]);
+  const fileEditActivityLogs = useMemo(() => toFileEditActivityLogs(fileEditEvents), [fileEditEvents]);
   const operationsActivityLogs = useMemo(
-    () => [...activityLogs, ...executionLogs],
-    [activityLogs, executionLogs]
+    () => [...activityLogs, ...executionLogs, ...fileEditActivityLogs],
+    [activityLogs, executionLogs, fileEditActivityLogs]
   );
   const gateResults = currentRun?.gates || [];
   const deliveryArtifacts = artifacts || currentRun?.artifacts || [];

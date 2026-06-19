@@ -72,7 +72,9 @@ vi.mock('../useRuntimeConnection', () => ({
     registerMessageHandler: runtimeConnectionMock.registerMessageHandler,
     sendCommand: runtimeConnectionMock.sendCommand,
     workspaceRef: { current: '/test/workspace' },
-    rolesRef: { current: ['pm', 'director', 'qa'] as ('pm' | 'director' | 'qa')[] },
+    rolesRef: {
+      current: ['pm', 'chief_engineer', 'director', 'qa'] as ('pm' | 'chief_engineer' | 'director' | 'qa')[],
+    },
     activeRef: { current: true },
   })),
 }));
@@ -181,6 +183,43 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(entry?.details).toContain('completion=1454');
   });
 
+  it('uses llm_completed response_content when no separate content preview is emitted', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'event',
+      event: {
+        schema_version: 'runtime.v2',
+        channel: 'llm',
+        kind: 'llm.state',
+        ts: '2026-06-19T07:04:05.413082Z',
+        payload: {
+          message: 'LLM call_end',
+          actor: 'director',
+          severity: 'info',
+          domain: 'llm',
+          raw: {
+            event_type: 'call_end',
+            metadata: {
+              elapsed_ms: 48630.82,
+              response_content: 'I reviewed the files and will repair the missing stylesheet.',
+              prompt_tokens: 2354,
+              completion_tokens: 95,
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.current.llmStreamEvents).toHaveLength(1);
+    const entry = result.current.llmStreamEvents[0];
+    expect(entry?.message).toBe('I reviewed the files and will repair the missing stylesheet.');
+    expect(entry?.meta?.streamEvent).toBe('call_end');
+    expect(entry?.meta?.durationMs).toBe(48631);
+  });
+
   it('parses the canonical journal llm_failed line as an error call', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })
@@ -268,6 +307,45 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(entry?.level).toBe('info');
     expect(entry?.meta?.streamEvent).toBe('content_chunk');
     expect(entry?.meta?.model).toBe('kimi-for-coding');
+  });
+
+  it('parses runtime.v2 content_preview metadata as visible LLM output', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'event',
+      event: {
+        schema_version: 'runtime.v2',
+        channel: 'llm',
+        kind: 'llm.output',
+        ts: '2026-06-19T07:32:36.916196Z',
+        payload: {
+          actor: 'director',
+          severity: 'info',
+          domain: 'llm',
+          raw: {
+            stream_event: 'content_preview',
+            event_type: 'content_preview',
+            data: {
+              model: 'qwen3.6-27b-gpu1',
+              metadata: {
+                content: '公开模型输出片段',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.current.llmStreamEvents).toHaveLength(1);
+    const entry = result.current.llmStreamEvents[0];
+    expect(entry?.message).toBe('公开模型输出片段');
+    expect(entry?.level).toBe('info');
+    expect(entry?.title).toBe('输出预览');
+    expect(entry?.meta?.streamEvent).toBe('content_preview');
+    expect(entry?.meta?.model).toBe('qwen3.6-27b-gpu1');
   });
 
   it('classifies process tool events as tool activity for role workspaces', () => {

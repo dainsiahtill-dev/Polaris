@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from contextlib import ExitStack
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from polaris.kernelone.llm.engine.executor import AIExecutor
@@ -369,6 +370,223 @@ class TestContextSnapshotRefInjection:
         ctx = request.context if isinstance(request.context, dict) else {}
         assert ctx.get("context_snapshot_ref") is not None
         assert len(str(ctx.get("context_snapshot_ref"))) == 24
+
+
+class TestContextStoreInvokeFailure:
+    """Regression tests: a failing context-store disk write MUST NOT abort the LLM call.
+
+    Phase 2 LOW #3: ``_execute_invoke`` wraps the ``await self._store_context_messages(...)``
+    call in a try/except so OSError / RuntimeError / generic Exception on the disk write
+    are logged at WARNING and the LLM call proceeds. The context viewer is informational
+    (read by ContextViewerModal), not critical path.
+    """
+
+    @staticmethod
+    def _build_request() -> Any:
+        from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
+
+        return AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="test",
+            input="hello",
+            provider_id="mock-provider",
+            model="mock-model",
+            context={"chat_messages": [{"role": "user", "content": "hi"}]},
+        )
+
+    @staticmethod
+    def _make_executor_with_mock_catalog() -> Any:
+        """Create an AIExecutor with a mocked model_catalog so it doesn't need llm_config.json."""
+        from polaris.kernelone.llm.shared_contracts import ModelSpec
+
+        class _FakeModelCatalog:
+            def resolve(self, *args: Any, **kwargs: Any) -> ModelSpec:
+                return ModelSpec(
+                    provider_id="mock-provider",
+                    provider_type="mock",
+                    model="mock-model",
+                    max_context_tokens=8192,
+                    max_output_tokens=2048,
+                )
+
+        executor = AIExecutor()
+        executor.model_catalog = _FakeModelCatalog()
+        return executor
+
+    @staticmethod
+    def _patch_provider(executor_module: Any) -> Any:
+        """Patch get_provider_manager + _invoke_with_timeout so _execute_invoke reaches the store call."""
+        from polaris.kernelone.llm.engine.executor import AIResponse
+
+        class _FakeProvider:
+            def invoke(self, *args: Any, **kwargs: Any) -> AIResponse:
+                return AIResponse.success(output="provider-ok")
+
+        class _FakeManager:
+            def get_provider_instance(self, name: str) -> Any:
+                return _FakeProvider()
+
+        async def _fake_invoke_with_timeout(coro: Any, timeout: Any = None) -> AIResponse:
+            return AIResponse.success(output="provider-ok")
+
+        return [
+            patch.object(executor_module, "get_provider_manager", return_value=_FakeManager()),
+            patch.object(executor_module, "_invoke_with_timeout", side_effect=_fake_invoke_with_timeout),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_oserror_from_store_context_messages_still_invokes(self) -> None:
+        """OSError (disk full / permission denied) must NOT abort the LLM call."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+
+        request = self._build_request()
+        executor = self._make_executor_with_mock_catalog()
+
+        async def _failing_store(*args: Any, **kwargs: Any) -> str:
+            raise OSError("disk full")
+
+        with ExitStack() as stack:
+            for p in self._patch_provider(executor_module):
+                stack.enter_context(p)
+            stack.enter_context(patch.object(executor, "_store_context_messages", side_effect=_failing_store))
+            stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+            response = await executor._execute_invoke(request, trace_id="trace-os-1")
+
+        # LLM call must succeed despite the disk-write failure.
+        assert response.ok is True, f"Expected LLM call to succeed; got error: {response.error}"
+        # context_snapshot_ref must NOT be injected (truthy-gated).
+        ctx = request.context if isinstance(request.context, dict) else {}
+        assert ctx.get("context_snapshot_ref") is None
+
+    @pytest.mark.asyncio
+    async def test_value_error_from_store_context_messages_still_invokes(self) -> None:
+        """ValueError from store must NOT abort the LLM call."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+
+        request = self._build_request()
+        executor = self._make_executor_with_mock_catalog()
+
+        async def _failing_store(*args: Any, **kwargs: Any) -> str:
+            raise ValueError("hash collision / corrupt payload")
+
+        with ExitStack() as stack:
+            for p in self._patch_provider(executor_module):
+                stack.enter_context(p)
+            stack.enter_context(patch.object(executor, "_store_context_messages", side_effect=_failing_store))
+            stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+            response = await executor._execute_invoke(request, trace_id="trace-val-1")
+
+        assert response.ok is True, f"Expected LLM call to succeed; got error: {response.error}"
+        ctx = request.context if isinstance(request.context, dict) else {}
+        assert ctx.get("context_snapshot_ref") is None
+
+
+class TestWorkerIdPropagation:
+    """Regression tests: worker_id is propagated from request.context or env into context.
+
+    Phase 3 HIGH finding: ``_execute_invoke`` did not propagate worker_id into
+    request.context, breaking the ContextOS multi-worker UI for real backend events.
+    Resolution: read from request.context.get("worker_id") / .get("workerId") first,
+    then fall back to KERNELONE_WORKER_ID env. Never fabricate a value.
+    """
+
+    @staticmethod
+    def _build_request(context: dict[str, Any] | None = None) -> Any:
+        from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
+
+        ctx = context if context is not None else {"chat_messages": [{"role": "user", "content": "y"}]}
+        return AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="director",
+            input="x",
+            provider_id="mock-provider",
+            model="mock-model",
+            context=ctx,
+        )
+
+    @staticmethod
+    async def _fake_invoke_with_timeout(coro: Any, timeout: Any = None) -> Any:
+        from polaris.kernelone.llm.engine.executor import AIResponse
+
+        return AIResponse.success(output="provider-ok")
+
+    @pytest.mark.asyncio
+    async def test_worker_id_from_request_context_is_preserved(self) -> None:
+        """Explicit worker_id in request.context is preserved (caller wins)."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+
+        request = self._build_request(
+            context={
+                "worker_id": "worker-explicit-1",
+                "chat_messages": [{"role": "user", "content": "y"}],
+            }
+        )
+        executor = TestContextStoreInvokeFailure._make_executor_with_mock_catalog()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("KERNELONE_WORKER_ID", None)
+            with ExitStack() as stack:
+                for p in TestContextStoreInvokeFailure._patch_provider(executor_module):
+                    stack.enter_context(p)
+                stack.enter_context(patch.object(executor, "_store_context_messages", AsyncMock(return_value=None)))
+                stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+                await executor._execute_invoke(request, trace_id="t-1")
+        assert request.context["worker_id"] == "worker-explicit-1"
+
+    @pytest.mark.asyncio
+    async def test_worker_id_from_env_is_injected_when_context_missing(self) -> None:
+        """KERNELONE_WORKER_ID env is injected into request.context when caller did not provide one."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+
+        request = self._build_request()
+        executor = TestContextStoreInvokeFailure._make_executor_with_mock_catalog()
+        with patch.dict(os.environ, {"KERNELONE_WORKER_ID": "worker-pool-3-7"}), ExitStack() as stack:
+            for p in TestContextStoreInvokeFailure._patch_provider(executor_module):
+                stack.enter_context(p)
+            stack.enter_context(patch.object(executor, "_store_context_messages", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+            await executor._execute_invoke(request, trace_id="t-2")
+        assert request.context.get("worker_id") == "worker-pool-3-7"
+
+    @pytest.mark.asyncio
+    async def test_worker_id_is_not_fabricated_when_neither_present(self) -> None:
+        """When neither context nor env has worker_id, no key is injected (fail-closed)."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+
+        request = self._build_request()
+        executor = TestContextStoreInvokeFailure._make_executor_with_mock_catalog()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("KERNELONE_WORKER_ID", None)
+            with ExitStack() as stack:
+                for p in TestContextStoreInvokeFailure._patch_provider(executor_module):
+                    stack.enter_context(p)
+                stack.enter_context(patch.object(executor, "_store_context_messages", AsyncMock(return_value=None)))
+                stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+                await executor._execute_invoke(request, trace_id="t-3")
+        assert "worker_id" not in request.context
+
+    @pytest.mark.asyncio
+    async def test_worker_id_not_injected_when_context_is_not_dict(self) -> None:
+        """When request.context is not a dict, no AttributeError; worker_id absent."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+        from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
+
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="pm",
+            input="x",
+            provider_id="mock-provider",
+            model="mock-model",
+            context=None,  # type: ignore[arg-type]
+        )
+        executor = TestContextStoreInvokeFailure._make_executor_with_mock_catalog()
+        with patch.dict(os.environ, {"KERNELONE_WORKER_ID": "should-not-be-used"}), ExitStack() as stack:
+            for p in TestContextStoreInvokeFailure._patch_provider(executor_module):
+                stack.enter_context(p)
+            stack.enter_context(patch.object(executor, "_store_context_messages", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+            # Must not raise even when context is None.
+            await executor._execute_invoke(request, trace_id="t-4")
+        # No assertion needed beyond "did not raise"; context is None so no key to read.
 
 
 class TestContextViewerRouter:

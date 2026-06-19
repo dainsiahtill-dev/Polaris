@@ -193,10 +193,11 @@ def _register_routers(app: FastAPI) -> None:
         system,
         tests,
     )
-    from polaris.delivery.http.v2 import router as v2_router
+    from polaris.delivery.http.v2 import context as v2_context, router as v2_router
 
     app.include_router(primary_router)
     app.include_router(v2_router)
+    app.include_router(v2_context.router)
     app.include_router(factory.router)
 
     app.include_router(aggregate_chat.router)

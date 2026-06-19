@@ -180,3 +180,5 @@ tmp_pytest_*/
 .pytest_tmp*/
 pytest-cache-files-*/
 .understand-anything
+.worktrees/*
+.codegraph

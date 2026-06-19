@@ -437,17 +437,47 @@ class AIExecutor:
         # ContextOS full-context viewer: store post-compression messages by hash.
         # Use the async variant so the disk write runs in the thread pool and
         # does not block the event loop on every LLM call.
+        #
+        # The context viewer is informational (read by ContextViewerModal) — a
+        # disk-write failure here MUST NOT abort the LLM call. We log at
+        # WARNING with trace_id and workspace context for forensics and fall
+        # back to context_store_hash=None so the gating below never injects a
+        # partial/stale hash into request.context.
         context_store_hash: str | None = None
         if effective_chat_messages:
-            context_store_hash = await self._store_context_messages(
-                workspace=self.workspace,
-                messages=effective_chat_messages,
-                trace_id=trace_id,
-                call_id=request.context.get("call_id") if isinstance(request.context, dict) else None,
-            )
-        # Inject hash into request context so upstream emit_llm_event can include it
+            try:
+                context_store_hash = await self._store_context_messages(
+                    workspace=self.workspace,
+                    messages=effective_chat_messages,
+                    trace_id=trace_id,
+                    call_id=request.context.get("call_id") if isinstance(request.context, dict) else None,
+                )
+            except Exception as exc:  # noqa: BLE001 — disk failure must not abort the LLM call
+                logger.warning(
+                    "[executor] context viewer disk write failed (trace_id=%s, workspace=%s, exc_type=%s): %s",
+                    trace_id,
+                    self.workspace,
+                    type(exc).__name__,
+                    exc,
+                )
+                context_store_hash = None
+        # Inject hash into request context so upstream emit_llm_event can include it.
+        # Gate on truthy hash so a None from a failed disk write never leaks a
+        # falsy-but-set key into request.context.
         if isinstance(request.context, dict) and context_store_hash:
             request.context["context_snapshot_ref"] = context_store_hash
+
+        # Propagate worker_id from caller (request.context) or environment
+        # (KERNELONE_WORKER_ID, set by Director's WorkerPool at spawn time) so
+        # the ContextOS multi-worker UI can attribute this LLM call to a
+        # specific worker in the role's parallel pool. Only inject when
+        # request.context is a dict; never fabricate a worker_id.
+        if isinstance(request.context, dict):
+            existing_worker_id = request.context.get("worker_id") or request.context.get("workerId")
+            if not existing_worker_id:
+                env_worker_id = os.environ.get("KERNELONE_WORKER_ID", "").strip()
+                if env_worker_id:
+                    request.context["worker_id"] = env_worker_id
 
         # Acquire semaphore for concurrency control
         semaphore = await _get_global_semaphore()

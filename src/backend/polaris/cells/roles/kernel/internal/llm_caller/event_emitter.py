@@ -54,7 +54,8 @@ class LLMEventEmitter:
             )
 
         try:
-            _task = asyncio.create_task(_publish())
+            loop = asyncio.get_running_loop()
+            _task = loop.create_task(_publish())
             _task.add_done_callback(lambda t: t.exception() if t.done() and not t.cancelled() else None)
         except (RuntimeError, ValueError) as exc:
             if isinstance(exc, RuntimeError):
@@ -267,6 +268,20 @@ class LLMEventEmitter:
             payload.setdefault("workspace", self.workspace)
             if response_content is not None:
                 payload["response_content"] = response_content
+                content_preview = response_content.strip()
+                if content_preview:
+                    preview_payload = dict(payload)
+                    preview_payload.setdefault("content", content_preview)
+                    emit_llm_event(
+                        event_type=LLMEventType.CONTENT_PREVIEW,
+                        role=role,
+                        run_id=run_id,
+                        task_id=task_id,
+                        attempt=attempt,
+                        model=model,
+                        completion_tokens=completion_tokens,
+                        metadata=preview_payload,
+                    )
             kwargs: dict[str, Any] = {
                 "event_type": LLMEventType.CALL_END,
                 "role": role,
