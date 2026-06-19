@@ -183,6 +183,33 @@ class TestRateLimitMiddleware:
         assert response.status_code != 429
 
     @pytest.mark.asyncio
+    async def test_factory_control_loopback_endpoint_is_not_rate_limited(self) -> None:
+        middleware = RateLimitMiddleware(MagicMock(), requests_per_second=0.0, burst_size=1)
+
+        first = await middleware.dispatch(
+            self._make_mock_request("/v2/factory/bench/sessions/bench-1/events", "127.0.0.1"),
+            self._call_next,
+        )
+        second = await middleware.dispatch(
+            self._make_mock_request("/v2/factory/runs/factory_123", "127.0.0.1"),
+            self._call_next,
+        )
+
+        assert first.status_code != 429
+        assert second.status_code != 429
+
+    @pytest.mark.asyncio
+    async def test_factory_control_remote_endpoint_is_rate_limited(self) -> None:
+        middleware = RateLimitMiddleware(MagicMock(), requests_per_second=0.0, burst_size=1)
+        request = self._make_mock_request("/v2/factory/bench/sessions/bench-1/events", "10.0.0.5")
+
+        first = await middleware.dispatch(request, self._call_next)
+        second = await middleware.dispatch(request, self._call_next)
+
+        assert first.status_code != 429
+        assert second.status_code == 429
+
+    @pytest.mark.asyncio
     async def test_normal_remote_path_is_rate_limited(self) -> None:
         middleware = RateLimitMiddleware(MagicMock(), requests_per_second=0.0, burst_size=1)
         request = self._make_mock_request("/api/test", "10.0.0.5")

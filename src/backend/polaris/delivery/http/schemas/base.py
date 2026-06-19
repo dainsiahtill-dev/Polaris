@@ -288,3 +288,12 @@ class CorruptionRecord(BaseModel):
     error_message: str
     line_preview: str
     recovered: bool = False
+
+
+class ContextStoreStatsResponse(BaseModel):
+    """运行时上下文存储统计响应（最小可工作占位）。"""
+
+    total: int = 0
+    bytes_used: int = 0
+    quota_bytes: int = 0
+    entries: list[dict[str, object]] = Field(default_factory=list)

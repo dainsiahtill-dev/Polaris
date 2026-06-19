@@ -7,6 +7,7 @@ from polaris.delivery.http.endpoint_policy import (
     classify_endpoint,
     is_always_rate_limit_exempt,
     is_bootstrap_rate_limit_sensitive,
+    is_loopback_rate_limit_exempt,
     is_observability_exempt,
     is_public_probe,
 )
@@ -42,6 +43,20 @@ def test_bootstrap_endpoints_are_loopback_sensitive_not_public() -> None:
         assert is_public_probe(path) is False
 
 
+def test_factory_control_plane_paths_are_loopback_rate_limit_exempt_only() -> None:
+    for path in (
+        "/v2/factory/runs",
+        "/v2/factory/runs/factory_123",
+        "/v2/factory/runs/factory_123/artifacts",
+        "/v2/factory/bench/sessions",
+        "/v2/factory/bench/sessions/bench-1/events",
+    ):
+        assert classify_endpoint(path) == EndpointPolicy.AUTH_ACTION
+        assert is_loopback_rate_limit_exempt(path) is True
+        assert is_always_rate_limit_exempt(path) is False
+        assert is_public_probe(path) is False
+
+
 def test_runtime_storage_layout_routes_are_backward_compatible_bootstrap() -> None:
     for path in (
         "/runtime/storage-layout",
@@ -57,3 +72,4 @@ def test_normal_action_default_policy() -> None:
     assert classify_endpoint("/v2/pm/status") == EndpointPolicy.AUTH_ACTION
     assert is_observability_exempt("/v2/pm/status") is False
     assert is_always_rate_limit_exempt("/v2/pm/status") is False
+    assert is_loopback_rate_limit_exempt("/v2/pm/status") is False

@@ -199,6 +199,37 @@ class TestStaticReview:
 
         assert "placeholder_content_detected" in review["critical_issues"]
 
+    def test_todo_product_selectors_are_not_unfinished_content(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "index.html").write_text(
+            '<form id="todo-form"><input id="todo-input"><ul id="todo-list"></ul></form>\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "style.css").write_text(
+            ".todo-list { display: grid; }\n.todo-item.done { opacity: .7; }\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "app.js").write_text(
+            "\n".join(
+                [
+                    'const STORAGE_KEY = "todo_app_items";',
+                    'const form = document.getElementById("todo-form");',
+                    "const items = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');",
+                    "form.addEventListener('submit', (event) => { event.preventDefault(); });",
+                    "localStorage.setItem(STORAGE_KEY, JSON.stringify(items));",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        review = adapter._run_static_review("原生本地待办事项")
+
+        assert "placeholder_content_detected" not in review["critical_issues"]
+        assert "code_file_count=3" in review["evidence"]
+        assert any(str(item).startswith("feature:local_storage=") for item in review["evidence"])
+        assert any(str(item).startswith("feature:dom_event_listener=") for item in review["evidence"])
+        assert any(str(item).startswith("feature:dom_selector=") for item in review["evidence"])
+
     def test_targeted_repair_does_not_fail_on_out_of_scope_placeholder(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         src = tmp_path / "src"
@@ -267,7 +298,8 @@ class TestBuildQaMessage:
         msg = adapter._build_qa_message("quality_gate", "Project X")
         assert "quality_gate" in msg
         assert "Project X" in msg
-        assert "JSON" in msg
+        assert "Return exactly one JSON object" not in msg
+        assert "Do not call tools" not in msg
 
     def test_includes_evidence(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -280,6 +312,13 @@ class TestBuildQaMessage:
         msg = adapter._build_qa_message("quality_gate", "Project X", review_result={})
         assert "no deterministic evidence" in msg
 
+    def test_prompt_appendix_contains_json_contract(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        appendix = adapter._build_qa_prompt_appendix()
+        assert "Return exactly one JSON object" in appendix
+        assert "Do not call tools" in appendix
+        assert '"verdict": "PASS|FAIL"' in appendix
+
     def test_json_repair_message_preserves_previous_output(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         msg = adapter._build_qa_json_repair_message(
@@ -289,9 +328,13 @@ class TestBuildQaMessage:
             previous_output="我先对工作区进行侦察，然后执行审查。",
         )
 
-        assert "Return exactly one JSON object" in msg
+        assert "Return exactly one JSON object" not in msg
         assert "workspace_checks_passed=True" in msg
         assert "我先对工作区进行侦察" in msg
+
+        appendix = adapter._build_qa_json_repair_prompt_appendix()
+        assert "Return exactly one JSON object" in appendix
+        assert "Do not call tools" in appendix
 
 
 # ---------------------------------------------------------------------------
@@ -362,10 +405,12 @@ class TestQaExecute:
     def test_retries_strict_json_when_llm_output_lacks_verdict(self, tmp_path: Any, monkeypatch: Any) -> None:
         adapter = _make_adapter(tmp_path)
         calls: list[str] = []
+        appendices: list[str] = []
         metadata_calls: list[dict[str, Any]] = []
 
         async def fake_invoke_role_runtime_first(**kwargs: Any) -> dict[str, str]:
             calls.append(str(kwargs.get("message") or ""))
+            appendices.append(str(kwargs.get("prompt_appendix") or ""))
             context = kwargs.get("context") if isinstance(kwargs.get("context"), dict) else {}
             metadata = context.get("metadata") if isinstance(context.get("metadata"), dict) else {}
             metadata_calls.append(dict(metadata))
@@ -413,7 +458,9 @@ class TestQaExecute:
         )
 
         assert len(calls) == 2
-        assert "Return exactly one JSON object" in calls[1]
+        assert all("Return exactly one JSON object" not in item for item in calls)
+        assert "Return exactly one JSON object" in appendices[0]
+        assert "Return exactly one JSON object" in appendices[1]
         assert all(item.get("native_tool_mode") == "disabled" for item in metadata_calls)
         assert all(item.get("response_format_mode") == "json" for item in metadata_calls)
         assert all(item.get("qa_output_contract") == "json_only_verdict" for item in metadata_calls)

@@ -33,6 +33,7 @@ from polaris.kernelone.benchmark.factory_audit import (
     build_factory_audit_record,
 )
 from scripts.factory_bench.factory_http_client import (
+    _http_post_json as _shared_http_post_json,
     get_audit_bundle,
     poll_run_until_terminal,
     start_factory_run,
@@ -375,8 +376,6 @@ def _emit_bench_event(
 # (which the WS bridge can still pick up if connected to the active
 # workspace's runtime dir).
 
-import urllib.error  # noqa: E402
-import urllib.request  # noqa: E402
 
 _DEFAULT_BACKEND_URL = "http://127.0.0.1:49977"
 _BENCH_HTTP_TIMEOUT_S = 10.0  # bumped from 2.0: cold-start 49977 can exceed 2s
@@ -419,26 +418,7 @@ def _http_post_json(
     timeout_s: float = _BENCH_HTTP_TIMEOUT_S,
     token: str = "",
 ) -> dict[str, Any] | None:
-    try:
-        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        headers = {"Content-Type": "application/json", "Accept": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        req = urllib.request.Request(
-            url,
-            data=data,
-            method="POST",
-            headers=headers,
-        )
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            raw = resp.read().decode("utf-8") or "{}"
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, ValueError) as exc:
-        print(f"[factory-bench] backend POST failed: {url}: {exc}", file=sys.stderr, flush=True)
-        return None
-    try:
-        return json.loads(raw)
-    except ValueError:
-        return None
+    return _shared_http_post_json(url, body, timeout_s=timeout_s, token=token)
 
 
 def _push_bench_session_to_backend(

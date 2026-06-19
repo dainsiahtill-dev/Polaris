@@ -22,6 +22,7 @@ from fastapi import Request, Response
 from polaris.delivery.http.endpoint_policy import (
     is_always_rate_limit_exempt,
     is_bootstrap_rate_limit_sensitive,
+    is_loopback_rate_limit_exempt,
 )
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -262,6 +263,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if is_always_rate_limit_exempt(path) or any(path.startswith(excluded) for excluded in self._excluded_paths):
             return await call_next(request)
         if self._exempt_loopback and request.client and request.client.host in _LOOPBACK_CLIENTS:
+            return await call_next(request)
+        if request.client and request.client.host in _LOOPBACK_CLIENTS and is_loopback_rate_limit_exempt(path):
             return await call_next(request)
         if is_bootstrap_rate_limit_sensitive(path) and request.client and request.client.host in _LOOPBACK_CLIENTS:
             return await call_next(request)

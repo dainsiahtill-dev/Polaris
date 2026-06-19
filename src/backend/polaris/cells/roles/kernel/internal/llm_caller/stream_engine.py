@@ -52,6 +52,7 @@ class StreamEngine:
         emit_call_error_event: Any,
         emit_call_end_event: Any,
         emit_call_retry_event: Any,
+        store_context_messages: Any | None = None,
     ) -> None:
         """Initialize stream engine.
 
@@ -63,6 +64,20 @@ class StreamEngine:
             emit_call_error_event: Event emitter callable.
             emit_call_end_event: Event emitter callable.
             emit_call_retry_event: Event emitter callable.
+            store_context_messages: Optional async callable
+                ``async (workspace, messages, trace_id, call_id) -> str | None``
+                that persists the post-compression chat messages to the
+                runtime context store and returns the 24-char reference hash.
+                The callable MUST be a coroutine — it is awaited so the
+                underlying disk write runs in a worker thread and does not
+                block the event loop. When provided, the hash is injected into
+                ``prepared.ai_request.context`` BEFORE the call-start event so
+                streamed invocations carry a non-empty ``context_snapshot_ref``
+                in event metadata (mirrors the sync path's
+                ``AIExecutor._store_context_messages`` wiring). Failing
+                closed: any exception raised by the callable is swallowed and
+                the stream proceeds with no snapshot ref so a misbehaving
+                store never blocks the LLM call.
         """
         self.workspace = workspace
         self._get_executor = get_executor
@@ -71,6 +86,7 @@ class StreamEngine:
         self._emit_call_error = emit_call_error_event
         self._emit_call_end = emit_call_end_event
         self._emit_call_retry = emit_call_retry_event
+        self._store_context_messages = store_context_messages
 
     async def run_stream(
         self,
@@ -153,6 +169,40 @@ class StreamEngine:
 
         context_result = prepared.context_result
         prompt_tokens = context_result.token_estimate if context_result else 0
+
+        # Phase 1 critical fix (CRITICAL FIX_SCHEMA): stream path was never
+        # persisting context snapshots, so the per-LLM context viewer in
+        # RoleInternalPanel stayed empty for every streamed call. Mirror the
+        # sync path (executor._store_context_messages at line 440) by hashing
+        # the prepared messages BEFORE call_start. The hash is written into
+        # prepared.ai_request.context so the existing _extract_context_snapshot_ref
+        # below resolves it for the event metadata.
+        #
+        # Performance hardening (HIGH #2): ``_store_context_messages`` is an
+        # async coroutine that runs the disk write in the default thread pool
+        # (asyncio.to_thread). Awaing it here keeps the event loop responsive
+        # while the on-disk file lands — the hash is still guaranteed durable
+        # by the time the call_start event emits.
+        if self._store_context_messages is not None:
+            snapshot_messages: list[Any] = list(getattr(prepared, "messages", []) or [])
+            if snapshot_messages:
+                try:
+                    context_store_hash = await self._store_context_messages(
+                        self.workspace,
+                        snapshot_messages,
+                        run_id,
+                        call_id,
+                    )
+                except (RuntimeError, ValueError, TypeError, OSError) as exc:
+                    logger.warning(
+                        "[StreamEngine] context_snapshot store failed (non-fatal): %s",
+                        exc,
+                    )
+                    context_store_hash = None
+                if context_store_hash:
+                    request_context = getattr(prepared.ai_request, "context", None)
+                    if isinstance(request_context, dict):
+                        request_context["context_snapshot_ref"] = context_store_hash
 
         self._emit_call_start(
             event_emitter=event_emitter,

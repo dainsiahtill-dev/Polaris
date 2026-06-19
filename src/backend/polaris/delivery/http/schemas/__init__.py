@@ -90,6 +90,11 @@ from polaris.delivery.http.schemas.common import (
     VisionAnalyzeResponse,
     VisionStatusResponse,
 )
+from polaris.delivery.http.schemas.context import (
+    ContextStoreStatsResponse,
+    SweepReportResponse,
+    SweepRequest,
+)
 
 __all__ = [
     "AgentsApplyPayload",
@@ -110,6 +115,7 @@ __all__ = [
     "CacheStatsResponse",
     "CodeRegionRequest",
     "CodeRegionResponse",
+    "ContextStoreStatsResponse",
     "ConversationDeleteResponse",
     "ConversationListResponse",
     "ConversationResponse",
@@ -173,6 +179,8 @@ __all__ = [
     "RuntimeResetTasksResponse",
     "RuntimeStorageLayoutResponse",
     "SchedulerStatusResponse",
+    "SweepReportResponse",
+    "SweepRequest",
     "VisionAnalyzeResponse",
     "VisionStatusResponse",
 ]

@@ -20,7 +20,26 @@ from polaris.kernelone.storage import resolve_runtime_path
 from .base import BaseRoleAdapter
 from .runtime_dialogue import invoke_role_runtime_first
 
-_CODE_EXTENSIONS = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".java", ".rs", ".json", ".yaml", ".yml"}
+_CODE_EXTENSIONS = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".html",
+    ".css",
+    ".c",
+    ".h",
+    ".cpp",
+    ".rs",
+    ".go",
+    ".java",
+    ".json",
+    ".sql",
+    ".sh",
+    ".yaml",
+    ".yml",
+}
 _IGNORE_ROOTS = {
     ".git",
     ".polaris",
@@ -43,6 +62,15 @@ _PLACEHOLDER_PATTERNS = (
     re.compile(r"\bplaceholder\b", re.IGNORECASE),
     re.compile(r"\bstub\b", re.IGNORECASE),
 )
+_COMMENT_MARKER_PLACEHOLDER_PATTERNS = {r"\bTODO\b", r"\bFIXME\b", r"\bTBD\b"}
+_COMMENT_MARKERS = ("//", "#", "/*", "*", "<!--")
+_FEATURE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("local_storage", re.compile(r"\blocalStorage\b")),
+    ("dom_event_listener", re.compile(r"\baddEventListener\s*\(")),
+    ("dom_selector", re.compile(r"\b(?:document\.)?(?:getElementById|querySelector|querySelectorAll)\s*\(")),
+    ("dom_creation", re.compile(r"\bdocument\.createElement\s*\(")),
+    ("json_persistence", re.compile(r"\bJSON\.(?:parse|stringify)\s*\(")),
+)
 _DOMAIN_STOPWORDS = {"project", "quality", "gate", "feature", "module", "system", "task", "tasks"}
 _DEFAULT_DIRECTOR_TASK_REWORK_MAX_RETRIES = 3
 _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING = "qa_llm_judgement_unavailable"
@@ -51,6 +79,16 @@ _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING = "qa_llm_judgement_unavailable"
 def _is_nonfatal_qa_llm_runtime_exception(error_text: str) -> bool:
     lowered = str(error_text or "").lower()
     return "cognitive_runtime_blocked" in lowered or "low probability" in lowered
+
+
+def _format_qa_evidence_block(review_result: dict[str, Any] | None) -> str:
+    evidence_lines: list[str] = []
+    if isinstance(review_result, dict):
+        for item in list(review_result.get("evidence") or [])[:16]:
+            token = str(item).strip()
+            if token:
+                evidence_lines.append(f"- {token}")
+    return "\n".join(evidence_lines) if evidence_lines else "- no deterministic evidence"
 
 
 class QAAdapter(BaseRoleAdapter):
@@ -88,6 +126,7 @@ class QAAdapter(BaseRoleAdapter):
             run_id = str(context.get("run_id") or "").strip() if isinstance(context, dict) else ""
             review_result = self._run_static_review(target, run_id=run_id)
             message = self._build_qa_message(review_type, target, review_result=review_result)
+            prompt_appendix = self._build_qa_prompt_appendix()
             response = await invoke_role_runtime_first(
                 workspace=self.workspace,
                 role=self.role_id,
@@ -105,6 +144,7 @@ class QAAdapter(BaseRoleAdapter):
                 },
                 validate_output=False,
                 max_retries=1,
+                prompt_appendix=prompt_appendix,
             )
             raw_content = str(response.get("response") or "") if isinstance(response, dict) else str(response or "")
             llm_review = self._parse_review_result(raw_content)
@@ -133,6 +173,7 @@ class QAAdapter(BaseRoleAdapter):
                     },
                     validate_output=False,
                     max_retries=1,
+                    prompt_appendix=self._build_qa_json_repair_prompt_appendix(),
                 )
                 repair_content = (
                     str(repair_response.get("response") or "")
@@ -400,6 +441,7 @@ class QAAdapter(BaseRoleAdapter):
         placeholder_hits: list[str] = []
         out_of_scope_placeholder_hits: list[str] = []
         unreadable_files: list[str] = []
+        feature_hits: dict[str, set[str]] = {name: set() for name, _pattern in _FEATURE_PATTERNS}
         domain_tokens = self._extract_domain_tokens(target)
         domain_hit = False
         scope_paths = (
@@ -436,6 +478,10 @@ class QAAdapter(BaseRoleAdapter):
                         out_of_scope_placeholder_hits.append(hit)
                     break
 
+            for feature_name, feature_pattern in _FEATURE_PATTERNS:
+                if feature_pattern.search(content):
+                    feature_hits[feature_name].add(rel_path)
+
             if domain_tokens and not domain_hit:
                 lowered = content.lower()
                 rel_lower = rel_path.lower()
@@ -465,6 +511,9 @@ class QAAdapter(BaseRoleAdapter):
         if unreadable_files:
             warnings.append("unreadable_code_files")
             evidence.extend([f"unreadable={item}" for item in unreadable_files[:8]])
+        for feature_name, paths in feature_hits.items():
+            if paths:
+                evidence.append(f"feature:{feature_name}={len(paths)}:{','.join(sorted(paths)[:4])}")
 
         runtime_signals = self._load_runtime_stage_signals(run_id=run_id)
         for signal in runtime_signals[:40]:
@@ -499,25 +548,30 @@ class QAAdapter(BaseRoleAdapter):
         review_result: dict[str, Any] | None = None,
     ) -> str:
         """Build optional LLM review prompt."""
-        evidence_lines: list[str] = []
-        if isinstance(review_result, dict):
-            for item in list(review_result.get("evidence") or [])[:16]:
-                token = str(item).strip()
-                if token:
-                    evidence_lines.append(f"- {token}")
-        evidence_block = "\n".join(evidence_lines) if evidence_lines else "- no deterministic evidence"
+        evidence_block = _format_qa_evidence_block(review_result)
         return "\n".join(
             [
-                "You are Polaris QA. Return exactly one JSON object and nothing else.",
-                "Do not inspect the workspace. Do not call tools. Do not narrate the QA process.",
-                "Judge semantic task completion quality; do not rely only on file count or line count.",
-                "Small but complete utility classes are acceptable if requirements are met.",
+                "Review the QA target using only the deterministic evidence already collected by Polaris.",
                 f"Review type: {review_type}",
                 f"Target: {target}",
                 "",
                 "Deterministic evidence collected from upstream stages:",
                 evidence_block,
                 "",
+            ]
+        )
+
+    @staticmethod
+    def _build_qa_prompt_appendix() -> str:
+        """Build trusted QA output-contract instructions for the system prompt."""
+        return "\n".join(
+            [
+                "Polaris QA output contract:",
+                "Return exactly one JSON object and nothing else.",
+                "Do not inspect the workspace. Do not call tools. Do not narrate the QA process.",
+                "Judge semantic task completion quality; do not rely only on file count or line count.",
+                "Small but complete utility classes are acceptable if requirements are met.",
+                "Use this schema:",
                 "{",
                 '  "verdict": "PASS|FAIL",',
                 '  "score": 0,',
@@ -539,19 +593,11 @@ class QAAdapter(BaseRoleAdapter):
         previous_output: str = "",
     ) -> str:
         """Build a strict JSON-only repair prompt for non-structured QA output."""
-        evidence_lines: list[str] = []
-        if isinstance(review_result, dict):
-            for item in list(review_result.get("evidence") or [])[:16]:
-                token = str(item).strip()
-                if token:
-                    evidence_lines.append(f"- {token}")
-        evidence_block = "\n".join(evidence_lines) if evidence_lines else "- no deterministic evidence"
+        evidence_block = _format_qa_evidence_block(review_result)
         previous_excerpt = str(previous_output or "").strip()[:1200]
         return "\n".join(
             [
-                "Return exactly one JSON object. No markdown. No prose. No process narration.",
-                "Do not inspect the workspace. Do not call tools. Convert the evidence below into a verdict.",
-                "Use only the schema below and include a concrete PASS or FAIL verdict.",
+                "Repair the previous QA response into a structured verdict using the deterministic evidence below.",
                 f"Review type: {review_type}",
                 f"Target: {target}",
                 "",
@@ -560,7 +606,18 @@ class QAAdapter(BaseRoleAdapter):
                 "",
                 "Previous non-JSON output to convert into a verdict-bearing QA judgement:",
                 previous_excerpt or "(empty)",
-                "",
+            ]
+        )
+
+    @staticmethod
+    def _build_qa_json_repair_prompt_appendix() -> str:
+        """Build trusted strict JSON repair instructions for the system prompt."""
+        return "\n".join(
+            [
+                "Polaris QA JSON repair output contract:",
+                "Return exactly one JSON object. No markdown. No prose. No process narration.",
+                "Do not inspect the workspace. Do not call tools.",
+                "Use only the schema below and include a concrete PASS or FAIL verdict.",
                 "{",
                 '  "verdict": "PASS|FAIL",',
                 '  "score": 0,',
@@ -1212,8 +1269,13 @@ def _has_unfinished_placeholder_match(content: str, pattern: re.Pattern[str]) ->
     """Return whether placeholder-like text indicates unfinished implementation.
 
     A JSX/HTML ``placeholder=`` attribute is normal product UI copy, not an
-    unfinished-code marker. Other markers such as TODO/FIXME/stub remain strict.
+    unfinished-code marker. TODO/FIXME/TBD only count in comment context so
+    product identifiers such as ``todo-list`` are not mistaken for unfinished
+    implementation markers.
     """
+    if pattern.pattern in _COMMENT_MARKER_PLACEHOLDER_PATTERNS:
+        return _has_comment_marker_match(content, pattern)
+
     if pattern.pattern != r"\bplaceholder\b":
         return bool(pattern.search(content))
 
@@ -1226,6 +1288,21 @@ def _has_unfinished_placeholder_match(content: str, pattern: re.Pattern[str]) ->
         if re.search(r"\bplaceholder\s*=", line, flags=re.IGNORECASE):
             continue
         return True
+    return False
+
+
+def _has_comment_marker_match(content: str, pattern: re.Pattern[str]) -> bool:
+    for line in content.splitlines():
+        for match in pattern.finditer(line):
+            prefix = line[: match.start()]
+            stripped_line = line.lstrip()
+            stripped_prefix = prefix.lstrip()
+            if stripped_line.startswith(_COMMENT_MARKERS):
+                return True
+            if any(marker in stripped_prefix for marker in ("//", "/*", "<!--")):
+                return True
+            if "#" in stripped_prefix and not re.search(r"['\"]\\s*#[0-9A-Fa-f]{3,8}", line):
+                return True
     return False
 
 

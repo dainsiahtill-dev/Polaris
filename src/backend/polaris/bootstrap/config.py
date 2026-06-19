@@ -179,6 +179,78 @@ class JSONLConfig(BaseModel):
         )
 
 
+class ContextStoreRetentionConfig(BaseModel):
+    """TTL + capacity cleanup policy for ``runtime/contexts/``.
+
+    The context viewer (see ``AIExecutor._store_context_messages``) writes a
+    new content-addressed JSON file on every LLM call. These files are
+    immutable; once nobody references a hash, the only cost is disk. This
+    config describes the deterministic, oldest-first cleanup policy that
+    keeps the directory bounded.
+
+    Attributes:
+        ttl_seconds: Wall-clock TTL in seconds. Files older than this are
+            dropped first.
+        max_total_bytes: Hard cap on total bytes in ``runtime/contexts/``.
+            Applied after the TTL pass.
+        max_files: Hard cap on the number of files. Applied after TTL.
+        sweep_min_interval_seconds: Minimum wall-clock interval between
+            full sweeps. The cheap on-read gate consults this to throttle
+            expensive scans on hot paths.
+        enabled: Master switch. When ``False``, the on-read gate is a
+            no-op and the admin endpoints can still be used to inspect
+            state without triggering any cleanup.
+    """
+
+    ttl_seconds: int = Field(
+        default=604800,
+        description="TTL in seconds (KERNELONE_CONTEXT_STORE_TTL_SECONDS)",
+    )
+    max_total_bytes: int = Field(
+        default=524288000,
+        description="Total bytes cap (KERNELONE_CONTEXT_STORE_MAX_TOTAL_BYTES)",
+    )
+    max_files: int = Field(
+        default=20000,
+        description="Max files cap (KERNELONE_CONTEXT_STORE_MAX_FILES)",
+    )
+    sweep_min_interval_seconds: int = Field(
+        default=300,
+        description="Min seconds between full sweeps (KERNELONE_CONTEXT_STORE_SWEEP_MIN_INTERVAL_SECONDS)",
+    )
+    enabled: bool = Field(
+        default=True,
+        description="Master switch (KERNELONE_CONTEXT_STORE_RETENTION_ENABLED)",
+    )
+
+    @field_validator("ttl_seconds", "max_total_bytes", "max_files", "sweep_min_interval_seconds", mode="before")
+    @classmethod
+    def validate_positive_int(cls, value: Any) -> int:
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return 1
+
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def validate_enabled(cls, value: Any) -> bool:
+        # Disable-as-blocklist — same convention as JSONLConfig and other
+        # module-level switches in the codebase: the value is enabled when
+        # the env var is unset, and only the explicit blocklist {0, false,
+        # no, off} turns it off. Mirrors hybrid_memory / kernelone style.
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return True
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return normalized not in ("0", "false", "no", "off", "disabled")
+        try:
+            return bool(int(value))
+        except (TypeError, ValueError):
+            return bool(value)
+
+
 class RuntimeConfig(BaseModel):
     """Runtime paths and storage behavior."""
 
@@ -186,6 +258,10 @@ class RuntimeConfig(BaseModel):
     cache_root: Path | None = Field(default=None, description="Cache directory")
     use_ramdisk: bool = Field(default=True, description="Use ramdisk if available")
     ramdisk_root: Path | None = Field(default=None, description="Configured ramdisk path")
+    context_store_retention: ContextStoreRetentionConfig = Field(
+        default_factory=ContextStoreRetentionConfig,
+        description="TTL + capacity cleanup for runtime/contexts/",
+    )
 
     @field_validator("root", "cache_root", "ramdisk_root")
     @classmethod
@@ -1099,6 +1175,21 @@ class Settings(BaseModel):
         state_to_ramdisk = os.environ.get("KERNELONE_STATE_TO_RAMDISK")
         if state_to_ramdisk is not None:
             runtime_config["use_ramdisk"] = _parse_bool(state_to_ramdisk)
+        retention_config: dict[str, Any] = {}
+        for key, env_key in (
+            ("ttl_seconds", "KERNELONE_CONTEXT_STORE_TTL_SECONDS"),
+            ("max_total_bytes", "KERNELONE_CONTEXT_STORE_MAX_TOTAL_BYTES"),
+            ("max_files", "KERNELONE_CONTEXT_STORE_MAX_FILES"),
+            ("sweep_min_interval_seconds", "KERNELONE_CONTEXT_STORE_SWEEP_MIN_INTERVAL_SECONDS"),
+        ):
+            raw = os.environ.get(env_key)
+            if raw is not None:
+                retention_config[key] = _parse_value(raw)
+        retention_enabled = os.environ.get("KERNELONE_CONTEXT_STORE_RETENTION_ENABLED")
+        if retention_enabled is not None:
+            retention_config["enabled"] = _parse_bool(retention_enabled)
+        if retention_config:
+            runtime_config["context_store_retention"] = ContextStoreRetentionConfig(**retention_config)
         if runtime_config:
             kwargs["runtime"] = RuntimeConfig(**runtime_config)
 

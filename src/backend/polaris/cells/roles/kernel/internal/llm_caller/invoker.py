@@ -151,6 +151,24 @@ class LLMInvoker:
             emit_call_error_event=lambda **kwargs: self._emit_call_error_event(**kwargs),
             emit_call_end_event=lambda **kwargs: self._emit_call_end_event(**kwargs),
             emit_call_retry_event=lambda **kwargs: self._emit_call_retry_event(**kwargs),
+            # Phase 1 critical fix: stream the prepared messages through the
+            # same context-snapshot store the sync path uses (executor:440).
+            # Without this, every streamed invocation emits a call_start with
+            # an empty context_snapshot_ref and the per-LLM context viewer
+            # never shows data for Director multi-worker streams.
+            #
+            # Performance hardening (HIGH #2): must be an async coroutine so
+            # ``StreamEngine`` can await it and the underlying disk write runs
+            # in the thread pool via ``asyncio.to_thread`` instead of blocking
+            # the event loop on every streamed LLM call.
+            store_context_messages=(
+                lambda ws, msgs, trace_id, call_id_value: AIExecutor._store_context_messages(
+                    workspace=ws,
+                    messages=msgs,
+                    trace_id=trace_id,
+                    call_id=call_id_value,
+                )
+            ),
         )
 
     def set_executor(self, executor: Any) -> None:

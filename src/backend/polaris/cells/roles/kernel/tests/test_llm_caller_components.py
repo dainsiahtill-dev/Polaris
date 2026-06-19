@@ -817,6 +817,191 @@ class TestStreamEngineRunStream:
         # Should have at least context_metadata event
         assert any(e.get("type") == "context_metadata" for e in events)
 
+    async def test_stream_call_start_emits_context_snapshot_ref(self) -> None:
+        """Phase 1 critical fix: StreamEngine must call store_context_messages
+        BEFORE the call_start event so the event metadata carries a non-empty
+        context_snapshot_ref (Director multi-worker streams were producing
+        empty refs and the per-LLM context viewer stayed blank).
+        """
+        emit_start = Mock()
+        emit_end = Mock()
+        captured_hash = "deadbeef" + "cafef00d" * 2  # 24-char hash sentinel
+
+        # Performance hardening (HIGH #2): store_context_messages is awaited
+        # so the disk write runs in a thread — the stub MUST be a coroutine
+        # that returns the captured hash, mirroring the real
+        # ``AIExecutor._store_context_messages`` signature.
+        fake_store = AsyncMock(return_value=captured_hash)
+
+        engine = StreamEngine(
+            workspace="/ws",
+            get_executor=Mock(),
+            allow_native_tool_text_fallback_fn=Mock(return_value=False),
+            emit_call_start_event=emit_start,
+            emit_call_error_event=Mock(),
+            emit_call_end_event=emit_end,
+            emit_call_retry_event=Mock(),
+            store_context_messages=fake_store,
+        )
+
+        context = Mock()
+        context.context_override = {}
+        context.stream_cancelled = False
+        context.temperature = 0.2
+        context.max_tokens = 256
+
+        context_result = Mock()
+        context_result.token_estimate = 12
+        context_result.compression_strategy = "none"
+        context_result.compression_applied = False
+
+        prepared_messages = [
+            {"role": "system", "content": "you are a director"},
+            {"role": "user", "content": "build a thing"},
+        ]
+        prepared = Mock()
+        prepared.messages = prepared_messages
+        # Use a real dict-backed context so we can prove the hash is written
+        # into prepared.ai_request.context AND read back via
+        # _extract_context_snapshot_ref.
+        prepared.ai_request = Mock()
+        prepared.ai_request.context = {"mode": "chat"}
+        prepared.native_tool_mode = "disabled"
+        prepared.response_format_mode = "none"
+        prepared.context_result = context_result
+        prepared.context_os_audit = {}
+
+        mock_executor = Mock()
+
+        async def _empty_stream(_request):
+            return
+            yield  # pragma: no cover -- intentional empty generator
+
+        mock_executor.invoke_stream = _empty_stream
+        engine._get_executor = lambda: mock_executor
+
+        events: list[dict[str, Any]] = []
+        async for event in engine.run_stream(
+            profile=Mock(role_id="director"),
+            prepared=prepared,
+            context=context,
+            start_time=0.0,
+            role_id="director",
+            run_id="run_stream_42",
+            task_id="task_42",
+            attempt=0,
+            model="claude",
+            call_id="call_42",
+            event_emitter=None,
+            turn_round=0,
+        ):
+            events.append(event)
+
+        # 1. The fake store was invoked with the prepared messages and the
+        # same run_id/call_id we passed into run_stream.
+        assert any(
+            list(call_args.args[1]) == prepared_messages
+            and call_args.args[2] == "run_stream_42"
+            and call_args.args[3] == "call_42"
+            for call_args in fake_store.call_args_list
+        ), fake_store.call_args_list
+
+        # 2. The hash was written into prepared.ai_request.context so the
+        # sync-style extractor can read it back.
+        assert prepared.ai_request.context["context_snapshot_ref"] == captured_hash
+
+        # 3. The call_start event metadata carries a non-empty
+        # context_snapshot_ref. THIS is what the per-LLM context viewer reads.
+        start_metadata = emit_start.call_args.kwargs["metadata"]
+        assert start_metadata["context_snapshot_ref"] == captured_hash
+
+        # 4. The call_end event metadata also carries the same hash so
+        # downstream consumers can correlate.
+        end_metadata = emit_end.call_args.kwargs["metadata"]
+        assert end_metadata["context_snapshot_ref"] == captured_hash
+
+    async def test_stream_call_start_missing_store_does_not_block(self) -> None:
+        """Failing-closed guarantee: if store_context_messages is None (legacy
+        wiring) or raises, the stream must still emit a call_start with an
+        empty context_snapshot_ref instead of crashing the LLM call.
+        """
+        emit_start = Mock()
+
+        # Performance hardening (HIGH #2): the stream engine now awaits
+        # ``store_context_messages`` so the disk write runs in a worker
+        # thread. The store stub must be a coroutine that raises so the
+        # except clause in ``run_stream`` sees a real exception and falls
+        # through to the empty-ref path.
+        async def _raising_store(
+            workspace: str,
+            messages: list[Any],
+            trace_id: str,
+            call_id_value: str,
+        ) -> str:
+            raise RuntimeError("disk_full_simulated")
+
+        engine = StreamEngine(
+            workspace="/ws",
+            get_executor=Mock(),
+            allow_native_tool_text_fallback_fn=Mock(return_value=False),
+            emit_call_start_event=emit_start,
+            emit_call_error_event=Mock(),
+            emit_call_end_event=Mock(),
+            emit_call_retry_event=Mock(),
+            store_context_messages=_raising_store,
+        )
+
+        context = Mock()
+        context.context_override = {}
+        context.stream_cancelled = False
+        context.temperature = 0.2
+        context.max_tokens = 256
+
+        context_result = Mock()
+        context_result.token_estimate = 4
+        context_result.compression_strategy = "none"
+        context_result.compression_applied = False
+
+        prepared = Mock()
+        prepared.messages = [{"role": "user", "content": "hi"}]
+        prepared.ai_request = Mock()
+        prepared.ai_request.context = {"mode": "chat"}
+        prepared.native_tool_mode = "disabled"
+        prepared.response_format_mode = "none"
+        prepared.context_result = context_result
+        prepared.context_os_audit = {}
+
+        async def _empty_stream(_request):
+            return
+            yield  # pragma: no cover -- intentional empty generator
+
+        mock_executor = Mock()
+        mock_executor.invoke_stream = _empty_stream
+        engine._get_executor = lambda: mock_executor
+
+        events: list[dict[str, Any]] = []
+        async for event in engine.run_stream(
+            profile=Mock(role_id="director"),
+            prepared=prepared,
+            context=context,
+            start_time=0.0,
+            role_id="director",
+            run_id="run_x",
+            task_id="task_x",
+            attempt=0,
+            model="claude",
+            call_id="call_x",
+            event_emitter=None,
+            turn_round=0,
+        ):
+            events.append(event)
+
+        # Stream completed without raising.
+        assert any(e.get("type") == "context_metadata" for e in events)
+        # No hash was injected because the store failed.
+        start_metadata = emit_start.call_args.kwargs["metadata"]
+        assert "context_snapshot_ref" not in start_metadata or not start_metadata["context_snapshot_ref"]
+
     async def test_context_os_audit_is_emitted_with_stream_metadata(self) -> None:
         """ContextOS audit should travel with stream lifecycle metadata."""
         emit_start = Mock()

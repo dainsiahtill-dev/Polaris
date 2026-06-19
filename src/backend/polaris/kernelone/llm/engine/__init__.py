@@ -13,6 +13,15 @@ from __future__ import annotations
 
 from polaris.kernelone.shared import truncate_text
 
+# Context store retention
+from .context_store_retention import (
+    ContextStoreRetention,
+    ContextStoreRetentionConfig,
+    SweepReport,
+    clear_retention_cache,
+    get_retention,
+)
+
 # Contracts
 from .contracts import (
     AIRequest,
@@ -84,15 +93,15 @@ from .telemetry import (
 from .token_estimator import TokenEstimator, estimate_tokens
 
 __all__ = [
-    # Executor
     "AIExecutor",
-    # Contracts
     "AIRequest",
     "AIResponse",
     "AIStreamEvent",
     "AIStreamGenerator",
     "CompressionResult",
     "CompressionRouter",
+    "ContextStoreRetention",
+    "ContextStoreRetentionConfig",
     "ErrorCategory",
     "EvaluationCase",
     "EvaluationReport",
@@ -100,22 +109,17 @@ __all__ = [
     "EvaluationResult",
     "EvaluationSuiteResult",
     "KernelRepairCategory",
-    # Telemetry
     "MetricsAggregator",
-    # Model Catalog and Token Budget
     "ModelCatalog",
     "ModelSpec",
     "NoRetryCategory",
-    # Error Mapping
     "PlatformRetryCategory",
-    # Resilience
     "ResilienceManager",
-    # Normalizer
     "ResponseNormalizer",
     "RetryConfig",
     "StreamEventType",
-    # Stream Executor
     "StreamExecutor",
+    "SweepReport",
     "TaskType",
     "TelemetryCollector",
     "TelemetryEvent",
@@ -126,10 +130,12 @@ __all__ = [
     "TruncationConfig",
     "Usage",
     "WorkspaceExecutorManager",
+    "clear_retention_cache",
     "create_telemetry_collector",
     "estimate_tokens",
     "get_executor",
     "get_executor_async",
+    "get_retention",
     "get_retry_hint",
     "is_kernel_repairable",
     "is_platform_retryable",

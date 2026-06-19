@@ -434,10 +434,12 @@ class AIExecutor:
             clamp_prompt_text=clamp_prompt_text,
         )
 
-        # ContextOS full-context viewer: store post-compression messages by hash
+        # ContextOS full-context viewer: store post-compression messages by hash.
+        # Use the async variant so the disk write runs in the thread pool and
+        # does not block the event loop on every LLM call.
         context_store_hash: str | None = None
         if effective_chat_messages:
-            context_store_hash = self._store_context_messages(
+            context_store_hash = await self._store_context_messages(
                 workspace=self.workspace,
                 messages=effective_chat_messages,
                 trace_id=trace_id,
@@ -698,7 +700,7 @@ class AIExecutor:
         return text or None
 
     @staticmethod
-    def _store_context_messages(
+    def _store_context_messages_sync(
         workspace: str | None,
         messages: list[Any],
         trace_id: str,
@@ -706,10 +708,26 @@ class AIExecutor:
     ) -> str:
         """Store compressed chat messages to runtime/contexts/ by SHA-256 hash.
 
+        Synchronous disk IO. Prefer the async variant ``_store_context_messages``
+        from any code path that lives in the event loop; this synchronous entry
+        point is kept for tests, the executor's own thread-pool bridge, and any
+        legacy non-asyncio caller.
+
         Returns the 24-char truncated hash used as the reference key.
+
+        The hash key is validated through
+        :func:`polaris.kernelone.llm.engine.internal.context_hash.validate_context_hash`
+        (the same single source of truth the consumer uses), so the producer
+        can never emit a key the consumer will refuse to read.  The on-disk
+        path is also routed through ``StorageLayout.resolve_artifact_path``
+        so any future loosening of ``get_path`` cannot bypass the
+        ``normalize_logical_rel_path`` + ``_join_under`` guards.
         """
         from datetime import datetime, timezone
 
+        from polaris.kernelone.llm.engine.internal.context_hash import (
+            validate_context_hash,
+        )
         from polaris.kernelone.storage import StorageLayout
         from polaris.kernelone.storage.io_paths import build_cache_root
 
@@ -722,23 +740,69 @@ class AIExecutor:
         }
         content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         full_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        hash_key = full_hash[:24]
+        # Defence in depth: fullmatch the producer-side hash against the
+        # consumer-side validator. If this ever fails we know SHA-256 output
+        # has drifted (it should never happen) and we fail loud rather than
+        # silently writing a key no reader can look up.
+        hash_key = validate_context_hash(full_hash[:24])
 
         ws = workspace or "."
         cache_root = build_cache_root("", ws)
         layout = StorageLayout(workspace=ws, runtime_base=cache_root)
         # Shard to avoid directory explosion: runtime/contexts/ab/abcdef...
         shard = hash_key[:2]
-        dir_path = layout.get_path("runtime", f"contexts/{shard}")
-        os.makedirs(dir_path, exist_ok=True)
-        file_path = os.path.join(dir_path, hash_key)
+        dir_rel = f"runtime/contexts/{shard}"
+        file_rel = f"{dir_rel}/{hash_key}"
+        # resolve_artifact_path rejects path traversal / unsupported prefixes
+        # via normalize_logical_rel_path + _join_under.
+        file_path = layout.resolve_artifact_path(file_rel)
+        dir_path = layout.resolve_artifact_path(dir_rel)
+        os.makedirs(str(dir_path), exist_ok=True)
 
-        # Atomic write-then-rename to avoid partial reads
-        tmp_path = file_path + ".tmp"
+        # Atomic write-then-rename to avoid partial reads. The .tmp sibling
+        # is the standard pattern; the round-trip test asserts no .tmp is
+        # left behind after a successful write.
+        tmp_path = str(file_path) + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(content)
-        os.replace(tmp_path, file_path)
+        os.replace(tmp_path, str(file_path))
+        # Opportunistic retention sweep — cheap gate first, full sweep only
+        # when the gate says it's needed and the throttle has elapsed.
+        # This call MUST never raise to the caller; on_read_gate() is fail-closed.
+        try:
+            from polaris.kernelone.llm.engine.context_store_retention import (
+                get_retention as _get_retention,
+            )
+
+            _get_retention(ws).on_read_gate()
+        except (OSError, RuntimeError, ValueError, TypeError) as _retention_exc:  # pragma: no cover - defensive
+            import logging as _logging
+
+            _logging.getLogger(__name__).debug("context_retention: on_read_gate failed: %s", _retention_exc)
         return hash_key
+
+    @staticmethod
+    async def _store_context_messages(
+        workspace: str | None,
+        messages: list[Any],
+        trace_id: str,
+        call_id: str | None = None,
+    ) -> str:
+        """Async-safe variant of ``_store_context_messages_sync``.
+
+        Runs the synchronous disk write in the default thread pool via
+        ``asyncio.to_thread`` so the event loop is not blocked on every LLM
+        call. Returns the 24-char truncated hash once the on-disk file is
+        fully written (atomic rename) — callers can still depend on the
+        hash being durable by the time the await resolves.
+        """
+        return await asyncio.to_thread(
+            AIExecutor._store_context_messages_sync,
+            workspace,
+            messages,
+            trace_id,
+            call_id,
+        )
 
     @staticmethod
     def _traceability_metadata(value: Any) -> dict[str, Any]:

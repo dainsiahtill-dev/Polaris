@@ -8,6 +8,22 @@ import urllib.request
 from typing import Any, Callable
 
 DEFAULT_TIMEOUT_S = 10.0
+DEFAULT_MAX_RETRIES = 2
+MAX_RETRY_AFTER_S = 5.0
+
+
+def _retry_after_seconds(exc: urllib.error.HTTPError) -> float | None:
+    if exc.code != 429:
+        return None
+    raw = None
+    headers = getattr(exc, "headers", None)
+    if headers is not None:
+        raw = headers.get("Retry-After")
+    try:
+        delay = float(raw) if raw is not None else 1.0
+    except (TypeError, ValueError):
+        delay = 1.0
+    return min(max(delay, 0.0), MAX_RETRY_AFTER_S)
 
 
 def _http_post_json(
@@ -16,17 +32,35 @@ def _http_post_json(
     *,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     token: str = "",
+    max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any] | None:
-    try:
-        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-        headers = {"Content-Type": "application/json", "Accept": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        req = urllib.request.Request(url, data=data, method="POST", headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            raw = resp.read().decode("utf-8") or "{}"
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, ValueError) as exc:
-        print(f"[factory-bench] backend POST failed: {url}: {exc}", file=sys.stderr, flush=True)
+    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    attempts = max(1, max_retries + 1)
+    for attempt in range(attempts):
+        try:
+            req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                raw = resp.read().decode("utf-8") or "{}"
+            break
+        except urllib.error.HTTPError as exc:
+            delay = _retry_after_seconds(exc)
+            if delay is not None and attempt < attempts - 1:
+                print(
+                    f"[factory-bench] backend POST rate-limited: {url}; retrying in {delay:.1f}s",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(delay)
+                continue
+            print(f"[factory-bench] backend POST failed: {url}: {exc}", file=sys.stderr, flush=True)
+            return None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            print(f"[factory-bench] backend POST failed: {url}: {exc}", file=sys.stderr, flush=True)
+            return None
+    else:
         return None
     try:
         return json.loads(raw)
@@ -39,16 +73,34 @@ def _http_get_json(
     *,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     token: str = "",
+    max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any] | None:
-    try:
-        headers = {"Accept": "application/json"}
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            raw = resp.read().decode("utf-8") or "{}"
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, ValueError) as exc:
-        print(f"[factory-bench] backend GET failed: {url}: {exc}", file=sys.stderr, flush=True)
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    attempts = max(1, max_retries + 1)
+    for attempt in range(attempts):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                raw = resp.read().decode("utf-8") or "{}"
+            break
+        except urllib.error.HTTPError as exc:
+            delay = _retry_after_seconds(exc)
+            if delay is not None and attempt < attempts - 1:
+                print(
+                    f"[factory-bench] backend GET rate-limited: {url}; retrying in {delay:.1f}s",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(delay)
+                continue
+            print(f"[factory-bench] backend GET failed: {url}: {exc}", file=sys.stderr, flush=True)
+            return None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            print(f"[factory-bench] backend GET failed: {url}: {exc}", file=sys.stderr, flush=True)
+            return None
+    else:
         return None
     try:
         return json.loads(raw)

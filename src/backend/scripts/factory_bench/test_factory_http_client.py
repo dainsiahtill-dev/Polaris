@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+from email.message import Message
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend/scripts/factory_bench")
@@ -35,6 +36,15 @@ class FakeHTTPResponse:
         pass
 
 
+def _http_error(url: str, code: int, msg: str, retry_after: str | None = None):
+    from urllib.error import HTTPError
+
+    headers = Message()
+    if retry_after is not None:
+        headers["Retry-After"] = retry_after
+    return HTTPError(url, code, msg, headers, None)
+
+
 class TestHTTPPostJson(unittest.TestCase):
     def test_post_success(self) -> None:
         payload = {"ok": True}
@@ -58,21 +68,31 @@ class TestHTTPPostJson(unittest.TestCase):
         self.assertEqual(req.get_header("Authorization"), "Bearer secret123")
 
     def test_post_401(self) -> None:
-        from urllib.error import HTTPError
-
         payload = {"ok": True}
         with patch(
             "urllib.request.urlopen",
-            side_effect=HTTPError(
-                "http://localhost:49977/v2/factory/runs",
-                401,
-                "Unauthorized",
-                None,  # type: ignore[arg-type]
-                None,
-            ),
+            side_effect=_http_error("http://localhost:49977/v2/factory/runs", 401, "Unauthorized"),
         ):
             result = _http_post_json("http://localhost:49977/v2/factory/runs", payload, token="bad")
         self.assertIsNone(result)
+
+    def test_post_retries_429_retry_after(self) -> None:
+        payload = {"ok": True}
+        fake_resp = FakeHTTPResponse(json.dumps({"result": "created"}).encode("utf-8"))
+        with (
+            patch(
+                "urllib.request.urlopen",
+                side_effect=[
+                    _http_error("http://localhost:49977/v2/factory/runs", 429, "Too Many Requests", "0"),
+                    fake_resp,
+                ],
+            ) as mock_urlopen,
+            patch("time.sleep") as sleep_mock,
+        ):
+            result = _http_post_json("http://localhost:49977/v2/factory/runs", payload, max_retries=1)
+        self.assertEqual(result, {"result": "created"})
+        self.assertEqual(mock_urlopen.call_count, 2)
+        sleep_mock.assert_called_once_with(0.0)
 
     def test_post_timeout(self) -> None:
         from urllib.error import URLError
@@ -125,20 +145,29 @@ class TestHTTPGetJson(unittest.TestCase):
         self.assertEqual(req.get_header("Authorization"), "Bearer secret123")
 
     def test_get_401(self) -> None:
-        from urllib.error import HTTPError
-
         with patch(
             "urllib.request.urlopen",
-            side_effect=HTTPError(
-                "http://localhost:49977/v2/factory/runs/123",
-                401,
-                "Unauthorized",
-                None,  # type: ignore[arg-type]
-                None,
-            ),
+            side_effect=_http_error("http://localhost:49977/v2/factory/runs/123", 401, "Unauthorized"),
         ):
             result = _http_get_json("http://localhost:49977/v2/factory/runs/123", token="bad")
         self.assertIsNone(result)
+
+    def test_get_retries_429_retry_after(self) -> None:
+        fake_resp = FakeHTTPResponse(json.dumps({"status": "running"}).encode("utf-8"))
+        with (
+            patch(
+                "urllib.request.urlopen",
+                side_effect=[
+                    _http_error("http://localhost:49977/v2/factory/runs/123", 429, "Too Many Requests", "0"),
+                    fake_resp,
+                ],
+            ) as mock_urlopen,
+            patch("time.sleep") as sleep_mock,
+        ):
+            result = _http_get_json("http://localhost:49977/v2/factory/runs/123", max_retries=1)
+        self.assertEqual(result, {"status": "running"})
+        self.assertEqual(mock_urlopen.call_count, 2)
+        sleep_mock.assert_called_once_with(0.0)
 
     def test_get_timeout(self) -> None:
         from urllib.error import URLError

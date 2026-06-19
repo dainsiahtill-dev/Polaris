@@ -20,6 +20,10 @@ _PUBLIC_PROBES = frozenset({"/health", "/ready", "/live"})
 _INFRASTRUCTURE_PATHS = frozenset({"/metrics", "/favicon.ico"})
 _LOW_SIGNAL_PATHS = frozenset({"/health", "/metrics", "/favicon.ico"})
 _LOW_SIGNAL_PREFIXES = tuple(f"{path}/" for path in _LOW_SIGNAL_PATHS)
+_LOOPBACK_RATE_LIMIT_EXEMPT_PREFIXES = (
+    "/v2/factory/bench",
+    "/v2/factory/runs",
+)
 _AUTH_PROBES = frozenset(
     {
         "/v2/health",
@@ -89,6 +93,14 @@ def is_always_rate_limit_exempt(path: str) -> bool:
     """Return whether a path should never consume the normal request bucket."""
     normalized = normalize_path(path)
     return normalized in _LOW_SIGNAL_PATHS or normalized.startswith(_LOW_SIGNAL_PREFIXES)
+
+
+def is_loopback_rate_limit_exempt(path: str) -> bool:
+    """Return whether a loopback-only control-plane path skips rate limiting."""
+    normalized = normalize_path(path)
+    return any(
+        normalized == prefix or normalized.startswith(f"{prefix}/") for prefix in _LOOPBACK_RATE_LIMIT_EXEMPT_PREFIXES
+    )
 
 
 def is_bootstrap_rate_limit_sensitive(path: str) -> bool:
