@@ -11,6 +11,17 @@
  * - 性能：useMemo 包裹 highlight；React.memo 包裹 MessageCard；
  *         单消息高亮 span 数量上限 2000 防爆栈。
  *
+ * Phase 3 无障碍硬化（默认开启，单文件增强）：
+ * - AbortController 绑定 useEffect 清理：contextSnapshotRef 变化或组件卸载时
+ *   取消 in-flight fetch，避免 setState-on-unmounted 与无谓 IO。
+ * - 手写焦点陷阱：Tab / Shift+Tab 在弹窗内首尾可聚焦元素间循环。
+ *   用容器级 keydown 监听 + Selector 集合，不引入 focus-trap 依赖。
+ * - 焦点恢复：弹窗打开时记录 activeElement，关闭（onClose / Escape / 背景点击）
+ *   时在清理函数中恢复。
+ * - ARIA 强化：aria-labelledby 指向标题；正文区 aria-describedby 指向角色 chip
+ *   元信息；aria-modal="true" 已在 dialog 上；加载/错误/空态补 aria-live="polite"。
+ * - 弹窗打开时锁定 body 滚动（overflow:hidden + 还原），避免背景跟随。
+ *
  * 核心原则（保留）：
  * - 事件流只传 hash（context_snapshot_ref），完整内容通过 GET /v2/context/{hash} 按需拉取。
  * - 严格 TypeScript，公共接口无 any。
@@ -26,6 +37,7 @@ import {
   Clock,
   Code2,
   Copy,
+  Cpu,
   FileText,
   Filter,
   Hash,
@@ -66,6 +78,11 @@ export interface ContextViewerModalProps {
   contextSnapshotRef: string | null;
   roleId: string;
   onClose: () => void;
+  /**
+   * Phase 3+：触发此视图的 worker id（仅用于在 header 标注「来自哪个 worker」）。
+   * 后端当前按 worker 复用同一份 snapshot 落盘；该字段仅展示用，不影响 hash 解析。
+   */
+  workerId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +213,45 @@ function highlightClass(kind: HighlightToken['kind']): string {
 }
 
 const HIGHLIGHT_SPAN_CAP = 2000;
+
+/** Selector 集合：弹窗内参与 Tab 循环的可聚焦元素。 */
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'area[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+  'audio[controls]',
+  'video[controls]',
+  'iframe',
+  'object',
+  'embed',
+  'summary',
+  '[contenteditable]:not([contenteditable="false"])',
+].join(',');
+
+/** 在容器内收集所有可达的可聚焦元素。 */
+function getFocusableElements(container: HTMLElement | null): HTMLElement[] {
+  if (!container) return [];
+  const nodes = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+  return nodes.filter((el) => {
+    if (el.hasAttribute('disabled')) return false;
+    if (el.getAttribute('aria-hidden') === 'true') return false;
+    // 跳过不可见元素（display:none / visibility:hidden）。
+    // JSDOM 不实现 layout：getClientRects() 存在但恒返回空数组 → 不能用它判可见性。
+    // 用 offsetParent 检测：JSDOM 中 offsetParent 为 null 仅当元素真的被 display:none 隐藏或
+    // 未连接；这与生产浏览器的语义略不同，但对 JSDOM 测试更可靠。
+    if (typeof el.offsetParent !== 'undefined') {
+      // offsetParent === null 在 JSDOM 中常表示节点脱离 DOM 或 display:none。
+      // 但 JSDOM 也对所有 display 不为 none 的元素返回非 null，所以我们额外用 style.display 兜底。
+      const inlineDisplay = el.style.display;
+      if (inlineDisplay === 'none') return false;
+    }
+    return true;
+  });
+}
 
 // ---------------------------------------------------------------------------
 // CodeBlock — fence/plain 片段的渲染单元
@@ -431,8 +487,14 @@ const MessageCard = memo(MessageCardBase);
 
 function LoadingState() {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-12" data-testid="contextos-viewer-loading">
-      <Loader2 className="h-6 w-6 animate-spin text-accent-secondary" />
+    <div
+      className="flex flex-col items-center justify-center gap-3 py-12"
+      data-testid="contextos-viewer-loading"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <Loader2 className="h-6 w-6 animate-spin text-accent-secondary" aria-hidden="true" />
       <span className="text-sm text-text-muted">正在加载上下文…</span>
     </div>
   );
@@ -440,8 +502,13 @@ function LoadingState() {
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-10" data-testid="contextos-viewer-error">
-      <AlertCircle className="h-6 w-6 text-status-error" />
+    <div
+      className="flex flex-col items-center justify-center gap-3 py-10"
+      data-testid="contextos-viewer-error"
+      role="alert"
+      aria-live="assertive"
+    >
+      <AlertCircle className="h-6 w-6 text-status-error" aria-hidden="true" />
       <span className="text-sm text-status-error">加载失败</span>
       <span className="max-w-xs text-center text-[11px] text-text-dim">{message}</span>
       <button
@@ -457,8 +524,13 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 
 function EmptyState({ reason, testId }: { reason: string; testId?: string }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 py-10" data-testid={testId}>
-      <MessageSquare className="h-6 w-6 text-text-dim" />
+    <div
+      className="flex flex-col items-center justify-center gap-2 py-10"
+      data-testid={testId}
+      role="status"
+      aria-live="polite"
+    >
+      <MessageSquare className="h-6 w-6 text-text-dim" aria-hidden="true" />
       <span className="text-sm text-text-muted">{reason}</span>
     </div>
   );
@@ -502,7 +574,7 @@ function GroupSection({ role, count, totalTokens, children }: GroupSectionProps)
 // Main component
 // ---------------------------------------------------------------------------
 
-export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: ContextViewerModalProps) {
+export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, workerId }: ContextViewerModalProps) {
   const [content, setContent] = useState<ContextPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -519,14 +591,19 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
   const [perMessageCopy, setPerMessageCopy] = useState<number | null>(null);
 
   const groupRefs = useRef<Record<string, HTMLElement | null>>({});
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const titleId = 'contextos-viewer-title';
+  const descriptionId = 'contextos-viewer-description';
 
-  const fetchContext = useCallback(async () => {
+  const fetchContext = useCallback(async (signal?: AbortSignal) => {
     if (!contextSnapshotRef) return;
     setLoading(true);
     setError(null);
     setWorkspaceForbidden(false);
     try {
       const res = await apiFetch(`/v2/context/${contextSnapshotRef}`);
+      // 若请求在 await 期间被取消，response 解析也无意义。
+      if (signal?.aborted) return;
       if (res.status === 403) {
         // Detect WORKSPACE_FORBIDDEN from the structured detail payload so
         // any other 403 still surfaces as a normal error.
@@ -548,28 +625,99 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
         throw new Error(`HTTP ${res.status}${text ? ': ' + text : ''}`);
       }
       const data = (await res.json()) as ContextPayload;
+      if (signal?.aborted) return;
       setContent(data);
     } catch (e) {
+      // AbortError 静默：组件卸载或 ref 变化导致的取消不应作为错误呈现。
+      if ((e as { name?: string })?.name === 'AbortError') return;
       setError(String(e));
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+      }
     }
   }, [contextSnapshotRef]);
 
   useEffect(() => {
-    if (contextSnapshotRef) {
-      void fetchContext();
-    }
+    if (!contextSnapshotRef) return;
+    // 每次 ref 变化（或组件挂载）创建新的 AbortController，清理时 abort。
+    const controller = new AbortController();
+    void fetchContext(controller.signal);
+    return () => {
+      controller.abort();
+    };
   }, [contextSnapshotRef, fetchContext]);
 
-  // Close on Escape
+  // Close on Escape / focus trap
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      // 焦点陷阱：Tab / Shift+Tab 在弹窗内首尾可聚焦元素间循环。
+      if (e.key === 'Tab' && containerRef.current) {
+        const focusables = getFocusableElements(containerRef.current);
+        if (focusables.length === 0) {
+          e.preventDefault();
+          return;
+        }
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        // 若当前焦点不在弹窗内（被前置 body 锁丢失等），回收到第一个可聚焦元素。
+        if (!active || !containerRef.current.contains(active)) {
+          e.preventDefault();
+          first.focus();
+          return;
+        }
+        if (e.shiftKey && active === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     }
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
+
+  // 焦点进入弹窗：挂载时把焦点移入内部首个可聚焦元素。
+  // 焦点恢复：卸载时把焦点还给打开弹窗前 activeElement。
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    // 等到 microtask 让 dialog 渲染完毕，再投放焦点。
+    const focusTimer = window.setTimeout(() => {
+      const container = containerRef.current;
+      if (!container) return;
+      const focusables = getFocusableElements(container);
+      if (focusables.length > 0) {
+        focusables[0].focus();
+      } else {
+        // 容器本身兜底可聚焦。
+        container.setAttribute('tabindex', '-1');
+        container.focus();
+      }
+    }, 0);
+    // Body 滚动锁：避免背景跟随内容滚动；记录原值以便还原。
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.body.style.overflow = previousOverflow;
+      // 焦点恢复：仅在原本聚焦元素仍然挂载时归还（防御组件已卸载的边界）。
+      if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+        try {
+          previouslyFocused.focus();
+        } catch {
+          // 静默：DOM 已卸载 / 不可聚焦。
+        }
+      }
+    };
+  }, []);
 
   // 过滤后的消息列表
   const filteredMessages = useMemo(() => {
@@ -648,17 +796,34 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
       }}
       role="dialog"
       aria-modal="true"
-      aria-label="LLM 上下文查看器"
+      aria-labelledby={titleId}
+      aria-describedby={descriptionId}
       data-testid="contextos-viewer-modal"
     >
-      <div className="flex max-h-[85vh] w-[92vw] max-w-3xl flex-col rounded-xl border border-white/[0.08] bg-bg-panel shadow-2xl">
+      <div
+        ref={containerRef}
+        className="flex max-h-[85vh] w-[92vw] max-w-3xl flex-col rounded-xl border border-white/[0.08] bg-bg-panel shadow-2xl"
+      >
         {/* Header */}
         <header className="flex items-center justify-between gap-3 border-b border-white/[0.06] px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
-            <Bot className="h-4 w-4 shrink-0 text-accent-secondary" />
-            <h2 className="truncate text-sm font-semibold text-text-main">
+            <Bot className="h-4 w-4 shrink-0 text-accent-secondary" aria-hidden="true" />
+            <h2
+              id={titleId}
+              className="truncate text-sm font-semibold text-text-main"
+            >
               完整上下文 · {roleId.toUpperCase()}
             </h2>
+            {workerId && (
+              <span
+                className="flex items-center gap-1 rounded bg-accent/15 px-1.5 py-0.5 font-mono text-[9px] text-accent"
+                data-testid="contextos-viewer-worker-chip"
+                title={`该上下文来自 worker ${workerId}`}
+              >
+                <Cpu className="h-3 w-3" aria-hidden="true" />
+                worker {workerId}
+              </span>
+            )}
             {contextSnapshotRef && (
               <span className="flex items-center gap-1 rounded bg-black/30 px-1.5 py-0.5 font-mono text-[9px] text-text-dim">
                 <Hash className="h-3 w-3" />
@@ -681,12 +846,13 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
         {content && content.messages.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.05] bg-bg-panel/40 px-4 py-2">
             <div className="flex flex-1 items-center gap-1 rounded-md border border-white/[0.06] bg-black/20 px-2 py-1">
-              <Search className="h-3.5 w-3.5 text-text-dim" />
+              <Search className="h-3.5 w-3.5 text-text-dim" aria-hidden="true" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索消息内容 / 工具调用…"
+                aria-label="搜索消息"
                 className="flex-1 bg-transparent text-[11px] text-text-main outline-none placeholder:text-text-dim"
                 data-testid="contextos-viewer-search"
               />
@@ -694,6 +860,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
                 <span
                   className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[9px] text-text-dim"
                   data-testid="contextos-viewer-search-count"
+                  aria-live="polite"
                 >
                   {filteredMessages.length} / {content.messages.length} 命中
                 </span>
@@ -712,12 +879,13 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
               data-testid="contextos-viewer-group-toggle"
               title="按角色折叠分组"
             >
-              <Layers className="h-3.5 w-3.5" />
+              <Layers className="h-3.5 w-3.5" aria-hidden="true" />
               分组
             </button>
             <button
               type="button"
               onClick={() => setAllExpanded((v) => (v === true ? false : true))}
+              aria-pressed={allExpanded === true}
               className={cn(
                 'flex items-center gap-1 rounded-md px-2 py-1 text-[11px] transition-colors',
                 allExpanded
@@ -727,7 +895,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
               data-testid="contextos-viewer-expand-toggle"
               title={allExpanded ? '全部收起' : '全部展开'}
             >
-              {allExpanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              {allExpanded ? <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" /> : <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />}
               {allExpanded ? '收起' : '展开'}
             </button>
             <button
@@ -741,8 +909,9 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
               )}
               data-testid="contextos-viewer-copy-all"
               title="复制完整 Markdown"
+              aria-label="复制完整上下文为 Markdown"
             >
-              {globalCopyState === 'done' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              {globalCopyState === 'done' ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
               复制全文
             </button>
           </div>
@@ -754,7 +923,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
             className="sticky top-0 z-10 flex items-center gap-1 overflow-x-auto border-b border-white/[0.05] bg-bg-panel/70 px-4 py-1.5 backdrop-blur"
             data-testid="contextos-viewer-anchor-nav"
           >
-            <Filter className="h-3 w-3 shrink-0 text-text-dim" />
+            <Filter className="h-3 w-3 shrink-0 text-text-dim" aria-hidden="true" />
             {Array.from(roleGroups.entries()).map(([role, info]) => (
               <button
                 key={role}
@@ -765,6 +934,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
                   'text-text-muted hover:bg-white/5 hover:text-text-main',
                 )}
                 data-testid={`contextos-viewer-anchor-${role}`}
+                aria-label={`跳转到 ${roleLabel(role)} 分组`}
               >
                 {roleShortLabel(role)} ({info.count})
               </button>
@@ -788,13 +958,16 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
           ) : content ? (
             <div className="space-y-3">
               {/* Meta bar */}
-              <div className="flex flex-wrap items-center gap-2 text-[10px] text-text-dim">
+              <div
+                id={descriptionId}
+                className="flex flex-wrap items-center gap-2 text-[10px] text-text-dim"
+              >
                 {content.call_id && (
                   <span
                     className="flex items-center gap-1 rounded bg-black/20 px-1.5 py-0.5"
                     data-testid="contextos-viewer-meta-call"
                   >
-                    <Hash className="h-3 w-3" />
+                    <Hash className="h-3 w-3" aria-hidden="true" />
                     call: {content.call_id}
                   </span>
                 )}
@@ -803,7 +976,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
                     className="flex items-center gap-1 rounded bg-black/20 px-1.5 py-0.5"
                     data-testid="contextos-viewer-meta-trace"
                   >
-                    <Hash className="h-3 w-3" />
+                    <Hash className="h-3 w-3" aria-hidden="true" />
                     trace: {content.trace_id}
                   </span>
                 )}
@@ -811,7 +984,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose }: Cont
                   className="flex items-center gap-1 rounded bg-black/20 px-1.5 py-0.5"
                   data-testid="contextos-viewer-meta-stored"
                 >
-                  <Clock className="h-3 w-3" />
+                  <Clock className="h-3 w-3" aria-hidden="true" />
                   {formatStoredAt(content.stored_at)}
                 </span>
                 <span

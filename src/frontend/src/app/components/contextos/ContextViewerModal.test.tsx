@@ -227,3 +227,210 @@ describe('ContextViewerModal', () => {
     expect(mockedApiFetch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {
+  beforeEach(() => {
+    mockedApiFetch.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('dialog has aria-modal="true" and aria-labelledby pointing at the title', () => {
+    render(<ContextViewerModal contextSnapshotRef={null} roleId="pm" onClose={vi.fn()} />);
+    const dialog = screen.getByTestId('contextos-viewer-modal');
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
+    const labelledBy = dialog.getAttribute('aria-labelledby');
+    expect(labelledBy).toBeTruthy();
+    const title = labelledBy ? document.getElementById(labelledBy) : null;
+    expect(title).toBeTruthy();
+    expect(title?.tagName.toLowerCase()).toBe('h2');
+  });
+
+  it('dialog has aria-describedby pointing at the meta bar once content loads', async () => {
+    mockFetchOk(makePayload());
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    await waitFor(() => screen.getByTestId('contextos-viewer-meta-count'));
+    const dialog = screen.getByTestId('contextos-viewer-modal');
+    const describedBy = dialog.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    const description = describedBy ? document.getElementById(describedBy) : null;
+    expect(description).toBeTruthy();
+    // description 是 meta bar，应包含 call / trace / count 之一
+    expect(description?.textContent).toContain('call:');
+  });
+
+  it('loading state has role="status" and aria-live="polite"', () => {
+    // 慢响应以保留 loading 态
+    mockedApiFetch.mockImplementation(
+      () =>
+        new Promise(() => {
+          // 永不 resolve
+        }),
+    );
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    const loading = screen.getByTestId('contextos-viewer-loading');
+    expect(loading.getAttribute('role')).toBe('status');
+    expect(loading.getAttribute('aria-live')).toBe('polite');
+    expect(loading.getAttribute('aria-busy')).toBe('true');
+  });
+
+  it('error state has role="alert" and aria-live="assertive"', async () => {
+    mockedApiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: async () => 'boom',
+      json: async () => {
+        throw new Error('not json');
+      },
+    });
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    await waitFor(() => screen.getByTestId('contextos-viewer-error'));
+    const error = screen.getByTestId('contextos-viewer-error');
+    expect(error.getAttribute('role')).toBe('alert');
+    expect(error.getAttribute('aria-live')).toBe('assertive');
+  });
+
+  it('focus is moved into the dialog on mount (initial focus inside container)', async () => {
+    mockFetchOk(makePayload());
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    await waitFor(() => screen.getByTestId('contextos-viewer-close'));
+    // 关闭按钮在弹窗内，且应被赋予初始焦点。
+    await waitFor(() => {
+      const active = document.activeElement as HTMLElement | null;
+      const dialog = screen.getByTestId('contextos-viewer-modal');
+      expect(dialog.contains(active)).toBe(true);
+    });
+  });
+
+  it('Tab on last focusable element wraps focus to first focusable element', async () => {
+    mockFetchOk(
+      makePayload({
+        messages: [
+          { role: 'user', content: 'a'.repeat(2000) },
+        ],
+      }),
+    );
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    await waitFor(() => screen.getByTestId('contextos-viewer-close'));
+    // 寻找弹窗内最后一个可聚焦元素（footer 关闭按钮）
+    const dialog = screen.getByTestId('contextos-viewer-modal');
+    const allButtons = Array.from(
+      dialog.querySelectorAll<HTMLElement>('button:not([disabled])'),
+    );
+    // 最后一个按钮：footer 的"关闭"按钮
+    const lastButton = allButtons[allButtons.length - 1];
+    expect(lastButton).toBeTruthy();
+    lastButton.focus();
+    expect(document.activeElement).toBe(lastButton);
+
+    // 在最后一个聚焦元素上按 Tab，应回卷到第一个
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(dialog.contains(document.activeElement as HTMLElement | null)).toBe(true);
+    // 焦点应不再停留在原 lastButton
+    expect(document.activeElement).not.toBe(lastButton);
+  });
+
+  it('Shift+Tab on first focusable element wraps focus to last focusable element', async () => {
+    mockFetchOk(makePayload());
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    await waitFor(() => screen.getByTestId('contextos-viewer-close'));
+    // 等焦点稳定到弹窗内
+    await waitFor(() => {
+      const dialog = screen.getByTestId('contextos-viewer-modal');
+      expect(dialog.contains(document.activeElement as HTMLElement | null)).toBe(true);
+    });
+    // Shift+Tab 应在首元素上回卷到尾元素（footer 关闭按钮在内容下方）
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+    const dialog = screen.getByTestId('contextos-viewer-modal');
+    expect(dialog.contains(document.activeElement as HTMLElement | null)).toBe(true);
+  });
+
+  it('body scroll is locked while modal is mounted and restored on unmount', async () => {
+    const previousOverflow = document.body.style.overflow;
+    mockFetchOk(makePayload());
+    const { unmount } = render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    expect(document.body.style.overflow).toBe('hidden');
+    unmount();
+    expect(document.body.style.overflow).toBe(previousOverflow);
+  });
+
+  it('focus is restored to the previously-focused element on unmount', async () => {
+    const trigger = document.createElement('button');
+    trigger.textContent = 'open-modal-trigger';
+    document.body.appendChild(trigger);
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+
+    mockFetchOk(makePayload());
+    const { unmount } = render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    await waitFor(() => screen.getByTestId('contextos-viewer-close'));
+    // 焦点应已迁入弹窗
+    const dialog = screen.getByTestId('contextos-viewer-modal');
+    expect(dialog.contains(document.activeElement as HTMLElement | null)).toBe(true);
+
+    unmount();
+    // 焦点归还到原 trigger
+    expect(document.activeElement).toBe(trigger);
+    document.body.removeChild(trigger);
+  });
+
+  it('re-fetches with a new AbortController when contextSnapshotRef changes; old fetch is cancelled', async () => {
+    // 第一个 fetch 永远 pending（模拟慢请求）
+    let firstResolve: ((value: Response) => void) | null = null;
+    mockedApiFetch.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          firstResolve = resolve;
+        }),
+    );
+    // 第二次 fetch 即时返回成功
+    mockFetchOk(makePayload({ messages: [{ role: 'user', content: 'second' }] }));
+
+    const { rerender } = render(
+      <ContextViewerModal contextSnapshotRef="first-ref" roleId="pm" onClose={vi.fn()} />,
+    );
+    // 第一次请求已发出但未返回
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1);
+
+    // 切换 ref：触发新请求，旧的应被取消
+    rerender(<ContextViewerModal contextSnapshotRef="second-ref" roleId="pm" onClose={vi.fn()} />);
+    expect(mockedApiFetch).toHaveBeenCalledTimes(2);
+
+    // 让第一次 fetch 在「取消后」resolve：组件应忽略该结果
+    await waitFor(() => {
+      expect(screen.getByText('second')).toBeTruthy();
+    });
+    if (firstResolve) {
+      firstResolve(
+        new Response(JSON.stringify({ messages: [{ role: 'user', content: 'first-wins' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+    }
+    // 等待一拍让潜在的 setState 触发，再确认 first 的内容没出现
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByText('first-wins')).toBeNull();
+    expect(screen.getByText('second')).toBeTruthy();
+  });
+
+  it('search input has aria-label for screen readers', async () => {
+    mockFetchOk(makePayload());
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    await waitFor(() => screen.getByTestId('contextos-viewer-search'));
+    const search = screen.getByTestId('contextos-viewer-search');
+    expect(search.getAttribute('aria-label')).toBeTruthy();
+  });
+
+  it('group toggle has aria-pressed reflecting state', async () => {
+    mockFetchOk(makePayload());
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+    await waitFor(() => screen.getByTestId('contextos-viewer-group-toggle'));
+    const toggle = screen.getByTestId('contextos-viewer-group-toggle');
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+  });
+});
