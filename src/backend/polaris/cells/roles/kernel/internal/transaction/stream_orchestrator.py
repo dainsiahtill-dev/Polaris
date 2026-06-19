@@ -1309,6 +1309,12 @@ class StreamOrchestrator:
         # Reuse the probe decision when no corrective retry replaced the response
         # (decode is pure — identical input yields an identical decision).
         decision = probe_decision if corrective_ask is None else self.decoder.decode(llm_response, TurnId(turn_id))
+
+        # PROPOSE_PATCH / ANALYZE_ONLY 边界保护：过滤 write tools（与 run 模式一致）。
+        # 必须在 record_decision / TOOL_BATCH 执行之前应用，否则只读/提案契约下
+        # 流式 Director 仍会真实写入 workspace（fail-open）。
+        decision = apply_delivery_mode_filter(decision, ledger)
+
         ledger.record_decision(decision)
         self.emit_event(
             TurnPhaseEvent.create(
