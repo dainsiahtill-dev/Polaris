@@ -1055,11 +1055,11 @@ export function PMWorkspace({
     const eventCount = executionLogs.length + llmStreamEvents.length + processStreamEvents.length;
     const previousCount = lastRealtimeEventCountRef.current;
     lastRealtimeEventCountRef.current = eventCount;
-    if (!pmRunning || eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
+    if (eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
     if (activeView !== 'activity') {
       setActiveView('activity');
     }
-  }, [activeView, executionLogs.length, llmStreamEvents.length, pmRunning, processStreamEvents.length]);
+  }, [activeView, executionLogs.length, llmStreamEvents.length, processStreamEvents.length]);
   
   // 当用户手动点击导航时，记录用户偏好
   const handleViewChange = useCallback((view: PMActiveView) => {

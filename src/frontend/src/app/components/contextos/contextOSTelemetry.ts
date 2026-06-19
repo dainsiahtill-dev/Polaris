@@ -73,6 +73,12 @@ export interface ContextOSEvent {
   isProjection: boolean;
   /** 是否为一次离散 LLM 调用（llm_completed / llm_failed 或旧版 invoke_done / invoke_error）。 */
   isCall: boolean;
+  /**
+   * Phase 3+：该事件归属的 worker id（仅多 worker Director 调用携带）。
+   * 来源：meta.worker_id / meta.workerId，缺失时为 null。
+   * 后端未发时一律 null——绝不伪造 worker 归属。
+   */
+  workerId: string | null;
   category: 'projection' | 'call' | 'tool' | 'error' | 'state' | 'event';
 }
 
@@ -85,6 +91,21 @@ export interface ActorAggregate {
   totalTokens: number;
   calls: number;
   events: number;
+}
+
+/**
+ * Phase 3+ 多 worker LLM 追踪：单 worker 聚合。
+ * 来源 = `meta.worker_id` / `meta.workerId` 在 logEntryToEvent 中提取；
+ * 后端尚未发出 worker_id 时聚合为空对象（hasWorkers=false），UI 据实降级。
+ */
+export interface WorkerAggregate {
+  workerId: string;
+  role: string;
+  totalTokens: number;
+  calls: number;
+  events: number;
+  lastEpoch: number | null;
+  lastLatencyMs: number | null;
 }
 
 export interface ContextOSTelemetry {
@@ -122,6 +143,13 @@ export interface ContextOSTelemetry {
   lastEventEpoch: number | null;
   byMode: Record<string, ModeAggregate>;
   byActor: Record<string, ActorAggregate>;
+  /**
+   * Phase 3+：按 worker_id 聚合的实时统计。
+   * 无任何事件携带 worker_id 时为空对象（hasWorkers=false），UI 据实降级。
+   */
+  byWorker: Record<string, WorkerAggregate>;
+  /** 是否识别到至少一条带 worker_id 的事件（用于 UI 判断是否渲染多 worker 面板）。 */
+  hasWorkers: boolean;
 }
 
 /** 空遥测（无 WS 数据时的稳定缺省）。 */
@@ -145,6 +173,8 @@ export const EMPTY_TELEMETRY: ContextOSTelemetry = {
   lastEventEpoch: null,
   byMode: {},
   byActor: {},
+  byWorker: {},
+  hasWorkers: false,
 };
 
 /** 事件流截断上限（防止超长流拖垮渲染）。 */
@@ -333,6 +363,9 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const contextSnapshotRef = nonEmptyString(meta['contextSnapshotRef']) || nonEmptyString(meta['context_snapshot_ref']);
   const promptHash = nonEmptyString(meta['promptHash']) || nonEmptyString(meta['prompt_hash']);
   const turnId = nonEmptyString(meta['turnId']) || nonEmptyString(meta['turn_id']);
+  // Phase 3+：多 worker Director / 并发 LLM 调用的 worker 归属（meta.worker_id / meta.workerId）。
+  // 后端未发时一律 null，绝不冒充。
+  const workerId = nonEmptyString(meta['worker_id']) || nonEmptyString(meta['workerId']) || null;
 
   // 真实 per-call 用量（来自 journal `llm` 通道 raw.data，经 parseLlmStreamLine 注入 meta）。
   const usagePromptTokens = toFiniteOrNull(meta['promptTokens']) ?? 0;
@@ -399,6 +432,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     contextSnapshotRef: contextSnapshotRef || null,
     promptHash: promptHash || null,
     turnId: turnId || null,
+    workerId,
     isProjection,
     isCall,
     category,
@@ -420,6 +454,8 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
   let latencyCount = 0;
   const byMode: Record<string, ModeAggregate> = {};
   const byActor: Record<string, ActorAggregate> = {};
+  const byWorker: Record<string, WorkerAggregate> = {};
+  let hasWorkers = false;
 
   for (const event of events) {
     if (event.isProjection) projectionCount += 1;
@@ -451,6 +487,34 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
       actorAgg.calls += 1;
     }
     byActor[actorKey] = actorAgg;
+
+    // Phase 3 多 worker 聚合：仅对携带 worker_id 的事件计入；后端未发时整字段为空（hasWorkers=false）。
+    if (event.workerId) {
+      hasWorkers = true;
+      const workerAgg = byWorker[event.workerId] ?? {
+        workerId: event.workerId,
+        role: event.actor,
+        totalTokens: 0,
+        calls: 0,
+        events: 0,
+        lastEpoch: null,
+        lastLatencyMs: null,
+      };
+      workerAgg.events += 1;
+      workerAgg.totalTokens += event.totalTokens;
+      if (event.isCall || event.hasUsage) workerAgg.calls += 1;
+      if (event.epoch > 0 && (workerAgg.lastEpoch === null || event.epoch > workerAgg.lastEpoch)) {
+        workerAgg.lastEpoch = event.epoch;
+        // 最近一次活动对应的事件携带的 actor 作为 worker 角色标记。
+        workerAgg.role = event.actor;
+      }
+      if (event.durationMs !== null) {
+        if (workerAgg.lastLatencyMs === null || (event.epoch > 0 && event.epoch >= (workerAgg.lastEpoch ?? 0))) {
+          workerAgg.lastLatencyMs = event.durationMs;
+        }
+      }
+      byWorker[event.workerId] = workerAgg;
+    }
   }
 
   // 按 epoch 倒序（稳定排序，等时保留出现序）。
@@ -486,6 +550,8 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
     lastEventEpoch: lastEventEpoch && lastEventEpoch > 0 ? lastEventEpoch : null,
     byMode,
     byActor,
+    byWorker,
+    hasWorkers,
   };
 }
 

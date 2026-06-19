@@ -22,6 +22,7 @@ import {
   telemetryRoleTokens,
   type ContextOSEvent,
   type ContextOSTelemetry,
+  type WorkerAggregate,
 } from './contextOSTelemetry';
 
 /** 名义上下文窗口大小（用于「上下文窗口占用」估算条；真实窗口随模型而变）。 */
@@ -138,6 +139,27 @@ export interface DecisionRow {
   receipt?: boolean;
 }
 
+/**
+ * Phase 3+：单 worker 的实时 LLM 追踪卡。
+ * 字段完全派生自真实遥测（journal `llm` 通道的 meta.worker_id / meta.workerId）。
+ * 无 worker 归属时聚合为空（hasWorkers=false，UI 据实降级）。
+ */
+export interface WorkerCard {
+  workerId: string;
+  role: string;
+  tokens: number;
+  calls: number;
+  events: number;
+  /** 真实时延（ms），无则 null。 */
+  latencyMs: number | null;
+  /** 最近活动 epoch（ms），无则 null。 */
+  lastEpoch: number | null;
+  /** Pipeline 状态（有事件 → active；纯空 → idle）。 */
+  state: PipelineState;
+  /** 该 worker 命中的最近一次 context snapshot ref（按事件截取）。 */
+  latestContextSnapshotRef: string | null;
+}
+
 export interface ContextOSModel {
   running: boolean;
   /** 无运行、无 token、无事件 → 数据空闲（用于「空闲」水印，避免陈旧数据被误读为实时） */
@@ -187,6 +209,10 @@ export interface ContextOSModel {
   roles: RoleCard[];
   decisions: DecisionRow[];
   policies: string[];
+  /** Phase 3+：多 worker LLM 追踪卡（按 worker_id 聚合）。无 worker 归属时为空数组。 */
+  workers: WorkerCard[];
+  /** 是否识别到任何带 worker_id 的真实事件（用于 UI 判断是否展示多 worker 面板）。 */
+  hasWorkers: boolean;
 }
 
 /** 事件类型 → 展示标签与颜色（与解析层 category 一致）。 */
@@ -787,6 +813,32 @@ export function buildContextOSModel(input: {
     ? deriveTelemetryDecisions(telemetry)
     : deriveDecisions(dialogueEvents, executionLogs);
 
+  // Phase 3+：多 worker LLM 追踪卡（按 worker_id 聚合）。无 worker 归属时为空数组。
+  // 字段完全派生自真实遥测（meta.worker_id / meta.workerId），后端未发时据实为空。
+  // 按最近活动 epoch 倒序，确保活跃 worker 排在前面。
+  const workers: WorkerCard[] = telemetryActive
+    ? Object.values(telemetry.byWorker)
+        .map((agg: WorkerAggregate): WorkerCard => {
+          // 该 worker 命中的最近一次 context snapshot ref（按 epoch 倒序扫）。
+          const lastSnapshot = telemetry.events.find(
+            (event) => event.workerId === agg.workerId && event.contextSnapshotRef,
+          );
+          return {
+            workerId: agg.workerId,
+            role: agg.role || 'Worker',
+            tokens: agg.totalTokens,
+            calls: agg.calls,
+            events: agg.events,
+            latencyMs: agg.lastLatencyMs,
+            lastEpoch: agg.lastEpoch,
+            state: agg.events > 0 ? 'active' : 'idle',
+            latestContextSnapshotRef: lastSnapshot ? lastSnapshot.contextSnapshotRef : null,
+          };
+        })
+        .sort((a, b) => (b.lastEpoch ?? 0) - (a.lastEpoch ?? 0))
+    : [];
+  const hasWorkers = telemetryActive ? telemetry.hasWorkers : false;
+
   return {
     running,
     dataIdle,
@@ -819,6 +871,8 @@ export function buildContextOSModel(input: {
     roles,
     decisions,
     policies,
+    workers,
+    hasWorkers,
   };
 }
 

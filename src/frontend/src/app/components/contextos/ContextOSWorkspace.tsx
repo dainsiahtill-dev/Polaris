@@ -57,9 +57,11 @@ import {
   type PipelineState,
   type RoleCard,
   type RoleInternalContext,
+  type WorkerCard,
 } from './contextOSData';
 import { buildTelemetryFromStream, type ContextOSEvent } from './contextOSTelemetry';
 import { ContextViewerModal } from './ContextViewerModal';
+import { ContextStoreStatsPanel } from './ContextStoreStatsPanel';
 
 export interface ContextOSWorkspaceProps {
   workspace: string;
@@ -613,8 +615,8 @@ function DecisionTable({ rows }: { rows: DecisionRow[] }) {
   }
   return (
     <div className="space-y-1">
-      {rows.map((row) => (
-        <div key={row.id} className="grid grid-cols-[64px_72px_1fr] items-start gap-2 rounded-md px-2 py-1.5 text-[11px] hover:bg-white/[0.03]">
+      {rows.map((row, index) => (
+        <div key={`${row.id}-${index}`} className="grid grid-cols-[64px_72px_1fr] items-start gap-2 rounded-md px-2 py-1.5 text-[11px] hover:bg-white/[0.03]">
           <span className="font-mono text-[10px] text-text-dim">{row.time}</span>
           <span className={cn('truncate font-medium', toneClass[row.tone])} title={`${row.actor} · ${row.kind}`}>
             {row.actor}
@@ -670,6 +672,104 @@ function SectionCard({ title, subtitle, icon: Icon, children, className, action 
 }
 
 // ---------------------------------------------------------------------------
+// WorkerPanel — Phase 3+ 多 worker LLM 追踪面板
+// ---------------------------------------------------------------------------
+
+interface WorkerCardViewProps {
+  worker: WorkerCard;
+  onViewContext: (ref: string, workerId: string) => void;
+}
+
+function WorkerCardView({ worker, onViewContext }: WorkerCardViewProps) {
+  const style = STATE_STYLES[worker.state];
+  return (
+    <div
+      data-testid={`contextos-worker-${worker.workerId}`}
+      data-state={worker.state}
+      className={cn(
+        'rounded-lg border bg-white/[0.02] p-2.5 transition-all duration-300',
+        style.ring,
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-black/30', style.text)}>
+            <Cpu className="h-3.5 w-3.5" />
+          </div>
+          <div className="min-w-0">
+            <div className="truncate font-mono text-[11px] font-semibold text-text-main" title={worker.workerId}>
+              {worker.workerId}
+            </div>
+            <div className={cn('truncate text-[9px]', style.text)}>{worker.role}</div>
+          </div>
+        </div>
+        <span className={cn('rounded px-1.5 py-0.5 text-[9px] font-medium', style.ring, style.text)}>
+          {style.label}
+        </span>
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-1.5 text-[10px]">
+        <div className="rounded bg-black/20 px-1.5 py-1">
+          <div className="text-[8px] uppercase tracking-wider text-text-dim">调用</div>
+          <div className="font-mono font-semibold text-text-main">{worker.calls}</div>
+        </div>
+        <div className="rounded bg-black/20 px-1.5 py-1">
+          <div className="text-[8px] uppercase tracking-wider text-text-dim">Token</div>
+          <div className="font-mono font-semibold text-text-main">
+            {worker.tokens > 0 ? contextOSFormat.tokens(worker.tokens) : '0'}
+          </div>
+        </div>
+        <div className="rounded bg-black/20 px-1.5 py-1">
+          <div className="text-[8px] uppercase tracking-wider text-text-dim">时延</div>
+          <div className="font-mono font-semibold text-text-main">
+            {worker.latencyMs !== null ? `${worker.latencyMs}ms` : '—'}
+          </div>
+        </div>
+      </div>
+      {worker.latestContextSnapshotRef && (
+        <button
+          type="button"
+          data-testid={`contextos-worker-view-${worker.workerId}`}
+          onClick={() => onViewContext(worker.latestContextSnapshotRef as string, worker.workerId)}
+          className="mt-2 w-full rounded bg-accent-secondary/15 px-2 py-1 text-[10px] text-accent-secondary hover:bg-accent-secondary/25 transition-colors"
+        >
+          查看 worker 上下文
+        </button>
+      )}
+    </div>
+  );
+}
+
+function WorkerPanel({
+  workers,
+  onViewContext,
+}: {
+  workers: WorkerCard[];
+  onViewContext: (ref: string, workerId: string) => void;
+}) {
+  return (
+    <SectionCard
+      title="多 worker LLM 追踪"
+      subtitle={`Multi-worker LLM Tracking · ${workers.length} worker`}
+      icon={Cpu}
+      action={
+        <span className="text-[10px] text-text-dim" data-testid="contextos-worker-count">
+          {workers.length} 个并发 worker
+        </span>
+      }
+      className="border-accent/30"
+    >
+      <div data-testid="contextos-worker-panel" className="space-y-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {workers.map((worker) => (
+            <WorkerCardView key={worker.workerId} worker={worker} onViewContext={onViewContext} />
+          ))}
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 主组件
 // ---------------------------------------------------------------------------
 
@@ -716,6 +816,8 @@ export function ContextOSWorkspace({
   const [showStructure, setShowStructure] = useState(false);
   const [viewerHash, setViewerHash] = useState<string | null>(null);
   const [viewerRole, setViewerRole] = useState<string>('');
+  // Phase 3+：worker-scoped context viewer。
+  const [viewerWorkerId, setViewerWorkerId] = useState<string | null>(null);
 
   const wsTone = live ? 'success' : reconnecting ? 'warning' : 'error';
   const wsLabel = live ? 'WS LIVE' : reconnecting ? 'WS RECONNECT' : 'WS OFFLINE';
@@ -963,6 +1065,17 @@ export function ContextOSWorkspace({
 
             {showStructure && <ContextStructurePanel model={model} telemetry={telemetry} />}
 
+            {model.hasWorkers && model.workers.length > 0 && (
+              <WorkerPanel
+                workers={model.workers}
+                onViewContext={(ref, workerId) => {
+                  setViewerHash(ref);
+                  setViewerRole('director');
+                  setViewerWorkerId(workerId);
+                }}
+              />
+            )}
+
             <SectionCard
               title="角色信号面"
               subtitle={`RoleSignalPlane · ${model.roles.length} 主角色`}
@@ -985,6 +1098,7 @@ export function ContextOSWorkspace({
                   onViewContext={(hash) => {
                     setViewerHash(hash);
                     setViewerRole(activeRole);
+                    setViewerWorkerId(null);
                   }}
                 />
               )}
@@ -1095,6 +1209,8 @@ export function ContextOSWorkspace({
                 </div>
               </SectionCard>
             )}
+
+            <ContextStoreStatsPanel workspace={workspace} />
           </div>
         </div>
       </main>
@@ -1104,9 +1220,11 @@ export function ContextOSWorkspace({
         <ContextViewerModal
           contextSnapshotRef={viewerHash}
           roleId={viewerRole}
+          workerId={viewerWorkerId}
           onClose={() => {
             setViewerHash(null);
             setViewerRole('');
+            setViewerWorkerId(null);
           }}
         />
       )}

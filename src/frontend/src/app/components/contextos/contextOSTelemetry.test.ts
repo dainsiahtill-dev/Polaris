@@ -401,3 +401,95 @@ describe('telemetry role helpers', () => {
     expect(telemetryRoleHasUsageChannel(t, 'qa')).toBe(false);
   });
 });
+
+describe('Phase 3+ multi-worker LLM tracking', () => {
+  it('reports hasWorkers=false and an empty byWorker map when no event carries worker_id', () => {
+    const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
+    expect(t.hasWorkers).toBe(false);
+    expect(t.byWorker).toEqual({});
+  });
+
+  it('extracts workerId from meta.worker_id and meta.workerId, aggregating tokens/calls/latency', () => {
+    const w1Call1 = logEntry({
+      id: 'w1-call-1',
+      timestamp: '2026-06-19T11:00:00Z',
+      level: 'success',
+      source: 'Director',
+      message: 'worker-1 call',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        worker_id: 'worker-1',
+        promptTokens: 100,
+        completionTokens: 50,
+        totalTokens: 150,
+        durationMs: 800,
+      },
+    });
+    const w1Call2 = logEntry({
+      id: 'w1-call-2',
+      timestamp: '2026-06-19T11:00:05Z',
+      level: 'success',
+      source: 'Director',
+      message: 'worker-1 second call',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        workerId: 'worker-1', // alternate key
+        promptTokens: 200,
+        completionTokens: 80,
+        totalTokens: 280,
+        durationMs: 1200,
+      },
+    });
+    const w2Call = logEntry({
+      id: 'w2-call-1',
+      timestamp: '2026-06-19T11:00:02Z',
+      level: 'success',
+      source: 'Director',
+      message: 'worker-2 call',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        worker_id: 'worker-2',
+        promptTokens: 60,
+        completionTokens: 30,
+        totalTokens: 90,
+        durationMs: 500,
+      },
+    });
+    const t = buildTelemetryFromStream([w1Call1, w1Call2, w2Call], [], []);
+    expect(t.hasWorkers).toBe(true);
+    expect(Object.keys(t.byWorker).sort()).toEqual(['worker-1', 'worker-2']);
+    expect(t.byWorker['worker-1'].calls).toBe(2);
+    expect(t.byWorker['worker-1'].totalTokens).toBe(430);
+    expect(t.byWorker['worker-2'].calls).toBe(1);
+    expect(t.byWorker['worker-2'].totalTokens).toBe(90);
+    // lastLatencyMs tracks the most recent event's duration
+    expect(t.byWorker['worker-1'].lastLatencyMs).toBe(1200);
+    expect(t.byWorker['worker-2'].lastLatencyMs).toBe(500);
+  });
+
+  it('attaches workerId to each derived event so downstream UI can filter', () => {
+    const wEvent = logEntry({
+      id: 'w-evt-1',
+      timestamp: '2026-06-19T11:00:00Z',
+      level: 'success',
+      source: 'Director',
+      message: 'worker-1 call',
+      meta: { channel: 'llm', streamEvent: 'llm_completed', worker_id: 'worker-1', promptTokens: 10, completionTokens: 5 },
+    });
+    const t = buildTelemetryFromStream([wEvent], [], []);
+    expect(t.events[0].workerId).toBe('worker-1');
+  });
+
+  it('exposes workerId=null for events without meta.worker_id, never fabricates it', () => {
+    const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
+    for (const event of t.events) {
+      expect(event.workerId).toBeNull();
+    }
+  });
+});

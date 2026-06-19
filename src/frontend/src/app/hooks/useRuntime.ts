@@ -345,11 +345,69 @@ function appendLlmStreamEntries(prev: LogEntry[], incoming: LogEntry[], limit: n
   return next.slice(-limit);
 }
 
+function normalizeTaggedStreamLine(raw: string): Record<string, unknown> | null {
+  const match = raw.match(/^(?:\[[^\]]+\]\s*>\s*)?\[(thinking_chunk|content_chunk|tool_call|tool_result)\]\s*(\{.*\})\s*$/i);
+  if (!match) return null;
+
+  const streamEvent = match[1].toLowerCase();
+  const parsedPayload = Parsing.tryParseJsonObject(match[2]);
+  if (!parsedPayload) return null;
+
+  const rawPayload = Parsing.isRecord(parsedPayload.raw) ? parsedPayload.raw : {};
+  return {
+    ...parsedPayload,
+    event: streamEvent,
+    raw: {
+      ...rawPayload,
+      stream_event: String(rawPayload.stream_event || streamEvent),
+      event_type: String(rawPayload.event_type || streamEvent),
+      content: parsedPayload.content ?? rawPayload.content,
+      payload: Parsing.isRecord(rawPayload.payload) ? rawPayload.payload : parsedPayload,
+    },
+  };
+}
+
+function firstRecord(...candidates: unknown[]): Record<string, unknown> | null {
+  for (const candidate of candidates) {
+    if (Parsing.isRecord(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function extractToolPayload(
+  rawObj: Record<string, unknown> | null,
+  eventData: Record<string, unknown> | null,
+  parsed: Record<string, unknown>,
+): Record<string, unknown> | null {
+  return firstRecord(
+    rawObj?.payload,
+    eventData?.payload,
+    rawObj,
+    eventData,
+    parsed.tool || parsed.tool_name ? parsed : null,
+  );
+}
+
+function readToolName(toolPayload: Record<string, unknown> | null): string {
+  return String(toolPayload?.tool || toolPayload?.tool_name || toolPayload?.name || '').trim();
+}
+
+function readToolArgs(toolPayload: Record<string, unknown> | null): string {
+  const args = firstRecord(toolPayload?.args, toolPayload?.arguments, toolPayload?.input);
+  return args ? JSON.stringify(args).slice(0, 180) : '';
+}
+
+function readToolResult(toolPayload: Record<string, unknown> | null): Record<string, unknown> | null {
+  return firstRecord(toolPayload?.result, toolPayload?.output);
+}
+
 function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
   const raw = String(line || '').trim();
   if (!raw) return null;
 
-  const parsed = Parsing.tryParseJsonObject(raw);
+  const parsed = normalizeTaggedStreamLine(raw) ?? Parsing.tryParseJsonObject(raw);
   let message = raw;
   let timestamp = new Date().toISOString();
   let source = 'LLM';
@@ -369,8 +427,10 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     const eventName = String(parsed.event || parsed.name || parsed.kind || '').trim();
     const eventToken = eventName.toLowerCase();
     let modelName = String(parsed.model || parsed.model_name || '').trim();
-    const rawObj = parsed.raw && typeof parsed.raw === 'object' ? (parsed.raw as Record<string, unknown>) : null;
-    const streamEvent = rawObj ? String(rawObj.stream_event || '').trim().toLowerCase() : '';
+    const rawObj = Parsing.isRecord(parsed.raw) ? parsed.raw : null;
+    const streamEvent = rawObj
+      ? String(rawObj.stream_event || rawObj.event_type || '').trim().toLowerCase()
+      : '';
     const rawEvent = rawObj ? String(rawObj.event || rawObj.name || '').trim() : '';
     const rawSummary = rawObj ? String(rawObj.summary || rawObj.message || '').trim() : '';
     const rawContent = rawObj ? String(rawObj.content || '').trim() : '';
@@ -414,6 +474,7 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     const usageTotalTokens = safePromptTokens + safeCompletionTokens;
 
     const normalizedEvent = streamEvent || eventToken;
+    const toolPayload = extractToolPayload(rawObj, eventData, parsed);
 
     if (normalizedEvent === 'thinking_chunk') {
       message = rawContent || thinking || 'LLM thinking';
@@ -424,19 +485,19 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       level = 'info';
       details = modelName ? `model=${modelName}` : '';
     } else if (normalizedEvent === 'tool_call') {
-      const toolName = rawObj ? String(rawObj.tool || '').trim() : '';
-      const toolArgs = rawObj && typeof rawObj.args === 'object' ? JSON.stringify(rawObj.args) : '';
+      const toolName = readToolName(toolPayload);
+      const toolArgs = readToolArgs(toolPayload);
       message = toolName ? `调用工具: ${toolName}` : '调用工具';
-      details = toolArgs ? `args=${toolArgs.slice(0, 180)}` : '';
-      level = 'thinking';
+      details = toolArgs ? `args=${toolArgs}` : '';
+      level = 'tool';
     } else if (normalizedEvent === 'tool_result') {
-      const toolName = rawObj ? String(rawObj.tool || '').trim() : '';
-      const rawSuccess = rawObj ? rawObj.success : undefined;
+      const toolName = readToolName(toolPayload);
+      const rawSuccess = toolPayload ? toolPayload.success : undefined;
       const status = rawSuccess === undefined ? 'done' : (rawSuccess ? 'ok' : 'failed');
       message = toolName ? `工具结果: ${toolName} (${status})` : `工具结果 (${status})`;
-      const resultObj = rawObj && typeof rawObj.result === 'object' ? (rawObj.result as Record<string, unknown>) : null;
+      const resultObj = readToolResult(toolPayload);
       details = resultObj ? String(resultObj.error || resultObj.message || '') : '';
-      level = status === 'failed' ? 'error' : 'success';
+      level = status === 'failed' ? 'error' : 'tool';
     } else if (normalizedEvent === 'llm_waiting' || eventToken === 'llm_call_start') {
       // 规范 LLM 生命周期（journal `llm` 通道）：等待响应 = 一次调用的开始。
       message = `正在请求 ${modelName || dataBackend || 'LLM'} 响应…`;
@@ -622,6 +683,7 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
   let message = raw;
   let details = '';
   let level: LogEntry['level'] = 'info';
+  let streamEvent = '';
 
   const parsed = Parsing.tryParseJsonObject(raw);
   if (parsed) {
@@ -636,11 +698,20 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
     if (parsedRole) source = Parsing.normalizeActorLabel(parsedRole);
 
     const eventName = String(parsed.event || parsed.name || parsed.kind || parsed.type || '').trim();
+    const eventToken = eventName.toLowerCase();
     const summary = String(parsed.summary || parsed.message || parsed.text || '').trim();
     const dataObj = parsed.data && typeof parsed.data === 'object' ? (parsed.data as Record<string, unknown>) : null;
     const rawObj = parsed.raw && typeof parsed.raw === 'object' ? (parsed.raw as Record<string, unknown>) : null;
     const dataMsg = dataObj ? String(dataObj.message || dataObj.summary || '').trim() : '';
     const rawMsg = rawObj ? String(rawObj.message || rawObj.summary || '').trim() : '';
+    streamEvent = String(
+      dataObj?.stream_event ||
+      dataObj?.event_type ||
+      rawObj?.stream_event ||
+      rawObj?.event_type ||
+      eventToken ||
+      ''
+    ).trim().toLowerCase();
     const toolName = dataObj
       ? String(dataObj.tool || dataObj.tool_name || rawObj?.tool || rawObj?.tool_name || '').trim()
       : String(rawObj?.tool || rawObj?.tool_name || '').trim();
@@ -648,18 +719,32 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
       ? String(dataObj.command || rawObj?.command || '').trim()
       : String(rawObj?.command || '').trim();
 
-    message = summary || dataMsg || rawMsg || eventName || raw;
-    details = [toolName ? `tool=${toolName}` : '', command ? `cmd=${command}` : '']
-      .filter((item) => item.length > 0)
-      .join(' ');
+    if (streamEvent === 'tool_call' || streamEvent === 'tool_result' || toolName) {
+      const rawSuccess = dataObj ? dataObj.success : rawObj?.success;
+      const status = rawSuccess === undefined ? 'done' : (rawSuccess ? 'ok' : 'failed');
+      message = streamEvent === 'tool_result'
+        ? (toolName ? `工具结果: ${toolName} (${status})` : `工具结果 (${status})`)
+        : (toolName ? `调用工具: ${toolName}` : '调用工具');
+      const args = firstRecord(dataObj?.args, rawObj?.args, dataObj?.arguments, rawObj?.arguments);
+      details = [
+        args ? `args=${JSON.stringify(args).slice(0, 180)}` : '',
+        command ? `cmd=${command}` : '',
+      ].filter((item) => item.length > 0).join(' ');
+      level = status === 'failed' ? 'error' : 'tool';
+    } else {
+      message = summary || dataMsg || rawMsg || eventName || raw;
+      details = [toolName ? `tool=${toolName}` : '', command ? `cmd=${command}` : '']
+        .filter((item) => item.length > 0)
+        .join(' ');
 
-    level = Parsing.mapSeverityToLevel(String(parsed.severity || '').trim(), level);
-    if (level === 'info') {
-      const token = `${eventName} ${summary} ${dataMsg} ${rawMsg}`.toLowerCase();
-      if (/error|failed|exception|traceback|timeout/.test(token)) level = 'error';
-      else if (/warn|retry|blocked/.test(token)) level = 'warning';
-      else if (/tool|invoke|llm|thinking|prompt/.test(token)) level = 'thinking';
-      else if (/success|completed|done|passed/.test(token)) level = 'success';
+      level = Parsing.mapSeverityToLevel(String(parsed.severity || '').trim(), level);
+      if (level === 'info') {
+        const token = `${eventName} ${summary} ${dataMsg} ${rawMsg}`.toLowerCase();
+        if (/error|failed|exception|traceback|timeout/.test(token)) level = 'error';
+        else if (/warn|retry|blocked/.test(token)) level = 'warning';
+        else if (/tool|invoke|llm|thinking|prompt/.test(token)) level = 'thinking';
+        else if (/success|completed|done|passed/.test(token)) level = 'success';
+      }
     }
   } else {
     const text = raw.toLowerCase();
@@ -682,6 +767,7 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
     meta: {
       channel,
       streamKind: getRuntimeProcessStreamKind(channel) || 'execution',
+      streamEvent: streamEvent || undefined,
     },
   };
 }

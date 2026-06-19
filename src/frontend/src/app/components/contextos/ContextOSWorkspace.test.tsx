@@ -242,4 +242,71 @@ describe('ContextOSWorkspace', () => {
     // No token chip since totalTokens === 0.
     expect(screen.queryByTestId('contextos-role-panel-tokens-director')).toBeNull();
   });
+
+  it('renders the multi-worker LLM tracking panel when WS events carry worker_id', () => {
+    const workerStream: LogEntry[] = [
+      {
+        id: 'w1c',
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        source: 'Director',
+        message: 'worker-1 call',
+        details: 'model=local 800ms',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          worker_id: 'worker-1',
+          promptTokens: 100,
+          completionTokens: 50,
+          totalTokens: 150,
+          durationMs: 800,
+        },
+        tags: ['llm_completed'],
+      },
+      {
+        id: 'w2c',
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        source: 'Director',
+        message: 'worker-2 call',
+        details: 'model=local 500ms',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          worker_id: 'worker-2',
+          promptTokens: 60,
+          completionTokens: 30,
+          totalTokens: 90,
+          durationMs: 500,
+        },
+        tags: ['llm_completed'],
+      },
+    ];
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmStreamEvents={workerStream}
+        directorRunning
+      />,
+    );
+
+    const panel = screen.getByTestId('contextos-worker-panel');
+    expect(panel).toBeTruthy();
+    expect(screen.getByTestId('contextos-worker-worker-1')).toBeTruthy();
+    expect(screen.getByTestId('contextos-worker-worker-2')).toBeTruthy();
+    expect(screen.getByTestId('contextos-worker-count').textContent).toContain('2');
+  });
+
+  it('does not render the multi-worker panel when no event carries worker_id', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmStreamEvents={LLM_STREAM}
+        executionLogs={EXECUTION_STREAM}
+      />,
+    );
+    expect(screen.queryByTestId('contextos-worker-panel')).toBeNull();
+  });
 });

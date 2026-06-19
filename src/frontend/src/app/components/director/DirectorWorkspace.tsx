@@ -1819,11 +1819,11 @@ export function DirectorWorkspace({
     const eventCount = executionLogs.length + llmStreamEvents.length + processStreamEvents.length;
     const previousCount = lastRealtimeEventCountRef.current;
     lastRealtimeEventCountRef.current = eventCount;
-    if (!directorRunning || eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
+    if (eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
     if (activeView !== 'activity') {
       setActiveView('activity');
     }
-  }, [activeView, directorRunning, executionLogs.length, llmStreamEvents.length, processStreamEvents.length]);
+  }, [activeView, executionLogs.length, llmStreamEvents.length, processStreamEvents.length]);
 
   // 用户手动点击导航时记录偏好
   const handleViewChange = useCallback((view: DirectorActiveView) => {

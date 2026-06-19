@@ -498,3 +498,111 @@ describe('contextOSFormat', () => {
     expect(NOMINAL_CONTEXT_WINDOW).toBe(128_000);
   });
 });
+
+describe('Phase 3+ multi-worker LLM tracking model', () => {
+  function rawLog(over: Partial<LogEntry> & { id: string; timestamp: string }): LogEntry {
+    return {
+      level: 'info',
+      source: 'System',
+      message: '',
+      ...over,
+    };
+  }
+  const telemetryOf = (llm: LogEntry[] = []) => buildTelemetryFromStream(llm, [], []);
+
+  it('reports hasWorkers=false and an empty workers array when no event carries worker_id', () => {
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf() }));
+    expect(model.hasWorkers).toBe(false);
+    expect(model.workers).toEqual([]);
+  });
+
+  it('aggregates per-worker cards when telemetry contains worker_id metadata', () => {
+    const llmStream: LogEntry[] = [
+      rawLog({
+        id: 'w1c1',
+        timestamp: '2026-06-19T11:00:00Z',
+        level: 'success',
+        source: 'Director',
+        message: 'worker-1 call 1',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          worker_id: 'worker-1',
+          promptTokens: 100,
+          completionTokens: 50,
+          totalTokens: 150,
+          durationMs: 800,
+        },
+      }),
+      rawLog({
+        id: 'w1c2',
+        timestamp: '2026-06-19T11:00:05Z',
+        level: 'success',
+        source: 'Director',
+        message: 'worker-1 call 2',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          workerId: 'worker-1',
+          promptTokens: 200,
+          completionTokens: 80,
+          totalTokens: 280,
+          durationMs: 1200,
+        },
+      }),
+      rawLog({
+        id: 'w2c1',
+        timestamp: '2026-06-19T11:00:02Z',
+        level: 'success',
+        source: 'Director',
+        message: 'worker-2 call',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          worker_id: 'worker-2',
+          promptTokens: 60,
+          completionTokens: 30,
+          totalTokens: 90,
+          durationMs: 500,
+        },
+      }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    expect(model.hasWorkers).toBe(true);
+    expect(model.workers).toHaveLength(2);
+    const w1 = model.workers.find((w) => w.workerId === 'worker-1');
+    const w2 = model.workers.find((w) => w.workerId === 'worker-2');
+    expect(w1?.calls).toBe(2);
+    expect(w1?.tokens).toBe(430);
+    expect(w1?.state).toBe('active');
+    expect(w2?.calls).toBe(1);
+    expect(w2?.tokens).toBe(90);
+    // Sorted by lastEpoch desc — worker-1's latest event (11:00:05) beats worker-2 (11:00:02).
+    expect(model.workers[0].workerId).toBe('worker-1');
+  });
+
+  it('attaches latestContextSnapshotRef from the worker\'s most recent context snapshot', () => {
+    const llmStream: LogEntry[] = [
+      rawLog({
+        id: 'w1snap',
+        timestamp: '2026-06-19T11:00:00Z',
+        level: 'success',
+        source: 'Director',
+        message: 'worker-1 snap',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          worker_id: 'worker-1',
+          contextSnapshotRef: 'abc123',
+        },
+      }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    const w1 = model.workers.find((w) => w.workerId === 'worker-1');
+    expect(w1?.latestContextSnapshotRef).toBe('abc123');
+  });
+});

@@ -213,6 +213,91 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(entry?.meta?.durationMs).toBe(1200);
   });
 
+  it('classifies runtime.v2 llm.action tool payloads as tool activity', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'event',
+      event: {
+        schema_version: 'runtime.v2',
+        channel: 'llm',
+        kind: 'llm.action',
+        ts: '2026-06-19T07:02:03.754192Z',
+        payload: {
+          message: "[tool_call] {'tool': 'write_file'}",
+          actor: 'director',
+          severity: 'info',
+          domain: 'llm',
+          raw: {
+            event_type: 'tool_call',
+            payload: {
+              tool: 'write_file',
+              args: { file: 'index.html', content: '<html></html>' },
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.current.llmStreamEvents).toHaveLength(1);
+    const entry = result.current.llmStreamEvents[0];
+    expect(entry?.level).toBe('tool');
+    expect(entry?.source).toBe('Director');
+    expect(entry?.message).toBe('调用工具: write_file');
+    expect(entry?.details).toContain('"file":"index.html"');
+    expect(entry?.meta?.streamEvent).toBe('tool_call');
+    expect(entry?.tags).toContain('tool_call');
+  });
+
+  it('parses tagged content_chunk lines emitted by streaming-compatible providers', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'llm',
+      text: '[16:55:00] > [content_chunk] {"content":" This","model":"kimi-for-coding"}',
+    });
+
+    expect(result.current.llmStreamEvents).toHaveLength(1);
+    const entry = result.current.llmStreamEvents[0];
+    expect(entry?.message).toBe('This');
+    expect(entry?.level).toBe('info');
+    expect(entry?.meta?.streamEvent).toBe('content_chunk');
+    expect(entry?.meta?.model).toBe('kimi-for-coding');
+  });
+
+  it('classifies process tool events as tool activity for role workspaces', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'process',
+      text: JSON.stringify({
+        channel: 'process',
+        event: 'tool_result',
+        role: 'director',
+        data: {
+          tool: 'repo_tree',
+          success: true,
+          result: { path: '.', total_entries: 6 },
+        },
+      }),
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(1);
+    const entry = result.current.processStreamEvents[0];
+    expect(entry?.level).toBe('tool');
+    expect(entry?.source).toBe('Director');
+    expect(entry?.message).toBe('工具结果: repo_tree (ok)');
+    expect(entry?.meta?.streamEvent).toBe('tool_result');
+  });
+
   it('processes EVENT query_result batches item-by-item and preserves v2 dedup', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })
