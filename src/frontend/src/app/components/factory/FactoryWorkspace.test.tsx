@@ -167,6 +167,40 @@ describe('FactoryWorkspace', () => {
     expect(screen.queryByTestId('pm-workspace-mock')).not.toBeInTheDocument();
   });
 
+  it('shows Director runtime progress on the matching PM contract row', () => {
+    const pmTask = {
+      id: 'TASK-2',
+      title: 'Implement checkout route',
+      goal: 'Deliver the route from the approved blueprint',
+      status: 'completed',
+      done: true,
+      completed: true,
+      steps: ['Edit route handler'],
+      acceptance_criteria: ['Route test passes'],
+      target_files: ['src/checkout/route.ts'],
+    } as PmTask;
+    const directorTask = {
+      ...pmTask,
+      status: 'in_progress',
+      done: false,
+      completed: false,
+      worker_id: 'worker-1',
+    } as PmTask;
+
+    render(
+      <FactoryWorkspace
+        {...baseProps}
+        tasks={[pmTask]}
+        pmTasks={[pmTask]}
+        directorTasks={[directorTask]}
+        currentRun={null}
+        events={[]}
+      />
+    );
+
+    expect(screen.getByTestId('factory-pm-task-item')).toHaveTextContent('执行中');
+  });
+
   it('uses a compact Director delivery layer with Factory-owned execution controls', () => {
     const task = {
       id: 'director-task-1',

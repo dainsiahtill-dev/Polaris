@@ -172,7 +172,7 @@ describe('buildContextOSModel', () => {
     expect(projection?.state).toBe('active');
   });
 
-  it('maps by_mode tokens onto role cards via aliases', () => {
+  it('does not map usage-stats by_mode totals onto role cards', () => {
     const usageStats: UsageStats = {
       totals: { prompt_tokens: 100, completion_tokens: 100, total_tokens: 200 },
       calls: 2,
@@ -181,7 +181,9 @@ describe('buildContextOSModel', () => {
     };
     const model = buildContextOSModel(baseInput({ usageStats, directorRunning: true }));
     const director = model.roles.find((r) => r.id === 'director');
-    expect(director?.tokens).toBe(200);
+    expect(director?.tokens).toBe(0);
+    expect(director?.tokensReal).toBe(false);
+    expect(director?.detail).toBe('待命');
     expect(director?.state).toBe('active');
   });
 
@@ -372,6 +374,18 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(qa?.tokensReal).toBe(false); // no events, no usage
   });
 
+  it('derives role window occupancy from each role rather than the global average', () => {
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf() }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+    const director = model.roles.find((r) => r.id === 'director');
+
+    expect(model.windowOccupancyTokens).toBe(Math.round((1932 + 800) / 2));
+    expect(pm?.internalContext.windowOccupancyTokens).toBe(1932);
+    expect(pm?.internalContext.windowOccupancyLabel).toBe('平均提示');
+    expect(director?.internalContext.windowOccupancyTokens).toBe(800);
+    expect(director?.internalContext.windowOccupancyLabel).toBe('平均提示');
+  });
+
   it('flags windowed when a WS stream reaches its ring-buffer cap', () => {
     expect(buildContextOSModel(baseInput({ telemetry: telemetryOf() })).telemetryWindowed).toBe(false);
     const bigExec = Array.from({ length: 100 }, (_, i) =>
@@ -555,6 +569,8 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(pm?.internalContext.workingMemoryItems).toBe(5);
     expect(pm?.internalContext.workingMemoryEstimated).toBe(false);
     expect(pm?.internalContext.contextTokensLatest).toBe(3200);
+    expect(pm?.internalContext.windowOccupancyTokens).toBe(3200);
+    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新上下文');
   });
 
   it('truncates RoleInternalContext.events to MAX_ROLE_EVENTS while preserving newest-first order', () => {

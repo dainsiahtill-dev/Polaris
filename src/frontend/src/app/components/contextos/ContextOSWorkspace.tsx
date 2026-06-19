@@ -485,8 +485,8 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
         />
         <RoleInternalStat
           label="Token"
-          value={`${contextOSFormat.tokens(ctx.promptTokens)} / ${contextOSFormat.tokens(ctx.completionTokens)}`}
-          sub="提示 / 输出"
+          value={ctx.totalTokens > 0 ? `${contextOSFormat.tokens(ctx.promptTokens)} / ${contextOSFormat.tokens(ctx.completionTokens)}` : '—'}
+          sub={ctx.totalTokens > 0 ? '提示 / 输出' : '无 usage 观测'}
           highlight={ctx.totalTokens > 0}
         />
       </div>
@@ -850,7 +850,19 @@ export function ContextOSWorkspace({
     ? `${selectedRole.title} · ${selectedRole.contextWindowLabel}`
     : model.contextWindowLabel;
   const budgetWindowDetail = selectedRole?.contextWindowDetail ?? model.contextWindowDetail;
-  const budgetWindowOccupancy = Math.max(0, Math.min(1, model.windowOccupancyTokens / budgetWindowTokens));
+  const globalWindowOccupancyTokens = model.windowOccupancyTokens > 0 ? model.windowOccupancyTokens : null;
+  const budgetWindowOccupancyTokens = selectedRole
+    ? selectedRole.internalContext.windowOccupancyTokens
+    : globalWindowOccupancyTokens;
+  const budgetWindowOccupancyLabel = selectedRole
+    ? selectedRole.internalContext.windowOccupancyLabel
+    : globalWindowOccupancyTokens !== null ? '平均提示' : '无 usage';
+  const budgetWindowOccupancyDetail = selectedRole
+    ? `${selectedRole.internalContext.windowOccupancyDetail} · ${budgetWindowDetail}`
+    : globalWindowOccupancyTokens !== null ? budgetWindowDetail : `尚无全局 usage 观测 · ${budgetWindowDetail}`;
+  const budgetWindowOccupancy = budgetWindowOccupancyTokens !== null
+    ? Math.max(0, Math.min(1, budgetWindowOccupancyTokens / budgetWindowTokens))
+    : 0;
 
   const toggleRole = (roleId: string) => setActiveRole((prev) => (prev === roleId ? null : roleId));
 
@@ -1210,11 +1222,12 @@ export function ContextOSWorkspace({
                   <div
                     className="flex items-center justify-end gap-1 text-right font-mono text-[9px] text-text-dim"
                     data-testid="contextos-window-source"
-                    title={budgetWindowDetail}
+                    title={budgetWindowOccupancyDetail}
                   >
-                    <span>~{contextOSFormat.tokens(model.windowOccupancyTokens)}</span>
+                    <span>{budgetWindowOccupancyTokens !== null ? `~${contextOSFormat.tokens(budgetWindowOccupancyTokens)}` : '无 usage'}</span>
                     <span>/</span>
                     <span>{contextOSFormat.windowTokens(budgetWindowTokens)}</span>
+                    <span className="max-w-[120px] truncate">{budgetWindowOccupancyLabel}</span>
                     <span className="max-w-[170px] truncate">{budgetWindowLabel}</span>
                   </div>
                 </div>

@@ -206,6 +206,50 @@ describe('ContextOSWorkspace', () => {
     expect(screen.getByTestId('contextos-window-source').textContent).toContain('PM');
   });
 
+  it('uses the selected role occupancy numerator instead of the global average', () => {
+    const mixedRoleStream: LogEntry[] = [
+      ...LLM_STREAM,
+      {
+        id: 'director-call',
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        source: 'Director',
+        message: 'director implementation call returned',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          promptTokens: 800,
+          completionTokens: 200,
+          totalTokens: 1000,
+          durationMs: 1800,
+        },
+        tags: ['llm_completed'],
+      },
+    ];
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmRuntimeState={READY_LLM_WITH_WINDOWS}
+        llmStreamEvents={mixedRoleStream}
+      />,
+    );
+
+    const source = screen.getByTestId('contextos-window-source');
+    expect(source.textContent).toContain('~1.4k'); // global average prompt: (1932 + 800) / 2
+
+    fireEvent.click(screen.getByTestId('contextos-role-director'));
+    expect(source.textContent).toContain('~800');
+    expect(source.textContent).toContain('Director');
+    expect(source.textContent).toContain('平均提示');
+
+    fireEvent.click(screen.getByTestId('contextos-role-director'));
+    fireEvent.click(screen.getByTestId('contextos-role-pm'));
+    expect(source.textContent).toContain('~1.9k');
+    expect(source.textContent).toContain('PM');
+    expect(source.textContent).toContain('平均提示');
+  });
+
   it('surfaces REAL ContextOS telemetry from the live WebSocket stream props', () => {
     render(
       <ContextOSWorkspace

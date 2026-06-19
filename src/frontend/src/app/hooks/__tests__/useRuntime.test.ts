@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useRuntime } from '../useRuntime';
 import { useRuntimeStore } from '../useRuntimeStore';
+import { TaskStatus } from '@/types/task';
 
 type RuntimeMessageHandler = (message: unknown) => void;
 
@@ -685,6 +686,51 @@ describe('useRuntime llm filtering and dedup', () => {
       sourceChannel: 'event.file_edit',
       eventKind: 'file_edit',
       provenance: 'process_local_fanout',
+    });
+  });
+
+  it('marks runtime tasks in progress from Director task lifecycle events', () => {
+    act(() => {
+      useRuntimeStore.getState().setTasks([
+        {
+          id: 'TASK-2',
+          title: 'Implement checkout route',
+          status: TaskStatus.PENDING,
+          state: TaskStatus.PENDING,
+          done: false,
+          completed: false,
+          priority: 3,
+          acceptance: [],
+        },
+      ]);
+    });
+
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'runtime_event',
+      event: {
+        name: 'director_task_started',
+        actor: 'Director',
+        ts: '2026-06-19T12:00:00.000Z',
+        data: {
+          task_id: 'TASK-2',
+          task_title: 'Implement checkout route',
+          worker_id: 'worker-1',
+        },
+      },
+    });
+
+    expect(result.current.tasks[0]).toMatchObject({
+      id: 'TASK-2',
+      status: 'in_progress',
+      state: 'in_progress',
+      done: false,
+      completed: false,
+      worker_id: 'worker-1',
+      started_at: '2026-06-19T12:00:00.000Z',
     });
   });
 });

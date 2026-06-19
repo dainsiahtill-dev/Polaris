@@ -1294,13 +1294,16 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
 
         if (msgType === 'dialogue_event') {
           payload = { type: 'line', channel: 'dialogue', text: Parsing.isRecord(payload.event) ? JSON.stringify(payload.event) : '' };
+          channel = 'dialogue';
         } else if (msgType === 'runtime_event') {
           payload = { type: 'line', channel: 'runtime_events', text: Parsing.isRecord(payload.event) ? JSON.stringify(payload.event) : (typeof payload.line === 'string' ? payload.line : '') };
+          channel = 'runtime_events';
         } else if (msgType === 'llm_stream' || msgType === 'process_stream') {
           const eventText = Parsing.isRecord(payload.event) ? JSON.stringify(payload.event) : '';
           const lineText = typeof payload.line === 'string' ? payload.line : '';
           const fallbackChannel = msgType === 'llm_stream' ? 'llm' : 'process';
           payload = { type: 'line', channel: channel || fallbackChannel, text: eventText || lineText };
+          channel = String(payload.channel || '').trim();
         }
 
         if (payload.type === 'status') {

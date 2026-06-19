@@ -86,6 +86,10 @@ export interface RoleInternalContext {
   contextWindowTokens: number | null;
   contextWindowLabel: string;
   contextWindowDetail: string;
+  /** 当前窗口占用的角色级分子。优先真实 context token，其次该角色平均 prompt token；无数据为 null。 */
+  windowOccupancyTokens: number | null;
+  windowOccupancyLabel: string;
+  windowOccupancyDetail: string;
   totalTokens: number;
   promptTokens: number;
   completionTokens: number;
@@ -112,8 +116,8 @@ export interface RoleCard {
   detail: string;
   /**
    * 该角色的 token 是否来自真实带 usage 的观测通道。
-   * 后端目前仅 PM 路径构造 UsageContext → 仅 PM 有真实 token 归并；
-   * 其余角色无 usage 通道，detail 以事件数/无观测呈现，不冒充 token 归因。
+   * 只有该角色自己的实时事件携带 usage 时才归并 token；无 usage 通道时
+   * detail 以事件数/无观测呈现，不冒充 token 归因。
    */
   tokensReal: boolean;
   /** 是否为只读辅助角色 */
@@ -235,14 +239,6 @@ const EVENT_TYPE_META: ReadonlyArray<{ key: ContextOSEvent['category']; label: s
   { key: 'error', label: '错误', colorClass: 'bg-status-error' },
   { key: 'event', label: '其他', colorClass: 'bg-text-dim' },
 ];
-
-const ROLE_KEY_ALIASES: Record<string, string[]> = {
-  pm: ['pm', 'project_manager', 'planning', 'plan'],
-  architect: ['architect', 'design', 'architecture'],
-  chief_engineer: ['chief_engineer', 'chief', 'engineer', 'blueprint'],
-  director: ['director', 'execution', 'implementation', 'code', 'worker'],
-  qa: ['qa', 'review', 'reviewer', 'quality', 'test'],
-};
 
 /** 角色 → Decision Log 中 actor/speaker 的匹配别名（用于角色页签交叉过滤）。 */
 export const ROLE_DECISION_ALIASES: Record<string, string[]> = {
@@ -381,17 +377,6 @@ function phaseToActiveStage(phase: string, running: boolean): string | null {
   if (token.includes('implement') || token.includes('exec') || token.includes('code')) return 'llm';
   if (token.includes('review') || token.includes('qa') || token.includes('test')) return 'telemetry';
   return 'working_mem';
-}
-
-function sumModeTokens(byMode: Record<string, { total_tokens: number; calls: number }>, aliases: string[]): number {
-  let total = 0;
-  for (const [key, value] of Object.entries(byMode)) {
-    const lowered = key.toLowerCase();
-    if (aliases.some((alias) => lowered.includes(alias))) {
-      total += safeNumber(value?.total_tokens);
-    }
-  }
-  return total;
 }
 
 /** 把时间戳解析成可比较的 epoch（毫秒）；不可解析 → 0（排到末尾，保留插入序）。 */
@@ -757,13 +742,11 @@ export function buildContextOSModel(input: {
   };
 
   const roleTokens = (roleKey: string): number => {
-    // 真实遥测按 actor 归并的 token 最准；无则退回 by_mode 估算。
+    // 角色卡只展示真实 per-role usage。usageStats/by_mode 是全局用量统计维度，
+    // 不能冒充某个角色的当前窗口占用，否则会让多个角色显示同一个估算 token。
     if (telemetryActive) {
-      const fromTelemetry = telemetryRoleTokens(telemetry, roleKey);
-      if (fromTelemetry > 0) return fromTelemetry;
+      return telemetryRoleTokens(telemetry, roleKey);
     }
-    const fromMode = sumModeTokens(byMode, ROLE_KEY_ALIASES[roleKey] ?? [roleKey]);
-    if (fromMode > 0) return fromMode;
     return 0;
   };
 
@@ -805,8 +788,24 @@ export function buildContextOSModel(input: {
     const lastContextBuild = roleEvents.find((event) => event.contextItems !== null);
     const lastContextSize = roleEvents.find((event) => event.contextTokens !== null);
     const contextItemsCount = lastContextBuild ? lastContextBuild.contextItems : null;
+    const contextTokensLatest = lastContextSize ? lastContextSize.contextTokens : null;
     const workingMemoryItems = contextItemsCount ?? (roleEvents.length > 0 ? roleEvents.length : null);
     const roleWindow = roleWindowByKey[role.key] ?? { tokens: null, label: '窗口未知', detail: 'LLM status 未提供角色绑定窗口' };
+    const usageCallCount = roleEvents.filter((event) => event.hasUsage).length;
+    const promptAverage = usageCallCount > 0 && promptTokens > 0 ? Math.round(promptTokens / usageCallCount) : null;
+    const windowOccupancyTokens = contextTokensLatest !== null && contextTokensLatest > 0
+      ? contextTokensLatest
+      : promptAverage;
+    const windowOccupancyLabel = contextTokensLatest !== null && contextTokensLatest > 0
+      ? '最新上下文'
+      : promptAverage !== null
+        ? '平均提示'
+        : '无 usage';
+    const windowOccupancyDetail = contextTokensLatest !== null && contextTokensLatest > 0
+      ? '来自该角色最近一次 context.build/context_tokens_after'
+      : promptAverage !== null
+        ? '来自该角色 usage 事件的 prompt_tokens 平均值'
+        : '该角色尚无带 usage 的实时观测事件';
 
     // 当前任务：ContextOSEvent 目前未携带 refs，先诚实留空；后续可在 logEntryToEvent 中扩展
     // refs/task_id 字段后再精确填充。
@@ -840,10 +839,13 @@ export function buildContextOSModel(input: {
       contextItemsCount,
       workingMemoryItems,
       workingMemoryEstimated: contextItemsCount === null && workingMemoryItems !== null,
-      contextTokensLatest: lastContextSize ? lastContextSize.contextTokens : null,
+      contextTokensLatest,
       contextWindowTokens: roleWindow.tokens,
       contextWindowLabel: roleWindow.label,
       contextWindowDetail: roleWindow.detail,
+      windowOccupancyTokens,
+      windowOccupancyLabel,
+      windowOccupancyDetail,
       totalTokens,
       promptTokens,
       completionTokens,
