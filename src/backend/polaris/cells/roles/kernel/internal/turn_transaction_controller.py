@@ -545,92 +545,15 @@ class TurnTransactionController:
 
         PROPOSE_PATCH / ANALYZE_ONLY 模式下禁止 write tools。
         若检测到 write tools，过滤后降级为 FINAL_ANSWER。
+
+        实现统一委托给 ``contract_guards.apply_delivery_mode_filter``，使 run 模式
+        与 stream 模式共用同一只读/提案边界语义。
         """
-        contract = ledger.delivery_contract
-        if contract.mode == DeliveryMode.MATERIALIZE_CHANGES:
-            return decision
-
-        tool_batch = decision.get("tool_batch")
-        if not tool_batch:
-            return decision
-
-        invocations = list(tool_batch.get("invocations", []) or [])
-        from polaris.cells.roles.kernel.internal.transaction.contract_guards import is_write_invocation
-
-        filtered = [inv for inv in invocations if not is_write_invocation(inv)]
-        dropped = len(invocations) - len(filtered)
-
-        if dropped == 0:
-            return decision
-
-        logger.warning(
-            "delivery-mode-filter: dropped %d write tool(s) in %s mode. turn_id=%s",
-            dropped,
-            contract.mode.value,
-            ledger.turn_id,
-        )
-        ledger.anomaly_flags.append(
-            {
-                "type": "DELIVERY_MODE_WRITE_TOOL_FILTERED",
-                "turn_id": ledger.turn_id,
-                "dropped_count": dropped,
-                "delivery_mode": contract.mode.value,
-                "original_tool_count": len(invocations),
-            }
+        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+            apply_delivery_mode_filter,
         )
 
-        if not filtered:
-            # 全部过滤完，降级为 FINAL_ANSWER
-            from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode, TurnDecisionKind
-
-            return TurnDecision(
-                turn_id=decision.get("turn_id"),
-                kind=TurnDecisionKind.FINAL_ANSWER,
-                visible_message=decision.get("visible_message", ""),
-                reasoning_summary=decision.get("reasoning_summary"),
-                tool_batch=None,
-                finalize_mode=FinalizeMode.NONE,
-                domain=decision.get("domain", "code"),
-                metadata={
-                    **(decision.get("metadata") or {}),
-                    "delivery_mode_filter_applied": True,
-                    "dropped_write_tools": dropped,
-                },
-            )
-
-        # 部分过滤，重建 tool_batch
-        from polaris.cells.roles.kernel.public.turn_contracts import (
-            BatchId,
-            ToolBatch,
-            ToolExecutionMode,
-            TurnDecisionKind,
-        )
-
-        turn_id_val = decision.get("turn_id")
-        new_batch = ToolBatch(
-            batch_id=tool_batch.get("batch_id", BatchId(f"{turn_id_val}_filtered")),
-            invocations=filtered,
-            parallel_readonly=[
-                inv for inv in filtered if inv.get("execution_mode") == ToolExecutionMode.READONLY_PARALLEL
-            ],
-            readonly_serial=[inv for inv in filtered if inv.get("execution_mode") == ToolExecutionMode.READONLY_SERIAL],
-            serial_writes=[],
-            async_receipts=[inv for inv in filtered if inv.get("execution_mode") == ToolExecutionMode.ASYNC_RECEIPT],
-        )
-        return TurnDecision(
-            turn_id=turn_id_val,
-            kind=TurnDecisionKind.TOOL_BATCH,
-            visible_message=decision.get("visible_message", ""),
-            reasoning_summary=decision.get("reasoning_summary"),
-            tool_batch=new_batch,
-            finalize_mode=decision.get("finalize_mode"),
-            domain=decision.get("domain", "code"),
-            metadata={
-                **(decision.get("metadata") or {}),
-                "delivery_mode_filter_applied": True,
-                "dropped_write_tools": dropped,
-            },
-        )
+        return apply_delivery_mode_filter(decision, ledger)
 
     async def _drain_speculative_tasks(
         self,
