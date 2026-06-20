@@ -4474,6 +4474,63 @@ def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_pa
     assert "public type: FlowerType = FlowerType.Moonflower;" in repaired
 
 
+def test_materialization_quality_errors_scan_declared_target_files(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _collect_materialization_quality_errors,
+    )
+
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    (src / "changed.ts").write_text("export const changed = 1;\n", encoding="utf-8")
+    (src / "declared.ts").write_text(
+        "export function broken() {\n"
+        "  return {\n"
+        "    value: 1;\n"
+        "  };\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(workspace=str(tmp_path))
+
+    errors = _collect_materialization_quality_errors(
+        adapter,
+        task={"target_files": ["src/changed.ts", "src/declared.ts"]},
+        all_affected_files=["src/changed.ts"],
+        workspace_name=tmp_path.name,
+    )
+
+    assert any("src/declared.ts" in error for error in errors)
+
+
+def test_materialization_quality_errors_keep_pinned_step_single_file_scope(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _collect_materialization_quality_errors,
+    )
+
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    (src / "pinned.ts").write_text("export const pinned = 1;\n", encoding="utf-8")
+    (src / "other.ts").write_text(
+        "export function broken() {\n"
+        "  return {\n"
+        "    value: 1;\n"
+        "  };\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(workspace=str(tmp_path))
+
+    errors = _collect_materialization_quality_errors(
+        adapter,
+        task={"target_files": ["src/pinned.ts", "src/other.ts"]},
+        all_affected_files=["src/pinned.ts"],
+        workspace_name=tmp_path.name,
+        context={"construction_step": {"target_file": "src/pinned.ts"}},
+    )
+
+    assert not any("src/other.ts" in error for error in errors)
+
+
 def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any) -> None:
     """§8 regression: missing test files should not be masked by fabricated
     placeholder tests in production/director hot paths."""

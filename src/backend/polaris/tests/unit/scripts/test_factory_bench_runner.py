@@ -143,7 +143,10 @@ def test_runtime_dir_candidates_merge_artifacts_and_chain_results(
 
 
 def test_clean_chain_preserves_static_pass() -> None:
-    record = _record()
+    record = _record(
+        real_run_gate={"ok": True, "summary": "real run gate passed"},
+        llm_route_audit={"ok": True, "summary": "LLM route audit passed"},
+    )
 
     apply_factory_bench_gates(record, chain={"exit_code": 0})
 
@@ -162,6 +165,17 @@ def test_real_run_and_llm_route_gates_are_fail_closed_when_present() -> None:
 
     gates = {gate["gate"]: gate for gate in record["factory_gates"]}
     assert gates["real_run_gate"]["ok"] is True
+    assert gates["llm_route_audit"]["ok"] is False
+    assert record["all_checks_passed"] is False
+
+
+def test_real_run_and_llm_route_gates_are_fail_closed_when_missing() -> None:
+    record = _record()
+
+    apply_factory_bench_gates(record, chain={"exit_code": 0})
+
+    gates = {gate["gate"]: gate for gate in record["factory_gates"]}
+    assert gates["real_run_gate"]["ok"] is False
     assert gates["llm_route_audit"]["ok"] is False
     assert record["all_checks_passed"] is False
 
@@ -599,6 +613,102 @@ def test_main_rejects_unknown_explicit_project_ids(
     assert result == 1
     assert "unknown project id(s): L2-01" in captured.out
     assert "refusing to run partial explicit selection" in captured.out
+
+
+def test_main_defaults_to_l1_through_l12_catalog(monkeypatch: Any, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+    projects = [
+        {"id": f"L{level}-{level:02d}", "level": level, "title": f"Project {level}", "brief": "Build something"}
+        for level in range(1, 13)
+    ]
+
+    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
+    monkeypatch.setattr(bench, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+
+    def _capture_session(**kwargs: Any) -> str:
+        captured.update(kwargs)
+        return "bench-default"
+
+    def _stop_after_registration(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(bench, "_ensure_bench_session", _capture_session)
+    monkeypatch.setattr(bench, "run_factory_chain", _stop_after_registration)
+
+    result = bench.main()
+
+    assert result == 130
+    assert captured["total"] == 12
+    assert captured["metadata"]["levels"] == list(range(1, 13))
+    assert captured["project_ids"] == [project["id"] for project in projects]
+
+
+def test_main_default_max_failed_zero_does_not_early_stop(monkeypatch: Any, tmp_path: Path) -> None:
+    calls: list[str] = []
+    projects = [
+        {"id": "L1-01", "level": 1, "title": "One", "brief": "Build one"},
+        {"id": "L2-02", "level": 2, "title": "Two", "brief": "Build two"},
+    ]
+
+    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
+    monkeypatch.setattr(bench, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-no-early-stop")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(
+        bench,
+        "build_factory_audit_record",
+        lambda **_kwargs: {
+            "all_checks_passed": True,
+            "static_checks_passed": True,
+            "has_plan_doc": True,
+            "has_blueprint_doc": True,
+            "has_qa_verdict": True,
+            "code_file_count": 1,
+            "checks": [],
+        },
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_real_run_gate",
+        lambda *_args, **_kwargs: {"ok": False, "summary": "real run failed"},
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_llm_route_audit",
+        lambda *_args, **_kwargs: {"ok": False, "summary": "LLM route audit failed"},
+    )
+
+    def _chain(project: dict[str, Any], *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        calls.append(str(project["id"]))
+        return {
+            "exit_code": 0,
+            "duration_s": 0.01,
+            "chain_results": {
+                "contract_goal": str(project["brief"]),
+                "qa_ran": True,
+                "qa_passed": True,
+                "director": {"total": 1, "successes": 1, "failures": 0},
+            },
+        }
+
+    monkeypatch.setattr(bench, "run_factory_chain", _chain)
+
+    result = bench.main()
+
+    assert result == 1
+    assert calls == ["L1-01", "L2-02"]
 
 
 # --- run_factory_chain (API path) ---

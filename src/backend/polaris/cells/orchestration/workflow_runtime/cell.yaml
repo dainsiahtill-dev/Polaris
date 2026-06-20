@@ -42,7 +42,6 @@ depends_on:
 - policy.permission
 - policy.workspace_guard
 - resident.autonomy
-- roles.adapters
 - roles.profile
 - runtime.artifact_store
 - runtime.execution_broker

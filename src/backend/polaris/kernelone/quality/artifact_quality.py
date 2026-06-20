@@ -77,7 +77,9 @@ _PATCH_RESIDUE_RE = re.compile(
     re.IGNORECASE,
 )
 _TS_RETURN_OBJECT_BLOCK_RE = re.compile(r"return\s*\{(?P<body>.*?)^\s*\};", re.DOTALL | re.MULTILINE)
-_TS_OBJECT_PROPERTY_SEMICOLON_RE = re.compile(r"(?m)^\s*[A-Za-z_$][\w$]*\s*;\s*$")
+_TS_OBJECT_PROPERTY_SEMICOLON_RE = re.compile(
+    r"(?m)^\s*(?:[A-Za-z_$][\w$]*\s*|(?:\[[^\]]+\]|[A-Za-z_$][\w$]*|['\"][^'\"]+['\"])\s*:\s*[^;{}]+);\s*$"
+)
 _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE = re.compile(
     r"//[^\r\n]*\\n\s*(?:export|import|const|let|var|class|function|interface|type|enum)\b",
     re.IGNORECASE,

@@ -796,6 +796,8 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
                 str(real_run_gate.get("summary") or "real run gate missing summary"),
             )
         )
+    else:
+        gates.append(_bench_gate("real_run_gate", False, "real run gate missing"))
     llm_route_audit = record.get("llm_route_audit")
     if isinstance(llm_route_audit, dict):
         gates.append(
@@ -805,6 +807,8 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
                 str(llm_route_audit.get("summary") or "LLM route audit missing summary"),
             )
         )
+    else:
+        gates.append(_bench_gate("llm_route_audit", False, "LLM route audit missing"))
     return gates
 
 
@@ -1097,7 +1101,11 @@ def run_chain(
 def main() -> int:
     ap = argparse.ArgumentParser(description="Polaris factory-bench full-chain runner")
     ap.add_argument("--project-ids", default="", help="comma-separated ids (e.g. L1-01,L1-02); empty = use --levels")
-    ap.add_argument("--levels", default="1", help="comma-separated levels to run when no ids given")
+    ap.add_argument(
+        "--levels",
+        default="1,2,3,4,5,6,7,8,9,10,11,12",
+        help="comma-separated levels to run when no ids given",
+    )
     ap.add_argument(
         "--projects-file",
         default=str(_FIXTURE),
@@ -1105,7 +1113,12 @@ def main() -> int:
     )
     ap.add_argument("--work-dir", default=os.path.expanduser("~/Temp/factory-bench"))
     ap.add_argument("--timeout", type=int, default=5400, help="per-project chain timeout seconds")
-    ap.add_argument("--max-failed", type=int, default=3, help="early stop after N audit failures")
+    ap.add_argument(
+        "--max-failed",
+        type=int,
+        default=0,
+        help="early stop after N audit failures; 0 disables early stop",
+    )
     ap.add_argument(
         "--director-workflow-execution-mode",
         choices=("serial", "parallel"),
@@ -1406,13 +1419,13 @@ def main() -> int:
         )
         if not record["all_checks_passed"]:
             failed += 1
-            if failed >= args.max_failed:
+            if args.max_failed > 0 and failed >= args.max_failed:
                 print(f"[factory-bench] early stop: {failed} failures (audit before continuing)", flush=True)
                 break
 
     agg = aggregate_factory_audits(records)
     goal_audit = aggregate_goal_audit(records)
-    run_success = failed < args.max_failed and agg["all_checks_passed"] == agg["total"]
+    run_success = agg["all_checks_passed"] == agg["total"]
     _emit_bench_event(
         workspace=base,
         project_id="-",

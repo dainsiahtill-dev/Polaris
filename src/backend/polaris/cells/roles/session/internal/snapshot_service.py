@@ -129,15 +129,7 @@ class SnapshotService:
 
                 for row in rows:
                     try:
-                        msg_dict: dict[str, Any] = {
-                            "id": str(row.id or ""),
-                            "role": str(row.role or ""),
-                            "content": str(row.content or ""),
-                            "thinking": str(row.thinking or "") if row.thinking else "",
-                            "sequence": int(row.sequence or 0),
-                            "created_at": (row.created_at.isoformat() if row.created_at else ""),
-                            "meta": {},
-                        }
+                        msg_dict = row.to_dict()
                     except (RuntimeError, ValueError) as exc:
                         logger.debug(
                             "Failed to serialise message row %s: %s",

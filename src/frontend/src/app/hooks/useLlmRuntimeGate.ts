@@ -239,6 +239,7 @@ export function getRoleLlmBlockedReason(
 
 export function useLlmRuntimeGate({
   workspace,
+  live,
   llmStatus,
 }: UseLlmRuntimeGateOptions) {
   const [llmRuntimeState, setLlmRuntimeState] = useState<LlmRuntimeGateState>(EMPTY_LLM_RUNTIME_STATE);
@@ -255,12 +256,16 @@ export function useLlmRuntimeGate({
   }, []);
 
   const handleLlmStatusChange = useCallback((status: LlmStatus | null) => {
+    if (!live) {
+      clearLlmRuntimeState();
+      return;
+    }
     if (status) {
       applyLlmStatusPayload(status);
       return;
     }
     clearLlmRuntimeState();
-  }, [applyLlmStatusPayload, clearLlmRuntimeState]);
+  }, [applyLlmStatusPayload, clearLlmRuntimeState, live]);
 
   const getLlmRoleBlockedReason = useCallback(
     (role: string, roleDisplayName?: string) =>
@@ -269,14 +274,14 @@ export function useLlmRuntimeGate({
   );
 
   useEffect(() => {
-    if (!workspace) {
+    if (!workspace || !live) {
       clearLlmRuntimeState();
       return;
     }
     if (llmStatus) {
       applyLlmStatusPayload(llmStatus);
     }
-  }, [applyLlmStatusPayload, clearLlmRuntimeState, llmStatus, workspace]);
+  }, [applyLlmStatusPayload, clearLlmRuntimeState, live, llmStatus, workspace]);
 
   return {
     llmRuntimeState,

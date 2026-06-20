@@ -208,6 +208,52 @@ describe('useLlmRuntimeGate', () => {
     expect(result.current.llmRuntimeState.blockedRoles).toEqual([]);
   });
 
+  it('clears a stale ready state when the runtime websocket disconnects', () => {
+    const readyStatus = llmStatus({
+      state: 'READY',
+      blocked_roles: [],
+      required_ready_roles: ['pm'],
+      last_updated: '2026-05-24T00:01:00Z',
+    });
+
+    const { result, rerender } = renderHook(
+      ({ live }) => useLlmRuntimeGate({
+        workspace: 'C:/Temp/Product',
+        live,
+        llmStatus: live ? readyStatus : null,
+      }),
+      {
+        initialProps: { live: true },
+      },
+    );
+
+    expect(result.current.llmRuntimeState.state).toBe('READY');
+
+    rerender({ live: false });
+
+    expect(result.current.llmRuntimeState.state).toBe('UNKNOWN');
+    expect(result.current.llmRuntimeState.blockedRoles).toEqual([]);
+  });
+
+  it('ignores direct status callbacks while the runtime websocket is disconnected', () => {
+    const { result } = renderHook(() => useLlmRuntimeGate({
+      workspace: 'C:/Temp/Product',
+      live: false,
+      llmStatus: null,
+    }));
+
+    act(() => {
+      result.current.handleLlmStatusChange(llmStatus({
+        state: 'READY',
+        blocked_roles: [],
+        required_ready_roles: ['pm'],
+      }));
+    });
+
+    expect(result.current.llmRuntimeState.state).toBe('UNKNOWN');
+    expect(result.current.llmRuntimeState.blockedRoles).toEqual([]);
+  });
+
   it('does not regress to an older blocked websocket snapshot after a newer ready stream event', () => {
     const readyStatus = llmStatus({
       state: 'READY',
@@ -293,7 +339,7 @@ describe('useLlmRuntimeGate', () => {
     expect(result.current.llmRuntimeState.blockedRoles).toEqual(['pm']);
   });
 
-  it('allows settings callbacks to clear stale blocked state immediately', () => {
+  it('allows runtime status callbacks to replace the current stream state', () => {
     const initialStatus = llmStatus({
       state: 'READY',
       blocked_roles: [],

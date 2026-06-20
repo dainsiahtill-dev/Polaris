@@ -583,6 +583,7 @@ async def test_get_chief_engineer_llm_events_filters_role_and_task(client: Async
     """Chief Engineer LLM events should be available through the role route."""
     mock_event = MagicMock()
     mock_event.event_type = "llm_call_start"
+    mock_event.metadata = {"workspace": "."}
     mock_event.to_dict.return_value = {
         "event_type": "llm_call_start",
         "run_id": "run-1",
@@ -612,6 +613,42 @@ async def test_get_chief_engineer_llm_events_filters_role_and_task(client: Async
         role="chief_engineer",
         limit=5,
     )
+
+
+@pytest.mark.asyncio
+async def test_get_chief_engineer_llm_events_filters_active_workspace_by_default(client: AsyncClient) -> None:
+    """Chief Engineer LLM events should filter to active workspace without query workspace."""
+    matching_event = MagicMock()
+    matching_event.event_type = "llm_call_start"
+    matching_event.metadata = {"workspace": "."}
+    matching_event.to_dict.return_value = {
+        "event_type": "llm_call_start",
+        "run_id": "run-active",
+        "role": "chief_engineer",
+    }
+    other_event = MagicMock()
+    other_event.event_type = "llm_call_start"
+    other_event.metadata = {"workspace": "/tmp/other-workspace"}
+    other_event.to_dict.return_value = {
+        "event_type": "llm_call_start",
+        "run_id": "run-other",
+        "role": "chief_engineer",
+    }
+
+    with patch(
+        "polaris.delivery.http.v2.chief_engineer.get_global_emitter",
+    ) as mock_get_emitter:
+        mock_emitter = MagicMock()
+        mock_emitter.get_events.return_value = [matching_event, other_event]
+        mock_get_emitter.return_value = mock_emitter
+
+        response = await client.get("/v2/chief-engineer/llm-events?limit=5")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["workspace"] == "."
+    assert data["count"] == 1
+    assert data["events"][0]["run_id"] == "run-active"
 
 
 @pytest.mark.asyncio

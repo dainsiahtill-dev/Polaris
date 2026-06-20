@@ -2126,8 +2126,7 @@ async def get_task_llm_events(
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, limit=limit)
     resolved_workspace = _workspace_from_request(request, workspace)
-    if workspace.strip():
-        events = filter_llm_events_by_workspace(events, resolved_workspace)
+    events = filter_llm_events_by_workspace(events, resolved_workspace)
 
     # 分类统计
     stats = {

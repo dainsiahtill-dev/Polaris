@@ -31,7 +31,6 @@ public_contracts:
   errors:
   - LlmProviderConfigErrorV1
 depends_on:
-- llm.control_plane
 - storage.layout
 - policy.workspace_guard
 - audit.evidence

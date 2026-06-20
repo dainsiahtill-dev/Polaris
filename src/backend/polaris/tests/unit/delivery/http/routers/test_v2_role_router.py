@@ -608,6 +608,42 @@ async def test_role_all_llm_events_returns_filtered_kernel_events(client: AsyncC
 
 
 @pytest.mark.asyncio
+async def test_role_all_llm_events_filters_active_workspace_by_default(client: AsyncClient) -> None:
+    """All-role LLM events should filter to active workspace without query workspace."""
+    matching_event = MagicMock()
+    matching_event.event_type = "llm_call_end"
+    matching_event.metadata = {"workspace": "."}
+    matching_event.to_dict.return_value = {
+        "event_type": "llm_call_end",
+        "role": "director",
+        "run_id": "run-active",
+    }
+    other_event = MagicMock()
+    other_event.event_type = "llm_call_end"
+    other_event.metadata = {"workspace": "/tmp/other-workspace"}
+    other_event.to_dict.return_value = {
+        "event_type": "llm_call_end",
+        "role": "director",
+        "run_id": "run-other",
+    }
+
+    with patch(
+        "polaris.delivery.http.routers.role_chat.get_global_emitter",
+    ) as mock_get_emitter:
+        mock_emitter = MagicMock()
+        mock_emitter.get_events.return_value = [matching_event, other_event]
+        mock_get_emitter.return_value = mock_emitter
+
+        response = await client.get("/v2/role/llm-events?role=director&limit=10")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["workspace"] == "."
+    assert data["count"] == 1
+    assert data["events"][0]["run_id"] == "run-active"
+
+
+@pytest.mark.asyncio
 async def test_role_all_llm_events_filters_requested_workspace(client: AsyncClient) -> None:
     """All-role LLM events should support workspace-scoped desktop diagnostics."""
     matching_event = MagicMock()

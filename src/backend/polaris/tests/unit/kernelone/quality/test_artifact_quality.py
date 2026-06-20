@@ -89,6 +89,27 @@ export const cardRulesEngineScenario0 = {
     assert "audit-seed" in errors[0] or "planning scenario" in errors[0]
 
 
+def test_scan_detects_semicolon_terminated_typescript_object_values(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "models" / "firefly.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        """
+export function toJSON() {
+  return {
+    id: "firefly-1",
+    moonSensitivity: 0.8;
+  };
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/models/firefly.ts"])
+
+    assert any("semicolon-terminated property" in error and "src/models/firefly.ts" in error for error in errors)
+
+
 def test_scan_detects_structural_verification_scripts(tmp_path: Path) -> None:
     target = tmp_path / "scripts" / "build.mjs"
     target.parent.mkdir(parents=True, exist_ok=True)

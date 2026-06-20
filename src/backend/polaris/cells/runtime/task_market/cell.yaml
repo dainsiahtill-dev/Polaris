@@ -46,9 +46,6 @@ depends_on:
   - policy.workspace_guard
   - audit.evidence
   - factory.cognitive_runtime
-  - chief_engineer.blueprint
-  - director.task_consumer
-  - qa.audit_verdict
 subgraphs:
   - execution_governance_pipeline
 state_owners:

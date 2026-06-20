@@ -8,7 +8,7 @@ and the 50-entry TTL trim policy.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from polaris.cells.roles.session.internal.snapshot_service import (
@@ -158,6 +158,60 @@ class TestSnapshotServiceSnapshot:
         snap_file = svc._snapshots_path("sess-reuse")
         lines = _read_jsonl(snap_file)
         assert len(lines) == 2
+
+    def test_snapshot_redacts_legacy_message_thinking(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """snapshot() must not serialize raw thinking from legacy DB rows."""
+
+        class _Row:
+            id = "msg-legacy"
+            role = "assistant"
+            content = "ok"
+            thinking = "legacy private chain"
+            sequence = 1
+            created_at = None
+
+            def to_dict(self) -> dict[str, Any]:
+                return {
+                    "id": self.id,
+                    "role": self.role,
+                    "content": self.content,
+                    "thinking": None,
+                    "sequence": self.sequence,
+                    "created_at": "",
+                    "meta": {"thinking_chars": len(self.thinking), "thinking_sha256": "hash"},
+                }
+
+        class _Result:
+            def scalars(self) -> "_Result":
+                return self
+
+            def all(self) -> list[_Row]:
+                return [_Row()]
+
+        class _Db:
+            def __enter__(self) -> "_Db":
+                return self
+
+            def __exit__(self, *_args: object) -> None:
+                return None
+
+            def execute(self, *_args: object, **_kwargs: object) -> _Result:
+                return _Result()
+
+        class _SessionLocal:
+            def __call__(self) -> _Db:
+                return _Db()
+
+        from polaris.cells.roles.session.internal import conversation
+
+        monkeypatch.setattr(conversation, "get_session_local", lambda: _SessionLocal())
+        svc = SnapshotService(tmp_path)
+
+        snap = svc.snapshot("sess-legacy")
+
+        assert snap.messages[0]["thinking"] is None
+        assert snap.messages[0]["meta"]["thinking_chars"] == len("legacy private chain")
+        assert "legacy private chain" not in json.dumps(snap.to_dict(), ensure_ascii=False)
 
 
 # ------------------------------------------------------------------

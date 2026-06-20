@@ -256,8 +256,7 @@ def _sanitize_meta_value(value: Any, *, redacted_keys: set[str], parent_key: str
         return sanitized
     if isinstance(value, list):
         return [
-            _sanitize_meta_value(item, redacted_keys=redacted_keys, parent_key=f"{parent_key}[]")
-            for item in value[:50]
+            _sanitize_meta_value(item, redacted_keys=redacted_keys, parent_key=f"{parent_key}[]") for item in value[:50]
         ]
     if isinstance(value, str):
         return value[:1000]

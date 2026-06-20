@@ -156,6 +156,50 @@ class TestConversationsRouter:
         response = client.post("/v2/conversations", json={})
         assert response.status_code == 422
 
+    def test_create_conversation_initial_message_redacts_thinking(self) -> None:
+        """POST /v2/conversations redacts raw thinking from initial messages."""
+        db = _mock_db_session()
+        added: list[Any] = []
+
+        def capture_add(instance: Any) -> None:
+            added.append(instance)
+            if hasattr(instance, "id") and instance.id is None:
+                instance.id = "conv-1"
+            if hasattr(instance, "created_at") and getattr(instance, "created_at", None) is None:
+                instance.created_at = _NOW
+            if hasattr(instance, "updated_at") and getattr(instance, "updated_at", None) is None:
+                instance.updated_at = _NOW
+            if hasattr(instance, "message_count") and getattr(instance, "message_count", None) is None:
+                instance.message_count = 0
+
+        db.add.side_effect = capture_add
+        client = _build_client(db)
+
+        response = client.post(
+            "/v2/conversations",
+            json={
+                "role": "pm",
+                "title": "Initial",
+                "initial_message": {
+                    "role": "assistant",
+                    "content": "ready",
+                    "thinking": "initial private chain",
+                    "meta": {"prompt": "raw prompt"},
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        message = next(item for item in added if item.__class__.__name__ == "ConversationMessage")
+        assert message.thinking is None
+        assert message.meta is not None
+        persisted_meta = json.loads(message.meta)
+        assert persisted_meta["thinking_chars"] == len("initial private chain")
+        assert "thinking_sha256" in persisted_meta
+        assert "prompt" in persisted_meta["redacted_keys"]
+        assert "initial private chain" not in message.meta
+        assert "raw prompt" not in message.meta
+
     def test_list_conversations_happy_path(self) -> None:
         """GET /v2/conversations returns 200 with conversation list."""
         db = _mock_db_session()
@@ -386,6 +430,57 @@ class TestConversationsRouter:
         payload: dict[str, Any] = response.json()
         assert payload["ok"] is True
         assert payload["added_count"] == 2
+
+    def test_add_messages_batch_redacts_each_message(self) -> None:
+        """POST /v2/conversations/{id}/messages/batch redacts each message payload."""
+        db = _mock_db_session()
+        mock_conv = _MockConversation(id="conv-1")
+        added: list[Any] = []
+
+        def _query(model: Any) -> MagicMock:
+            q = MagicMock()
+            q.filter.return_value = q
+            q.first.return_value = mock_conv
+            q.count.return_value = 0
+            return q
+
+        def capture_add(instance: Any) -> None:
+            added.append(instance)
+
+        db.query.side_effect = _query
+        db.add.side_effect = capture_add
+        client = _build_client(db)
+
+        response = client.post(
+            "/v2/conversations/conv-1/messages/batch",
+            json=[
+                {
+                    "role": "assistant",
+                    "content": "msg1",
+                    "thinking": "batch private one",
+                    "meta": {"messages": ["raw"]},
+                },
+                {
+                    "role": "assistant",
+                    "content": "msg2",
+                    "thinking": "batch private two",
+                    "meta": {"nested": {"tool_calls": ["secret"]}},
+                },
+            ],
+        )
+
+        assert response.status_code == 200
+        messages = [item for item in added if item.__class__.__name__ == "ConversationMessage"]
+        assert len(messages) == 2
+        for message in messages:
+            assert message.thinking is None
+            assert message.meta is not None
+            assert "batch private" not in message.meta
+            assert "secret" not in message.meta
+        first_meta = json.loads(messages[0].meta)
+        second_meta = json.loads(messages[1].meta)
+        assert "messages" in first_meta["redacted_keys"]
+        assert "nested.tool_calls" in second_meta["redacted_keys"]
 
     def test_delete_message_happy_path(self) -> None:
         """DELETE /v2/conversations/{id}/messages/{msg_id} returns 200."""

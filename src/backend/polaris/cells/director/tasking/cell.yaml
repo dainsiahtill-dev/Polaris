@@ -38,7 +38,6 @@ depends_on:
 - llm.provider_runtime
 - policy.workspace_guard
 - audit.verdict
-- director.execution
 - factory.cognitive_runtime
 - roles.runtime
 subgraphs: []

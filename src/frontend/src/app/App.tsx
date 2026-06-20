@@ -309,7 +309,6 @@ function AppContent() {
   const {
     llmRuntimeState,
     getLlmRoleBlockedReason,
-    handleLlmStatusChange,
   } = useLlmRuntimeGate({
     workspace,
     live,
@@ -592,10 +591,17 @@ function AppContent() {
   const lancedbStartBlockedReason = lancedbBlocked
     ? String(lancedbStatus?.error || '').trim() || 'LanceDB 不可用'
     : '';
-  const pmLlmBlockedReason = llmRuntimeState.state === 'READY' ? '' : getLlmRoleBlockedReason('pm', 'PM');
+  const llmRuntimeUnavailableReason = !live
+    ? 'Runtime WebSocket 未连接，LLM 状态未知'
+    : llmRuntimeState.state === 'UNKNOWN'
+      ? 'LLM runtime 状态未知，等待实时推送'
+      : '';
+  const pmLlmBlockedReason = llmRuntimeState.state === 'READY'
+    ? ''
+    : llmRuntimeUnavailableReason || getLlmRoleBlockedReason('pm', 'PM');
   const directorLlmBlockedReason = llmRuntimeState.state === 'READY'
     ? ''
-    : getLlmRoleBlockedReason('director', 'Director');
+    : llmRuntimeUnavailableReason || getLlmRoleBlockedReason('director', 'Director');
   const pmStartBlockedReason = docsStartBlockedReason || lancedbStartBlockedReason || pmLlmBlockedReason;
   const directorAgentsBlockedReason = agentsRequired && agentsDraftFailed
     ? 'AGENTS 草稿生成失败'
@@ -788,7 +794,6 @@ function AppContent() {
         isOpen={ui.isSettingsOpen}
         initialTab={ui.settingsInitialTab}
         onClose={() => uiActions.closeSettings()}
-        onLlmStatusChange={handleLlmStatusChange}
         settings={settings}
         onSave={handleSaveSettings}
       />

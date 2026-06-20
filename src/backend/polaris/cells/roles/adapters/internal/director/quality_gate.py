@@ -513,9 +513,22 @@ def _collect_materialization_quality_errors(
         # files belongs to the steps that own them.
         quality_scan_paths = [step_target]
     else:
+        declared_target_paths = [
+            normalized
+            for candidate in _extract_task_target_path_candidates(task)
+            if (
+                normalized := _normalize_declared_task_path(
+                    candidate,
+                    workspace_name=workspace_name,
+                )
+            )
+            and Path(normalized).suffix
+            and "*" not in normalized
+            and "?" not in normalized
+        ]
         quality_scan_paths = _materialization_quality_scan_paths_with_package_manifest(
             workspace_full=workspace_full,
-            affected_files=all_affected_files,
+            affected_files=[*all_affected_files, *declared_target_paths],
         )
     errors = _em.scan_workspace_artifact_quality(
         workspace_full,
