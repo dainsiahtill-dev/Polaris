@@ -18,6 +18,10 @@ from polaris.kernelone.quality.syntax_gate import (
 
 _HAS_NODE = shutil.which("node") is not None
 _HAS_TSC = shutil.which("tsc") is not None
+_HAS_GOFMT = shutil.which("gofmt") is not None
+_HAS_RUSTC = shutil.which("rustc") is not None
+_HAS_GPP = shutil.which("g++") is not None
+_HAS_JAVAC = shutil.which("javac") is not None
 
 _BROKEN_JS = """\
 const bricks = [];
@@ -97,6 +101,10 @@ class TestExtensionMapping:
         assert syntax_checker_for("flower.ts") == ts_checker
         assert syntax_checker_for("garden.tsx") == ts_checker
         assert syntax_checker_for("mod.py")[1:] == ["-m", "py_compile"]
+        assert syntax_checker_for("main.go") == ["gofmt", "-e"]
+        assert syntax_checker_for("main.rs") == ["rustc", "--crate-type", "lib", "--emit", "metadata"]
+        assert syntax_checker_for("main.cpp") == ["g++", "-fsyntax-only"]
+        assert syntax_checker_for("Main.java") == ["javac", "-Xlint:none", "-proc:none"]
 
     def test_unknown_extension_has_no_checker(self) -> None:
         assert syntax_checker_for("readme.md") is None
@@ -194,6 +202,78 @@ class TestTypescriptSyntax:
         assert result.checked is True
         assert result.ok is False
         assert "TS1005" in result.error or "',' expected" in result.error
+
+
+@pytest.mark.skipif(not _HAS_GOFMT, reason="gofmt not available")
+class TestGoSyntax:
+    def test_valid_go_passes(self, tmp_path: Path) -> None:
+        f = tmp_path / "main.go"
+        f.write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+        result = check_file_syntax(str(f))
+        assert result.checked is True
+        assert result.ok is True
+
+    def test_broken_go_fails(self, tmp_path: Path) -> None:
+        f = tmp_path / "main.go"
+        f.write_text("package main\n\nfunc main( {}\n", encoding="utf-8")
+        result = check_file_syntax(str(f))
+        assert result.checked is True
+        assert result.ok is False
+        assert result.error
+
+
+@pytest.mark.skipif(not _HAS_RUSTC, reason="rustc not available")
+class TestRustSyntax:
+    def test_valid_rust_passes(self, tmp_path: Path) -> None:
+        f = tmp_path / "main.rs"
+        f.write_text("pub fn value() -> i32 { 42 }\n", encoding="utf-8")
+        result = check_file_syntax(str(f))
+        assert result.checked is True
+        assert result.ok is True
+
+    def test_broken_rust_fails(self, tmp_path: Path) -> None:
+        f = tmp_path / "main.rs"
+        f.write_text("pub fn value() -> i32 { 1 + }\n", encoding="utf-8")
+        result = check_file_syntax(str(f))
+        assert result.checked is True
+        assert result.ok is False
+        assert result.error
+
+
+@pytest.mark.skipif(not _HAS_GPP, reason="g++ not available")
+class TestCppSyntax:
+    def test_valid_cpp_passes(self, tmp_path: Path) -> None:
+        f = tmp_path / "main.cpp"
+        f.write_text("int main() { return 0; }\n", encoding="utf-8")
+        result = check_file_syntax(str(f))
+        assert result.checked is True
+        assert result.ok is True
+
+    def test_broken_cpp_fails(self, tmp_path: Path) -> None:
+        f = tmp_path / "main.cpp"
+        f.write_text("int main() { return ; ;\n", encoding="utf-8")
+        result = check_file_syntax(str(f))
+        assert result.checked is True
+        assert result.ok is False
+        assert result.error
+
+
+@pytest.mark.skipif(not _HAS_JAVAC, reason="javac not available")
+class TestJavaSyntax:
+    def test_valid_java_passes(self, tmp_path: Path) -> None:
+        f = tmp_path / "Main.java"
+        f.write_text("public class Main { public static void main(String[] args) {} }\n", encoding="utf-8")
+        result = check_file_syntax(str(f))
+        assert result.checked is True
+        assert result.ok is True
+
+    def test_broken_java_fails(self, tmp_path: Path) -> None:
+        f = tmp_path / "Main.java"
+        f.write_text("public class Main { public static void main(String[] args) { ; }\n", encoding="utf-8")
+        result = check_file_syntax(str(f))
+        assert result.checked is True
+        assert result.ok is False
+        assert result.error
 
 
 def test_first_syntax_failure_returns_none_when_all_parse(tmp_path: Path) -> None:

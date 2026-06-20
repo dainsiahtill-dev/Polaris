@@ -98,6 +98,10 @@ class FactoryStartRequest(BaseModel):
     )
     loop: bool = Field(default=False, description="是否循环运行")
     input_source: str | None = Field(default=None, description="输入来源: 'directive' | 'docs' | 'existing_project'")
+    persist_workspace: bool = Field(
+        default=True,
+        description="是否把本次运行 workspace 持久化为全局 active workspace；bench/e2e 隔离运行应设为 false",
+    )
 
 
 class FactoryControlRequest(BaseModel):

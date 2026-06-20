@@ -1257,7 +1257,13 @@ async def _start_factory_run_core(
     except (AttributeError, ValueError):
         logger.debug("Factory settings object does not accept workspace_path assignment")
     sync_process_settings_environment(state.settings)
-    save_persisted_settings(state.settings)
+    if payload.persist_workspace:
+        save_persisted_settings(state.settings)
+    else:
+        logger.info(
+            "Factory run using transient workspace without persisting global settings: workspace=%s",
+            workspace,
+        )
     service = _get_service(workspace)
 
     start_from = _normalize_start_from(payload.start_from, workspace)

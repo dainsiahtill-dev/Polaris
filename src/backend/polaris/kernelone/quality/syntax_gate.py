@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 
 # Extension groups → the checker command (the file path is appended).
@@ -40,6 +41,10 @@ _SYNTAX_CHECKERS: dict[tuple[str, ...], list[str]] = {
         "ES2020,DOM",
     ],
     (".py",): [sys.executable, "-m", "py_compile"],
+    (".go",): ["gofmt", "-e"],
+    (".rs",): ["rustc", "--crate-type", "lib", "--emit", "metadata"],
+    (".cpp", ".cc", ".cxx"): ["g++", "-fsyntax-only"],
+    (".java",): ["javac", "-Xlint:none", "-proc:none"],
 }
 
 _DEFAULT_TIMEOUT_SECONDS = 20
@@ -81,14 +86,27 @@ def check_file_syntax(path: str, *, timeout_seconds: int = _DEFAULT_TIMEOUT_SECO
         return SyntaxCheckResult(path=path, checked=False, ok=True, error="", reason="file not found")
     try:
         cwd = os.path.dirname(os.path.abspath(path)) or None
-        proc = subprocess.run(
-            [*cmd, path],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-        )
+        ext = os.path.splitext(path)[1].lower()
+        if ext in {".rs", ".java"}:
+            with tempfile.TemporaryDirectory(prefix="polaris-syntax-") as temp_dir:
+                cmdline = [*cmd, "--out-dir" if ext == ".rs" else "-d", temp_dir, path]
+                proc = subprocess.run(
+                    cmdline,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout_seconds,
+                    check=False,
+                )
+        else:
+            proc = subprocess.run(
+                [*cmd, path],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return SyntaxCheckResult(path=path, checked=False, ok=True, error="", reason=str(exc))
     ok = proc.returncode == 0

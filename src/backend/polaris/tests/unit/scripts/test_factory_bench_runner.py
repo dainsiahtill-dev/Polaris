@@ -49,6 +49,13 @@ def test_chain_failure_overrides_static_artifact_checks() -> None:
     assert gates["integration_qa_passed"]["ok"] is False
 
 
+def test_runner_requires_all_director_routes_for_llm_route_audit() -> None:
+    source = Path(bench.__file__).read_text(encoding="utf-8")
+
+    assert "require_all_director_routes=True" in source
+    assert "require_all_director_routes=False" not in source
+
+
 def test_missing_qa_verdict_and_wrong_product_are_fail_closed() -> None:
     record = _record(
         has_qa_verdict=False,

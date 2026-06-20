@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Any, cast
 
 from polaris.cells.orchestration.pm_planning.public.service import evaluate_pm_task_quality
@@ -12,6 +13,18 @@ from polaris.cells.runtime.artifact_store.public.service import resolve_artifact
 from .base import ActivityExecutionResult, register_activity
 
 activity = get_activity_api()
+
+
+def _is_file_like_scope_path(value: str) -> bool:
+    normalized = value.strip().replace("\\", "/")
+    if not normalized or normalized.endswith("/"):
+        return False
+    name = normalized.rsplit("/", 1)[-1]
+    if not name or name in {".", ".."}:
+        return False
+    return bool(
+        PurePosixPath(normalized).suffix or name.upper().startswith("README") or normalized.startswith("tests/")
+    )
 
 
 def _validate_tasks(tasks: list[TaskContract]) -> list[str]:
@@ -81,8 +94,9 @@ def _merge_chief_engineer_task_updates(
             if isinstance(existing_targets, list)
             else []
         )
-        if missing_targets:
-            payload["target_files"] = list(dict.fromkeys([*target_files, *missing_targets]))
+        file_scope_targets = [item for item in scope_for_apply if _is_file_like_scope_path(item)]
+        if missing_targets or file_scope_targets:
+            payload["target_files"] = list(dict.fromkeys([*target_files, *file_scope_targets, *missing_targets]))
 
         constraints_raw = payload.get("constraints")
         constraints = (

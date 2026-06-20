@@ -52,7 +52,7 @@ async def test_run_chief_engineer_blueprint_enriches_director_tasks(monkeypatch,
             "task_update_map": {
                 "TASK-1": {
                     "task_id": "TASK-1",
-                    "scope_for_apply": ["src/app.ts", "src/routes.ts"],
+                    "scope_for_apply": ["src/app.ts", "src/routes.ts", "src/schema.ts"],
                     "missing_targets": ["src/routes.ts"],
                     "blueprint_scope": {"module": "app"},
                     "construction_plan": {
@@ -102,8 +102,8 @@ async def test_run_chief_engineer_blueprint_enriches_director_tasks(monkeypatch,
     payload = result["payload"]
     [task] = payload["tasks"]
     assert task["construction_plan"]["method_catalog"] == ["registerRoutes"]
-    assert task["chief_engineer"]["scope_for_apply"] == ["src/app.ts", "src/routes.ts"]
-    assert task["target_files"] == ["src/app.ts", "src/routes.ts"]
+    assert task["chief_engineer"]["scope_for_apply"] == ["src/app.ts", "src/routes.ts", "src/schema.ts"]
+    assert task["target_files"] == ["src/app.ts", "src/routes.ts", "src/schema.ts"]
     assert task["constraints"] == ["Use existing style.", "Keep API routes idempotent."]
     receipt = payload["cognitive_runtime_receipt"]
     assert receipt["ok"] is True

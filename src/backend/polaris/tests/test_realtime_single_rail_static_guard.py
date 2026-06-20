@@ -31,6 +31,11 @@ FRONTEND_WORKSPACE_REALTIME_FILES = (
     FRONTEND_SRC / "hooks" / "useFactoryBench.ts",
     FRONTEND_SRC / "hooks" / "useProcessOperations.ts",
 )
+FRONTEND_LOG_VIEWER_FILE = FRONTEND_SRC / "app" / "components" / "LogViewer.tsx"
+FRONTEND_SETTINGS_MODAL_FILE = FRONTEND_SRC / "app" / "components" / "SettingsModal.tsx"
+FRONTEND_REALTIME_AUDIT_SPEC = (
+    REPO_ROOT / "src" / "backend" / "polaris" / "tests" / "electron" / "realtime-nat-jetstream-workspaces.spec.ts"
+)
 TASK_MARKET_EVENT_WAKE_FILES = (
     REPO_ROOT / "src" / "backend" / "polaris" / "cells" / "runtime" / "task_market" / "internal" / "consumer_loop.py",
     REPO_ROOT
@@ -356,6 +361,60 @@ def test_frontend_workspaces_do_not_refresh_status_snapshots_for_realtime() -> N
         for token in FRONTEND_WORKSPACE_FORBIDDEN_SNAPSHOT_REFRESH:
             if token in text:
                 findings.append(f"{path.relative_to(REPO_ROOT)} contains {token!r}")
+
+    assert findings == []
+
+
+def test_log_viewer_uses_runtime_transport_not_file_read_tail_polling() -> None:
+    """Runtime log surfaces must subscribe to runtime.v2, not tail log files through HTTP."""
+
+    text = FRONTEND_LOG_VIEWER_FILE.read_text(encoding="utf-8")
+    findings: list[str] = []
+    for token in ("/files/read", "tail_lines=", "tailLines=400"):
+        if token in text:
+            findings.append(f"{FRONTEND_LOG_VIEWER_FILE.relative_to(REPO_ROOT)} contains {token!r}")
+    for token in ("useRuntimeTransport", "subscribeChannels", "registerMessageHandler", "tailLines: 400"):
+        if token not in text:
+            findings.append(f"{FRONTEND_LOG_VIEWER_FILE.relative_to(REPO_ROOT)} missing {token!r}")
+
+    assert findings == []
+
+
+def test_settings_modal_does_not_refresh_llm_status_while_closed_or_off_tab() -> None:
+    """Settings modal must not create hidden /v2/llm/status refreshes during workspace navigation."""
+
+    text = FRONTEND_SETTINGS_MODAL_FILE.read_text(encoding="utf-8")
+    findings: list[str] = []
+    forbidden_tokens = (
+        "if (!isOpen) {\n      loadLLMStatus",
+        "if (!isOpen) {\r\n      loadLLMStatus",
+        "if (!isOpen) return;\n    loadLLMConfig",
+    )
+    for token in forbidden_tokens:
+        if token in text:
+            findings.append(f"{FRONTEND_SETTINGS_MODAL_FILE.relative_to(REPO_ROOT)} contains {token!r}")
+
+    for token in ("if (!isOpen || activeTab !== 'llm') return;", "}, [activeTab, isOpen]);"):
+        if token not in text:
+            findings.append(f"{FRONTEND_SETTINGS_MODAL_FILE.relative_to(REPO_ROOT)} missing {token!r}")
+
+    assert findings == []
+
+
+def test_workspace_realtime_playwright_audit_forbids_sse_file_and_status_polling() -> None:
+    """The cross-workspace E2E audit must keep checking the no-SSE/no-polling contract."""
+
+    text = FRONTEND_REALTIME_AUDIT_SPEC.read_text(encoding="utf-8")
+    findings: list[str] = []
+    for token in (
+        "text/event-stream",
+        'path === "/files/read"',
+        'path === "/v2/llm/status"',
+        "repeatedPolling",
+        "runtime.v2 WebSocket should be used",
+    ):
+        if token not in text:
+            findings.append(f"{FRONTEND_REALTIME_AUDIT_SPEC.relative_to(REPO_ROOT)} missing {token!r}")
 
     assert findings == []
 
