@@ -17,7 +17,7 @@ sys.path.insert(
     os.path.join(os.path.dirname(__file__), "..", "core", "polaris_loop"),
 )
 
-from polaris.cells.director.execution.internal.existence_gate import (
+from polaris.cells.director.tasking.public import (
     check_mode,
     is_any_missing,
     is_pure_create,

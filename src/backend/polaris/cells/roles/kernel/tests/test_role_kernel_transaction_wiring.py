@@ -296,8 +296,140 @@ class TestTransactionKernelPrebuiltContextPassThrough:
         assert context_override["_transaction_kernel_forced_tool_definitions"] == []
         assert context_override["_transaction_kernel_forced_tool_choice"] == "none"
 
+    @pytest.mark.asyncio
+    async def test_provider_preserves_existing_forced_write_tool_choice_over_auto(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(role_id="director", model="base-model")
+        forced_write_tool = {
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                    "required": ["path", "content"],
+                },
+            },
+        }
+        request = _MockRequest(
+            message="[mode:materialize]\nCreate the missing target file.",
+            run_id="run_123",
+            context_override={
+                "context_os_snapshot": {},
+                "_transaction_kernel_forced_tool_definitions": [forced_write_tool],
+                "_transaction_kernel_forced_tool_choice": {
+                    "type": "function",
+                    "function": {"name": "write_file"},
+                },
+            },
+        )
+
+        captured_contexts: list[Any] = []
+
+        async def _fake_call_decision(*, context: Any, **_kwargs: Any) -> dict[str, Any]:
+            captured_contexts.append(context)
+            return {"content": "", "tool_calls": []}
+
+        kernel.inject_llm_caller(SimpleNamespace(call_decision=_fake_call_decision))
+        tk = kernel._create_transaction_kernel("director", profile, request)
+
+        response = await tk.llm_provider(
+            {
+                "messages": [
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": request.message},
+                ],
+                "tools": [
+                    forced_write_tool,
+                    {"type": "function", "function": {"name": "read_file"}},
+                ],
+                "tool_choice": "auto",
+            }
+        )
+
+        assert response["tool_calls"] == []
+        assert len(captured_contexts) == 1
+        context_override = getattr(captured_contexts[0], "context_override", None)
+        assert isinstance(context_override, dict)
+        assert context_override["_transaction_kernel_forced_tool_definitions"] == [forced_write_tool]
+        assert context_override["_transaction_kernel_forced_tool_choice"] == {
+            "type": "function",
+            "function": {"name": "write_file"},
+        }
+
 
 class TestExecuteTransactionKernelTurn:
+    @pytest.mark.asyncio
+    async def test_execute_transaction_kernel_turn_uses_forced_tool_definitions(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(
+            role_id="director",
+            tool_policy=MagicMock(policy_id="tp1", whitelist=["read_file", "write_file"]),
+        )
+        forced_write_tool = {
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                    "required": ["path", "content"],
+                },
+            },
+        }
+        request = _MockRequest(
+            message="[mode:materialize]\nCreate the missing target file.",
+            run_id="run_123",
+            context_override={
+                "context_os_snapshot": {},
+                "_transaction_kernel_forced_tool_definitions": [forced_write_tool],
+                "_transaction_kernel_forced_tool_choice": {
+                    "type": "function",
+                    "function": {"name": "write_file"},
+                },
+            },
+        )
+        fingerprint = _MockFingerprint()
+        mock_execute = AsyncMock(
+            return_value={
+                "turn_id": "turn_abc",
+                "kind": "final_answer",
+                "visible_content": "ok",
+                "metrics": {"duration_ms": 100, "llm_calls": 1, "tool_calls": 0},
+            }
+        )
+        context_gateway = MagicMock(
+            build_context=AsyncMock(
+                return_value=SimpleNamespace(
+                    messages=[{"role": "user", "content": request.message}],
+                    token_estimate=37,
+                    metadata={},
+                )
+            ),
+            record_projection_outcome=MagicMock(return_value={"route_weight": 0.31}),
+        )
+
+        with (
+            patch.object(kernel, "_create_transaction_kernel", return_value=MagicMock(execute=mock_execute)),
+            patch(
+                "polaris.cells.roles.kernel.public.service.RoleContextGateway",
+                return_value=context_gateway,
+            ),
+        ):
+            result = await kernel._execute_transaction_kernel_turn(
+                role="director",
+                profile=profile,
+                request=request,
+                system_prompt="You are a Director",
+                fingerprint=fingerprint,
+                observer_run_id="run_123",
+                response_schema=None,
+            )
+
+        assert result.content == "ok"
+        assert mock_execute.await_args is not None
+        assert mock_execute.await_args.args[2] == [forced_write_tool]
+
     @pytest.mark.asyncio
     async def test_execute_transaction_kernel_turn_returns_role_turn_result(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")

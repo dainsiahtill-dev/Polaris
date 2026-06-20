@@ -15,16 +15,16 @@ import sys
 # Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from polaris.cells.director.execution.internal.director_logic_rules import (
+from polaris.cells.director.planning.public import (
     compact_pm_payload,
     extract_defect_ticket,
     extract_required_evidence,
     parse_acceptance,
-    parse_json_payload,
     validate_defect_ticket,
     validate_files_to_edit,
     write_gate_check,
 )
+from polaris.kernelone.utils.json_utils import parse_json_payload
 
 
 class TestParseJsonPayload:

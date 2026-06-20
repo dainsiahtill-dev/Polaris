@@ -25,7 +25,7 @@ from polaris.domain.director.context_constants import (
 )
 
 if TYPE_CHECKING:
-    from polaris.cells.director.execution.internal.existence_gate import ExecutionMode
+    from polaris.cells.director.tasking.public import ExecutionMode
 
 logger = logging.getLogger(__name__)
 

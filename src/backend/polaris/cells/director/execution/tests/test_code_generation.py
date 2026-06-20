@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
-from polaris.cells.director.execution.internal.code_generation_engine import (
+from polaris.cells.director.tasking.public import (
     CodeGenerationEngine,
     CodeGenerationPolicyViolationError,
     _raise_policy_violation,

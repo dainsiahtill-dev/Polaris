@@ -47,9 +47,10 @@ legacy branch does.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from polaris.cells.roles.runtime.internal.capability.errors import CapabilityInvocationError
 from polaris.cells.roles.runtime.public.capability_commands import (
@@ -65,7 +66,6 @@ from polaris.cells.roles.runtime.public.contracts import RoleCapabilityInvocatio
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from polaris.cells.architect.design.public.contracts import ArchitectureDesignResultV1
     from polaris.cells.policy.permission.public.contracts import (
         EvaluatePermissionCommandV1,
         PermissionDecisionResultV1,
@@ -96,6 +96,22 @@ class _BoundaryValidatedPayload:
     evaluate_permission_fn: Callable[[EvaluatePermissionCommandV1], PermissionDecisionResultV1]
 
 
+class _ArchitectureDesignResultLike(Protocol):
+    """Structural view of the ``architect.design`` boundary result.
+
+    Keeps ``roles.runtime/internal/capability/**`` free of any ``architect.design``
+    import (even type-only): the typed :class:`ArchitectDesignPort` returns an
+    opaque ``object`` that this handler reads structurally through these members,
+    so the ``roles.runtime`` → ``architect.design`` cell edge stays absent.
+    """
+
+    design_id: str
+    summary: str
+    status: str
+    ok: bool
+    recommendation_paths: Sequence[str]
+
+
 @dataclass(frozen=True)
 class _BoundaryInvokeResult:
     """Owner-cell product of :meth:`BoundaryValidationHandler.invoke`.
@@ -106,7 +122,7 @@ class _BoundaryInvokeResult:
     ~2051-2057 / ~2130-2135).
     """
 
-    design_result: ArchitectureDesignResultV1
+    design_result: _ArchitectureDesignResultLike
     guard_metadata: dict[str, Any]
 
 
@@ -330,7 +346,7 @@ class BoundaryValidationHandler:
         timeout_seconds = float(command.payload.get("timeout_seconds", 30.0))
         try:
             design_result = cast(
-                "ArchitectureDesignResultV1",
+                "_ArchitectureDesignResultLike",
                 _run_with_timeout(
                     lambda: architect_design_service.run_boundary_design(
                         workspace=workspace,

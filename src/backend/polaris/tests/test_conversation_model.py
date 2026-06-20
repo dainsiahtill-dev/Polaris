@@ -47,7 +47,7 @@ def test_role_session_service_first_session_init_does_not_deadlock(monkeypatch, 
             with RoleSessionService() as service:
                 created = service.create_session(role="pm", workspace=str(tmp_path))
                 result["session"] = created.to_dict()
-        except BaseException as exc:  # pragma: no cover - asserted below
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover - asserted below
             failure["error"] = exc
         finally:
             completed.set()

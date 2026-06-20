@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
 from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.kernel.helpers import quality_result_to_dict
+from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.quality_checker import QualityResult
 from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
@@ -409,14 +410,34 @@ class TurnEngineExecutor:
                 and not override.get("_transaction_kernel_forced_tool_definitions")
                 and str(override.get("_transaction_kernel_forced_tool_choice") or "").strip().lower() == "none"
             )
+            existing_forced_defs = override.get("_transaction_kernel_forced_tool_definitions")
+            existing_forced_choice = override.get("_transaction_kernel_forced_tool_choice")
+            existing_forced_scope = (
+                (isinstance(existing_forced_defs, list) and bool(existing_forced_defs))
+                or (
+                    existing_forced_choice is not None
+                    and not (
+                        isinstance(existing_forced_choice, str)
+                        and existing_forced_choice.strip().lower() in {"", "auto"}
+                    )
+                )
+            )
+            incoming_choice_is_default = tool_choice is None or (
+                isinstance(tool_choice, str) and tool_choice.strip().lower() == "auto"
+            )
+            preserve_existing_forced_scope = existing_forced_scope and incoming_choice_is_default
             override["_transaction_kernel_prebuilt_messages"] = [
                 dict(item) for item in prebuilt_messages if isinstance(item, dict)
             ]
-            if isinstance(tool_definitions, list) and not explicit_tool_disable:
+            if (
+                isinstance(tool_definitions, list)
+                and not explicit_tool_disable
+                and not preserve_existing_forced_scope
+            ):
                 override["_transaction_kernel_forced_tool_definitions"] = [
                     dict(item) for item in tool_definitions if isinstance(item, dict)
                 ]
-            if tool_choice is not None and not explicit_tool_disable:
+            if tool_choice is not None and not explicit_tool_disable and not preserve_existing_forced_scope:
                 override["_transaction_kernel_forced_tool_choice"] = tool_choice
             # ADR-0090 W2.6: phase-aware low temperature rides the same channel.
             if temperature_override is not None:
@@ -717,6 +738,10 @@ class TurnEngineExecutor:
                     "repair-turn edit-only for existing target: target=%s",
                     _repair_target,
                 )
+        tool_definitions = _apply_forced_transaction_tool_definitions(
+            tool_definitions,
+            getattr(request, "context_override", None),
+        )
 
         try:
             tk_result = await tk.execute(turn_id, messages, tool_definitions)
@@ -934,6 +959,10 @@ class TurnEngineExecutor:
                     "repair-turn edit-only for existing target: target=%s",
                     _repair_target,
                 )
+        tool_definitions = _apply_forced_transaction_tool_definitions(
+            tool_definitions,
+            getattr(request, "context_override", None),
+        )
 
         accumulated_content: list[str] = []
         accumulated_thinking: list[str] = []

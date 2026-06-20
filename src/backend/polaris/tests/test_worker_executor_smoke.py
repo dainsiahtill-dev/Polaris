@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from polaris.cells.director.execution.internal.worker_executor import WorkerExecutor
+from polaris.cells.director.tasking.public import WorkerExecutor
 from polaris.domain.entities import Task
 
 

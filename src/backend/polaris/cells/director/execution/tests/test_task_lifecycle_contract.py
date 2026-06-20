@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from polaris.cells.director.execution.internal.patch_apply_engine import (
+from polaris.cells.director.tasking.public import (
     parse_full_file_blocks,
     parse_search_replace_blocks,
 )

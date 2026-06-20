@@ -171,3 +171,30 @@ def _apply_runtime_tool_policy(
         "cognitive_tool_policy_applied": bool(cognitive_blocked_tools),
         "cognitive_blocked_tools": sorted(cognitive_blocked_tools),
     }
+
+
+def _extract_forced_transaction_tool_definitions(context_override: Any) -> list[dict[str, Any]] | None:
+    """Return explicit TransactionKernel forced tool definitions, if present."""
+    if not isinstance(context_override, dict):
+        return None
+    raw_definitions = context_override.get("_transaction_kernel_forced_tool_definitions")
+    if not isinstance(raw_definitions, list):
+        return None
+    forced_definitions = [dict(item) for item in raw_definitions if isinstance(item, dict)]
+    if forced_definitions:
+        return forced_definitions
+    forced_choice = str(context_override.get("_transaction_kernel_forced_tool_choice") or "").strip().lower()
+    if forced_choice == "none":
+        return []
+    return None
+
+
+def _apply_forced_transaction_tool_definitions(
+    tool_definitions: list[dict[str, Any]],
+    context_override: Any,
+) -> list[dict[str, Any]]:
+    """Prefer explicit TransactionKernel forced tool scope over default role tools."""
+    forced_definitions = _extract_forced_transaction_tool_definitions(context_override)
+    if forced_definitions is None:
+        return tool_definitions
+    return forced_definitions

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from polaris.cells.director.execution.internal.patch_apply_engine import (
+from polaris.cells.director.tasking.public import (
     apply_all_operations,
     apply_operations_strict,
     parse_all_operations,

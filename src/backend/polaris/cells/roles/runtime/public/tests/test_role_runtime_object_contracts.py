@@ -9,10 +9,6 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from polaris.cells.architect.design.public.contracts import (
-    ArchitectureDesignResultV1,
-    GenerateArchitectureDesignCommandV1,
-)
 from polaris.cells.chief_engineer.blueprint.public.contracts import (
     GenerateTaskBlueprintCommandV1,
     TaskBlueprintResultV1,
@@ -505,17 +501,51 @@ class FakePermissionService:
         )
 
 
+@dataclasses.dataclass(frozen=True)
+class _FakeArchitectDesignCommand:
+    """Local structural stand-in for ``GenerateArchitectureDesignCommandV1``.
+
+    Keeps this ``roles.runtime`` test free of an ``architect.design`` import (the
+    ``declared_cell_dependencies_match_imports`` gate counts test imports too, so a
+    real cross-cell import would re-declare the roles.runtime -> architect.design
+    edge that CYCLE-15 removed), while still recording exactly what the boundary
+    handler projected onto the typed ``ArchitectDesignPort`` seam.
+    """
+
+    workspace: str
+    objective: str
+    constraints: dict[str, object]
+    context: dict[str, object]
+
+
+@dataclasses.dataclass(frozen=True)
+class _FakeArchitectDesignResult:
+    """Local structural stand-in for ``ArchitectureDesignResultV1``.
+
+    The boundary handler reads the design result structurally (via its private
+    ``_ArchitectureDesignResultLike`` protocol over the opaque port return), so a
+    local double with the same members suffices and avoids the cross-cell import.
+    """
+
+    ok: bool
+    workspace: str
+    design_id: str
+    status: str
+    summary: str = ""
+    recommendation_paths: tuple[str, ...] = ()
+
+
 class FakeArchitectDesignService:
     """Boundary-design invoker fake.
 
     Mirrors the real ``architect.design`` provider supplied through the typed
-    ``ArchitectDesignPort`` seam: it owns the ``GenerateArchitectureDesignCommandV1``
-    construction (the boundary handler now passes only validated primitives) and
-    records each built command so callers can assert the handler's projection.
+    ``ArchitectDesignPort`` seam: it owns the boundary-design command construction
+    (the boundary handler now passes only validated primitives) and records each
+    built command so callers can assert the handler's projection.
     """
 
     def __init__(self) -> None:
-        self.generated: list[GenerateArchitectureDesignCommandV1] = []
+        self.generated: list[_FakeArchitectDesignCommand] = []
 
     def run_boundary_design(
         self,
@@ -524,15 +554,15 @@ class FakeArchitectDesignService:
         objective: str,
         constraints: Mapping[str, object],
         context: Mapping[str, object],
-    ) -> ArchitectureDesignResultV1:
-        command = GenerateArchitectureDesignCommandV1(
+    ) -> _FakeArchitectDesignResult:
+        command = _FakeArchitectDesignCommand(
             workspace=workspace,
             objective=objective,
             constraints=dict(constraints),
             context=dict(context),
         )
         self.generated.append(command)
-        return ArchitectureDesignResultV1(
+        return _FakeArchitectDesignResult(
             ok=True,
             workspace=command.workspace,
             design_id="design-boundary-1",
@@ -607,10 +637,10 @@ class SlowArchitectDesignService:
         objective: str,
         constraints: Mapping[str, object],
         context: Mapping[str, object],
-    ) -> ArchitectureDesignResultV1:
+    ) -> _FakeArchitectDesignResult:
         del objective, constraints, context
         time.sleep(0.25)
-        return ArchitectureDesignResultV1(
+        return _FakeArchitectDesignResult(
             ok=True,
             workspace=workspace,
             design_id="slow-design",

@@ -13,21 +13,25 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+# PipelineSpec / PipelineTask / RunStatus / TaskPhase are used at runtime as VALUES
+# (e.g. RunStatus.PENDING and TaskPhase.INIT defaults below, PipelineSpec(...) /
+# PipelineTask(...) construction), so they must be real runtime imports — a
+# TYPE_CHECKING-only name with an ``object`` fallback makes ``RunStatus.PENDING``
+# raise ``AttributeError`` at import time. runtime_contracts is a dependency-light
+# contracts module, so importing it here is cycle-safe.
+from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts import (
+    PipelineSpec,
+    PipelineTask,
+    RunStatus,
+    TaskPhase,
+)
+
 if TYPE_CHECKING:
-    from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts import (
-        PipelineSpec,
-        PipelineTask,
-        RunStatus,
-        TaskPhase,
-    )
+    # WorkflowQueryState is only used in annotations (erased by ``from __future__
+    # import annotations``), so it stays type-only with a runtime ``object`` fallback.
     from polaris.cells.orchestration.workflow_runtime.internal.runtime_queries import WorkflowQueryState
 else:
-    # 运行时降级：避免导入失败
     WorkflowQueryState = object  # type: ignore[misc,assignment]
-    PipelineSpec = object  # type: ignore[misc,assignment]
-    PipelineTask = object  # type: ignore[misc,assignment]
-    RunStatus = object  # type: ignore[misc,assignment]
-    TaskPhase = object  # type: ignore[misc,assignment]
 
 
 def get_workflow_api() -> Any:

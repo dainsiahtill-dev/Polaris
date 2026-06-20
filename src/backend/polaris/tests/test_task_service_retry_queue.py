@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from polaris.cells.director.execution.internal.task_lifecycle_service import TaskQueueConfig, TaskService
+from polaris.cells.director.tasking.public import TaskQueueConfig, TaskService
 from polaris.domain.entities import TaskResult, TaskStatus
 
 

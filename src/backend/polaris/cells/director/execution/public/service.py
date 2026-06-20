@@ -16,7 +16,7 @@ from threading import Thread
 from typing import Any
 
 from polaris.cells.director.execution.internal.director_agent import DirectorAgent
-from polaris.cells.director.execution.internal.patch_apply_engine import (
+from polaris.cells.director.tasking.public import (
     ApplyIntegrity,
     EditType,
     parse_all_operations,

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from polaris.cells.director.execution.internal.file_apply_service import FileApplyService
+from polaris.cells.director.tasking.public import FileApplyService
 
 
 class TestFileApplyService:

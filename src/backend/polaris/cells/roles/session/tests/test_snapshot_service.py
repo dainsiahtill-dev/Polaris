@@ -182,14 +182,14 @@ class TestSnapshotServiceSnapshot:
                 }
 
         class _Result:
-            def scalars(self) -> "_Result":
+            def scalars(self) -> _Result:
                 return self
 
             def all(self) -> list[_Row]:
                 return [_Row()]
 
         class _Db:
-            def __enter__(self) -> "_Db":
+            def __enter__(self) -> _Db:
                 return self
 
             def __exit__(self, *_args: object) -> None:

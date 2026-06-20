@@ -5,7 +5,7 @@ All text operations MUST explicitly use UTF-8 encoding.
 
 from __future__ import annotations
 
-from polaris.cells.director.execution.internal.bootstrap_template_catalog import (
+from polaris.cells.director.tasking import (
     get_generic_bootstrap_files,
     get_intelligent_bootstrap_files,
     get_python_bootstrap_files,

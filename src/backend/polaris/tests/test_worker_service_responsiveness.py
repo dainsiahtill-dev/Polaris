@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from polaris.cells.director.execution.internal.task_lifecycle_service import TaskQueueConfig, TaskService
-from polaris.cells.director.execution.internal.worker_pool_service import WorkerPoolConfig, WorkerService
+from polaris.cells.director.tasking.public import TaskQueueConfig, TaskService
+from polaris.cells.director.tasking.public import WorkerPoolConfig, WorkerService
 from polaris.domain.entities import TaskResult
 
 

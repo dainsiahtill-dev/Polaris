@@ -4,11 +4,11 @@ import time
 from pathlib import Path
 
 import pytest
-from polaris.cells.director.execution.internal.code_generation_engine import (
+from polaris.cells.director.tasking.public import (
     CODE_WRITING_FORBIDDEN_WARNING,
     CodeGenerationPolicyViolationError,
 )
-from polaris.cells.director.execution.internal.worker_executor import WorkerExecutor
+from polaris.cells.director.tasking.public import WorkerExecutor
 from polaris.domain.entities import Task
 
 

@@ -18,6 +18,7 @@ import uuid
 import warnings
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
 from polaris.cells.roles.kernel.internal.turn_engine.compat import TurnEngineCompatMixin
 from polaris.cells.roles.kernel.internal.turn_engine.turn_materializer import TurnMaterializer
@@ -300,6 +301,24 @@ class TurnEngine(TurnEngineCompatMixin):
                 self._llm_caller._get_invoker() if hasattr(self._llm_caller, "_get_invoker") else self._llm_caller
             )
 
+        def _preserve_existing_forced_tool_scope(context_override: dict[str, Any], tool_choice: Any) -> bool:
+            existing_forced_defs = context_override.get("_transaction_kernel_forced_tool_definitions")
+            existing_forced_choice = context_override.get("_transaction_kernel_forced_tool_choice")
+            existing_forced_scope = (
+                (isinstance(existing_forced_defs, list) and bool(existing_forced_defs))
+                or (
+                    existing_forced_choice is not None
+                    and not (
+                        isinstance(existing_forced_choice, str)
+                        and existing_forced_choice.strip().lower() in {"", "auto"}
+                    )
+                )
+            )
+            incoming_choice_is_default = tool_choice is None or (
+                isinstance(tool_choice, str) and tool_choice.strip().lower() == "auto"
+            )
+            return existing_forced_scope and incoming_choice_is_default
+
         async def llm_provider(request_payload: dict[str, Any]) -> dict[str, Any]:
             raw_messages = list(request_payload.get("messages", []))
             messages = list(raw_messages)
@@ -323,14 +342,26 @@ class TurnEngine(TurnEngineCompatMixin):
                 and not context_override.get("_transaction_kernel_forced_tool_definitions")
                 and str(context_override.get("_transaction_kernel_forced_tool_choice") or "").strip().lower() == "none"
             )
+            preserve_existing_forced_scope = _preserve_existing_forced_tool_scope(
+                context_override,
+                request_payload.get("tool_choice"),
+            )
             context_override["_transaction_kernel_prebuilt_messages"] = [
                 dict(item) for item in raw_messages if isinstance(item, dict)
             ]
-            if isinstance(request_payload.get("tools"), list) and not explicit_tool_disable:
+            if (
+                isinstance(request_payload.get("tools"), list)
+                and not explicit_tool_disable
+                and not preserve_existing_forced_scope
+            ):
                 context_override["_transaction_kernel_forced_tool_definitions"] = [
                     dict(item) for item in request_payload["tools"] if isinstance(item, dict)
                 ]
-            if request_payload.get("tool_choice") is not None and not explicit_tool_disable:
+            if (
+                request_payload.get("tool_choice") is not None
+                and not explicit_tool_disable
+                and not preserve_existing_forced_scope
+            ):
                 context_override["_transaction_kernel_forced_tool_choice"] = request_payload.get("tool_choice")
             # ADR-0090 W2.6: phase-aware decoding — escalated mutation retries
             # carry a low-temperature override down the same channel.
@@ -454,14 +485,26 @@ class TurnEngine(TurnEngineCompatMixin):
                 and not context_override.get("_transaction_kernel_forced_tool_definitions")
                 and str(context_override.get("_transaction_kernel_forced_tool_choice") or "").strip().lower() == "none"
             )
+            preserve_existing_forced_scope = _preserve_existing_forced_tool_scope(
+                context_override,
+                request_payload.get("tool_choice"),
+            )
             context_override["_transaction_kernel_prebuilt_messages"] = [
                 dict(item) for item in raw_messages if isinstance(item, dict)
             ]
-            if isinstance(request_payload.get("tools"), list) and not explicit_tool_disable:
+            if (
+                isinstance(request_payload.get("tools"), list)
+                and not explicit_tool_disable
+                and not preserve_existing_forced_scope
+            ):
                 context_override["_transaction_kernel_forced_tool_definitions"] = [
                     dict(item) for item in request_payload["tools"] if isinstance(item, dict)
                 ]
-            if request_payload.get("tool_choice") is not None and not explicit_tool_disable:
+            if (
+                request_payload.get("tool_choice") is not None
+                and not explicit_tool_disable
+                and not preserve_existing_forced_scope
+            ):
                 context_override["_transaction_kernel_forced_tool_choice"] = request_payload.get("tool_choice")
             # ADR-0090 W2.6: phase-aware decoding — escalated mutation retries
             # carry a low-temperature override down the same channel.
@@ -693,6 +736,10 @@ class TurnEngine(TurnEngineCompatMixin):
                     "repair-turn edit-only for existing target: target=%s",
                     _repair_target,
                 )
+        tool_definitions = _apply_forced_transaction_tool_definitions(
+            tool_definitions,
+            getattr(request, "context_override", None),
+        )
 
         tk = self._create_transaction_kernel(role, profile, request)
         turn_id = str(request.run_id or uuid.uuid4().hex[:12])
@@ -983,6 +1030,10 @@ class TurnEngine(TurnEngineCompatMixin):
                     "repair-turn edit-only for existing target: target=%s",
                     _repair_target,
                 )
+        tool_definitions = _apply_forced_transaction_tool_definitions(
+            tool_definitions,
+            getattr(request, "context_override", None),
+        )
 
         tk = self._create_transaction_kernel(role, profile, request)
         turn_id = str(request.run_id or stream_run_id or uuid.uuid4().hex[:12])
