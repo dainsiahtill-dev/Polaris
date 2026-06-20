@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
@@ -1251,7 +1252,141 @@ class LifecycleMixin(ServiceBaseMixin):
                 expected_versions[item.task_id] = expected_version
                 dead_letter_records.append(dead_letter_record)
                 changed = True
+        self._reconcile_parents_after_terminal_children(
+            store=store,
+            items=items,
+            transitions=transitions,
+            outbox_records=outbox_records,
+            expected_versions=expected_versions,
+            dead_letter_records=dead_letter_records,
+        )
         return transitions, outbox_records, expected_versions, dead_letter_records
+
+    def _reconcile_parents_after_terminal_children(
+        self,
+        *,
+        store: Any,
+        items: dict[str, TaskWorkItemRecord],
+        transitions: list[dict[str, Any]],
+        outbox_records: list[dict[str, Any]],
+        expected_versions: dict[str, int],
+        dead_letter_records: list[dict[str, Any]],
+    ) -> None:
+        """Synchronously reconcile parent rows during queue-scan sweeps.
+
+        The periodic reconciler eventually fixes parent status, but factory
+        bench chains run inside short-lived subprocesses and can strand
+        non-leaf parents in ``pending_exec`` after a child dead-letters. Queue
+        scans already sweep terminal dependencies; folding parent convergence
+        into that same transaction makes failure visible immediately.
+        """
+        children_by_parent: dict[str, list[TaskWorkItemRecord]] = {}
+        for candidate in items.values():
+            parent_task_id = str(candidate.parent_task_id or "").strip()
+            if parent_task_id:
+                children_by_parent.setdefault(parent_task_id, []).append(candidate)
+
+        if not children_by_parent:
+            return
+
+        dlq = DLQManager(store)
+        changed = True
+        while changed:
+            changed = False
+            for parent in [item for item in items.values() if not item.is_leaf]:
+                children = children_by_parent.get(parent.task_id, [])
+                if not children:
+                    continue
+
+                expected_status, expected_stage = self._expected_parent_state_from_children(children)
+                if parent.status == expected_status and (not expected_stage or parent.stage == expected_stage):
+                    continue
+
+                previous_status = parent.status
+                previous_stage = parent.stage
+                expected_versions.setdefault(parent.task_id, int(parent.version))
+                child_status_counts = dict(Counter(child.status for child in children))
+
+                if expected_status == "dead_letter":
+                    dead_letter_record = dlq.move_to_dead_letter(
+                        item=parent,
+                        reason="child_dead_lettered",
+                        error_code="child_terminal_failure",
+                        metadata={"child_status_counts": child_status_counts},
+                        persist=False,
+                    )
+                    dead_letter_records.append(dead_letter_record)
+                else:
+                    parent.status = expected_status
+                    if expected_stage:
+                        parent.stage = expected_stage
+                    LeaseManager(store).clear_lease(parent)
+                    parent.version += 1
+                    parent.updated_at = now_iso()
+
+                parent.metadata = dict(parent.metadata)
+                parent.metadata["reconciled_from_children_at"] = parent.updated_at
+                parent.metadata["reconciled_child_status_counts"] = child_status_counts
+                parent.metadata["reconciled_expected_status"] = expected_status
+                if expected_stage:
+                    parent.metadata["reconciled_expected_stage"] = expected_stage
+
+                items[parent.task_id] = parent
+                transitions.append(
+                    {
+                        "task_id": parent.task_id,
+                        "from_status": previous_status,
+                        "to_status": parent.status,
+                        "event_type": "reconciled",
+                        "worker_id": "dependency_cascade_sweep",
+                        "lease_token": "",
+                        "version": parent.version,
+                        "metadata": {
+                            "trace_id": parent.trace_id,
+                            "from_stage": previous_stage,
+                            "to_stage": parent.stage,
+                            "child_status_counts": child_status_counts,
+                        },
+                    }
+                )
+                outbox_records.append(
+                    self._build_outbox_record(
+                        workspace=parent.workspace,
+                        event_type="task_market.parent_reconciled",
+                        run_id=parent.run_id,
+                        task_id=parent.task_id,
+                        payload={
+                            "trace_id": parent.trace_id,
+                            "from_status": previous_status,
+                            "to_status": parent.status,
+                            "from_stage": previous_stage,
+                            "to_stage": parent.stage,
+                            "child_status_counts": child_status_counts,
+                        },
+                    )
+                )
+                changed = True
+
+    @staticmethod
+    def _expected_parent_state_from_children(children: list[TaskWorkItemRecord]) -> tuple[str, str]:
+        statuses = {child.status for child in children}
+
+        if statuses and statuses <= {"resolved"}:
+            return "resolved", ""
+        if "dead_letter" in statuses:
+            return "dead_letter", ""
+        if "rejected" in statuses:
+            return "rejected", ""
+        if "waiting_human" in statuses:
+            return "waiting_human", "waiting_human"
+        if statuses & {"pending_qa", "in_qa"}:
+            return "in_qa", "pending_qa"
+        if statuses & {"pending_exec", "in_execution"}:
+            return "in_execution", "pending_exec"
+        if statuses & {"pending_design", "in_design"}:
+            return "in_design", "pending_design"
+
+        return "pending_design", "pending_design"
 
     # Pure readiness predicates live in ``claim_readiness``; bound here as
     # staticmethods so the existing ``self._exec_claim_ready`` /

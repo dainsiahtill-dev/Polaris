@@ -25,7 +25,7 @@
         },
         {
           "name": "supports_streaming",
-          "doc": "Whether this host supports SSE streaming."
+          "doc": "Whether this host supports streaming."
         },
         {
           "name": "supports_tool_async",

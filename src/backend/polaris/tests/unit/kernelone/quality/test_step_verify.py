@@ -8,6 +8,7 @@ three verify touchpoints (in-turn self-check, QA acceptance, punch list).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from polaris.kernelone.quality.step_verify import (
@@ -122,6 +123,25 @@ class TestNormalize:
         assert verify == "grep -Fiq '<html' index.html"
         assert outcome is not None
         assert outcome[0] == 0
+
+    def test_dist_require_verify_runs_package_build_first(self, tmp_path: Path) -> None:
+        package = {
+            "scripts": {
+                "build": (
+                    "node -e \"const fs=require('fs');"
+                    "fs.mkdirSync('dist/models',{recursive:true});"
+                    "fs.writeFileSync('dist/models/moonphase.js', "
+                    '\\"exports.MoonPhase = class MoonPhase { getPhase(){ return \'full\'; } };\\");"'
+                )
+            }
+        }
+        (tmp_path / "package.json").write_text(json.dumps(package), encoding="utf-8")
+        verify = "node -e \"const {MoonPhase}=require('./dist/models/moonphase.js'); console.log(new MoonPhase().getPhase())\""
+        outcome = run_step_verify(verify, cwd=str(tmp_path))
+
+        assert outcome is not None
+        assert outcome[0] == 0
+        assert "full" in outcome[1]
 
     def test_explicit_regex_grep_is_preserved(self) -> None:
         verify = "grep -Eq 'class .+App' src/main.js"

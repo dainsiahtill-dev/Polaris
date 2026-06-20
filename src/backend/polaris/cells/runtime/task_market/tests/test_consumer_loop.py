@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from polaris.cells.runtime.task_market.internal.consumer_loop import ConsumerLoopManager
+from polaris.cells.runtime.task_market.internal.wake_bus import notify_task_market_outbox
 
 
 class FakeConsumer:
@@ -197,12 +198,17 @@ class TestConsumerLoopManagerOutboxRelay:
             service=fake_service,
         )
 
-        # Wait for at least 3 relay calls.
+        # Startup drains once, then subsequent relay work is event-woken.
         deadline = time.monotonic() + 2.0
-        while fake_service.relay_outbox_messages.call_count < 3 and time.monotonic() < deadline:
+        while fake_service.relay_outbox_messages.call_count < 1 and time.monotonic() < deadline:
             time.sleep(0.01)
+        assert fake_service.relay_outbox_messages.call_count == 1
 
-        assert fake_service.relay_outbox_messages.call_count >= 3
+        notify_task_market_outbox(workspace)
+        deadline = time.monotonic() + 2.0
+        while fake_service.relay_outbox_messages.call_count < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert fake_service.relay_outbox_messages.call_count == 2
 
         manager.stop(join_timeout=3.0)
 

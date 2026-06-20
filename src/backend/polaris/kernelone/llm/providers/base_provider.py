@@ -129,7 +129,7 @@ class BaseProvider(ABC):
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Yield provider-native structured streaming events when supported.
 
-        Providers that can surface raw SSE / structured deltas should override
+        Providers that can surface provider-native structured deltas should override
         this method. Callers must feature-detect the override and fall back to
         ``invoke_stream()`` when absent.
         """

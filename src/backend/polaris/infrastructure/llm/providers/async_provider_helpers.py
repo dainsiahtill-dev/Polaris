@@ -6,7 +6,7 @@ replacing sync ``requests`` calls with native ``httpx.AsyncClient`` I/O.
 Key functions:
     - ``async_invoke_with_retry``: Async version of ``invoke_with_retry``
     - ``async_health_check_post``: Async version of ``health_check_post``
-    - ``AsyncStreamSession``: Async SSE stream session using httpx
+    - ``AsyncStreamSession``: Async streaming session using httpx
 
 Migration guide:
     Replace ``from polaris.infrastructure.llm.providers.provider_helpers import ...``
@@ -261,7 +261,7 @@ async def async_health_check_post(
 
 @dataclass
 class AsyncStreamSession:
-    """Async SSE stream session using httpx.
+    """Async streaming session using httpx.
 
     Replaces the sync ``aiohttp`` based stream sessions.
     """

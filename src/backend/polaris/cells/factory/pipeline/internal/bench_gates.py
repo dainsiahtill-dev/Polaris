@@ -647,6 +647,7 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
 
     build_command_ok = False
     build_detail = "no build/test/lint command was discovered"
+    package_script_failed = False
     if package and shutil.which("npm"):
         for script_name in ("test", "build", "lint", "check"):
             if script_name in scripts:
@@ -655,10 +656,11 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
                 cmd["script"] = script_name
                 commands.append(cmd)
                 build_command_ok = bool(cmd.get("ok"))
+                package_script_failed = not build_command_ok
                 build_detail = f"npm run {script_name} {'passed' if build_command_ok else 'failed'}"
                 break
     python_test_files = _discover_python_test_files(workspace, code_files)
-    if not build_command_ok and any(rel.endswith(".py") for rel in code_files):
+    if not build_command_ok and not package_script_failed and any(rel.endswith(".py") for rel in code_files):
         cmd = _run_command(
             [sys.executable, "-m", "compileall", "-q", "."], workspace, timeout_s=max(10, int(timeout_s))
         )
@@ -681,6 +683,7 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
                 build_detail = str(test_cmd.get("detail") or f"python {runner} failed")
     if (
         not build_command_ok
+        and not package_script_failed
         and any(rel.endswith((".js", ".mjs", ".cjs")) for rel in code_files)
         and shutil.which("node")
     ):
@@ -694,7 +697,7 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
                 failures.append(rel)
         build_command_ok = bool(js_files) and not failures
         build_detail = "node --check passed" if build_command_ok else f"node --check failed: {', '.join(failures[:3])}"
-    if not build_command_ok:
+    if not build_command_ok and not package_script_failed:
         language_ok, language_detail, language_commands = _run_language_build_gate(
             workspace,
             code_files,

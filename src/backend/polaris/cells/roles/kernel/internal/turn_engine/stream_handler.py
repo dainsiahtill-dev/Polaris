@@ -276,7 +276,7 @@ class StreamEventHandler:
 
         self._patch_buffer.flush()
 
-        # Internal only: consumed by TransactionKernel, not yielded to SSE clients.
+        # Internal only: consumed by TransactionKernel, not yielded to transport clients.
         yield {
             "type": "_internal_materialize",
             "emitted_round_content": emitted_round_content,

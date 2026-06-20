@@ -479,11 +479,55 @@ class TestF15MidRunResilience:
         assert {row["task_id"] for row in merged if row.get("ok")} == {"slow-live"}
         assert elapsed >= 2.0
 
-    def test_non_resolving_claims_are_paced_to_yield_to_siblings(self, tmp_path: Path) -> None:
-        """Fairness: a churning step that requeues without resolving must NOT be
-        re-grabbed at full speed by the same worker (which starves idle siblings on
-        other backends). Each non-resolving claim yields ~poll_interval so a sibling
-        can claim the requeued step next — observable as a paced claim rate."""
+    def test_active_claim_timeout_overrides_longer_drive_stall(self, tmp_path: Path) -> None:
+        """A claimed task's own timeout is the active-call watchdog budget.
+
+        The drive-level stall budget is a backstop for unknown state, not a reason
+        to let a known timed-out claim keep renewing for several extra minutes.
+        """
+        self._config(tmp_path)
+        release = threading.Event()
+
+        class _TimedOutClaimConsumer:
+            def __init__(self) -> None:
+                self._active_started_at = time.monotonic()
+
+            def active_claim_watchdog_snapshot(self) -> dict[str, Any]:
+                return {
+                    "task_id": "hung-claim",
+                    "started_monotonic": self._active_started_at,
+                    "timeout_seconds": 0.2,
+                }
+
+            def poll_once(self) -> list[dict[str, Any]]:
+                release.wait(timeout=30)
+                return []
+
+        class _EmptyConsumer:
+            def poll_once(self) -> list[dict[str, Any]]:
+                return []
+
+        start = time.monotonic()
+        try:
+            merged = _drive_director_workers(
+                [(_TimedOutClaimConsumer(), "prov-local"), (_EmptyConsumer(), "prov-lan")],
+                poll_interval=0.005,
+                stall_seconds=5.0,
+            )
+        finally:
+            release.set()
+        elapsed = time.monotonic() - start
+
+        assert merged == []
+        assert elapsed < 3.0
+
+    def test_non_resolving_claims_are_not_interval_paced(self, tmp_path: Path) -> None:
+        """Non-resolving claims must not reintroduce timer-driven polling.
+
+        With a single inline worker there is no sibling to yield to, so the driver
+        should drain to the defensive claim cap without sleeping on poll_interval.
+        Multi-worker fairness is handled by event wakeups from the task market.
+        """
         self._config(tmp_path)
         state = {"n": 0, "cap": 5}
 
@@ -498,8 +542,7 @@ class TestF15MidRunResilience:
         start = time.monotonic()
         _drive_director_workers([(_ChurnConsumer(), "prov-local")], poll_interval=0.05)
         elapsed = time.monotonic() - start
-        # 5 non-resolving claims each yield ~0.05s → paced to >= ~0.2s (4 inter-claim yields).
-        assert elapsed >= 0.05 * (state["cap"] - 1)
+        assert elapsed < 0.05 * 2
 
     def test_resolving_claims_are_not_paced(self, tmp_path: Path) -> None:
         """The fairness yield must NOT slow the happy path: claims that RESOLVE a step

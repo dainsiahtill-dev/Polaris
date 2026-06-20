@@ -9,6 +9,8 @@ import threading
 import time
 from typing import Any, Protocol
 
+from .wake_bus import get_task_market_outbox_event, get_task_market_work_event
+
 logger = logging.getLogger(__name__)
 
 
@@ -114,17 +116,8 @@ class ConsumerLoopManager:
             )
         )
         self._enable_safe_parallel = enable_safe_parallel
-        self._outbox_relay_interval = (
-            outbox_relay_interval
-            if outbox_relay_interval is not None
-            else _read_float_env(
-                "KERNELONE_TASK_MARKET_OUTBOX_RELAY_INTERVAL",
-                default=2.0,
-                minimum=0.05,
-                maximum=60.0,
-            )
-        )
         self._stop_event = threading.Event()
+        self._outbox_event = get_task_market_outbox_event(ws_token)
         self._threads: dict[str, threading.Thread] = {}
         self._consumers: dict[str, Any] = {}
         self._outbox_relay_thread: threading.Thread | None = None
@@ -192,6 +185,7 @@ class ConsumerLoopManager:
                     workspace=self._workspace,
                     worker_id=worker_id,
                     poll_interval=self._poll_interval,
+                    wake_event=get_task_market_work_event(self._workspace, role),
                     **cfg,
                 )
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
@@ -234,6 +228,7 @@ class ConsumerLoopManager:
         if not self._started:
             return
         self._stop_event.set()
+        self._outbox_event.set()
 
         # Signal stop on each consumer.
         for consumer in self._consumers.values():
@@ -277,7 +272,7 @@ class ConsumerLoopManager:
             "workspace": self._workspace,
             "started": self._started,
             "is_running": self.is_running(),
-            "poll_interval": self._poll_interval,
+            "consumer_idle_mode": "event_wakeup",
             "roles": roles,
             "outbox_relay_running": (self._outbox_relay_thread is not None and self._outbox_relay_thread.is_alive()),
         }
@@ -300,11 +295,17 @@ class ConsumerLoopManager:
             self._record_consumer_metrics(role, elapsed_ms)
 
     def _run_outbox_relay(self, service: _Service) -> None:
-        """Thread target for periodic outbox relay."""
+        """Thread target for event-woken outbox relay."""
         while not self._stop_event.is_set():
+            self._outbox_event.clear()
             t0 = time.monotonic()
+            should_continue_drain = False
             try:
-                service.relay_outbox_messages(self._workspace)
+                result = service.relay_outbox_messages(self._workspace)
+                scanned = int(result.get("scanned", 0) or 0)
+                sent = int(result.get("sent", 0) or 0)
+                failed = int(result.get("failed", 0) or 0)
+                should_continue_drain = scanned >= 200 and sent > 0 and failed == 0
             except Exception as exc:
                 logger.exception(
                     "ConsumerLoopManager: outbox relay failed: %s",
@@ -312,7 +313,8 @@ class ConsumerLoopManager:
                 )
             elapsed_ms = (time.monotonic() - t0) * 1000.0
             self._record_consumer_metrics("outbox_relay", elapsed_ms)
-            self._stop_event.wait(self._outbox_relay_interval)
+            if not should_continue_drain:
+                self._outbox_event.wait()
 
     @staticmethod
     def _record_consumer_metrics(role: str, duration_ms: float) -> None:

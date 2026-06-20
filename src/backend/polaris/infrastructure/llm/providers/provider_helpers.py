@@ -261,7 +261,7 @@ def _blocking_http_post(
     tests), falls back to a direct call.
 
     This prevents sync requests.post() from freezing WebSocket heartbeats,
-    SSE streams, and other async work when providers are invoked from
+    provider data-line streams, and other async work when providers are invoked from
     FastAPI route handlers or similar async contexts.
 
     P0 fix (2026-03-23): Uses ``ThreadPoolExecutor.submit().result()`` instead of
@@ -614,15 +614,15 @@ def close_stream_sessions_sync() -> None:
         logger.debug("Failed to close stream sessions: %s", e)
 
 
-async def iter_sse_data_payloads(
+async def iter_data_line_payloads(
     stream: AsyncIterable[bytes | str],
 ) -> AsyncGenerator[str, None]:
-    """Iterate decoded SSE ``data:`` payloads from a byte stream.
+    """Iterate decoded provider ``data:`` payloads from a byte stream.
 
     Guarantees:
     1. UTF-8 decoding is incremental, so multi-byte chars split across TCP chunks
        are preserved instead of being silently dropped.
-    2. Multi-line SSE events are reassembled using blank-line frame boundaries.
+    2. Multi-line provider events are reassembled using blank-line frame boundaries.
     """
 
     decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
@@ -659,7 +659,7 @@ async def iter_sse_data_payloads(
                 continue
 
             if line.startswith(":"):
-                # SSE comment line
+                # Provider comment line
                 continue
             if not line.startswith("data:"):
                 continue
@@ -1135,7 +1135,7 @@ async def invoke_stream_with_retry(
     max_attempts: int = _STREAM_RETRY_MAX_ATTEMPTS,
     retry_delay_seconds: float = _STREAM_RETRY_DELAY_SEC,
 ) -> AsyncGenerator[dict[str, Any], None]:
-    """POST *url* with JSON *payload* as SSE stream, retrying on transient network errors.
+    """POST *url* with JSON *payload* as provider data-line stream, retrying on transient network errors.
 
     This is the async counterpart to invoke_with_retry, designed for streaming responses.
     Uses aiohttp for async HTTP requests and implements retry with configurable delay.
@@ -1149,7 +1149,7 @@ async def invoke_stream_with_retry(
         retry_delay_seconds: Delay between retries in seconds (default from env or 5s).
 
     Yields:
-        dict: Parsed JSON events from the SSE stream.
+        dict: Parsed JSON events from the provider data-line stream.
 
     Raises:
         aiohttp.ClientError: If all retries are exhausted.
@@ -1200,14 +1200,14 @@ async def invoke_stream_with_retry(
                         )
 
                     decoded_event_count = 0
-                    async for data_str in iter_sse_data_payloads(response.content):
+                    async for data_str in iter_data_line_payloads(response.content):
                         if data_str == "[DONE]":
                             break
                         try:
                             payload_obj = json.loads(data_str)
                         except (RuntimeError, ValueError) as exc:
                             logger.debug(
-                                "[provider-helpers] Failed to decode SSE JSON payload from %s: %s",
+                                "[provider-helpers] Failed to decode provider JSON payload from %s: %s",
                                 url,
                                 exc,
                             )
@@ -1280,7 +1280,7 @@ async def invoke_stream_with_retry_and_handler(
     """POST *url* with JSON *payload* as stream, with custom handler and retry on network errors.
 
     This is a more flexible version of invoke_stream_with_retry that allows providers
-    to provide their own stream processing logic (e.g., custom SSE parsing, token extraction).
+    to provide their own stream processing logic (e.g., custom data-line parsing, token extraction).
 
     Args:
         url: The endpoint URL to POST to.

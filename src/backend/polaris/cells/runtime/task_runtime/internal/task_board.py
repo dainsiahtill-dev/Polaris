@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, cast
 
 from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
 from polaris.cells.events.fact_stream.public.service import append_fact_event
@@ -366,6 +366,8 @@ class TaskBoard:
         self._max_id_file.parent.mkdir(parents=True, exist_ok=True)
 
         self._lock = threading.RLock()
+        self._ready_condition = threading.Condition(self._lock)
+        self._ready_listeners: list[Callable[[], None]] = []
         self._cache: dict[int, Task] = {}
         self._state_bridge = state_bridge  # Optional workflow runtime bridge
         self._load_all()
@@ -378,6 +380,46 @@ class TaskBoard:
         """Board-level transaction lock for atomic cache+filesystem updates."""
         with self._lock:
             yield
+
+    @staticmethod
+    def _is_ready_task(task: Task) -> bool:
+        return task.status in (TaskStatus.PENDING, TaskStatus.READY) and not task.blocked_by and not task.claimed_by
+
+    def _has_ready_task_locked(self) -> bool:
+        return any(self._is_ready_task(task) for task in self._cache.values())
+
+    def _notify_ready_tasks(self) -> None:
+        listeners: list[Callable[[], None]] = []
+        with self._ready_condition:
+            if not self._has_ready_task_locked():
+                return
+            self._ready_condition.notify_all()
+            listeners = list(self._ready_listeners)
+
+        for listener in listeners:
+            try:
+                listener()
+            except RuntimeError as exc:
+                logger.debug("TaskBoard ready listener failed: %s", exc)
+
+    def wait_ready(self, timeout: float | None = None) -> bool:
+        """Block until at least one task is ready, without interval polling."""
+
+        wait_timeout = None if timeout is None else max(0.0, float(timeout))
+        with self._ready_condition:
+            return self._ready_condition.wait_for(self._has_ready_task_locked, timeout=wait_timeout)
+
+    def add_ready_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Register a callback fired when a ready task becomes available."""
+
+        with self._ready_condition:
+            self._ready_listeners.append(listener)
+
+        def _unsubscribe() -> None:
+            with self._ready_condition, suppress(ValueError):
+                self._ready_listeners.remove(listener)
+
+        return _unsubscribe
 
     def _load_all(self) -> None:
         """Load all tasks from disk into in-memory cache."""
@@ -453,7 +495,10 @@ class TaskBoard:
                 import msvcrt
 
                 lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                msvcrt_vars = vars(msvcrt)
+                locking = cast(Callable[[int, int, int], None], msvcrt_vars["locking"])
+                lock_flag = cast(int, msvcrt_vars["LK_LOCK"])
+                locking(lock_file.fileno(), lock_flag, 1)
             else:
                 import fcntl
 
@@ -466,7 +511,10 @@ class TaskBoard:
                         import msvcrt
 
                         lock_file.seek(0)
-                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                        msvcrt_vars = vars(msvcrt)
+                        locking = cast(Callable[[int, int, int], None], msvcrt_vars["locking"])
+                        unlock_flag = cast(int, msvcrt_vars["LK_UNLCK"])
+                        locking(lock_file.fileno(), unlock_flag, 1)
                     else:
                         import fcntl
 
@@ -514,6 +562,7 @@ class TaskBoard:
         """
         import copy
 
+        should_notify_ready = False
         with self.transaction():
             task_id = self._get_next_id()
             deps = blocked_by or []
@@ -555,7 +604,12 @@ class TaskBoard:
                     blocked_by=deps,
                 )
 
-            return task
+            should_notify_ready = self._is_ready_task(task)
+
+        if should_notify_ready:
+            self._notify_ready_tasks()
+
+        return task
 
     def get(self, task_id: int) -> Task | None:
         """Get a task by numeric ID. Returns a deep copy."""
@@ -613,6 +667,7 @@ class TaskBoard:
             }
 
         result_task: Task | None = None
+        should_notify_ready = False
         with self.transaction():
             task = self._cache.get(task_id)
             if not task:
@@ -651,9 +706,10 @@ class TaskBoard:
                 # (otherwise workers would pick up tasks whose deps never produced
                 # the artifacts they require).
                 if next_status == TaskStatus.COMPLETED:
-                    self._unblock_dependent_tasks(task_id)
+                    should_notify_ready = self._unblock_dependent_tasks(task_id)
 
             self._save_task(task)
+            should_notify_ready = should_notify_ready or self._is_ready_task(task)
 
             # State bridge notification
             if self._state_bridge is not None:
@@ -675,17 +731,22 @@ class TaskBoard:
         # Outside lock: write terminal event
         if terminal_event_data:
             self._write_terminal_event(terminal_event_data)
+        if should_notify_ready:
+            self._notify_ready_tasks()
 
         return result_task
 
-    def _unblock_dependent_tasks(self, completed_task_id: int) -> None:
+    def _unblock_dependent_tasks(self, completed_task_id: int) -> bool:
         """Remove completed task from blocked_by lists of dependent tasks."""
+        ready_unblocked = False
         for task in self._cache.values():
             if completed_task_id in task.blocked_by:
                 task.blocked_by.remove(completed_task_id)
                 if task.status == TaskStatus.BLOCKED and not task.blocked_by:
                     task.status = TaskStatus.PENDING
+                    ready_unblocked = True
                 self._save_task(task)
+        return ready_unblocked
 
     def _write_terminal_event(self, event_data: dict[str, Any]) -> None:
         """Write terminal event to JSONL outside the board transaction lock."""
@@ -789,6 +850,8 @@ class TaskBoard:
         """Reopen a terminal task for another implementation round."""
         import copy
 
+        should_notify_ready = False
+        result_task: Task | None = None
         with self.transaction():
             task = self._cache.get(task_id)
             if not task:
@@ -830,18 +893,20 @@ class TaskBoard:
                     workflow_id=None,
                 )
 
-            return copy.deepcopy(task)
+            should_notify_ready = self._is_ready_task(task)
+            result_task = copy.deepcopy(task)
+
+        if should_notify_ready:
+            self._notify_ready_tasks()
+
+        return result_task
 
     def get_ready_tasks(self) -> list[Task]:
         """Get all tasks that are pending, unblocked, and unclaimed."""
         import copy
 
         with self.transaction():
-            return [
-                copy.deepcopy(t)
-                for t in self._cache.values()
-                if t.status in (TaskStatus.PENDING, TaskStatus.READY) and not t.blocked_by and not t.claimed_by
-            ]
+            return [copy.deepcopy(t) for t in self._cache.values() if self._is_ready_task(t)]
 
     def list_ready(self) -> list[Task]:
         """Compatibility alias for role-agent worker polling."""

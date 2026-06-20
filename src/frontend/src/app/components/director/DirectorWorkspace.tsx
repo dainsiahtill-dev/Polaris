@@ -79,7 +79,6 @@ import {
   getDirectorCapabilities,
   getDirectorDiagnostics,
   getDirectorRun,
-  getDirectorStatus,
   getDirectorTask,
   getDirectorWorker,
   clearRoleKernelCache,
@@ -92,7 +91,6 @@ import {
   runDirector,
   type DirectorCapabilitiesResponse,
   type DirectorOrchestrationRunResponse,
-  type DirectorStatus,
   type DirectorWorker,
   type CreateDirectorTaskPayload,
   type DirectorDiagnosticsResponse,
@@ -196,9 +194,12 @@ interface DirectorRunCancelState {
 interface DirectorToggleStatusEvidenceState {
   triggered: boolean;
   loading: boolean;
-  data: DirectorStatus | null;
+  message: string | null;
   error: string | null;
 }
+
+const DIRECTOR_RUNTIME_PUSH_ENDPOINT = '/v2/ws/runtime';
+const DIRECTOR_COMMAND_ACCEPTED_MESSAGE = '命令已提交，等待 runtime.v2 推送确认。';
 
 interface DirectorDiagnosticsState {
   loading: boolean;
@@ -1757,7 +1758,7 @@ export function DirectorWorkspace({
   const [directorToggleStatusEvidence, setDirectorToggleStatusEvidence] = useState<DirectorToggleStatusEvidenceState>({
     triggered: false,
     loading: false,
-    data: null,
+    message: null,
     error: null,
   });
   const [directorDiagnostics, setDirectorDiagnostics] = useState<DirectorDiagnosticsState>({
@@ -2685,36 +2686,26 @@ export function DirectorWorkspace({
     setDirectorToggleStatusEvidence({
       triggered: true,
       loading: true,
-      data: null,
+      message: null,
       error: null,
     });
     try {
-      await Promise.resolve(onToggleDirector());
-      const statusResult = await getDirectorStatus(workspace);
-      if (statusResult.ok && statusResult.data) {
-        setDirectorToggleStatusEvidence({
-          triggered: true,
-          loading: false,
-          data: statusResult.data,
-          error: null,
-        });
-        return;
-      }
+      const accepted = await Promise.resolve(onToggleDirector());
       setDirectorToggleStatusEvidence({
         triggered: true,
         loading: false,
-        data: null,
-        error: statusResult.error || 'Director status unavailable',
+        message: accepted === false ? '命令未被接受。' : DIRECTOR_COMMAND_ACCEPTED_MESSAGE,
+        error: accepted === false ? 'Director command was not accepted' : null,
       });
     } catch (error) {
       setDirectorToggleStatusEvidence({
         triggered: true,
         loading: false,
-        data: null,
-        error: error instanceof Error ? error.message : 'Director status unavailable',
+        message: null,
+        error: error instanceof Error ? error.message : 'Director command unavailable',
       });
     }
-  }, [onToggleDirector, workspace]);
+  }, [onToggleDirector]);
 
   const directorDiagnosticExecutionReason = useMemo(
     () => formatDirectorExecutionBlockReason(
@@ -2731,12 +2722,12 @@ export function DirectorWorkspace({
       : '';
   const directorToggleBusy = directorToggleStatusEvidence.loading;
   const directorControlBusyReason = directorStarting
-    ? 'Director 正在启动，请等待状态回传。'
-    : directorStopping
-      ? 'Director 正在停止，请等待状态回传。'
-      : directorToggleBusy
-        ? 'Director 状态确认中，请等待后端回传。'
-        : '';
+      ? 'Director 正在启动，请等待状态回传。'
+      : directorStopping
+        ? 'Director 正在停止，请等待状态回传。'
+        : directorToggleBusy
+          ? 'Director 命令提交中，请等待 runtime.v2 回传。'
+          : '';
   const executionDisabledReason = executionBlockReasonForStart || directorControlBusyReason;
   const directorPrimaryActionLabel = directorStarting
     ? '启动中'
@@ -3126,26 +3117,20 @@ export function DirectorWorkspace({
           data-testid="director-toggle-status-evidence"
         >
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-medium text-slate-100">Director status evidence</span>
+            <span className="font-medium text-slate-100">Director command evidence</span>
             <EvidenceEndpointBadge
-              endpoint={evidenceEndpoint('/v2/director/status?source=auto', workspace)}
+              endpoint={DIRECTOR_RUNTIME_PUSH_ENDPOINT}
               testId="director-toggle-status-endpoint"
             />
             {directorToggleStatusEvidence.loading ? (
-              <span className="text-slate-400">正在读取进程状态...</span>
+              <span className="text-slate-400">正在提交命令...</span>
             ) : directorToggleStatusEvidence.error ? (
               <span className="text-rose-300">{directorToggleStatusEvidence.error}</span>
-            ) : directorToggleStatusEvidence.data ? (
-              <span className={cn(
-                directorToggleStatusEvidence.data.running ? 'text-emerald-300' : 'text-slate-300',
-              )}>
-                {directorToggleStatusEvidence.data.running ? 'running' : 'idle'}
-                {' · '}
-                pid={directorToggleStatusEvidence.data.pid ?? 'none'}
-                {directorToggleStatusEvidence.data.mode ? ` · mode=${directorToggleStatusEvidence.data.mode}` : ''}
-                {directorToggleStatusEvidence.data.source ? ` · source=${directorToggleStatusEvidence.data.source}` : ''}
+            ) : (
+              <span className="text-emerald-300">
+                {directorToggleStatusEvidence.message || DIRECTOR_COMMAND_ACCEPTED_MESSAGE}
               </span>
-            ) : null}
+            )}
           </div>
         </div>
       )}

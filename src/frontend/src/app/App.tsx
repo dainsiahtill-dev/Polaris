@@ -32,7 +32,7 @@ import { ResidentWorkspace } from '@/app/components/resident';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
 import { RuntimeDiagnosticsWorkspace } from '@/app/components/RuntimeDiagnosticsWorkspace';
 import { ContextOSWorkspace } from '@/app/components/contextos';
-import { apiFetchFresh, openPath, pickWorkspace } from '@/api';
+import { openPath, pickWorkspace } from '@/api';
 import { runtimeService } from '@/services';
 import { useRuntime } from './hooks/useRuntime';
 import { useRuntimeConnectionNotifications } from './hooks/useConnectionNotifications';
@@ -351,23 +351,6 @@ function AppContent() {
 
   const displaySnapshot = progressSnapshot ?? snapshot;
 
-  const refreshProgressSnapshot = useCallback(async () => {
-    try {
-      const response = await apiFetchFresh('/state/snapshot');
-      if (!response.ok) {
-        return null;
-      }
-      const payload = (await response.json()) as SnapshotPayload | null;
-      if (!payload || typeof payload !== 'object') {
-        return null;
-      }
-      setProgressSnapshot(payload);
-      return payload;
-    } catch {
-      return null;
-    }
-  }, []);
-
   const {
     isStartingPM,
     isStoppingPM,
@@ -385,8 +368,7 @@ function AppContent() {
     workspace,
     onStatusChange: () => {
       loadSettings();
-      // 不需要手动 reconnectWebSocket() - 状态已通过现有 WebSocket 实时推送
-      void refreshProgressSnapshot();
+      // 状态与进度只由 runtime.v2 WebSocket 推送；这里不再补拉快照。
     },
     onOpenLogs: (sourceId, banner) => {
       uiActions.openLogs(sourceId, banner);
@@ -769,28 +751,23 @@ function AppContent() {
   // Role Workspace handlers
   const handleEnterPMWorkspace = () => {
     setActiveRoleView('pm');
-    void refreshProgressSnapshot();
   };
 
   const handleEnterChiefEngineerWorkspace = () => {
     setActiveRoleView('chief_engineer');
-    void refreshProgressSnapshot();
   };
 
   const handleEnterDirectorWorkspace = () => {
     setActiveRoleView('director');
-    void refreshProgressSnapshot();
   };
 
   const handleEnterFactoryMode = () => {
     // Factory 模式：先 PM 规划，再 Director 执行
     setActiveRoleView('factory');
-    void refreshProgressSnapshot();
   };
 
   const handleEnterAGIWorkspace = () => {
     setActiveRoleView('agi');
-    void refreshProgressSnapshot();
   };
 
   const handleEnterRuntimeDiagnostics = () => {
@@ -799,7 +776,6 @@ function AppContent() {
 
   const handleEnterContextOS = () => {
     setActiveRoleView('contextos');
-    void refreshProgressSnapshot();
   };
 
   const handleBackToMain = () => {

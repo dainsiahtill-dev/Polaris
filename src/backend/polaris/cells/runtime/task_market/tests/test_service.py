@@ -2331,6 +2331,27 @@ class TestDependencyTerminalCascade:
         assert dlq_entries["step-2"]["error_code"] == "dependency_terminal_failure"
         assert "step-1" in dlq_entries["step-2"]["reason"]
 
+    def test_child_dead_letter_reconciles_parent_during_dependency_sweep(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        service = TaskMarketService()
+        self._publish(service, workspace, "parent", is_leaf=False)
+        self._publish(service, workspace, "step-1", parent="parent")
+        self._publish(service, workspace, "step-2", parent="parent", depends_on=("step-1",))
+        self._dead_letter(service, workspace, "step-1")
+
+        claim = self._scan_claim(service, workspace)
+        assert claim.ok is False
+        assert claim.reason == "no_claimable_work_item"
+
+        status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace)))
+        by_id = {row["task_id"]: row for row in status.items}
+        assert by_id["step-2"]["status"] == "dead_letter"
+        assert by_id["parent"]["status"] == "dead_letter"
+        assert by_id["parent"]["stage"] == "dead_letter"
+        dlq_entries = {entry["task_id"]: entry for entry in get_store(str(workspace)).load_dead_letters(limit=50)}
+        assert dlq_entries["parent"]["error_code"] == "child_terminal_failure"
+
     def test_rejected_dependency_cascades_dependent(self, tmp_path: Path) -> None:
         workspace = tmp_path / "ws"
         workspace.mkdir()

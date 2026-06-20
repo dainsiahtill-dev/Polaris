@@ -32,7 +32,7 @@ from .provider_helpers import (
     get_stream_session,
     health_check_post,
     invoke_with_retry,
-    iter_sse_data_payloads,
+    iter_data_line_payloads,
     list_models_from_api,
 )
 
@@ -472,7 +472,7 @@ class OpenAICompatProvider(BaseProvider):
     async def invoke_stream_events(
         self, prompt: str, model: str, config: dict[str, Any]
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Yield raw structured SSE events for KernelOne stream decoding."""
+        """Yield raw structured provider stream events for KernelOne stream decoding."""
 
         base = normalize_base_url(str(config.get("base_url") or ""))
         timeout = _timeout_seconds(config, 60)
@@ -550,7 +550,7 @@ class OpenAICompatProvider(BaseProvider):
                 error_text = await response.text()
                 raise RuntimeError(f"HTTP {response.status} - {error_text}")
 
-            async for data in iter_sse_data_payloads(response.content):
+            async for data in iter_data_line_payloads(response.content):
                 if data == "[DONE]":
                     break
                 try:

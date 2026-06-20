@@ -22,6 +22,7 @@ lines removed; the missing information was literally a handful of bits.
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 import subprocess
@@ -428,6 +429,7 @@ def first_failing_verify_clause(verify: str, *, cwd: str) -> str:
 def run_step_verify(verify: str, *, cwd: str) -> tuple[int, str] | None:
     """Run the full verify command. Returns (exit_code, output_tail) or None
     when it could not run at all."""
+    verify = _prefix_typescript_dist_build_if_needed(verify, cwd=cwd)
     try:
         proc = subprocess.run(
             verify,
@@ -441,6 +443,28 @@ def run_step_verify(verify: str, *, cwd: str) -> tuple[int, str] | None:
     except (OSError, subprocess.TimeoutExpired):
         return None
     return proc.returncode, ((proc.stdout or "") + (proc.stderr or ""))
+
+
+def _prefix_typescript_dist_build_if_needed(verify: str, *, cwd: str) -> str:
+    command = str(verify or "").strip()
+    if all(marker not in command for marker in ("./dist/", "'./dist/", '"./dist/', "\\'./dist/", '\\"./dist/')):
+        return command
+    if ".js" not in command:
+        return command
+    package_path = Path(cwd) / "package.json"
+    if not package_path.exists():
+        return command
+    try:
+        package_data = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return command
+    scripts = package_data.get("scripts")
+    if not isinstance(scripts, dict):
+        return command
+    build_script = scripts.get("build")
+    if not isinstance(build_script, str) or not build_script.strip():
+        return command
+    return f"npm run build --silent >/dev/null 2>&1 && {command}"
 
 
 def collect_failing_clauses(verify: str, *, cwd: str) -> dict[str, Any] | None:

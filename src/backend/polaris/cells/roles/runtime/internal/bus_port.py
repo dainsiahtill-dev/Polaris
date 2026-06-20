@@ -28,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-import time
 from typing import Any
 
 # Import queue size constants from KernelOne (single source of truth)
@@ -47,9 +46,10 @@ from polaris.kernelone.multi_agent.bus_port import (
 
 logger = logging.getLogger(__name__)
 
-# Upper bound on async poll cancellation delay when shutdown is requested (seconds).
-# Prevents indefinite blocking if the caller ignores cancellation.
-_MAX_CANCEL_DELAY_SEC: float = 1.0
+
+def _complete_async_waiter(waiter: asyncio.Future[None]) -> None:
+    if not waiter.done():
+        waiter.set_result(None)
 
 
 class InMemoryAgentBusPort:
@@ -71,12 +71,15 @@ class InMemoryAgentBusPort:
     def __init__(self, max_queue_size: int = _MAX_QUEUE_SIZE) -> None:
         self._max_queue_size = max(1, int(max_queue_size))
         self._lock = threading.RLock()
+        self._condition = threading.Condition(self._lock)
         # inbox: receiver_name -> list[AgentEnvelope]
         self._inbox: dict[str, list[AgentEnvelope]] = {}
         # inflight: message_id -> AgentEnvelope  (ack/nack pending)
         self._inflight: dict[str, AgentEnvelope] = {}
         # dead_letter store
         self._dead: list[DeadLetterRecord] = []
+        # receiver_name -> async waiters. publish() wakes them through their event loop.
+        self._async_waiters: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]]] = {}
         # optional downstream forwarding callbacks (e.g. KernelOne MessageBus)
         self._subscribers: list[Any] = []
 
@@ -99,6 +102,8 @@ class InMemoryAgentBusPort:
                 )
                 return False
             inbox.append(envelope)
+            self._condition.notify_all()
+            self._wake_async_waiters_locked(envelope.receiver)
         logger.debug(
             "bus_port.publish: queued message_id=%s type=%s sender=%s receiver=%s",
             envelope.message_id,
@@ -115,11 +120,7 @@ class InMemoryAgentBusPort:
         block: bool = False,
         timeout: float = 1.0,
     ) -> AgentEnvelope | None:
-        """Poll next message for receiver. Thread-safe.
-
-        Uses blocking `time.sleep()` which cannot be cancelled by asyncio.
-        For async contexts, use `poll_async()` instead.
-        """
+        """Receive next message for receiver. Thread-safe."""
         envelope = self._pop_and_mark_inflight(receiver)
         if envelope is not None:
             return envelope
@@ -127,11 +128,17 @@ class InMemoryAgentBusPort:
         if not block:
             return None
 
-        # Simple blocking poll: sleep in small intervals
-        deadline = time.monotonic() + max(0.0, float(timeout))
-        interval = min(0.1, max(0.01, float(timeout) / 10))
-        while time.monotonic() < deadline:
-            time.sleep(interval)
+        timeout_seconds = max(0.0, float(timeout))
+        if timeout_seconds <= 0.0:
+            return None
+
+        receiver_key = str(receiver or "")
+        with self._condition:
+            if not self._condition.wait_for(
+                lambda: bool(self._inbox.get(receiver_key)),
+                timeout=timeout_seconds,
+            ):
+                return None
             envelope = self._pop_and_mark_inflight(receiver)
             if envelope is not None:
                 return envelope
@@ -145,75 +152,81 @@ class InMemoryAgentBusPort:
         timeout: float = 1.0,
         poll_interval: float = _DEFAULT_POLL_INTERVAL_SEC,
     ) -> AgentEnvelope | None:
-        """Poll next message for receiver using async-aware polling.
+        """Receive next message for receiver using event-loop wakeups.
 
-        This method yields to the event loop and can be cancelled via
-        asyncio.cancel(). It is the async-safe alternative to `poll()`.
+        ``poll_interval`` is accepted for compatibility only; no interval
+        wakeup or sleep loop is used.
 
         Args:
             receiver: The receiver name to poll messages for.
             block: If True, wait until a message arrives or timeout expires.
             timeout: Maximum time to wait when block=True (seconds).
                 A value <= 0 returns immediately.
-            poll_interval: Time between polls (seconds). Must be positive.
-                Defaults to 0.05 seconds for responsive cancellation.
+            poll_interval: Compatibility argument; ignored.
 
         Returns:
             The next `AgentEnvelope` for `receiver`, or None if no message
             is available within the timeout (or immediately if block=False).
 
         Raises:
-            asyncio.CancelledError: Propagates if cancellation occurs
-                during a sleep interval. Caught and converted to return None
-                if cancellation occurs at the boundary (last_interval case).
+            asyncio.CancelledError: Propagates if cancellation occurs while
+                waiting for a publish wakeup.
 
         Implementation notes:
-            - Uses `asyncio.sleep()` instead of `time.sleep()` to yield.
-            - Calculates remaining time per iteration to respect total timeout.
-            - Applies a hard upper bound on cancellation delay to prevent
-              indefinite blocking when the event loop is stuck.
+            - Registers one future per waiting receiver.
+            - publish() wakes futures through loop.call_soon_threadsafe().
+            - Timeout is handled by asyncio.wait_for(), not by interval checks.
         """
-        # Validate and normalize poll_interval
-        safe_interval = max(0.001, float(poll_interval))
+        _ = poll_interval
         safe_timeout = max(0.0, float(timeout))
 
-        # Fast path: non-blocking or zero timeout
+        envelope = self._pop_and_mark_inflight(receiver)
+        if envelope is not None:
+            return envelope
         if not block or safe_timeout <= 0.0:
-            envelope = self._pop_and_mark_inflight(receiver)
-            if envelope is not None:
-                return envelope
             return None
 
-        deadline = time.monotonic() + safe_timeout
-
-        while True:
-            # Calculate remaining time
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                # Timeout expired
-                return None
-
-            # Use smaller of remaining time or poll_interval for this sleep
-            sleep_time = min(remaining, safe_interval)
-
-            # Apply hard upper bound to prevent indefinite blocking on
-            # cancellation (e.g., if event loop is stuck). This ensures
-            # the coroutine returns within a bounded time even if cancelled.
-            bounded_sleep = min(sleep_time, _MAX_CANCEL_DELAY_SEC)
-
-            try:
-                await asyncio.sleep(bounded_sleep)
-            except asyncio.CancelledError:
-                # Propagate cancellation upward; this is the expected
-                # behavior when a caller explicitly cancels the task.
-                raise
-
-            # Check for message after sleeping
+        receiver_key = str(receiver or "")
+        loop = asyncio.get_running_loop()
+        waiter: asyncio.Future[None] = loop.create_future()
+        with self._lock:
             envelope = self._pop_and_mark_inflight(receiver)
             if envelope is not None:
                 return envelope
+            self._async_waiters.setdefault(receiver_key, []).append((loop, waiter))
 
-            # Loop will continue with updated remaining time calculation
+        try:
+            await asyncio.wait_for(waiter, timeout=safe_timeout)
+        except asyncio.TimeoutError:
+            return None
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._remove_async_waiter(receiver_key, waiter)
+
+        return self._pop_and_mark_inflight(receiver)
+
+    def _wake_async_waiters_locked(self, receiver: str) -> None:
+        receiver_key = str(receiver or "")
+        waiters = self._async_waiters.pop(receiver_key, [])
+        for loop, waiter in waiters:
+            if waiter.done():
+                continue
+            try:
+                loop.call_soon_threadsafe(_complete_async_waiter, waiter)
+            except RuntimeError:
+                continue
+
+    def _remove_async_waiter(self, receiver: str, waiter: asyncio.Future[None]) -> None:
+        with self._lock:
+            waiters = self._async_waiters.get(receiver)
+            if not waiters:
+                return
+            remaining = [(loop, item) for loop, item in waiters if item is not waiter and not item.done()]
+            if remaining:
+                self._async_waiters[receiver] = remaining
+            else:
+                self._async_waiters.pop(receiver, None)
 
     def ack(self, message_id: str, receiver: str) -> bool:
         """Acknowledge message — remove from inflight."""
@@ -375,7 +388,6 @@ class InMemoryAgentBusPort:
 
 __all__ = [
     "_DEFAULT_POLL_INTERVAL_SEC",
-    "_MAX_CANCEL_DELAY_SEC",
     "AgentBusPort",
     "AgentEnvelope",
     "DeadLetterRecord",

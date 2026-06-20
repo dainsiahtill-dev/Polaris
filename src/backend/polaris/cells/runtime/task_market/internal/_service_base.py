@@ -35,6 +35,7 @@ from .models import (
 from .reconciler import TaskReconciliationLoop
 from .store import get_store
 from .tracing import get_task_market_tracer
+from .wake_bus import notify_task_market_outbox, notify_task_market_workspace
 
 logger = logging.getLogger(__name__)
 _COGNITIVE_REQUIRED_KEYS = (
@@ -169,8 +170,8 @@ class ServiceBaseMixin:
         """Return the appropriate store backend (lazy)."""
         return get_store(workspace)
 
-    @staticmethod
     def _atomic_save_changed_items(
+        self,
         *,
         store: Any,
         items: dict[str, TaskWorkItemRecord],
@@ -191,6 +192,16 @@ class ServiceBaseMixin:
             dead_letter_records=dead_letter_records or [],
             human_review_records=human_review_records or [],
         )
+        workspaces = {
+            str(item.workspace or "").strip() for item in changed_items.values() if str(item.workspace or "").strip()
+        }
+        workspaces.update(
+            str(record.get("workspace") or "").strip()
+            for record in outbox_records
+            if str(record.get("workspace") or "").strip()
+        )
+        for workspace in workspaces:
+            notify_task_market_workspace(workspace)
 
     @staticmethod
     def _coerce_optional_bool(value: Any) -> bool | None:
@@ -480,6 +491,7 @@ class ServiceBaseMixin:
         try:
             store = self._get_store(workspace)
             store.append_outbox_message(outbox)
+            notify_task_market_outbox(workspace)
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning(
                 "task_market webhook outbox append failed: task_id=%s action=%s error=%s",
@@ -564,6 +576,7 @@ class ServiceBaseMixin:
         try:
             store = self._get_store(workspace)
             store.append_outbox_message(outbox_record)
+            notify_task_market_outbox(workspace)
         except (OSError, RuntimeError, ValueError) as exc:
             logger.warning(
                 "task_market outbox append failed: event_type=%s task_id=%s outbox_id=%s error=%s",

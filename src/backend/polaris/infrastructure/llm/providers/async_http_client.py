@@ -295,7 +295,7 @@ class AsyncProviderHttpClient:
         *,
         timeout: float | None = None,
     ) -> httpx.Response:
-        """POST and return raw streaming response (for SSE).
+        """POST and return raw streaming response.
 
         Caller is responsible for consuming the stream.
         Returns the response object with ``.aiter_lines()`` / ``.aiter_bytes()``.

@@ -25,6 +25,19 @@ from dataclasses import dataclass
 # Extension groups → the checker command (the file path is appended).
 _SYNTAX_CHECKERS: dict[tuple[str, ...], list[str]] = {
     (".js", ".mjs", ".cjs"): ["node", "--check"],
+    (".ts", ".tsx"): [
+        "tsc",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--skipLibCheck",
+        "--target",
+        "ES2020",
+        "--module",
+        "commonjs",
+        "--lib",
+        "ES2020,DOM",
+    ],
     (".py",): [sys.executable, "-m", "py_compile"],
 }
 
@@ -65,8 +78,10 @@ def check_file_syntax(path: str, *, timeout_seconds: int = _DEFAULT_TIMEOUT_SECO
     if not os.path.isfile(path):
         return SyntaxCheckResult(path=path, checked=False, ok=True, error="", reason="file not found")
     try:
+        cwd = os.path.dirname(os.path.abspath(path)) or None
         proc = subprocess.run(
             [*cmd, path],
+            cwd=cwd,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,

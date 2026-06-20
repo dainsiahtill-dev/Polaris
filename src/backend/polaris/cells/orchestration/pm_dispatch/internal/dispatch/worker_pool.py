@@ -91,7 +91,8 @@ def _drive_role_workers(
 
     Args:
         workers: ``(consumer, provider_id)`` pairs, one per bound backend.
-        poll_interval: idle back-off between empty polls while siblings still work.
+        poll_interval: deprecated compatibility argument; inline workers now wait on
+            TaskMarket wake events instead of timer-driven empty polls.
         max_claims_per_worker: defensive cap on claims per worker per drain so a
             pathological always-ready market can never spin forever (the outer
             cycle loop picks up any remainder).
@@ -139,6 +140,66 @@ def _drive_role_workers(
     idle = [False] * len(workers)
     lock = threading.Lock()
     stop = threading.Event()
+    wake_condition = threading.Condition()
+    wake_generation = 0
+
+    def _consumer_workspace() -> str:
+        for consumer, _binding in workers:
+            for attr in ("workspace", "_workspace"):
+                token = str(getattr(consumer, attr, "") or "").strip()
+                if token:
+                    return token
+        return ""
+
+    workspace_token = _consumer_workspace()
+    work_event: threading.Event | None = None
+    if workspace_token:
+        try:
+            from polaris.cells.runtime.task_market.internal.wake_bus import get_task_market_work_event
+
+            work_event = get_task_market_work_event(workspace_token, role_id)
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug(
+                "director pool wake-bus unavailable for role=%s workspace=%s: %s", role_id, workspace_token, exc
+            )
+
+    def _notify_pool() -> None:
+        nonlocal wake_generation
+        with wake_condition:
+            wake_generation += 1
+            wake_condition.notify_all()
+
+    def _stop_pool() -> None:
+        stop.set()
+        if work_event is not None:
+            work_event.set()
+        _notify_pool()
+
+    def _wait_for_pool_signal() -> None:
+        if stop.is_set() or work_event is None:
+            return
+        with wake_condition:
+            observed_generation = wake_generation
+            wake_condition.wait_for(lambda: stop.is_set() or wake_generation != observed_generation)
+
+    def _wait_until_deadline(deadline: float) -> None:
+        remaining = max(0.0, float(deadline) - time.monotonic())
+        if remaining <= 0.0:
+            return
+        with wake_condition:
+            observed_generation = wake_generation
+            wake_condition.wait_for(
+                lambda: stop.is_set() or wake_generation != observed_generation,
+                timeout=remaining,
+            )
+
+    def _run_wake_bridge() -> None:
+        if work_event is None:
+            return
+        while not stop.is_set():
+            work_event.wait()
+            work_event.clear()
+            _notify_pool()
 
     _pool_trace(f"DRIVE: starting {len(workers)} worker thread(s)")
 
@@ -195,7 +256,7 @@ def _drive_role_workers(
         return (
             str(snapshot.get("task_id") or "").strip(),
             float(started_raw),
-            max(float(stall_timeout), timeout_seconds),
+            max(0.1, timeout_seconds),
         )
 
     def _retire(index: int, provider_id: str, reason: str) -> None:
@@ -203,8 +264,11 @@ def _drive_role_workers(
         _pool_trace(f"w{index} ({provider_id}) RETIRED: {reason}")
         with lock:
             idle[index] = True  # count toward all-idle quorum so the pool can still terminate
-            if all(idle):
-                stop.set()
+            pool_idle = all(idle)
+        if pool_idle:
+            _stop_pool()
+        else:
+            _notify_pool()
 
     def _run(index: int, consumer: Any, binding: Any) -> None:
         provider_id = _binding_provider_id(binding)
@@ -229,7 +293,14 @@ def _drive_role_workers(
                     if backend_failures >= death_threshold:
                         _retire(index, provider_id, f"poll_exception:{exc}")
                         return
-                    time.sleep(poll_interval)
+                    with lock:
+                        idle[index] = True
+                        pool_idle = all(idle)
+                    if pool_idle:
+                        _stop_pool()
+                        return
+                    _notify_pool()
+                    _wait_for_pool_signal()
                     continue
                 if batch:
                     ids = [r.get("task_id") for r in batch if isinstance(r, dict)]
@@ -243,10 +314,10 @@ def _drive_role_workers(
                                 row.setdefault("_director_binding_id", binding_id)
                             if slot_index is not None:
                                 row.setdefault("_director_slot_index", slot_index)
-                    results[index].extend(batch)
                     claims += len(batch)
                     resolved = any(isinstance(r, dict) and r.get("ok") for r in batch)
-                    if _batch_shows_live_backend(batch):
+                    batch_shows_live = _batch_shows_live_backend(batch)
+                    if batch_shows_live:
                         backend_failures = 0
                     else:
                         # Empty-output / no-evidence claim: the dead-backend signature.
@@ -257,29 +328,40 @@ def _drive_role_workers(
                             f"w{index} ({provider_id}) unproductive claim ({backend_failures}/{death_threshold}): {ids}"
                         )
                     with lock:
+                        results[index].extend(batch)
                         idle[index] = False
+                    _notify_pool()
                     if backend_failures >= death_threshold:
                         # Stop re-claiming so the requeued step(s) route to a LIVE worker.
                         _retire(index, provider_id, "backend_unproductive_streak")
                         return
                     if resolved:
                         continue  # real progress → immediately reach for the next step (high load)
+                    if not batch_shows_live:
+                        continue
                     # Fairness: the claim requeued WITHOUT resolving (a failing/churning step).
-                    # An immediate re-poll here lets this worker monopolise that one requeued step
-                    # while idle siblings on OTHER backends starve (observed r43: gpu0 re-grabbed
-                    # js-skel 3× while LAN+gpu1 sat idle). Yield one poll_interval so an idle
-                    # sibling claims the requeued step next — spreading load across every backend
-                    # and retrying the step on a FRESH backend instead of re-failing it here.
-                    time.sleep(poll_interval)
+                    # Wake idle siblings and wait for a market/progress signal instead of
+                    # sleeping on an interval; this prevents one backend from monopolising a
+                    # requeued step while preserving event-driven dispatch.
+                    if len(workers) > 1:
+                        with lock:
+                            idle[index] = True
+                            pool_idle = all(idle)
+                        if pool_idle:
+                            _stop_pool()
+                            return
+                        _notify_pool()
+                        _wait_for_pool_signal()
                     continue
                 # Nothing ready for me right now (a genuinely empty claim = market drained for me).
                 with lock:
                     idle[index] = True
                     pool_idle = all(idle)
                 if pool_idle:
-                    stop.set()  # market drained + no sibling mid-flight → yield to CE/QA
+                    _stop_pool()  # market drained + no sibling mid-flight → yield to CE/QA
                     return
-                time.sleep(poll_interval)  # a sibling is still executing; it may unblock a step
+                _notify_pool()
+                _wait_for_pool_signal()  # wake when a sibling or TaskMarket commit changes availability
         finally:
             clear_role_provider_override(role_id)
 
@@ -287,6 +369,14 @@ def _drive_role_workers(
         threading.Thread(target=_run, args=(i, consumer, binding), name=f"{role_id}-w{i}", daemon=True)
         for i, (consumer, binding) in enumerate(workers)
     ]
+    bridge_thread: threading.Thread | None = None
+    if work_event is not None:
+        bridge_thread = threading.Thread(
+            target=_run_wake_bridge,
+            name=f"{role_id}-task-market-wake-bridge",
+            daemon=True,
+        )
+        bridge_thread.start()
     for thread in threads:
         thread.start()
 
@@ -320,7 +410,8 @@ def _drive_role_workers(
             ]
             if fresh_active_claims:
                 last_progress_ts = now
-                time.sleep(min(0.2, stall_timeout / 10.0))
+                next_deadline = min(snapshot[1] + snapshot[2] for _index, _provider_id, snapshot in fresh_active_claims)
+                _wait_until_deadline(next_deadline)
                 continue
             if active_claims:
                 index, provider_id, snapshot = max(active_claims, key=lambda item: now - item[2][1])
@@ -339,7 +430,7 @@ def _drive_role_workers(
                     f"DRIVE STALL: active claim {task_id or '<unknown>'} on w{index} "
                     f"({provider_id}) age {age:.0f}s > {timeout_seconds:.0f}s; stopping"
                 )
-                stop.set()
+                _stop_pool()
                 break
         if now - last_progress_ts > stall_timeout:
             logger.warning(
@@ -347,13 +438,16 @@ def _drive_role_workers(
                 now - last_progress_ts,
             )
             _pool_trace(f"DRIVE STALL: no progress {now - last_progress_ts:.0f}s > {stall_timeout:.0f}s; stopping")
-            stop.set()
+            _stop_pool()
             break
-        time.sleep(min(0.2, stall_timeout / 10.0))
+        _wait_until_deadline(last_progress_ts + stall_timeout)
 
     join_timeout = max(2.0, poll_interval * 4)
     for thread in threads:
         thread.join(timeout=join_timeout)
+    _stop_pool()
+    if bridge_thread is not None:
+        bridge_thread.join(timeout=1.0)
 
     merged: list[dict[str, Any]] = []
     for batch in results:

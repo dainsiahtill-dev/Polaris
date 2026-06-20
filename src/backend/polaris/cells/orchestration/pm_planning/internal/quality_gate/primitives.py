@@ -110,6 +110,8 @@ _PM_EXECUTABLE_BACKTICK_RE = re.compile(r"`([^`]{2,})`")
 _PM_PLACEHOLDER_ACCEPTANCE_RE = re.compile(
     r"("
     r"占位\s*(?:输出|脚本|检查|测试|即可|可以)"
+    r"|(?:可|可以|允许)[^\n。；;]*(?:占位|placeholder|stub|dummy)"
+    r"|(?:最小|空|empty)[\w\s-]*(?:占位|placeholder|stub|dummy)"
     r"|(?:placeholder|stub|dummy)[\w\s-]*(?:output|script|only|suffices?|is\s+ok)"
     r"|manifest[\w\s-]*only"
     r"|只检查\s*(?:manifest|package\.json)"

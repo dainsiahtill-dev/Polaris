@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import threading
 from typing import Any
@@ -81,6 +82,14 @@ _QA_LLM_AUDIT_ENABLED_ENV = "KERNELONE_QA_LLM_AUDIT_ENABLED"
 _QA_LLM_AUDIT_TIMEOUT_ENV = "KERNELONE_QA_LLM_AUDIT_TIMEOUT_SECONDS"
 _BOOL_TRUE = {"1", "true", "yes", "on", "enabled"}
 _BOOL_FALSE = {"0", "false", "no", "off", "disabled"}
+_VERIFY_SCRIPT_NAMES = frozenset({"verify.js", "scripts/verify.js"})
+_PACKAGE_SCRIPT_CHECKS = ("package_scripts",)
+_VERIFY_SCRIPT_CHECK_LABELS = {
+    "ts_syntax": "ts_syntax / tsc TypeScript syntax check",
+    "package_scripts": "package_scripts npm script validation",
+    "min_files": "min_files code inventory validation",
+    "content_any": "content_any feature keyword probe",
+}
 
 
 def _read_bool_env(name: str, *, default: bool = False) -> bool:
@@ -123,6 +132,152 @@ def _resolve_qa_route(audit_result: dict[str, Any]) -> tuple[str, str, str]:
     if mapped_stage:
         return verdict, mapped_stage, ""
     return verdict, "", "rejected"
+
+
+def _iter_payload_strings(value: Any, *, _depth: int = 0) -> list[str]:
+    if _depth > 5:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (int, float, bool)):
+        return [str(value)]
+    if isinstance(value, dict):
+        strings: list[str] = []
+        for key, item in value.items():
+            strings.extend(_iter_payload_strings(key, _depth=_depth + 1))
+            strings.extend(_iter_payload_strings(item, _depth=_depth + 1))
+        return strings
+    if isinstance(value, (list, tuple, set)):
+        strings = []
+        for item in value:
+            strings.extend(_iter_payload_strings(item, _depth=_depth + 1))
+        return strings
+    return []
+
+
+def _payload_text(payload: dict[str, Any]) -> str:
+    return "\n".join(_iter_payload_strings(payload)).lower()
+
+
+def _payload_paths_for_contract_gate(payload: dict[str, Any]) -> list[str]:
+    paths = _collect_payload_paths(payload, ("target_files", "scope_paths", "scope"))
+    paths.extend(_extract_director_changed_files(payload))
+    paths.extend(_extract_fallback_audit_files(payload))
+    step = payload.get("construction_step")
+    if isinstance(step, dict):
+        paths.extend(_normalize_path_values(step.get("target_file")))
+    return _normalize_path_values(paths)
+
+
+def _path_set_contains(paths: list[str], expected: str) -> bool:
+    wanted = expected.replace("\\", "/").lower().lstrip("./")
+    for raw in paths:
+        path = raw.replace("\\", "/").lower().lstrip("./")
+        if path == wanted or path.endswith(f"/{wanted}"):
+            return True
+    return False
+
+
+def _contract_mentions_package_scripts(payload_text: str) -> bool:
+    return (
+        "package_scripts" in payload_text
+        or ("package.json" in payload_text and "script" in payload_text)
+        or ("package.json" in payload_text and "脚本" in payload_text)
+    )
+
+
+def _extract_verify_script_requirements(payload: dict[str, Any]) -> dict[str, str]:
+    """Extract explicit deterministic-check requirements a verify script must encode."""
+    text = _payload_text(payload)
+    required: dict[str, str] = {}
+    if "ts_syntax" in text or "verifytssyntax" in text or "ts syntax" in text or "typescript syntax" in text:
+        required["ts_syntax"] = "ts_syntax"
+    if _contract_mentions_package_scripts(text) or "verifypackagescripts" in text or "package scripts" in text:
+        required["package_scripts"] = "package_scripts"
+    min_files_match = re.search(r"\bmin_files\s*:\s*(\d+)", text)
+    if min_files_match:
+        required["min_files"] = f"min_files:{min_files_match.group(1)}"
+    elif "verifyfilecount" in text or "file count" in text or "至少 3 个文件" in text:
+        required["min_files"] = "min_files:3"
+    content_match = re.search(r"\bcontent_any\s*:\s*([a-z0-9_|.-]+)", text)
+    if content_match:
+        required["content_any"] = f"content_any:{content_match.group(1)}"
+    elif (
+        "verifycontentexists" in text
+        or "content exists" in text
+        or all(term in text for term in ("firefly", "flower", "moon", "humidity"))
+    ):
+        required["content_any"] = "content_any:firefly|flower|moon|humidity"
+    return required
+
+
+def _verify_script_covers_requirement(script_text: str, kind: str, requirement: str) -> bool:
+    content = script_text.lower()
+    if kind == "ts_syntax":
+        return "ts_syntax" in content or "tsc" in content or "typescript" in content
+    if kind == "package_scripts":
+        return "package_scripts" in content or ("package.json" in content and "scripts" in content)
+    if kind == "min_files":
+        return "min_files" in content or any(token in content for token in ("readdir", "recursive", "glob", "walk"))
+    if kind == "content_any":
+        if "content_any" in content:
+            return True
+        pattern = requirement.split(":", 1)[1] if ":" in requirement else ""
+        terms = [term.strip().lower() for term in pattern.split("|") if term.strip()]
+        return bool(terms) and all(term in content for term in terms)
+    return True
+
+
+def _verify_script_gate_failure(workspace: str, payload: dict[str, Any]) -> str:
+    paths = _payload_paths_for_contract_gate(payload)
+    text = _payload_text(payload)
+    script_targeted = (
+        _path_set_contains(paths, "scripts/verify.js")
+        or _path_set_contains(paths, "verify.js")
+        or "scripts/verify.js" in text
+        or "验收脚本" in text
+    )
+    if not script_targeted:
+        return ""
+
+    requirements = _extract_verify_script_requirements(payload)
+    if not requirements:
+        return ""
+
+    script_path = os.path.join(workspace, "scripts", "verify.js")
+    if not os.path.isfile(script_path):
+        return "verification script gate failed: scripts/verify.js is required but missing"
+    try:
+        with open(script_path, encoding="utf-8") as handle:
+            script_text = handle.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"verification script gate failed: could not read scripts/verify.js: {exc}"
+
+    missing = [
+        f"{requirement} ({_VERIFY_SCRIPT_CHECK_LABELS.get(kind, kind)})"
+        for kind, requirement in requirements.items()
+        if not _verify_script_covers_requirement(script_text, kind, requirement)
+    ]
+    if not missing:
+        return ""
+    return (
+        "verification script gate failed: scripts/verify.js is manifest-only or incomplete; "
+        "encode these deterministic checks directly: " + "; ".join(missing)
+    )
+
+
+def _package_scripts_gate_failure(workspace: str, payload: dict[str, Any]) -> str:
+    paths = _payload_paths_for_contract_gate(payload)
+    text = _payload_text(payload)
+    if not (_path_set_contains(paths, "package.json") or _contract_mentions_package_scripts(text)):
+        return ""
+    from polaris.kernelone.benchmark.factory_audit import run_checks
+
+    failures = [result for result in run_checks(workspace, list(_PACKAGE_SCRIPT_CHECKS)) if not result.get("ok")]
+    if not failures:
+        return ""
+    details = "; ".join(str(item.get("detail") or item.get("check") or "package_scripts failed") for item in failures)
+    return f"package script gate failed: {details}"
 
 
 # RANK 1 (Reflexion / Actor-Critic): the critic's precise findings must reach the
@@ -412,6 +567,7 @@ class QAConsumer:
         visibility_timeout_seconds: int = 900,
         poll_interval: float = 5.0,
         enable_llm_audit: bool | None = None,
+        wake_event: threading.Event | None = None,
     ) -> None:
         self._workspace = str(workspace or "").strip()
         if not self._workspace:
@@ -420,8 +576,8 @@ class QAConsumer:
         if not self._worker_id:
             raise ValueError("worker_id must be a non-empty string")
         self._visibility_timeout = int(visibility_timeout_seconds)
-        self._poll_interval = float(poll_interval)
         self._stop_event = threading.Event()
+        self._work_event = wake_event or threading.Event()
         self._svc = get_task_market_service()
         self._enable_llm_audit = (
             bool(enable_llm_audit)
@@ -457,15 +613,17 @@ class QAConsumer:
 
     def run(self) -> None:
         """Run the consumer continuously until stop() is called."""
-        logger.info("QA consumer running — press Ctrl+C to stop")
+        logger.info("QA consumer running with event_wakeup — press Ctrl+C to stop")
         while not self._stop_event.is_set():
+            self._work_event.clear()
             results = self.poll_once()
             if not results:
-                self._stop_event.wait(self._poll_interval)
+                self._work_event.wait()
 
     def stop(self) -> None:
         """Signal the consumer to stop after the current cycle."""
         self._stop_event.set()
+        self._work_event.set()
 
     def _run_step_verify(self, payload: dict[str, Any]) -> str:
         """Run a construction step's machine verify in the workspace.
@@ -543,6 +701,21 @@ class QAConsumer:
         compact = _compress_node_syntax_error(failure.error, failure.path)
         return f"语法检查失败(node --check / py_compile),逐字修正后重试:\n{compact}"
 
+    def _run_contract_gate(self, payload: dict[str, Any]) -> str:
+        """Fail shallow verification artifacts before the generic QA audit.
+
+        The generic file audit only knows whether the changed file is readable.
+        Factory contracts, however, often require generated verification scripts
+        and npm scripts to encode deterministic checks. Keep this gate narrow and
+        explicit: it only fires when the payload names package/verify artifacts
+        or explicitly mentions the deterministic check surface.
+        """
+        for checker in (_package_scripts_gate_failure, _verify_script_gate_failure):
+            failure = checker(self._workspace, payload)
+            if failure:
+                return failure
+        return ""
+
     def _claim_and_process_one(self) -> dict[str, Any] | None:
         """Attempt to claim one PENDING_QA task and process it.
 
@@ -614,6 +787,30 @@ class QAConsumer:
                     "ok": False,
                     "verdict": "FAIL",
                     "reason": "syntax_failed",
+                }
+
+            # Factory artifacts can be syntactically valid yet hollow (r16:
+            # scripts/verify.js checked package name/version while the contract
+            # required ts_syntax/package_scripts/min_files/content_any; package
+            # test was `echo "No tests yet"`). Reject these narrow, explicit
+            # contract misses before the LLM reviewer can rubber-stamp them.
+            contract_failure = self._run_contract_gate(payload)
+            if contract_failure:
+                self._svc.fail_task_stage(
+                    FailTaskStageCommandV1(
+                        workspace=self._workspace,
+                        task_id=task_id,
+                        lease_token=lease_token,
+                        error_code="QA_contract_gate_failed",
+                        error_message=contract_failure,
+                        requeue_stage="pending_exec",
+                    )
+                )
+                return {
+                    "task_id": task_id,
+                    "ok": False,
+                    "verdict": "FAIL",
+                    "reason": "contract_gate_failed",
                 }
 
             # Run QA audit
@@ -932,13 +1129,19 @@ class QAConsumer:
             result["llm_review"] = llm_review
             llm_findings = [f"[llm] {item}" for item in llm_review.get("findings", []) if str(item or "").strip()]
             if not bool(llm_review.get("ok", False)):
-                result["verdict"] = "FAIL"
-                result["score"] = 0.0
-                result["findings"] = [*findings, *llm_findings] or ["[llm] QA LLM audit failed"]
+                if str(result.get("verdict") or "").strip().upper() == "PASS":
+                    result["llm_review_warning"] = llm_findings or ["[llm] QA LLM audit was inconclusive"]
+                else:
+                    result["verdict"] = "FAIL"
+                    result["score"] = 0.0
+                    result["findings"] = [*findings, *llm_findings] or ["[llm] QA LLM audit failed"]
             elif str(llm_review.get("verdict") or "").strip().upper() in {"FAIL", "NEEDS_REVIEW"}:
-                result["verdict"] = str(llm_review.get("verdict") or "FAIL").strip().upper()
-                result["score"] = 0.0
-                result["findings"] = [*findings, *llm_findings] or ["[llm] QA LLM requested review"]
+                if str(result.get("verdict") or "").strip().upper() == "PASS":
+                    result["llm_review_warning"] = llm_findings or ["[llm] QA LLM requested review"]
+                else:
+                    result["verdict"] = str(llm_review.get("verdict") or "FAIL").strip().upper()
+                    result["score"] = 0.0
+                    result["findings"] = [*findings, *llm_findings] or ["[llm] QA LLM requested review"]
         return result
 
     def _run_qa_audit(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:

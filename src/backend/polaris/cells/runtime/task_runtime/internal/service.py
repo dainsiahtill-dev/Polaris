@@ -5,7 +5,7 @@ import re
 import shutil
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from polaris.cells.events.fact_stream.public.contracts import AppendFactEventCommandV1
 from polaris.cells.events.fact_stream.public.service import append_fact_event
@@ -662,6 +662,12 @@ class TaskRuntimeService:
 
     def list_ready(self) -> list[Task]:
         return self._board.list_ready()
+
+    def wait_ready(self, timeout: float | None = None) -> bool:
+        return self._board.wait_ready(timeout=timeout)
+
+    def add_ready_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        return self._board.add_ready_listener(listener)
 
     def get_ready_tasks(self) -> list[Task]:
         return self._board.get_ready_tasks()

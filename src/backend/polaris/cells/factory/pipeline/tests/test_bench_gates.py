@@ -200,6 +200,45 @@ def test_real_run_gate_starts_static_web_entrypoint(tmp_path: Path) -> None:
     assert gate["entrypoint"]["kind"] == "web_static"
 
 
+def test_real_run_gate_does_not_fallback_after_failed_npm_script(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text("<html><body><h1>ok</h1></body></html>", encoding="utf-8")
+    (tmp_path / "app.js").write_text("const answer = 42;\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "test": "node scripts/verify.js",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        return {
+            "command": command,
+            "ok": False,
+            "returncode": 1,
+            "duration_s": 0.01,
+            "stdout_tail": "verification failed",
+            "stderr_tail": "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["index.html", "app.js", "package.json"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is False
+    assert gate["requirements"]["build_test_lint_ran"]["detail"] == "npm run test failed"
+    assert ["node", "--check", "app.js"] not in commands
+
+
 def test_real_run_gate_accepts_pure_static_html_css_smoke(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text(
         '<html><head><link rel="stylesheet" href="style.css"></head><body><h1>ok</h1></body></html>',

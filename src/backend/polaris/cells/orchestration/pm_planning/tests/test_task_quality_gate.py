@@ -206,6 +206,10 @@ class TestHasPlaceholderOrManifestOnlyAcceptance:
     def test_placeholder_output_is_flagged(self) -> None:
         assert _has_placeholder_or_manifest_only_acceptance(["运行 npm start 能执行且不报错（占位输出即可）"]) is True
         assert _has_placeholder_or_manifest_only_acceptance(["placeholder output is ok for now"]) is True
+        assert (
+            _has_placeholder_or_manifest_only_acceptance(["src/main.ts 与 src/index.html 已创建（可为空或最小占位）"])
+            is True
+        )
 
     def test_manifest_only_is_flagged(self) -> None:
         assert _has_placeholder_or_manifest_only_acceptance(["npm test only checks package.json"]) is True
@@ -1044,6 +1048,49 @@ class TestAutofixPmContractForQuality:
         report = evaluate_pm_task_quality(payload, workspace_full=workspace)
         assert report["ok"] is True
         assert not any("game PM decomposition" in item for item in report["critical_issues"])
+
+    def test_renderer_and_tests_paths_do_not_trigger_game_domain_tasks(self, tmp_path: Any) -> None:
+        workspace = str(tmp_path)
+        payload: dict[str, Any] = {
+            "workspace": workspace,
+            "overall_goal": "Build a glowing firefly garden simulator with TypeScript visuals and tests.",
+            "tasks": [
+                {
+                    "id": "T01-renderer",
+                    "title": "Implement firefly renderer",
+                    "goal": "Render firefly, flower, moon, and humidity signals for the garden simulator.",
+                    "acceptance_criteria": ["Run `npm run build` passes"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["Implement", "Verify"],
+                    "scope_paths": ["src/renderer/canvas-renderer.ts"],
+                    "target_files": ["src/renderer/canvas-renderer.ts"],
+                },
+                {
+                    "id": "T02-tests",
+                    "title": "Add simulator tests",
+                    "goal": "Verify the firefly garden simulation rules.",
+                    "acceptance_criteria": ["Run `npm run test` passes"],
+                    "assigned_to": "director",
+                    "phase": "verification",
+                    "depends_on": ["T01-renderer"],
+                    "execution_checklist": ["Implement", "Verify"],
+                    "scope_paths": ["tests/garden-simulation.test.ts"],
+                    "target_files": ["tests/garden-simulation.test.ts"],
+                },
+            ],
+        }
+
+        initial_report = evaluate_pm_task_quality(payload, workspace_full=workspace)
+        assert not any("game PM decomposition" in item for item in initial_report["critical_issues"])
+
+        stats = autofix_pm_contract_for_quality(payload, workspace_full=workspace)
+
+        assert stats["game_domain_tasks_added"] == 0
+        assert not any(
+            isinstance(task, dict) and str(task.get("id") or "").startswith("PM-AUTO-") for task in payload["tasks"]
+        )
 
     def test_adds_missing_card3d_domain_tasks_without_roguelike_repair(self, tmp_path: Any) -> None:
         workspace = str(tmp_path)

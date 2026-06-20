@@ -10,8 +10,7 @@ export interface DirectorRealtimeFeed {
 export interface LiveTaskQueues {
   pmTasks: PmTask[];
   directorTasks: PmTask[];
-  directorFallbackTasks: PmTask[];
-  directorTaskSource: 'realtime' | 'snapshot';
+  directorTaskSource: 'realtime';
   isDirectorRealtimeConnected: boolean;
   isDirectorRealtimeReady: boolean;
 }
@@ -65,14 +64,6 @@ function normalizeTask(task: PmTask): PmTask {
   };
 }
 
-function buildDirectorFallbackTasks(snapshotTasks: PmTask[]): PmTask[] {
-  const explicitlyAssignedTasks = snapshotTasks.filter((task) => isDirectorAssignedTask(task));
-  if (explicitlyAssignedTasks.length > 0) {
-    return explicitlyAssignedTasks;
-  }
-  return snapshotTasks;
-}
-
 function readMetadataString(task: PmTask, key: string): string {
   const metadata = task.metadata && typeof task.metadata === 'object'
     ? task.metadata
@@ -112,21 +103,14 @@ export function splitTaskQueues(
 ): LiveTaskQueues {
   const normalizedSnapshotTasks = normalizeTasks(snapshotTasks);
   const normalizedRealtimeTasks = normalizeTasks(directorRealtime.tasks);
-  const directorFallbackTasks = buildDirectorFallbackTasks(normalizedSnapshotTasks);
   // PM panel is the canonical backlog view and should retain the full snapshot list.
   const pmTasks = normalizedSnapshotTasks;
   const isDirectorRealtimeReady = Boolean(directorRealtime.runId);
-  const shouldUseRealtimeTasks =
-    normalizedRealtimeTasks.length > 0 || (!directorFallbackTasks.length && isDirectorRealtimeReady);
-  const directorTasks = shouldUseRealtimeTasks
-    ? normalizedRealtimeTasks
-    : directorFallbackTasks;
 
   return {
     pmTasks,
-    directorTasks,
-    directorFallbackTasks,
-    directorTaskSource: shouldUseRealtimeTasks ? 'realtime' : 'snapshot',
+    directorTasks: normalizedRealtimeTasks,
+    directorTaskSource: 'realtime',
     isDirectorRealtimeConnected: Boolean(directorRealtime.isConnected),
     isDirectorRealtimeReady,
   };

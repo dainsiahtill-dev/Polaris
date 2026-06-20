@@ -52,6 +52,7 @@ _MAX_SCAN_FILES = 20000
 _SCRIPT_INTERPRETERS = {"node", "python", "python3", "bash", "sh"}
 _SCRIPT_PATH_EXTENSIONS = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
 _SHELL_OPERATORS = {"&&", "||", ";", "|"}
+_PLACEHOLDER_SCRIPT_COMMANDS = {"echo", "printf"}
 
 
 def collect_workspace_inventory(workspace: str) -> dict[str, Any]:
@@ -365,6 +366,25 @@ def _missing_package_script_entrypoints(workspace: str, script_name: str, comman
     return missing
 
 
+def _placeholder_package_script_reason(script_name: str, command: str) -> str:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return ""
+    if not tokens:
+        return f"script {script_name!r} is empty"
+    first_command = os.path.basename(tokens[0])
+    if first_command not in _PLACEHOLDER_SCRIPT_COMMANDS:
+        return ""
+    for index, token in enumerate(tokens):
+        if token not in _SHELL_OPERATORS or index + 1 >= len(tokens):
+            continue
+        next_command = os.path.basename(tokens[index + 1])
+        if next_command not in {*_PLACEHOLDER_SCRIPT_COMMANDS, "exit", "true"}:
+            return ""
+    return f"script {script_name!r} is a placeholder command: {command}"
+
+
 def _check_package_scripts(workspace: str) -> tuple[bool, str]:
     package_path = os.path.join(workspace, "package.json")
     if not os.path.exists(package_path):
@@ -381,6 +401,10 @@ def _check_package_scripts(workspace: str) -> tuple[bool, str]:
     for script_name, command in scripts.items():
         if not isinstance(command, str):
             failures.append(f"script {script_name!r} is not a string")
+            continue
+        placeholder_reason = _placeholder_package_script_reason(str(script_name), command)
+        if placeholder_reason:
+            failures.append(placeholder_reason)
             continue
         failures.extend(_missing_package_script_entrypoints(workspace, str(script_name), command))
     if failures:

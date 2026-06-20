@@ -328,7 +328,7 @@ class AsyncGeminiAPIProvider(AsyncBaseProvider):
     async def invoke_stream(
         self, prompt: str, model: str, config: dict[str, Any]
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream invoke - Gemini API doesn't support SSE, so yield single result."""
+        """Stream invoke - Gemini API returns a single result in this adapter."""
         result = await self.invoke(prompt, model, config)
         if result.ok and result.output:
             yield {"text": result.output}

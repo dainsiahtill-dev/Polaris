@@ -1244,6 +1244,31 @@ class WorkflowEngine:
     async def describe_workflow(self, workflow_id: str) -> WorkflowSnapshot:
         return await self._store.create_snapshot(workflow_id)
 
+    async def wait_workflow_completion(
+        self,
+        workflow_id: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> WorkflowSnapshot:
+        """Wait for the in-process workflow task to finish, without status polling."""
+
+        wid = str(workflow_id or "").strip()
+        if not wid:
+            raise ValueError("workflow_id is required")
+
+        task = self._workflow_tasks.get(wid)
+        if task is not None:
+            try:
+                if timeout_seconds is None:
+                    await asyncio.shield(task)
+                else:
+                    timeout_value = max(0.0, float(timeout_seconds))
+                    await asyncio.wait_for(asyncio.shield(task), timeout=timeout_value)
+            except asyncio.TimeoutError as exc:
+                raise TimeoutError("workflow_wait_timeout") from exc
+
+        return await self.describe_workflow(wid)
+
     async def query_workflow(self, workflow_id: str, query_name: str, *args: Any) -> dict[str, Any]:
         q = str(query_name or "").strip().lower()
         runtime_context = self._workflow_contexts.get(workflow_id)

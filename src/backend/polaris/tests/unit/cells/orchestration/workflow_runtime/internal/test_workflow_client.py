@@ -61,7 +61,8 @@ class TestSubmitPmWorkflowSync:
 
             def __init__(self) -> None:
                 self.describe_calls = 0
-                self.submitted_payload = {}
+                self.wait_calls = 0
+                self.submitted_payload: dict[str, object] = {}
 
             async def start(self) -> None:
                 self._running = True
@@ -78,8 +79,15 @@ class TestSubmitPmWorkflowSync:
 
             async def describe_workflow(self, workflow_id):
                 self.describe_calls += 1
-                if self.describe_calls < 2:
-                    return {"workflow_id": workflow_id, "status": "running", "result": {}}
+                return {
+                    "workflow_id": workflow_id,
+                    "status": "completed",
+                    "result": {"status": "completed", "ok": True},
+                }
+
+            async def wait_workflow_completion(self, workflow_id, *, timeout_seconds=None):
+                self.wait_calls += 1
+                assert timeout_seconds == 2
                 return {
                     "workflow_id": workflow_id,
                     "status": "completed",
@@ -102,7 +110,8 @@ class TestSubmitPmWorkflowSync:
 
         assert result.submitted is True
         assert result.status == "completed"
-        assert adapter.describe_calls >= 2
+        assert adapter.wait_calls == 1
+        assert adapter.describe_calls == 0
         assert adapter.submitted_payload["timeout_seconds"] == 2.0
         assert result.details["final"]["status"] == "completed"
 

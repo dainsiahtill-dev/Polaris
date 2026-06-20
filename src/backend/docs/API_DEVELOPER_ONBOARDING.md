@@ -451,24 +451,13 @@ export function useMyFeatureRun(runId: string | null): void {
 
 ### 6.4 Forbidden realtime patterns
 
-Do not introduce these in product realtime paths:
+Do not introduce product realtime code that:
 
-```python
-# Forbidden: product SSE streaming.
-from fastapi.responses import StreamingResponse
-
-return StreamingResponse(generator(), media_type="text/event-stream")
-```
-
-```typescript
-// Forbidden: polling-as-realtime.
-setInterval(() => {
-  void fetch('/v2/my-feature/status');
-}, 1000);
-
-// Forbidden: a second browser realtime transport.
-const source = new EventSource('/v2/my-feature/stream');
-```
+- returns `StreamingResponse` event streams or any `text/event-stream` response;
+- creates browser `EventSource` clients or feature-local WebSocket clients;
+- schedules HTTP status refreshes with timers;
+- uses HTTP long polling, file polling, polling fallback, or hidden retry loops
+  as a realtime substitute.
 
 Allowed exceptions are test harness waits, UI clocks/animations, WebSocket
 heartbeat/reconnect timers, initial snapshot hydration, explicit user refresh,

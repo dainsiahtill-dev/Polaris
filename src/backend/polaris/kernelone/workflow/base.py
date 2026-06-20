@@ -52,6 +52,15 @@ class RuntimeBackendPort(Protocol):
         """查询工作流状态 - Query 只读语义"""
         ...
 
+    async def wait_workflow_completion(
+        self,
+        workflow_id: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> WorkflowSnapshot:
+        """等待工作流完成 - 事件/任务等待语义，禁止状态轮询"""
+        ...
+
     async def query_workflow(
         self,
         workflow_id: str,

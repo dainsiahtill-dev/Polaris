@@ -366,6 +366,33 @@ def test_validate_generated_output_allows_title_case_todo_product_heading(tmp_pa
     assert error is None
 
 
+def test_validate_generated_output_uses_target_path_as_domain_signal_for_config(tmp_path: Any) -> None:
+    executor = DirectorPatchExecutor(str(tmp_path))
+    config = tmp_path / "tsconfig.json"
+    config.write_text(
+        "{\n"
+        '  "compilerOptions": {\n'
+        '    "target": "ES2022",\n'
+        '    "module": "ES2022",\n'
+        '    "rootDir": "src",\n'
+        '    "outDir": "dist",\n'
+        '    "strict": true\n'
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    error = executor.validate_generated_output(
+        {
+            "subject": "Create tsconfig.json",
+            "description": "test -f tsconfig.json && npx tsc --noEmit",
+        },
+        ["tsconfig.json"],
+    )
+
+    assert error is None
+
+
 # ---------------------------------------------------------------------------
 # Strategy selection
 # ---------------------------------------------------------------------------

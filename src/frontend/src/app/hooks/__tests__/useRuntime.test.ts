@@ -220,6 +220,72 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('factory_bench.gate.evaluated');
   });
 
+  it('routes runtime.v2 event.factory envelopes into process stream events', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'EVENT',
+      protocol: 'runtime.v2',
+      cursor: 42,
+      event: {
+        schema_version: 'runtime.v2',
+        event_id: 'factory-live-1',
+        workspace_key: 'test-workspace',
+        run_id: 'run-42',
+        channel: 'event.factory:run-42',
+        kind: 'factory_bench.project.started',
+        ts: '2026-06-20T08:56:47.770284+00:00',
+        payload: {
+          type: 'factory_bench.project.started',
+          name: 'factory_bench.project.started',
+          actor: 'factory-bench',
+          message: 'Factory v2 live event visible',
+        },
+      },
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(1);
+    expect(result.current.processStreamEvents[0]?.message).toBe('Factory v2 live event visible');
+    expect(result.current.processStreamEvents[0]?.source).toBe('factory-bench');
+    expect(result.current.processStreamEvents[0]?.meta?.channel).toBe('event.factory:run-42');
+    expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('factory_bench.project.started');
+  });
+
+  it('routes runtime.v2 event.bench envelopes into process stream events', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'EVENT',
+      protocol: 'runtime.v2',
+      cursor: 43,
+      event: {
+        schema_version: 'runtime.v2',
+        event_id: 'bench-live-1',
+        workspace_key: 'test-workspace',
+        run_id: 'bench-1',
+        channel: 'event.bench:bench-1',
+        kind: 'factory_bench.run.started',
+        ts: '2026-06-20T08:57:47.770284+00:00',
+        payload: {
+          type: 'factory_bench.run.started',
+          name: 'factory_bench.run.started',
+          actor: 'factory-bench',
+          summary: 'Bench v2 live event visible',
+        },
+      },
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(1);
+    expect(result.current.processStreamEvents[0]?.message).toBe('Bench v2 live event visible');
+    expect(result.current.processStreamEvents[0]?.source).toBe('factory-bench');
+    expect(result.current.processStreamEvents[0]?.meta?.channel).toBe('event.bench:bench-1');
+    expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('factory_bench.run.started');
+  });
+
   it('parses the canonical journal llm_completed line: real tokens + latency into meta', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })

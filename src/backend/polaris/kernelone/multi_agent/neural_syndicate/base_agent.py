@@ -143,7 +143,7 @@ class BaseAgent(ABC):
                       (defaults to InMemoryAgentBusPort from Cells)
             mailbox_size: Maximum size of the internal mailbox queue
             default_ttl: Default TTL for outgoing messages
-            mailbox_poll_interval: How often to poll the bus for messages (seconds)
+            mailbox_poll_interval: Compatibility name for the mailbox receive timeout (seconds)
         """
         self.agent_id = str(agent_id).strip()
         if not self.agent_id:
@@ -313,17 +313,16 @@ class BaseAgent(ABC):
         - Errors are logged and trigger backoff
         """
         logger.debug(
-            "Mailbox consumer started for agent %s (poll_interval=%.3fs)",
+            "Mailbox consumer started for agent %s (receive_timeout=%.3fs)",
             self.agent_id,
             self._mailbox_poll_interval,
         )
 
         while self._running:
             try:
-                # Poll for messages from the bus
                 envelope = await self._bus_port.poll_async(
                     self.agent_id,
-                    block=False,
+                    block=True,
                     timeout=self._mailbox_poll_interval,
                 )
 

@@ -476,7 +476,7 @@ class AnthropicCompatProvider(BaseProvider):
         """
         True streaming invoke for Anthropic-compatible API using aiohttp.
 
-        Anthropic API is similar to OpenAI for streaming, using SSE format:
+        Anthropic API is similar to OpenAI for streaming, using provider data-line chunks:
         data: {"type":"content_block_delta","delta":{"text":"hello"}}
 
         Args:
@@ -516,7 +516,7 @@ class AnthropicCompatProvider(BaseProvider):
     async def invoke_stream_events(
         self, prompt: str, model: str, config: dict[str, Any]
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Yield raw structured SSE events for KernelOne stream decoding."""
+        """Yield raw structured provider stream events for KernelOne stream decoding."""
 
         base = normalize_base_url(str(config.get("base_url") or ""))
         timeout_val = _timeout_seconds(config, 60)
@@ -556,7 +556,7 @@ class AnthropicCompatProvider(BaseProvider):
             payload.update(overrides)
 
         headers = _headers(config, api_key)
-        headers["Accept"] = "text/event-stream"
+        headers["Accept"] = "application/json"
 
         # Use invoke_stream_with_retry for automatic network jitter handling
         async for payload_obj in invoke_stream_with_retry(

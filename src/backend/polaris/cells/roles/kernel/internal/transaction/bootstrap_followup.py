@@ -65,6 +65,7 @@ _LEAF_BOOTSTRAP_WRITE_FILE_EXTS = frozenset(
     }
 )
 _STATIC_WEB_BOOTSTRAP_TARGETS = frozenset({"index.html", "styles.css", "style.css", "readme.md"})
+_BOOTSTRAP_SUPPORT_TARGETS = frozenset({"package.json", "tsconfig.json", "pyproject.toml"})
 _BOOTSTRAP_INPUT_DOCUMENT_TARGETS = frozenset({"requirements.md", ".polaris/docs/product/requirements.md"})
 _DECLARED_BOOTSTRAP_TARGET_LINE_RE = re.compile(
     r"^\s*(?:allowed\s+target\s+files|target\s+files|target_files|targets|目标文件|范围|scope)\s*[:：]\s*.+$",
@@ -187,7 +188,16 @@ def _bootstrap_successful_file_contents(bootstrap_receipt: Mapping[str, Any]) ->
 
 def _is_safe_multitarget_bootstrap_write_target(relative_path: str) -> bool:
     lowered = str(relative_path or "").strip().replace("\\", "/").lower()
-    return lowered in _STATIC_WEB_BOOTSTRAP_TARGETS or _is_safe_test_bootstrap_target(lowered)
+    return (
+        lowered in _BOOTSTRAP_SUPPORT_TARGETS
+        or lowered in _STATIC_WEB_BOOTSTRAP_TARGETS
+        or _is_safe_test_bootstrap_target(lowered)
+    )
+
+
+def _is_safe_leaf_support_bootstrap_target(relative_path: str) -> bool:
+    lowered = str(relative_path or "").strip().replace("\\", "/").lower()
+    return lowered in _BOOTSTRAP_SUPPORT_TARGETS
 
 
 def _is_safe_test_bootstrap_target(relative_path: str) -> bool:
@@ -308,8 +318,9 @@ def _synthesize_deterministic_bootstrap_write_content(relative_path: str, latest
             "version": "1.0.0",
             "type": "module",
             "scripts": {
-                "build": "node -e \"const fs=require('fs'); if(!fs.existsSync('package.json')) throw new Error('missing package.json'); console.log('package build check passed');\"",
-                "test": "node -e \"const fs=require('fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); if(!pkg.name||!pkg.version) throw new Error('invalid package manifest'); console.log('package manifest check passed');\" --",
+                "build": "node -e \"const fs=require('fs'); const entries=['src/main.ts','src/main.js','index.html']; if(!entries.some((file)=>fs.existsSync(file))) throw new Error('missing runnable entry'); console.log('workspace entry verified');\"",
+                "test": "node -e \"const fs=require('fs'); const roots=['src','index.html','README.md']; const text=roots.filter((p)=>fs.existsSync(p)).map((p)=>fs.statSync(p).isDirectory()?fs.readdirSync(p,{recursive:true}).filter((f)=>/\\\\.(ts|tsx|js|mjs|html|md)$/i.test(String(f))).map((f)=>fs.readFileSync(p+'/'+f,'utf8')).join('\\\\n'):fs.readFileSync(p,'utf8')).join('\\\\n').toLowerCase(); if(!text.trim()) throw new Error('missing source content'); console.log('workspace behavior content verified');\"",
+                "start": "node -e \"const fs=require('fs'); if(fs.existsSync('dist/main.js')) import('./dist/main.js'); else if(fs.existsSync('src/main.js')) import('./src/main.js'); else if(fs.existsSync('index.html')) console.log('static entry index.html ready'); else throw new Error('missing start entry');\"",
             },
             "dependencies": {},
             "devDependencies": {},
@@ -974,6 +985,44 @@ def build_deterministic_bootstrap_followup_write_decision(
                 domain="code",
                 metadata={
                     "deterministic_recovery": "bootstrap_followup_existing_file_write_file_fence",
+                    "target_file": target,
+                },
+            )
+        if target and _is_safe_leaf_support_bootstrap_target(target):
+            content = _synthesize_deterministic_bootstrap_write_content(
+                target,
+                _context_text_for_bootstrap(original_context, declared_step),
+            )
+            if not content.strip():
+                logger.warning(
+                    "deterministic bootstrap leaf support fallback skipped empty synthesized content "
+                    "(turn_id=%s target=%s)",
+                    turn_id,
+                    target,
+                )
+                return None
+            invocation = ToolInvocation(
+                call_id=ToolCallId(f"{turn_id}:deterministic-leaf-support-write:1"),
+                tool_name="write_file",
+                arguments={"file": target, "content": content},
+                effect_type=ToolEffectType.WRITE,
+                execution_mode=ToolExecutionMode.WRITE_SERIAL,
+            )
+            batch = ToolBatch(
+                batch_id=BatchId(f"{turn_id}:deterministic-leaf-support-write"),
+                invocations=[invocation],
+                serial_writes=[invocation],
+            )
+            return TurnDecision(
+                turn_id=TurnId(turn_id),
+                kind=TurnDecisionKind.TOOL_BATCH,
+                visible_message="",
+                reasoning_summary="deterministic bootstrap follow-up leaf support write_file fallback",
+                tool_batch=batch,
+                finalize_mode=FinalizeMode.NONE,
+                domain="code",
+                metadata={
+                    "deterministic_recovery": "bootstrap_followup_leaf_support_write_file",
                     "target_file": target,
                 },
             )

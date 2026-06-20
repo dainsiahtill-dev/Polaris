@@ -21,7 +21,6 @@ from typing import Any
 import pytest
 from polaris.cells.roles.runtime.internal.bus_port import (
     _DEFAULT_POLL_INTERVAL_SEC,
-    _MAX_CANCEL_DELAY_SEC,
     AgentEnvelope,
     InMemoryAgentBusPort,
 )
@@ -413,7 +412,7 @@ class TestPollAsyncEdgeCases:
         self,
         bus: InMemoryAgentBusPort,
     ) -> None:
-        """poll_async() should honor custom poll_interval."""
+        """poll_async() accepts poll_interval for compatibility but waits by event/timeout."""
         custom_interval = 0.15
 
         start = time.monotonic()
@@ -426,7 +425,7 @@ class TestPollAsyncEdgeCases:
         elapsed = time.monotonic() - start
 
         assert result is None
-        # Should timeout after approximately poll_interval
+        # Timeout is authoritative; poll_interval no longer drives interval wakeups.
         assert elapsed >= custom_interval - 0.01
 
     @pytest.mark.asyncio
@@ -434,8 +433,7 @@ class TestPollAsyncEdgeCases:
         self,
         bus: InMemoryAgentBusPort,
     ) -> None:
-        """poll_async() should normalize invalid poll_interval to safe minimum."""
-        # Zero and negative intervals should be normalized
+        """Invalid poll_interval compatibility values must not affect event wakeup."""
         start = time.monotonic()
         result = await bus.poll_async(
             "qa",
@@ -446,7 +444,6 @@ class TestPollAsyncEdgeCases:
         elapsed = time.monotonic() - start
 
         assert result is None
-        # Should still work, using normalized interval
         assert elapsed < 0.5
 
     @pytest.mark.asyncio
@@ -556,13 +553,5 @@ class TestPollAsyncConstants:
     """Tests for exported constants."""
 
     def test_default_poll_interval_positive(self) -> None:
-        """_DEFAULT_POLL_INTERVAL_SEC should be positive."""
+        """_DEFAULT_POLL_INTERVAL_SEC remains for compatibility."""
         assert _DEFAULT_POLL_INTERVAL_SEC > 0
-
-    def test_max_cancel_delay_positive(self) -> None:
-        """_MAX_CANCEL_DELAY_SEC should be positive."""
-        assert _MAX_CANCEL_DELAY_SEC > 0
-
-    def test_max_cancel_delay_reasonable(self) -> None:
-        """_MAX_CANCEL_DELAY_SEC should be a reasonable upper bound."""
-        assert _MAX_CANCEL_DELAY_SEC <= 5.0  # Should be at most 5 seconds

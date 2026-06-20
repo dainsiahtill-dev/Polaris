@@ -8,7 +8,7 @@ Worker Lifecycle:
     spawn -> WORKING -> IDLE -> WORKING -> ... -> SHUTDOWN
 
 Worker States:
-    - idle: Free, polling for tasks
+    - idle: Free, waiting for task events
     - working: Executing task
     - shutdown: Graceful shutdown pending
 
@@ -30,14 +30,11 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Callable, Protocol
 
 from polaris.kernelone.fs.jsonl.ops import append_jsonl_atomic
 from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.storage import resolve_runtime_path
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +81,10 @@ class TaskBoardPort(Protocol):
     def fail(self, task_id: int, error: str) -> Any: ...
     def list_ready(self) -> list[ReadyTaskLike]: ...
     def claim(self, task_id: int, worker_id: str) -> bool: ...
+
+
+class ReadyTaskNotifier(Protocol):
+    def add_ready_listener(self, listener: Callable[[], None]) -> Callable[[], None]: ...
 
 
 class WorkerState(str, Enum):
@@ -140,7 +141,7 @@ class Worker:
     Each Worker:
     - Has independent work directory
     - Runs in independent thread
-    - Supports idle/poll mechanism for auto-claiming tasks
+    - Wakes from direct submissions or TaskBoard ready events
     - Can send messages back to main process
     """
 
@@ -158,9 +159,11 @@ class Worker:
         self._thread: threading.Thread | None = None
         self._running = False
         self._current_task: WorkerTask | None = None
-        self._result_queue: queue.Queue = queue.Queue(maxsize=200)  # 有界队列防止内存泄漏
+        self._result_queue: queue.Queue[WorkerTask] = queue.Queue(maxsize=200)  # 有界队列防止内存泄漏
         self._command_executor = CommandExecutionService(self.config.work_dir)
         self._state_lock = threading.Lock()
+        self._wake_condition = threading.Condition()
+        self._ready_unsubscribe: Callable[[], None] | None = None
 
     def start(self) -> None:
         """Start Worker"""
@@ -168,6 +171,7 @@ class Worker:
             return
 
         self._running = True
+        self._ready_unsubscribe = self._register_ready_listener()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 
@@ -178,24 +182,26 @@ class Worker:
                 return
             self.state = WorkerState.SHUTDOWN
 
+        self._wake()
+
         if graceful:
             self._wait_for_current_task(timeout=30.0)
 
         with self._state_lock:
             self._running = False
 
+        self._wake()
         if self._thread:
             self._thread.join(timeout=5)
+        if self._ready_unsubscribe is not None:
+            self._ready_unsubscribe()
+            self._ready_unsubscribe = None
 
     def _wait_for_current_task(self, timeout: float) -> bool:
         """Wait for current task to complete."""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            with self._state_lock:
-                if self._current_task is None:
-                    return True
-            time.sleep(0.1)
-        return False
+        wait_timeout = max(0.0, float(timeout))
+        with self._wake_condition:
+            return self._wake_condition.wait_for(lambda: self._current_task is None, timeout=wait_timeout)
 
     def submit_task(self, task: WorkerTask) -> bool:
         """Submit task to Worker"""
@@ -203,66 +209,97 @@ class Worker:
             return False
 
         self._result_queue.put(task)
+        self._wake()
         return True
 
     def _run_loop(self) -> None:
-        """Main loop: WORK -> IDLE -> WORK"""
+        """Main loop: wait for work events, execute, repeat."""
         while self._running:
             if self.state == WorkerState.SHUTDOWN:
                 break
 
-            self._work_phase()
+            task = self._next_task()
+            if task is None:
+                break
+            self._execute_worker_task(task)
 
-            if self._running and self.state != WorkerState.SHUTDOWN:
-                self._idle_phase()
+    def _wake(self) -> None:
+        with self._wake_condition:
+            self._wake_condition.notify_all()
 
-    def _work_phase(self) -> None:
-        """Working phase"""
-        self.state = WorkerState.WORKING
+    def _register_ready_listener(self) -> Callable[[], None] | None:
+        if self.taskboard is None:
+            return None
+        add_listener = getattr(self.taskboard, "add_ready_listener", None)
+        if not callable(add_listener):
+            return None
+        return add_listener(self._wake)
 
-        while self._running and self.state != WorkerState.SHUTDOWN:
+    def _has_ready_task(self) -> bool:
+        return bool(self.taskboard and self.taskboard.list_ready())
+
+    def _claim_ready_task(self) -> WorkerTask | None:
+        if not self.taskboard:
+            return None
+        for task in self.taskboard.list_ready():
+            if self.taskboard.claim(task.id, self.config.worker_id):
+                return WorkerTask(
+                    task_id=task.id,
+                    command=task.metadata.get("command", ""),
+                    work_dir=self.config.work_dir,
+                    env=task.metadata.get("env", {}),
+                    timeout=task.metadata.get("timeout", 300),
+                    metadata=task.metadata,
+                )
+        return None
+
+    def _next_task(self) -> WorkerTask | None:
+        while True:
+            with self._state_lock:
+                if not self._running or self.state == WorkerState.SHUTDOWN:
+                    return None
+                self.state = WorkerState.IDLE
+
             try:
-                task = self._result_queue.get(timeout=1)
+                return self._result_queue.get_nowait()
             except queue.Empty:
-                continue
+                pass
 
+            ready_task = self._claim_ready_task()
+            if ready_task is not None:
+                return ready_task
+
+            with self._wake_condition:
+                self._wake_condition.wait_for(
+                    lambda: (
+                        not self._running
+                        or self.state == WorkerState.SHUTDOWN
+                        or not self._result_queue.empty()
+                        or self._has_ready_task()
+                    )
+                )
+
+    def _execute_worker_task(self, task: WorkerTask) -> None:
+        with self._state_lock:
+            self.state = WorkerState.WORKING
             self._current_task = task
-            result = self._execute_task(task)
+        self._wake()
+
+        result = self._execute_task(task)
+
+        with self._state_lock:
             self._current_task = None
 
-            if self.taskboard:
-                if result.success:
-                    self.taskboard.complete(task.task_id)
-                else:
-                    self.taskboard.fail(task.task_id, result.error)
+        if self.taskboard:
+            if result.success:
+                self.taskboard.complete(task.task_id)
+            else:
+                self.taskboard.fail(task.task_id, result.error)
 
-            if self.message_callback:
-                self.message_callback(result)
+        if self.message_callback:
+            self.message_callback(result)
 
-    def _idle_phase(self) -> None:
-        """Idle phase: poll taskboard, auto-claim tasks"""
-        self.state = WorkerState.IDLE
-        idle_time = 0
-
-        while self._running and idle_time < self.config.max_idle_time:
-            if self.taskboard:
-                ready_tasks = self.taskboard.list_ready()
-                if ready_tasks:
-                    task = ready_tasks[0]
-                    if self.taskboard.claim(task.id, self.config.worker_id):
-                        worker_task = WorkerTask(
-                            task_id=task.id,
-                            command=task.metadata.get("command", ""),
-                            work_dir=self.config.work_dir,
-                            env=task.metadata.get("env", {}),
-                            timeout=task.metadata.get("timeout", 300),
-                            metadata=task.metadata,
-                        )
-                        self._result_queue.put(worker_task)
-                        return
-
-            time.sleep(self.config.poll_interval)
-            idle_time += self.config.poll_interval
+        self._wake()
 
     def _execute_task(self, task: WorkerTask) -> WorkerResult:
         """Execute task (sync version using CommandExecutionService)"""
@@ -367,6 +404,9 @@ class AsyncWorker:
         self._current_task: WorkerTask | None = None
         self._result_queue: asyncio.Queue[WorkerTask] = asyncio.Queue(maxsize=200)
         self._state_lock = asyncio.Lock()
+        self._wake_event = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._ready_unsubscribe: Callable[[], None] | None = None
 
     async def start(self) -> None:
         """Start Async Worker"""
@@ -374,6 +414,8 @@ class AsyncWorker:
             return
 
         self._running = True
+        self._loop = asyncio.get_running_loop()
+        self._ready_unsubscribe = self._register_ready_listener()
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self, graceful: bool = True) -> None:
@@ -383,12 +425,15 @@ class AsyncWorker:
                 return
             self.state = WorkerState.SHUTDOWN
 
+        self._wake()
+
         if graceful:
             await self._wait_for_current_task(timeout=30.0)
 
         async with self._state_lock:
             self._running = False
 
+        self._wake()
         if self._task:
             try:
                 await asyncio.wait_for(asyncio.shield(self._task), timeout=5.0)
@@ -397,16 +442,26 @@ class AsyncWorker:
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._task
             self._task = None
+        if self._ready_unsubscribe is not None:
+            self._ready_unsubscribe()
+            self._ready_unsubscribe = None
+        self._loop = None
 
     async def _wait_for_current_task(self, timeout: float) -> bool:
         """Wait for current task to complete."""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        while True:
             async with self._state_lock:
                 if self._current_task is None:
                     return True
-            await asyncio.sleep(0.1)
-        return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            self._wake_event.clear()
+            try:
+                await asyncio.wait_for(self._wake_event.wait(), timeout=remaining)
+            except asyncio.TimeoutError:
+                return False
 
     async def submit_task(self, task: WorkerTask) -> bool:
         """Submit task to Async Worker"""
@@ -414,75 +469,99 @@ class AsyncWorker:
             return False
 
         await self._result_queue.put(task)
+        self._wake()
         return True
 
     async def _run_loop(self) -> None:
-        """Main loop: WORK -> IDLE -> WORK"""
+        """Main loop: wait for work events, execute, repeat."""
         while self._running:
             if self.state == WorkerState.SHUTDOWN:
                 break
 
-            await self._work_phase()
+            task = await self._next_task()
+            if task is None:
+                break
+            await self._execute_worker_task(task)
 
-            if self._running and self.state != WorkerState.SHUTDOWN:
-                await self._idle_phase()
+    def _wake(self) -> None:
+        self._wake_event.set()
 
-    async def _work_phase(self) -> None:
-        """Working phase"""
+    def _wake_threadsafe(self) -> None:
+        if self._loop is None or self._loop.is_closed():
+            return
+        self._loop.call_soon_threadsafe(self._wake_event.set)
+
+    def _register_ready_listener(self) -> Callable[[], None] | None:
+        if self.taskboard is None:
+            return None
+        add_listener = getattr(self.taskboard, "add_ready_listener", None)
+        if not callable(add_listener):
+            return None
+        return add_listener(self._wake_threadsafe)
+
+    def _has_ready_task(self) -> bool:
+        return bool(self.taskboard and self.taskboard.list_ready())
+
+    def _claim_ready_task(self) -> WorkerTask | None:
+        if not self.taskboard:
+            return None
+        for task in self.taskboard.list_ready():
+            if self.taskboard.claim(task.id, self.config.worker_id):
+                return WorkerTask(
+                    task_id=task.id,
+                    command=task.metadata.get("command", ""),
+                    work_dir=self.config.work_dir,
+                    env=task.metadata.get("env", {}),
+                    timeout=task.metadata.get("timeout", 300),
+                    metadata=task.metadata,
+                )
+        return None
+
+    async def _next_task(self) -> WorkerTask | None:
+        while True:
+            async with self._state_lock:
+                if not self._running or self.state == WorkerState.SHUTDOWN:
+                    return None
+                self.state = WorkerState.IDLE
+
+            try:
+                return self._result_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+
+            ready_task = self._claim_ready_task()
+            if ready_task is not None:
+                return ready_task
+
+            self._wake_event.clear()
+            if not self._running or self.state == WorkerState.SHUTDOWN:
+                return None
+            if not self._result_queue.empty() or self._has_ready_task():
+                self._wake_event.set()
+                continue
+            await self._wake_event.wait()
+
+    async def _execute_worker_task(self, task: WorkerTask) -> None:
         async with self._state_lock:
             self.state = WorkerState.WORKING
+            self._current_task = task
+        self._wake()
 
-        while self._running and self.state != WorkerState.SHUTDOWN:
-            try:
-                task = await asyncio.wait_for(
-                    self._result_queue.get(),
-                    timeout=1.0,
-                )
-            except asyncio.TimeoutError:
-                continue
+        result = await self._execute_task_async(task)
 
-            async with self._state_lock:
-                self._current_task = task
-
-            result = await self._execute_task_async(task)
-
-            async with self._state_lock:
-                self._current_task = None
-
-            if self.taskboard:
-                if result.success:
-                    self.taskboard.complete(task.task_id)
-                else:
-                    self.taskboard.fail(task.task_id, result.error)
-
-            if self.message_callback:
-                self.message_callback(result)
-
-    async def _idle_phase(self) -> None:
-        """Idle phase: poll taskboard, auto-claim tasks"""
         async with self._state_lock:
-            self.state = WorkerState.IDLE
-        idle_time = 0.0
+            self._current_task = None
 
-        while self._running and idle_time < self.config.max_idle_time:
-            if self.taskboard:
-                ready_tasks = self.taskboard.list_ready()
-                if ready_tasks:
-                    task = ready_tasks[0]
-                    if self.taskboard.claim(task.id, self.config.worker_id):
-                        worker_task = WorkerTask(
-                            task_id=task.id,
-                            command=task.metadata.get("command", ""),
-                            work_dir=self.config.work_dir,
-                            env=task.metadata.get("env", {}),
-                            timeout=task.metadata.get("timeout", 300),
-                            metadata=task.metadata,
-                        )
-                        await self._result_queue.put(worker_task)
-                        return
+        if self.taskboard:
+            if result.success:
+                self.taskboard.complete(task.task_id)
+            else:
+                self.taskboard.fail(task.task_id, result.error)
 
-            await asyncio.sleep(self.config.poll_interval)
-            idle_time += self.config.poll_interval
+        if self.message_callback:
+            self.message_callback(result)
+
+        self._wake()
 
     async def _execute_task_async(self, task: WorkerTask) -> WorkerResult:
         """Execute task using execution_broker.

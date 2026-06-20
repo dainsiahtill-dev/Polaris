@@ -487,7 +487,7 @@
     {
       "type": "function",
       "name": "legacy_sse_removed",
-      "description": "Fail closed for removed HTTP SSE endpoints.",
+      "description": "Fail closed for removed HTTP event-stream endpoints.",
       "defined_in": "polaris/delivery/http/routers/_shared.py"
     },
     {

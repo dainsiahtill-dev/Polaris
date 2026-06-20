@@ -1392,24 +1392,19 @@ describe.sequential('Director capability desktop integration', () => {
         tasks_failed: 0,
       },
     });
-    serviceMocks.listDirectorTaskSnapshotRows.mockResolvedValueOnce({
-      ok: true,
-      data: [
-        {
-          id: 'director-task-1',
-          subject: 'Backend worker task',
-          title: 'Backend worker task',
-          status: 'RUNNING',
-          metadata: { director_task_source: 'workflow' },
-        },
-      ],
-    });
-
     render(
       <DirectorWorkspace
         workspace="C:/Temp/Product"
         onBackToMain={vi.fn()}
-        tasks={[]}
+        tasks={[
+          {
+            id: 'director-task-1',
+            subject: 'Runtime worker task',
+            title: 'Backend worker task',
+            status: 'RUNNING',
+            metadata: { director_task_source: 'workflow' },
+          },
+        ]}
         workers={[]}
         directorRunning
         onToggleDirector={vi.fn()}
@@ -1451,18 +1446,6 @@ describe.sequential('Director capability desktop integration', () => {
       ok: true,
       data: { ok: true, role: 'director', capabilities: { electron_workbench: ['read_files'] } },
     });
-    serviceMocks.listDirectorTaskSnapshotRows.mockResolvedValueOnce({
-      ok: true,
-      data: [
-        {
-          id: 'director-task-llm',
-          subject: 'Inspect LLM calls',
-          title: 'Inspect LLM calls',
-          status: 'RUNNING',
-          metadata: { director_task_source: 'workflow' },
-        },
-      ],
-    });
     serviceMocks.getDirectorTaskKernelLLMEvents.mockResolvedValueOnce({
       ok: true,
       data: {
@@ -1496,7 +1479,15 @@ describe.sequential('Director capability desktop integration', () => {
       <DirectorWorkspace
         workspace="C:/Temp/Product"
         onBackToMain={vi.fn()}
-        tasks={[]}
+        tasks={[
+          {
+            id: 'director-task-llm',
+            subject: 'Inspect LLM calls',
+            title: 'Inspect LLM calls',
+            status: 'RUNNING',
+            metadata: { director_task_source: 'workflow' },
+          },
+        ]}
         directorRunning
         onToggleDirector={vi.fn()}
       />,
@@ -1675,7 +1666,7 @@ describe.sequential('Director capability desktop integration', () => {
     await waitFor(() => expect(serviceMocks.getDirectorCapabilities).toHaveBeenCalled());
     expect(serviceMocks.listDirectorTaskSnapshotRows).not.toHaveBeenCalled();
     expect(screen.queryByText('Implement runtime contract')).not.toBeInTheDocument();
-    expect(screen.getByText('暂无 Director 任务')).toBeInTheDocument();
+    expect(screen.queryByTestId('director-task-item')).not.toBeInTheDocument();
   });
 
   it('runs the Director queue through orchestration when no task is selected', async () => {
@@ -1809,18 +1800,15 @@ describe.sequential('Director capability desktop integration', () => {
     fireEvent.click(screen.getByTestId('director-workspace-execute'));
 
     await waitFor(() => expect(onToggleDirector).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(serviceMocks.getDirectorStatus).toHaveBeenCalledWith('C:/Temp/Product'));
+    expect(serviceMocks.getDirectorStatus).not.toHaveBeenCalled();
     expect(serviceMocks.runDirector).not.toHaveBeenCalled();
     const statusEvidence = await screen.findByTestId('director-toggle-status-evidence');
     expect(statusEvidence).not.toHaveTextContent('/v2/director/status?source=auto');
     expect(screen.getByTestId('director-toggle-status-endpoint')).toHaveAttribute(
       'data-endpoint',
-      '/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct',
+      '/v2/ws/runtime',
     );
-    expect(statusEvidence).toHaveTextContent('idle');
-    expect(statusEvidence).toHaveTextContent('pid=none');
-    expect(statusEvidence).toHaveTextContent('mode=desktop_service');
-    expect(statusEvidence).toHaveTextContent('source=status_file');
+    expect(statusEvidence).toHaveTextContent('等待 runtime.v2 推送确认');
   });
 
   it('locks Director execution controls while a stop request is pending', () => {

@@ -83,6 +83,7 @@ async def _fast_execute_task(self, task, worker) -> None:
         self._metrics["tasks_failed"] += 1
     finally:
         worker.release_task(result)
+        self._wake_main_loop()
 
 
 _WORKER_POOL_MODULE = "polaris.cells.director.tasking.internal.worker_pool_service"
@@ -99,7 +100,6 @@ async def test_director_auto_stops_after_all_tasks_terminal(monkeypatch, tmp_pat
         DirectorConfig(
             workspace=str(tmp_path),
             max_workers=2,
-            task_poll_interval=0.05,
         )
     )
     await service.start()
@@ -134,7 +134,6 @@ async def test_director_auto_stops_when_no_tasks_submitted(monkeypatch, tmp_path
         DirectorConfig(
             workspace=str(tmp_path),
             max_workers=1,
-            task_poll_interval=0.05,
         )
     )
     await service.start()
@@ -159,7 +158,6 @@ async def test_director_fails_deadlocked_pending_tasks_and_converges(monkeypatch
         DirectorConfig(
             workspace=str(tmp_path),
             max_workers=1,
-            task_poll_interval=0.05,
         )
     )
     await service.start()
@@ -205,7 +203,6 @@ async def test_director_start_rolls_back_state_when_worker_init_fails(monkeypatc
         DirectorConfig(
             workspace=str(tmp_path),
             max_workers=1,
-            task_poll_interval=0.05,
         )
     )
 
@@ -224,7 +221,6 @@ async def test_director_no_command_task_result_is_failure(tmp_path) -> None:
         DirectorConfig(
             workspace=str(tmp_path),
             max_workers=1,
-            task_poll_interval=0.05,
         )
     )
 
@@ -240,7 +236,6 @@ async def test_director_status_self_heals_stale_running_without_loop_or_workers(
         DirectorConfig(
             workspace=str(tmp_path),
             max_workers=1,
-            task_poll_interval=0.05,
         )
     )
     service.state = DirectorState.RUNNING

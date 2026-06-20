@@ -36,7 +36,7 @@ interface ProjectProgressPanelProps {
   executionLogs?: LogEntry[];
   dialogueEvents?: DialogueEvent[];
   currentPhase?: string;
-  directorTaskSource?: 'realtime' | 'snapshot';
+  directorTaskSource?: 'realtime';
   directorRealtimeConnected?: boolean;
 }
 
@@ -236,7 +236,7 @@ export function ProjectProgressPanel({
   executionLogs = [],
   dialogueEvents = [],
   currentPhase = 'idle',
-  directorTaskSource = 'snapshot',
+  directorTaskSource = 'realtime',
   directorRealtimeConnected = false,
 }: ProjectProgressPanelProps) {
   const [isGoalsExpanded, setIsGoalsExpanded] = useState(true);
@@ -389,11 +389,9 @@ export function ProjectProgressPanel({
   const goalList = Array.isArray(goals) ? goals.filter((item) => typeof item === 'string' && item.trim().length > 0) : [];
   const directorQueueHint = normalizedDirectorTasks.length > 0
     ? `${directorCompletedCount}/${normalizedDirectorTasks.length} Director queue 已完成`
-    : directorTaskSource === 'realtime'
-      ? directorRealtimeConnected
-        ? 'Director live queue 为空'
-        : 'Director live queue 已断开'
-      : 'Director queue 待同步';
+    : directorRealtimeConnected
+      ? 'Director live queue 为空'
+      : 'Director live queue 已断开';
   const pmContractsReady = totalTasks > 0;
   const pmContractsComplete = totalTasks > 0 && completedCount >= totalTasks;
   const directorHandoffReady = normalizedDirectorTasks.length > 0;
@@ -476,21 +474,11 @@ export function ProjectProgressPanel({
                 </StatusBadge>
               ) : null}
               <StatusBadge
-                color={
-                  directorTaskSource === 'realtime'
-                    ? directorRealtimeConnected
-                      ? 'accent'
-                      : 'warning'
-                    : 'default'
-                }
+                color={directorRealtimeConnected ? 'accent' : 'warning'}
                 variant="dot"
-                pulse={directorTaskSource === 'realtime' && directorRealtimeConnected}
+                pulse={directorRealtimeConnected}
               >
-                {directorTaskSource === 'realtime'
-                  ? directorRealtimeConnected
-                    ? 'Director live queue'
-                    : 'Director live 断线'
-                  : 'Director snapshot 回退'}
+                {directorRealtimeConnected ? 'Director live queue' : 'Director live 断线'}
               </StatusBadge>
             </div>
             <div className="mt-1 text-xs text-text-muted">

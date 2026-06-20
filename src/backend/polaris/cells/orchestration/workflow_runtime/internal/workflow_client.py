@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -102,44 +101,62 @@ async def _wait_for_adapter_workflow_completion(
     timeout_seconds: float | None,
     poll_interval_seconds: float,
 ) -> dict[str, Any]:
-    deadline = None
-    if timeout_seconds is not None:
-        try:
-            timeout_value = float(timeout_seconds)
-        except (RuntimeError, ValueError):
-            timeout_value = 0.0
-        if timeout_value > 0:
-            deadline = time.monotonic() + timeout_value
-
-    interval = max(0.2, float(poll_interval_seconds or 1.0))
     terminal = {"completed", "failed", "cancelled", "canceled", "terminated", "timed_out"}
     normalized_id = str(workflow_id or "").strip()
+    _ = poll_interval_seconds
+    try:
+        waiter = getattr(adapter, "wait_workflow_completion", None)
+        if callable(waiter):
+            snapshot = await waiter(normalized_id, timeout_seconds=timeout_seconds)
+        else:
+            snapshot = await adapter.describe_workflow(normalized_id)
+    except TimeoutError:
+        with contextlib.suppress(RuntimeError, ValueError):
+            await adapter.cancel_workflow(normalized_id, reason="workflow_wait_timeout")
+        return {
+            "ok": False,
+            "workflow_id": normalized_id,
+            "status": "timed_out",
+            "error": "workflow_wait_timeout",
+        }
 
-    while True:
-        snapshot = await adapter.describe_workflow(normalized_id)
-        payload = snapshot if isinstance(snapshot, dict) else {}
-        status = str(payload.get("status") or "").strip().lower()
-        if status in terminal:
-            return {
-                "ok": status == "completed",
-                "workflow_id": str(payload.get("workflow_id") or normalized_id).strip(),
-                "status": status,
-                "result": payload.get("result") if isinstance(payload.get("result"), dict) else {},
-                "error": str((payload.get("result") or {}).get("error") or payload.get("error") or "").strip()
-                if isinstance(payload.get("result"), dict)
-                else str(payload.get("error") or "").strip(),
-                "details": payload,
-            }
-        if deadline is not None and time.monotonic() >= deadline:
-            with contextlib.suppress(RuntimeError, ValueError):
-                await adapter.cancel_workflow(normalized_id, reason="workflow_wait_timeout")
-            return {
-                "ok": False,
-                "workflow_id": normalized_id,
-                "status": "timed_out",
-                "error": "workflow_wait_timeout",
-            }
-        await asyncio.sleep(interval)
+    payload = snapshot if isinstance(snapshot, dict) else {}
+    status = str(payload.get("status") or "").strip().lower()
+    if status not in terminal:
+        return {
+            "ok": False,
+            "workflow_id": str(payload.get("workflow_id") or normalized_id).strip(),
+            "status": status or "running",
+            "error": "workflow_wait_unavailable_without_event_source",
+            "details": payload,
+        }
+    return {
+        "ok": status == "completed",
+        "workflow_id": str(payload.get("workflow_id") or normalized_id).strip(),
+        "status": status,
+        "result": payload.get("result") if isinstance(payload.get("result"), dict) else {},
+        "error": str((payload.get("result") or {}).get("error") or payload.get("error") or "").strip()
+        if isinstance(payload.get("result"), dict)
+        else str(payload.get("error") or "").strip(),
+        "details": payload,
+    }
+
+
+async def _wait_for_workflow_completion_async(
+    workflow_id: str,
+    *,
+    timeout_seconds: float | None,
+    poll_interval_seconds: float,
+) -> dict[str, Any]:
+    adapter = await get_adapter()
+    if not adapter._running:
+        await adapter.start()
+    return await _wait_for_adapter_workflow_completion(
+        adapter,
+        workflow_id,
+        timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+    )
 
 
 async def _submit_pm_workflow_async(
@@ -271,39 +288,20 @@ def wait_for_workflow_completion_sync(
             "error": "workflow_runtime_disabled",
         }
 
-    deadline = None
-    if timeout_seconds is not None:
-        try:
-            timeout_value = float(timeout_seconds)
-        except (RuntimeError, ValueError):
-            timeout_value = 0.0
-        if timeout_value > 0:
-            deadline = time.monotonic() + timeout_value
-
-    interval = max(0.2, float(poll_interval_seconds or 1.0))
-    terminal = {"completed", "failed", "cancelled", "canceled", "terminated", "timed_out"}
-
-    while True:
-        snapshot = describe_workflow_sync(normalized_id, config=runtime_config)
-        if not isinstance(snapshot, dict):
-            return {
-                "ok": False,
-                "workflow_id": normalized_id,
-                "error": "describe_workflow_failed",
-            }
-        if not bool(snapshot.get("ok", True)):
-            return snapshot
-        status = str(snapshot.get("status") or "").strip().lower()
-        if status in terminal:
-            return snapshot
-        if deadline is not None and time.monotonic() >= deadline:
-            return {
-                "ok": False,
-                "workflow_id": normalized_id,
-                "status": status or "running",
-                "error": "workflow_wait_timeout",
-            }
-        time.sleep(interval)
+    try:
+        return _run_sync(
+            _wait_for_workflow_completion_async(
+                normalized_id,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+            )
+        )
+    except (RuntimeError, ValueError) as exc:
+        return {
+            "ok": False,
+            "workflow_id": normalized_id,
+            "error": str(exc),
+        }
 
 
 def describe_workflow_sync(

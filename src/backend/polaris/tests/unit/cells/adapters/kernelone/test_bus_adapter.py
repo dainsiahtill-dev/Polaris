@@ -19,7 +19,7 @@ class TestKernelOneBusPortAdapter:
     @pytest.fixture
     def adapter(self, mock_impl: MagicMock) -> KernelOneBusPortAdapter:
         with patch(
-            "polaris.cells.roles.runtime.internal.kernel_one_bus_port.KernelOneMessageBusPort",
+            "polaris.cells.roles.runtime.public.KernelOneMessageBusPort",
             return_value=mock_impl,
         ):
             return KernelOneBusPortAdapter()

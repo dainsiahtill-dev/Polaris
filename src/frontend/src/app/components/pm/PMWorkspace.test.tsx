@@ -4,7 +4,6 @@ import { PMWorkspace } from './PMWorkspace';
 
 const listPmTaskHistoryMock = vi.hoisted(() => vi.fn());
 const listPmDirectorTaskHistoryMock = vi.hoisted(() => vi.fn());
-const listPmTasksMock = vi.hoisted(() => vi.fn());
 const listPmRequirementsMock = vi.hoisted(() => vi.fn());
 const getPmRequirementMock = vi.hoisted(() => vi.fn());
 const getPmStatusMock = vi.hoisted(() => vi.fn());
@@ -23,7 +22,6 @@ const resolveRoleCapabilitiesMock = vi.hoisted(() => vi.fn((payload: { capabilit
 vi.mock('@/services/pmService', () => ({
   getPmStatus: getPmStatusMock,
   getPmStartupDiagnostics: getPmStartupDiagnosticsMock,
-  listPmTasks: listPmTasksMock,
   listPmRequirements: listPmRequirementsMock,
   getPmRequirement: getPmRequirementMock,
   listPmTaskHistory: listPmTaskHistoryMock,
@@ -150,14 +148,6 @@ describe('PMWorkspace history panel', () => {
             updated_at: '2026-05-23T00:01:00Z',
           },
         ],
-      },
-    });
-    listPmTasksMock.mockResolvedValue({
-      ok: true,
-      data: {
-        ok: true,
-        tasks: [],
-        pagination: { total: 0 },
       },
     });
     listPmRequirementsMock.mockResolvedValue({
@@ -392,31 +382,7 @@ describe('PMWorkspace history panel', () => {
     expect(clearResult).toHaveTextContent('cache cleared');
   });
 
-  it('uses backend PM task list fallback when runtime tasks are absent', async () => {
-    listPmTasksMock.mockResolvedValueOnce({
-      ok: true,
-      data: {
-        ok: true,
-        tasks: [
-          {
-            id: 'PM-backend-1',
-            title: 'Backend PM task',
-            status: 'in_progress',
-            priority: 'high',
-            acceptance_criteria: ['backend acceptance'],
-          },
-          {
-            id: 'PM-backend-2',
-            subject: 'Completed PM task',
-            status: 'completed',
-            done: true,
-            priority: 2,
-          },
-        ],
-        pagination: { total: 2 },
-      },
-    });
-
+  it('keeps PM task evidence empty until runtime publishes tasks', async () => {
     render(
       <PMWorkspace
         tasks={[]}
@@ -429,19 +395,9 @@ describe('PMWorkspace history panel', () => {
       />,
     );
 
-    await waitFor(() => expect(listPmTasksMock).toHaveBeenCalledWith({
-      limit: 100,
-      offset: 0,
-      workspace: 'C:/Temp/Product',
-    }));
-    const evidence = await screen.findByTestId('pm-task-backend-evidence');
-    expect(evidence).not.toHaveTextContent('/v2/pm/tasks');
-    expect(screen.getByTestId('pm-task-list-evidence-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/tasks');
-    expect(evidence).toHaveTextContent('backend=2');
-    expect(evidence).toHaveTextContent('runtime=0');
-    expect(evidence).toHaveTextContent('merged=2');
-    expect(screen.getByTestId('pm-task-panel-mock')).toHaveTextContent('tasks=2');
-    expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveTextContent('taskCount=2');
+    await waitFor(() => expect(screen.getByTestId('pm-task-panel-mock')).toHaveTextContent('tasks=0'));
+    expect(screen.queryByTestId('pm-task-backend-evidence')).not.toBeInTheDocument();
+    expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveTextContent('taskCount=0');
   });
 
   it('keeps the PM task evidence list in sync when the task panel creates a task', async () => {
@@ -467,20 +423,13 @@ describe('PMWorkspace history panel', () => {
     const evidence = screen.getByTestId('pm-task-backend-evidence');
     expect(evidence).not.toHaveTextContent('/v2/pm/tasks');
     expect(screen.getByTestId('pm-task-list-evidence-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/tasks');
-    expect(evidence).toHaveTextContent('backend=1');
-    expect(evidence).toHaveTextContent('merged=1');
+    expect(evidence).toHaveTextContent('runtime=0');
+    expect(evidence).toHaveTextContent('command_snapshot=1');
+    expect(evidence).toHaveTextContent('visible=1');
     expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveTextContent('taskCount=1');
   });
 
-  it('keeps PM task creation disabled when the task registry is not initialized', async () => {
-    listPmTasksMock.mockResolvedValueOnce({
-      ok: true,
-      data: {
-        initialized: false,
-        reason: 'PM system not initialized',
-      },
-    });
-
+  it('keeps PM task creation independent from automatic backend task-list snapshots', async () => {
     render(
       <PMWorkspace
         tasks={[]}
@@ -494,8 +443,7 @@ describe('PMWorkspace history panel', () => {
     );
 
     const createButton = await screen.findByTestId('pm-task-panel-mock-create');
-    await waitFor(() => expect(createButton).toBeDisabled());
-    expect(screen.getByTestId('pm-task-panel-mock')).toHaveTextContent('PM 任务注册表未初始化：PM system not initialized');
+    await waitFor(() => expect(createButton).not.toBeDisabled());
     expect(screen.queryByTestId('pm-task-backend-evidence')).not.toBeInTheDocument();
   });
 
@@ -673,7 +621,7 @@ describe('PMWorkspace history panel', () => {
     expect(screen.getByTestId('pm-history-director-list')).toHaveTextContent('暂无 Director 分发历史');
   });
 
-  it('runs the PM single-iteration callback and shows backend status evidence', async () => {
+  it('runs the PM single-iteration callback and waits for runtime push evidence', async () => {
     const onRunPmOnce = vi.fn().mockResolvedValue(true);
 
     render(
@@ -691,14 +639,11 @@ describe('PMWorkspace history panel', () => {
     fireEvent.click(screen.getByTestId('pm-workspace-run-once'));
 
     await waitFor(() => expect(onRunPmOnce).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(getPmStatusMock).toHaveBeenCalledWith('C:/Temp/Product'));
+    expect(getPmStatusMock).not.toHaveBeenCalled();
     const evidence = await screen.findByTestId('pm-run-once-status-evidence');
     expect(evidence).not.toHaveTextContent('/v2/pm/status');
-    expect(screen.getByTestId('pm-run-once-status-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/status');
-    expect(evidence).toHaveTextContent('running');
-    expect(evidence).toHaveTextContent('pid=4242');
-    expect(evidence).toHaveTextContent('mode=run_once');
-    expect(evidence).toHaveTextContent('source=handle');
+    expect(screen.getByTestId('pm-run-once-status-endpoint')).toHaveAttribute('data-endpoint', '/v2/ws/runtime');
+    expect(evidence).toHaveTextContent('等待 runtime.v2 推送确认');
   });
 
   it('uses PM startup diagnostics blockers to disable PM start controls', async () => {
@@ -1042,7 +987,7 @@ describe('PMWorkspace history panel', () => {
     expect(screen.getByTestId('pm-ai-dialogue-mock')).toHaveAttribute('data-blocked-reason', '');
   });
 
-  it('suppresses stale PM runtime failure banners while run_once status evidence is running', async () => {
+  it('keeps stale PM runtime failure banners until runtime push confirms running', async () => {
     const onRunPmOnce = vi.fn().mockResolvedValue(true);
 
     render(
@@ -1068,17 +1013,9 @@ describe('PMWorkspace history panel', () => {
 
     await waitFor(() => expect(onRunPmOnce).toHaveBeenCalledTimes(1));
     const evidence = await screen.findByTestId('pm-run-once-status-evidence');
-    expect(evidence).toHaveTextContent('running');
-    await waitFor(() => expect(screen.queryByTestId('pm-runtime-terminal-banner')).not.toBeInTheDocument());
-    expect(screen.getByTestId('pm-workspace-run-once')).toBeDisabled();
-    expect(screen.getByTestId('pm-workspace-run-once')).toHaveAttribute(
-      'title',
-      'PM 正在运行，不能同时触发单次督办。',
-    );
-    expect(screen.getByTestId('pm-workspace-toggle')).toHaveAttribute(
-      'title',
-      'PM 后端已在运行，等待主状态同步后再操作。',
-    );
+    expect(evidence).toHaveTextContent('等待 runtime.v2 推送确认');
+    expect(screen.getByTestId('pm-runtime-terminal-banner')).toHaveTextContent('上次 PM Run 失败');
+    expect(screen.getByTestId('pm-workspace-run-once')).not.toBeDisabled();
   });
 
   it('suppresses stale PM runtime errors after the latest terminal status succeeds', () => {
@@ -1261,18 +1198,8 @@ describe('PMWorkspace history panel', () => {
     expect(onTogglePm).not.toHaveBeenCalled();
   });
 
-  it('runs the PM toggle callback and shows backend status evidence', async () => {
+  it('runs the PM toggle callback and waits for runtime push evidence', async () => {
     const onTogglePm = vi.fn().mockResolvedValue(true);
-    getPmStatusMock.mockResolvedValueOnce({
-      ok: true,
-      data: {
-        running: true,
-        pid: 5150,
-        started_at: 1779494460,
-        mode: 'loop',
-        source: 'status_file',
-      },
-    });
 
     render(
       <PMWorkspace
@@ -1289,14 +1216,11 @@ describe('PMWorkspace history panel', () => {
     fireEvent.click(screen.getByTestId('pm-workspace-toggle'));
 
     await waitFor(() => expect(onTogglePm).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(getPmStatusMock).toHaveBeenCalledWith('C:/Temp/Product'));
+    expect(getPmStatusMock).not.toHaveBeenCalled();
     const evidence = await screen.findByTestId('pm-toggle-status-evidence');
     expect(evidence).not.toHaveTextContent('/v2/pm/status');
-    expect(screen.getByTestId('pm-toggle-status-endpoint')).toHaveAttribute('data-endpoint', '/v2/pm/status');
-    expect(evidence).toHaveTextContent('running');
-    expect(evidence).toHaveTextContent('pid=5150');
-    expect(evidence).toHaveTextContent('mode=loop');
-    expect(evidence).toHaveTextContent('source=status_file');
+    expect(screen.getByTestId('pm-toggle-status-endpoint')).toHaveAttribute('data-endpoint', '/v2/ws/runtime');
+    expect(evidence).toHaveTextContent('等待 runtime.v2 推送确认');
   });
 
   it('exposes the PM RoleSession orchestration workbench from the desktop navigation', async () => {

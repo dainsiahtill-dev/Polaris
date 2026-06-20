@@ -29,7 +29,7 @@ from polaris.kernelone.llm.providers import (
     ProviderInfo,
     ValidationResult,
 )
-from polaris.kernelone.llm.providers.stream_thinking_parser import StreamThinkingParser
+from polaris.kernelone.llm.providers.stream_thinking_parser import ChunkKind, StreamThinkingParser
 from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, ModelListResult, Usage, estimate_usage
 from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds, timeout_seconds_or_none
 
@@ -436,7 +436,7 @@ class KimiProvider(BaseProvider):
         """
         True streaming invoke for Kimi API using aiohttp.
 
-        Kimi API is OpenAI-compatible, so we use SSE format:
+        Kimi API is OpenAI-compatible, so we parse provider data-line chunks:
         data: {"choices":[{"delta":{"content":"hello"}}]}
 
         Args:
@@ -482,8 +482,7 @@ class KimiProvider(BaseProvider):
         }
 
         headers = self._headers(config, api_key)
-        # Override for streaming
-        headers["Accept"] = "text/event-stream"
+        headers["Accept"] = "application/json"
 
         try:
             session = await get_stream_session(
@@ -505,7 +504,7 @@ class KimiProvider(BaseProvider):
                 # Track if we've seen native reasoning across all deltas
                 has_seen_native_reasoning = False
 
-                def _handle_sse_data(data: str) -> list[str]:
+                def _handle_data_line(data: str) -> list[str]:
                     nonlocal has_seen_native_reasoning
                     out: list[str] = []
                     payload = str(data or "").strip()
@@ -562,7 +561,7 @@ class KimiProvider(BaseProvider):
                                 out.append(parsed_text)
                     return out
 
-                # Process SSE stream with newline buffering, so reasoning isn't lost on TCP chunk boundaries.
+                # Process provider data-line chunks with newline buffering, so reasoning isn't lost on TCP boundaries.
                 async for chunk in response.content:
                     text = chunk.decode("utf-8", errors="ignore")
                     if not text:
@@ -579,7 +578,7 @@ class KimiProvider(BaseProvider):
                         if data_str == "[DONE]":
                             done = True
                             break
-                        for token in _handle_sse_data(data_str):
+                        for token in _handle_data_line(data_str):
                             yield token
                     if done:
                         break
@@ -587,20 +586,18 @@ class KimiProvider(BaseProvider):
                 if not done and buffer.strip().startswith("data:"):
                     data_str = buffer.strip()[5:].lstrip()
                     if data_str != "[DONE]":
-                        for token in _handle_sse_data(data_str):
+                        for token in _handle_data_line(data_str):
                             yield token
 
                 # Flush any remaining buffered content
                 for kind, text in think_parser.flush():
-                    if kind == "thinking":
+                    if kind == ChunkKind.DONE or not text:
+                        continue
+                    if kind == ChunkKind.THINKING:
                         # 如果已检测到过原生 reasoning，跳过 flush 中的 thinking
                         if not has_seen_native_reasoning:
                             yield f"{THINKING_PREFIX}{text}"
-                    elif kind == "answer":
-                        # answer 内容作为 content 输出
-                        yield text
-                    else:
-                        # kind == "content" - 总是输出
+                    elif kind == ChunkKind.TEXT:
                         yield text
 
         except aiohttp.ClientError as e:

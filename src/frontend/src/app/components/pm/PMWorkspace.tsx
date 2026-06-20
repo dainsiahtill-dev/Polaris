@@ -37,13 +37,11 @@ import { PMDiagnosticsPanel } from './PMDiagnosticsPanel';
 import { PMWorkbenchPanel } from './PMWorkbenchPanel';
 import { QualityGateCard, type QualityGateData } from './QualityGateCard';
 import { RealtimeActivityPanel } from '@/app/components/common/RealtimeActivityPanel';
-import { TaskStatus, type PmTask } from '@/types/task';
+import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 import type { TaskTraceMap } from '@/app/types/taskTrace';
 import {
-  getPmStatus,
   getPmStartupDiagnostics,
-  listPmTasks,
   getPmRequirement,
   listPmDirectorTaskHistory,
   listPmRequirements,
@@ -52,12 +50,10 @@ import {
   getRoleKernelCacheStats,
   getRoleKernelLLMEvents,
   getRoleKernelTokenBudgetStats,
-  type PmStatus,
   type PmStartupDiagnosticsResponse,
   type PmDirectorHistoryIteration,
   type PmRequirementEntry,
   type PmTaskHistoryEntry,
-  type PmTaskSearchResult,
   type RoleKernelCacheStats,
   type RoleKernelLLMEvent,
   type RoleKernelLLMEventsResponse,
@@ -142,14 +138,14 @@ interface PMRuntimeRoleLine {
 interface PMRunOnceStatusEvidence {
   triggered: boolean;
   loading: boolean;
-  data: PmStatus | null;
+  message: string | null;
   error: string | null;
 }
 
 interface PMToggleStatusEvidence {
   triggered: boolean;
   loading: boolean;
-  data: PmStatus | null;
+  message: string | null;
   error: string | null;
 }
 
@@ -334,123 +330,9 @@ function isLlmStartupBlockReason(value: string): boolean {
   return Boolean(token && (token.includes('llm') || token.includes('provider') || token.includes('model')));
 }
 
-function taskListRecord(task: PmTaskSearchResult): Record<string, unknown> {
-  return task as Record<string, unknown>;
-}
-
-function taskListMetadata(task: PmTaskSearchResult): Record<string, unknown> {
-  const metadata = taskListRecord(task).metadata;
-  return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
-    ? metadata as Record<string, unknown>
-    : {};
-}
-
-function readTaskListValue(task: PmTaskSearchResult, keys: string[]): unknown {
-  const record = taskListRecord(task);
-  const metadata = taskListMetadata(task);
-  for (const key of keys) {
-    const directValue = record[key];
-    if (directValue !== undefined && directValue !== null) return directValue;
-    const metadataValue = metadata[key];
-    if (metadataValue !== undefined && metadataValue !== null) return metadataValue;
-  }
-  return undefined;
-}
-
-function readTaskListString(task: PmTaskSearchResult, keys: string[]): string {
-  const value = readTaskListValue(task, keys);
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function toTaskListStrings(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    const token = typeof value === 'string' ? value.trim() : '';
-    return token ? [token] : [];
-  }
-
-  return value
-    .map((item) => {
-      if (typeof item === 'string') return item.trim();
-      if (item && typeof item === 'object') {
-        const record = item as Record<string, unknown>;
-        return String(record.description || record.title || record.name || record.path || record.id || '').trim();
-      }
-      return String(item || '').trim();
-    })
-    .filter(Boolean);
-}
-
-function normalizePmTaskListStatus(task: PmTaskSearchResult): TaskStatus {
-  const status = readTaskListString(task, ['status', 'state']).toLowerCase();
-  if (status === 'completed' || status === 'done' || status === 'success') return TaskStatus.COMPLETED;
-  if (status === 'running' || status === 'in_progress' || status === 'active') return TaskStatus.IN_PROGRESS;
-  if (status === 'blocked') return TaskStatus.BLOCKED;
-  if (status === 'failed' || status === 'failure') return TaskStatus.FAILED;
-  return TaskStatus.PENDING;
-}
-
-function normalizePmTaskListPriority(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    const parsed = Number.parseInt(normalized.replace(/^p/, ''), 10);
-    if (Number.isFinite(parsed)) return parsed;
-    if (normalized === 'critical') return 0;
-    if (normalized === 'high') return 1;
-    if (normalized === 'medium') return 2;
-    if (normalized === 'low') return 3;
-  }
-  return 99;
-}
-
-function normalizePmTaskListRow(task: PmTaskSearchResult): PmTask | null {
-  const id = readTaskListString(task, ['id', 'task_id']);
-  if (!id) return null;
-
-  const status = normalizePmTaskListStatus(task);
-  const acceptance = [
-    ...toTaskListStrings(readTaskListValue(task, ['acceptance'])),
-    ...toTaskListStrings(readTaskListValue(task, ['acceptance_criteria', 'acceptanceCriteria'])),
-  ].map((description) => ({ description }));
-  const qaContract = readTaskListValue(task, ['qa_contract']);
-  const done = task.done === true || task.completed === true || status === TaskStatus.COMPLETED;
-
-  return {
-    id,
-    title: readTaskListString(task, ['title', 'subject', 'name']) || id,
-    subject: readTaskListString(task, ['subject']),
-    goal: readTaskListString(task, ['goal']),
-    summary: readTaskListString(task, ['summary', 'snippet', 'description']),
-    description: readTaskListString(task, ['description']),
-    status,
-    done,
-    completed: done,
-    priority: normalizePmTaskListPriority(readTaskListValue(task, ['priority'])),
-    acceptance,
-    acceptance_criteria: toTaskListStrings(readTaskListValue(task, ['acceptance_criteria', 'acceptanceCriteria'])),
-    execution_checklist: toTaskListStrings(readTaskListValue(task, ['execution_checklist', 'execution_steps', 'steps'])),
-    target_files: toTaskListStrings(readTaskListValue(task, ['target_files', 'scope_paths', 'files'])),
-    dependencies: toTaskListStrings(readTaskListValue(task, ['dependencies', 'blocked_by'])),
-    qa_contract: qaContract && typeof qaContract === 'object' ? qaContract as Record<string, unknown> : undefined,
-    blueprint_id: readTaskListString(task, ['blueprint_id', 'blueprintId']) || null,
-    blueprint_path: readTaskListString(task, ['blueprint_path', 'blueprintPath']) || null,
-    runtime_blueprint_path: readTaskListString(task, ['runtime_blueprint_path', 'runtimeBlueprintPath']) || null,
-    assignee: readTaskListString(task, ['assignee', 'assigned_to', 'assignedTo']) || undefined,
-    assigned_to: readTaskListString(task, ['assigned_to', 'assignedTo']) || undefined,
-    created_at: readTaskListString(task, ['created_at', 'createdAt']) || undefined,
-    started_at: readTaskListString(task, ['started_at', 'startedAt']) || undefined,
-    completed_at: readTaskListString(task, ['completed_at', 'completedAt']) || undefined,
-    metadata: {
-      ...taskListRecord(task),
-      ...taskListMetadata(task),
-      source: readTaskListString(task, ['source']) || 'pm_task_list',
-    },
-  };
-}
-
-function mergePmTaskEvidenceRows(runtimeTasks: PmTask[], backendTasks: PmTask[]): PmTask[] {
+function mergePmTaskEvidenceRows(runtimeTasks: PmTask[], commandSnapshots: PmTask[]): PmTask[] {
   const rows = new Map<string, PmTask>();
-  for (const task of backendTasks) {
+  for (const task of commandSnapshots) {
     if (task.id) rows.set(task.id, task);
   }
   for (const task of runtimeTasks) {
@@ -458,6 +340,9 @@ function mergePmTaskEvidenceRows(runtimeTasks: PmTask[], backendTasks: PmTask[])
   }
   return Array.from(rows.values());
 }
+
+const PM_RUNTIME_PUSH_ENDPOINT = '/v2/ws/runtime';
+const PM_COMMAND_ACCEPTED_MESSAGE = '命令已提交，等待 runtime.v2 推送确认。';
 
 const PM_RUNTIME_ROLE_LABELS: Record<string, string> = {
   pm: 'PM',
@@ -582,16 +467,6 @@ function resolvePMRuntimeBanner({
       stringValue(pmTerminalStatus.log_path),
     ].filter(Boolean),
   };
-}
-
-function formatPMStatusSnapshot(status: PmStatus | null): string {
-  if (!status) return '等待状态';
-  return [
-    status.running ? 'running' : 'idle',
-    typeof status.pid === 'number' ? `pid=${status.pid}` : '',
-    status.mode ? `mode=${status.mode}` : '',
-    status.source ? `source=${status.source}` : '',
-  ].filter(Boolean).join(' · ');
 }
 
 function PMBackendEvidenceStrip({
@@ -866,77 +741,23 @@ export function PMWorkspace({
   const [runOnceStatusEvidence, setRunOnceStatusEvidence] = useState<PMRunOnceStatusEvidence>({
     triggered: false,
     loading: false,
-    data: null,
+    message: null,
     error: null,
   });
   const [toggleStatusEvidence, setToggleStatusEvidence] = useState<PMToggleStatusEvidence>({
     triggered: false,
     loading: false,
-    data: null,
+    message: null,
     error: null,
   });
-  const [backendPmTasks, setBackendPmTasks] = useState<PmTask[]>([]);
-  const [backendPmTaskError, setBackendPmTaskError] = useState('');
-  const [backendPmTaskInitialized, setBackendPmTaskInitialized] = useState<boolean | null>(null);
-  const [backendPmTaskInitReason, setBackendPmTaskInitReason] = useState('');
-  const [isLoadingBackendPmTasks, setIsLoadingBackendPmTasks] = useState(false);
+  const [commandSnapshotTasks, setCommandSnapshotTasks] = useState<PmTask[]>([]);
   const [pmBackendEvidence, setPmBackendEvidence] = useState<PMBackendEvidenceState>(EMPTY_PM_BACKEND_EVIDENCE);
   const [pmKernelCacheClearing, setPmKernelCacheClearing] = useState(false);
   const [pmKernelCacheClearStatus, setPmKernelCacheClearStatus] = useState('');
 
-  const loadBackendPmTasks = useCallback(async () => {
-    if (!workspace) {
-      setBackendPmTasks([]);
-      setBackendPmTaskError('');
-      setBackendPmTaskInitialized(null);
-      setBackendPmTaskInitReason('');
-      setIsLoadingBackendPmTasks(false);
-      return;
-    }
-
-    setIsLoadingBackendPmTasks(true);
-    setBackendPmTaskError('');
-    setBackendPmTaskInitialized(null);
-    setBackendPmTaskInitReason('');
-    try {
-      const result = await listPmTasks({ limit: 100, offset: 0, workspace });
-      if (!result.ok || !result.data) {
-        throw new Error(result.error || 'PM task list unavailable');
-      }
-      if (result.data.initialized === false) {
-        setBackendPmTasks([]);
-        setBackendPmTaskInitialized(false);
-        setBackendPmTaskInitReason(
-          result.data.reason
-            || result.data.message
-            || result.data.error
-            || result.data.code
-            || 'PM task registry is not initialized',
-        );
-        return;
-      }
-      const rows = Array.isArray(result.data.tasks)
-        ? result.data.tasks
-        : Array.isArray(result.data.items)
-          ? result.data.items
-          : [];
-      setBackendPmTasks(rows.map(normalizePmTaskListRow).filter((task): task is PmTask => Boolean(task)));
-      setBackendPmTaskInitialized(true);
-      setBackendPmTaskInitReason('');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'PM task list unavailable';
-      setBackendPmTasks([]);
-      setBackendPmTaskError(message);
-      setBackendPmTaskInitialized(false);
-      setBackendPmTaskInitReason(message);
-    } finally {
-      setIsLoadingBackendPmTasks(false);
-    }
-  }, [workspace]);
-
   useEffect(() => {
-    void loadBackendPmTasks();
-  }, [loadBackendPmTasks]);
+    setCommandSnapshotTasks([]);
+  }, [workspace]);
 
   const loadPmBackendEvidence = useCallback(async () => {
     if (!workspace || factoryMode) {
@@ -1025,8 +846,8 @@ export function PMWorkspace({
   }, [loadPmBackendEvidence]);
 
   const pmTaskEvidenceRows = useMemo(
-    () => mergePmTaskEvidenceRows(tasks, backendPmTasks),
-    [backendPmTasks, tasks],
+    () => mergePmTaskEvidenceRows(tasks, commandSnapshotTasks),
+    [commandSnapshotTasks, tasks],
   );
   
   // 用户手动切换视图的标记（避免自动切换覆盖用户选择）
@@ -1055,11 +876,18 @@ export function PMWorkspace({
     const eventCount = executionLogs.length + llmStreamEvents.length + processStreamEvents.length;
     const previousCount = lastRealtimeEventCountRef.current;
     lastRealtimeEventCountRef.current = eventCount;
-    if (eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
+    const runtimeActive = pmRunning;
+    if (!runtimeActive || eventCount <= previousCount || eventCount <= 0 || userSwitchedViewRef.current) return;
     if (activeView !== 'activity') {
       setActiveView('activity');
     }
-  }, [activeView, executionLogs.length, llmStreamEvents.length, processStreamEvents.length]);
+  }, [
+    activeView,
+    executionLogs.length,
+    llmStreamEvents.length,
+    pmRunning,
+    processStreamEvents.length,
+  ]);
   
   // 当用户手动点击导航时，记录用户偏好
   const handleViewChange = useCallback((view: PMActiveView) => {
@@ -1074,7 +902,7 @@ export function PMWorkspace({
   }, []);
 
   const handleBackendPmTaskCreated = useCallback((task: PmTask) => {
-    setBackendPmTasks((current) => {
+    setCommandSnapshotTasks((current) => {
       if (!task.id) return current;
       return mergePmTaskEvidenceRows([], [task, ...current.filter((item) => item.id !== task.id)]);
     });
@@ -1093,11 +921,8 @@ export function PMWorkspace({
   );
   const pendingLlmBlockReason = pmDiagnosticsPending && isLlmStartupBlockReason(pmStartBlockedReason);
   const externalPmStartBlockedReason = pmDiagnosticsAllowStart || pendingLlmBlockReason ? '' : pmStartBlockedReason;
-  const statusEvidenceRunning = Boolean(
-    runOnceStatusEvidence.data?.running === true || toggleStatusEvidence.data?.running === true,
-  );
-  const observedPmRunning = pmRunning || statusEvidenceRunning;
-  const pmStatusSyncPending = !pmRunning && statusEvidenceRunning;
+  const observedPmRunning = pmRunning;
+  const pmStatusSyncPending = false;
   const pmStartBlockReason = !observedPmRunning ? externalPmStartBlockedReason || pmDiagnosticStartReason : '';
   const pmTaskCreateDisabledReason = factoryMode
     ? '工厂模式下无法手动创建 PM 任务。'
@@ -1107,12 +932,7 @@ export function PMWorkspace({
         ? 'PM 后端诊断中，请等待启动门禁确认。'
         : pmBackendEvidence.diagnosticsError
           ? `PM 后端诊断不可用：${pmBackendEvidence.diagnosticsError}`
-          : pmStartBlockReason
-            || (isLoadingBackendPmTasks ? 'PM 任务合同正在同步，请稍候。' : '')
-            || (backendPmTaskInitialized === false
-              ? `PM 任务注册表未初始化：${backendPmTaskInitReason || '请先完成 PM 计划生成或解除启动门禁。'}`
-              : '')
-            || (backendPmTaskError ? `PM 任务合同读取失败：${backendPmTaskError}` : '');
+          : pmStartBlockReason;
   const pmStarting = Boolean(isStarting);
   const pmStopping = Boolean(isStopping);
   const pmToggleBusyReason = pmStarting
@@ -1120,14 +940,14 @@ export function PMWorkspace({
     : pmStopping
       ? 'PM 正在停止，请等待状态回传。'
       : toggleStatusEvidence.loading
-        ? 'PM 状态确认中，请等待后端回传。'
+        ? 'PM 命令提交中，请等待 runtime.v2 回传。'
         : '';
   const pmRunOnceBusyReason = pmStarting
     ? 'PM 正在启动，请等待状态回传。'
     : pmStopping
       ? 'PM 正在停止，请等待状态回传。'
       : runOnceStatusEvidence.loading
-        ? 'PM 单次督办状态确认中，请等待后端回传。'
+        ? 'PM 单次督办命令提交中，请等待 runtime.v2 回传。'
         : '';
   const pmRunOnceDisabledReason = factoryMode
     ? '工厂模式下无法使用此功能'
@@ -1149,7 +969,7 @@ export function PMWorkspace({
       setRunOnceStatusEvidence({
         triggered: true,
         loading: false,
-        data: null,
+        message: null,
         error: pmStartBlockReason,
       });
       return;
@@ -1157,36 +977,26 @@ export function PMWorkspace({
     setRunOnceStatusEvidence({
       triggered: true,
       loading: true,
-      data: null,
+      message: null,
       error: null,
     });
     try {
-      await Promise.resolve(onRunPmOnce());
-      const statusResult = await getPmStatus(workspace);
-      if (statusResult.ok && statusResult.data) {
-        setRunOnceStatusEvidence({
-          triggered: true,
-          loading: false,
-          data: statusResult.data,
-          error: null,
-        });
-        return;
-      }
+      const accepted = await Promise.resolve(onRunPmOnce());
       setRunOnceStatusEvidence({
         triggered: true,
         loading: false,
-        data: null,
-        error: statusResult.error || 'PM status unavailable',
+        message: accepted === false ? '命令未被接受。' : PM_COMMAND_ACCEPTED_MESSAGE,
+        error: accepted === false ? 'PM command was not accepted' : null,
       });
     } catch (error) {
       setRunOnceStatusEvidence({
         triggered: true,
         loading: false,
-        data: null,
+        message: null,
         error: error instanceof Error ? error.message : 'PM status unavailable',
       });
     }
-  }, [onRunPmOnce, pmRunOnceBusyReason, pmStartBlockReason, workspace]);
+  }, [onRunPmOnce, pmRunOnceBusyReason, pmStartBlockReason]);
 
   const handleTogglePm = useCallback(async () => {
     if (pmToggleBusyReason) {
@@ -1197,7 +1007,7 @@ export function PMWorkspace({
       setToggleStatusEvidence({
         triggered: true,
         loading: false,
-        data: null,
+        message: null,
         error: pmStartBlockReason,
       });
       return;
@@ -1205,36 +1015,26 @@ export function PMWorkspace({
     setToggleStatusEvidence({
       triggered: true,
       loading: true,
-      data: null,
+      message: null,
       error: null,
     });
     try {
-      await Promise.resolve(onTogglePm());
-      const statusResult = await getPmStatus(workspace);
-      if (statusResult.ok && statusResult.data) {
-        setToggleStatusEvidence({
-          triggered: true,
-          loading: false,
-          data: statusResult.data,
-          error: null,
-        });
-        return;
-      }
+      const accepted = await Promise.resolve(onTogglePm());
       setToggleStatusEvidence({
         triggered: true,
         loading: false,
-        data: null,
-        error: statusResult.error || 'PM status unavailable',
+        message: accepted === false ? '命令未被接受。' : PM_COMMAND_ACCEPTED_MESSAGE,
+        error: accepted === false ? 'PM command was not accepted' : null,
       });
     } catch (error) {
       setToggleStatusEvidence({
         triggered: true,
         loading: false,
-        data: null,
+        message: null,
         error: error instanceof Error ? error.message : 'PM status unavailable',
       });
     }
-  }, [observedPmRunning, onTogglePm, pmStartBlockReason, pmToggleBusyReason, workspace]);
+  }, [observedPmRunning, onTogglePm, pmStartBlockReason, pmToggleBusyReason]);
 
   const handleDocumentSelect = useCallback((path: string) => {
     userSwitchedViewRef.current = true;
@@ -1476,58 +1276,25 @@ export function PMWorkspace({
           <details className="group">
             <summary className="flex cursor-pointer list-none items-center gap-2 outline-none">
               <Clock className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-              <span className="font-medium text-slate-200">PM 运行快照</span>
-              {runOnceStatusEvidence.data ? (
-                <span className={cn(
-                  'rounded-full border px-2 py-0.5 text-[10px]',
-                  runOnceStatusEvidence.data.running
-                    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
-                    : 'border-slate-500/25 bg-slate-500/10 text-slate-300',
-                )}>
-                  {runOnceStatusEvidence.data.running ? 'running' : 'idle'}
-                </span>
-              ) : null}
+              <span className="font-medium text-slate-200">PM 单次命令回执</span>
               <span className="min-w-0 truncate text-slate-500">
                 {runOnceStatusEvidence.loading
-                  ? '正在同步后端状态...'
-                  : runOnceStatusEvidence.error || formatPMStatusSnapshot(runOnceStatusEvidence.data)}
+                  ? '正在提交命令...'
+                  : runOnceStatusEvidence.error || runOnceStatusEvidence.message || PM_COMMAND_ACCEPTED_MESSAGE}
               </span>
               <span className="ml-auto text-[10px] text-slate-500 group-open:hidden">详情</span>
               <span className="ml-auto hidden text-[10px] text-slate-500 group-open:inline">收起</span>
             </summary>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-white/10 bg-slate-950/55 px-2 py-1.5">
-              <span className="font-medium text-amber-100">PM run_once status</span>
-              <EvidenceEndpointBadge endpoint="/v2/pm/status" testId="pm-run-once-status-endpoint" />
+              <span className="font-medium text-amber-100">PM run_once command</span>
+              <EvidenceEndpointBadge endpoint={PM_RUNTIME_PUSH_ENDPOINT} testId="pm-run-once-status-endpoint" />
             {runOnceStatusEvidence.loading ? (
-              <span className="text-slate-400">正在读取状态快照...</span>
+              <span className="text-slate-400">正在提交命令...</span>
             ) : runOnceStatusEvidence.error ? (
               <span className="text-rose-300">{runOnceStatusEvidence.error}</span>
-            ) : runOnceStatusEvidence.data ? (
-              <>
-                <span className={cn(
-                  'rounded border px-1.5 py-0.5 text-[10px]',
-                  runOnceStatusEvidence.data.running
-                    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
-                    : 'border-slate-500/25 bg-slate-500/10 text-slate-300',
-                )}>
-                  {runOnceStatusEvidence.data.running ? 'running' : 'idle'}
-                </span>
-                <span className="text-slate-400">
-                  pid={runOnceStatusEvidence.data.pid ?? 'none'}
-                </span>
-                {runOnceStatusEvidence.data.mode ? (
-                  <span className="text-slate-400">mode={runOnceStatusEvidence.data.mode}</span>
-                ) : null}
-                {runOnceStatusEvidence.data.source ? (
-                  <span className="text-slate-400">source={runOnceStatusEvidence.data.source}</span>
-                ) : null}
-                {runOnceStatusEvidence.data.workspace ? (
-                  <span className="max-w-[260px] truncate text-slate-400" title={runOnceStatusEvidence.data.workspace}>
-                    workspace={runOnceStatusEvidence.data.workspace}
-                  </span>
-                ) : null}
-              </>
-            ) : null}
+            ) : (
+              <span className="text-emerald-300">{runOnceStatusEvidence.message || PM_COMMAND_ACCEPTED_MESSAGE}</span>
+            )}
             </div>
           </details>
         </section>
@@ -1541,64 +1308,31 @@ export function PMWorkspace({
           <details className="group">
             <summary className="flex cursor-pointer list-none items-center gap-2 outline-none">
               <Activity className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-              <span className="font-medium text-slate-200">PM 启停快照</span>
-              {toggleStatusEvidence.data ? (
-                <span className={cn(
-                  'rounded-full border px-2 py-0.5 text-[10px]',
-                  toggleStatusEvidence.data.running
-                    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
-                    : 'border-slate-500/25 bg-slate-500/10 text-slate-300',
-                )}>
-                  {toggleStatusEvidence.data.running ? 'running' : 'idle'}
-                </span>
-              ) : null}
+              <span className="font-medium text-slate-200">PM 启停命令回执</span>
               <span className="min-w-0 truncate text-slate-500">
                 {toggleStatusEvidence.loading
-                  ? '正在同步后端状态...'
-                  : toggleStatusEvidence.error || formatPMStatusSnapshot(toggleStatusEvidence.data)}
+                  ? '正在提交命令...'
+                  : toggleStatusEvidence.error || toggleStatusEvidence.message || PM_COMMAND_ACCEPTED_MESSAGE}
               </span>
               <span className="ml-auto text-[10px] text-slate-500 group-open:hidden">详情</span>
               <span className="ml-auto hidden text-[10px] text-slate-500 group-open:inline">收起</span>
             </summary>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-white/10 bg-slate-950/55 px-2 py-1.5">
-              <span className="font-medium text-amber-100">PM toggle status</span>
-              <EvidenceEndpointBadge endpoint="/v2/pm/status" testId="pm-toggle-status-endpoint" />
+              <span className="font-medium text-amber-100">PM toggle command</span>
+              <EvidenceEndpointBadge endpoint={PM_RUNTIME_PUSH_ENDPOINT} testId="pm-toggle-status-endpoint" />
             {toggleStatusEvidence.loading ? (
-              <span className="text-slate-400">正在读取状态快照...</span>
+              <span className="text-slate-400">正在提交命令...</span>
             ) : toggleStatusEvidence.error ? (
               <span className="text-rose-300">{toggleStatusEvidence.error}</span>
-            ) : toggleStatusEvidence.data ? (
-              <>
-                <span className={cn(
-                  'rounded border px-1.5 py-0.5 text-[10px]',
-                  toggleStatusEvidence.data.running
-                    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
-                    : 'border-slate-500/25 bg-slate-500/10 text-slate-300',
-                )}>
-                  {toggleStatusEvidence.data.running ? 'running' : 'idle'}
-                </span>
-                <span className="text-slate-400">
-                  pid={toggleStatusEvidence.data.pid ?? 'none'}
-                </span>
-                {toggleStatusEvidence.data.mode ? (
-                  <span className="text-slate-400">mode={toggleStatusEvidence.data.mode}</span>
-                ) : null}
-                {toggleStatusEvidence.data.source ? (
-                  <span className="text-slate-400">source={toggleStatusEvidence.data.source}</span>
-                ) : null}
-                {toggleStatusEvidence.data.workspace ? (
-                  <span className="max-w-[260px] truncate text-slate-400" title={toggleStatusEvidence.data.workspace}>
-                    workspace={toggleStatusEvidence.data.workspace}
-                  </span>
-                ) : null}
-              </>
-            ) : null}
+            ) : (
+              <span className="text-emerald-300">{toggleStatusEvidence.message || PM_COMMAND_ACCEPTED_MESSAGE}</span>
+            )}
             </div>
           </details>
         </section>
       )}
 
-      {(isLoadingBackendPmTasks || backendPmTaskError || tasks.length > 0 || backendPmTasks.length > 0) && (
+      {(tasks.length > 0 || commandSnapshotTasks.length > 0) && (
         <section
           className="border-b border-white/10 bg-slate-950/45 px-4 py-1.5 text-xs text-slate-300"
           data-testid="pm-task-backend-evidence"
@@ -1609,42 +1343,24 @@ export function PMWorkspace({
               <span className="font-medium text-slate-200">任务合同来源</span>
               <span className={cn(
                 'rounded-full border px-2 py-0.5 text-[10px]',
-                backendPmTaskError
-                  ? 'border-rose-500/25 bg-rose-500/10 text-rose-200'
-                  : backendPmTaskInitialized === false
-                    ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
-                  : 'border-slate-500/25 bg-slate-500/10 text-slate-300',
+                'border-slate-500/25 bg-slate-500/10 text-slate-300',
               )}>
-                {isLoadingBackendPmTasks
-                  ? '读取中'
-                  : backendPmTaskError
-                    ? '读取失败'
-                    : backendPmTaskInitialized === false
-                      ? '未初始化'
-                      : `backend ${backendPmTasks.length}`}
+                runtime push
               </span>
               <span className="min-w-0 truncate text-slate-500">
-                runtime {tasks.length} · merged {pmTaskEvidenceRows.length}
+                runtime {tasks.length} · command snapshot {commandSnapshotTasks.length} · visible {pmTaskEvidenceRows.length}
               </span>
               <span className="ml-auto text-[10px] text-slate-500 group-open:hidden">详情</span>
               <span className="ml-auto hidden text-[10px] text-slate-500 group-open:inline">收起</span>
             </summary>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-white/10 bg-slate-950/55 px-2 py-1.5">
-              <span className="font-medium text-amber-100">PM task list evidence</span>
+              <span className="font-medium text-amber-100">PM runtime task evidence</span>
               <EvidenceEndpointBadge endpoint="/v2/pm/tasks" testId="pm-task-list-evidence-endpoint" />
-            {isLoadingBackendPmTasks ? (
-              <span className="text-slate-400">正在读取任务合同...</span>
-            ) : backendPmTaskError ? (
-              <span className="text-rose-300">{backendPmTaskError}</span>
-            ) : backendPmTaskInitialized === false ? (
-              <span className="text-amber-200">{backendPmTaskInitReason || 'PM task registry is not initialized'}</span>
-            ) : (
               <>
-                <span className="text-slate-400">backend={backendPmTasks.length}</span>
                 <span className="text-slate-400">runtime={tasks.length}</span>
-                <span className="text-slate-400">merged={pmTaskEvidenceRows.length}</span>
+                <span className="text-slate-400">command_snapshot={commandSnapshotTasks.length}</span>
+                <span className="text-slate-400">visible={pmTaskEvidenceRows.length}</span>
               </>
-            )}
             </div>
           </details>
         </section>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -129,6 +130,45 @@ class TestAuditRecord:
         (ws / "app.js").write_text("console.log('ok');\n", encoding="utf-8")
         (ws / "package.json").write_text(
             '{"scripts":{"test":"node --test"}}\n',
+            encoding="utf-8",
+        )
+
+        results = run_checks(str(ws), ["package_scripts"])
+
+        assert results[0]["ok"] is True
+
+    def test_package_script_validation_rejects_echo_only_placeholders(self, tmp_path: Path) -> None:
+        ws = _project_workspace(tmp_path)
+        (ws / "scripts").mkdir()
+        (ws / "scripts" / "verify.js").write_text("console.log('ok');\n", encoding="utf-8")
+        (ws / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "build": "echo 'Building project...'",
+                        "start": "echo 'Starting project...'",
+                        "test": "node scripts/verify.js",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        results = run_checks(str(ws), ["package_scripts"])
+
+        assert results[0]["ok"] is False
+        assert "script 'build' is a placeholder command" in results[0]["detail"]
+
+    def test_package_script_validation_allows_echo_before_real_command(self, tmp_path: Path) -> None:
+        ws = _project_workspace(tmp_path)
+        (ws / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "build": "echo building && vite build",
+                    }
+                }
+            ),
             encoding="utf-8",
         )
 

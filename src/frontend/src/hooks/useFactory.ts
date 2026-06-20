@@ -387,8 +387,9 @@ export function useFactory(options: UseFactoryOptions = {}) {
     }
   }, [queryClient]);
 
-  const fetchRunStatus = useCallback(async (runId: string) => {
-    // Cancel previous request if exists
+  const loadRunSnapshot = useCallback(async (runId: string) => {
+    // Explicit one-shot snapshot read. Runtime updates must arrive through
+    // event.factory:<run_id> over the shared /v2/ws/runtime transport.
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -679,7 +680,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
     pauseRun,
     resumeRun,
     retryRunFromCheckpoint,
-    fetchRunStatus,
+    loadRunSnapshot,
     fetchRunArtifacts,
     fetchRuns,
     resumeLatestRun,

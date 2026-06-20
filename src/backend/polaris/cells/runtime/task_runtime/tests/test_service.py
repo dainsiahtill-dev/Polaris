@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService, reset_runtime_task_records
@@ -42,6 +43,96 @@ def test_task_runtime_service_manages_task_rows(tmp_path: Path) -> None:
     rows = service.list_task_rows()
     assert len(rows) == 1
     assert rows[0]["id"] == created.id
+
+
+def test_task_runtime_service_wakes_ready_waiters_on_create(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    ready_events: list[str] = []
+    listener_event = threading.Event()
+
+    def on_ready() -> None:
+        ready_events.append("ready")
+        listener_event.set()
+
+    unsubscribe = service.add_ready_listener(on_ready)
+    waiter_started = threading.Event()
+    wait_results: list[bool] = []
+
+    def wait_for_ready() -> None:
+        waiter_started.set()
+        wait_results.append(service.wait_ready(timeout=1.0))
+
+    waiter = threading.Thread(target=wait_for_ready)
+    waiter.start()
+    assert waiter_started.wait(timeout=0.5)
+
+    service.create(subject="wake ready waiters")
+
+    waiter.join(timeout=2.0)
+    assert not waiter.is_alive()
+    assert wait_results == [True]
+    assert listener_event.wait(timeout=0.5)
+    assert ready_events == ["ready"]
+
+    unsubscribe()
+    service.create(subject="listener already removed")
+    assert ready_events == ["ready"]
+
+
+def test_task_runtime_service_wakes_ready_waiters_when_dependency_unblocks(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    parent = service.create(subject="parent task")
+    child = service.create(subject="child task", blocked_by=[parent.id])
+    claimed = service.claim_execution(
+        parent.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-unblock",
+        selection_source="unit",
+    )
+    assert claimed["success"] is True
+    assert service.wait_ready(timeout=0.0) is False
+
+    ready_events: list[str] = []
+    listener_event = threading.Event()
+
+    def on_ready() -> None:
+        ready_events.append("ready")
+        listener_event.set()
+
+    service.add_ready_listener(on_ready)
+    waiter_started = threading.Event()
+    wait_results: list[bool] = []
+
+    def wait_for_ready() -> None:
+        waiter_started.set()
+        wait_results.append(service.wait_ready(timeout=1.0))
+
+    waiter = threading.Thread(target=wait_for_ready)
+    waiter.start()
+    assert waiter_started.wait(timeout=0.5)
+
+    completed = service.complete_execution(
+        parent.id,
+        session_id=str(claimed["session"]["session_id"]),
+        result_summary="parent done",
+    )
+
+    waiter.join(timeout=2.0)
+    assert completed["success"] is True
+    assert not waiter.is_alive()
+    assert wait_results == [True]
+    assert listener_event.wait(timeout=0.5)
+    assert ready_events == ["ready"]
+    child_row = service.get_task(child.id)
+    assert child_row is not None
+    assert child_row["status"] == "pending"
 
 
 def test_task_runtime_reset_records_clears_rows_sessions_and_events(tmp_path: Path) -> None:

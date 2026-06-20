@@ -28,7 +28,7 @@ from .provider_helpers import (
     _blocking_sleep,
     get_circuit_breaker,
     get_stream_session,
-    iter_sse_data_payloads,
+    iter_data_line_payloads,
 )
 
 if TYPE_CHECKING:
@@ -258,11 +258,7 @@ class MiniMaxProvider(BaseProvider):
         headers = {
             "Content-Type": "application/json",
         }
-        # 根据是否流式设置不同的 Accept 头
-        if streaming:
-            headers["Accept"] = "text/event-stream"  # 流式响应
-        else:
-            headers["Accept"] = "application/json"  # 普通响应
+        headers["Accept"] = "application/json"
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         return headers
@@ -480,7 +476,7 @@ class MiniMaxProvider(BaseProvider):
                     if debug_mode:
                         logger.debug("MiniMax invoke: starting streaming parse")
 
-                    # 检查响应类型 - MiniMax可能返回JSON而不是SSE
+                    # 检查响应类型 - MiniMax可能返回JSON而不是 data-line chunks
                     content_type = response.headers.get("Content-Type", "")
                     if debug_mode:
                         logger.debug("MiniMax invoke: response content-type=%s", content_type)
@@ -539,7 +535,7 @@ class MiniMaxProvider(BaseProvider):
                             if debug_mode:
                                 logger.debug("MiniMax invoke: JSON parse failed: %s", str(e))
                     else:
-                        # SSE流式解析
+                        # data-line streaming 解析
                         for line in response.iter_lines():
                             line_count += 1
                             if not line:
@@ -619,7 +615,7 @@ class MiniMaxProvider(BaseProvider):
 
                     # ===== 调试日志：流式解析完成 =====
                     if debug_mode:
-                        resp_type = "JSON (non-streaming)" if is_json_response else "SSE streaming"
+                        resp_type = "JSON (non-streaming)" if is_json_response else "data-line streaming"
                         logger.debug(
                             "MiniMax invoke: streaming parse complete - type=%s, line_count=%s, "
                             "output_parts=%s, thinking_parts=%s, output_len=%s",
@@ -814,7 +810,7 @@ class MiniMaxProvider(BaseProvider):
         Stream invoke the MiniMax LLM with true async streaming.
 
         Uses aiohttp for async HTTP requests and yields tokens as they arrive
-        from the MiniMax SSE stream.
+        from the MiniMax provider data-line stream.
 
         Args:
             prompt: The prompt to send
@@ -861,10 +857,10 @@ class MiniMaxProvider(BaseProvider):
                     yield f"Error: HTTP {response.status}: {error_text[:500]}"
                     return
 
-                # Process SSE stream
+                # Process provider data-line stream
                 content_type = response.headers.get("Content-Type", "")
 
-                # MiniMax may return JSON instead of SSE in some cases
+                # MiniMax may return JSON instead of data-line chunks in some cases
                 if "application/json" in content_type:
                     # Non-streaming JSON response - yield all at once
                     json_data = await response.json()
@@ -876,7 +872,7 @@ class MiniMaxProvider(BaseProvider):
                             yield content
                     return
 
-                # Process SSE stream line by line
+                # Process provider data-line stream line by line
                 buffer = ""
                 # Instantiate parser for <think> tag fallback
                 think_parser = StreamThinkingParser()
@@ -1057,7 +1053,7 @@ class MiniMaxProvider(BaseProvider):
                     yield payload_obj
                 return
 
-            async for data_str in iter_sse_data_payloads(response.content):
+            async for data_str in iter_data_line_payloads(response.content):
                 if data_str == "[DONE]":
                     break
                 try:

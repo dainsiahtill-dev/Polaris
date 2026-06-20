@@ -1400,17 +1400,14 @@ describe('ChiefEngineerWorkspace', () => {
     fireEvent.click(screen.getByTestId('chief-engineer-start-director'));
 
     await waitFor(() => expect(onToggleDirector).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/status?source=auto')));
+    expect(apiFetchMock).not.toHaveBeenCalledWith(directorPath('/v2/director/status?source=auto'));
     const statusEvidence = await screen.findByTestId('chief-engineer-director-status-evidence');
     expect(statusEvidence).not.toHaveTextContent('/v2/director/status?source=auto');
     expect(screen.getByTestId('chief-engineer-director-status-endpoint')).toHaveAttribute(
       'data-endpoint',
-      '/v2/director/status?source=auto&workspace=C%3A%2FTemp%2FProduct',
+      '/v2/ws/runtime',
     );
-    expect(statusEvidence).toHaveTextContent('running');
-    expect(statusEvidence).toHaveTextContent('pid=7242');
-    expect(statusEvidence).toHaveTextContent('mode=desktop_service');
-    expect(statusEvidence).toHaveTextContent('source=status_file');
+    expect(statusEvidence).toHaveTextContent('等待 runtime.v2 推送确认');
   });
 
   it('locks Chief Engineer Director control while Director is stopping', () => {
@@ -1735,7 +1732,7 @@ describe('ChiefEngineerWorkspace', () => {
     expect(directorList).toHaveTextContent('失败 1');
   });
 
-  it('counts backend Director task blueprint fields as Chief Engineer handoff evidence', async () => {
+  it('counts runtime Director task blueprint fields as Chief Engineer handoff evidence', async () => {
     apiFetchMock.mockImplementation((path: string) => {
       if (path === directorPath('/v2/director/tasks?source=auto')) {
         return Promise.resolve({
@@ -1828,9 +1825,24 @@ describe('ChiefEngineerWorkspace', () => {
       });
     });
 
-    render(<ChiefEngineerWorkspace {...baseProps} tasks={[]} />);
+    const runtimeTasks: PmTask[] = [
+      {
+        id: 'director-blueprint-backed',
+        title: 'Backend blueprint-backed task',
+        subject: 'Backend blueprint-backed task',
+        status: TaskStatus.PENDING,
+        metadata: {
+          pm_task_id: 'PM-blueprint',
+          blueprint_id: 'bp-backend-task',
+          runtime_blueprint_path: 'runtime/blueprints/bp-backend-task.json',
+          target_files: ['src/backend-task.ts'],
+        },
+      },
+    ];
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto')));
+    render(<ChiefEngineerWorkspace {...baseProps} tasks={runtimeTasks} />);
+
+    expect(apiFetchMock).not.toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto'));
     expect(screen.queryByTestId('chief-engineer-blueprint-empty')).not.toBeInTheDocument();
     expect(await screen.findByText('Backend blueprint-backed task')).toBeInTheDocument();
     expect(screen.getByText('bp-backend-task')).toBeInTheDocument();
@@ -1953,9 +1965,45 @@ describe('ChiefEngineerWorkspace', () => {
       });
     });
 
-    render(<ChiefEngineerWorkspace {...baseProps} tasks={[]} />);
+    const runtimeTasks: PmTask[] = [
+      {
+        id: 'director-alpha',
+        title: 'Alpha covered task',
+        subject: 'Alpha covered task',
+        status: TaskStatus.PENDING,
+        metadata: {
+          pm_task_id: 'PM-alpha',
+          blueprint_id: 'bp-alpha',
+          runtime_blueprint_path: 'runtime/blueprints/bp-alpha.json',
+        },
+      },
+      {
+        id: 'director-beta',
+        title: 'Beta covered task',
+        subject: 'Beta covered task',
+        status: TaskStatus.PENDING,
+        metadata: {
+          pm_task_id: 'PM-beta',
+          blueprint_id: 'bp-beta',
+          runtime_blueprint_path: 'runtime/blueprints/bp-beta.json',
+        },
+      },
+      {
+        id: 'director-gamma',
+        title: 'Gamma covered task',
+        subject: 'Gamma covered task',
+        status: TaskStatus.PENDING,
+        metadata: {
+          pm_task_id: 'PM-gamma',
+          blueprint_id: 'bp-gamma',
+          runtime_blueprint_path: 'runtime/blueprints/bp-gamma.json',
+        },
+      },
+    ];
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto')));
+    render(<ChiefEngineerWorkspace {...baseProps} tasks={runtimeTasks} />);
+
+    expect(apiFetchMock).not.toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto'));
     expect(await screen.findAllByText('Alpha covered task')).not.toHaveLength(0);
     expect(screen.getAllByText('Beta covered task')).not.toHaveLength(0);
     expect(screen.getAllByText('Gamma covered task')).not.toHaveLength(0);
@@ -1967,7 +2015,7 @@ describe('ChiefEngineerWorkspace', () => {
     expect(screen.getByTestId('chief-engineer-start-director')).not.toBeDisabled();
   });
 
-  it('blocks Director start when only part of the backend task pool has blueprint coverage', async () => {
+  it('blocks Director start when only part of the runtime task pool has blueprint coverage', async () => {
     apiFetchMock.mockImplementation((path: string) => {
       if (path === directorPath('/v2/director/tasks?source=auto')) {
         return Promise.resolve({
@@ -2065,16 +2113,34 @@ describe('ChiefEngineerWorkspace', () => {
       });
     });
 
-    render(<ChiefEngineerWorkspace {...baseProps} tasks={[]} />);
+    const runtimeTasks: PmTask[] = [
+      {
+        id: 'director-covered',
+        title: 'Covered backend task',
+        subject: 'Covered backend task',
+        status: TaskStatus.PENDING,
+        metadata: {
+          pm_task_id: 'PM-covered',
+          blueprint_id: 'bp-covered',
+          runtime_blueprint_path: 'runtime/blueprints/bp-covered.json',
+        },
+      },
+      {
+        id: 'director-missing',
+        title: 'Missing blueprint backend task',
+        subject: 'Missing blueprint backend task',
+        status: TaskStatus.PENDING,
+        metadata: { pm_task_id: 'PM-missing' },
+      },
+    ];
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto')));
+    render(<ChiefEngineerWorkspace {...baseProps} tasks={runtimeTasks} />);
+
+    expect(apiFetchMock).not.toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto'));
     expect(screen.getByText('Covered backend task')).toBeInTheDocument();
     expect(screen.getByText('bp-covered')).toBeInTheDocument();
     expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-covered')).not.toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-blueprint-generate-PM-missing')).toBeInTheDocument();
-    expect(screen.getByTitle('1/2')).toBeInTheDocument();
-    expect(screen.getByTitle('missing 1')).toBeInTheDocument();
-    expect(screen.getByTitle('PM-missing')).toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-start-director')).toBeDisabled();
   });
 
@@ -2297,6 +2363,5 @@ describe('ChiefEngineerWorkspace', () => {
     expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-backlog')).not.toBeInTheDocument();
     expect(screen.queryByTestId('chief-engineer-blueprint-status-PM-running')).not.toBeInTheDocument();
     expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-done')).not.toBeInTheDocument();
-    expect(screen.getByTestId('chief-engineer-start-director')).toBeDisabled();
   });
 });

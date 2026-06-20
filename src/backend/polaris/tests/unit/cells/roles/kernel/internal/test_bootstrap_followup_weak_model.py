@@ -11,6 +11,7 @@ Covers the django-11630 live findings (2026-06-10):
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -335,6 +336,37 @@ def test_leaf_construction_step_suppresses_write_fallback(tmp_path: Path) -> Non
         workspace=str(tmp_path),
     )
     assert decision is None
+
+
+def test_leaf_package_json_support_target_uses_safe_bootstrap_fallback(tmp_path: Path) -> None:
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001",
+        original_context=_leaf_step_context(
+            "package.json",
+            verify="test -f package.json && npm run build",
+            named_files="package.json tsconfig.json src/main.ts index.html firefly flower moon humidity",
+        ),
+        bootstrap_receipt=_failed_read_receipt("package.json"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is not None
+    assert decision.metadata.get("deterministic_recovery") == "bootstrap_followup_leaf_support_write_file"
+    assert decision.tool_batch is not None
+    invocation = decision.tool_batch.invocations[0]
+    assert invocation["tool_name"] == "write_file"
+    assert invocation["arguments"]["file"] == "package.json"
+    package_payload = json.loads(invocation["arguments"]["content"])
+    scripts = package_payload["scripts"]
+    assert "build" in scripts
+    assert "test" in scripts
+    assert "start" in scripts
+    joined_scripts = "\n".join(str(value) for value in scripts.values())
+    assert "package manifest check passed" not in joined_scripts
+    assert "readFileSync('package.json'" not in joined_scripts
+    assert "src/main.ts" in joined_scripts
+    assert "index.html" in joined_scripts
 
 
 def test_leaf_test_target_uses_safe_calculator_test_fallback(tmp_path: Path) -> None:

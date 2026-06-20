@@ -6,7 +6,7 @@ Run with: python -m pytest tests/test_kimi_streaming.py -v
 
 import asyncio
 from typing import Self
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from polaris.infrastructure.llm.providers.kimi_provider import KimiProvider
@@ -91,16 +91,19 @@ class TestKimiInvokeStream:
     @pytest.mark.asyncio
     async def test_invoke_stream_success(self, provider, valid_config):
         """Test successful streaming response"""
-        # Simulate SSE stream data
-        sse_data = [
+        # Simulate provider data-line stream chunks
+        stream_data = [
             b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n',
             b'data: {"choices":[{"delta":{"content":" world"}}]}\n\n',
             b"data: [DONE]\n\n",
         ]
 
-        fake_session = _FakeSession(response=_FakeStreamResponse(sse_data))
+        fake_session = _FakeSession(response=_FakeStreamResponse(stream_data))
 
-        with patch("aiohttp.ClientSession", return_value=fake_session):
+        with patch(
+            "polaris.infrastructure.llm.providers.kimi_provider.get_stream_session",
+            new=AsyncMock(return_value=fake_session),
+        ):
             tokens = []
             async for token in provider.invoke_stream("Hi", "kimi-k2-turbo-preview", valid_config):
                 tokens.append(token)
@@ -116,7 +119,10 @@ class TestKimiInvokeStream:
 
         fake_session = _FakeSession(error=aiohttp.ClientError("Connection failed"))
 
-        with patch("aiohttp.ClientSession", return_value=fake_session):
+        with patch(
+            "polaris.infrastructure.llm.providers.kimi_provider.get_stream_session",
+            new=AsyncMock(return_value=fake_session),
+        ):
             tokens = []
             async for token in provider.invoke_stream("Hi", "kimi-k2-turbo-preview", valid_config):
                 tokens.append(token)
@@ -130,7 +136,10 @@ class TestKimiInvokeStream:
 
         fake_session = _FakeSession(error=asyncio.TimeoutError())
 
-        with patch("aiohttp.ClientSession", return_value=fake_session):
+        with patch(
+            "polaris.infrastructure.llm.providers.kimi_provider.get_stream_session",
+            new=AsyncMock(return_value=fake_session),
+        ):
             tokens = []
             async for token in provider.invoke_stream("Hi", "kimi-k2-turbo-preview", valid_config):
                 tokens.append(token)
@@ -144,7 +153,10 @@ class TestKimiInvokeStream:
         fake_session = _FakeSession(response=_FakeStreamResponse([b"data: [DONE]\n\n"]))
         config = {**valid_config, "timeout": 120, "stream_timeout": 33}
 
-        with patch("aiohttp.ClientSession", return_value=fake_session):
+        with patch(
+            "polaris.infrastructure.llm.providers.kimi_provider.get_stream_session",
+            new=AsyncMock(return_value=fake_session),
+        ):
             tokens = []
             async for token in provider.invoke_stream("Hi", "kimi-k2-turbo-preview", config):
                 tokens.append(token)
@@ -158,16 +170,19 @@ class TestKimiInvokeStream:
         """Reasoning tokens from thinking models should be yielded with THINKING_PREFIX."""
         from polaris.kernelone.llm.providers import THINKING_PREFIX
 
-        sse_data = [
+        stream_data = [
             b'data: {"choices":[{"delta":{"reasoning_content":"Let me think..."}}]}\n\n',
             b'data: {"choices":[{"delta":{"reasoning_content":"The answer is 42."}}]}\n\n',
             b'data: {"choices":[{"delta":{"content":"{\\"reply\\":\\"42\\"}"}}]}\n\n',
             b"data: [DONE]\n\n",
         ]
 
-        fake_session = _FakeSession(response=_FakeStreamResponse(sse_data))
+        fake_session = _FakeSession(response=_FakeStreamResponse(stream_data))
 
-        with patch("aiohttp.ClientSession", return_value=fake_session):
+        with patch(
+            "polaris.infrastructure.llm.providers.kimi_provider.get_stream_session",
+            new=AsyncMock(return_value=fake_session),
+        ):
             tokens = []
             async for token in provider.invoke_stream("Hi", "kimi-k2-thinking-turbo", valid_config):
                 tokens.append(token)
@@ -180,20 +195,23 @@ class TestKimiInvokeStream:
         assert tokens[2] == '{"reply":"42"}'
 
     @pytest.mark.asyncio
-    async def test_invoke_stream_handles_split_sse_chunks_with_reasoning(self, provider, valid_config):
-        """SSE lines can be split across TCP chunks; reasoning should still be emitted."""
+    async def test_invoke_stream_handles_split_data_line_chunks_with_reasoning(self, provider, valid_config):
+        """Provider data lines can be split across TCP chunks; reasoning should still be emitted."""
         from polaris.kernelone.llm.providers import THINKING_PREFIX
 
-        sse_data = [
+        stream_data = [
             b'data: {"choices":[{"delta":{"reason',
             b'ing_content":"step-1"}}]}\n\n',
             b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
             b"data: [DO",
             b"NE]\n\n",
         ]
-        fake_session = _FakeSession(response=_FakeStreamResponse(sse_data))
+        fake_session = _FakeSession(response=_FakeStreamResponse(stream_data))
 
-        with patch("aiohttp.ClientSession", return_value=fake_session):
+        with patch(
+            "polaris.infrastructure.llm.providers.kimi_provider.get_stream_session",
+            new=AsyncMock(return_value=fake_session),
+        ):
             tokens = []
             async for token in provider.invoke_stream("Hi", "kimi-k2-thinking-turbo", valid_config):
                 tokens.append(token)
@@ -216,7 +234,10 @@ class TestKimiInvokeStream:
 
         fake_session.post = capturing_post
 
-        with patch("aiohttp.ClientSession", return_value=fake_session):
+        with patch(
+            "polaris.infrastructure.llm.providers.kimi_provider.get_stream_session",
+            new=AsyncMock(return_value=fake_session),
+        ):
             tokens = []
             async for token in provider.invoke_stream("Hello", "kimi-k2-turbo-preview", config):
                 tokens.append(token)

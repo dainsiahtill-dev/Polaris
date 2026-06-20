@@ -226,7 +226,7 @@ class OpenAIResponsesAdapter(ProviderAdapter):
     转换链路：
         ConversationState → build_request() → BaseProvider.invoke(config)
         InvokeResult.raw → decode_response() → DecodedProviderOutput
-        SSE chunk dict → decode_stream_event() → DecodedProviderOutput | None
+        Provider stream chunk dict → decode_stream_event() → DecodedProviderOutput | None
 
     工具格式：
         复用 BaseProvider.invoke() config["tools"] 机制。
@@ -328,9 +328,9 @@ class OpenAIResponsesAdapter(ProviderAdapter):
         self,
         raw_event: dict[str, Any],
     ) -> DecodedProviderOutput | None:
-        """将 OpenAI SSE chunk dict 解码为 DecodedProviderOutput。
+        """将 OpenAI provider stream chunk dict 解码为 DecodedProviderOutput。
 
-        OpenAI SSE 格式示例：
+        OpenAI provider stream 格式示例：
             data: {"choices":[{"delta":{"content":"hello"},"index":0}]}
 
         Returns:

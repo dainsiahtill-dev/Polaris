@@ -200,7 +200,7 @@ def normalize_stream_tool_call_payload(
     """Normalize stream tool events into an executable native payload.
 
     `call_stream()` emits provider-neutral tool events after the underlying
-    adapter/stream executor has already decoded raw SSE deltas. At this
+    adapter/stream executor has already decoded raw provider deltas. At this
     point the payload shape is the contract, and provider metadata should be
     treated only as debug context instead of a hard parser selector.
 

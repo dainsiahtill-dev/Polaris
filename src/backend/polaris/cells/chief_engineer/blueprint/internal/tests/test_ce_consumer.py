@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,7 +17,7 @@ class TestCEConsumerInit:
             assert consumer._workspace == "/test/workspace"
             assert consumer._worker_id == "w1"
             assert consumer._visibility_timeout == 900
-            assert consumer._poll_interval == 5.0
+            assert isinstance(consumer._work_event, threading.Event)
 
     def test_custom_params(self) -> None:
         with patch("polaris.cells.chief_engineer.blueprint.internal.ce_consumer.get_task_market_service") as mock_get:
@@ -28,7 +29,7 @@ class TestCEConsumerInit:
                 poll_interval=10.0,
             )
             assert consumer._visibility_timeout == 300
-            assert consumer._poll_interval == 10.0
+            assert isinstance(consumer._work_event, threading.Event)
 
     def test_empty_workspace_raises(self) -> None:
         with pytest.raises(ValueError, match="workspace"):

@@ -147,9 +147,15 @@ const DEFAULT_RUNTIME_ROLES: Array<'pm' | 'chief_engineer' | 'director' | 'qa'> 
   'qa',
 ];
 const FACTORY_EVENT_CHANNEL = 'event.factory';
+const BENCH_EVENT_CHANNEL = 'event.bench';
 
 function isFactoryEventChannel(channel: string): boolean {
-  return channel === FACTORY_EVENT_CHANNEL || channel.startsWith(`${FACTORY_EVENT_CHANNEL}:`);
+  return (
+    channel === FACTORY_EVENT_CHANNEL ||
+    channel.startsWith(`${FACTORY_EVENT_CHANNEL}:`) ||
+    channel === BENCH_EVENT_CHANNEL ||
+    channel.startsWith(`${BENCH_EVENT_CHANNEL}:`)
+  );
 }
 
 // ============================================================================
@@ -214,6 +220,9 @@ function normalizeRuntimeV2Envelope(eventPayload: Record<string, unknown>): WebS
       },
       timestamp: String(eventPayload.timestamp || eventPayload.ts || rawPayload?.timestamp || nestedEvent?.timestamp || ''),
     };
+  }
+  if (isFactoryEventChannel(targetChannel)) {
+    return { type: 'line', channel: targetChannel, text: JSON.stringify(mergedPayload) };
   }
   if (targetChannel === 'llm' || v2Domain === 'llm' || kind.startsWith('llm.')) {
     return { type: 'line', channel: 'llm', text: JSON.stringify(mergedPayload) };

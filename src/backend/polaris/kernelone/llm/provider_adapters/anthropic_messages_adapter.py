@@ -183,7 +183,7 @@ class AnthropicMessagesAdapter(ProviderAdapter):
     转换链路：
         ConversationState → build_request() → BaseProvider.invoke(config)
         InvokeResult.raw → decode_response() → DecodedProviderOutput
-        SSE chunk dict → decode_stream_event() → DecodedProviderOutput | None
+        Provider stream chunk dict → decode_stream_event() → DecodedProviderOutput | None
 
     Anthropic Messages API 特殊格式：
         - System prompt: 单独 config["system"] 字段（不是消息）
@@ -314,9 +314,9 @@ class AnthropicMessagesAdapter(ProviderAdapter):
         self,
         raw_event: dict[str, Any],
     ) -> DecodedProviderOutput | None:
-        """将 Anthropic SSE chunk dict 解码为 DecodedProviderOutput。
+        """将 Anthropic provider stream chunk dict 解码为 DecodedProviderOutput。
 
-        Anthropic SSE 事件类型：
+        Anthropic provider stream 事件类型：
             - content_block_delta: delta with text or thinking
             - content_block_stop: end of a content block
             - message_stop: end of the message

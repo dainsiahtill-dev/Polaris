@@ -118,6 +118,18 @@ class RuntimeBackendAdapter:
             raise RuntimeError("Runtime adapter is not started")
         return self._runtime
 
+    @staticmethod
+    def _snapshot_payload(snapshot: Any) -> dict[str, Any]:
+        return {
+            "workflow_id": snapshot.workflow_id,
+            "workflow_name": snapshot.workflow_name,
+            "status": snapshot.status,
+            "run_id": snapshot.run_id,
+            "start_time": snapshot.start_time,
+            "close_time": snapshot.close_time,
+            "result": snapshot.result,
+        }
+
     async def submit_workflow(
         self,
         workflow_name: str,
@@ -172,15 +184,22 @@ class RuntimeBackendAdapter:
         """查询工作流状态。"""
         runtime = self._require_runtime()
         snapshot = await runtime.describe_workflow(str(workflow_id or "").strip())
-        return {
-            "workflow_id": snapshot.workflow_id,
-            "workflow_name": snapshot.workflow_name,
-            "status": snapshot.status,
-            "run_id": snapshot.run_id,
-            "start_time": snapshot.start_time,
-            "close_time": snapshot.close_time,
-            "result": snapshot.result,
-        }
+        return self._snapshot_payload(snapshot)
+
+    async def wait_workflow_completion(
+        self,
+        workflow_id: str,
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Wait for workflow completion via runtime task completion, without polling."""
+
+        runtime = self._require_runtime()
+        snapshot = await runtime.wait_workflow_completion(
+            str(workflow_id or "").strip(),
+            timeout_seconds=timeout_seconds,
+        )
+        return self._snapshot_payload(snapshot)
 
     async def query_workflow(
         self,

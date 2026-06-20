@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import polaris.cells.qa.audit_verdict.internal.qa_consumer as qa_consumer_module
@@ -178,7 +179,7 @@ class TestQAConsumerPollOnce:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        calls: list[object] = []
+        calls: list[Any] = []
 
         class FakeDialogueService:
             def __init__(self, settings: object) -> None:
@@ -220,6 +221,100 @@ class TestQAConsumerPollOnce:
         assert context["_transaction_kernel_forced_tool_choice"] == "none"
         assert metadata["validate_output"] is False
         assert metadata["max_retries"] == 0
+
+    @pytest.mark.asyncio
+    async def test_malformed_llm_review_does_not_override_deterministic_pass(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class FakeDialogueService:
+            def __init__(self, settings: object) -> None:
+                self.settings = settings
+
+            async def invoke_role_dialogue(self, command: object) -> object:
+                return SimpleNamespace(
+                    ok=True,
+                    status="ok",
+                    content="PASS: looks fine",
+                    metadata={},
+                    error_code=None,
+                    error_message=None,
+                )
+
+        monkeypatch.setattr(
+            "polaris.cells.llm.dialogue.public.service.LlmDialogueService",
+            FakeDialogueService,
+        )
+        (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-llm", enable_llm_audit=True)
+
+        async def _deterministic_pass(**_kwargs: object) -> object:
+            return SimpleNamespace(
+                audit_id="audit-pass",
+                verdict="PASS",
+                issues=[],
+                metrics={"files_audited": 1},
+            )
+
+        monkeypatch.setattr(consumer._qa_svc, "audit_task", _deterministic_pass)
+
+        result = await consumer._run_qa_audit_async(
+            "task-llm-malformed",
+            {"run_id": "run-llm", "title": "Review target", "target_files": ["main.py"]},
+        )
+
+        assert result["verdict"] == "PASS"
+        assert result["findings"] == []
+        assert result["llm_review"]["ok"] is False
+        assert "llm_review_warning" in result
+
+    @pytest.mark.asyncio
+    async def test_llm_needs_review_does_not_override_deterministic_pass(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        class FakeDialogueService:
+            def __init__(self, settings: object) -> None:
+                self.settings = settings
+
+            async def invoke_role_dialogue(self, command: object) -> object:
+                return SimpleNamespace(
+                    ok=True,
+                    status="ok",
+                    content='{"verdict":"NEEDS_REVIEW","findings":["too small"],"summary":"review"}',
+                    metadata={},
+                    error_code=None,
+                    error_message=None,
+                )
+
+        monkeypatch.setattr(
+            "polaris.cells.llm.dialogue.public.service.LlmDialogueService",
+            FakeDialogueService,
+        )
+        (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-llm", enable_llm_audit=True)
+
+        async def _deterministic_pass(**_kwargs: object) -> object:
+            return SimpleNamespace(
+                audit_id="audit-pass",
+                verdict="PASS",
+                issues=[],
+                metrics={"files_audited": 1},
+            )
+
+        monkeypatch.setattr(consumer._qa_svc, "audit_task", _deterministic_pass)
+
+        result = await consumer._run_qa_audit_async(
+            "task-llm-review",
+            {"run_id": "run-llm", "title": "Review target", "target_files": ["main.py"]},
+        )
+
+        assert result["verdict"] == "PASS"
+        assert result["findings"] == []
+        assert result["llm_review"]["verdict"] == "NEEDS_REVIEW"
+        assert result["llm_review_warning"] == ["[llm] too small"]
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_pass_verdict_acks_resolved(self, mock_get_svc: MagicMock) -> None:
@@ -517,6 +612,151 @@ class TestQAConsumerPollOnce:
         assert "Director changed_files evidence is required" in fail_call.error_message
 
 
+class TestContractGate:
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_rejects_placeholder_package_scripts(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:
+        mock_get_svc.return_value = MagicMock()
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"build":"tsc","start":"node dist/index.js","test":"echo \\"No tests yet\\" && exit 0"}}\n',
+            encoding="utf-8",
+        )
+
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-contract")
+        msg = consumer._run_contract_gate(
+            {
+                "construction_step": {"target_file": "package.json"},
+                "acceptance_criteria": ["package_scripts"],
+            }
+        )
+
+        assert msg
+        assert "package script gate failed" in msg
+        assert "placeholder" in msg
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_rejects_manifest_only_verify_script_for_declared_checks(
+        self, mock_get_svc: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir()
+        (tmp_path / "package.json").write_text(
+            (
+                '{"scripts":{"build":"node scripts/verify.js",'
+                '"start":"node scripts/verify.js","test":"node scripts/verify.js"}}\n'
+            ),
+            encoding="utf-8",
+        )
+        (scripts_dir / "verify.js").write_text(
+            "\n".join(
+                [
+                    "const fs = require('fs');",
+                    "const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));",
+                    "if (!pkg.name || !pkg.version || !pkg.scripts) process.exit(1);",
+                    "console.log('PASS');",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-contract")
+        msg = consumer._run_contract_gate(
+            {
+                "title": "编写验收脚本 scripts/verify.js 输出 PASS/FAIL 并校验核心规则",
+                "construction_step": {"target_file": "scripts/verify.js"},
+                "acceptance_criteria": [
+                    "scripts/verify.js 运行后输出 PASS/FAIL，并校验 ts_syntax、package_scripts、min_files:3、content_any:firefly|flower|moon|humidity"
+                ],
+            }
+        )
+
+        assert msg
+        assert "verification script gate failed" in msg
+        assert "ts_syntax" in msg
+        assert "min_files:3" in msg
+        assert "content_any:firefly|flower|moon|humidity" in msg
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_rejects_manifest_only_verify_script_when_contract_was_split_into_signatures(
+        self, mock_get_svc: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir()
+        (tmp_path / "package.json").write_text(
+            (
+                '{"scripts":{"build":"node scripts/verify.js",'
+                '"start":"node scripts/verify.js","test":"node scripts/verify.js"}}\n'
+            ),
+            encoding="utf-8",
+        )
+        (scripts_dir / "verify.js").write_text(
+            "const fs = require('fs');\n"
+            "const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));\n"
+            "if (!pkg.scripts) process.exit(1);\n"
+            "console.log('PASS');\n",
+            encoding="utf-8",
+        )
+
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-contract")
+        msg = consumer._run_contract_gate(
+            {
+                "title": "创建 scripts/verify.js — 自动验证核心规则",
+                "construction_step": {
+                    "target_file": "scripts/verify.js",
+                    "signatures": [
+                        "function verifyTsSyntax()",
+                        "function verifyPackageScripts()",
+                        "function verifyContentExists()",
+                        "function verifyFileCount()",
+                        "function main()",
+                    ],
+                },
+                "changed_files": ["scripts/verify.js"],
+            }
+        )
+
+        assert msg
+        assert "ts_syntax" in msg
+        assert "min_files:3" in msg
+        assert "content_any:firefly|flower|moon|humidity" in msg
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_contract_gate_failure_requeues_to_pending_exec(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"test":"echo \\"No tests yet\\" && exit 0"}}\n',
+            encoding="utf-8",
+        )
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "task-contract"
+        claim_result.lease_token = "lease-contract"
+        claim_result.payload = {
+            "title": "Validate package scripts",
+            "construction_step": {"target_file": "package.json"},
+            "acceptance_criteria": ["package_scripts"],
+            "changed_files": ["package.json"],
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-contract")
+        with patch.object(consumer, "_run_qa_audit", return_value={"verdict": "PASS", "audit_id": "a"}):
+            results = consumer.poll_once()
+
+        assert results[0]["reason"] == "contract_gate_failed"
+        mock_svc.acknowledge_task_stage.assert_not_called()
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "QA_contract_gate_failed"
+        assert fail_call.requeue_stage == "pending_exec"
+        assert "placeholder" in fail_call.error_message
+
+
 class TestSyntaxGate:
     """I3-r18 fail-closed syntax gate: a non-parsing target is rejected, not shipped."""
 
@@ -558,3 +798,34 @@ class TestSyntaxGate:
         assert msg
         assert "main.js" in msg
         assert "SyntaxError" in msg or "Unexpected" in msg
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_broken_ts_target_rejected_with_tsc_error(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:
+        import shutil
+
+        import pytest
+
+        if shutil.which("tsc") is None:
+            pytest.skip("tsc not available")
+        mock_get_svc.return_value = MagicMock()
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "flower.ts").write_text(
+            "\n".join(
+                [
+                    "interface FlowerState {",
+                    "  wilted: boolean;",
+                    "}",
+                    "const state: FlowerState = {",
+                    "  wilted: false;",
+                    "};",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-1")
+        msg = consumer._run_syntax_gate({"construction_step": {"target_file": "src/flower.ts"}})
+        assert msg
+        assert "flower.ts" in msg
+        assert "TS1005" in msg or "',' expected" in msg

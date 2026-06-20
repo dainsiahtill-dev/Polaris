@@ -45,7 +45,7 @@ class UnifiedHostAdapter:
         return self._profile
 
     def supports_streaming(self) -> bool:
-        """Whether this host supports SSE streaming."""
+        """Whether this host supports streaming."""
         return self.get_profile().supports_streaming
 
     def supports_tool_async(self) -> bool:

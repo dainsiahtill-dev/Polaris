@@ -197,7 +197,8 @@ class CEConsumer:
         worker_id: Unique identifier for this worker instance.
         visibility_timeout_seconds: How long a claimed task is locked before it
             becomes visible to other workers again on failure.
-        poll_interval: Seconds to sleep between poll cycles when no task is found.
+        poll_interval: Deprecated compatibility argument; consumers now wait on
+            task-market wake signals when no task is found.
         enable_director_pool: Legacy flag for ADRStore-backed blueprint persistence.
     """
 
@@ -209,6 +210,7 @@ class CEConsumer:
         visibility_timeout_seconds: int = 900,
         poll_interval: float = 5.0,
         enable_director_pool: bool = True,
+        wake_event: threading.Event | None = None,
     ) -> None:
         self._workspace = str(workspace or "").strip()
         if not self._workspace:
@@ -219,8 +221,8 @@ class CEConsumer:
         self._visibility_timeout = int(visibility_timeout_seconds)
         # Injected by the host/driver layer (cells never import delivery).
         self._analysis_runner = analysis_runner
-        self._poll_interval = float(poll_interval)
         self._stop_event = threading.Event()
+        self._work_event = wake_event or threading.Event()
         self._svc = get_task_market_service()
         self._enable_director_pool = bool(enable_director_pool)
         self._adr_store: ADRStore | None = None
@@ -832,30 +834,30 @@ class CEConsumer:
         }
 
     def run(self) -> None:
-        """Continuously poll and process PENDING_DESIGN tasks until stop() is called."""
+        """Continuously process PENDING_DESIGN tasks until stop() is called."""
         logger.info(
-            "CE consumer started: worker_id=%s workspace=%s poll_interval=%.1f",
+            "CE consumer started: worker_id=%s workspace=%s idle_mode=event_wakeup",
             self._worker_id,
             self._workspace,
-            self._poll_interval,
         )
         while not self._stop_event.is_set():
             try:
+                self._work_event.clear()
                 processed = self.poll_once()
                 if not processed:
-                    self._stop_event.wait(self._poll_interval)
+                    self._work_event.wait()
             except Exception as exc:
                 logger.exception(
-                    "CE consumer poll cycle failed, retrying in %.1fs: %s",
-                    self._poll_interval,
+                    "CE consumer cycle failed, waiting for next wake signal: %s",
                     exc,
                 )
-                self._stop_event.wait(self._poll_interval)
+                self._work_event.wait()
         logger.info("CE consumer stopped: worker_id=%s", self._worker_id)
 
     def stop(self) -> None:
         """Signal the consumer to stop after the current poll cycle."""
         self._stop_event.set()
+        self._work_event.set()
 
 
 __all__ = ["CEConsumer"]

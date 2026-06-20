@@ -35,7 +35,7 @@ describe('isDirectorAssignedTask', () => {
 });
 
 describe('splitTaskQueues', () => {
-  it('falls back to snapshot director tasks until the realtime feed is ready', () => {
+  it('keeps Director queue empty until the realtime feed publishes tasks', () => {
     const snapshotTasks = [
       createTask({ id: 'pm-1', title: 'Draft plan' }),
       createTask({ id: 'pm-2', title: 'Implement UI', assigned_to: 'director' }),
@@ -48,13 +48,13 @@ describe('splitTaskQueues', () => {
     });
 
     expect(result.pmTasks.map((task) => task.id)).toEqual(['pm-1', 'pm-2']);
-    expect(result.directorTasks.map((task) => task.id)).toEqual(['pm-2']);
-    expect(result.directorTaskSource).toBe('snapshot');
+    expect(result.directorTasks).toEqual([]);
+    expect(result.directorTaskSource).toBe('realtime');
     expect(result.isDirectorRealtimeConnected).toBe(true);
     expect(result.isDirectorRealtimeReady).toBe(false);
   });
 
-  it('keeps snapshot tasks visible when realtime is connected but has not published queue items yet', () => {
+  it('does not substitute snapshot tasks when realtime is connected but has not published queue items yet', () => {
     const snapshotTasks = [
       createTask({ id: 'pm-1', title: 'Draft plan' }),
       createTask({ id: 'pm-2', title: 'Implement API' }),
@@ -68,8 +68,8 @@ describe('splitTaskQueues', () => {
     });
 
     expect(result.pmTasks.map((task) => task.id)).toEqual(['pm-1', 'pm-2', 'pm-3']);
-    expect(result.directorTasks.map((task) => task.id)).toEqual(['pm-1', 'pm-2', 'pm-3']);
-    expect(result.directorTaskSource).toBe('snapshot');
+    expect(result.directorTasks).toEqual([]);
+    expect(result.directorTaskSource).toBe('realtime');
     expect(result.isDirectorRealtimeReady).toBe(true);
   });
 
@@ -108,6 +108,6 @@ describe('splitTaskQueues', () => {
     expect(result.pmTasks.map((task) => task.id)).toEqual(['pm-1', 'pm-2']);
     expect(result.pmTasks.map((task) => task.status)).toEqual(['completed', 'pending']);
     expect(result.pmTasks.map((task) => task.done)).toEqual([true, false]);
-    expect(result.directorTasks.map((task) => task.id)).toEqual(['pm-1', 'pm-2']);
+    expect(result.directorTasks).toEqual([]);
   });
 });

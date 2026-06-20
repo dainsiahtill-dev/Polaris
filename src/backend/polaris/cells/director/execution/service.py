@@ -91,7 +91,6 @@ class DirectorConfig:
 
     workspace: str
     max_workers: int = field(default_factory=lambda: _DEFAULT_MAX_WORKERS)
-    task_poll_interval: float = 1.0
     enable_nag: bool = True
     enable_auto_compact: bool = True
     token_budget: int | None = None
@@ -156,6 +155,7 @@ class DirectorService(DirectorCodeIntelMixin):
         )
 
         self._stop_event = asyncio.Event()
+        self._loop_wakeup = asyncio.Event()
         self._state_lock = asyncio.Lock()
         self._current_iteration = 0
         self._main_loop_task: asyncio.Task | None = None
@@ -222,6 +222,7 @@ class DirectorService(DirectorCodeIntelMixin):
                 return
 
             self._stop_event = asyncio.Event()
+            self._loop_wakeup = asyncio.Event()
             self.state = DirectorState.RUNNING
             self._started_at = time.time()
             self._stopped_at = None
@@ -385,6 +386,7 @@ class DirectorService(DirectorCodeIntelMixin):
             },
             export_handoff=False,
         )
+        self._wake_main_loop()
 
         return task
 
@@ -488,8 +490,52 @@ class DirectorService(DirectorCodeIntelMixin):
                     role="system", content=f"Director loop error: {e}", metadata={"error": str(e)}
                 )
 
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self.config.task_poll_interval)
+            await self._wait_for_loop_signal()
+
+    def _wake_main_loop(self) -> None:
+        """Wake the main loop after task or worker state changes."""
+
+        self._loop_wakeup.set()
+
+    def _next_loop_deadline_delay(self) -> float | None:
+        """Return seconds until the next convergence deadline, if any."""
+
+        now = time.time()
+        deadlines: list[float] = []
+        if self._empty_queue_started_at is not None:
+            deadlines.append(self._empty_queue_started_at + EMPTY_QUEUE_STALL_TIMEOUT_SECONDS)
+        if self._pending_stall_started_at is not None:
+            deadlines.append(self._pending_stall_started_at + PENDING_STALL_TIMEOUT_SECONDS)
+        if self._quiescence_started_at is not None:
+            deadlines.append(self._quiescence_started_at + AUTO_IDLE_GRACE_SECONDS)
+        if not deadlines:
+            return None
+        return max(0.0, min(deadlines) - now)
+
+    async def _wait_for_loop_signal(self) -> None:
+        """Block until stop, explicit wakeup, or a convergence deadline."""
+
+        if self._stop_event.is_set():
+            return
+        if self._loop_wakeup.is_set():
+            self._loop_wakeup.clear()
+            return
+
+        stop_task = asyncio.create_task(self._stop_event.wait())
+        wake_task = asyncio.create_task(self._loop_wakeup.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {stop_task, wake_task},
+                timeout=self._next_loop_deadline_delay(),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if wake_task in done:
+                self._loop_wakeup.clear()
+        finally:
+            for task in (stop_task, wake_task):
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
     async def _check_run_convergence(self) -> bool:
         if self.state != DirectorState.RUNNING:
@@ -567,6 +613,7 @@ class DirectorService(DirectorCodeIntelMixin):
             await self._task_service.on_task_failed(task_id, reason, recoverable=False)
             self._metrics["tasks_failed"] += 1
         self._metrics["deadlock_breaks"] += 1
+        self._wake_main_loop()
 
     async def _auto_stop(self, reason: str) -> None:
         async with self._state_lock:
@@ -700,6 +747,7 @@ class DirectorService(DirectorCodeIntelMixin):
             # even if on_task_completed/on_task_failed raised an exception.
             if result is not None:
                 worker.release_task(result)
+            self._wake_main_loop()
 
     def _emit_cognitive_runtime_shadow_task_artifacts(
         self,
@@ -895,10 +943,10 @@ class DirectorService(DirectorCodeIntelMixin):
         await self._worker_service.auto_scale(ready_count)
 
     async def _on_task_completed(self, message: Message) -> None:
-        pass
+        self._wake_main_loop()
 
     async def _on_task_failed(self, message: Message) -> None:
-        pass
+        self._wake_main_loop()
 
     async def _on_worker_failed(self, message: Message) -> None:
-        pass
+        self._wake_main_loop()

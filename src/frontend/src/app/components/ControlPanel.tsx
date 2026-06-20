@@ -7,13 +7,6 @@ import { MiniStatusBadge } from '@/app/components/ai-dialogue/ManusStyleStatusIn
 import { cleanRuntimeDisplayText } from '@/app/utils/runtimeDisplay';
 import { workspaceLabel } from '@/app/utils/workspaceDisplay';
 import {
-  getDirectorStatus,
-  getPmStatus,
-  type DirectorStatus,
-  type PmStatus,
-  type ProcessStatus,
-} from '@/services';
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -77,47 +70,34 @@ interface ControlPanelProps {
   currentToolName?: string;
 }
 
-interface ProcessToggleEvidence<T extends ProcessStatus> {
+interface ProcessCommandEvidence {
   triggered: boolean;
   loading: boolean;
-  data: T | null;
+  message: string | null;
   error: string | null;
 }
 
-function processEvidenceText<T extends ProcessStatus>(
-  endpoint: string,
-  evidence: ProcessToggleEvidence<T>,
-): string {
+const RUNTIME_PUSH_ENDPOINT = '/v2/ws/runtime';
+const RUNTIME_PUSH_WAITING_MESSAGE = 'command submitted · waiting runtime.v2 push';
+
+function processEvidenceText(evidence: ProcessCommandEvidence): string {
   if (evidence.loading) {
-    return `${endpoint} · reading`;
+    return `${RUNTIME_PUSH_ENDPOINT} · submitting command`;
   }
   if (evidence.error) {
-    return `${endpoint} · ${evidence.error}`;
+    return `${RUNTIME_PUSH_ENDPOINT} · ${evidence.error}`;
   }
-  if (!evidence.data) {
-    return `${endpoint} · no status`;
-  }
-  const pid = evidence.data.pid ?? 'none';
-  const mode = evidence.data.mode ? ` · mode=${evidence.data.mode}` : '';
-  const source = evidence.data.source ? ` · source=${evidence.data.source}` : '';
-  const statusWorkspace = evidence.data.workspace ? ` · workspace=${evidence.data.workspace}` : '';
-  return `${endpoint} · ${evidence.data.running ? 'running' : 'idle'} · pid=${pid}${mode}${source}${statusWorkspace}`;
+  return `${RUNTIME_PUSH_ENDPOINT} · ${evidence.message || RUNTIME_PUSH_WAITING_MESSAGE}`;
 }
 
-function processEvidenceSummary<T extends ProcessStatus>(evidence: ProcessToggleEvidence<T>): string {
+function processEvidenceSummary(evidence: ProcessCommandEvidence): string {
   if (evidence.loading) {
-    return 'reading';
+    return 'submitting';
   }
   if (evidence.error) {
     return evidence.error;
   }
-  if (!evidence.data) {
-    return 'no status';
-  }
-  const pid = evidence.data.pid ?? 'none';
-  const mode = evidence.data.mode ? ` · mode=${evidence.data.mode}` : '';
-  const source = evidence.data.source ? ` · source=${evidence.data.source}` : '';
-  return `${evidence.data.running ? 'running' : 'idle'} · pid=${pid}${mode}${source}`;
+  return evidence.message || 'waiting runtime.v2';
 }
 
 export function ControlPanel({
@@ -175,16 +155,16 @@ export function ControlPanel({
   currentToolName,
 }: ControlPanelProps) {
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const [pmToggleEvidence, setPmToggleEvidence] = useState<ProcessToggleEvidence<PmStatus>>({
+  const [pmToggleEvidence, setPmToggleEvidence] = useState<ProcessCommandEvidence>({
     triggered: false,
     loading: false,
-    data: null,
+    message: null,
     error: null,
   });
-  const [directorToggleEvidence, setDirectorToggleEvidence] = useState<ProcessToggleEvidence<DirectorStatus>>({
+  const [directorToggleEvidence, setDirectorToggleEvidence] = useState<ProcessCommandEvidence>({
     triggered: false,
     loading: false,
-    data: null,
+    message: null,
     error: null,
   });
   const pmDisabled = !!pmToggleDisabled;
@@ -257,32 +237,22 @@ export function ControlPanel({
     setPmToggleEvidence({
       triggered: true,
       loading: true,
-      data: null,
+      message: null,
       error: null,
     });
     try {
-      await Promise.resolve(onTogglePm());
-      const statusResult = await getPmStatus(workspace);
-      if (statusResult.ok && statusResult.data) {
-        setPmToggleEvidence({
-          triggered: true,
-          loading: false,
-          data: statusResult.data,
-          error: null,
-        });
-        return;
-      }
+      const accepted = await Promise.resolve(onTogglePm());
       setPmToggleEvidence({
         triggered: true,
         loading: false,
-        data: null,
-        error: statusResult.error || 'PM status unavailable',
+        message: accepted === false ? 'command not accepted' : RUNTIME_PUSH_WAITING_MESSAGE,
+        error: accepted === false ? 'PM command was not accepted' : null,
       });
     } catch (error) {
       setPmToggleEvidence({
         triggered: true,
         loading: false,
-        data: null,
+        message: null,
         error: error instanceof Error ? error.message : 'PM status unavailable',
       });
     }
@@ -295,32 +265,22 @@ export function ControlPanel({
     setPmToggleEvidence({
       triggered: true,
       loading: true,
-      data: null,
+      message: null,
       error: null,
     });
     try {
-      await Promise.resolve(onRunPmOnce());
-      const statusResult = await getPmStatus(workspace);
-      if (statusResult.ok && statusResult.data) {
-        setPmToggleEvidence({
-          triggered: true,
-          loading: false,
-          data: statusResult.data,
-          error: null,
-        });
-        return;
-      }
+      const accepted = await Promise.resolve(onRunPmOnce());
       setPmToggleEvidence({
         triggered: true,
         loading: false,
-        data: null,
-        error: statusResult.error || 'PM status unavailable',
+        message: accepted === false ? 'command not accepted' : RUNTIME_PUSH_WAITING_MESSAGE,
+        error: accepted === false ? 'PM command was not accepted' : null,
       });
     } catch (error) {
       setPmToggleEvidence({
         triggered: true,
         loading: false,
-        data: null,
+        message: null,
         error: error instanceof Error ? error.message : 'PM status unavailable',
       });
     }
@@ -333,32 +293,22 @@ export function ControlPanel({
     setPmToggleEvidence({
       triggered: true,
       loading: true,
-      data: null,
+      message: null,
       error: null,
     });
     try {
-      await Promise.resolve(onResumePm());
-      const statusResult = await getPmStatus(workspace);
-      if (statusResult.ok && statusResult.data) {
-        setPmToggleEvidence({
-          triggered: true,
-          loading: false,
-          data: statusResult.data,
-          error: null,
-        });
-        return;
-      }
+      const accepted = await Promise.resolve(onResumePm());
       setPmToggleEvidence({
         triggered: true,
         loading: false,
-        data: null,
-        error: statusResult.error || 'PM status unavailable',
+        message: accepted === false ? 'command not accepted' : RUNTIME_PUSH_WAITING_MESSAGE,
+        error: accepted === false ? 'PM command was not accepted' : null,
       });
     } catch (error) {
       setPmToggleEvidence({
         triggered: true,
         loading: false,
-        data: null,
+        message: null,
         error: error instanceof Error ? error.message : 'PM status unavailable',
       });
     }
@@ -368,32 +318,22 @@ export function ControlPanel({
     setDirectorToggleEvidence({
       triggered: true,
       loading: true,
-      data: null,
+      message: null,
       error: null,
     });
     try {
-      await Promise.resolve(onToggleDirector());
-      const statusResult = await getDirectorStatus(workspace);
-      if (statusResult.ok && statusResult.data) {
-        setDirectorToggleEvidence({
-          triggered: true,
-          loading: false,
-          data: statusResult.data,
-          error: null,
-        });
-        return;
-      }
+      const accepted = await Promise.resolve(onToggleDirector());
       setDirectorToggleEvidence({
         triggered: true,
         loading: false,
-        data: null,
-        error: statusResult.error || 'Director status unavailable',
+        message: accepted === false ? 'command not accepted' : RUNTIME_PUSH_WAITING_MESSAGE,
+        error: accepted === false ? 'Director command was not accepted' : null,
       });
     } catch (error) {
       setDirectorToggleEvidence({
         triggered: true,
         loading: false,
-        data: null,
+        message: null,
         error: error instanceof Error ? error.message : 'Director status unavailable',
       });
     }
@@ -508,14 +448,14 @@ export function ControlPanel({
           {pmToggleEvidence.triggered ? (
             <span
               data-testid="control-panel-pm-toggle-evidence"
-              title={processEvidenceText('/v2/pm/status', pmToggleEvidence)}
-              data-endpoint="/v2/pm/status"
-              data-evidence={processEvidenceText('/v2/pm/status', pmToggleEvidence)}
+              title={processEvidenceText(pmToggleEvidence)}
+              data-endpoint={RUNTIME_PUSH_ENDPOINT}
+              data-evidence={processEvidenceText(pmToggleEvidence)}
               className={`max-w-[170px] truncate rounded border px-1.5 py-0.5 font-mono text-[10px] ${pmToggleEvidence.error
                 ? 'border-status-error/30 bg-status-error/10 text-status-error'
-                : pmToggleEvidence.data?.running
-                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-                  : 'border-white/10 bg-white/5 text-text-muted'
+                : pmToggleEvidence.loading
+                  ? 'border-white/10 bg-white/5 text-text-muted'
+                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
                 }`}
             >
               {processEvidenceSummary(pmToggleEvidence)}
@@ -575,14 +515,14 @@ export function ControlPanel({
           {directorToggleEvidence.triggered ? (
             <span
               data-testid="control-panel-director-toggle-evidence"
-              title={processEvidenceText('/v2/director/status?source=auto', directorToggleEvidence)}
-              data-endpoint="/v2/director/status?source=auto"
-              data-evidence={processEvidenceText('/v2/director/status?source=auto', directorToggleEvidence)}
+              title={processEvidenceText(directorToggleEvidence)}
+              data-endpoint={RUNTIME_PUSH_ENDPOINT}
+              data-evidence={processEvidenceText(directorToggleEvidence)}
               className={`max-w-[190px] truncate rounded border px-1.5 py-0.5 font-mono text-[10px] ${directorToggleEvidence.error
                 ? 'border-status-error/30 bg-status-error/10 text-status-error'
-                : directorToggleEvidence.data?.running
-                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-                  : 'border-white/10 bg-white/5 text-text-muted'
+                : directorToggleEvidence.loading
+                  ? 'border-white/10 bg-white/5 text-text-muted'
+                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
                 }`}
             >
               {processEvidenceSummary(directorToggleEvidence)}

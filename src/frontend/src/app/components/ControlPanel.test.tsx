@@ -93,33 +93,20 @@ describe('ControlPanel', () => {
       expect(defaultProps.onTogglePm).toHaveBeenCalledTimes(1);
     });
 
-    it('shows PM backend status evidence after toggling', async () => {
+    it('shows PM runtime push evidence after toggling', async () => {
       const onTogglePm = vi.fn().mockResolvedValue(undefined);
-      serviceMocks.getPmStatus.mockResolvedValueOnce({
-        ok: true,
-        data: {
-          running: true,
-          pid: 4101,
-          started_at: 1779512400,
-          mode: 'desktop_service',
-          source: 'status_file',
-        },
-      });
 
       render(<ControlPanel {...defaultProps} onTogglePm={onTogglePm} />);
 
       fireEvent.click(screen.getByTestId('control-panel-pm-toggle'));
 
       await waitFor(() => expect(onTogglePm).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledWith('/test/workspace'));
+      expect(serviceMocks.getPmStatus).not.toHaveBeenCalled();
       const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
       expect(evidence).not.toHaveTextContent('/v2/pm/status');
-      expect(evidence).toHaveAttribute('data-endpoint', '/v2/pm/status');
-      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/pm/status'));
-      expect(evidence).toHaveTextContent('running');
-      expect(evidence).toHaveTextContent('pid=4101');
-      expect(evidence).toHaveTextContent('mode=desktop_service');
-      expect(evidence).toHaveTextContent('source=status_file');
+      expect(evidence).toHaveAttribute('data-endpoint', '/v2/ws/runtime');
+      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/ws/runtime'));
+      expect(evidence).toHaveTextContent('waiting runtime.v2');
     });
 
     it('disables PM toggle when pmToggleDisabled is true', () => {
@@ -163,33 +150,20 @@ describe('ControlPanel', () => {
       expect(defaultProps.onToggleDirector).toHaveBeenCalledTimes(1);
     });
 
-    it('shows Director backend status evidence after toggling', async () => {
+    it('shows Director runtime push evidence after toggling', async () => {
       const onToggleDirector = vi.fn().mockResolvedValue(undefined);
-      serviceMocks.getDirectorStatus.mockResolvedValueOnce({
-        ok: true,
-        data: {
-          running: false,
-          pid: null,
-          started_at: null,
-          mode: 'desktop_service',
-          source: 'status_file',
-        },
-      });
 
       render(<ControlPanel {...defaultProps} onToggleDirector={onToggleDirector} directorRunning={true} />);
 
       fireEvent.click(screen.getByTestId('control-panel-director-toggle'));
 
       await waitFor(() => expect(onToggleDirector).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(serviceMocks.getDirectorStatus).toHaveBeenCalledWith('/test/workspace'));
+      expect(serviceMocks.getDirectorStatus).not.toHaveBeenCalled();
       const evidence = await screen.findByTestId('control-panel-director-toggle-evidence');
       expect(evidence).not.toHaveTextContent('/v2/director/status?source=auto');
-      expect(evidence).toHaveAttribute('data-endpoint', '/v2/director/status?source=auto');
-      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/director/status?source=auto'));
-      expect(evidence).toHaveTextContent('idle');
-      expect(evidence).toHaveTextContent('pid=none');
-      expect(evidence).toHaveTextContent('mode=desktop_service');
-      expect(evidence).toHaveTextContent('source=status_file');
+      expect(evidence).toHaveAttribute('data-endpoint', '/v2/ws/runtime');
+      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/ws/runtime'));
+      expect(evidence).toHaveTextContent('waiting runtime.v2');
     });
 
     it('disables Director toggle when directorToggleDisabled is true', () => {
@@ -262,33 +236,20 @@ describe('ControlPanel', () => {
       expect(screen.getByTestId('control-panel-pm-run-once')).toBeInTheDocument();
     });
 
-    it('shows PM backend status evidence after run once', async () => {
+    it('shows PM runtime push evidence after run once', async () => {
       const onRunPmOnce = vi.fn().mockResolvedValue(undefined);
-      serviceMocks.getPmStatus.mockResolvedValueOnce({
-        ok: true,
-        data: {
-          running: false,
-          pid: null,
-          started_at: null,
-          mode: 'single_iteration',
-          source: 'status_file',
-        },
-      });
 
       render(<ControlPanel {...defaultProps} onRunPmOnce={onRunPmOnce} />);
 
       fireEvent.click(screen.getByTestId('control-panel-pm-run-once'));
 
       await waitFor(() => expect(onRunPmOnce).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledWith('/test/workspace'));
+      expect(serviceMocks.getPmStatus).not.toHaveBeenCalled();
       const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
       expect(evidence).not.toHaveTextContent('/v2/pm/status');
-      expect(evidence).toHaveAttribute('data-endpoint', '/v2/pm/status');
-      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/pm/status'));
-      expect(evidence).toHaveTextContent('idle');
-      expect(evidence).toHaveTextContent('pid=none');
-      expect(evidence).toHaveTextContent('mode=single_iteration');
-      expect(evidence).toHaveTextContent('source=status_file');
+      expect(evidence).toHaveAttribute('data-endpoint', '/v2/ws/runtime');
+      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/ws/runtime'));
+      expect(evidence).toHaveTextContent('waiting runtime.v2');
     });
 
     it('disables run once with the explicit blocked reason', () => {
@@ -309,33 +270,20 @@ describe('ControlPanel', () => {
       expect(onRunPmOnce).not.toHaveBeenCalled();
     });
 
-    it('shows PM backend status evidence after resume', async () => {
+    it('shows PM runtime push evidence after resume', async () => {
       const onResumePm = vi.fn().mockResolvedValue(undefined);
-      serviceMocks.getPmStatus.mockResolvedValueOnce({
-        ok: true,
-        data: {
-          running: true,
-          pid: 4102,
-          started_at: 1779512500,
-          mode: 'resume',
-          source: 'status_file',
-        },
-      });
 
       render(<ControlPanel {...defaultProps} onResumePm={onResumePm} />);
 
       fireEvent.click(screen.getByTitle('Resume Last'));
 
       await waitFor(() => expect(onResumePm).toHaveBeenCalledTimes(1));
-      await waitFor(() => expect(serviceMocks.getPmStatus).toHaveBeenCalledWith('/test/workspace'));
+      expect(serviceMocks.getPmStatus).not.toHaveBeenCalled();
       const evidence = await screen.findByTestId('control-panel-pm-toggle-evidence');
       expect(evidence).not.toHaveTextContent('/v2/pm/status');
-      expect(evidence).toHaveAttribute('data-endpoint', '/v2/pm/status');
-      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/pm/status'));
-      expect(evidence).toHaveTextContent('running');
-      expect(evidence).toHaveTextContent('pid=4102');
-      expect(evidence).toHaveTextContent('mode=resume');
-      expect(evidence).toHaveTextContent('source=status_file');
+      expect(evidence).toHaveAttribute('data-endpoint', '/v2/ws/runtime');
+      expect(evidence).toHaveAttribute('data-evidence', expect.stringContaining('/v2/ws/runtime'));
+      expect(evidence).toHaveTextContent('waiting runtime.v2');
     });
   });
 

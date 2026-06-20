@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
-import { apiFetchFresh } from '@/api';
 import {
   startPm,
   stopPm,
@@ -143,20 +142,6 @@ function buildDirectorTaskPayload(task: PmTask): CreateDirectorTaskPayload {
   };
 }
 
-async function loadFreshPmTasks(): Promise<PmTask[]> {
-  try {
-    const response = await apiFetchFresh('/state/snapshot');
-    if (!response.ok) {
-      return [];
-    }
-    const payload = await response.json() as { tasks?: unknown };
-    const tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
-    return tasks.filter((item): item is PmTask => Boolean(item && typeof item === 'object'));
-  } catch {
-    return [];
-  }
-}
-
 export function useProcessOperations(options: UseProcessOperationsOptions = {}) {
   const { workspace = '', onStatusChange, onOpenLogs, lancedbBlocked, lancedbBlockMessage } = options;
 
@@ -178,30 +163,20 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
 
   const handleProcessError = useCallback(async (
     errorMessage: string,
-    defaultLogPath: string,
-    processType: 'pm' | 'director'
+    defaultLogPath: string
   ) => {
-    const { getPmStatus, getDirectorStatus } = await import('@/services');
-
     let combined = errorMessage;
     try {
-      const statusResult = processType === 'director'
-        ? await getDirectorStatus(workspace)
-        : await getPmStatus(workspace);
-
-      if (statusResult.ok && statusResult.data) {
-        const logPath = statusResult.data.log_path || defaultLogPath;
-        const tail = await readLogTail(logPath, 20);
-        if (tail) {
-          combined = `${errorMessage}\n\n${tail}`;
-        }
+      const tail = await readLogTail(defaultLogPath, 20);
+      if (tail) {
+        combined = `${errorMessage}\n\n${tail}`;
       }
     } catch {
       // Ignore errors when fetching log tail
     }
 
     return combined;
-  }, [workspace]);
+  }, []);
 
   const startPmLoop = useCallback(async (resume = false) => {
     setField('pmActionError', null);
@@ -224,8 +199,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
         toast.dismiss(startToastId);
         const combined = await handleProcessError(
           result.error || 'Failed to start PM',
-          'runtime/logs/pm.process.log',
-          'pm'
+          'runtime/logs/pm.process.log'
         );
         onOpenLogs?.('pm-subprocess', combined);
         toast.error('Failed to start PM');
@@ -297,8 +271,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
         toast.dismiss(startToastId);
         const combined = await handleProcessError(
           result.error || 'PM run once failed',
-          'runtime/logs/pm.process.log',
-          'pm'
+          'runtime/logs/pm.process.log'
         );
         onOpenLogs?.('pm-subprocess', combined);
         toast.error('PM run once failed');
@@ -321,11 +294,11 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
   }, [lancedbBlocked, lancedbBlockMessage, handleProcessError, onOpenLogs, onStatusChange, setField, workspace]);
 
   const seedDirectorQueueFromPmTasks = useCallback(async (tasks?: PmTask[]) => {
-    let sourceTasks = Array.isArray(tasks)
+    const sourceTasks = Array.isArray(tasks)
       ? tasks.filter((task) => task && typeof task === 'object')
       : [];
     if (!sourceTasks.length) {
-      sourceTasks = await loadFreshPmTasks();
+      return true;
     }
     const candidates = sourceTasks.filter((task) => task && typeof task === 'object' && !isPmTaskDone(task));
     if (!candidates.length) {
@@ -401,8 +374,7 @@ export function useProcessOperations(options: UseProcessOperationsOptions = {}) 
         toast.dismiss(startToastId);
         const combined = await handleProcessError(
           result.error || 'Failed to start Director',
-          'runtime/logs/director.process.log',
-          'director'
+          'runtime/logs/director.process.log'
         );
         onOpenLogs?.('director', combined);
         toast.error('Failed to start Director');

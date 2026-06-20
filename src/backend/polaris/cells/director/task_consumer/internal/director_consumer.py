@@ -128,24 +128,26 @@ def _run_coroutine_sync(
 ) -> dict[str, Any]:
     """Run an async Director adapter call from the synchronous consumer loop."""
 
+    bounded_timeout = timeout_seconds if timeout_seconds is not None and timeout_seconds > 0 else None
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(_await_with_optional_timeout(coro, timeout_seconds))
+        if bounded_timeout is None:
+            return asyncio.run(coro)
 
     result_box: dict[str, Any] = {}
 
     def _runner() -> None:
         try:
-            result_box["result"] = asyncio.run(_await_with_optional_timeout(coro, timeout_seconds))
+            result_box["result"] = asyncio.run(_await_with_optional_timeout(coro, bounded_timeout))
         except BaseException as exc:  # noqa: BLE001
             result_box["error"] = exc
 
     thread = threading.Thread(target=_runner, daemon=True)
     thread.start()
-    thread.join(timeout_seconds if timeout_seconds is not None and timeout_seconds > 0 else None)
+    thread.join(bounded_timeout)
     if thread.is_alive():
-        raise TimeoutError(f"Director adapter execution timed out after {timeout_seconds:.1f}s")
+        raise TimeoutError(f"Director adapter execution timed out after {bounded_timeout:.1f}s")
     error = result_box.get("error")
     if isinstance(error, BaseException):
         raise error
@@ -575,6 +577,8 @@ class ScopeConflictDetector:
         for item in status.items:
             if str(item.get("task_id") or "").strip() == str(current_task_id or "").strip():
                 continue
+            if item.get("is_leaf") is False:
+                continue
             if str(item.get("status") or "").strip().lower() != "in_execution":
                 continue
             payload = item.get("payload")
@@ -685,6 +689,7 @@ class DirectorExecutionConsumer:
         enable_safe_parallel: bool = False,
         lease_renew_interval_seconds: float | None = None,
         task_executor: DirectorTaskExecutor | None = None,
+        wake_event: threading.Event | None = None,
     ) -> None:
         warnings.warn(
             "DirectorExecutionConsumer is deprecated. Use DirectorPool instead. Will be removed after 2026-06-30.",
@@ -694,7 +699,6 @@ class DirectorExecutionConsumer:
         self._workspace = workspace
         self._worker_id = worker_id
         self._visibility_timeout = visibility_timeout_seconds
-        self._poll_interval = poll_interval
         self._enable_safe_parallel = enable_safe_parallel
         self._lease_renew_interval_seconds = (
             float(lease_renew_interval_seconds)
@@ -702,6 +706,7 @@ class DirectorExecutionConsumer:
             else max(1.0, min(60.0, float(self._visibility_timeout) / 3.0))
         )
         self._stop_event = threading.Event()
+        self._work_event = wake_event or threading.Event()
         self._svc = get_task_market_service()
         self._conflict_detector = ScopeConflictDetector()
         self._task_executor = task_executor
@@ -1053,30 +1058,30 @@ class DirectorExecutionConsumer:
         return {"task_id": task_id, "ok": False, "reason": "missing_execution_evidence"}
 
     def run(self) -> None:
-        """Continuously poll and process PENDING_EXEC tasks until stop() is called."""
+        """Continuously process PENDING_EXEC tasks until stop() is called."""
         logger.info(
-            "Director consumer started: worker_id=%s workspace=%s poll_interval=%.1f",
+            "Director consumer started: worker_id=%s workspace=%s idle_mode=event_wakeup",
             self._worker_id,
             self._workspace,
-            self._poll_interval,
         )
         while not self._stop_event.is_set():
             try:
+                self._work_event.clear()
                 processed = self.poll_once()
                 if not processed:
-                    self._stop_event.wait(self._poll_interval)
+                    self._work_event.wait()
             except Exception as exc:
                 logger.exception(
-                    "Director consumer poll cycle failed, retrying in %.1fs: %s",
-                    self._poll_interval,
+                    "Director consumer cycle failed, waiting for next wake signal: %s",
                     exc,
                 )
-                self._stop_event.wait(self._poll_interval)
+                self._work_event.wait()
         logger.info("Director consumer stopped: worker_id=%s", self._worker_id)
 
     def stop(self) -> None:
         """Signal the consumer to stop after the current poll cycle."""
         self._stop_event.set()
+        self._work_event.set()
 
     def _execute_task(self, task_id: str, payload: dict[str, Any], lease_token: str) -> dict[str, Any]:
         """Execute task through the real Director adapter and normalize evidence."""

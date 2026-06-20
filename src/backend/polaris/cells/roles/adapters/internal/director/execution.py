@@ -24,6 +24,65 @@ from .helpers import (
 
 logger = logging.getLogger(__name__)
 
+_STRUCTURAL_CONFIG_FILE_NAMES = {
+    "package.json",
+    "tsconfig.json",
+    "jsconfig.json",
+    "pyproject.toml",
+    "cargo.toml",
+    "go.mod",
+    "pom.xml",
+    "build.gradle",
+    "settings.gradle",
+    "makefile",
+    "cmakelists.txt",
+    "dockerfile",
+}
+_STRUCTURAL_CONFIG_SUFFIXES = (
+    ".config.js",
+    ".config.cjs",
+    ".config.mjs",
+    ".config.ts",
+    ".config.mts",
+    ".config.cts",
+    ".toml",
+    ".yaml",
+    ".yml",
+)
+_GENERIC_ENTRYPOINT_STEMS = {"main", "index", "app", "server", "cli"}
+_CODE_ENTRYPOINT_SUFFIXES = {
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".py",
+    ".go",
+    ".rs",
+    ".cpp",
+    ".cc",
+    ".cxx",
+    ".c",
+    ".h",
+    ".hpp",
+    ".java",
+}
+_ENTRYPOINT_CONTENT_SIGNALS = (
+    "import ",
+    "export ",
+    "function ",
+    "class ",
+    "def ",
+    "package ",
+    "fn ",
+    "#include",
+    "public class",
+    "const ",
+    "let ",
+    "var ",
+)
+
 
 class DirectorPatchExecutor:
     """Director PATCH 文件执行器。
@@ -569,7 +628,13 @@ class DirectorPatchExecutor:
             return None, False, False
         readable = bool(str(content or "").strip())
         lowered = content.lower()
-        domain_hit = any(token in lowered for token in domain_tokens if token)
+        domain_hit = any(
+            token in lowered for token in domain_tokens if token
+        ) or self._has_structural_path_domain_signal(
+            rel_path,
+            lowered,
+            domain_tokens,
+        )
         for pattern in low_quality_patterns:
             if pattern.search(content):
                 return f"{rel_path}:{pattern.pattern}", domain_hit, readable
@@ -580,6 +645,31 @@ class DirectorPatchExecutor:
             if marker.lower() in lowered:
                 return f"{rel_path}:{marker}", domain_hit, readable
         return None, domain_hit, readable
+
+    @staticmethod
+    def _has_structural_path_domain_signal(
+        rel_path: str,
+        lowered_content: str,
+        domain_tokens: list[str],
+    ) -> bool:
+        """Allow path-based signal only for structural files.
+
+        Business source files must carry the project/domain vocabulary in their
+        content. Config files and generic entrypoints are often intentionally
+        vocabulary-light, so their target path can be a weak domain signal.
+        """
+        lowered_path = rel_path.replace("\\", "/").lower()
+        if not any(token and token in lowered_path for token in domain_tokens):
+            return False
+        path = Path(lowered_path)
+        name = path.name
+        suffix = path.suffix
+        stem = path.stem
+        if name in _STRUCTURAL_CONFIG_FILE_NAMES or name.endswith(_STRUCTURAL_CONFIG_SUFFIXES):
+            return True
+        if suffix in _CODE_ENTRYPOINT_SUFFIXES and stem in _GENERIC_ENTRYPOINT_STEMS:
+            return any(signal in lowered_content for signal in _ENTRYPOINT_CONTENT_SIGNALS)
+        return False
 
     # -------------------------------------------------------------------------
     # QA Check

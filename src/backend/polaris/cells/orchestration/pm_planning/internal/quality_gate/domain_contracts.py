@@ -56,6 +56,15 @@ _GAME_PM_REQUIRED_DOMAINS = (
     "tooling",
     "tests",
 )
+_GAME_PM_DETECTION_CORE_DOMAINS = {
+    "engine",
+    "world",
+    "combat",
+    "ai",
+    "content",
+    "progression",
+    "economy",
+}
 _CARD3D_PM_REQUIRED_DOMAINS = (
     "client3d",
     "table",
@@ -775,12 +784,13 @@ def _is_game_pm_contract(normalized: dict[str, Any], tasks: list[Any]) -> bool:
         return True
 
     normalized_paths = {_normalize_path(path) for path in coverage_paths if _normalize_path(path)}
-    covered_domains = sum(
-        1
+    covered_domains = {
+        domain
         for domain in _GAME_PM_REQUIRED_DOMAINS
         if any(_path_matches_game_domain(path, domain) for path in normalized_paths)
-    )
-    return covered_domains >= 2
+    }
+    core_domains = covered_domains & _GAME_PM_DETECTION_CORE_DOMAINS
+    return len(core_domains) >= 2
 
 
 def _read_workspace_planning_hint_text(workspace_full: str) -> str:

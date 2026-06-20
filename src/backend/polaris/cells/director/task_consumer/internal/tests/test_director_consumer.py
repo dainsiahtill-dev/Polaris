@@ -27,7 +27,7 @@ class TestDirectorExecutionConsumerInit:
             assert consumer._workspace == "/test/workspace"
             assert consumer._worker_id == "dir-1"
             assert consumer._visibility_timeout == 1800
-            assert consumer._poll_interval == 5.0
+            assert isinstance(consumer._work_event, threading.Event)
             assert consumer._enable_safe_parallel is False
             assert consumer._execution_timeout_seconds == 600.0
 
@@ -44,7 +44,7 @@ class TestDirectorExecutionConsumerInit:
                 enable_safe_parallel=True,
             )
             assert consumer._visibility_timeout == 600
-            assert consumer._poll_interval == 10.0
+            assert isinstance(consumer._work_event, threading.Event)
             assert consumer._enable_safe_parallel is True
             assert consumer._lease_renew_interval_seconds == 60.0
             assert consumer._execution_timeout_seconds == 600.0
@@ -76,6 +76,21 @@ class TestRunCoroutineSync:
 
         with pytest.raises(TimeoutError):
             _run_coroutine_sync(slow_result(), timeout_seconds=0.001)
+
+    def test_timeout_is_not_delayed_by_stubborn_cancellation(self) -> None:
+        async def stubborn_result() -> dict[str, Any]:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                await asyncio.sleep(10)
+            return {"ok": True}
+
+        start = time.monotonic()
+        with pytest.raises(TimeoutError):
+            _run_coroutine_sync(stubborn_result(), timeout_seconds=0.05)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 1.0
 
 
 class TestDirectorExecutionConsumerPollOnce:
@@ -974,6 +989,25 @@ class TestScopeConflictDetector:
             )
             assert detector.check_conflict("/test", "task-1", ["/src/main.py"]) is True
 
+    def test_ignores_non_leaf_parent_in_execution_scope_overlap(self) -> None:
+        detector = ScopeConflictDetector()
+        with patch(
+            "polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service"
+        ) as mock_get:
+            mock_svc = MagicMock()
+            mock_get.return_value = mock_svc
+            mock_svc.query_status.return_value = MagicMock(
+                items=(
+                    {
+                        "task_id": "parent",
+                        "status": "in_execution",
+                        "is_leaf": False,
+                        "payload": {"scope_paths": ["/src/main.py"]},
+                    },
+                )
+            )
+            assert detector.check_conflict("/test", "task-1", ["/src/main.py"]) is False
+
     def test_detects_conflict_with_other_in_execution_single_target_file(self) -> None:
         detector = ScopeConflictDetector()
         with patch(
@@ -997,8 +1031,8 @@ class TestDirectorExecutionConsumerRunStop:
     """Tests for the run() / stop() durable consumer loop."""
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
-    def test_run_polls_until_stop(self, mock_get_svc: MagicMock) -> None:
-        """run() loops until stop() signals _stop_event."""
+    def test_run_waits_for_wake_event_until_stop(self, mock_get_svc: MagicMock) -> None:
+        """run() idles on wake_event instead of timer-driven polling."""
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
 
@@ -1007,10 +1041,12 @@ class TestDirectorExecutionConsumerRunStop:
         no_claim.ok = False
         mock_svc.claim_work_item.return_value = no_claim
 
+        wake_event = threading.Event()
         consumer = DirectorExecutionConsumer(
             workspace="/test",
             worker_id="run-test",
             poll_interval=0.02,
+            wake_event=wake_event,
         )
 
         poll_count = 0
@@ -1026,15 +1062,21 @@ class TestDirectorExecutionConsumerRunStop:
         thread = threading.Thread(target=consumer.run, daemon=True)
         thread.start()
 
-        # Wait for at least 3 poll cycles.
+        # Startup performs one claim cycle, then blocks until explicitly woken.
         deadline = time.monotonic() + 2.0
-        while poll_count < 3 and time.monotonic() < deadline:
+        while poll_count < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert poll_count == 1
+
+        wake_event.set()
+        deadline = time.monotonic() + 2.0
+        while poll_count < 2 and time.monotonic() < deadline:
             time.sleep(0.01)
 
         consumer.stop()
         thread.join(timeout=2.0)
 
-        assert poll_count >= 3
+        assert poll_count == 2
         assert not thread.is_alive()
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
@@ -1043,10 +1085,12 @@ class TestDirectorExecutionConsumerRunStop:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc
 
+        wake_event = threading.Event()
         consumer = DirectorExecutionConsumer(
             workspace="/test",
             worker_id="exc-test",
             poll_interval=0.02,
+            wake_event=wake_event,
         )
 
         poll_count = 0
@@ -1064,15 +1108,23 @@ class TestDirectorExecutionConsumerRunStop:
         thread = threading.Thread(target=consumer.run, daemon=True)
         thread.start()
 
-        # Wait for at least 4 poll cycles (2 failures + 2 normal).
+        # Each retry requires an explicit wake signal.
         deadline = time.monotonic() + 2.0
-        while poll_count < 4 and time.monotonic() < deadline:
+        while poll_count < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        wake_event.set()
+        deadline = time.monotonic() + 2.0
+        while poll_count < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        wake_event.set()
+        deadline = time.monotonic() + 2.0
+        while poll_count < 3 and time.monotonic() < deadline:
             time.sleep(0.01)
 
         consumer.stop()
         thread.join(timeout=2.0)
 
-        assert poll_count >= 4
+        assert poll_count == 3
         assert not thread.is_alive()
 
 

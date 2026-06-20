@@ -18,7 +18,7 @@ from polaris.kernelone.llm.types import HealthResult, InvokeResult, ModelInfo, M
 from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds, timeout_seconds_or_none
 
 from .http_utils import join_url, normalize_base_url
-from .provider_helpers import build_chat_messages_payload, get_stream_session, iter_sse_data_payloads
+from .provider_helpers import build_chat_messages_payload, get_stream_session, iter_data_line_payloads
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -423,7 +423,7 @@ class OllamaProvider(BaseProvider):
                     return
 
                 if is_compat:
-                    async for data in iter_sse_data_payloads(response.content):
+                    async for data in iter_data_line_payloads(response.content):
                         if data == "[DONE]":
                             break
                         try:
