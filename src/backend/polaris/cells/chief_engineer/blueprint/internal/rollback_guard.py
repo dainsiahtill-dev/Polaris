@@ -7,6 +7,7 @@ Provides two rollback strategies:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import subprocess
 import threading
@@ -26,6 +27,25 @@ def _resolve_safe_path(workspace: Path, file_path: str) -> Path | None:
         return target
     except (OSError, ValueError):
         return None
+
+
+def _read_file_text(target: Path) -> str:
+    """Read a file as UTF-8 text (blocking; run via asyncio.to_thread)."""
+    return target.read_text(encoding="utf-8")
+
+
+def _restore_file(target: Path, content: str | None) -> None:
+    """Restore one file to ``content`` (blocking; run via asyncio.to_thread).
+
+    A ``content`` of ``None`` means the file did not exist at snapshot time and
+    must be removed; otherwise its parent dirs are created and the text written.
+    """
+    if content is None:
+        if target.exists():
+            target.unlink()
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
 
 
 class RollbackGuard:
@@ -55,7 +75,7 @@ class RollbackGuard:
                 )
                 continue
             try:
-                content = target.read_text(encoding="utf-8")
+                content = await asyncio.to_thread(_read_file_text, target)
                 snapshot[file_path] = content
             except FileNotFoundError:
                 snapshot[file_path] = None
@@ -84,12 +104,7 @@ class RollbackGuard:
                 )
                 continue
             try:
-                if content is None:
-                    if target.exists():
-                        target.unlink()
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text(content, encoding="utf-8")
+                await asyncio.to_thread(_restore_file, target, content)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "RollbackGuard: failed to restore %s for %s: %s",

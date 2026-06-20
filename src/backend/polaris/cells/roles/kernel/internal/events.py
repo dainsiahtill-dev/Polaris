@@ -342,6 +342,26 @@ class LLMEventEmitter:
 # 全局事件发射器实例
 _global_emitter: LLMEventEmitter | None = None
 _LLM_EVENT_FIELD_NAMES = {item.name for item in fields(LLMCallEvent)}
+_DISK_AUDIT_REDACTED_KEYS = {
+    "messages",
+    "prompt",
+    "prompt_messages",
+    "prompt_text",
+    "raw_prompt",
+    "system_prompt",
+    "developer_prompt",
+    "user_prompt",
+    "assistant_prompt",
+    "content",
+    "response",
+    "response_content",
+    "response_text",
+    "raw_response",
+    "completion",
+    "completion_text",
+    "input_text",
+    "output_text",
+}
 
 
 def get_global_emitter() -> LLMEventEmitter:
@@ -424,6 +444,38 @@ def emit_llm_event(
     _emit_llm_event_to_disk(event)
 
 
+def _redacted_value_summary(value: Any) -> dict[str, Any]:
+    if isinstance(value, list):
+        return {"redacted": True, "type": "list", "count": len(value)}
+    if isinstance(value, dict):
+        return {"redacted": True, "type": "dict", "keys": sorted(str(key) for key in value)[:20]}
+    if isinstance(value, str):
+        return {"redacted": True, "type": "str", "chars": len(value)}
+    return {"redacted": True, "type": type(value).__name__}
+
+
+def _sanitize_llm_event_for_disk(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        redacted_fields: list[str] = []
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text.strip().lower() in _DISK_AUDIT_REDACTED_KEYS:
+                sanitized[key_text] = _redacted_value_summary(item)
+                redacted_fields.append(key_text)
+                continue
+            sanitized[key_text] = _sanitize_llm_event_for_disk(item)
+        if redacted_fields:
+            existing = sanitized.get("_redacted_fields")
+            combined = list(existing) if isinstance(existing, list) else []
+            combined.extend(redacted_fields)
+            sanitized["_redacted_fields"] = sorted(dict.fromkeys(str(item) for item in combined))
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_llm_event_for_disk(item) for item in value]
+    return value
+
+
 def _emit_llm_event_to_disk(event: LLMCallEvent) -> None:
     """Write LLM event to disk JSONL file for audit trail.
 
@@ -438,7 +490,7 @@ def _emit_llm_event_to_disk(event: LLMCallEvent) -> None:
         workspace = _resolve_runtime_workspace(event)
         safe_role = str(event.role or "unknown").strip().lower() or "unknown"
         iteration = _resolve_iteration(event)
-        data = event.to_dict()
+        data = _sanitize_llm_event_for_disk(event.to_dict())
 
         # Use Polaris-specific path resolution
         from polaris.cells.storage.layout import resolve_polaris_roots

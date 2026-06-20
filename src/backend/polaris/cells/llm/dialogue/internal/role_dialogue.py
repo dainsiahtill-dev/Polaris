@@ -42,6 +42,7 @@ from polaris.cells.roles.kernel.public.prompt_templates_facade import (
     ROLE_PROMPT_TEMPLATES,
     SHARED_SECURITY_BOUNDARY,
 )
+from polaris.kernelone.quality.role_output_markers import DEBT_MARKERS
 from polaris.kernelone.security.dangerous_patterns import (
     is_dangerous_command,
     is_path_traversal,
@@ -1110,9 +1111,8 @@ class RoleOutputQualityChecker:
                 score -= 15
                 suggestions.append(f"Missing section: {section}")
 
-        # 检查技术债务标记
-        debt_markers = ["临时方案", "hack", "TODO", "FIXME"]
-        for marker in debt_markers:
+        # 检查技术债务标记（canonical 源头: polaris.kernelone.quality.role_output_markers）
+        for marker in DEBT_MARKERS:
             if marker.lower() in text.lower():
                 suggestions.append(f"Warning: found debt marker '{marker}'")
 

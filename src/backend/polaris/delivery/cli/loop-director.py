@@ -371,8 +371,10 @@ class DirectorV2Runner:
         logger.info("\n[DirectorV2] Creating task: %s", task_data["subject"])
 
         try:
-            runtime_blocked_by = _normalize_dependency_ids(
-                task_data.get("blocked_by_runtime") or task_data.get("blocked_by")
+            # Widen to list[int | str] to match DirectorService.submit_task's
+            # invariant blocked_by parameter (values stay string IDs at runtime).
+            runtime_blocked_by: list[int | str] = list(
+                _normalize_dependency_ids(task_data.get("blocked_by_runtime") or task_data.get("blocked_by"))
             )
             # Submit task to Director v2
             task = await self.director.submit_task(
@@ -589,11 +591,12 @@ async def async_main(args: argparse.Namespace) -> int:
         logger.error("[DirectorV2] Error: PM task file not found: %s", args.pm_task_path)
         return 1
 
-    # Create Director configuration
+    # Create Director configuration.
+    # NOTE: DirectorConfig has no poll-interval field; the task-status poll
+    # interval lives locally in DirectorV2Runner.execute_task (poll_interval).
     config = DirectorConfig(
         workspace=args.workspace,
         max_workers=DEFAULT_DIRECTOR_MAX_PARALLELISM,
-        task_poll_interval=1.0,
         enable_nag=True,
         enable_auto_compact=True,
         token_budget=None,

@@ -80,6 +80,10 @@ class RealtimeSignalHub:
         self._condition = asyncio.Condition()
         self._sequence = 0
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Strong references to in-flight notify tasks scheduled from watcher
+        # threads. asyncio only keeps weak references to tasks, so without this
+        # the garbage collector can cancel a pending notify before it runs.
+        self._pending_notify_tasks: set[asyncio.Task[int]] = set()
         # Registry of watched roots with reference counting
         self._registry: dict[str, WatchEntry] = {}
         # Workspace context for signal filtering
@@ -183,7 +187,7 @@ class RealtimeSignalHub:
         if not normalized_root:
             return False
 
-        os.makedirs(normalized_root, exist_ok=True)
+        await asyncio.to_thread(os.makedirs, normalized_root, exist_ok=True)
 
         # Fast path: check if already running
         with self._lock:
@@ -384,10 +388,15 @@ class RealtimeSignalHub:
                     return
                 notify_coro = self.notify(source=source, path=path, root=root)
                 try:
-                    loop.create_task(notify_coro)
+                    task = loop.create_task(notify_coro)
                 except (RuntimeError, ValueError) as e:
                     notify_coro.close()
                     logger.debug(f"Failed to schedule notify: {e}")
+                    return
+                # Retain a strong reference so the task is not garbage-collected
+                # (and thereby cancelled) before it completes; drop it on done.
+                self._pending_notify_tasks.add(task)
+                task.add_done_callback(self._pending_notify_tasks.discard)
 
             loop.call_soon_threadsafe(_schedule_notify)
         except (RuntimeError, ValueError) as e:

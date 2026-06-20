@@ -208,6 +208,57 @@ async def test_runtime_diagnostics_prefers_active_workspace_path(
 
 
 @pytest.mark.asyncio
+async def test_runtime_diagnostics_tolerates_none_detail_payloads(client: AsyncClient) -> None:
+    """A malformed diagnostics payload with None ``details``/``store`` must not crash the endpoint."""
+
+    none_details_diagnostics = {
+        "state": "available",
+        "ok": None,
+        "details": None,
+        "evidence": None,
+    }
+
+    with (
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_managed_nats_runtime_snapshot",
+            return_value={"tcp_reachable": False},
+        ),
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_default_client_snapshot",
+            return_value={"is_connected": False},
+        ),
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_rate_limit_diagnostics",
+            return_value={"enabled": True, "store": None},
+        ),
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_contextos_diagnostics",
+            return_value=none_details_diagnostics,
+        ),
+        patch(
+            "polaris.delivery.http.v2.runtime_diagnostics.get_contextos_module_classification_diagnostics",
+            return_value=none_details_diagnostics,
+        ),
+    ):
+        response = await client.get("/v2/runtime/diagnostics")
+
+    assert response.status_code == 200
+    data = response.json()
+    # None store collapses to an empty dict -> no blocked clients -> rate limit reads active.
+    assert data["rate_limit"]["state"] == "active"
+    assert data["rate_limit"]["ok"] is True
+    # None details collapse to empty dicts/lists without raising AttributeError.
+    assert data["context_os"]["details"] == {}
+    assert data["context_os"]["evidence"] == []
+    assert data["runtime_receipts"]["details"]["receipt_ref_count"] == 0
+    assert data["runtime_receipts"]["details"]["receipt_refs"] == []
+    assert data["context_os_replay"]["state"] == "not_ready"
+    assert data["context_os_replay"]["details"]["latest_run_id"] == ""
+    assert data["dormant_modules"]["details"] == {}
+    assert data["dormant_modules"]["evidence"] == []
+
+
+@pytest.mark.asyncio
 async def test_runtime_diagnostics_required_nats_disconnected_is_unhealthy(client: AsyncClient) -> None:
     with (
         patch(

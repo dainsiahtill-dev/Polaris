@@ -6,6 +6,7 @@ Migrated from:
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
@@ -220,7 +221,7 @@ async def _run_director_execution(
             run_id or "adhoc",
             contract.task_id or "task",
         )
-    os.makedirs(task_root, exist_ok=True)
+    await asyncio.to_thread(os.makedirs, task_root, exist_ok=True)
     result_path = os.path.join(task_root, "director.result.json")
     log_path = os.path.join(task_root, "director.log")
     context = {

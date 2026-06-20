@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from polaris.kernelone.llm.toolkit.contracts import ServiceLocator
@@ -274,16 +274,31 @@ class ContextBudgetGate:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_model_window(cls, window: int, **kwargs: object) -> ContextBudgetGate:
+    def from_model_window(
+        cls,
+        window: int,
+        *,
+        safety_margin: float = DEFAULT_SAFETY_MARGIN,
+        initial_tokens: int = 0,
+        estimator_locator: ServiceLocator | None = None,
+    ) -> ContextBudgetGate:
         """Construct a gate directly from a known model context window."""
-        return cast(ContextBudgetGate, cls(model_window=window, **kwargs))
+        return cls(
+            model_window=window,
+            safety_margin=safety_margin,
+            initial_tokens=initial_tokens,
+            estimator_locator=estimator_locator,
+        )
 
     @classmethod
     def from_provider_spec(
         cls,
         provider_name: str,
         model_name: str,
-        **kwargs: object,
+        *,
+        safety_margin: float = DEFAULT_SAFETY_MARGIN,
+        initial_tokens: int = 0,
+        estimator_locator: ServiceLocator | None = None,
     ) -> ContextBudgetGate:
         """Resolve context window from a provider/model spec.
 
@@ -293,25 +308,49 @@ class ContextBudgetGate:
             3. DEFAULT_FALLBACK_WINDOW
         """
         window = _resolve_model_window_from_spec(provider_name, model_name)
-        return cast(ContextBudgetGate, cls(model_window=window, **kwargs))
+        return cls(
+            model_window=window,
+            safety_margin=safety_margin,
+            initial_tokens=initial_tokens,
+            estimator_locator=estimator_locator,
+        )
 
     @classmethod
     def from_role_policy(
         cls,
         max_context_tokens: int,
-        **kwargs: object,
+        *,
+        safety_margin: float = DEFAULT_SAFETY_MARGIN,
+        initial_tokens: int = 0,
+        estimator_locator: ServiceLocator | None = None,
     ) -> ContextBudgetGate:
         """Construct a gate from a role's context policy token limit.
 
         If max_context_tokens is 0 or negative, falls back to MIN_BUDGET_TOKENS.
         """
         window = max(max_context_tokens, MIN_BUDGET_TOKENS)
-        return cast(ContextBudgetGate, cls(model_window=window, **kwargs))
+        return cls(
+            model_window=window,
+            safety_margin=safety_margin,
+            initial_tokens=initial_tokens,
+            estimator_locator=estimator_locator,
+        )
 
     @classmethod
-    def default_gate(cls, **kwargs: object) -> ContextBudgetGate:
+    def default_gate(
+        cls,
+        *,
+        safety_margin: float = DEFAULT_SAFETY_MARGIN,
+        initial_tokens: int = 0,
+        estimator_locator: ServiceLocator | None = None,
+    ) -> ContextBudgetGate:
         """Construct a gate with the absolute safe fallback window."""
-        return cast(ContextBudgetGate, cls(model_window=MIN_BUDGET_TOKENS, **kwargs))
+        return cls(
+            model_window=MIN_BUDGET_TOKENS,
+            safety_margin=safety_margin,
+            initial_tokens=initial_tokens,
+            estimator_locator=estimator_locator,
+        )
 
 
 # ------------------------------------------------------------------

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import inspect
 import json
@@ -11,6 +12,7 @@ import os
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from fastapi import APIRouter, Depends
@@ -1250,18 +1252,27 @@ async def _start_factory_run_core(
     state: AppState,
 ) -> FactoryRunStatusContract:
     workspace = _resolve_workspace(state, payload.workspace)
-    state.settings.workspace = Path(workspace)
-    try:
-        if hasattr(state.settings, "workspace_path"):
-            state.settings.workspace_path = workspace
-    except (AttributeError, ValueError):
-        logger.debug("Factory settings object does not accept workspace_path assignment")
-    sync_process_settings_environment(state.settings)
+    run_state: Any = state
     if payload.persist_workspace:
+        state.settings.workspace = Path(workspace)
+        try:
+            if hasattr(state.settings, "workspace_path"):
+                state.settings.workspace_path = workspace
+        except (AttributeError, ValueError):
+            logger.debug("Factory settings object does not accept workspace_path assignment")
+        sync_process_settings_environment(state.settings)
         save_persisted_settings(state.settings)
     else:
+        transient_settings = copy.copy(state.settings)
+        transient_settings.workspace = Path(workspace)
+        try:
+            if hasattr(transient_settings, "workspace_path"):
+                transient_settings.workspace_path = workspace
+        except (AttributeError, ValueError):
+            logger.debug("Factory transient settings object does not accept workspace_path assignment")
+        run_state = SimpleNamespace(settings=transient_settings)
         logger.info(
-            "Factory run using transient workspace without persisting global settings: workspace=%s",
+            "Factory run using transient workspace without mutating global settings: workspace=%s",
             workspace,
         )
     service = _get_service(workspace)
@@ -1281,7 +1292,7 @@ async def _start_factory_run_core(
     run = await service.start_run(run.id)
     _store_start_request_metadata(run, payload, start_from)
     await _save_service_run(service, run)
-    _schedule_factory_run_task(service, run.id, payload, state)
+    _schedule_factory_run_task(service, run.id, payload, run_state)
     return _map_service_run_to_contract(run)
 
 

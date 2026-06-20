@@ -278,6 +278,40 @@ async def test_notify_from_thread(temp_dir):
 
 
 @pytest.mark.asyncio
+async def test_notify_from_thread_retains_task_until_done(temp_dir):
+    """notify_from_thread must keep a strong reference to its scheduled task.
+
+    asyncio only holds weak references to tasks, so a discarded reference can
+    let the GC cancel a pending notify before it runs (ASYNC-9).
+    """
+    hub = RealtimeSignalHub()
+    try:
+        # Arrange: bind the hub to the running loop.
+        await hub.notify(source="test", path="/test/init.txt", root=temp_dir)
+        assert hub._pending_notify_tasks == set()
+
+        # Act: schedule a notify from a worker thread.
+        def notify_in_thread():
+            hub.notify_from_thread(source="fs", path="/test/file.txt", root=temp_dir)
+
+        thread = threading.Thread(target=notify_in_thread)
+        thread.start()
+        thread.join()
+
+        # Assert: the task is retained while pending...
+        await asyncio.sleep(0)  # let call_soon_threadsafe run _schedule_notify
+        assert len(hub._pending_notify_tasks) == 1
+        retained = next(iter(hub._pending_notify_tasks))
+
+        # ...and discarded via the done-callback once it completes.
+        await retained
+        await asyncio.sleep(0)  # let the done-callback fire
+        assert hub._pending_notify_tasks == set()
+    finally:
+        hub.close()
+
+
+@pytest.mark.asyncio
 async def test_close_releases_all_watches(temp_dir):
     """Test that close() releases all watches."""
     hub = RealtimeSignalHub()

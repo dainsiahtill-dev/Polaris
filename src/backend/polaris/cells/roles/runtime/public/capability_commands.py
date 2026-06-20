@@ -98,7 +98,7 @@ def _capability_invocation_failure(
     )
 
 
-def _payload_string(payload: Mapping[str, Any], key: str, default: str = "") -> str:
+def _payload_string(payload: Mapping[str, Any], key: str, default: str | None = "") -> str:
     return str(payload.get(key) or default).strip()
 
 
@@ -194,9 +194,10 @@ def _mapping_string_tuple(payload: Mapping[str, Any], key: str) -> tuple[str, ..
 
 def _asset_mount_ref(runtime_object: RoleRuntimeObject, mount_name: str) -> str:
     try:
-        return runtime_object.asset_mounts.get(mount_name).asset_ref.ref
-    except KeyError:
+        ref = runtime_object.asset_mounts.get(mount_name).asset_ref.ref
+    except (KeyError, AttributeError):
         return ""
+    return ref if isinstance(ref, str) else ""
 
 
 def _pm_asset_refs(runtime_object: RoleRuntimeObject) -> dict[str, str]:
@@ -697,7 +698,7 @@ def execute_role_task_market_lifecycle(
         metadata = _task_market_lifecycle_metadata(command)
 
         if operation == "publish":
-            task_command = PublishTaskWorkItemCommandV1(
+            publish_command = PublishTaskWorkItemCommandV1(
                 workspace=workspace,
                 trace_id=_payload_string(command.payload, "trace_id", identity.run_id or identity.task_id),
                 run_id=_payload_string(command.payload, "run_id", identity.run_id or identity.task_id),
@@ -725,9 +726,9 @@ def execute_role_task_market_lifecycle(
                 change_policy=_payload_string(command.payload, "change_policy", "strict"),
                 compensation_group_id=_payload_string(command.payload, "compensation_group_id"),
             )
-            result = service.publish_work_item(task_command)
+            result = service.publish_work_item(publish_command)
         elif operation == "claim":
-            task_command = ClaimTaskWorkItemCommandV1(
+            claim_command = ClaimTaskWorkItemCommandV1(
                 workspace=workspace,
                 stage=_payload_string(command.payload, "stage"),
                 worker_id=_payload_string(
@@ -740,17 +741,17 @@ def execute_role_task_market_lifecycle(
                 task_id=_payload_string(command.payload, "task_id") or None,
                 trace_id=_payload_string(command.payload, "trace_id") or None,
             )
-            result = service.claim_work_item(task_command)
+            result = service.claim_work_item(claim_command)
         elif operation == "lease":
-            task_command = RenewTaskLeaseCommandV1(
+            renew_command = RenewTaskLeaseCommandV1(
                 workspace=workspace,
                 task_id=_payload_string(command.payload, "task_id"),
                 lease_token=_payload_string(command.payload, "lease_token"),
                 visibility_timeout_seconds=int(command.payload.get("visibility_timeout_seconds", 900)),
             )
-            result = service.renew_task_lease(task_command)
+            result = service.renew_task_lease(renew_command)
         elif operation == "ack":
-            task_command = AcknowledgeTaskStageCommandV1(
+            acknowledge_command = AcknowledgeTaskStageCommandV1(
                 workspace=workspace,
                 task_id=_payload_string(command.payload, "task_id"),
                 lease_token=_payload_string(command.payload, "lease_token"),
@@ -759,9 +760,9 @@ def execute_role_task_market_lifecycle(
                 summary=_payload_string(command.payload, "summary"),
                 metadata=metadata,
             )
-            result = service.acknowledge_task_stage(task_command)
+            result = service.acknowledge_task_stage(acknowledge_command)
         elif operation == "fail":
-            task_command = FailTaskStageCommandV1(
+            fail_command = FailTaskStageCommandV1(
                 workspace=workspace,
                 task_id=_payload_string(command.payload, "task_id"),
                 lease_token=_payload_string(command.payload, "lease_token"),
@@ -771,25 +772,25 @@ def execute_role_task_market_lifecycle(
                 to_dead_letter=bool(command.payload.get("to_dead_letter", False)),
                 metadata=metadata,
             )
-            result = service.fail_task_stage(task_command)
+            result = service.fail_task_stage(fail_command)
         elif operation == "requeue":
-            task_command = RequeueTaskCommandV1(
+            requeue_command = RequeueTaskCommandV1(
                 workspace=workspace,
                 task_id=_payload_string(command.payload, "task_id"),
                 target_stage=_payload_string(command.payload, "target_stage"),
                 reason=_payload_string(command.payload, "reason"),
                 metadata=metadata,
             )
-            result = service.requeue_task(task_command)
+            result = service.requeue_task(requeue_command)
         else:
-            task_command = MoveTaskToDeadLetterCommandV1(
+            dead_letter_command = MoveTaskToDeadLetterCommandV1(
                 workspace=workspace,
                 task_id=_payload_string(command.payload, "task_id"),
                 reason=_payload_string(command.payload, "reason"),
                 error_code=_payload_string(command.payload, "error_code") or None,
                 metadata=metadata,
             )
-            result = service.move_task_to_dead_letter(task_command)
+            result = service.move_task_to_dead_letter(dead_letter_command)
     except Exception as exc:  # noqa: BLE001 - public facade returns structured failure
         return _task_market_lifecycle_failure(
             command,

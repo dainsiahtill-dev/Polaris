@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -85,7 +89,7 @@ class RollbackManager:
                 continue
             if exists and is_regular_file:
                 try:
-                    content = path.read_text(encoding="utf-8")
+                    content = await asyncio.to_thread(path.read_text, encoding="utf-8")
                     file_hash = self._compute_hash(content)
                     etags[path_str] = file_hash
 
@@ -150,12 +154,9 @@ class RollbackManager:
             path = Path(path_str)
             if path.exists():
                 try:
-                    content = path.read_text(encoding="utf-8")
+                    content = await asyncio.to_thread(path.read_text, encoding="utf-8")
                     current_etags[path_str] = self._compute_hash(content)
-                except (RuntimeError, ValueError):
-                    import logging
-
-                    logger = logging.getLogger(__name__)
+                except (OSError, ValueError):
                     logger.warning("Failed to read file for hash computation: %s", path_str)
 
         # Step 2: Check for state drift on pre-existing files only.
@@ -182,7 +183,7 @@ class RollbackManager:
                 try:
                     target = Path(snapshot.path)
                     if snapshot.existed_before:
-                        target.write_text(snapshot.content, encoding="utf-8")
+                        await asyncio.to_thread(target.write_text, snapshot.content, encoding="utf-8")
                         executed.append(f"restored {snapshot.path}")
                     else:
                         if target.exists():
@@ -193,9 +194,6 @@ class RollbackManager:
                                 continue
                         executed.append(f"removed {snapshot.path}")
                 except (OSError, ValueError):
-                    import logging
-
-                    logger = logging.getLogger(__name__)
                     logger.warning("Failed to restore snapshot: %s", snapshot.path)
                     failed.append(path_str)
 
@@ -221,16 +219,13 @@ class RollbackManager:
                 try:
                     current_path = Path(snapshot.path)
                     if snapshot.existed_before:
-                        current_content = current_path.read_text(encoding="utf-8")
+                        current_content = await asyncio.to_thread(current_path.read_text, encoding="utf-8")
                         current_hash = self._compute_hash(current_content)
                         if current_hash != snapshot.hash:
                             verification_failures.append(f"{path_str}: hash mismatch")
                     elif current_path.exists():
                         verification_failures.append(f"{path_str}: expected missing after rollback")
                 except (OSError, ValueError):
-                    import logging
-
-                    logger = logging.getLogger(__name__)
                     logger.exception("Failed to verify restored snapshot: %s", path_str)
                     verification_failures.append(f"{path_str}: read error")
 

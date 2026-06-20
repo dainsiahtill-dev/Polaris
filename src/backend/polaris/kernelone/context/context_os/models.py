@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import warnings
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 if TYPE_CHECKING:
     from polaris.kernelone.events.typed import ContextWindowStatus
@@ -127,7 +127,7 @@ class DialogAct:
 
 
 @dataclass(slots=True)
-class DialogActResult:
+class _DialogActResultV1:
     """Result of dialog act classification."""
 
     act: str = ""
@@ -149,7 +149,7 @@ class DialogActResult:
             self._metadata = _freeze_mapping(self._metadata) if isinstance(self._metadata, dict) else ()
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> DialogActResult:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _DialogActResultV1:
         if not isinstance(payload, dict):
             return cls()
         return cls(
@@ -169,7 +169,7 @@ class DialogActResult:
 
 
 @dataclass(frozen=True, slots=True)
-class PendingFollowUp:
+class _PendingFollowUpV1:
     """Represents a pending follow-up action from assistant that awaits user resolution.
 
     This is a first-class state object that tracks the lifecycle of assistant
@@ -190,7 +190,7 @@ class PendingFollowUp:
         )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> PendingFollowUp:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _PendingFollowUpV1:
         if not isinstance(payload, dict):
             return cls()
         return cls(
@@ -219,7 +219,7 @@ class PendingFollowUp:
 
 
 @dataclass(slots=True)
-class TranscriptEvent:
+class _TranscriptEventV1:
     event_id: str
     sequence: int
     role: str
@@ -246,7 +246,7 @@ class TranscriptEvent:
             self._metadata = _freeze_mapping(self._metadata) if isinstance(self._metadata, dict) else ()
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> TranscriptEvent | None:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _TranscriptEventV1 | None:
         if not isinstance(payload, dict):
             return None
         return cls(
@@ -286,7 +286,7 @@ class TranscriptEvent:
 
 
 @dataclass(slots=True)
-class ArtifactRecord:
+class _ArtifactRecordV1:
     artifact_id: str
     artifact_type: str
     mime_type: str
@@ -313,7 +313,7 @@ class ArtifactRecord:
             self._metadata = _freeze_mapping(self._metadata) if isinstance(self._metadata, dict) else ()
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> ArtifactRecord | None:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _ArtifactRecordV1 | None:
         if not isinstance(payload, dict):
             return None
         return cls(
@@ -359,7 +359,7 @@ class ArtifactRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class StateEntry:
+class _StateEntryV1:
     entry_id: str
     path: str
     value: str
@@ -377,7 +377,7 @@ class StateEntry:
         )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> StateEntry | None:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _StateEntryV1 | None:
         if not isinstance(payload, dict):
             return None
         return cls(
@@ -411,7 +411,7 @@ class StateEntry:
 
 
 @dataclass(frozen=True, slots=True)
-class DecisionEntry:
+class _DecisionEntryV1:
     decision_id: str
     summary: str
     source_turns: tuple[str, ...]
@@ -428,7 +428,7 @@ class DecisionEntry:
         )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> DecisionEntry | None:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _DecisionEntryV1 | None:
         if not isinstance(payload, dict):
             return None
         summary = str(payload.get("summary") or payload.get("value") or "").strip()
@@ -460,10 +460,10 @@ class DecisionEntry:
 
 
 @dataclass(frozen=True, slots=True)
-class RunCard:
+class _RunCardV1:
     """Run Card v2 - Extended with attention runtime fields.
 
-    This extends the original RunCard with explicit attention semantics:
+    This extends the original _RunCardV1 with explicit attention semantics:
     - latest_user_intent: The most recent explicit user intent (may be short)
     - pending_followup_action: The action the assistant is awaiting confirmation for
     - pending_followup_status: Resolution status of pending follow-up
@@ -491,7 +491,7 @@ class RunCard:
         )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> RunCard | None:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _RunCardV1 | None:
         if not isinstance(payload, dict):
             return None
         return cls(
@@ -619,7 +619,7 @@ class RunCard:
 
 
 @dataclass(frozen=True, slots=True)
-class ContextSliceSelection:
+class _ContextSliceSelectionV1:
     selection_type: str
     ref: str
     reason: str
@@ -632,7 +632,7 @@ class ContextSliceSelection:
         )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> ContextSliceSelection | None:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _ContextSliceSelectionV1 | None:
         if not isinstance(payload, dict):
             return None
         return cls(
@@ -650,12 +650,12 @@ class ContextSliceSelection:
 
 
 @dataclass(frozen=True, slots=True)
-class ContextSlicePlan:
+class _ContextSlicePlanV1:
     plan_id: str
     budget_tokens: int
     roots: tuple[str, ...] = ()
-    included: tuple[ContextSliceSelection, ...] = ()
-    excluded: tuple[ContextSliceSelection, ...] = ()
+    included: tuple[_ContextSliceSelectionV1, ...] = ()
+    excluded: tuple[_ContextSliceSelectionV1, ...] = ()
     pressure_level: str = "normal"
 
     def __post_init__(self) -> None:
@@ -666,7 +666,7 @@ class ContextSlicePlan:
         )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> ContextSlicePlan | None:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _ContextSlicePlanV1 | None:
         if not isinstance(payload, dict):
             return None
         return cls(
@@ -675,12 +675,12 @@ class ContextSlicePlan:
             roots=_tuple_str(payload.get("roots")),
             included=tuple(
                 item
-                for item in (ContextSliceSelection.from_mapping(v) for v in payload.get("included", []))
+                for item in (_ContextSliceSelectionV1.from_mapping(v) for v in payload.get("included", []))
                 if item is not None
             ),
             excluded=tuple(
                 item
-                for item in (ContextSliceSelection.from_mapping(v) for v in payload.get("excluded", []))
+                for item in (_ContextSliceSelectionV1.from_mapping(v) for v in payload.get("excluded", []))
                 if item is not None
             ),
             pressure_level=str(payload.get("pressure_level") or "normal").strip() or "normal",
@@ -698,7 +698,7 @@ class ContextSlicePlan:
 
 
 @dataclass(frozen=True, slots=True)
-class EpisodeCard:
+class _EpisodeCardV1:
     """64/256/1k三层摘要的闭环历史卡片"""
 
     episode_id: str
@@ -728,7 +728,7 @@ class EpisodeCard:
         )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> EpisodeCard | None:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _EpisodeCardV1 | None:
         if not isinstance(payload, dict):
             return None
         return cls(
@@ -776,7 +776,7 @@ class EpisodeCard:
 
 
 @dataclass(frozen=True, slots=True)
-class BudgetPlan:
+class _BudgetPlanV1:
     model_context_window: int
     output_reserve: int
     tool_reserve: int
@@ -800,7 +800,7 @@ class BudgetPlan:
         )
 
     def validate_invariants(self) -> None:
-        """Validate BudgetPlan invariants and raise BudgetExceededError if invalid.
+        """Validate _BudgetPlanV1 invariants and raise BudgetExceededError if invalid.
 
         Checks:
         - expected_next_input_tokens should not exceed model_context_window
@@ -814,7 +814,7 @@ class BudgetPlan:
 
             raise BudgetExceededError(
                 message=(
-                    f"BudgetPlan invariant violated: expected_next_input_tokens "
+                    f"_BudgetPlanV1 invariant violated: expected_next_input_tokens "
                     f"({self.expected_next_input_tokens}) exceeds model_context_window "
                     f"({self.model_context_window}) by {overrun} tokens"
                 ),
@@ -824,7 +824,7 @@ class BudgetPlan:
             )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> BudgetPlan | None:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _BudgetPlanV1 | None:
         if not isinstance(payload, dict):
             return None
         return cls(
@@ -867,7 +867,7 @@ class BudgetPlan:
         segment_breakdown: dict[str, int] | None = None,
         critical_threshold: float = 80.0,
     ) -> ContextWindowStatus:
-        """Create a ContextWindowStatus event from this BudgetPlan.
+        """Create a ContextWindowStatus event from this _BudgetPlanV1.
 
         Args:
             segment_breakdown: Optional breakdown of tokens by segment
@@ -890,10 +890,10 @@ class BudgetPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class UserProfileState:
-    preferences: tuple[StateEntry, ...] = ()
-    style: tuple[StateEntry, ...] = ()
-    persistent_facts: tuple[StateEntry, ...] = ()
+class _UserProfileStateV1:
+    preferences: tuple[_StateEntryV1, ...] = ()
+    style: tuple[_StateEntryV1, ...] = ()
+    persistent_facts: tuple[_StateEntryV1, ...] = ()
 
     def __post_init__(self) -> None:
         warnings.warn(
@@ -903,21 +903,21 @@ class UserProfileState:
         )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> UserProfileState:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _UserProfileStateV1:
         if not isinstance(payload, dict):
             return cls()
         return cls(
             preferences=tuple(
                 item
-                for item in (StateEntry.from_mapping(v) for v in payload.get("preferences", []))
+                for item in (_StateEntryV1.from_mapping(v) for v in payload.get("preferences", []))
                 if item is not None
             ),
             style=tuple(
-                item for item in (StateEntry.from_mapping(v) for v in payload.get("style", [])) if item is not None
+                item for item in (_StateEntryV1.from_mapping(v) for v in payload.get("style", [])) if item is not None
             ),
             persistent_facts=tuple(
                 item
-                for item in (StateEntry.from_mapping(v) for v in payload.get("persistent_facts", []))
+                for item in (_StateEntryV1.from_mapping(v) for v in payload.get("persistent_facts", []))
                 if item is not None
             ),
         )
@@ -931,12 +931,12 @@ class UserProfileState:
 
 
 @dataclass(frozen=True, slots=True)
-class TaskStateView:
-    current_goal: StateEntry | None = None
-    accepted_plan: tuple[StateEntry, ...] = ()
-    open_loops: tuple[StateEntry, ...] = ()
-    blocked_on: tuple[StateEntry, ...] = ()
-    deliverables: tuple[StateEntry, ...] = ()
+class _TaskStateViewV1:
+    current_goal: _StateEntryV1 | None = None
+    accepted_plan: tuple[_StateEntryV1, ...] = ()
+    open_loops: tuple[_StateEntryV1, ...] = ()
+    blocked_on: tuple[_StateEntryV1, ...] = ()
+    deliverables: tuple[_StateEntryV1, ...] = ()
 
     def __post_init__(self) -> None:
         warnings.warn(
@@ -946,25 +946,29 @@ class TaskStateView:
         )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> TaskStateView:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _TaskStateViewV1:
         if not isinstance(payload, dict):
             return cls()
         return cls(
-            current_goal=StateEntry.from_mapping(payload.get("current_goal")),
+            current_goal=_StateEntryV1.from_mapping(payload.get("current_goal")),
             accepted_plan=tuple(
                 item
-                for item in (StateEntry.from_mapping(v) for v in payload.get("accepted_plan", []))
+                for item in (_StateEntryV1.from_mapping(v) for v in payload.get("accepted_plan", []))
                 if item is not None
             ),
             open_loops=tuple(
-                item for item in (StateEntry.from_mapping(v) for v in payload.get("open_loops", [])) if item is not None
+                item
+                for item in (_StateEntryV1.from_mapping(v) for v in payload.get("open_loops", []))
+                if item is not None
             ),
             blocked_on=tuple(
-                item for item in (StateEntry.from_mapping(v) for v in payload.get("blocked_on", [])) if item is not None
+                item
+                for item in (_StateEntryV1.from_mapping(v) for v in payload.get("blocked_on", []))
+                if item is not None
             ),
             deliverables=tuple(
                 item
-                for item in (StateEntry.from_mapping(v) for v in payload.get("deliverables", []))
+                for item in (_StateEntryV1.from_mapping(v) for v in payload.get("deliverables", []))
                 if item is not None
             ),
         )
@@ -980,14 +984,14 @@ class TaskStateView:
 
 
 @dataclass(frozen=True, slots=True)
-class WorkingState:
-    user_profile: UserProfileState = field(default_factory=UserProfileState)
-    task_state: TaskStateView = field(default_factory=TaskStateView)
-    decision_log: tuple[DecisionEntry, ...] = ()
-    active_entities: tuple[StateEntry, ...] = ()
+class _WorkingStateV1:
+    user_profile: _UserProfileStateV1 = field(default_factory=_UserProfileStateV1)
+    task_state: _TaskStateViewV1 = field(default_factory=_TaskStateViewV1)
+    decision_log: tuple[_DecisionEntryV1, ...] = ()
+    active_entities: tuple[_StateEntryV1, ...] = ()
     active_artifacts: tuple[str, ...] = ()
-    temporal_facts: tuple[StateEntry, ...] = ()
-    state_history: tuple[StateEntry, ...] = ()
+    temporal_facts: tuple[_StateEntryV1, ...] = ()
+    state_history: tuple[_StateEntryV1, ...] = ()
 
     def __post_init__(self) -> None:
         warnings.warn(
@@ -997,31 +1001,31 @@ class WorkingState:
         )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> WorkingState:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _WorkingStateV1:
         if not isinstance(payload, dict):
             return cls()
         return cls(
-            user_profile=UserProfileState.from_mapping(payload.get("user_profile")),
-            task_state=TaskStateView.from_mapping(payload.get("task_state")),
+            user_profile=_UserProfileStateV1.from_mapping(payload.get("user_profile")),
+            task_state=_TaskStateViewV1.from_mapping(payload.get("task_state")),
             decision_log=tuple(
                 item
-                for item in (DecisionEntry.from_mapping(v) for v in payload.get("decision_log", []))
+                for item in (_DecisionEntryV1.from_mapping(v) for v in payload.get("decision_log", []))
                 if item is not None
             ),
             active_entities=tuple(
                 item
-                for item in (StateEntry.from_mapping(v) for v in payload.get("active_entities", []))
+                for item in (_StateEntryV1.from_mapping(v) for v in payload.get("active_entities", []))
                 if item is not None
             ),
             active_artifacts=_tuple_str(payload.get("active_artifacts")),
             temporal_facts=tuple(
                 item
-                for item in (StateEntry.from_mapping(v) for v in payload.get("temporal_facts", []))
+                for item in (_StateEntryV1.from_mapping(v) for v in payload.get("temporal_facts", []))
                 if item is not None
             ),
             state_history=tuple(
                 item
-                for item in (StateEntry.from_mapping(v) for v in payload.get("state_history", []))
+                for item in (_StateEntryV1.from_mapping(v) for v in payload.get("state_history", []))
                 if item is not None
             ),
         )
@@ -1039,18 +1043,18 @@ class WorkingState:
 
 
 @dataclass(frozen=True, slots=True)
-class ContextOSSnapshot:
+class _ContextOSSnapshotV1:
     version: int = 1
     mode: str = "state_first_context_os_v1"
     adapter_id: str = "generic"
-    transcript_log: tuple[TranscriptEvent, ...] = ()
-    working_state: WorkingState = field(default_factory=WorkingState)
-    artifact_store: tuple[ArtifactRecord, ...] = ()
-    episode_store: tuple[EpisodeCard, ...] = ()
-    budget_plan: BudgetPlan | None = None
+    transcript_log: tuple[_TranscriptEventV1, ...] = ()
+    working_state: _WorkingStateV1 = field(default_factory=_WorkingStateV1)
+    artifact_store: tuple[_ArtifactRecordV1, ...] = ()
+    episode_store: tuple[_EpisodeCardV1, ...] = ()
+    budget_plan: _BudgetPlanV1 | None = None
     updated_at: str = ""
     # Attention Runtime: pending follow-up state
-    pending_followup: PendingFollowUp | None = None
+    pending_followup: _PendingFollowUpV1 | None = None
     # v2.1: content-addressable map for deduplicated persistence
     content_map: dict[str, str] = field(default_factory=dict)
 
@@ -1062,7 +1066,7 @@ class ContextOSSnapshot:
         )
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any] | None) -> ContextOSSnapshot | None:
+    def from_mapping(cls, payload: dict[str, Any] | None) -> _ContextOSSnapshotV1 | None:
         if not isinstance(payload, dict):
             return None
 
@@ -1086,22 +1090,22 @@ class ContextOSSnapshot:
             mode=str(payload.get("mode") or "state_first_context_os_v1").strip(),
             adapter_id=str(payload.get("adapter_id") or "generic").strip() or "generic",
             transcript_log=tuple(
-                item for item in (TranscriptEvent.from_mapping(v) for v in transcript_log_data) if item is not None
+                item for item in (_TranscriptEventV1.from_mapping(v) for v in transcript_log_data) if item is not None
             ),
-            working_state=WorkingState.from_mapping(payload.get("working_state")),
+            working_state=_WorkingStateV1.from_mapping(payload.get("working_state")),
             artifact_store=tuple(
                 item
-                for item in (ArtifactRecord.from_mapping(v) for v in payload.get("artifact_store", []))
+                for item in (_ArtifactRecordV1.from_mapping(v) for v in payload.get("artifact_store", []))
                 if item is not None
             ),
             episode_store=tuple(
                 item
-                for item in (EpisodeCard.from_mapping(v) for v in payload.get("episode_store", []))
+                for item in (_EpisodeCardV1.from_mapping(v) for v in payload.get("episode_store", []))
                 if item is not None
             ),
-            budget_plan=BudgetPlan.from_mapping(payload.get("budget_plan")),
+            budget_plan=_BudgetPlanV1.from_mapping(payload.get("budget_plan")),
             updated_at=str(payload.get("updated_at") or "").strip(),
-            pending_followup=PendingFollowUp.from_mapping(payload.get("pending_followup")),
+            pending_followup=_PendingFollowUpV1.from_mapping(payload.get("pending_followup")),
             content_map=dict(payload.get("content_map") or {}),
         )
 
@@ -1150,15 +1154,15 @@ class ContextOSSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
-class ContextOSProjection:
-    snapshot: ContextOSSnapshot
+class _ContextOSProjectionV1:
+    snapshot: _ContextOSSnapshotV1
     head_anchor: str
     tail_anchor: str
-    active_window: tuple[TranscriptEvent, ...] = ()
-    artifact_stubs: tuple[ArtifactRecord, ...] = ()
-    episode_cards: tuple[EpisodeCard, ...] = ()
-    run_card: RunCard | None = None
-    context_slice_plan: ContextSlicePlan | None = None
+    active_window: tuple[_TranscriptEventV1, ...] = ()
+    artifact_stubs: tuple[_ArtifactRecordV1, ...] = ()
+    episode_cards: tuple[_EpisodeCardV1, ...] = ()
+    run_card: _RunCardV1 | None = None
+    context_slice_plan: _ContextSlicePlanV1 | None = None
 
     def __post_init__(self) -> None:
         warnings.warn(
@@ -1183,7 +1187,7 @@ class ContextOSProjection:
     MAX_EVENTS_BEFORE_EMERGENCY_COMPACT = 50
     EMERGENCY_COMPACT_TOKEN_RATIO = 0.5
 
-    def compress(self, target_tokens: int, llm: Any = None) -> ContextOSProjection:
+    def compress(self, target_tokens: int, llm: Any = None) -> _ContextOSProjectionV1:
         """Compress active_window to target token count using turn-block-aware selection.
 
         Preserves entire turn blocks for the current (most recent) turn, ensuring
@@ -1198,7 +1202,7 @@ class ContextOSProjection:
             llm: Optional LLM for intelligent compression (not used in current implementation).
 
         Returns:
-            New ContextOSProjection with compressed active_window.
+            New _ContextOSProjectionV1 with compressed active_window.
         """
         from dataclasses import replace as _replace
 
@@ -1249,7 +1253,7 @@ class ContextOSProjection:
                     break
 
         # Step 2: Group events by turn block
-        turn_blocks: dict[str, list[tuple[int, TranscriptEvent]]] = {}
+        turn_blocks: dict[str, list[tuple[int, _TranscriptEventV1]]] = {}
         for i, event in enumerate(self.active_window):
             turn_key: str
             if event.source_turns and any(t == current_turn for t in event.source_turns):
@@ -1264,7 +1268,7 @@ class ContextOSProjection:
 
         # Step 3: Score each turn block
         # Current turn gets highest priority, older turns get lower priority
-        scored_blocks: list[tuple[float, str, list[tuple[int, TranscriptEvent]]]] = []
+        scored_blocks: list[tuple[float, str, list[tuple[int, _TranscriptEventV1]]]] = []
         for turn_key, events_in_turn in turn_blocks.items():
             score = 0.0
             is_current_turn = turn_key == current_turn
@@ -1356,6 +1360,38 @@ class ContextOSProjection:
             "run_card": self.run_card.to_dict() if self.run_card is not None else None,
             "context_slice_plan": self.context_slice_plan.to_dict() if self.context_slice_plan is not None else None,
         }
+
+
+class _PolicyEnvOverrides(TypedDict, total=False):
+    """Precisely typed env override payload for :class:`StateFirstContextOSPolicy`.
+
+    Mirrors exactly the int/bool fields that ``from_env`` is allowed to override.
+    Float fields are intentionally excluded because ``from_env`` only converts
+    ``bool`` and ``int`` env values. Used as a validated cast target so the
+    runtime-validated overrides can be splatted into ``dataclasses.replace``
+    under ``mypy --strict`` without ``Any`` or ``# type: ignore``.
+    """
+
+    # int fields
+    model_context_window: int
+    default_history_window_messages: int
+    artifact_char_threshold: int
+    artifact_token_threshold: int
+    max_artifact_stubs: int
+    max_episode_cards: int
+    max_open_loops: int
+    max_stable_facts: int
+    max_decisions: int
+    max_active_window_messages: int
+    min_recent_messages_pinned: int
+    p95_tool_result_tokens: int
+    planned_retrieval_tokens: int
+    min_recent_floor: int
+    # bool fields
+    enable_dialog_act: bool
+    prevent_seal_on_pending: bool
+    enable_attention_trace: bool
+    enable_seal_guard: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -1478,9 +1514,14 @@ class StateFirstContextOSPolicy:
                 # Silently ignore invalid values to maintain stability
                 pass
 
-        # Create instance with overrides using replace()
+        # Create instance with overrides using replace().
+        # The loop above only assigns keys whose corresponding policy field is
+        # typed bool/int (and converts the value to match), so the runtime dict
+        # always conforms to _PolicyEnvOverrides. Cast at this validated boundary
+        # so replace() type-checks under mypy --strict without Any/type:ignore.
         if kwargs:
-            return replace(cls(), **kwargs)
+            overrides = cast(_PolicyEnvOverrides, kwargs)
+            return replace(cls(), **overrides)
         return cls()
 
 
@@ -1517,13 +1558,14 @@ class SnapshotSummaryView:
 #   NEW: from polaris.kernelone.context.context_os.models_v2 import ArtifactRecordV2
 #
 
-# Compatibility aliases: re-export V2 classes under V1 names.
-# These names are already defined in this module as v1 dataclasses,
-# so the re-export triggers an assignment incompatibility in mypy.
-# We suppress the error per-line to preserve runtime behavior while
-# keeping the file type-check clean.
+# Compatibility aliases: re-export V2 classes under the historical public names.
+# The legacy v1 dataclasses above are kept under private ``_<Name>V1`` names (used
+# only by their own internal cross-references), so the public names below are
+# owned solely by this re-export. That de-shadowing makes the assignment
+# type-safe under ``mypy --strict`` without ``# type: ignore`` while keeping the
+# runtime contract identical (public names have always resolved to the V2 class).
 with contextlib.suppress(ImportError):
-    from .models_v2 import (  # v2 classes shadow v1 dataclasses intentionally
+    from .models_v2 import (
         ArtifactRecordV2 as ArtifactRecord,
         BudgetPlanV2 as BudgetPlan,
         ContextOSProjectionV2 as ContextOSProjection,

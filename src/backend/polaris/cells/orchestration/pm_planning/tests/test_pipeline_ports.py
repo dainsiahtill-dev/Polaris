@@ -287,6 +287,45 @@ class TestNormalizePmPayloadHappyPath:
         assert task["target_files"] == ["src/shared/generationSpec.ts", "package.json"]
         assert task["scope_paths"] == ["src/renderer"]
 
+    def test_file_scope_paths_complete_target_files(self) -> None:
+        raw = {
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Initialize simulation models",
+                    "goal": "Implement Flower, Firefly, MoonPhase, and Garden models.",
+                    "target_files": [
+                        "package.json",
+                        "tsconfig.json",
+                        "src/models/Flower.ts",
+                        "src/models/Firefly.ts",
+                    ],
+                    "scope_paths": [
+                        "package.json",
+                        "tsconfig.json",
+                        "src/models/Flower.ts",
+                        "src/models/Firefly.ts",
+                        "src/models/MoonPhase.ts",
+                        "src/models/Garden.ts",
+                    ],
+                    "phase": "implementation",
+                    "acceptance_criteria": ["Run `npm run build` exits 0"],
+                }
+            ]
+        }
+
+        result = normalize_pm_payload(raw, iteration=1, start_timestamp="t")
+        task = result["tasks"][0]
+
+        assert task["target_files"] == [
+            "package.json",
+            "tsconfig.json",
+            "src/models/Flower.ts",
+            "src/models/Firefly.ts",
+            "src/models/MoonPhase.ts",
+            "src/models/Garden.ts",
+        ]
+
     def test_preserves_explicit_pm_ids_and_dependency_refs(self) -> None:
         raw = {
             "tasks": [

@@ -19,6 +19,8 @@ from scripts.factory_bench.run_factory_bench import (
     run_factory_chain,
 )
 
+_LAST_FACTORY_START_PAYLOAD: dict[str, Any] = {}
+
 
 def _record(**overrides: Any) -> dict[str, Any]:
     record: dict[str, Any] = {
@@ -52,8 +54,10 @@ def test_chain_failure_overrides_static_artifact_checks() -> None:
 def test_runner_requires_all_director_routes_for_llm_route_audit() -> None:
     source = Path(bench.__file__).read_text(encoding="utf-8")
 
+    assert bench.FACTORY_BENCH_REQUIRED_LLM_ROLES == ("pm", "chief_engineer", "qa", "director")
     assert "require_all_director_routes=True" in source
     assert "require_all_director_routes=False" not in source
+    assert "required_roles=FACTORY_BENCH_REQUIRED_LLM_ROLES" in source
 
 
 def test_missing_qa_verdict_and_wrong_product_are_fail_closed() -> None:
@@ -611,8 +615,10 @@ def _setup_run_factory_chain_mocks(
     workspace = tmp_path / "L2-07"
     workspace.mkdir()
     expected_workspace = str(workspace)
+    _LAST_FACTORY_START_PAYLOAD.clear()
 
     def _fake_start_factory_run(_backend_url: str, _payload: dict[str, Any], token: str = "") -> dict[str, Any] | None:
+        _LAST_FACTORY_START_PAYLOAD.update(_payload)
         return start_response
 
     def _fake_wait_run_until_terminal(
@@ -689,6 +695,8 @@ def test_run_factory_chain_success(monkeypatch: Any, tmp_path: Path) -> None:
         "blocked": 0,
     }
     assert "audit_bundle" in result
+    assert _LAST_FACTORY_START_PAYLOAD["workspace"] == str(workspace)
+    assert _LAST_FACTORY_START_PAYLOAD["persist_workspace"] is False
 
 
 def test_run_factory_chain_start_failure(monkeypatch: Any, tmp_path: Path) -> None:

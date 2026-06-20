@@ -109,7 +109,15 @@ class TestJournalSink:
                 "run_id": run_id,
                 "role": "director",
                 "event_type": "call_start",
-                "metadata": {"model": "gpt-4", "call_id": "call-123"},
+                "metadata": {
+                    "model": "gpt-4",
+                    "call_id": "call-123",
+                    "messages": [
+                        {"role": "system", "content": "secret system prompt"},
+                        {"role": "user", "content": "secret user request"},
+                    ],
+                    "response_content": "secret assistant answer",
+                },
                 "timestamp": "2026-03-31T12:00:00Z",
             },
         )
@@ -123,8 +131,10 @@ class TestJournalSink:
         roots = resolve_storage_roots(temp_workspace)
         logs_dir = Path(roots.runtime_root) / "runs" / run_id / "logs"
         norm_journal = logs_dir / "journal.norm.jsonl"
+        raw_journal = logs_dir / "journal.raw.jsonl"
 
         assert norm_journal.exists()
+        assert raw_journal.exists()
 
         with open(norm_journal, encoding="utf-8") as f:
             event = json.loads(f.readline())
@@ -132,6 +142,16 @@ class TestJournalSink:
         assert event["kind"] == "state"
         assert event["severity"] == "info"
         assert "call_start" in event["message"]
+        with open(raw_journal, encoding="utf-8") as f:
+            raw_event = json.loads(f.readline())
+        raw_metadata = raw_event["raw"]["metadata"]
+        assert raw_metadata["model"] == "gpt-4"
+        assert raw_metadata["call_id"] == "call-123"
+        assert raw_metadata["messages"] == {"redacted": True, "type": "list", "count": 2}
+        assert raw_metadata["response_content"] == {"redacted": True, "type": "str", "chars": 23}
+        serialized = json.dumps(raw_event, ensure_ascii=False)
+        assert "secret system prompt" not in serialized
+        assert "secret assistant answer" not in serialized
 
         await sink.stop()
 

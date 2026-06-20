@@ -312,6 +312,142 @@ class TestEvaluatePmTaskQualityHappyPath:
         # Director task without scope_paths should be flagged
         assert any("scope" in i.lower() for i in report["critical_issues"])
 
+    def test_described_scope_paths_must_match_contract_paths(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "TASK-2",
+                    "title": "Core domain model implementation",
+                    "goal": "Implement firefly, flower, moon phase, and humidity domain rules",
+                    "description": "Scope: `src/models/`, `src/engine/`; write the TypeScript domain model.",
+                    "acceptance_criteria": ["`npm run test` exits 0", "verify src/models/index.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["TASK-1"],
+                    "execution_checklist": ["write domain model", "run tests"],
+                    "target_files": ["index.html", "tests/test_product.py"],
+                    "scope_paths": ["index.html", "tests/test_product.py"],
+                }
+            ]
+        }
+
+        report = evaluate_pm_task_quality(payload)
+
+        assert report["ok"] is False
+        assert any(
+            "described scope paths missing from target_files/scope_paths" in issue
+            and "src/models" in issue
+            and "src/engine" in issue
+            for issue in report["critical_issues"]
+        )
+
+    def test_file_scope_paths_must_be_targeted_when_target_files_present(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Initialize simulation models",
+                    "goal": "Implement Flower, Firefly, MoonPhase, and Garden TypeScript models.",
+                    "description": "Create all core model files for the firefly garden simulator.",
+                    "acceptance_criteria": ["`npm run build` exits 0", "verify src/models/MoonPhase.ts exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": [],
+                    "execution_checklist": ["write model files", "run build"],
+                    "scope_paths": [
+                        "package.json",
+                        "tsconfig.json",
+                        "src/models/Flower.ts",
+                        "src/models/Firefly.ts",
+                        "src/models/MoonPhase.ts",
+                        "src/models/Garden.ts",
+                    ],
+                    "target_files": [
+                        "package.json",
+                        "tsconfig.json",
+                        "src/models/Flower.ts",
+                        "src/models/Firefly.ts",
+                    ],
+                }
+            ]
+        }
+
+        report = evaluate_pm_task_quality(payload)
+
+        assert report["ok"] is False
+        assert any(
+            "file-level scope_paths missing from target_files" in issue
+            and "src/models/moonphase.ts" in issue
+            and "src/models/garden.ts" in issue
+            for issue in report["critical_issues"]
+        )
+
+    def test_first_product_delivery_task_cannot_be_documentation_only(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Detail design",
+                    "goal": "Write design notes before implementing the TypeScript project.",
+                    "description": "Define model rules for the firefly garden simulator.",
+                    "acceptance_criteria": ["verify docs/design.md exists"],
+                    "assigned_to": "director",
+                    "phase": "requirements",
+                    "depends_on": [],
+                    "execution_checklist": ["write design document", "review the design"],
+                    "scope_paths": ["docs/design.md"],
+                    "target_files": ["docs/design.md"],
+                },
+                {
+                    "id": "TASK-2",
+                    "title": "Implement TypeScript project",
+                    "goal": "Create package.json, tsconfig.json, and source files.",
+                    "description": "Deliver runnable code for the product.",
+                    "acceptance_criteria": ["`npm run build` exits 0", "verify package.json exists"],
+                    "assigned_to": "director",
+                    "phase": "implementation",
+                    "depends_on": ["TASK-1"],
+                    "execution_checklist": ["write code", "run build"],
+                    "scope_paths": ["package.json", "tsconfig.json", "src/main.ts"],
+                    "target_files": ["package.json", "tsconfig.json", "src/main.ts"],
+                },
+            ]
+        }
+
+        report = evaluate_pm_task_quality(payload)
+
+        assert report["ok"] is False
+        assert any(
+            "first product-delivery Director task cannot be documentation-only" in issue
+            for issue in report["critical_issues"]
+        )
+
+    def test_single_documentation_delivery_task_is_allowed(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "TASK-1",
+                    "title": "Write README",
+                    "goal": "Document how to run the project.",
+                    "description": "Produce a documentation-only deliverable.",
+                    "acceptance_criteria": ["verify README.md exists"],
+                    "assigned_to": "director",
+                    "phase": "verification",
+                    "depends_on": [],
+                    "execution_checklist": ["write README", "review README"],
+                    "scope_paths": ["README.md"],
+                    "target_files": ["README.md"],
+                }
+            ]
+        }
+
+        report = evaluate_pm_task_quality(payload)
+
+        assert not any(
+            "first product-delivery Director task cannot be documentation-only" in issue
+            for issue in report["critical_issues"]
+        )
+
     def test_lowercase_director_task_requires_scope(self) -> None:
         payload = {
             "tasks": [

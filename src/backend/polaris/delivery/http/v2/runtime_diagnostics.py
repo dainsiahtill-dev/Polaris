@@ -134,7 +134,8 @@ def _websocket_section(request: Request) -> RuntimeDiagnosticSection:
 
 def _rate_limit_section() -> RuntimeDiagnosticSection:
     diagnostics = get_rate_limit_diagnostics()
-    store = diagnostics.get("store") if isinstance(diagnostics.get("store"), dict) else {}
+    store_raw = diagnostics.get("store")
+    store: dict[str, Any] = store_raw if isinstance(store_raw, dict) else {}
     blocked_count = int(store.get("blocked_count", 0) or 0)
     enabled = bool(diagnostics.get("enabled"))
     if not enabled:
@@ -154,7 +155,8 @@ def _rate_limit_section() -> RuntimeDiagnosticSection:
 
 def _context_os_section(workspace: str) -> RuntimeDiagnosticSection:
     diagnostics = get_contextos_diagnostics(workspace)
-    details = diagnostics.get("details") if isinstance(diagnostics.get("details"), dict) else {}
+    details_raw = diagnostics.get("details")
+    details: dict[str, Any] = details_raw if isinstance(details_raw, dict) else {}
     evidence_raw = diagnostics.get("evidence")
     evidence = [str(item) for item in evidence_raw] if isinstance(evidence_raw, list) else []
     ok_value = diagnostics.get("ok")
@@ -195,7 +197,8 @@ def _runtime_receipts_section(workspace: str) -> RuntimeDiagnosticSection:
 
 def _context_os_replay_section(workspace: str) -> RuntimeDiagnosticSection:
     diagnostics = get_contextos_diagnostics(workspace)
-    details = diagnostics.get("details") if isinstance(diagnostics.get("details"), dict) else {}
+    details_raw = diagnostics.get("details")
+    details: dict[str, Any] = details_raw if isinstance(details_raw, dict) else {}
     replay_ready = bool(details.get("replay_ready"))
     diagnostics_ok = diagnostics.get("ok")
     ok = bool(diagnostics_ok) and replay_ready if diagnostics_ok is not None else replay_ready
@@ -216,7 +219,8 @@ def _context_os_replay_section(workspace: str) -> RuntimeDiagnosticSection:
 
 def _dormant_modules_section() -> RuntimeDiagnosticSection:
     diagnostics = get_contextos_module_classification_diagnostics()
-    details = diagnostics.get("details") if isinstance(diagnostics.get("details"), dict) else {}
+    details_raw = diagnostics.get("details")
+    details: dict[str, Any] = details_raw if isinstance(details_raw, dict) else {}
     evidence_raw = diagnostics.get("evidence")
     evidence = [str(item) for item in evidence_raw] if isinstance(evidence_raw, list) else []
     ok_value = diagnostics.get("ok")

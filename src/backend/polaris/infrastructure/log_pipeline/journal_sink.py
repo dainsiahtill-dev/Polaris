@@ -28,6 +28,27 @@ from .writer import get_writer
 
 logger = logging.getLogger(__name__)
 
+_REDACTED_RAW_KEYS = {
+    "messages",
+    "prompt",
+    "prompt_messages",
+    "prompt_text",
+    "raw_prompt",
+    "system_prompt",
+    "developer_prompt",
+    "user_prompt",
+    "assistant_prompt",
+    "content",
+    "response",
+    "response_content",
+    "response_text",
+    "raw_response",
+    "completion",
+    "completion_text",
+    "input_text",
+    "output_text",
+}
+
 
 def _get_writer_for_run(workspace: str, run_id: str) -> Any:
     """Lazy-resolve LogEventWriter for a workspace + run_id."""
@@ -36,6 +57,35 @@ def _get_writer_for_run(workspace: str, run_id: str) -> Any:
     except (RuntimeError, ValueError) as exc:
         logger.error("JournalSink failed to get writer: workspace=%s run_id=%s error=%s", workspace, run_id, exc)
         return None
+
+
+def _redact_raw_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, list):
+        return {"redacted": True, "type": "list", "count": len(value)}
+    if isinstance(value, dict):
+        return {"redacted": True, "type": "dict", "keys": sorted(str(key) for key in value)[:20]}
+    if isinstance(value, str):
+        return {"redacted": True, "type": "str", "chars": len(value)}
+    return {"redacted": True, "type": type(value).__name__}
+
+
+def _redact_raw_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        redacted_fields: list[str] = []
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text.strip().lower() in _REDACTED_RAW_KEYS:
+                sanitized[key_text] = _redact_raw_value(item)
+                redacted_fields.append(key_text)
+                continue
+            sanitized[key_text] = _redact_raw_payload(item)
+        if redacted_fields:
+            sanitized["_redacted_fields"] = sorted(dict.fromkeys(redacted_fields))
+        return sanitized
+    if isinstance(value, list):
+        return [_redact_raw_payload(item) for item in value]
+    return value
 
 
 def _normalize_uep_payload(message: Message) -> CanonicalLogEventV2 | None:
@@ -54,7 +104,7 @@ def _normalize_uep_payload(message: Message) -> CanonicalLogEventV2 | None:
     timestamp = str(payload.get("timestamp") or "")
 
     if topic == TOPIC_RUNTIME_STREAM:
-        event_payload = payload.get("payload", {})
+        event_payload = _redact_raw_payload(payload.get("payload", {}))
         event_kind = "output"
         if event_type in {EVENT_TYPE_TOOL_CALL, EVENT_TYPE_TOOL_RESULT}:
             event_kind = "action"
@@ -81,7 +131,7 @@ def _normalize_uep_payload(message: Message) -> CanonicalLogEventV2 | None:
         )
 
     if topic == TOPIC_RUNTIME_LLM:
-        metadata = payload.get("metadata", {})
+        metadata = _redact_raw_payload(payload.get("metadata", {}))
         severity = "info"
         if event_type in {"call_error"}:
             severity = "error"

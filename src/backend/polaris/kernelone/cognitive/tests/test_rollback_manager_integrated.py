@@ -13,7 +13,9 @@ Verified behaviors:
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -619,6 +621,157 @@ class TestRollbackManagerNoSnapshotLeak:
         # No orphaned snapshots and no plan recorded.
         assert manager._snapshots == {}
         assert manager._plans == {}
+
+
+class TestRollbackManagerAsyncIoOffload:
+    """ASYNC-5: prepare_rollback / execute_rollback must offload blocking file IO.
+
+    Root cause: prepare_rollback (read_text) and execute_rollback (read_text for
+    ETag/verification + write_text for restore) performed synchronous file IO
+    directly on the event loop, blocking every other coroutine for the duration
+    of the read/write. Each call must now run on a worker thread via
+    asyncio.to_thread, while preserving explicit UTF-8 and exact content.
+    """
+
+    @pytest.mark.asyncio
+    async def test_prepare_rollback_reads_off_event_loop_thread(self, tmp_path: Path) -> None:
+        # Arrange: a real file whose read records the thread it executes on.
+        loop_thread_id = threading.get_ident()
+        target = tmp_path / "snap_me.txt"
+        target.write_text("payload", encoding="utf-8")
+        recorded: dict[str, int] = {}
+        original_read_text = Path.read_text
+
+        def recording_read_text(self: Path, *args: object, **kwargs: object) -> str:
+            recorded["thread_id"] = threading.get_ident()
+            return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        manager = RollbackManager()
+
+        # Act
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(Path, "read_text", recording_read_text)
+            plan = await manager.prepare_rollback(
+                action_description="offload probe",
+                target_paths=(str(target),),
+            )
+
+        # Assert: snapshot captured AND the read ran on a worker thread.
+        snapshot_key = f"{plan.plan_id}:{target}"
+        assert manager._snapshots[snapshot_key].content == "payload"
+        assert recorded["thread_id"] != loop_thread_id
+
+    @pytest.mark.asyncio
+    async def test_execute_rollback_writes_off_event_loop_thread(self, tmp_path: Path) -> None:
+        # Arrange: snapshot an existing file. An existed_before snapshot always
+        # rewrites the file on restore, so a write fires even with no drift; we
+        # leave the on-disk content unchanged so the ETag matches (no abort).
+        loop_thread_id = threading.get_ident()
+        target = tmp_path / "restore_me.txt"
+        target.write_text("original", encoding="utf-8")
+        manager = RollbackManager()
+        plan = await manager.prepare_rollback(
+            action_description="write offload probe",
+            target_paths=(str(target),),
+        )
+
+        write_threads: list[int] = []
+        original_write_text = Path.write_text
+
+        def recording_write_text(self: Path, *args: object, **kwargs: object) -> int:
+            write_threads.append(threading.get_ident())
+            return original_write_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        # Act: restore. ETag matches current disk state, so rollback proceeds.
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(Path, "write_text", recording_write_text)
+            result = await manager.execute_rollback(plan)
+
+        # Assert: restored content + the restore write executed on a worker thread.
+        assert result.status == "SUCCESS"
+        assert target.read_text(encoding="utf-8") == "original"
+        assert write_threads, "write_text was never invoked"
+        assert all(tid != loop_thread_id for tid in write_threads)
+
+    @pytest.mark.asyncio
+    async def test_prepare_then_execute_roundtrips_utf8_content(self, tmp_path: Path) -> None:
+        # Arrange: non-ASCII content must survive the offloaded read+write cycle
+        # byte-for-byte. An existed_before snapshot rewrites the file on restore;
+        # with the disk left unchanged the ETag matches and rollback proceeds.
+        target = tmp_path / "unicode.txt"
+        utf8_content = "尚书令 → café ☃ 𝄞"
+        target.write_text(utf8_content, encoding="utf-8")
+        manager = RollbackManager()
+
+        # Act: snapshot then roll back (no external drift).
+        plan = await manager.prepare_rollback(
+            action_description="utf8 roundtrip",
+            target_paths=(str(target),),
+        )
+        result = await manager.execute_rollback(plan)
+
+        # Assert: exact UTF-8 restoration through the threaded read+write.
+        assert result.status == "SUCCESS"
+        assert target.read_text(encoding="utf-8") == utf8_content
+
+    @pytest.mark.asyncio
+    async def test_execute_rollback_aborts_on_external_drift(self, tmp_path: Path) -> None:
+        # Arrange: snapshot a file, then mutate it externally before rollback.
+        target = tmp_path / "drift.txt"
+        target.write_text("original", encoding="utf-8")
+        manager = RollbackManager()
+        plan = await manager.prepare_rollback(
+            action_description="drift probe",
+            target_paths=(str(target),),
+        )
+
+        # Act: an external edit changes the content hash (ETag).
+        target.write_text("externally modified", encoding="utf-8")
+        result = await manager.execute_rollback(plan)
+
+        # Assert: drift is detected and rollback is aborted, file untouched.
+        assert result.status == "ABORTED"
+        assert result.required_action == "MANUAL_INTERVENTION"
+        assert target.read_text(encoding="utf-8") == "externally modified"
+
+    @pytest.mark.asyncio
+    async def test_execute_rollback_concurrent_calls_do_not_block_loop(self, tmp_path: Path) -> None:
+        # Arrange: a read_text that sleeps in-thread; if IO ran on the loop these
+        # would serialize for ~N*delay, but offloaded they overlap on the pool.
+        delay = 0.2
+        files = []
+        manager = RollbackManager()
+        plans = []
+        for i in range(3):
+            f = tmp_path / f"concurrent_{i}.txt"
+            f.write_text(f"content-{i}", encoding="utf-8")
+            files.append(f)
+            plans.append(
+                await manager.prepare_rollback(
+                    action_description=f"concurrent-{i}",
+                    target_paths=(str(f),),
+                )
+            )
+
+        original_read_text = Path.read_text
+
+        def slow_read_text(self: Path, *args: object, **kwargs: object) -> str:
+            import time
+
+            time.sleep(delay)
+            return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+        # Act: run all three rollbacks concurrently and measure wall time.
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(Path, "read_text", slow_read_text)
+            loop = asyncio.get_running_loop()
+            start = loop.time()
+            results = await asyncio.gather(*(manager.execute_rollback(p) for p in plans))
+            elapsed = loop.time() - start
+
+        # Assert: all succeeded and the loop stayed responsive (overlapped IO).
+        assert all(r.status == "SUCCESS" for r in results)
+        assert elapsed < delay * len(plans), f"IO appears serialized on the loop: {elapsed:.2f}s"
 
 
 if __name__ == "__main__":

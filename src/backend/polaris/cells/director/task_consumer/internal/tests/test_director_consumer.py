@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -502,6 +503,9 @@ class TestDirectorExecutionConsumerPollOnce:
                 assert input_data["task_id"] == "task-real"
                 assert input_data["pm_task_id"] == "pm-1"
                 assert context["metadata"]["task_market_stage"] == "pending_exec"
+                target = Path(self.workspace) / "src" / "main.py"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("print('ok')\n", encoding="utf-8")
                 return {
                     "success": True,
                     "task_id": task_id,
@@ -542,6 +546,66 @@ class TestDirectorExecutionConsumerPollOnce:
         assert result["side_effects"] == []
         assert result["director_adapter_result"]["success"] is True
         assert result["director_adapter_result"]["materialization_mode"] == "unit_test"
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_execute_task_rejects_reported_changed_files_that_do_not_materialize(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+
+        class FakeDirectorAdapter:
+            def __init__(self, workspace: str) -> None:
+                self.workspace = workspace
+
+            async def execute(
+                self,
+                *,
+                task_id: str,
+                input_data: dict[str, Any],
+                context: dict[str, Any],
+            ) -> dict[str, Any]:
+                del input_data, context
+                return {
+                    "success": True,
+                    "task_id": task_id,
+                    "tools_executed": 1,
+                    "materialization_mode": "unit_test",
+                    "tool_results": [
+                        {
+                            "tool_name": "write_file",
+                            "status": "success",
+                            "effect_receipt": {
+                                "file": "src/main.py",
+                                "bytes_written": 12,
+                                "changed": True,
+                            },
+                        }
+                    ],
+                }
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.create_role_adapter",
+            lambda role_id, workspace: FakeDirectorAdapter(workspace),
+        )
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+        result = consumer._execute_task(
+            "task-real",
+            {
+                "source_pm_task_id": "pm-1",
+                "title": "Create module",
+                "goal": "Create a real module",
+                "target_files": ["src/main.py"],
+            },
+            "lease-real",
+        )
+
+        assert result["changed_files"] == []
+        assert result["director_adapter_result"]["reported_changed_files"] == ["src/main.py"]
+        assert result["director_adapter_result"]["unmaterialized_reported_changed_files"] == ["src/main.py"]
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_execute_task_preserves_verified_existing_scope_evidence(

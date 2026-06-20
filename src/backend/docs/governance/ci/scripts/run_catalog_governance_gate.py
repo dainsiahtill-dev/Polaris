@@ -86,6 +86,14 @@ class GovernanceReport:
 
 _RULE_MANIFEST_CATALOG_CONSISTENCY = "manifest_catalog_consistency"
 
+# Cross-cell acyclicity (GATE-01): a NEW policy enhancement.
+# ACGA 2.0 has NO on-disk peer-cell acyclicity rule, so this gate does not enforce a
+# pre-existing rule. Instead it freezes the set of dependency cycles currently declared
+# in cells.yaml as an allowlist and fails only on cycles that are NEW relative to that
+# allowlist, mirroring the fail-on-new baseline mechanism used elsewhere in this gate.
+_RULE_NO_NEW_CROSS_CELL_CYCLE = "no_new_cross_cell_cycle"
+_CYCLE_ALLOWLIST_REL = "docs/governance/ci/cell-cycle-allowlist.yaml"
+
 
 @dataclass(frozen=True)
 class CatalogCell:
@@ -639,6 +647,147 @@ def _check_cross_cell_internal_imports(
             )
 
 
+def _build_depends_on_graph(cells: Iterable[CatalogCell]) -> dict[str, tuple[str, ...]]:
+    """Build the directed cell dependency graph from declared depends_on edges.
+
+    Edges to unknown cells (not present in the catalog) are dropped so the graph
+    only reflects relationships that the catalog itself can reason about.
+    """
+    catalog_cells = tuple(cells)
+    known_cells = {cell.cell_id for cell in catalog_cells}
+    graph: dict[str, tuple[str, ...]] = {}
+    for cell in catalog_cells:
+        targets = tuple(
+            dependency for dependency in cell.depends_on if dependency in known_cells and dependency != cell.cell_id
+        )
+        graph[cell.cell_id] = targets
+    return graph
+
+
+def _strongly_connected_components(graph: dict[str, tuple[str, ...]]) -> list[tuple[str, ...]]:
+    """Return strongly connected components with more than one member (the cycles).
+
+    Uses an iterative Tarjan traversal so deeply nested catalogs cannot overflow the
+    recursion limit. Each returned component is a sorted tuple of cell ids; the order of
+    the returned list is deterministic (sorted by the component members).
+    """
+    index_of: dict[str, int] = {}
+    lowlink: dict[str, int] = {}
+    on_stack: set[str] = set()
+    scc_stack: list[str] = []
+    counter = 0
+    components: list[tuple[str, ...]] = []
+
+    for root in sorted(graph):
+        if root in index_of:
+            continue
+        # Each work item is (node, index into its neighbour list).
+        work_stack: list[tuple[str, int]] = [(root, 0)]
+        while work_stack:
+            node, next_child = work_stack[-1]
+            if next_child == 0:
+                index_of[node] = counter
+                lowlink[node] = counter
+                counter += 1
+                scc_stack.append(node)
+                on_stack.add(node)
+            neighbours = graph.get(node, ())
+            if next_child < len(neighbours):
+                work_stack[-1] = (node, next_child + 1)
+                child = neighbours[next_child]
+                if child not in index_of:
+                    work_stack.append((child, 0))
+                elif child in on_stack:
+                    lowlink[node] = min(lowlink[node], index_of[child])
+                continue
+            # All neighbours processed: settle this node.
+            if lowlink[node] == index_of[node]:
+                component: list[str] = []
+                while True:
+                    member = scc_stack.pop()
+                    on_stack.discard(member)
+                    component.append(member)
+                    if member == node:
+                        break
+                if len(component) > 1:
+                    components.append(tuple(sorted(component)))
+            work_stack.pop()
+            if work_stack:
+                parent, _ = work_stack[-1]
+                lowlink[parent] = min(lowlink[parent], lowlink[node])
+
+    return sorted(components)
+
+
+def _cycle_fingerprint(component: tuple[str, ...]) -> str:
+    """Stable fingerprint for one dependency cycle (a strongly connected component)."""
+    key = "cycle|" + "|".join(sorted(component))
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def _load_cycle_allowlist(repo_root: Path) -> set[str]:
+    """Load the frozen set of allowlisted cycle fingerprints.
+
+    The allowlist file lists the cycles that already exist in cells.yaml at the time the
+    rule was introduced. A missing or malformed file yields an empty allowlist, which is
+    fail-closed: every detected cycle is then treated as new.
+    """
+    allowlist_path = repo_root / _CYCLE_ALLOWLIST_REL
+    if not allowlist_path.is_file():
+        return set()
+    try:
+        payload = yaml.safe_load(allowlist_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+    entries = payload.get("cycles")
+    if not isinstance(entries, list):
+        return set()
+    fingerprints: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        fingerprint = entry.get("fingerprint")
+        if isinstance(fingerprint, str) and fingerprint.strip():
+            fingerprints.add(fingerprint.strip())
+    return fingerprints
+
+
+def _check_no_new_cross_cell_cycle(
+    *,
+    repo_root: Path,
+    cells: Iterable[CatalogCell],
+    issues: list[GovernanceIssue],
+) -> None:
+    """Fail on dependency cycles that are NEW relative to the frozen allowlist.
+
+    This is a preventive enhancement: the catalog today contains many declared cycles,
+    so all currently-known cycles are seeded into the allowlist and pass. Only a cycle
+    whose fingerprint is absent from the allowlist (a newly introduced cycle, or an
+    existing cycle that has pulled in a new cell) is reported and counted as a new issue.
+    """
+    components = _strongly_connected_components(_build_depends_on_graph(cells))
+    allowlist = _load_cycle_allowlist(repo_root)
+    for component in components:
+        if _cycle_fingerprint(component) in allowlist:
+            continue
+        issues.append(
+            GovernanceIssue(
+                rule_id=_RULE_NO_NEW_CROSS_CELL_CYCLE,
+                severity=_SEVERITY_HIGH,
+                message=(
+                    "New cross-cell dependency cycle not present in the allowlist: "
+                    + " -> ".join(component)
+                    + ". Break the cycle or, if intentional, add it to "
+                    + _CYCLE_ALLOWLIST_REL
+                    + " via --write-cycle-allowlist."
+                ),
+                path=_CYCLE_ALLOWLIST_REL,
+            )
+        )
+
+
 def _check_declared_cell_dependencies(
     *,
     repo_root: Path,
@@ -892,6 +1041,30 @@ def _write_baseline(path: Path, report: GovernanceReport) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_cycle_allowlist(repo_root: Path, cells: Iterable[CatalogCell]) -> None:
+    """Regenerate the cross-cell cycle allowlist from the current catalog.
+
+    Writes one entry per currently-declared dependency cycle so that re-running the gate
+    treats them as known and passes. Use this only after a deliberate, reviewed decision
+    to accept the listed cycles.
+    """
+    components = _strongly_connected_components(_build_depends_on_graph(cells))
+    lines = [
+        "# Allowlist of cross-cell dependency cycles known to cells.yaml.",
+        "# Regenerate with: run_catalog_governance_gate.py --write-cycle-allowlist <path>",
+        "# Each entry freezes one strongly connected component (a cycle) so the",
+        "# no_new_cross_cell_cycle rule fails only on cycles introduced after this snapshot.",
+        "cycles:",
+    ]
+    for component in components:
+        lines.append(f"  - fingerprint: {_cycle_fingerprint(component)}")
+        members = ", ".join(component)
+        lines.append(f"    members: [{members}]")
+    allowlist_path = repo_root / _CYCLE_ALLOWLIST_REL
+    allowlist_path.parent.mkdir(parents=True, exist_ok=True)
+    allowlist_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def run_governance_gate(
     *,
     workspace: str,
@@ -972,6 +1145,7 @@ def run_governance_gate(
     _check_single_state_owner(cells=cells, issues=issues)
     _check_cross_cell_internal_imports(repo_root=repo_root, file_owners=file_owners, issues=issues)
     _check_declared_cell_dependencies(repo_root=repo_root, cells=cells, issues=issues)
+    _check_no_new_cross_cell_cycle(repo_root=repo_root, cells=cells, issues=issues)
     _check_critical_subgraphs(repo_root=repo_root, issues=issues)
     _check_undeclared_effects(
         repo_root=repo_root,
@@ -1064,6 +1238,12 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="write_mismatch_baseline",
         help="Write current manifest-catalog mismatches to this JSON Lines file",
     )
+    parser.add_argument(
+        "--write-cycle-allowlist",
+        dest="write_cycle_allowlist",
+        action="store_true",
+        help=("Regenerate the cross-cell cycle allowlist (" + _CYCLE_ALLOWLIST_REL + ") from the current catalog"),
+    )
     return parser
 
 
@@ -1105,6 +1285,13 @@ def main(argv: list[str] | None = None) -> int:
             for m in mismatches_list
         ]
         _write_mismatch_baseline(Path(str(args.write_mismatch_baseline)).resolve(), mm_objects)
+
+    if args.write_cycle_allowlist:
+        repo_root = Path(str(args.workspace)).resolve()
+        catalog_path = repo_root / "docs" / "graph" / "catalog" / "cells.yaml"
+        catalog_payload = _read_yaml(catalog_path) if catalog_path.is_file() else None
+        cells = _build_cell_index(catalog_payload) if isinstance(catalog_payload, dict) else []
+        _write_cycle_allowlist(repo_root, cells)
 
     # Adjust exit code for new mismatches in fail-on-new mode
     final_exit = report.exit_code

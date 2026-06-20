@@ -77,6 +77,8 @@ _PM_CONTRACT_GOVERNANCE_EXACT_MARKERS = (
 )
 _PM_CONTRACT_PATH_FIELD_RE = re.compile(r"(?:scope_paths|target_files)", re.IGNORECASE)
 _PM_CONTRACT_JSON_OUTPUT_RE = re.compile(r"仅输出\s*JSON|JSON\s*对象", re.IGNORECASE)
+_PM_BACKTICK_PATH_RE = re.compile(r"`([^`]+)`")
+_PM_DOCUMENTATION_ONLY_SUFFIXES = (".md", ".markdown", ".mdx", ".txt")
 
 
 def _contains_pm_contract_governance_task(text: str) -> bool:
@@ -99,6 +101,67 @@ def _contains_pm_contract_governance_task(text: str) -> bool:
     return False
 
 
+def _extract_declared_scope_paths_from_text(text: str) -> list[str]:
+    paths: list[str] = []
+    for match in _PM_BACKTICK_PATH_RE.finditer(text or ""):
+        raw = match.group(1)
+        for item in re.split(r"[\s,，、]+", raw):
+            normalized = _normalize_path(item)
+            if not normalized or normalized in paths:
+                continue
+            if _is_concrete_pm_scope_path(normalized):
+                paths.append(normalized)
+    return paths
+
+
+def _task_paths_cover_declared_scope(declared_path: str, task_paths: list[str]) -> bool:
+    declared = _normalize_path(declared_path)
+    if not declared:
+        return True
+    normalized_paths = [_normalize_path(path) for path in task_paths if _normalize_path(path)]
+    if declared in normalized_paths:
+        return True
+    declared_prefix = f"{declared}/"
+    if any(path.startswith(declared_prefix) for path in normalized_paths):
+        return True
+    declared_parent = _normalize_path(os.path.dirname(declared))
+    return bool(declared_parent and declared_parent in normalized_paths)
+
+
+def _file_scope_paths_missing_from_targets(task: dict[str, Any]) -> list[str]:
+    target_files = [
+        _normalize_path(path)
+        for path in _normalize_path_list(task.get("target_files") or [])
+        if _is_file_like_pm_scope_path(path)
+    ]
+    if not target_files:
+        return []
+    target_set = set(target_files)
+    missing: list[str] = []
+    for path in _normalize_path_list(task.get("scope_paths") or []):
+        normalized = _normalize_path(path)
+        if not normalized or normalized in target_set or not _is_file_like_pm_scope_path(normalized):
+            continue
+        if normalized not in missing:
+            missing.append(normalized)
+    return missing
+
+
+def _is_documentation_only_task_scope(task: dict[str, Any]) -> bool:
+    paths = _collect_task_scope_paths(task)
+    file_paths = [_normalize_path(path) for path in paths if _is_file_like_pm_scope_path(path)]
+    if not file_paths:
+        return False
+    for path in file_paths:
+        basename = os.path.basename(path).lower()
+        if basename.startswith("readme"):
+            continue
+        if path.endswith(_PM_DOCUMENTATION_ONLY_SUFFIXES):
+            continue
+        return False
+    return True
+
+
 def evaluate_pm_task_quality(
     normalized: dict[str, Any],
     docs_stage: dict[str, Any] | None = None,
@@ -117,6 +180,7 @@ def evaluate_pm_task_quality(
     """
     tasks_raw = normalized.get("tasks")
     tasks: list[Any] = tasks_raw if isinstance(tasks_raw, list) else []
+    task_count = len(tasks)
     critical_issues: list[str] = []
     warnings: list[str] = []
     seen_signatures: set[str] = set()
@@ -202,6 +266,15 @@ def evaluate_pm_task_quality(
             critical_issues.append(
                 f"{task_id}: scope paths must stay inside workspace ({', '.join(invalid_scope_paths[:3])})"
             )
+        declared_scope_paths = _extract_declared_scope_paths_from_text(combined_text)
+        missing_declared_scope_paths = [
+            path for path in declared_scope_paths if not _task_paths_cover_declared_scope(path, task_paths)
+        ]
+        if missing_declared_scope_paths:
+            critical_issues.append(
+                f"{task_id}: described scope paths missing from target_files/scope_paths "
+                f"({', '.join(missing_declared_scope_paths[:3])})"
+            )
 
         checklist = task.get("execution_checklist")
         checklist_items = []
@@ -250,6 +323,14 @@ def evaluate_pm_task_quality(
                 critical_issues.append(f"{task_id}: assignee {assigned_to} requires concrete relative scope paths")
             elif non_path_entries:
                 warnings.append(f"{task_id}: non-path scope entries ignored ({', '.join(non_path_entries[:2])})")
+            if (
+                assigned_key == "director"
+                and index == 1
+                and task_count >= 2
+                and not docs_enabled
+                and _is_documentation_only_task_scope(task)
+            ):
+                critical_issues.append(f"{task_id}: first product-delivery Director task cannot be documentation-only")
             elif docs_enabled and active_doc:
                 out_of_scope: list[str] = []
                 for path in concrete_task_paths:
@@ -271,6 +352,12 @@ def evaluate_pm_task_quality(
                 file_scopes = [path for path in concrete_task_paths if _is_file_like_pm_scope_path(path)]
                 if not file_targets and not file_scopes:
                     critical_issues.append(f"{task_id}: Director task requires file-level target_files or scope_paths")
+                missing_file_scope_targets = _file_scope_paths_missing_from_targets(task)
+                if missing_file_scope_targets:
+                    critical_issues.append(
+                        f"{task_id}: file-level scope_paths missing from target_files "
+                        f"({', '.join(missing_file_scope_targets[:3])})"
+                    )
 
         if docs_enabled:
             metadata_raw = task.get("metadata")
@@ -282,7 +369,6 @@ def evaluate_pm_task_quality(
             else:
                 warnings.append(f"{task_id}: docs-stage task missing metadata.doc_sections")
 
-    task_count = len(tasks)
     if task_count == 0:
         critical_issues.append("PM returned zero tasks")
     unique_ratio = len(seen_signatures) / float(task_count) if task_count > 0 else 1.0

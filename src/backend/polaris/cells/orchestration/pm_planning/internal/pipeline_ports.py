@@ -971,6 +971,20 @@ def _split_target_files_and_directory_scopes(target_files: list[str]) -> tuple[l
     return files, scopes
 
 
+def _complete_target_files_from_file_scopes(target_files: list[str], scope_paths: list[str]) -> list[str]:
+    """Keep file-level PM scope and Director target hints consistent."""
+    completed = list(target_files)
+    seen = set(completed)
+    for path in scope_paths:
+        normalized = str(path or "").strip().replace("\\", "/").rstrip("/")
+        if not normalized or normalized in seen:
+            continue
+        if _is_concrete_target_file_path(normalized):
+            completed.append(normalized)
+            seen.add(normalized)
+    return completed
+
+
 def _generate_task_id(task: dict[str, Any], iteration: int, index: int) -> str:
     """Generate a stable task ID."""
     explicit_id = str(task.get("id") or "").strip()
@@ -1129,6 +1143,7 @@ def normalize_pm_payload(
             scope_paths = list(dict.fromkeys([*scope_paths, *target_directory_scopes]))
             if not scope_paths and target_files:
                 scope_paths = _derive_scope_paths_from_target_files(target_files)
+            target_files = _complete_target_files_from_file_scopes(target_files, scope_paths)
             scope_mode = _normalize_scope_mode(item.get("scope_mode"))
             if scope_mode == "exact_files" and not target_files:
                 scope_mode = "module"

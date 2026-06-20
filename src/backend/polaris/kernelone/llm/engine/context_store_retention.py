@@ -125,17 +125,24 @@ class ContextStoreRetention:
         runtime_base: str | None = None,
     ) -> None:
         # Local imports to avoid import cycles (storage is heavy).
+        from pathlib import Path
+
         from polaris.kernelone.storage import StorageLayout
-        from polaris.kernelone.storage.io_paths import build_cache_root
+        from polaris.kernelone.storage.io_paths import resolve_storage_roots
 
         self._workspace = workspace or "."
         self._config = config or ContextStoreRetentionConfig()
-        cache_root = runtime_base if runtime_base else build_cache_root("", self._workspace)
-        layout = StorageLayout(workspace=self._workspace, runtime_base=cache_root)
-        # ``get_path`` returns Path — we want string paths for os.scandir.
-        contexts_root = layout.get_path("runtime", "contexts")
+        if runtime_base:
+            layout = StorageLayout(workspace=self._workspace, runtime_base=runtime_base)
+            contexts_root = layout.get_path("runtime", "contexts")
+            runtime_root = layout.runtime_root
+        else:
+            roots = resolve_storage_roots(self._workspace)
+            runtime_root = Path(roots.runtime_root)
+            contexts_root = runtime_root / "contexts"
+        # ``contexts_root`` is a Path — we want string paths for os.scandir.
         self._contexts_root = str(contexts_root.resolve())
-        self._runtime_root = str(layout.runtime_root.resolve())
+        self._runtime_root = str(runtime_root.resolve())
         self._sweep_state_path = os.path.join(self._contexts_root, SWEEP_STATE_FILENAME)
 
     # ------------------------------------------------------------------

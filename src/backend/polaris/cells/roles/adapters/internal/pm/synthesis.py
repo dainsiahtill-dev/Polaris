@@ -17,6 +17,20 @@ from .pm_text_utils import (
 )
 
 
+def _directive_requires_typescript_package_contract(directive: str) -> bool:
+    text = str(directive or "")
+    lower = text.lower()
+    has_typescript = "typescript" in lower or "ts_syntax" in lower or ".ts" in lower
+    has_package_contract = (
+        "package.json" in lower
+        or "npm" in lower
+        or "build/test/start" in lower
+        or "build, test, and start" in lower
+        or "build/test" in lower
+    )
+    return has_typescript and has_package_contract
+
+
 class PMContractSynthesisMixin(_PMAdapterMixinBase):
     """PM 合同确定性合成 mixin：在 LLM 输出不可用时，无 LLM 地基于需求指令生成可执行任务合同。"""
 
@@ -173,6 +187,115 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         root_workspace_targets = _pm_root_workspace_contract_targets_from_directive(directive)
         if root_workspace_targets:
             source_file, test_file, readme_file = root_workspace_targets
+            if source_file == "index.html" and _directive_requires_typescript_package_contract(directive):
+                model_targets = [
+                    "package.json",
+                    "tsconfig.json",
+                    "src/models/Flower.ts",
+                    "src/models/Firefly.ts",
+                    "src/models/MoonPhase.ts",
+                    "src/models/Garden.ts",
+                    "src/index.ts",
+                ]
+                visual_targets = [
+                    "index.html",
+                    "src/engine/SimulationEngine.ts",
+                    "src/engine/LightDance.ts",
+                    "src/entry/browser.ts",
+                ]
+                validation_targets = [
+                    "package.json",
+                    "src/validation/verify.ts",
+                    "tests/verify.test.ts",
+                    "README.md",
+                ]
+                root_contracts = [
+                    {
+                        "id": "TASK-1",
+                        "title": f"实现 {domain_label} TypeScript 项目骨架与核心模型",
+                        "goal": (
+                            f"在工作区根交付 {domain_label} 的 TypeScript/npm 项目骨架、"
+                            "非占位 package 脚本和核心领域模型。"
+                        ),
+                        "description": (
+                            "创建 package.json、tsconfig.json、src/index.ts 与核心模型文件，"
+                            "覆盖 Flower、Firefly、MoonPhase、Garden、humidity 和 moon 行为。"
+                        ),
+                        "scope": model_targets,
+                        "target_files": model_targets,
+                        "steps": [
+                            "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
+                            "创建 tsconfig.json，启用 strict、DOM/ES2020 lib、outDir=dist、rootDir=src",
+                            "实现 Flower/Firefly/MoonPhase/Garden 领域模型与 src/index.ts 可运行入口",
+                            "确保 `npm run build` 能生成 dist/index.js，`npm start` 引用该真实入口",
+                        ],
+                        "acceptance": [
+                            "`package.json`、`tsconfig.json`、`src/index.ts` 与至少四个模型文件存在且非空",
+                            "`npm run build` 通过，`npm start` 引用已存在的编译入口",
+                            "源码包含 firefly、flower、moon、humidity 的真实领域逻辑",
+                        ],
+                        "phase": "requirements",
+                        "depends_on": [],
+                        "assigned_to": "Director",
+                        "metadata": dict(source_metadata),
+                    },
+                    {
+                        "id": "TASK-2",
+                        "title": f"实现 {domain_label} 实时模拟引擎与 Web 入口",
+                        "goal": f"实现 {domain_label} 的实时灯光舞蹈引擎和可打开的浏览器入口。",
+                        "description": (
+                            "补齐 SimulationEngine、LightDance、browser entry 和 index.html，"
+                            "让萤火虫根据花朵情绪、湿度和月相组成实时灯光舞蹈。"
+                        ),
+                        "scope": visual_targets,
+                        "target_files": visual_targets,
+                        "steps": [
+                            "实现 SimulationEngine.ts 的 tick/update 主循环",
+                            "实现 LightDance.ts，根据花朵情绪、湿度、月相计算亮度、颜色和位置",
+                            "创建 src/entry/browser.ts，将引擎渲染到 index.html 的画布或 DOM",
+                            "创建 index.html，包含有效 <html> 与可视化容器",
+                        ],
+                        "acceptance": [
+                            "`index.html` 存在并包含有效 `<html>` 标签与模拟容器",
+                            "实时引擎会更新 firefly 状态，并使用 flower emotion、moon phase、humidity",
+                            "`npm run build` 通过且浏览器入口引用真实构建产物",
+                        ],
+                        "phase": "implementation",
+                        "depends_on": ["TASK-1"],
+                        "assigned_to": "Director",
+                        "metadata": dict(source_metadata),
+                    },
+                    {
+                        "id": "TASK-3",
+                        "title": f"实现 {domain_label} 验证脚本与 README",
+                        "goal": f"固化 {domain_label} 的自动验收脚本、README 和可复现交付证据。",
+                        "description": (
+                            "实现 src/validation/verify.ts 与 tests/verify.test.ts，验证 TypeScript、"
+                            "package 脚本、入口文件和核心领域规则。"
+                        ),
+                        "scope": validation_targets,
+                        "target_files": validation_targets,
+                        "steps": [
+                            "实现 verify.ts，检查构建产物、入口文件、关键词和核心领域规则",
+                            "实现 tests/verify.test.ts 或等价测试，覆盖发光舞蹈核心规则",
+                            "更新 package.json 的 test 脚本，使其运行真实验证而非占位输出",
+                            "编写 README，说明 npm install/build/test/start 与浏览器运行方式",
+                        ],
+                        "acceptance": [
+                            "`npm run test` 执行真实验证并返回 PASS",
+                            "`README.md` 包含安装、构建、测试、启动和浏览器查看步骤",
+                            "交付物包含 TypeScript 源码、package.json、index.html、测试与 README",
+                        ],
+                        "phase": "verification",
+                        "depends_on": ["TASK-2"],
+                        "assigned_to": "Director",
+                        "metadata": dict(source_metadata),
+                    },
+                ]
+                contracts = [
+                    self._normalize_task_contract(item, idx + 1, directive) for idx, item in enumerate(root_contracts)
+                ]
+                return [item for item in contracts if isinstance(item, dict)]
             if source_file == "index.html":
                 static_targets = [source_file, "styles.css"]
                 verification_targets = [target for target in (readme_file, test_file) if target]

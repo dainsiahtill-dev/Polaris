@@ -306,38 +306,47 @@ class IdempotentVectorStore:
             return 0
 
         cutoff = datetime.now(timezone.utc).timestamp() - (max_age_days * 86400)
-        removed = 0
-        kept: list[str] = []
 
         try:
-            lock_path = f"{self._tombstone_file}.lock"
-            with file_lock(lock_path, timeout_sec=5.0), open(self._tombstone_file, encoding="utf-8") as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    data = json.loads(line)
-                    deleted_at = data.get("deleted_at", "")
-                    if deleted_at:
-                        try:
-                            ts = datetime.fromisoformat(deleted_at).timestamp()
-                            if ts < cutoff:
-                                removed += 1
-                                continue
-                        except (ValueError, TypeError):
-                            # Malformed timestamp — keep the entry and let it be re-parsed next time
-                            logger.debug("Vacuum: could not parse timestamp %r, keeping entry", deleted_at)
-                    kept.append(line)
-
-            # Rewrite tombstone file with kept entries
-            with open(self._tombstone_file, "w", encoding="utf-8", newline="\n") as f:
-                f.writelines(kept)
-
+            # Blocking lock acquisition and file I/O run off the event loop.
+            removed = await asyncio.to_thread(self._vacuum_blocking, cutoff)
             logger.info("Vacuumed %d old tombstone entries", removed)
             return removed
-
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Vacuum failed: %s", exc)
             return 0
+
+    def _vacuum_blocking(self, cutoff: float) -> int:
+        """Prune tombstones older than ``cutoff`` and rewrite the file.
+
+        Blocking; runs in a worker thread. Returns the number of removed entries.
+        """
+        removed = 0
+        kept: list[str] = []
+
+        lock_path = f"{self._tombstone_file}.lock"
+        with file_lock(lock_path, timeout_sec=5.0), open(self._tombstone_file, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                deleted_at = data.get("deleted_at", "")
+                if deleted_at:
+                    try:
+                        ts = datetime.fromisoformat(deleted_at).timestamp()
+                        if ts < cutoff:
+                            removed += 1
+                            continue
+                    except (ValueError, TypeError):
+                        # Malformed timestamp — keep the entry and let it be re-parsed next time
+                        logger.debug("Vacuum: could not parse timestamp %r, keeping entry", deleted_at)
+                kept.append(line)
+
+        # Rewrite tombstone file with kept entries
+        with open(self._tombstone_file, "w", encoding="utf-8", newline="\n") as f:
+            f.writelines(kept)
+
+        return removed
 
     def get_stats(self) -> dict[str, Any]:
         """Get statistics about the idempotent store."""

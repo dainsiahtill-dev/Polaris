@@ -7,7 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from polaris.cells.factory.pipeline.internal import factory_run_service as factory_service_module
+from polaris.cells.factory.pipeline.internal import (
+    factory_run_service as factory_service_module,
+    factory_stage_executor as factory_stage_module,
+)
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryConfig,
     FactoryRun,
@@ -1654,6 +1657,46 @@ class TestOrchestrationStageExecutor:
         assert "qa_passed=False" in str(result.output)
         assert "runtime/qa/report.json" in result.artifacts
         assert f"workspace/roles/qa/{run.id}/report.json" in result.artifacts
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_offloads_report_read_off_event_loop(self, temp_workspace, monkeypatch):
+        # Arrange: a finished QA run plus an on-disk report. Spy on asyncio.to_thread
+        # so we can assert the (blocking) report read is dispatched off the event loop.
+        command_service = _CompletedCommandService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_quality_gate_offload",
+            config=FactoryConfig(name="test-run", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        report_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/report.json"))
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps({"passed": True, "score": 91, "critical_issue_count": 0}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        real_to_thread = asyncio.to_thread
+        offloaded_report_reads: list[dict[str, object]] = []
+
+        async def _spy_to_thread(func, /, *args, **kwargs):
+            bound_self = getattr(func, "__self__", None)
+            if getattr(func, "__name__", "") == "read_text" and bound_self == report_path:
+                offloaded_report_reads.append({"args": args, "kwargs": dict(kwargs)})
+            return await real_to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(factory_stage_module.asyncio, "to_thread", _spy_to_thread)
+
+        # Act
+        result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
+
+        # Assert: the report read was offloaded exactly once, with explicit UTF-8, and the
+        # verdict still reflects the on-disk payload.
+        assert len(offloaded_report_reads) == 1
+        assert offloaded_report_reads[0]["kwargs"] == {"encoding": "utf-8"}
+        assert "qa_passed=True" in str(result.output)
+        assert "qa_score=91" in str(result.output)
 
     @pytest.mark.asyncio
     async def test_quality_gate_fails_when_llm_judgement_unavailable_by_default(self, temp_workspace):

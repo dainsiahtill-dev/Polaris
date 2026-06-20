@@ -2225,7 +2225,7 @@ async def director_run_integration_qa(
 
         task_rows = build_integration_qa_tasks_from_director_result(director_result)
         run_dir = resolve_artifact_path(workspace, "", f"runtime/runs/{run_id}")
-        os.makedirs(run_dir, exist_ok=True)
+        await asyncio.to_thread(os.makedirs, run_dir, exist_ok=True)
         run_events = resolve_artifact_path(workspace, "", f"runtime/runs/{run_id}/events/runtime.events.jsonl")
         dialogue_full = resolve_artifact_path(workspace, "", "runtime/events/dialogue.transcript.jsonl")
         qa_result = await asyncio.to_thread(

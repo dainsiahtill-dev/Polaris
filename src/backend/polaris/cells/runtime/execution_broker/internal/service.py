@@ -8,7 +8,7 @@ import os
 import shlex
 import weakref
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TextIO
 
 from polaris.cells.runtime.execution_broker.public.contracts import (
     ExecutionBrokerError,
@@ -58,6 +58,8 @@ _STATUS_MAP: dict[ExecutionStatus, ExecutionProcessStatusV1] = {
 _LOG_DRAIN_MAX_SECONDS_ENV = "KERNELONE_EXECUTION_BROKER_LOG_DRAIN_MAX_SECONDS"
 _LOG_DRAIN_TERMINAL_IDLE_SECONDS = 5.0
 _LOG_DRAIN_TERMINAL_SNAPSHOT_WAIT_SECONDS = 1.0
+# Number of buffered lines that triggers an off-loop batch flush in the drain hot path.
+_LOG_DRAIN_FLUSH_BATCH_LINES = 64
 _SENSITIVE_ARG_NAMES = {
     "--api-key",
     "--apikey",
@@ -210,6 +212,54 @@ async def _wait_for_terminal_snapshot(handle: ExecutionHandle, *, timeout_second
     with contextlib.suppress(TimeoutError):
         await handle.wait(timeout=max(timeout_seconds, 0.0))
     return handle.snapshot()
+
+
+class _AsyncLineLog:
+    """Append-only UTF-8 log writer that keeps blocking file I/O off the event loop.
+
+    Lines are accumulated in an in-memory buffer on the calling coroutine (cheap),
+    and the actual ``write`` + ``flush`` syscalls are offloaded to a worker thread
+    via :func:`asyncio.to_thread`. The drain task is the single writer per log file,
+    so append-order buffering preserves on-disk write ordering.
+    """
+
+    def __init__(self, handle: TextIO) -> None:
+        self._handle = handle
+        self._buffer: list[str] = []
+
+    @classmethod
+    async def open(cls, log_path: str) -> _AsyncLineLog:
+        """Open the log file off-loop (directory creation + ``open`` both run in a thread)."""
+        handle = await asyncio.to_thread(open_text_log_append, log_path)
+        return cls(handle)
+
+    @property
+    def pending_lines(self) -> int:
+        """Number of buffered lines awaiting the next flush."""
+        return len(self._buffer)
+
+    def write_line(self, line: str) -> None:
+        """Buffer one already-newline-terminated line for the next flush (no I/O)."""
+        self._buffer.append(line)
+
+    async def flush(self) -> None:
+        """Offload the buffered writes and an explicit flush to a worker thread."""
+        if not self._buffer:
+            return
+        pending = "".join(self._buffer)
+        self._buffer.clear()
+        await asyncio.to_thread(self._write_and_flush, pending)
+
+    def _write_and_flush(self, payload: str) -> None:
+        self._handle.write(payload)
+        self._handle.flush()
+
+    async def close(self) -> None:
+        """Flush any remaining buffered lines and close the handle off-loop."""
+        with contextlib.suppress(Exception):
+            await self.flush()
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(self._handle.close)
 
 
 class ExecutionBrokerService:
@@ -598,19 +648,36 @@ class ExecutionBrokerService:
         Uses per-chunk timeout (max 1 second between chunks) to prevent permanent blocking.
         An optional env-configured wall-clock cap is available for diagnostics tests,
         but production drains for the subprocess lifetime.
+
+        Directory creation, the initial ``open`` and every ``write``/``flush`` run in a
+        worker thread (see :class:`_AsyncLineLog`) so the per-chunk hot path never blocks
+        the event loop on disk I/O. Lines are buffered in append order by the single drain
+        task, which keeps the on-disk write ordering identical to the synchronous version.
         """
-        os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
-        log_file = open_text_log_append(log_path)
+        execution_id = handle.execution_id
+        try:
+            log = await _AsyncLineLog.open(log_path)
+        except OSError as exc:
+            _logger.error(
+                "execution_broker.log_drain.open_failed",
+                execution_id=execution_id,
+                log_path=log_path,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            async with self._log_tasks_lock:
+                self._process_log_tasks.remove(execution_id)
+            return
+
         loop = asyncio.get_running_loop()
         max_seconds = _resolve_log_drain_max_seconds()
         deadline = loop.time() + max_seconds if max_seconds is not None else None
         terminal_idle_started_at: float | None = None
-        execution_id = handle.execution_id
         emitted_process_lines = 0
 
         try:
             start_snapshot = handle.snapshot()
-            log_file.write(
+            log.write_line(
                 "[execution_broker] launched "
                 f"execution_id={execution_id} "
                 f"pid={start_snapshot.pid} "
@@ -618,8 +685,8 @@ class ExecutionBrokerService:
             )
             args = start_snapshot.metadata.get("args")
             if isinstance(args, list):
-                log_file.write(f"[execution_broker] command={_format_args_for_log(str(item) for item in args)}\n")
-            log_file.flush()
+                log.write_line(f"[execution_broker] command={_format_args_for_log(str(item) for item in args)}\n")
+            await log.flush()
             # Use iterator approach with per-chunk timeout
             # This ensures we don't block forever on stream()
             stream_iter = handle.stream().__aiter__()
@@ -643,6 +710,9 @@ class ExecutionBrokerService:
                 except StopAsyncIteration:
                     break
                 except asyncio.TimeoutError:
+                    # No data this interval: persist whatever is buffered so the log
+                    # stays live, then evaluate the terminal-idle cutoff.
+                    await log.flush()
                     snapshot = handle.snapshot()
                     if snapshot.status.terminal:
                         if terminal_idle_started_at is None:
@@ -662,8 +732,10 @@ class ExecutionBrokerService:
                     continue
                 terminal_idle_started_at = None
                 emitted_process_lines += 1
-                log_file.write(chunk.line + "\n")
-            log_file.flush()
+                log.write_line(chunk.line + "\n")
+                if log.pending_lines >= _LOG_DRAIN_FLUSH_BATCH_LINES:
+                    await log.flush()
+            await log.flush()
         except asyncio.CancelledError:
             _logger.warning(
                 "execution_broker.log_drain.cancelled",
@@ -685,9 +757,9 @@ class ExecutionBrokerService:
                 )
                 if emitted_process_lines == 0:
                     for line in _iter_result_output_lines(snapshot.result):
-                        log_file.write(line + "\n")
+                        log.write_line(line + "\n")
                 marker = "terminal" if snapshot.status.terminal else "closed_before_terminal"
-                log_file.write(
+                log.write_line(
                     f"[execution_broker] {marker} "
                     f"execution_id={execution_id} "
                     f"pid={snapshot.pid} "
@@ -695,9 +767,8 @@ class ExecutionBrokerService:
                     f"exit_code={_extract_exit_code(snapshot)} "
                     f"error={_format_error_for_log(snapshot.error)}\n"
                 )
-                log_file.flush()
-            with contextlib.suppress(Exception):
-                log_file.close()
+                await log.flush()
+            await log.close()
             # Always remove task from registry to prevent memory leak
             async with self._log_tasks_lock:
                 self._process_log_tasks.remove(execution_id)

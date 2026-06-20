@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -254,3 +255,24 @@ class TestIdempotentVectorStoreVacuum:
         removed = await vector_store.vacuum(max_age_days=30)
 
         assert removed == 3
+
+    @pytest.mark.asyncio
+    async def test_vacuum_runs_blocking_io_off_loop(self, tombstone_file, vector_store, monkeypatch) -> None:
+        """Vacuum dispatches its blocking file I/O through asyncio.to_thread."""
+        # Arrange: one old tombstone to prune and a spy on asyncio.to_thread.
+        self._write_tombstone(tombstone_file, "old_mem", days_ago=90)
+        to_thread_calls: list[object] = []
+        real_to_thread = asyncio.to_thread
+
+        async def _spy_to_thread(func, /, *args, **kwargs):  # type: ignore[no-untyped-def]
+            to_thread_calls.append(func)
+            return await real_to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", _spy_to_thread)
+
+        # Act
+        removed = await vector_store.vacuum(max_age_days=30)
+
+        # Assert: behavior preserved AND blocking helper went off-loop.
+        assert removed == 1
+        assert vector_store._vacuum_blocking in to_thread_calls

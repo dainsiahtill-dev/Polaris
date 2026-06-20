@@ -193,21 +193,26 @@ class AkashicEpisodicMemory:
                     "metadata": record.metadata,
                 }
 
-        # Try to find in file (may have been evicted from cache)
-        if os.path.exists(self._turns_file):
-            try:
-                with open(self._turns_file, encoding="utf-8") as f:
-                    for line in f:
-                        if not line.strip():
-                            continue
-                        data = json.loads(line)
-                        if data.get("turn_index") == turn_index:
-                            if isinstance(data.get("created_at"), str):
-                                data["created_at"] = datetime.fromisoformat(data["created_at"])
-                            return data
-            except (json.JSONDecodeError, TypeError):
-                pass
+        # Try to find in file (may have been evicted from cache).
+        # Blocking file I/O runs off the event loop via asyncio.to_thread.
+        return await asyncio.to_thread(self._read_turn_from_file, turn_index)
 
+    def _read_turn_from_file(self, turn_index: int) -> dict[str, Any] | None:
+        """Scan the turns JSONL file for a turn (blocking; runs in a worker thread)."""
+        if not os.path.exists(self._turns_file):
+            return None
+        try:
+            with open(self._turns_file, encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    data = json.loads(line)
+                    if data.get("turn_index") == turn_index:
+                        if isinstance(data.get("created_at"), str):
+                            data["created_at"] = datetime.fromisoformat(data["created_at"])
+                        return data
+        except (json.JSONDecodeError, TypeError):
+            pass
         return None
 
     async def get_range(
@@ -272,21 +277,26 @@ class AkashicEpisodicMemory:
                     "metadata": record.metadata,
                 }
 
-        # Try to find in file
-        if os.path.exists(self._episodes_file):
-            try:
-                with open(self._episodes_file, encoding="utf-8") as f:
-                    for line in f:
-                        if not line.strip():
-                            continue
-                        data = json.loads(line)
-                        if data.get("episode_id") == episode_id:
-                            if isinstance(data.get("created_at"), str):
-                                data["created_at"] = datetime.fromisoformat(data["created_at"])
-                            return data
-            except (json.JSONDecodeError, TypeError):
-                pass
+        # Try to find in file.
+        # Blocking file I/O runs off the event loop via asyncio.to_thread.
+        return await asyncio.to_thread(self._read_episode_from_file, episode_id)
 
+    def _read_episode_from_file(self, episode_id: str) -> dict[str, Any] | None:
+        """Scan the episodes JSONL file for an episode (blocking; runs in a worker thread)."""
+        if not os.path.exists(self._episodes_file):
+            return None
+        try:
+            with open(self._episodes_file, encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    data = json.loads(line)
+                    if data.get("episode_id") == episode_id:
+                        if isinstance(data.get("created_at"), str):
+                            data["created_at"] = datetime.fromisoformat(data["created_at"])
+                        return data
+        except (json.JSONDecodeError, TypeError):
+            pass
         return None
 
     async def get_recent_episodes(self, limit: int = 10) -> list[dict[str, Any]]:

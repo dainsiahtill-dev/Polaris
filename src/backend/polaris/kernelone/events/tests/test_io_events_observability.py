@@ -9,6 +9,7 @@ Verifies that:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from unittest.mock import patch
@@ -138,6 +139,50 @@ def test_llm_realtime_bridge_prefers_payload_workspace_over_cache_path(tmp_path:
 
     assert published
     assert published[0].workspace == str(real_workspace)
+
+
+def test_emit_llm_event_redacts_prompt_payload_before_persistence(tmp_path: Path) -> None:
+    """Generic LLM event emission must not persist raw prompt/completion payloads."""
+    from polaris.kernelone.events import io_events
+
+    events_path = tmp_path / "pm.llm.events.jsonl"
+    secret_prompt = "SYSTEM: never persist this prompt"
+    secret_response = "assistant response with private details"
+
+    with (
+        patch("polaris.kernelone.events.io_events._publish_llm_event_to_realtime_bridge"),
+        patch("polaris.kernelone.events.io_events._publish_runtime_event_to_bus"),
+    ):
+        io_events.emit_llm_event(
+            str(events_path),
+            event="invoke_done",
+            role="pm",
+            run_id="run-redact",
+            iteration=1,
+            source="test",
+            data={
+                "model": "kimi-for-coding",
+                "provider_id": "anthropic_compat-test",
+                "prompt_tokens": 12,
+                "prompt": secret_prompt,
+                "metadata": {
+                    "messages": [{"role": "user", "content": secret_prompt}],
+                    "response_content": secret_response,
+                },
+            },
+        )
+
+    text = events_path.read_text(encoding="utf-8")
+    assert secret_prompt not in text
+    assert secret_response not in text
+    row = json.loads(text.splitlines()[0])
+    data = row["data"]
+    assert data["model"] == "kimi-for-coding"
+    assert data["provider_id"] == "anthropic_compat-test"
+    assert data["prompt_tokens"] == 12
+    assert data["prompt"]["redacted"] is True
+    assert data["metadata"]["messages"]["redacted"] is True
+    assert data["metadata"]["response_content"]["redacted"] is True
 
 
 def test_message_bus_sync_publish_without_loop_skips_without_warning(caplog) -> None:

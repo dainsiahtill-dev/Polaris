@@ -13,6 +13,9 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from polaris.kernelone.quality.role_output_markers import (
+    DEBT_MARKERS as _CANONICAL_DEBT_MARKERS,
+)
 from polaris.kernelone.security.dangerous_patterns import (
     is_dangerous_command,
     is_path_traversal,
@@ -43,8 +46,8 @@ class QualityChecker:
     # 模糊词汇（降低质量分数）
     VAGUE_WORDS = ["适当的", "合适的", "根据需要", "等等"]
 
-    # 技术债务标记
-    DEBT_MARKERS = ["临时方案", "hack", "TODO", "FIXME"]
+    # 技术债务标记（canonical 源头: polaris.kernelone.quality.role_output_markers）
+    DEBT_MARKERS = _CANONICAL_DEBT_MARKERS
 
     # Default quality threshold
     _DEFAULT_QUALITY_THRESHOLD = 60.0

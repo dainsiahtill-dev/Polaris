@@ -1663,7 +1663,8 @@ class OrchestrationStageExecutor:
         parse_error: Exception | None = None
         for _attempt in range(5):
             try:
-                loaded = json.loads(qa_report_path.read_text(encoding="utf-8"))
+                report_text = await asyncio.to_thread(qa_report_path.read_text, encoding="utf-8")
+                loaded = json.loads(report_text)
                 parse_error = None
                 break
             except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:

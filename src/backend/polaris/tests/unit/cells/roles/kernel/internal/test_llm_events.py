@@ -1,0 +1,56 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+from polaris.cells.roles.kernel.internal import events
+
+
+def test_emit_llm_event_to_disk_redacts_prompt_payloads(monkeypatch: Any, tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+
+    def _fake_roots(_workspace: str) -> SimpleNamespace:
+        return SimpleNamespace(runtime_root=str(runtime_root))
+
+    monkeypatch.setattr("polaris.cells.storage.layout.resolve_polaris_roots", _fake_roots)
+
+    event = events.LLMCallEvent(
+        event_type=events.LLMEventType.CALL_END,
+        role="director",
+        run_id="run-1",
+        model="qwen3.6-27b-gpu1",
+        prompt_tokens=123,
+        completion_tokens=45,
+        metadata={
+            "workspace": str(tmp_path),
+            "call_id": "call-1",
+            "prompt_fingerprint": "abc123",
+            "messages": [
+                {"role": "system", "content": "secret system prompt"},
+                {"role": "user", "content": "secret user request"},
+            ],
+            "response_content": "secret assistant answer",
+            "nested": {"content": "secret nested content", "safe_count": 2},
+        },
+    )
+
+    events._emit_llm_event_to_disk(event)
+
+    event_path = runtime_root / "events" / "director.llm.events.jsonl"
+    payload = json.loads(event_path.read_text(encoding="utf-8").strip())
+    data = payload["data"]
+    metadata = data["metadata"]
+
+    assert data["model"] == "qwen3.6-27b-gpu1"
+    assert data["prompt_tokens"] == 123
+    assert metadata["call_id"] == "call-1"
+    assert metadata["prompt_fingerprint"] == "abc123"
+    assert metadata["messages"] == {"redacted": True, "type": "list", "count": 2}
+    assert metadata["response_content"] == {"redacted": True, "type": "str", "chars": 23}
+    assert metadata["nested"]["content"] == {"redacted": True, "type": "str", "chars": 21}
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "secret system prompt" not in serialized
+    assert "secret assistant answer" not in serialized
+    assert "secret nested content" not in serialized

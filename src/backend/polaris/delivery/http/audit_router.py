@@ -13,6 +13,7 @@ Provides endpoints for:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -116,6 +117,19 @@ def _resolve_failure_hops_events_path(runtime_root: Path) -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def _read_failure_hops_json(hops_path: Path) -> dict[str, Any]:
+    """Read and parse a pre-computed failure_hops.json file.
+
+    Blocking I/O; intended to be offloaded via ``asyncio.to_thread`` so it
+    never stalls the request event loop. Always uses explicit UTF-8.
+    """
+    with open(hops_path, encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise ValueError(f"failure_hops payload is not an object: {hops_path}")
+    return data
 
 
 @router.get("/logs", response_model=AuditLogsResponse, dependencies=[Depends(require_auth)])
@@ -459,22 +473,21 @@ async def get_failure_hops(
 
     if hops_path.exists():
         try:
-            with open(hops_path, encoding="utf-8") as f:
-                data = json.load(f)
+            data = await asyncio.to_thread(_read_failure_hops_json, hops_path)
 
-                # Upgrade to V2 schema
-                return FailureHopsResponse(
-                    schema_version=2,
-                    run_id=data.get("run_id", run_id),
-                    generated_at=data.get("generated_at", datetime.now(timezone.utc).isoformat()),
-                    ready=data.get("ready", False),
-                    has_failure=data.get("has_failure", False),
-                    failure_code=data.get("failure_code", ""),
-                    failure_event_seq=data.get("failure_event_seq"),
-                    hop1_phase=data.get("hop1_phase"),
-                    hop2_evidence=data.get("hop2_evidence"),
-                    hop3_tool_output=data.get("hop3_tool_output"),
-                )
+            # Upgrade to V2 schema
+            return FailureHopsResponse(
+                schema_version=2,
+                run_id=data.get("run_id", run_id),
+                generated_at=data.get("generated_at", datetime.now(timezone.utc).isoformat()),
+                ready=data.get("ready", False),
+                has_failure=data.get("has_failure", False),
+                failure_code=data.get("failure_code", ""),
+                failure_event_seq=data.get("failure_event_seq"),
+                hop1_phase=data.get("hop1_phase"),
+                hop2_evidence=data.get("hop2_evidence"),
+                hop3_tool_output=data.get("hop3_tool_output"),
+            )
         except (RuntimeError, ValueError) as e:
             logger.error("Failed to read failure hops for run_id=%s: %s", run_id, e)
             raise HTTPException(status_code=500, detail="internal error") from e

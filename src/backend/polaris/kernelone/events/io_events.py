@@ -40,6 +40,26 @@ _EVENT_DEDUP_WINDOW_SEC = max(0.0, resolve_env_float("runtime_event_dedup_window
 _llm_event_guard_lock = Lock()
 _llm_event_last_by_path: dict[str, tuple[str, float]] = {}
 _LLM_EVENT_DEDUP_WINDOW_SEC = max(0.0, resolve_env_float("llm_event_dedup_window_sec"))
+_LLM_EVENT_REDACTED_KEYS = frozenset(
+    {
+        "content",
+        "completion",
+        "completion_preview",
+        "messages",
+        "output",
+        "preview",
+        "prompt",
+        "prompt_preview",
+        "raw",
+        "raw_prompt",
+        "reasoning",
+        "response",
+        "response_content",
+        "system_prompt",
+        "thinking",
+        "user_message",
+    }
+)
 
 
 def _infer_workspace_for_path(path: str) -> str:
@@ -80,6 +100,53 @@ def _extract_workspace_from_llm_event_data(data: dict[str, Any]) -> str:
         if os.path.isdir(workspace_path):
             return workspace_path
     return ""
+
+
+def _redacted_llm_event_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        return {"redacted": True, "type": "str", "chars": len(value)}
+    if isinstance(value, list):
+        return {"redacted": True, "type": "list", "count": len(value)}
+    if isinstance(value, dict):
+        return {"redacted": True, "type": "dict", "keys": sorted(str(key) for key in value)[:20]}
+    return {"redacted": True, "type": type(value).__name__}
+
+
+def _sanitize_llm_event_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Redact prompt/completion payloads before durable or realtime LLM emission."""
+    redacted_fields: list[str] = []
+
+    def _sanitize(value: Any, path: str = "") -> Any:
+        if isinstance(value, dict):
+            sanitized: dict[str, Any] = {}
+            child_redactions: list[str] = []
+            for key, item in value.items():
+                key_text = str(key)
+                key_norm = key_text.strip().lower()
+                child_path = f"{path}.{key_text}" if path else key_text
+                if key_norm in _LLM_EVENT_REDACTED_KEYS:
+                    sanitized[key_text] = _redacted_llm_event_value(item)
+                    child_redactions.append(child_path)
+                    continue
+                sanitized[key_text] = _sanitize(item, child_path)
+            if child_redactions:
+                existing = sanitized.get("_redacted_fields")
+                merged = list(existing) if isinstance(existing, list) else []
+                merged.extend(child_redactions)
+                sanitized["_redacted_fields"] = merged
+                redacted_fields.extend(child_redactions)
+            return sanitized
+        if isinstance(value, list):
+            return [_sanitize(item, f"{path}[]") for item in value]
+        return value
+
+    sanitized_root = _sanitize(data)
+    if isinstance(sanitized_root, dict) and redacted_fields:
+        existing = sanitized_root.get("_redacted_fields")
+        merged_root = list(existing) if isinstance(existing, list) else []
+        merged_root.extend(field for field in redacted_fields if field not in merged_root)
+        sanitized_root["_redacted_fields"] = merged_root
+    return sanitized_root if isinstance(sanitized_root, dict) else {}
 
 
 def _append_jsonl_direct(path: str, payload: dict[str, Any]) -> None:
@@ -639,7 +706,7 @@ def emit_llm_event(
     source_name = str(source or "").strip().lower() or "system"
     run_name = str(run_id or "").strip()
     iteration_num = int(iteration or 0)
-    event_data = data if isinstance(data, dict) else {}
+    event_data = _sanitize_llm_event_data(data if isinstance(data, dict) else {})
 
     now_ts = time.time()
     fingerprint = _build_llm_event_fingerprint(

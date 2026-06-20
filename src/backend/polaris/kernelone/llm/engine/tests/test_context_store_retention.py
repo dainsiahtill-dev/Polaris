@@ -25,7 +25,7 @@ from polaris.kernelone.llm.engine.context_store_retention import (
 )
 from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.storage import StorageLayout
-from polaris.kernelone.storage.io_paths import build_cache_root
+from polaris.kernelone.storage.io_paths import build_cache_root, resolve_storage_roots
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +87,19 @@ class TestContextStoreRetentionPolicy:
             config=config,
             runtime_base=build_cache_root("", workspace),
         )
+
+    def test_default_layout_uses_workspace_runtime_root_without_double_projects(self, tmp_path: Path) -> None:
+        workspace = str(tmp_path)
+        roots = resolve_storage_roots(workspace)
+
+        retention = ContextStoreRetention(
+            workspace=workspace,
+            config=ContextStoreRetentionConfig(sweep_min_interval_seconds=0),
+        )
+
+        assert Path(retention.runtime_root) == Path(roots.runtime_root)
+        assert Path(retention.contexts_root) == Path(roots.runtime_root) / "contexts"
+        assert "/runtime/projects/" not in str(Path(retention.contexts_root).relative_to(roots.runtime_root))
 
     def test_ttl_drops_files_older_than_ttl(self, tmp_path: Path) -> None:
         """TTL phase: files older than ``ttl_seconds`` are removed first."""

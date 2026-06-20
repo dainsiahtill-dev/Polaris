@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -82,6 +83,17 @@ class BackupManager:
         """Compute SHA256 checksum of data."""
         return hashlib.sha256(data).hexdigest()
 
+    def _write_backup_file(self, backup_file: Path, json_data: str) -> None:
+        """Write backup payload to disk (blocking; offload via to_thread)."""
+        with open(backup_file, "w", encoding="utf-8") as f:
+            f.write(json_data)
+
+    def _read_backup_file(self, backup_file: Path) -> dict[str, Any]:
+        """Read and parse a backup payload from disk (blocking; offload via to_thread)."""
+        with open(backup_file, encoding="utf-8") as f:
+            data: dict[str, Any] = json.load(f)
+        return data
+
     async def create_backup(
         self,
         data: dict[str, Any],
@@ -97,8 +109,7 @@ class BackupManager:
         checksum = self._compute_checksum(json_bytes)
 
         backup_file = self._backup_dir / f"{backup_id}.json"
-        with open(backup_file, "w", encoding="utf-8") as f:
-            f.write(json_data)
+        await asyncio.to_thread(self._write_backup_file, backup_file, json_data)
 
         metadata = BackupMetadata(
             backup_id=backup_id,
@@ -108,7 +119,7 @@ class BackupManager:
             replica_id=replica_id,
         )
         self._backups[backup_id] = metadata
-        self._save_metadata()
+        await asyncio.to_thread(self._save_metadata)
 
         return metadata
 
@@ -127,8 +138,7 @@ class BackupManager:
             raise FileNotFoundError(f"Backup file {backup_id}.json not found")
 
         try:
-            with open(backup_file, encoding="utf-8") as f:
-                data: dict[str, Any] = json.load(f)
+            data: dict[str, Any] = await asyncio.to_thread(self._read_backup_file, backup_file)
         except json.JSONDecodeError as e:
             raise ValueError(f"Backup {backup_id} is corrupted: {e}") from e
 
@@ -161,8 +171,8 @@ class BackupManager:
 
         backup_file = _safe_backup_path(self._backup_dir, backup_id)
         if backup_file.exists():
-            backup_file.unlink()
+            await asyncio.to_thread(backup_file.unlink)
 
         del self._backups[backup_id]
-        self._save_metadata()
+        await asyncio.to_thread(self._save_metadata)
         return True

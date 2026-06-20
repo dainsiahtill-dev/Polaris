@@ -59,6 +59,18 @@ def _safe_event_id(raw_value: str | None, prefix: str) -> str:
     return safe[:96] or f"{prefix}-{uuid4().hex}"
 
 
+def _read_json_file(path: str) -> Any:
+    """Read and parse a UTF-8 JSON file (blocking; run via asyncio.to_thread)."""
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _read_text_file(path: str) -> str:
+    """Read a UTF-8 text file (blocking; run via asyncio.to_thread)."""
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
+
+
 def _track_jetstream_task(task: asyncio.Task[None]) -> None:
     _BACKGROUND_JETSTREAM_TASKS.add(task)
 
@@ -133,8 +145,7 @@ async def llm_test_report(request: Request, test_run_id: str) -> dict[str, Any]:
     if not report_path or not os.path.isfile(report_path):
         raise StructuredHTTPException(status_code=404, code="REPORT_NOT_FOUND", message="report not found")
     try:
-        with open(report_path, encoding="utf-8") as handle:
-            data = json.load(handle)
+        data = await asyncio.to_thread(_read_json_file, report_path)
     except (RuntimeError, ValueError) as e:
         raise StructuredHTTPException(
             status_code=500, code="REPORT_READ_FAILED", message="failed to read report"
@@ -153,8 +164,7 @@ async def llm_test_transcript(request: Request, test_run_id: str) -> dict[str, A
     if not transcript_path or not os.path.isfile(transcript_path):
         raise StructuredHTTPException(status_code=404, code="TRANSCRIPT_NOT_FOUND", message="transcript not found")
     try:
-        with open(transcript_path, encoding="utf-8") as handle:
-            content = handle.read()
+        content = await asyncio.to_thread(_read_text_file, transcript_path)
     except (RuntimeError, ValueError) as e:
         raise StructuredHTTPException(
             status_code=500, code="TRANSCRIPT_READ_FAILED", message="failed to read transcript"

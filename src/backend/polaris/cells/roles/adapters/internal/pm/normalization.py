@@ -197,7 +197,7 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             "description": description or f"实现 {title}，并满足验收标准。",
             "scope": scope_text,
             "scope_paths": scope_paths,
-            "target_files": list(dict.fromkeys(target_files[:4])),
+            "target_files": list(dict.fromkeys(target_files)),
             "steps": steps,
             "acceptance": acceptance,
             "acceptance_criteria": acceptance,

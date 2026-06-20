@@ -180,36 +180,47 @@ class AkashicSemanticMemory:
         """Rewrite JSONL file to remove deleted items.
 
         This is called asynchronously after delete() to clean up the file.
+        The blocking lock acquisition and file I/O run off the event loop via
+        asyncio.to_thread; the parse/filter logic is preserved unchanged.
         """
         if not self._deleted_ids:
             return
 
+        deleted_snapshot = frozenset(self._deleted_ids)
         try:
-            lock_path = f"{self._memory_file}.lock"
-            with file_lock(lock_path, timeout_sec=10.0):
-                # Read all items
-                items_to_keep: list[dict[str, Any]] = []
-                if os.path.exists(self._memory_file):
-                    with open(self._memory_file, encoding="utf-8") as f:
-                        for line in f:
-                            if not line.strip():
-                                continue
-                            try:
-                                data = json.loads(line)
-                                if data.get("memory_id") not in self._deleted_ids:
-                                    items_to_keep.append(data)
-                            except json.JSONDecodeError:
-                                continue
-
-                # Rewrite file
-                with open(self._memory_file, "w", encoding="utf-8", newline="\n") as f:
-                    for data in items_to_keep:
-                        f.write(json.dumps(data, ensure_ascii=False) + "\n")
-
-            logger.debug("Compacted JSONL: removed %d items", len(self._deleted_ids))
+            removed = await asyncio.to_thread(self._compact_jsonl_blocking, deleted_snapshot)
+            logger.debug("Compacted JSONL: removed %d items", removed)
             self._deleted_ids.clear()
         except (RuntimeError, ValueError) as exc:
             logger.warning("Failed to compact semantic memory JSONL: %s", exc)
+
+    def _compact_jsonl_blocking(self, deleted_ids: frozenset[str]) -> int:
+        """Lock the file and rewrite it without deleted items (blocking; worker thread).
+
+        Returns the number of deleted ids applied to the rewrite.
+        """
+        lock_path = f"{self._memory_file}.lock"
+        with file_lock(lock_path, timeout_sec=10.0):
+            # Read all items
+            items_to_keep: list[dict[str, Any]] = []
+            if os.path.exists(self._memory_file):
+                with open(self._memory_file, encoding="utf-8") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            data = json.loads(line)
+                            if data.get("memory_id") not in deleted_ids:
+                                items_to_keep.append(data)
+                        except json.JSONDecodeError:
+                            continue
+
+            # Rewrite file
+            with open(self._memory_file, "w", encoding="utf-8", newline="\n") as f:
+                for data in items_to_keep:
+                    f.write(json.dumps(data, ensure_ascii=False) + "\n")
+
+        return len(deleted_ids)
 
     def _tokenize(self, text: str) -> set[str]:
         """Simple tokenizer for keyword matching."""

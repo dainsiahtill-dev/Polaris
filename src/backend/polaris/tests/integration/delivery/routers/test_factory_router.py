@@ -113,7 +113,7 @@ class TestFactoryRouter:
             ),
             patch(
                 "polaris.delivery.http.routers.factory.save_persisted_settings",
-            ),
+            ) as save_settings,
             patch(
                 "polaris.delivery.http.routers.factory.create_task_with_context",
             ),
@@ -137,6 +137,52 @@ class TestFactoryRouter:
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["run_id"] == "run-1"
+        save_settings.assert_called_once()
+
+    def test_start_factory_run_can_skip_global_workspace_persistence(self) -> None:
+        """Bench/e2e factory runs must not overwrite the user's global active workspace."""
+        client = _build_client()
+        mock_service = _make_mock_service()
+        mock_run = _mock_run("run-1")
+        mock_service.create_run.return_value = mock_run
+        mock_service.start_run.return_value = mock_run
+
+        with (
+            patch(
+                "polaris.delivery.http.routers.factory.FactoryRunService",
+                return_value=mock_service,
+            ),
+            patch(
+                "polaris.delivery.http.routers.factory.sync_process_settings_environment",
+            ),
+            patch(
+                "polaris.delivery.http.routers.factory.save_persisted_settings",
+            ) as save_settings,
+            patch(
+                "polaris.delivery.http.routers.factory.create_task_with_context",
+            ),
+            patch(
+                "polaris.delivery.http.routers.factory._check_docs_ready",
+                return_value=True,
+            ),
+        ):
+            response = client.post(
+                "/v2/factory/runs",
+                json={
+                    "directive": "test",
+                    "workspace": ".",
+                    "start_from": "pm",
+                    "run_director": False,
+                    "loop": False,
+                    "director_iterations": 1,
+                    "persist_workspace": False,
+                },
+            )
+
+        assert response.status_code == 200
+        save_settings.assert_not_called()
+        assert mock_run.metadata["factory_start_request"]["persist_workspace"] is False
+        assert client.app.state.app_state.settings.workspace == "."
 
     def test_start_factory_run_validation_error(self) -> None:
         """POST /v2/factory/runs with invalid payload returns 422."""

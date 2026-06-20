@@ -30,7 +30,11 @@ def _interventions_path(request: Request) -> Path:
     state = get_state(request)
     workspace = active_workspace_value(state.settings)
     if not workspace:
-        raise StructuredHTTPException(status_code=400, detail="workspace is not configured")
+        raise StructuredHTTPException(
+            status_code=400,
+            code="WORKSPACE_NOT_CONFIGURED",
+            message="workspace is not configured",
+        )
     return Path(workspace).resolve() / "INTERVENTIONS.json"
 
 
@@ -45,9 +49,17 @@ def _load_interventions(path: Path) -> dict[str, Any]:
     try:
         payload = fs.read_json(path.name)
     except json.JSONDecodeError as exc:
-        raise StructuredHTTPException(status_code=500, detail=f"invalid INTERVENTIONS.json: {exc}") from exc
+        raise StructuredHTTPException(
+            status_code=500,
+            code="INTERVENTIONS_FILE_INVALID_JSON",
+            message=f"invalid INTERVENTIONS.json: {exc}",
+        ) from exc
     if not isinstance(payload, dict):
-        raise StructuredHTTPException(status_code=500, detail="invalid INTERVENTIONS.json: root must be an object")
+        raise StructuredHTTPException(
+            status_code=500,
+            code="INTERVENTIONS_FILE_NOT_OBJECT",
+            message="invalid INTERVENTIONS.json: root must be an object",
+        )
     interventions = payload.get("interventions")
     if not isinstance(interventions, list):
         payload["interventions"] = []
@@ -71,14 +83,26 @@ async def apply_intervention_action(request: Request) -> dict[str, Any]:
 
     body = await request.json()
     if not isinstance(body, dict):
-        raise StructuredHTTPException(status_code=400, detail="request body must be an object")
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INTERVENTION_BODY_NOT_OBJECT",
+            message="request body must be an object",
+        )
     intervention_id = str(body.get("id") or "").strip()
     action = str(body.get("action") or "").strip().lower()
     if not intervention_id:
-        raise StructuredHTTPException(status_code=400, detail="intervention id is required")
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INTERVENTION_ID_REQUIRED",
+            message="intervention id is required",
+        )
     status = VALID_ACTION_STATUSES.get(action)
     if not status:
-        raise StructuredHTTPException(status_code=400, detail=f"unsupported intervention action: {action or '(empty)'}")
+        raise StructuredHTTPException(
+            status_code=400,
+            code="INTERVENTION_ACTION_UNSUPPORTED",
+            message=f"unsupported intervention action: {action or '(empty)'}",
+        )
 
     path = _interventions_path(request)
     payload = _load_interventions(path)
@@ -94,4 +118,8 @@ async def apply_intervention_action(request: Request) -> dict[str, Any]:
             _store_interventions(path, payload)
             return {"ok": True, "id": intervention_id, "status": status}
 
-    raise StructuredHTTPException(status_code=404, detail=f"intervention not found: {intervention_id}")
+    raise StructuredHTTPException(
+        status_code=404,
+        code="INTERVENTION_NOT_FOUND",
+        message=f"intervention not found: {intervention_id}",
+    )

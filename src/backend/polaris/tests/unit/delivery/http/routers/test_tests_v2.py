@@ -291,3 +291,191 @@ async def test_v2_llm_test_transcript_not_found(client: AsyncClient) -> None:
         assert response.status_code == 404
         data = response.json()
         assert data["error"]["code"] == "TRANSCRIPT_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_v2_llm_test_transcript_preserves_utf8(client: AsyncClient, tmp_path: Path) -> None:
+    """Transcript reads must decode non-ASCII content via explicit UTF-8."""
+    transcript_file = tmp_path / "transcript.md"
+    transcript_file.write_text("# 测试记录\n\n全部通过 ✅", encoding="utf-8")
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.tests.build_cache_root",
+            return_value=str(tmp_path),
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests.resolve_artifact_path",
+            return_value=str(transcript_file),
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests.os.path.isfile",
+            return_value=True,
+        ),
+    ):
+        response = await client.get("/v2/llm/test/run-123/transcript")
+        assert response.status_code == 200
+        assert response.json()["content"] == "# 测试记录\n\n全部通过 ✅"
+
+
+@pytest.mark.asyncio
+async def test_v2_llm_test_report_read_failure_returns_500(client: AsyncClient, tmp_path: Path) -> None:
+    """A failure while reading the report should surface a structured 500."""
+    report_file = tmp_path / "report.json"
+    report_file.write_text("{}", encoding="utf-8")
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.tests.build_cache_root",
+            return_value=str(tmp_path),
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests.resolve_artifact_path",
+            return_value=str(report_file),
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests.os.path.isfile",
+            return_value=True,
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests._read_json_file",
+            side_effect=ValueError("boom"),
+        ),
+    ):
+        response = await client.get("/v2/llm/test/run-123")
+        assert response.status_code == 500
+        assert response.json()["error"]["code"] == "REPORT_READ_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_v2_llm_test_transcript_read_failure_returns_500(client: AsyncClient, tmp_path: Path) -> None:
+    """A failure while reading the transcript should surface a structured 500."""
+    transcript_file = tmp_path / "transcript.md"
+    transcript_file.write_text("x", encoding="utf-8")
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.tests.build_cache_root",
+            return_value=str(tmp_path),
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests.resolve_artifact_path",
+            return_value=str(transcript_file),
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests.os.path.isfile",
+            return_value=True,
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests._read_text_file",
+            side_effect=RuntimeError("boom"),
+        ),
+    ):
+        response = await client.get("/v2/llm/test/run-123/transcript")
+        assert response.status_code == 500
+        assert response.json()["error"]["code"] == "TRANSCRIPT_READ_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_v2_llm_test_report_offloads_read_via_to_thread(client: AsyncClient, tmp_path: Path) -> None:
+    """The blocking report read must run via asyncio.to_thread off the loop."""
+    report_file = tmp_path / "report.json"
+    report_file.write_text(
+        '{"run_id": "run-123", "provider_id": "openai", "model": "gpt-4", '
+        '"role": "connectivity", "summary": {"ready": true}, "suites": {}}',
+        encoding="utf-8",
+    )
+
+    from polaris.delivery.http.routers import tests as tests_router
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.tests.build_cache_root",
+            return_value=str(tmp_path),
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests.resolve_artifact_path",
+            return_value=str(report_file),
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests.os.path.isfile",
+            return_value=True,
+        ),
+        patch.object(
+            tests_router.asyncio,
+            "to_thread",
+            wraps=tests_router.asyncio.to_thread,
+        ) as spy,
+    ):
+        response = await client.get("/v2/llm/test/run-123")
+        assert response.status_code == 200
+        spy.assert_awaited_once()
+        assert spy.await_args is not None
+        assert spy.await_args.args[0] is tests_router._read_json_file
+
+
+@pytest.mark.asyncio
+async def test_v2_llm_test_transcript_offloads_read_via_to_thread(client: AsyncClient, tmp_path: Path) -> None:
+    """The blocking transcript read must run via asyncio.to_thread off the loop."""
+    transcript_file = tmp_path / "transcript.md"
+    transcript_file.write_text("hello", encoding="utf-8")
+
+    from polaris.delivery.http.routers import tests as tests_router
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.tests.build_cache_root",
+            return_value=str(tmp_path),
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests.resolve_artifact_path",
+            return_value=str(transcript_file),
+        ),
+        patch(
+            "polaris.delivery.http.routers.tests.os.path.isfile",
+            return_value=True,
+        ),
+        patch.object(
+            tests_router.asyncio,
+            "to_thread",
+            wraps=tests_router.asyncio.to_thread,
+        ) as spy,
+    ):
+        response = await client.get("/v2/llm/test/run-123/transcript")
+        assert response.status_code == 200
+        spy.assert_awaited_once()
+        assert spy.await_args is not None
+        assert spy.await_args.args[0] is tests_router._read_text_file
+
+
+# ---------------------------------------------------------------------------
+# Helpers: _read_json_file / _read_text_file
+# ---------------------------------------------------------------------------
+
+
+def test_read_json_file_parses_utf8(tmp_path: Path) -> None:
+    # Arrange
+    from polaris.delivery.http.routers.tests import _read_json_file
+
+    path = tmp_path / "data.json"
+    path.write_text('{"name": "报告", "ok": true}', encoding="utf-8")
+
+    # Act
+    data = _read_json_file(str(path))
+
+    # Assert
+    assert data == {"name": "报告", "ok": True}
+
+
+def test_read_text_file_parses_utf8(tmp_path: Path) -> None:
+    # Arrange
+    from polaris.delivery.http.routers.tests import _read_text_file
+
+    path = tmp_path / "data.txt"
+    path.write_text("内容 ✅", encoding="utf-8")
+
+    # Act
+    content = _read_text_file(str(path))
+
+    # Assert
+    assert content == "内容 ✅"
