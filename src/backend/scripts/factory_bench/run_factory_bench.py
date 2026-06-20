@@ -18,6 +18,7 @@ time, ``--max-failed`` early stop, audit + root-cause before continuing.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -157,6 +158,41 @@ def _safe_mtime(path: Path) -> float:
         return 0.0
 
 
+_RUNTIME_WORKSPACE_EVIDENCE_RELATIVE_PATHS = (
+    "events/director.llm.events.jsonl",
+    "events/pm.llm.events.jsonl",
+    "events/task_runtime.execution.jsonl",
+    "events/roles.kernel.events.jsonl",
+    "results/director.result.json",
+    "results/integration_qa.result.json",
+)
+
+
+def _file_mentions_workspace(path: Path, workspace_text: str) -> bool:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            content = handle.read(2_000_000)
+    except (OSError, RuntimeError, UnicodeDecodeError):
+        return False
+    return workspace_text in content
+
+
+def _runtime_dir_matches_workspace(runtime_dir: Path, workspace: Path) -> bool:
+    """Return true when a runtime dir contains evidence for this exact workspace."""
+
+    try:
+        workspace_text = str(workspace.resolve())
+    except (OSError, RuntimeError, ValueError):
+        workspace_text = str(workspace)
+    candidates: list[Path] = []
+    candidates.extend(runtime_dir / rel_path for rel_path in _RUNTIME_WORKSPACE_EVIDENCE_RELATIVE_PATHS)
+    events_dir = runtime_dir / "events"
+    if events_dir.is_dir():
+        with contextlib.suppress(OSError):
+            candidates.extend(sorted(events_dir.glob("*.jsonl"))[:24])
+    return any(path.is_file() and _file_mentions_workspace(path, workspace_text) for path in candidates)
+
+
 def resolve_runtime_dirs_for_workspace(workspace: Path) -> list[Path]:
     """Find all runtime dirs for this workspace across ramdisk/cache bases."""
     key_prefix = workspace.name.lower() + "-"
@@ -175,7 +211,11 @@ def resolve_runtime_dirs_for_workspace(workspace: Path) -> list[Path]:
             runtime_dirs.add(runtime)
         elif match.is_dir():
             runtime_dirs.add(match)
-    return sorted(runtime_dirs, key=_safe_mtime, reverse=True)
+    sorted_runtime_dirs = sorted(runtime_dirs, key=_safe_mtime, reverse=True)
+    matching_runtime_dirs = [
+        runtime_dir for runtime_dir in sorted_runtime_dirs if _runtime_dir_matches_workspace(runtime_dir, workspace)
+    ]
+    return matching_runtime_dirs or sorted_runtime_dirs
 
 
 def discover_artifacts(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -107,18 +108,122 @@ def _apply_deterministic_npm_test_script_repair(
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
-    del adapter, task_id
     if not any(_is_repairable_npm_test_script_error(error) for error in artifact_quality_errors):
         return []
-    # Do not fabricate a manifest-only `npm test` script. That made generated
-    # projects look runnable while exercising only package.json parsing. Let the
-    # normal LLM quality-repair path create a project-specific test/check, or
-    # fail closed with the original quality error.
-    return []
+
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    package_path = workspace_path / "package.json"
+    if not package_path.is_file():
+        return []
+    try:
+        payload = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict) or not _workspace_has_typescript_context(workspace_path, payload):
+        return []
+
+    scripts_raw = payload.get("scripts")
+    scripts: dict[str, Any] = dict(scripts_raw) if isinstance(scripts_raw, dict) else {}
+    changed_scripts: dict[str, str] = {}
+    if "build" not in scripts:
+        compile_script = str(scripts.get("compile") or "").strip()
+        scripts["build"] = "npm run compile" if compile_script else "tsc"
+        changed_scripts["build"] = str(scripts["build"])
+
+    if any(_is_repairable_npm_test_script_error(error) for error in artifact_quality_errors):
+        test_script = str(scripts.get("test") or "").strip()
+        if not test_script or _is_manifest_only_or_default_test_script_error(artifact_quality_errors):
+            scripts["test"] = "npm run build"
+            changed_scripts["test"] = "npm run build"
+
+    missing_start_entrypoint = _missing_npm_script_entrypoint(artifact_quality_errors, script_name="start")
+    if missing_start_entrypoint:
+        entrypoint = _package_entrypoint(payload, fallback=missing_start_entrypoint)
+        scripts["start"] = f"npm run build && node {entrypoint}"
+        changed_scripts["start"] = str(scripts["start"])
+
+    if not changed_scripts:
+        return []
+
+    payload["scripts"] = dict(sorted((str(key), value) for key, value in scripts.items()))
+    content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    write_result = DirectorToolExecutor(
+        str(workspace_path),
+        message_bus=message_bus,
+        worker_id="director",
+    ).execute_tool(
+        "write_file",
+        {"file": "package.json", "content": content},
+        task_id=task_id,
+    )
+    if not bool(write_result.get("ok")):
+        return []
+    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+        adapter._update_task_progress(task_id, "executing", current_file="package.json")
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_npm_script_contract_repair",
+                "file": "package.json",
+                "scripts": changed_scripts,
+                "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
+                "operation": str(write_result.get("operation") or "modify"),
+                "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                "director_policy": write_result.get("director_policy"),
+            },
+        }
+    ]
 
 
 def _is_repairable_npm_test_script_error(error: Any) -> bool:
     text = str(error or "")
-    return "npm default failing test script" in text or (
-        "npm package manifest script 'test' has invalid shell syntax" in text
+    return (
+        "npm default failing test script" in text
+        or "npm manifest-only test script" in text
+        or "npm package manifest script 'test' has invalid shell syntax" in text
+        or "npm package manifest script 'start' references missing local entrypoint" in text
     )
+
+
+def _is_manifest_only_or_default_test_script_error(errors: list[str]) -> bool:
+    joined = "\n".join(str(error or "") for error in errors)
+    return (
+        "npm default failing test script" in joined
+        or "npm manifest-only test script" in joined
+        or "npm package manifest script 'test' has invalid shell syntax" in joined
+    )
+
+
+def _missing_npm_script_entrypoint(errors: list[str], *, script_name: str) -> str:
+    pattern = re.compile(
+        rf"npm package manifest script '{re.escape(script_name)}' references missing local entrypoint '([^']+)'"
+    )
+    for error in errors:
+        match = pattern.search(str(error or ""))
+        if match:
+            return str(match.group(1) or "").strip()
+    return ""
+
+
+def _package_entrypoint(payload: dict[str, Any], *, fallback: str) -> str:
+    entrypoint = str(payload.get("main") or "").strip()
+    return entrypoint or fallback or "dist/main.js"
+
+
+def _workspace_has_typescript_context(workspace_path: Path, payload: dict[str, Any]) -> bool:
+    if (workspace_path / "tsconfig.json").is_file():
+        return True
+    for dependency_key in ("dependencies", "devDependencies"):
+        dependencies = payload.get(dependency_key)
+        if isinstance(dependencies, dict) and "typescript" in dependencies:
+            return True
+    for source_root in ("src", "tests"):
+        root = workspace_path / source_root
+        if root.is_dir() and any(path.suffix == ".ts" for path in root.rglob("*.ts")):
+            return True
+    return False

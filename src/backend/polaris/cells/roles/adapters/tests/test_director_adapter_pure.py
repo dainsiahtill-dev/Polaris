@@ -63,6 +63,81 @@ def _make_adapter(tmp_path: Any, task_board: Any = None, task_runtime: Any = Non
     return adapter
 
 
+def _write_substantive_node_test_script(tmp_path: Any) -> None:
+    script_path = tmp_path / "scripts" / "test.mjs"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(
+        "import assert from 'node:assert/strict';\n"
+        "assert.equal(typeof process.version, 'string');\n"
+        "console.log('node smoke test passed');\n",
+        encoding="utf-8",
+    )
+
+
+def test_deterministic_npm_script_repair_builds_before_missing_dist_entrypoint(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_npm_test_script_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("console.log('hello');\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps(
+            {
+                "compilerOptions": {
+                    "outDir": "dist",
+                    "rootDir": "src",
+                    "target": "ES2020",
+                    "module": "ES2020",
+                },
+                "include": ["src/**/*.ts"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "typescript-project",
+                "version": "1.0.0",
+                "main": "dist/main.js",
+                "scripts": {
+                    "build": "tsc",
+                    "start": "node dist/main.js",
+                    "test": (
+                        "node -e \"const fs=require('fs');"
+                        "JSON.parse(fs.readFileSync('package.json','utf8'));"
+                        "console.log('Manifest check passed')\""
+                    ),
+                },
+                "devDependencies": {"typescript": "^5.4.0"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert any("manifest-only test script" in error for error in errors)
+    assert any("references missing local entrypoint 'dist/main.js'" in error for error in errors)
+
+    results = _apply_deterministic_npm_test_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["scripts"]["test"] == "npm run build"
+    assert repaired["scripts"]["start"] == "npm run build && node dist/main.js"
+    repaired_errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert not any("manifest-only test script" in error for error in repaired_errors)
+    assert not any("references missing local entrypoint" in error for error in repaired_errors)
+
+
 def test_empty_write_content_retry_needed_only_for_blank_write() -> None:
     assert (
         _empty_write_content_retry_needed(
@@ -1488,6 +1563,7 @@ export function summary() {
             + "\n",
             encoding="utf-8",
         )
+        _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
         task = adapter.task_board.create(
             subject="Define tenant model",
@@ -1568,6 +1644,7 @@ export function summary() {
             + "\n",
             encoding="utf-8",
         )
+        _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
         task = adapter.task_board.create(
             subject="Tenant Context & Audit Log Middleware",
@@ -1667,6 +1744,7 @@ export function summary() {
             + "\n",
             encoding="utf-8",
         )
+        _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
         task = adapter.task_board.create(
             subject="Immutable Audit Logging Implementation",
@@ -1767,6 +1845,7 @@ export function summary() {
             + "\n",
             encoding="utf-8",
         )
+        _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
         task = adapter.task_board.create(
             subject="Tenant Context Middleware",
@@ -1865,6 +1944,7 @@ export function summary() {
             + "\n",
             encoding="utf-8",
         )
+        _write_substantive_node_test_script(tmp_path)
         adapter = _make_adapter(tmp_path)
         task = adapter.task_board.create(
             subject="Task Definition Model",
@@ -5194,6 +5274,88 @@ class TestQualityRepairMissingTargetContract:
         assert summary["semantic_quality_target_files"] == ["package.json"]
         assert summary["repair_target_files"] == ["package.json"]
 
+    @pytest.mark.asyncio
+    async def test_quality_repair_second_attempt_rotates_to_typescript_source_after_package_target(
+        self, tmp_path
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self.repair_context: dict[str, Any] = {}
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, timeout_seconds, stage_label
+                self.repair_context = context
+                return {"content": ""}
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "index.ts").write_text("const config = { humidity: 65.0; };\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {"build": "tsc", "start": "node dist/index.js"},
+                    "devDependencies": {"typescript": "^5.3.0"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        adapter = _Adapter()
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["package.json", "src/index.ts"]},
+            target_task_id="task-1",
+            run_id="run-1",
+            context={},
+            original_message="Create TypeScript garden simulation.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: npm package manifest script "
+                "'start' references missing local entrypoint 'dist/index.js' in package.json",
+                "Artifact quality scan failed: TypeScript project typecheck failed: "
+                "src/index.ts(16,21): error TS1005: ',' expected.",
+            ],
+            changed_files=["package.json", "src/index.ts"],
+            repair_attempt=2,
+        )
+
+        assert summary["semantic_quality_target_files"] == ["package.json", "src/index.ts"]
+        assert summary["repair_target_files"] == ["src/index.ts"]
+        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
+            "tool": "write_file",
+            "target_file": "src/index.ts",
+        }
+
     def test_repair_targets_existing_import_case_variant_is_not_missing(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _missing_materialization_quality_repair_target_files,
@@ -5740,7 +5902,7 @@ class TestQualityRepairMissingTargetContract:
         assert summary["missing_target_files"] == missing_targets
         assert summary["repair_target_files"] == missing_targets
 
-    def test_materialization_quality_repair_retry_after_first_attempt_is_single_target(self) -> None:
+    def test_materialization_quality_repair_retry_after_first_attempt_stays_single_target(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _select_materialization_quality_repair_target_batch,
         )
@@ -5753,6 +5915,33 @@ class TestQualityRepairMissingTargetContract:
 
         assert _select_materialization_quality_repair_target_batch(missing_targets, repair_attempt=1) == missing_targets
         assert _select_materialization_quality_repair_target_batch(missing_targets, repair_attempt=2) == ["src/main.ts"]
+
+    def test_materialization_quality_repair_retry_can_rotate_single_target_after_first_attempt(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _select_materialization_quality_repair_target_batch,
+        )
+
+        missing_targets = [
+            "src/main.ts",
+            "README.md",
+            "tests/main.test.ts",
+        ]
+
+        assert _select_materialization_quality_repair_target_batch(
+            missing_targets,
+            repair_attempt=2,
+            rotate_after_first_attempt=True,
+        ) == ["README.md"]
+        assert _select_materialization_quality_repair_target_batch(
+            missing_targets,
+            repair_attempt=3,
+            rotate_after_first_attempt=True,
+        ) == ["tests/main.test.ts"]
+        assert _select_materialization_quality_repair_target_batch(
+            missing_targets,
+            repair_attempt=4,
+            rotate_after_first_attempt=True,
+        ) == ["src/main.ts"]
 
     def test_repair_message_names_missing_targets_and_hides_changed_paths(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

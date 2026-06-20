@@ -18,7 +18,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-import re
 import sys
 import time
 import typing
@@ -30,6 +29,8 @@ from polaris.cells.director.tasking.internal import path_predicates as _path_pre
 from polaris.cells.director.tasking.internal.bootstrap_template_catalog import (
     get_intelligent_bootstrap_files,
 )
+from polaris.cells.director.tasking.internal.codegen_rounds import CodegenRoundPlanner
+from polaris.cells.director.tasking.internal.prompt_builder import PromptBuilder
 from polaris.cells.director.tasking.internal.response_parser import (
     extract_files_from_response as _extract_files_from_response_impl,
 )
@@ -37,6 +38,10 @@ from polaris.cells.director.tasking.internal.target_file_resolver import TargetF
 from polaris.cells.director.tasking.internal.task_classifier import (
     classify_task as _classify_task_impl,
     extract_tech_stack as _extract_tech_stack_impl,
+)
+from polaris.cells.director.tasking.internal.verification_repair import (
+    VerificationRepair,
+    parse_unresolved_import_entry as _parse_unresolved_import_entry_impl,
 )
 from polaris.cells.director.tasking.internal.workspace_probe import WorkspaceProbe
 from polaris.domain.entities import Task, TaskResult
@@ -169,6 +174,14 @@ class WorkerExecutor:
         self._worker_id = worker_id
         self._workspace_probe = WorkspaceProbe(workspace)
         self._target_resolver = TargetFileResolver(workspace, self._workspace_probe)
+        self._verification_repair = VerificationRepair(self._target_resolver, self._workspace_probe)
+        self._codegen_rounds = CodegenRoundPlanner(self._verification_repair, self._target_resolver)
+        self._prompt_builder = PromptBuilder(
+            self._target_resolver,
+            self._verification_repair,
+            self._codegen_rounds,
+            self._compact_prompt_fragment,
+        )
 
         # Initialize specialized services (Phase 4 deps deferred)
         if _FileApplyService is not None:
@@ -614,84 +627,20 @@ class WorkerExecutor:
         return self._target_resolver.normalize_scope_paths(task)
 
     def _verification_feedback(self, task: Task) -> dict[str, Any]:
-        """Return previous verification diagnostics carried by the workflow retry."""
-        metadata = task.metadata if isinstance(task.metadata, dict) else {}
-        direct = metadata.get("previous_verification_result")
-        if isinstance(direct, dict) and direct:
-            return direct
-        phase_context = metadata.get("phase_context")
-        if isinstance(phase_context, dict):
-            phase_verification = phase_context.get("verification_result")
-            if isinstance(phase_verification, dict) and phase_verification:
-                return phase_verification
-        task_context = metadata.get("task_context")
-        if isinstance(task_context, dict):
-            previous = task_context.get("previous_verification_result")
-            if isinstance(previous, dict) and previous:
-                return previous
-            nested_phase = task_context.get("phase_context")
-            if isinstance(nested_phase, dict):
-                nested_verification = nested_phase.get("verification_result")
-                if isinstance(nested_verification, dict) and nested_verification:
-                    return nested_verification
-        return {}
+        """Return previous verification diagnostics carried by the workflow retry.
+
+        Delegates to ``VerificationRepair.feedback``.
+        """
+        return self._verification_repair.feedback(task)
 
     @staticmethod
     def _parse_unresolved_import_entry(entry: Any) -> tuple[str, str] | None:
-        token = str(entry or "").strip()
-        if ":" not in token:
-            return None
-        source_file, import_ref = token.split(":", maxsplit=1)
-        source_file = source_file.strip().replace("\\", "/")
-        import_ref = import_ref.strip().strip("`'\"")
-        if not source_file or not import_ref.startswith("."):
-            return None
-        return source_file, import_ref
+        """Delegates to ``verification_repair.parse_unresolved_import_entry``."""
+        return _parse_unresolved_import_entry_impl(entry)
 
     def _candidate_paths_for_unresolved_import(self, source_file: str, import_ref: str) -> list[str]:
-        source_dir = os.path.dirname(source_file.replace("\\", "/"))
-        resolved = os.path.normpath(os.path.join(source_dir, import_ref)).replace("\\", "/")
-        if not resolved or resolved.startswith("../") or os.path.isabs(resolved):
-            return []
-        leaf = os.path.basename(resolved)
-        extension = os.path.splitext(leaf)[1].lower()
-        if extension in {".ts", ".tsx", ".js", ".jsx", ".json", ".mjs", ".cjs"}:
-            raw_candidates = [resolved]
-        elif source_file.endswith((".ts", ".tsx")):
-            raw_candidates = [
-                f"{resolved}.ts",
-                f"{resolved}.tsx",
-                f"{resolved}.js",
-                f"{resolved}.jsx",
-                f"{resolved}.json",
-                f"{resolved}/index.ts",
-                f"{resolved}/index.tsx",
-                f"{resolved}/index.js",
-            ]
-        elif source_file.endswith((".js", ".jsx", ".mjs", ".cjs")):
-            raw_candidates = [
-                f"{resolved}.js",
-                f"{resolved}.jsx",
-                f"{resolved}.ts",
-                f"{resolved}.tsx",
-                f"{resolved}.json",
-                f"{resolved}/index.js",
-                f"{resolved}/index.ts",
-            ]
-        else:
-            raw_candidates = [resolved]
-
-        candidates: list[str] = []
-        seen: set[str] = set()
-        for path in raw_candidates:
-            normalized = path.replace("\\", "/")
-            if normalized in seen or not self._is_concrete_target_file_path(normalized):
-                continue
-            if self._resolve_workspace_file_path(normalized) is None:
-                continue
-            seen.add(normalized)
-            candidates.append(normalized)
-        return candidates
+        """Delegates to ``VerificationRepair.candidate_paths_for_unresolved_import``."""
+        return self._verification_repair.candidate_paths_for_unresolved_import(source_file, import_ref)
 
     @staticmethod
     def _path_under_scope(path: str, scope: str) -> bool:
@@ -699,75 +648,20 @@ class WorkerExecutor:
         return _path_predicates.path_under_scope(path, scope)
 
     def _repair_path_allowed(self, task: Task, path: str) -> bool:
-        normalized = str(path or "").strip().replace("\\", "/")
-        if not normalized or self._resolve_workspace_file_path(normalized) is None:
-            return False
-        target_files = set(self._normalize_target_files(task))
-        if normalized in target_files:
-            return True
-        return any(self._path_under_scope(normalized, scope) for scope in self._normalize_scope_paths(task))
+        """Delegates to ``VerificationRepair.repair_path_allowed``."""
+        return self._verification_repair.repair_path_allowed(task, path)
 
     def _unresolved_import_repair_records(self, task: Task) -> list[dict[str, Any]]:
-        feedback = self._verification_feedback(task)
-        unresolved_raw = feedback.get("unresolved_imports")
-        if not isinstance(unresolved_raw, list):
-            return []
-        records: list[dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
-        for raw_entry in unresolved_raw:
-            parsed = self._parse_unresolved_import_entry(raw_entry)
-            if parsed is None or parsed in seen:
-                continue
-            seen.add(parsed)
-            source_file, import_ref = parsed
-            if not self._repair_path_allowed(task, source_file):
-                continue
-            candidates = [
-                candidate
-                for candidate in self._candidate_paths_for_unresolved_import(source_file, import_ref)
-                if self._repair_path_allowed(task, candidate)
-            ]
-            if not candidates:
-                continue
-            records.append(
-                {
-                    "source_file": source_file,
-                    "import_ref": import_ref,
-                    "candidate_files": candidates[:3],
-                }
-            )
-        return records
+        """Delegates to ``VerificationRepair.unresolved_import_repair_records``."""
+        return self._verification_repair.unresolved_import_repair_records(task)
 
     def _verification_repair_target_paths(self, task: Task) -> list[str]:
-        records = self._unresolved_import_repair_records(task)
-        paths: list[str] = []
-        seen: set[str] = set()
-        for record in records:
-            record_paths = [
-                str(record.get("source_file") or ""),
-                *[str(path) for path in list(record.get("candidate_files") or [])[:1]],
-            ]
-            for path in record_paths:
-                normalized = path.strip().replace("\\", "/")
-                if normalized and normalized not in seen and self._repair_path_allowed(task, normalized):
-                    seen.add(normalized)
-                    paths.append(normalized)
-        return paths
+        """Delegates to ``VerificationRepair.repair_target_paths``."""
+        return self._verification_repair.repair_target_paths(task)
 
     def _verification_repair_prompt_section(self, task: Task) -> str:
-        records = self._unresolved_import_repair_records(task)
-        if not records:
-            return "- No previous verification failure was provided."
-        lines = [
-            "- Previous verification failed with unresolved relative imports.",
-            "- Resolve each issue by creating the listed candidate file or changing the source import to an existing local module.",
-        ]
-        for record in records[:8]:
-            candidates = ", ".join(str(path) for path in list(record.get("candidate_files") or [])[:3])
-            lines.append(
-                f"- {record.get('source_file')} imports {record.get('import_ref')}; allowed repair candidate(s): {candidates}"
-            )
-        return "\n".join(lines)
+        """Delegates to ``VerificationRepair.repair_prompt_section``."""
+        return self._verification_repair.repair_prompt_section(task)
 
     def _bootstrap_target_file_content(self, *, path: str, task: Task, language: str) -> typing.NoReturn:
         """Blocked: bootstrap target files must be produced by runtime codegen."""
@@ -775,115 +669,66 @@ class WorkerExecutor:
         self._raise_code_writing_forbidden("_bootstrap_target_file_content")
 
     def _construction_file_plans(self, task: Task) -> list[dict]:
-        """Get construction file plans from task metadata."""
-        metadata = task.metadata if isinstance(task.metadata, dict) else {}
-        plan = metadata.get("construction_plan", {})
-        if isinstance(plan, dict):
-            files = plan.get("files", [])
-            if isinstance(files, list):
-                return files
-        return []
+        """Get construction file plans from task metadata.
+
+        Delegates to ``CodegenRoundPlanner.construction_file_plans``.
+        """
+        return self._codegen_rounds.construction_file_plans(task)
 
     def _extract_architecture_context(self, task: Task) -> dict[str, Any]:
-        """Extract architecture context from task metadata."""
-        metadata = task.metadata if isinstance(task.metadata, dict) else {}
-        return metadata.get("architecture_context", {})
+        """Extract architecture context from task metadata.
+
+        Delegates to ``PromptBuilder.extract_architecture_context``.
+        """
+        return self._prompt_builder.extract_architecture_context(task)
 
     def _get_module_for_task(self, task: Task) -> str:
-        """Get current module name for task."""
-        metadata = task.metadata if isinstance(task.metadata, dict) else {}
-        return metadata.get("current_module", "unknown")
+        """Get current module name for task.
+
+        Delegates to ``PromptBuilder.get_module_for_task``.
+        """
+        return self._prompt_builder.get_module_for_task(task)
 
     def _build_code_generation_rounds(self, task: Task) -> list[list[dict]]:
-        """Build code generation rounds from task metadata."""
-        repair_paths = self._verification_repair_target_paths(task)
-        if repair_paths:
-            return [[{"path": path, "repair": True} for path in repair_paths]]
+        """Build code generation rounds from task metadata.
 
-        metadata = task.metadata if isinstance(task.metadata, dict) else {}
-        plan = metadata.get("construction_plan", {})
-
-        # Check for rounds in construction plan
-        if isinstance(plan, dict):
-            rounds = plan.get("rounds", [])
-            if rounds:
-                normalized_rounds: list[list[dict]] = []
-                for round_items in rounds:
-                    if not isinstance(round_items, list):
-                        continue
-                    normalized_items = [
-                        item
-                        for item in round_items
-                        if isinstance(item, dict) and self._is_concrete_target_file_path(str(item.get("path") or ""))
-                    ]
-                    if normalized_items:
-                        normalized_rounds.append(normalized_items)
-                return normalized_rounds or [[]]
-
-        # Check for file_plans (legacy format)
-        if isinstance(plan, dict):
-            file_plans = plan.get("file_plans", [])
-            if file_plans:
-                normalized_plans = [
-                    item
-                    for item in file_plans
-                    if isinstance(item, dict) and self._is_concrete_target_file_path(str(item.get("path") or ""))
-                ]
-                if not normalized_plans:
-                    return [[]]
-                chunk_size = self._effective_code_generation_round_chunk_size(normalized_plans)
-                if chunk_size > 0:
-                    return [normalized_plans[i : i + chunk_size] for i in range(0, len(normalized_plans), chunk_size)]
-                return [normalized_plans]  # Single round with all files
-
-        # Default: single round with all target files
-        files = self._normalize_target_files(task)
-        if files:
-            file_plans = [{"path": f} for f in files]
-            chunk_size = self._effective_code_generation_round_chunk_size(file_plans)
-            if chunk_size > 0:
-                return [file_plans[i : i + chunk_size] for i in range(0, len(file_plans), chunk_size)]
-            return [file_plans]
-        return [[]]
+        Delegates to ``CodegenRoundPlanner.build_code_generation_rounds``. This
+        method MUST remain an instance method (live test-contract callers).
+        """
+        return self._codegen_rounds.build_code_generation_rounds(task)
 
     @staticmethod
     def _resolve_code_generation_round_chunk_size() -> int:
-        """Resolve file count per code-generation round."""
-        raw = (
-            os.environ.get("KERNELONE_DIRECTOR_TARGET_FILE_CHUNK")
-            or os.environ.get("KERNELONE_CE_ROUND_FILE_CHUNK")
-            or "2"
-        )
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = 0
-        if value <= 0:
-            return 0
-        return min(value, 8)
+        """Resolve file count per code-generation round.
+
+        Delegates to ``CodegenRoundPlanner.resolve_code_generation_round_chunk_size``.
+        """
+        return CodegenRoundPlanner.resolve_code_generation_round_chunk_size()
 
     @staticmethod
     def _code_generation_round_chunk_configured() -> bool:
-        """Return whether a caller explicitly configured target-file chunking."""
-        return bool(
-            os.environ.get("KERNELONE_DIRECTOR_TARGET_FILE_CHUNK") or os.environ.get("KERNELONE_CE_ROUND_FILE_CHUNK")
-        )
+        """Return whether a caller explicitly configured target-file chunking.
+
+        Delegates to ``CodegenRoundPlanner.code_generation_round_chunk_configured``
+        (dead code carried verbatim; zero callers).
+        """
+        return CodegenRoundPlanner.code_generation_round_chunk_configured()
 
     def _effective_code_generation_round_chunk_size(self, file_plans: list[dict]) -> int:
-        """Return the chunk size for this concrete file set."""
-        _ = file_plans
-        chunk_size = self._resolve_code_generation_round_chunk_size()
-        if chunk_size <= 0:
-            return 0
-        return chunk_size
+        """Return the chunk size for this concrete file set.
+
+        Delegates to ``CodegenRoundPlanner.effective_code_generation_round_chunk_size``.
+        """
+        return self._codegen_rounds.effective_code_generation_round_chunk_size(file_plans)
 
     @staticmethod
     def _is_test_like_target_file(path: str) -> bool:
         """Return whether a target path is likely to produce expensive test/spec output.
 
-        Delegates to ``path_predicates.is_test_like_target_file``.
+        Delegates to ``CodegenRoundPlanner.is_test_like_target_file`` (dead class-level
+        copy carried verbatim; zero callers).
         """
-        return _path_predicates.is_test_like_target_file(path)
+        return CodegenRoundPlanner.is_test_like_target_file(path)
 
     def _generated_artifact_quality_error(self, files_created: list[dict], *, phase: str) -> str | None:
         """Return a fail-closed quality error for generated artifact receipts.
@@ -1011,46 +856,20 @@ class WorkerExecutor:
         )
 
     def _extract_functional_requirements(self, description: str) -> list[str]:
-        """Extract functional requirements from description."""
-        requirements: list[str] = []
-        lines = str(description or "").split("\n")
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            # Remove common prefixes
-            cleaned = re.sub(r"^[\d]+[.)]\s*", "", line)
-            cleaned = re.sub(r"^[-*•]\s*", "", cleaned)
-            cleaned = re.sub(
-                r"^(must|should|need|require|implement|create|add)\s+",
-                "",
-                cleaned,
-                flags=re.IGNORECASE,
-            )
-            if len(cleaned) > 10 and len(cleaned) < 500:
-                requirements.append(cleaned)
-        return requirements[:10]
+        """Extract functional requirements from description.
+
+        Delegates to ``PromptBuilder.extract_functional_requirements`` (dead code
+        carried verbatim; zero callers).
+        """
+        return self._prompt_builder.extract_functional_requirements(description)
 
     def _get_framework_guidance(self, language: str, framework: str | None) -> str:
-        """Get framework-specific guidance."""
-        if language != "python":
-            return ""
-        if framework == "fastapi":
-            return """
-## FastAPI Specific Requirements
-- Use Pydantic models for request/response validation
-- Include proper HTTP exception handling
-- Add OpenAPI/Swagger documentation
-- Use async/await for endpoint handlers
-"""
-        elif framework == "flask":
-            return """
-## Flask Specific Requirements
-- Use Flask blueprints for route organization
-- Include proper error handlers
-- Add application factory pattern if appropriate
-"""
-        return ""
+        """Get framework-specific guidance.
+
+        Delegates to ``PromptBuilder.get_framework_guidance`` (dead §8 code carried
+        verbatim; zero callers).
+        """
+        return self._prompt_builder.get_framework_guidance(language, framework)
 
     def _build_code_generation_prompt(
         self,
@@ -1060,171 +879,17 @@ class WorkerExecutor:
         round_total: int = 0,
         round_files: list[Any] | None = None,
     ) -> str:
-        """Build LLM prompt for code generation."""
-        task_subject = self._compact_prompt_fragment(str(task.subject or ""), max_chars=280)
-        task_description = self._compact_prompt_fragment(
-            str(task.description or ""),
-            max_chars=2600,
+        """Build LLM prompt for code generation.
+
+        Delegates to ``PromptBuilder.build_code_generation_prompt``. This method
+        MUST remain an instance method (live test-contract callers).
+        """
+        return self._prompt_builder.build_code_generation_prompt(
+            task,
+            round_index=round_index,
+            round_total=round_total,
+            round_files=round_files,
         )
-        normalized_round_files: list[str] = []
-        for raw_round_file in round_files or []:
-            raw_path = raw_round_file.get("path") if isinstance(raw_round_file, dict) else raw_round_file
-            path = str(raw_path or "").strip().replace("\\", "/")
-            if path and self._is_concrete_target_file_path(path) and path not in normalized_round_files:
-                normalized_round_files.append(path)
-        target_files = normalized_round_files or self._normalize_target_files(task)
-        target_text = "\n".join(f"- {path}" for path in target_files[:16]) if target_files else "- (model may decide)"
-        repair_records = self._unresolved_import_repair_records(task)
-        target_scope_rule = (
-            "- This is a verification repair round. Edit/create only the target files listed above, "
-            "including derived repair files. Do not write outside declared scopes."
-            if repair_records and target_files
-            else (
-                "- Concrete target files are declared for this round. Edit/create only those paths; "
-                "do not add unrelated files."
-                if target_files
-                else "- No concrete target files were declared. Choose the smallest concrete file set under the declared scopes."
-            )
-        )
-        scope_paths = self._normalize_scope_paths(task)
-        scope_text = "\n".join(f"- {path}" for path in scope_paths[:16]) if scope_paths else "- (not declared)"
-        construction_hints: list[str] = []
-        for plan in self._construction_file_plans(task):
-            path = str(plan.get("path") or "").strip()
-            if not path:
-                continue
-            if target_files and path not in target_files:
-                continue
-            steps = plan.get("implementation_steps")
-            step_text = (
-                "; ".join(str(item).strip() for item in steps[:2] if str(item or "").strip())
-                if isinstance(steps, list)
-                else ""
-            )
-            step_text = self._compact_prompt_fragment(step_text, max_chars=180)
-            if step_text:
-                construction_hints.append(f"- {path}: {step_text}")
-            else:
-                construction_hints.append(f"- {path}: follow ChiefEngineer file plan")
-            if len(construction_hints) >= 12:
-                break
-        round_text = ""
-        if round_index > 0 and round_total > 0:
-            round_text = f"\nBuild Round: {round_index}/{round_total}\n"
-
-        # Extract architecture context
-        arch_context = self._extract_architecture_context(task)
-        current_module = self._get_module_for_task(task)
-
-        # Build architecture hints
-        arch_hints: list[str] = []
-        module_order = arch_context.get("module_order", [])
-        if module_order:
-            arch_hints.append(f"模块构建顺序（底层优先）: {' -> '.join(module_order[:6])}")
-            if len(module_order) > 6:
-                arch_hints.append(f"  ... 及其他 {len(module_order) - 6} 个模块")
-
-        module_arch = arch_context.get("module_arch", {})
-        if current_module in module_arch:
-            arch = module_arch[current_module]
-            layer = arch.get("layer", 0)
-            deps = arch.get("dependencies", [])
-            stability = arch.get("stability_score", 0)
-            arch_hints.append(f"当前模块: '{current_module}' (层级 L{layer})")
-            if deps:
-                arch_hints.append(f"  依赖模块: {', '.join(deps[:6])}")
-            if stability > 0.3:
-                arch_hints.append(f"  注意: 此模块被多个其他模块依赖（稳定性 {stability:.0%}），请设计稳定接口")
-
-        constraints = arch_context.get("constraints", [])
-        violation_constraints = [c for c in constraints if c.startswith(("❌", "⚠️"))]
-        for vc in violation_constraints[:2]:
-            arch_hints.append(f"架构警告: {vc}")
-
-        arch_section = "\n".join(f"- {h}" for h in arch_hints) if arch_hints else "- 无全局架构上下文"
-
-        prompt = f"""You are a software developer implementing a task.
-
-Task: {task_subject}
-Description: {task_description}
-{round_text}
-Target files for this execution:
-{target_text}
-
-Declared directory/module scopes:
-{scope_text}
-
-=== Architecture Context (全局架构上下文) ===
-{arch_section}
-
-=== ChiefEngineer Blueprint Hints ===
-{chr(10).join(construction_hints) if construction_hints else "- no explicit file hints"}
-
-=== Verification Repair Context ===
-{self._verification_repair_prompt_section(task)}
-
-IMPORTANT ARCHITECTURE GUIDELINES:
-1. 遵循模块层级: 底层模块（L0）提供基础设施，上层模块（L1+）依赖底层
-2. 保持接口稳定: 如果被依赖的模块（高稳定性），优先设计清晰的接口
-3. 避免循环依赖: 不要让你的模块依赖关系形成环路
-4. 按模块构建顺序施工: 优先实现底层模块，再实现依赖它们的上层模块
-5. 架构演进: 如果模块健康状况不佳，优先重构而不是添加新功能
-6. 模块规划: 如果任务涉及计划中的新模块，请按ADR(架构决策记录)的指引实现
-7. 接口优先: 对于稳定模块，先定义清晰的公共接口，再实现内部逻辑
-
-Please generate the code to implement this task.
-
-Output contract:
-{target_scope_rule}
-- Return only `PATCH_FILE:` blocks or fenced ` ```file: path` file sections.
-- Do not output `Command:`, shell commands, terminal logs, status narration, SESSION_PATCH, or tool-call wrappers.
-- If target files are not concrete, choose concrete workspace-relative file paths under the declared scopes and create those files.
-
-For each file you create, provide:
-1. Prefer PATCH format for incremental edits on existing files:
-   PATCH_FILE: path/to/file.py
-   <<<<<<< SEARCH
-   <old snippet>
-   =======
-   <new snippet>
-   >>>>>>> REPLACE
-2. For new files, use full-file block:
-   FILE: path/to/file.py
-   <complete content>
-   END FILE
-3. For deletions, use:
-   DELETE_FILE: path/to/obsolete.py
-
-Format your response as:
-
-```file: path/to/file.py
-<file content here>
-```
-
-```file: another/file.py
-<content>
-```
-
-Requirements:
-- Write complete, working code
-- Include all necessary imports
-- Add appropriate comments and docstrings
-- Follow best practices for the target language/framework
-- Ensure the code is syntactically correct
-- Prioritize minimal patch edits over full-file rewrites when file already exists
-- Prefer editing/creating the listed target files before creating new files
-- Keep this generation response focused on source-file changes. Skip package
-  installation, build/test commands, and dev-server startup; Polaris runs
-  verification after file application.
-"""
-
-        raw_max_chars = os.environ.get("KERNELONE_WORKER_PROMPT_MAX_CHARS", "9000")
-        try:
-            max_chars = int(raw_max_chars)
-        except ValueError:
-            max_chars = 9000
-        max_chars = min(max(max_chars, 2000), 40000)
-        return self._compact_prompt_fragment(prompt, max_chars=max_chars)
 
     def _extract_files_from_response(self, response: str) -> list[dict]:
         """Extract file paths and contents from LLM response.

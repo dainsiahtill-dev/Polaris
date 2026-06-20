@@ -797,7 +797,9 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
             "kind": "npm_start",
             "entrypoint": "npm run start",
             "ok": has_success_evidence,
-            "detail": "npm run start completed successfully" if has_success_evidence else "npm run start timed out or failed",
+            "detail": "npm run start completed successfully"
+            if has_success_evidence
+            else "npm run start timed out or failed",
             **cmd,
         }
     else:
@@ -922,13 +924,22 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
         data_metadata.get("source"),
         extra_fields.get("source"),
     )
+    lowered_source = source.lower()
+    if lowered_source == "llm":
+        source = "llm"
+    elif "llm" not in lowered_source:
+        metadata_source = _norm_text(data_metadata.get("source"))
+        if metadata_source.lower() == "llm":
+            source = "llm"
+            lowered_source = "llm"
     cache_hit = bool(
         raw.get("cache_hit")
         or data.get("cache_hit")
         or metadata.get("cache_hit")
         or data_metadata.get("cache_hit")
         or extra_fields.get("cache_hit")
-        or source.lower() == "cache"
+        or data_metadata.get("cached")
+        or lowered_source == "cache"
     )
     prompt_tokens = data.get("prompt_tokens", tokens.get("prompt"))
     completion_tokens = data.get("completion_tokens", tokens.get("completion"))
@@ -1110,9 +1121,46 @@ def _matches_family(role: str, row: dict[str, Any]) -> bool:
 
 def _is_real_llm_route_event(event: dict[str, Any]) -> bool:
     source = _norm_text(event.get("source"))
+    data = _as_dict(event.get("data"))
+    data_meta = _as_dict(data.get("metadata"))
+    if not source or source.lower() != "llm":
+        source = _norm_text(data_meta.get("source"))
     provider = _norm_text(event.get("provider_id") or event.get("provider"))
     model = _norm_text(event.get("model"))
-    return bool(event.get("invocation") and source == "llm" and not event.get("cache_hit") and provider and model)
+    if not model:
+        model = _norm_text(data.get("model"))
+    cache_hit = bool(event.get("cache_hit") or data_meta.get("cached"))
+    return bool(event.get("invocation") and source.lower() == "llm" and not cache_hit and provider and model)
+
+
+def _resolve_provider_from_expected(
+    event: dict[str, Any],
+    expected_bindings: dict[str, list[dict[str, Any]]],
+) -> bool:
+    if _norm_text(event.get("provider_id") or event.get("provider")):
+        return False
+    model = _norm_text(event.get("model"))
+    if not model:
+        data = _as_dict(event.get("data"))
+        model = _norm_text(data.get("model"))
+        if model:
+            event["model"] = model
+    if not model:
+        return False
+    role = _norm_role(event.get("role"))
+    candidates = [
+        row
+        for row in expected_bindings.get(role, [])
+        if _norm_text(row.get("model")) == model and _norm_text(row.get("provider_id") or row.get("provider"))
+    ]
+    if len(candidates) == 1:
+        match = candidates[0]
+        event["provider_id"] = _norm_text(match.get("provider_id") or match.get("provider"))
+        binding_id = _norm_text(match.get("binding_id"))
+        if binding_id:
+            event["binding_id"] = binding_id
+        return True
+    return False
 
 
 def build_llm_route_audit(
@@ -1128,6 +1176,8 @@ def build_llm_route_audit(
     candidate_events = [
         event for event in events if event.get("invocation") and _norm_role(event.get("role")) in required_roles
     ]
+    for event in candidate_events:
+        _resolve_provider_from_expected(event, expected)
     evidence = [event for event in candidate_events if _is_real_llm_route_event(event)]
     terminal = [event for event in evidence if event.get("terminal")]
     by_role: dict[str, list[dict[str, Any]]] = {}

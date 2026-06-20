@@ -13,7 +13,6 @@ import contextlib
 import json
 import logging
 import os
-import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,12 +32,11 @@ from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
 from polaris.kernelone.storage import resolve_logical_path
 
+from . import factory_stage_helpers as helpers
 from .factory_run_models import (
     _PM_ARCHITECT_DOC_MAX_CHARS,
     _PM_DIRECTIVE_MAX_CHARS,
-    _PM_DIRECTIVE_META_LINE_PATTERN,
     _PM_ORIGINAL_DIRECTIVE_MAX_CHARS,
-    _PM_PLAN_META_DIAGNOSTIC_MARKERS,
     _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING,
     _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS,
     _WORKSPACE_VALIDATION_TIMEOUT_SECONDS,
@@ -172,72 +170,15 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _extend_artifacts(artifacts: list[str], *paths: str) -> None:
-        seen = set(artifacts)
-        for path in paths:
-            normalized = str(path or "").replace("\\", "/").strip().lstrip("/")
-            if not normalized or normalized in seen:
-                continue
-            artifacts.append(normalized)
-            seen.add(normalized)
+        helpers.extend_artifacts(artifacts, *paths)
 
     @staticmethod
     def _normalize_declared_delivery_target(value: Any) -> str:
-        token = str(value or "").replace("\\", "/").strip().strip("`'\"")
-        while token.startswith("./"):
-            token = token[2:]
-        token = token.lstrip("/")
-        if token.startswith("workspace/"):
-            token = token.removeprefix("workspace/")
-        if not token or token.endswith("/"):
-            return ""
-        lowered = token.lower()
-        if lowered.startswith(("http://", "https://", "#")):
-            return ""
-        parts = tuple(part for part in token.split("/") if part)
-        if not parts or any(part in {"", ".."} for part in parts):
-            return ""
-        if parts[0] in {".git", ".polaris", "runtime"}:
-            return ""
-        return token
+        return helpers.normalize_declared_delivery_target(value)
 
     @classmethod
     def _collect_declared_delivery_targets(cls, tasks: list[dict[str, Any]]) -> list[str]:
-        seen: set[str] = set()
-        targets: list[str] = []
-
-        def add(value: Any, *, require_file_like: bool = False) -> None:
-            normalized = cls._normalize_declared_delivery_target(value)
-            if not normalized:
-                return
-            if require_file_like and not (
-                Path(normalized).suffix or normalized.upper().startswith("README") or normalized.startswith("tests/")
-            ):
-                return
-            if normalized in seen:
-                return
-            targets.append(normalized)
-            seen.add(normalized)
-
-        for task in tasks:
-            if not isinstance(task, dict):
-                continue
-            for field in ("target_files", "output_files", "expected_files"):
-                raw_values = task.get(field)
-                if isinstance(raw_values, str):
-                    add(raw_values)
-                elif isinstance(raw_values, (list, tuple, set)):
-                    for item in raw_values:
-                        add(item)
-            raw_scope_paths = task.get("scope_paths")
-            if isinstance(raw_scope_paths, str):
-                add(raw_scope_paths, require_file_like=True)
-            elif isinstance(raw_scope_paths, (list, tuple, set)):
-                for item in raw_scope_paths:
-                    add(item, require_file_like=True)
-            scope = str(task.get("scope") or "")
-            for item in scope.replace("\n", ",").split(","):
-                add(item, require_file_like=True)
-        return targets
+        return helpers.collect_declared_delivery_targets(tasks)
 
     def _missing_declared_delivery_targets(self, tasks: list[dict[str, Any]]) -> list[str]:
         workspace_root = self.workspace.resolve()
@@ -397,10 +338,7 @@ class OrchestrationStageExecutor:
     @staticmethod
     def _artifact_file_ready(target: Path) -> bool:
         """Return whether an expected stage artifact is present after upstream completion."""
-        try:
-            return target.exists() and target.is_file() and target.stat().st_size > 0
-        except OSError:
-            return False
+        return helpers.artifact_file_ready(target)
 
     def _artifact_exists(self, relative_path: str, *, min_chars: int = 1) -> bool:
         target = self._artifact_path(relative_path)
@@ -418,11 +356,7 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _is_substantive_doc_text(text: str, *, min_chars: int = 200) -> bool:
-        normalized = str(text or "").strip()
-        if len(normalized) < min_chars:
-            return False
-        heading_count = len([line for line in normalized.splitlines() if str(line or "").strip().startswith("#")])
-        return heading_count >= 2
+        return helpers.is_substantive_doc_text(text, min_chars=min_chars)
 
     def _ensure_docs_artifacts(
         self,
@@ -502,14 +436,7 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _is_pm_meta_diagnostic_task(task: dict[str, Any]) -> bool:
-        text = "\n".join(
-            str(task.get(key) or "").strip()
-            for key in ("title", "goal", "description")
-            if str(task.get(key) or "").strip()
-        ).lower()
-        if not text:
-            return False
-        return any(marker.lower() in text for marker in _PM_PLAN_META_DIAGNOSTIC_MARKERS)
+        return helpers.is_pm_meta_diagnostic_task(task)
 
     def _load_pm_plan_tasks(self, relative_path: str = "tasks/plan.json") -> list[dict[str, Any]]:
         target = self._artifact_path(relative_path)
@@ -528,24 +455,11 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _compact_text_for_prompt(text: str, *, max_chars: int) -> str:
-        normalized = str(text or "").strip()
-        if len(normalized) <= max_chars:
-            return normalized
-        head_chars = max(max_chars * 2 // 3, 1)
-        tail_chars = max(max_chars - head_chars, 1)
-        omitted = len(normalized) - head_chars - tail_chars
-        return (
-            normalized[:head_chars].rstrip()
-            + f"\n\n[... omitted {omitted} chars for PM planning context ...]\n\n"
-            + normalized[-tail_chars:].lstrip()
-        )
+        return helpers.compact_text_for_prompt(text, max_chars=max_chars)
 
     @staticmethod
     def _strip_prompt_meta_lines(text: str) -> str:
-        lines = [
-            line for line in str(text or "").splitlines() if not _PM_DIRECTIVE_META_LINE_PATTERN.search(str(line or ""))
-        ]
-        return "\n".join(lines).strip()
+        return helpers.strip_prompt_meta_lines(text)
 
     def _build_pm_planning_directive(self, raw_directive: Any) -> str:
         user_directive = self._strip_prompt_meta_lines(str(raw_directive or "").strip())
@@ -580,47 +494,15 @@ class OrchestrationStageExecutor:
         return self._compact_text_for_prompt(compacted, max_chars=_PM_DIRECTIVE_MAX_CHARS)
 
     def _build_director_task_filter(self, tasks: list[dict[str, Any]]) -> str:
-        if not tasks:
-            return "Execute ready tasks from PM contract"
-        lines: list[str] = []
-        for task in tasks[:4]:
-            title = str(task.get("title") or task.get("goal") or "").strip()
-            scope = str(task.get("scope") or "").strip()
-            if not title:
-                continue
-            if scope:
-                lines.append(f"- {title} [scope: {scope}]")
-            else:
-                lines.append(f"- {title}")
-        if not lines:
-            return "Execute ready tasks from PM contract"
-        return "Execute PM tasks strictly in order:\n" + "\n".join(lines)
+        return helpers.build_director_task_filter(tasks)
 
     @staticmethod
     def _task_string(task: dict[str, Any], *keys: str) -> str:
-        for key in keys:
-            value = task.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-            if value is not None and not isinstance(value, (dict, list, tuple, set)):
-                token = str(value).strip()
-                if token:
-                    return token
-        return ""
+        return helpers.task_string(task, *keys)
 
     @staticmethod
     def _task_string_list(task: dict[str, Any], *keys: str) -> list[str]:
-        rows: list[str] = []
-        for key in keys:
-            value = task.get(key)
-            if isinstance(value, list):
-                for item in value:
-                    token = str(item or "").strip()
-                    if token:
-                        rows.append(token)
-            elif isinstance(value, str) and value.strip():
-                rows.append(value.strip())
-        return rows
+        return helpers.task_string_list(task, *keys)
 
     def _task_id(self, task: dict[str, Any], index: int) -> str:
         return self._task_string(task, "id", "task_id", "uid") or f"task-{index}"
@@ -682,19 +564,11 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _is_taskboard_converged(stats: dict[str, int]) -> bool:
-        return (
-            int(stats.get("pending") or 0) <= 0
-            and int(stats.get("ready") or 0) <= 0
-            and int(stats.get("in_progress") or 0) <= 0
-            and int(stats.get("blocked") or 0) <= 0
-        )
+        return helpers.is_taskboard_converged(stats)
 
     @staticmethod
     def _has_director_progress(before: dict[str, int], after: dict[str, int]) -> bool:
-        return any(
-            int(after.get(key) or 0) != int(before.get(key) or 0)
-            for key in ("pending", "ready", "in_progress", "completed", "failed", "blocked")
-        )
+        return helpers.has_director_progress(before, after)
 
     @staticmethod
     def _has_director_execution_evidence(
@@ -704,44 +578,16 @@ class OrchestrationStageExecutor:
         final_stats: dict[str, int],
         converged: bool,
     ) -> bool:
-        completed_delta = int(final_stats.get("completed") or 0) - int(initial_stats.get("completed") or 0)
-        failed_delta = int(final_stats.get("failed") or 0) - int(initial_stats.get("failed") or 0)
-        if completed_delta > 0 or failed_delta > 0:
-            return True
-
-        for attempt in attempts:
-            if bool(attempt.get("progress_made")):
-                return True
-            metadata = attempt.get("metadata")
-            if not isinstance(metadata, dict):
-                continue
-            counts = metadata.get("task_status_counts")
-            if not isinstance(counts, dict):
-                continue
-            try:
-                total = sum(int(value or 0) for value in counts.values())
-            except (TypeError, ValueError):
-                total = 0
-            if total > 0:
-                return True
-
-        return bool(converged and int(final_stats.get("completed") or 0) > 0)
+        return helpers.has_director_execution_evidence(
+            attempts=attempts,
+            initial_stats=initial_stats,
+            final_stats=final_stats,
+            converged=converged,
+        )
 
     @staticmethod
     def _metadata_indicates_execution(metadata: dict[str, Any]) -> bool:
-        if not isinstance(metadata, dict):
-            return False
-        counts = metadata.get("task_status_counts")
-        if not isinstance(counts, dict):
-            return False
-        try:
-            completed = int(counts.get("completed") or 0)
-            failed = int(counts.get("failed") or 0)
-            blocked = int(counts.get("blocked") or 0)
-            cancelled = int(counts.get("cancelled") or 0)
-        except (TypeError, ValueError):
-            return False
-        return (completed + failed + blocked + cancelled) > 0
+        return helpers.metadata_indicates_execution(metadata)
 
     async def _execute_docs_generation(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing docs generation for run %s", run.id)
@@ -1510,20 +1356,7 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _is_director_no_materialized_changes(result: CommandResult) -> bool:
-        if str(result.status or "").strip().lower() not in {"failed", "error"}:
-            return False
-        message = str(result.message or "").strip().lower()
-        if "director_no_materialized_changes" in message:
-            return True
-        metadata = result.metadata if isinstance(result.metadata, dict) else {}
-        failed_tasks = metadata.get("failed_tasks")
-        if isinstance(failed_tasks, list):
-            for item in failed_tasks:
-                if not isinstance(item, dict):
-                    continue
-                if "director_no_materialized_changes" in str(item.get("error_message") or "").lower():
-                    return True
-        return False
+        return helpers.is_director_no_materialized_changes(result)
 
     @staticmethod
     def _bool_from_context_or_env(
@@ -1532,23 +1365,7 @@ class OrchestrationStageExecutor:
         env_var: str = "",
         default: bool = True,
     ) -> bool:
-        raw: Any = None
-        for key in keys:
-            if key in context:
-                raw = context.get(key)
-                break
-        if raw is None and env_var:
-            raw = os.environ.get(env_var)
-        if raw is None:
-            return default
-        if isinstance(raw, bool):
-            return raw
-        token = str(raw).strip().lower()
-        if token in {"1", "true", "yes", "on", "enabled"}:
-            return True
-        if token in {"0", "false", "no", "off", "disabled"}:
-            return False
-        return default
+        return helpers.bool_from_context_or_env(context, *keys, env_var=env_var, default=default)
 
     def _load_package_scripts(self) -> dict[str, str]:
         package_path = (self.workspace / "package.json").resolve()
@@ -1595,10 +1412,7 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _trim_command_output(text: str, limit: int = _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS) -> str:
-        body = str(text or "")
-        if len(body) <= limit:
-            return body
-        return body[-limit:]
+        return helpers.trim_command_output(text, limit)
 
     def _run_workspace_quality_command(self, command: list[str], timeout_seconds: float) -> dict[str, Any]:
         started_at = datetime.now(timezone.utc).isoformat()
@@ -1663,20 +1477,7 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _resolve_workspace_quality_command(command: list[str]) -> list[str]:
-        if not command:
-            return []
-        executable = str(command[0] or "").strip()
-        if not executable:
-            return []
-        resolved = shutil.which(executable)
-        if resolved is None and os.name == "nt":
-            for suffix in (".cmd", ".exe", ".bat"):
-                resolved = shutil.which(f"{executable}{suffix}")
-                if resolved:
-                    break
-        if not resolved:
-            return []
-        return [resolved, *command[1:]]
+        return helpers.resolve_workspace_quality_command(command)
 
     async def _run_workspace_quality_checks(self, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
         commands = self._workspace_quality_commands(context)
@@ -1730,12 +1531,7 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _qa_report_has_warning(payload: dict[str, Any], warning: str) -> bool:
-        warnings = payload.get("warnings")
-        if isinstance(warnings, list):
-            return any(str(item or "").strip() == warning for item in warnings)
-        if isinstance(warnings, str):
-            return any(part.strip() == warning for part in warnings.split(","))
-        return False
+        return helpers.qa_report_has_warning(payload, warning)
 
     async def _execute_quality_gate(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing quality gate for run %s", run.id)

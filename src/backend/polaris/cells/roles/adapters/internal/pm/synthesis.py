@@ -31,6 +31,41 @@ def _directive_requires_typescript_package_contract(directive: str) -> bool:
     return has_typescript and has_package_contract
 
 
+_DETERMINISTIC_CHECK_RE = re.compile(r"(?i)(html|ts_syntax|package_scripts|content_any:[A-Za-z0-9_|-]+)")
+_CONTENT_ANY_RE = re.compile(r"(?i)content_any:([A-Za-z0-9_|-]+)")
+
+
+def _dedupe_limited_texts(values: list[str], *, limit: int) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        token = str(value or "").strip()
+        if not token:
+            continue
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(token)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _extract_deterministic_checks_from_directive(directive: str, *, limit: int = 8) -> list[str]:
+    return _dedupe_limited_texts(
+        [str(match.group(1) or "").strip() for match in _DETERMINISTIC_CHECK_RE.finditer(str(directive or ""))],
+        limit=limit,
+    )
+
+
+def _extract_content_any_keywords_from_directive(directive: str, *, limit: int = 8) -> list[str]:
+    values: list[str] = []
+    for match in _CONTENT_ANY_RE.finditer(str(directive or "")):
+        values.extend(part.strip().lower() for part in str(match.group(1) or "").split("|"))
+    return _dedupe_limited_texts(values, limit=limit)
+
+
 class PMContractSynthesisMixin(_PMAdapterMixinBase):
     """PM 合同确定性合成 mixin：在 LLM 输出不可用时，无 LLM 地基于需求指令生成可执行任务合同。"""
 
@@ -188,51 +223,58 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
         if root_workspace_targets:
             source_file, test_file, readme_file = root_workspace_targets
             if source_file == "index.html" and _directive_requires_typescript_package_contract(directive):
+                domain_token = _pm_path_token_from_subject(str(domain_label or domain)) or str(domain or "app")
+                deterministic_checks = _extract_deterministic_checks_from_directive(directive)
+                content_keywords = _extract_content_any_keywords_from_directive(directive)
+                if not content_keywords:
+                    content_keywords = self._extract_domain_keywords(directive, limit=6)
+                keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
+                check_summary = (
+                    "; ".join(deterministic_checks[:6])
+                    if deterministic_checks
+                    else ("html; ts_syntax; package_scripts")
+                )
                 model_targets = [
                     "package.json",
                     "tsconfig.json",
-                    "src/models/Flower.ts",
-                    "src/models/Firefly.ts",
-                    "src/models/MoonPhase.ts",
-                    "src/models/Garden.ts",
-                    "src/index.ts",
+                    "src/main.ts",
+                    f"src/{domain_token}.ts",
                 ]
                 visual_targets = [
                     "index.html",
-                    "src/engine/SimulationEngine.ts",
-                    "src/engine/LightDance.ts",
-                    "src/entry/browser.ts",
+                    "src/simulation.ts",
+                    "src/render.ts",
                 ]
                 validation_targets = [
                     "package.json",
-                    "src/validation/verify.ts",
+                    "src/verify.ts",
                     "tests/verify.test.ts",
                     "README.md",
                 ]
                 root_contracts = [
                     {
                         "id": "TASK-1",
-                        "title": f"实现 {domain_label} TypeScript 项目骨架与核心模型",
+                        "title": f"实现 {domain_label} TypeScript 项目骨架与核心模块",
                         "goal": (
                             f"在工作区根交付 {domain_label} 的 TypeScript/npm 项目骨架、"
-                            "非占位 package 脚本和核心领域模型。"
+                            "非占位 package 脚本和需求驱动的核心模块。"
                         ),
                         "description": (
-                            "创建 package.json、tsconfig.json、src/index.ts 与核心模型文件，"
-                            "覆盖 Flower、Firefly、MoonPhase、Garden、humidity 和 moon 行为。"
+                            "创建 package.json、tsconfig.json、src/main.ts 与需求模块，"
+                            f"覆盖需求关键词和确定性检查：{keyword_summary}。"
                         ),
                         "scope": model_targets,
                         "target_files": model_targets,
                         "steps": [
                             "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
                             "创建 tsconfig.json，启用 strict、DOM/ES2020 lib、outDir=dist、rootDir=src",
-                            "实现 Flower/Firefly/MoonPhase/Garden 领域模型与 src/index.ts 可运行入口",
-                            "确保 `npm run build` 能生成 dist/index.js，`npm start` 引用该真实入口",
+                            f"实现 src/main.ts 与 src/{domain_token}.ts，暴露可运行入口和核心需求状态",
+                            "`npm start` 必须先 build 或引用当前存在的源码入口，不能指向未生成的 dist 文件",
                         ],
                         "acceptance": [
-                            "`package.json`、`tsconfig.json`、`src/index.ts` 与至少四个模型文件存在且非空",
-                            "`npm run build` 通过，`npm start` 引用已存在的编译入口",
-                            "源码包含 firefly、flower、moon、humidity 的真实领域逻辑",
+                            "`package.json`、`tsconfig.json`、`src/main.ts` 与需求模块存在且非空",
+                            "`npm run build`、`npm run test` 与 `npm start` 对真实入口执行检查",
+                            f"源码或测试覆盖需求关键词：{keyword_summary}",
                         ],
                         "phase": "requirements",
                         "depends_on": [],
@@ -241,23 +283,22 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     },
                     {
                         "id": "TASK-2",
-                        "title": f"实现 {domain_label} 实时模拟引擎与 Web 入口",
-                        "goal": f"实现 {domain_label} 的实时灯光舞蹈引擎和可打开的浏览器入口。",
+                        "title": f"实现 {domain_label} 模拟流程与 Web 入口",
+                        "goal": f"实现 {domain_label} 的需求流程、状态更新和可打开的浏览器入口。",
                         "description": (
-                            "补齐 SimulationEngine、LightDance、browser entry 和 index.html，"
-                            "让萤火虫根据花朵情绪、湿度和月相组成实时灯光舞蹈。"
+                            f"补齐 simulation/render 和 index.html，让页面与源码共同体现需求关键词：{keyword_summary}。"
                         ),
                         "scope": visual_targets,
                         "target_files": visual_targets,
                         "steps": [
-                            "实现 SimulationEngine.ts 的 tick/update 主循环",
-                            "实现 LightDance.ts，根据花朵情绪、湿度、月相计算亮度、颜色和位置",
-                            "创建 src/entry/browser.ts，将引擎渲染到 index.html 的画布或 DOM",
+                            "实现 src/simulation.ts 的状态更新或计算流程",
+                            "实现 src/render.ts，将核心状态渲染为浏览器可见内容",
                             "创建 index.html，包含有效 <html> 与可视化容器",
+                            f"在页面或源码中保留验收关键词：{keyword_summary}",
                         ],
                         "acceptance": [
                             "`index.html` 存在并包含有效 `<html>` 标签与模拟容器",
-                            "实时引擎会更新 firefly 状态，并使用 flower emotion、moon phase、humidity",
+                            f"源码或页面包含需求关键词：{keyword_summary}",
                             "`npm run build` 通过且浏览器入口引用真实构建产物",
                         ],
                         "phase": "implementation",
@@ -270,19 +311,20 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "title": f"实现 {domain_label} 验证脚本与 README",
                         "goal": f"固化 {domain_label} 的自动验收脚本、README 和可复现交付证据。",
                         "description": (
-                            "实现 src/validation/verify.ts 与 tests/verify.test.ts，验证 TypeScript、"
-                            "package 脚本、入口文件和核心领域规则。"
+                            "实现 src/verify.ts 与 tests/verify.test.ts，验证 TypeScript、"
+                            f"package 脚本、入口文件和 bench 检查：{check_summary}。"
                         ),
                         "scope": validation_targets,
                         "target_files": validation_targets,
                         "steps": [
-                            "实现 verify.ts，检查构建产物、入口文件、关键词和核心领域规则",
-                            "实现 tests/verify.test.ts 或等价测试，覆盖发光舞蹈核心规则",
+                            f"实现 verify.ts，检查构建产物、入口文件、关键词和确定性检查：{check_summary}",
+                            "实现 tests/verify.test.ts 或等价测试，覆盖核心需求规则",
                             "更新 package.json 的 test 脚本，使其运行真实验证而非占位输出",
                             "编写 README，说明 npm install/build/test/start 与浏览器运行方式",
                         ],
                         "acceptance": [
                             "`npm run test` 执行真实验证并返回 PASS",
+                            f"验证脚本覆盖确定性检查：{check_summary}",
                             "`README.md` 包含安装、构建、测试、启动和浏览器查看步骤",
                             "交付物包含 TypeScript 源码、package.json、index.html、测试与 README",
                         ],

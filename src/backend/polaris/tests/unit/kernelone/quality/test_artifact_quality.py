@@ -222,6 +222,27 @@ def test_scan_detects_npm_no_tests_yet_placeholder(tmp_path: Path) -> None:
     assert "npm placeholder test script" in errors[0]
 
 
+def test_scan_detects_standalone_manifest_check_passed_test_script(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "garden-engine",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node -e \\"const p=require('./package.json');if(!p.main||!p.scripts){process.exit(1)}console.log('Manifest check passed')\\""
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("manifest-only test script" in error for error in errors)
+
+
 def test_scan_detects_start_script_missing_local_entrypoint(tmp_path: Path) -> None:
     target = tmp_path / "package.json"
     target.write_text(
@@ -269,6 +290,48 @@ def test_scan_detects_start_script_direct_tsc_then_missing_dist_entrypoint(tmp_p
     assert any("references missing local entrypoint 'dist/main.js'" in error for error in errors)
 
 
+def test_scan_detects_bun_start_script_missing_local_entrypoint(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "bun run src/main.ts"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("references missing local entrypoint 'src/main.ts'" in error for error in errors)
+
+
+def test_scan_detects_deno_start_script_missing_local_entrypoint(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "deno run --allow-read src/main.ts"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("references missing local entrypoint 'src/main.ts'" in error for error in errors)
+
+
 def test_scan_detects_test_script_missing_local_entrypoint_after_node_loader(tmp_path: Path) -> None:
     target = tmp_path / "package.json"
     target.write_text(
@@ -291,6 +354,32 @@ def test_scan_detects_test_script_missing_local_entrypoint_after_node_loader(tmp
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
 
     assert any("references missing local entrypoint 'src/verify.ts'" in error for error in errors)
+
+
+def test_scan_allows_start_script_that_compiles_before_dist_entrypoint(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "compile": "tsc",
+    "start": "npm run compile && node dist/main.js",
+    "test": "node scripts/test.mjs"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    test_script = tmp_path / "scripts" / "test.mjs"
+    test_script.parent.mkdir(parents=True, exist_ok=True)
+    test_script.write_text("console.log('ok');\n", encoding="utf-8")
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert not any("missing local entrypoint" in error for error in errors)
 
 
 def test_scan_allows_start_script_that_builds_before_dist_entrypoint(tmp_path: Path) -> None:

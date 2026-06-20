@@ -176,7 +176,7 @@ _NODE_BUILTIN_IMPORTS = {
 _TEST_FRAMEWORK_IMPORTS = {"@jest/globals", "jest", "vitest", "mocha"}
 _NPM_TEST_RUNNER_SCRIPT_RE = re.compile(r"(?:^|[\s;&|])(vitest|jest|mocha|ava)(?:$|[\s;&|])", re.IGNORECASE)
 _NPM_MANIFEST_ONLY_TEST_SCRIPT_RE = re.compile(
-    r"package\s+manifest\s+check\s+passed|invalid\s+package\s+manifest|readFileSync\s*\(\s*['\"]package\.json"
+    r"(?:package\s+)?manifest\s+check\s+passed|invalid\s+package\s+manifest|readFileSync\s*\(\s*['\"]package\.json"
     r"|readFileSync\s*\(\s*['\"](?:tsconfig\.json|README\.md|src/main\.ts|index\.html)"
     r"|existsSync\s*\(\s*['\"]dist/"
     r"|missing\s+(?:build|start|test)\s+script"
@@ -189,8 +189,14 @@ _NPM_PLACEHOLDER_TEST_SCRIPT_RE = re.compile(
     r"\b(?:no\s+tests?\s+(?:specified|yet)|tests?\s+not\s+(?:implemented|available))\b",
     re.IGNORECASE,
 )
-_NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(r"(?:npm\s+run\s+build|pnpm\s+build|yarn\s+build)")
-_NPM_SCRIPT_ENTRYPOINT_COMMANDS = {"node", "tsx", "ts-node"}
+_NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(
+    r"(?:npm\s+run\s+(?:build|compile)|pnpm\s+(?:build|compile)|yarn\s+(?:build|compile))"
+)
+_NPM_SCRIPT_ENTRYPOINT_COMMANDS = {"node", "tsx", "ts-node", "bun", "deno"}
+_NPM_SCRIPT_ENTRYPOINT_SUBCOMMANDS = {
+    "bun": {"run", "test"},
+    "deno": {"run", "test", "bench"},
+}
 _NPM_NODE_INLINE_CODE_FLAGS = {"-e", "--eval", "-p", "--print", "-c", "--check"}
 _NPM_NODE_OPTION_VALUE_FLAGS = {"--loader", "--require", "-r", "--import"}
 _NPM_SCRIPT_SEPARATORS = {"&&", "||", ";", "|"}
@@ -640,12 +646,16 @@ def _scan_npm_script_missing_local_entrypoints(
 
 
 def _npm_script_entrypoint_after_command(tokens: list[str], command_index: int) -> str:
+    command = str(tokens[command_index] or "").strip().lower()
     index = command_index + 1
     while index < len(tokens):
         token = str(tokens[index] or "").strip()
         if not token or token in _NPM_SCRIPT_SEPARATORS:
             return ""
         lowered = token.lower()
+        if lowered in _NPM_SCRIPT_ENTRYPOINT_SUBCOMMANDS.get(command, set()):
+            index += 1
+            continue
         if lowered in _NPM_NODE_INLINE_CODE_FLAGS:
             return ""
         if lowered in _NPM_NODE_OPTION_VALUE_FLAGS:

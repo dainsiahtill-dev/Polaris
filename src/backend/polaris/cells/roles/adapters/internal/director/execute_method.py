@@ -1033,10 +1033,6 @@ async def _execute_standard_llm_flow(
     workspace_name = Path(str(getattr(adapter, "workspace", "") or "")).resolve().name
     direct_fallback_summary: dict[str, Any] | None = None
     empty_write_content_retry_summary: dict[str, Any] | None = None
-    tool_results: list[dict[str, Any]] = []
-    current_files: dict[str, str] = baseline_files
-    new_files: list[str] = []
-    modified_files: list[str] = []
     all_affected_files: list[str] = []
     primary_llm_summary: dict[str, Any] | None = None
     quality_repair_summary: dict[str, Any] | None = None
@@ -1138,15 +1134,13 @@ async def _execute_standard_llm_flow(
         state=state,
     )
 
-    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
-
     existing_contract_evidence = _build_existing_workspace_task_evidence(
         task=task,
-        current_files=current_files,
+        current_files=state.current_files,
         workspace_full=str(getattr(adapter, "workspace", "") or ""),
         workspace_name=workspace_name,
     )
-    write_tool_evidence = has_successful_write_tool(tool_results)
+    write_tool_evidence = has_successful_write_tool(state.tool_results)
     can_accept_existing_scope = bool(existing_contract_evidence.get("ok")) and _can_accept_existing_workspace_scope(
         task=task,
         requires_fresh_materialization=requires_fresh_materialization,
@@ -1154,57 +1148,29 @@ async def _execute_standard_llm_flow(
         primary_llm_summary=primary_llm_summary,
     )
 
-    if (
-        not all_affected_files
-        and not can_accept_existing_scope
-        and write_tool_evidence
-        and (requires_fresh_materialization or not bool(existing_contract_evidence.get("ok")))
-    ):
-        pre_materialization_quality_errors = _collect_materialization_quality_errors(
-            adapter,
-            task=task,
-            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-            workspace_name=workspace_name,
-            context=context,
-        )
-        deterministic_quality_tool_results, deterministic_quality_summary = (
-            _apply_deterministic_materialization_quality_repairs(
-                adapter,
-                task=task,
-                task_id=target_task_id,
-                artifact_quality_errors=pre_materialization_quality_errors,
-            )
-        )
-        if deterministic_quality_tool_results:
-            tool_results.extend(deterministic_quality_tool_results)
-            quality_repair_summary = deterministic_quality_summary
-            quality_repair_attempts.append(deterministic_quality_summary)
-            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-                adapter,
-                baseline_files,
-                task=task,
-                workspace_name=workspace_name,
-            )
-            if all_affected_files:
-                all_affected_files = _merge_successful_write_paths(
-                    all_affected_files,
-                    _extract_successful_write_paths(deterministic_quality_tool_results),
-                )
-            existing_contract_evidence = _build_existing_workspace_task_evidence(
-                task=task,
-                current_files=current_files,
-                workspace_full=str(getattr(adapter, "workspace", "") or ""),
-                workspace_name=workspace_name,
-            )
-            write_tool_evidence = has_successful_write_tool(tool_results)
-            can_accept_existing_scope = bool(
-                existing_contract_evidence.get("ok")
-            ) and _can_accept_existing_workspace_scope(
-                task=task,
-                requires_fresh_materialization=requires_fresh_materialization,
-                write_tool_evidence=write_tool_evidence,
-                primary_llm_summary=primary_llm_summary,
-            )
+    (
+        state,
+        existing_contract_evidence,
+        can_accept_existing_scope,
+        write_tool_evidence,
+        quality_repair_summary,
+    ) = _phase_pre_materialization_quality(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        context=context,
+        baseline_files=baseline_files,
+        existing_contract_evidence=existing_contract_evidence,
+        can_accept_existing_scope=can_accept_existing_scope,
+        write_tool_evidence=write_tool_evidence,
+        requires_fresh_materialization=requires_fresh_materialization,
+        primary_llm_summary=primary_llm_summary,
+        quality_repair_attempts=quality_repair_attempts,
+        quality_repair_summary=quality_repair_summary,
+        workspace_name=workspace_name,
+        state=state,
+    )
+    all_affected_files = state.all_affected_files
 
     if not all_affected_files and not can_accept_existing_scope:
         acceptance_verify_satisfied, acceptance_verify_evidence = _evaluate_acceptance_verify_exists(
@@ -1219,14 +1185,6 @@ async def _execute_standard_llm_flow(
             can_accept_existing_scope = True
             existing_contract_evidence = dict(existing_contract_evidence)
             existing_contract_evidence["acceptance_verify_exists"] = acceptance_verify_evidence
-
-    state = MaterializationState.from_locals(
-        current_files,
-        new_files,
-        modified_files,
-        all_affected_files,
-        tool_results,
-    )
 
     no_materialized_result = _phase_no_materialized_changes(
         adapter,
@@ -1293,224 +1251,28 @@ async def _execute_standard_llm_flow(
     if missing_receipt_result is not None:
         return missing_receipt_result
 
-    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    _adapter_workspace = str(getattr(adapter, "workspace", "") or "")
 
-    deterministic_contract_tool_results, deterministic_contract_summary = (
-        _apply_deterministic_declared_target_contract_repairs(
-            adapter,
-            task=task,
-            task_id=target_task_id,
-        )
-    )
-    if deterministic_contract_tool_results:
-        tool_results.extend(deterministic_contract_tool_results)
-        quality_repair_summary = deterministic_contract_summary
-        quality_repair_attempts.append(deterministic_contract_summary)
-        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-            adapter,
-            baseline_files,
-            task=task,
-            workspace_name=workspace_name,
-        )
-        all_affected_files = _merge_successful_write_paths(
-            all_affected_files,
-            _extract_successful_write_paths(deterministic_contract_tool_results),
-        )
-        write_tool_evidence = has_successful_write_tool(tool_results)
-
-    artifact_quality_errors = _collect_materialization_quality_errors(
+    (
+        state,
+        artifact_quality_errors,
+        quality_repair_summary,
+        write_tool_evidence,
+    ) = await _phase_quality_repair_loop(
         adapter,
         task=task,
-        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-        workspace_name=workspace_name,
+        target_task_id=target_task_id,
+        run_id=run_id,
         context=context,
-    )
-    artifact_quality_errors += _collect_step_verify_errors(adapter, context)
-    # Live factory-bench L1-01 (2026-06-17, after the symbol-coherence fix):
-    # py_compile + scan_workspace_artifact_quality pass for a calculator.py
-    # whose __main__ block raises at call time. The deterministic ladder
-    # must actually run the code to surface this kind of failure.
-    artifact_quality_errors += _apply_deterministic_python_static_smoke(
-        adapter,
-        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-    )
-    artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
-        adapter,
-        task_id=target_task_id,
-        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-    )
-    _adapter_workspace = str(getattr(adapter, "workspace", "") or "")
-    artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
-        artifact_quality_errors,
-        _adapter_workspace,
-    )
-    # Progress-aware repair budget: the base budget is 2 attempts, but while
-    # an attempt makes measurable progress on EITHER dimension — fewer missing
-    # declared targets OR fewer quality errors overall — the loop keeps going
-    # (hard cap 5). Live factory-bench L2-11 r1: missing-count convergence
-    # (3→2→1) was cut one file short by the fixed budget. L2-11 r6: an attempt
-    # repaired the truncated index.html (errors 2→1, real progress) but the
-    # missing-only metric (1→1) still cut the loop before diff.test.html.
-    prev_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
-    prev_error_count = len(artifact_quality_errors)
-    for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
-        if not artifact_quality_errors:
-            break
-        current_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
-        current_error_count = len(artifact_quality_errors)
-        if repair_attempt > _QUALITY_REPAIR_BASE_ATTEMPTS:
-            missing_progress = 0 < current_missing_count < prev_missing_count
-            error_progress = 0 < current_error_count < prev_error_count
-            if not (missing_progress or error_progress):
-                break
-        prev_missing_count = current_missing_count
-        prev_error_count = current_error_count
-        deterministic_quality_tool_results, deterministic_quality_summary = (
-            _apply_deterministic_materialization_quality_repairs(
-                adapter,
-                task=task,
-                task_id=target_task_id,
-                artifact_quality_errors=artifact_quality_errors,
-            )
-        )
-        if deterministic_quality_tool_results:
-            tool_results.extend(deterministic_quality_tool_results)
-            quality_repair_summary = deterministic_quality_summary
-            quality_repair_attempts.append(deterministic_quality_summary)
-            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-                adapter,
-                baseline_files,
-                task=task,
-                workspace_name=workspace_name,
-            )
-            all_affected_files = _merge_successful_write_paths(
-                all_affected_files,
-                _extract_successful_write_paths(deterministic_quality_tool_results),
-            )
-            artifact_quality_errors = _collect_materialization_quality_errors(
-                adapter,
-                task=task,
-                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-                workspace_name=workspace_name,
-                context=context,
-            )
-            artifact_quality_errors += _collect_step_verify_errors(adapter, context)
-            artifact_quality_errors += _apply_deterministic_python_static_smoke(
-                adapter,
-                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-            )
-            artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
-                adapter,
-                task_id=target_task_id,
-                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-            )
-            artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
-                artifact_quality_errors,
-                _adapter_workspace,
-            )
-            if not artifact_quality_errors:
-                break
-        repair_tool_results, quality_repair_summary = await _run_materialization_quality_repair_retry(
-            adapter,
-            task=task,
-            target_task_id=target_task_id,
-            run_id=run_id,
-            context=context,
-            original_message=message,
-            llm_call_timeout=llm_call_timeout,
-            artifact_quality_errors=artifact_quality_errors,
-            changed_files=all_affected_files,
-            repair_attempt=repair_attempt,
-        )
-        quality_repair_attempts.append(quality_repair_summary)
-        if not repair_tool_results:
-            break
-        if repair_tool_results:
-            tool_results.extend(repair_tool_results)
-            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-                adapter,
-                baseline_files,
-                task=task,
-                workspace_name=workspace_name,
-            )
-            all_affected_files = _merge_successful_write_paths(
-                all_affected_files,
-                _extract_successful_write_paths(repair_tool_results),
-            )
-            artifact_quality_errors = _collect_materialization_quality_errors(
-                adapter,
-                task=task,
-                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-                workspace_name=workspace_name,
-                context=context,
-            )
-            artifact_quality_errors += _collect_step_verify_errors(adapter, context)
-            artifact_quality_errors += _apply_deterministic_python_static_smoke(
-                adapter,
-                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-            )
-            artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
-                adapter,
-                task_id=target_task_id,
-                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-            )
-            artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
-                artifact_quality_errors,
-                _adapter_workspace,
-            )
-            if artifact_quality_errors:
-                deterministic_quality_tool_results, deterministic_quality_summary = (
-                    _apply_deterministic_materialization_quality_repairs(
-                        adapter,
-                        task=task,
-                        task_id=target_task_id,
-                        artifact_quality_errors=artifact_quality_errors,
-                    )
-                )
-                if deterministic_quality_tool_results:
-                    tool_results.extend(deterministic_quality_tool_results)
-                    quality_repair_summary = deterministic_quality_summary
-                    quality_repair_attempts.append(deterministic_quality_summary)
-                    current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-                        adapter,
-                        baseline_files,
-                        task=task,
-                        workspace_name=workspace_name,
-                    )
-                    all_affected_files = _merge_successful_write_paths(
-                        all_affected_files,
-                        _extract_successful_write_paths(deterministic_quality_tool_results),
-                    )
-                    artifact_quality_errors = _collect_materialization_quality_errors(
-                        adapter,
-                        task=task,
-                        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-                        workspace_name=workspace_name,
-                        context=context,
-                    )
-                    artifact_quality_errors += _collect_step_verify_errors(adapter, context)
-                    artifact_quality_errors += _apply_deterministic_python_static_smoke(
-                        adapter,
-                        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-                    )
-                    artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
-                        adapter,
-                        task_id=target_task_id,
-                        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-                    )
-                    artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
-                        artifact_quality_errors,
-                        _adapter_workspace,
-                    )
-                    if not artifact_quality_errors:
-                        break
-
-    state = MaterializationState.from_locals(
-        current_files,
-        new_files,
-        modified_files,
-        all_affected_files,
-        tool_results,
+        message=message,
+        baseline_files=baseline_files,
+        llm_call_timeout=llm_call_timeout,
+        adapter_workspace=_adapter_workspace,
+        quality_repair_attempts=quality_repair_attempts,
+        quality_repair_summary=quality_repair_summary,
+        workspace_name=workspace_name,
+        write_tool_evidence=write_tool_evidence,
+        state=state,
     )
 
     quality_failed_result = _phase_quality_failed(
@@ -1535,83 +1297,23 @@ async def _execute_standard_llm_flow(
     if quality_failed_result is not None:
         return quality_failed_result
 
-    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
-
-    semantic_quality_repair_summary: dict[str, Any] | None = None
-    semantic_quality_repair_attempts: list[dict[str, Any]] = []
-    semantic_quality_error = adapter._execution.validate_generated_output(task, all_affected_files)
-    for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
-        missing_declared_targets = _missing_declared_target_files(task, _adapter_workspace)
-        if not semantic_quality_error and not missing_declared_targets:
-            break
-        semantic_repair_errors: list[str] = []
-        if semantic_quality_error:
-            semantic_repair_errors.append(semantic_quality_error)
-        semantic_repair_errors.extend(
-            f"Artifact quality scan failed: declared target file missing '{path}'" for path in missing_declared_targets
-        )
-        if not semantic_repair_errors:
-            break
-        repair_tool_results, semantic_quality_repair_summary = await _run_materialization_quality_repair_retry(
-            adapter,
-            task=task,
-            target_task_id=target_task_id,
-            run_id=run_id,
-            context=context,
-            original_message=message,
-            llm_call_timeout=llm_call_timeout,
-            artifact_quality_errors=semantic_repair_errors,
-            changed_files=all_affected_files,
-            repair_attempt=repair_attempt,
-        )
-        semantic_quality_repair_attempts.append(semantic_quality_repair_summary)
-        if not repair_tool_results:
-            break
-        tool_results.extend(repair_tool_results)
-        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-            adapter,
-            baseline_files,
-            task=task,
-            workspace_name=workspace_name,
-        )
-        all_affected_files = _merge_successful_write_paths(
-            all_affected_files,
-            _extract_successful_write_paths(repair_tool_results),
-        )
-        artifact_quality_errors = _collect_materialization_quality_errors(
-            adapter,
-            task=task,
-            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-            workspace_name=workspace_name,
-            context=context,
-        )
-        artifact_quality_errors += _collect_step_verify_errors(adapter, context)
-        artifact_quality_errors += _apply_deterministic_python_static_smoke(
-            adapter,
-            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-        )
-        artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
-            adapter,
-            task_id=target_task_id,
-            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
-        )
-        artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
-            artifact_quality_errors,
-            str(getattr(adapter, "workspace", "") or ""),
-        )
-        if artifact_quality_errors:
-            semantic_quality_error = "Director output quality gate failed after semantic repair: " + "; ".join(
-                artifact_quality_errors[:6]
-            )
-            break
-        semantic_quality_error = adapter._execution.validate_generated_output(task, all_affected_files)
-
-    state = MaterializationState.from_locals(
-        current_files,
-        new_files,
-        modified_files,
-        all_affected_files,
-        tool_results,
+    (
+        state,
+        semantic_quality_error,
+        semantic_quality_repair_summary,
+        semantic_quality_repair_attempts,
+    ) = await _phase_semantic_quality_repair_loop(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        run_id=run_id,
+        context=context,
+        message=message,
+        baseline_files=baseline_files,
+        llm_call_timeout=llm_call_timeout,
+        adapter_workspace=_adapter_workspace,
+        workspace_name=workspace_name,
+        state=state,
     )
 
     semantic_failed_result = _phase_semantic_quality_failed(
@@ -1636,7 +1338,58 @@ async def _execute_standard_llm_flow(
     if semantic_failed_result is not None:
         return semantic_failed_result
 
-    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    return _phase_finalize_materialization(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        run_id=run_id,
+        context=context,
+        board_claim_applied=board_claim_applied,
+        decision_signals=decision_signals,
+        direct_fallback_summary=direct_fallback_summary,
+        empty_write_content_retry_summary=empty_write_content_retry_summary,
+        materialization_mode=materialization_mode,
+        primary_llm_summary=primary_llm_summary,
+        quality_repair_attempts=quality_repair_attempts,
+        quality_repair_summary=quality_repair_summary,
+        semantic_quality_repair_attempts=semantic_quality_repair_attempts,
+        semantic_quality_repair_summary=semantic_quality_repair_summary,
+        task_claim_session_id=task_claim_session_id,
+        write_tool_evidence=write_tool_evidence,
+        state=state,
+    )
+
+
+def _phase_finalize_materialization(
+    adapter: Any,
+    *,
+    board_claim_applied: bool,
+    context: dict[str, Any],
+    decision_signals: list[dict[str, Any]],
+    direct_fallback_summary: dict[str, Any] | None,
+    empty_write_content_retry_summary: dict[str, Any] | None,
+    materialization_mode: str,
+    primary_llm_summary: dict[str, Any] | None,
+    quality_repair_attempts: list[dict[str, Any]],
+    quality_repair_summary: dict[str, Any] | None,
+    run_id: str,
+    semantic_quality_repair_attempts: list[dict[str, Any]],
+    semantic_quality_repair_summary: dict[str, Any] | None,
+    target_task_id: str,
+    task: dict[str, Any],
+    task_claim_session_id: str,
+    write_tool_evidence: bool,
+    state: MaterializationState,
+) -> dict[str, Any]:
+    """Materialized-paths reconcile + completion-metadata + finalize (Block D).
+
+    Reconciles reported changed files against what actually materialized on
+    disk, returning the ``no_physical_files`` failure dict when nothing
+    materialized, otherwise assembling the completion metadata, emitting the
+    cognitive receipt, finalizing the board claim, and returning the success
+    result dict. This is the success/failure epilogue of the standard flow.
+    """
+    _current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
     reported_affected_files = list(all_affected_files)
     all_affected_files, unmaterialized_affected_files = _adapter_materialized_file_paths(
         adapter,
@@ -2249,6 +2002,459 @@ def _phase_pre_materialization_target_repair(
             tool_results,
         ),
         quality_repair_summary,
+    )
+
+
+def _phase_pre_materialization_quality(
+    adapter: Any,
+    *,
+    baseline_files: dict[str, str],
+    can_accept_existing_scope: bool,
+    context: dict[str, Any],
+    existing_contract_evidence: dict[str, Any],
+    primary_llm_summary: dict[str, Any] | None,
+    quality_repair_attempts: list[dict[str, Any]],
+    quality_repair_summary: dict[str, Any] | None,
+    requires_fresh_materialization: bool,
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    write_tool_evidence: bool,
+    state: MaterializationState,
+) -> tuple[MaterializationState, dict[str, Any], bool, bool, dict[str, Any] | None]:
+    """Pre-materialization deterministic quality recompute (Block A).
+
+    When the Director produced a write receipt but no in-scope diff yet, run the
+    deterministic materialization-quality repairs once and recompute the
+    existing-contract evidence / acceptance gate. Returns the updated state, the
+    (possibly updated) existing-contract evidence, the can-accept-existing-scope
+    and write-tool-evidence flags, and the latest quality-repair summary.
+    ``quality_repair_attempts`` is appended in place.
+    """
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    if (
+        not all_affected_files
+        and not can_accept_existing_scope
+        and write_tool_evidence
+        and (requires_fresh_materialization or not bool(existing_contract_evidence.get("ok")))
+    ):
+        pre_materialization_quality_errors = _collect_materialization_quality_errors(
+            adapter,
+            task=task,
+            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            workspace_name=workspace_name,
+            context=context,
+        )
+        deterministic_quality_tool_results, deterministic_quality_summary = (
+            _apply_deterministic_materialization_quality_repairs(
+                adapter,
+                task=task,
+                task_id=target_task_id,
+                artifact_quality_errors=pre_materialization_quality_errors,
+            )
+        )
+        if deterministic_quality_tool_results:
+            tool_results.extend(deterministic_quality_tool_results)
+            quality_repair_summary = deterministic_quality_summary
+            quality_repair_attempts.append(deterministic_quality_summary)
+            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+                adapter,
+                baseline_files,
+                task=task,
+                workspace_name=workspace_name,
+            )
+            if all_affected_files:
+                all_affected_files = _merge_successful_write_paths(
+                    all_affected_files,
+                    _extract_successful_write_paths(deterministic_quality_tool_results),
+                )
+            existing_contract_evidence = _build_existing_workspace_task_evidence(
+                task=task,
+                current_files=current_files,
+                workspace_full=str(getattr(adapter, "workspace", "") or ""),
+                workspace_name=workspace_name,
+            )
+            write_tool_evidence = has_successful_write_tool(tool_results)
+            can_accept_existing_scope = bool(
+                existing_contract_evidence.get("ok")
+            ) and _can_accept_existing_workspace_scope(
+                task=task,
+                requires_fresh_materialization=requires_fresh_materialization,
+                write_tool_evidence=write_tool_evidence,
+                primary_llm_summary=primary_llm_summary,
+            )
+    return (
+        MaterializationState.from_locals(
+            current_files,
+            new_files,
+            modified_files,
+            all_affected_files,
+            tool_results,
+        ),
+        existing_contract_evidence,
+        can_accept_existing_scope,
+        write_tool_evidence,
+        quality_repair_summary,
+    )
+
+
+async def _phase_quality_repair_loop(
+    adapter: Any,
+    *,
+    adapter_workspace: str,
+    baseline_files: dict[str, str],
+    context: dict[str, Any],
+    llm_call_timeout: float,
+    message: str,
+    quality_repair_attempts: list[dict[str, Any]],
+    quality_repair_summary: dict[str, Any] | None,
+    run_id: str,
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    write_tool_evidence: bool,
+    state: MaterializationState,
+) -> tuple[MaterializationState, list[str], dict[str, Any] | None, bool]:
+    """Progress-aware deterministic + LLM quality-repair ladder (Block B).
+
+    Runs the declared-target contract repair, then a progress-budgeted repair
+    loop that interleaves deterministic materialization-quality repairs with an
+    LLM repair retry, recomputing the artifact-quality error set after each
+    write attempt. Returns the updated state, the residual artifact-quality
+    errors, the latest quality-repair summary, and the (possibly updated)
+    write-tool evidence flag. ``quality_repair_attempts`` is appended in place.
+    """
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    _adapter_workspace = adapter_workspace
+
+    deterministic_contract_tool_results, deterministic_contract_summary = (
+        _apply_deterministic_declared_target_contract_repairs(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+        )
+    )
+    if deterministic_contract_tool_results:
+        tool_results.extend(deterministic_contract_tool_results)
+        quality_repair_summary = deterministic_contract_summary
+        quality_repair_attempts.append(deterministic_contract_summary)
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
+            task=task,
+            workspace_name=workspace_name,
+        )
+        all_affected_files = _merge_successful_write_paths(
+            all_affected_files,
+            _extract_successful_write_paths(deterministic_contract_tool_results),
+        )
+        write_tool_evidence = has_successful_write_tool(tool_results)
+
+    artifact_quality_errors = _collect_materialization_quality_errors(
+        adapter,
+        task=task,
+        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+        workspace_name=workspace_name,
+        context=context,
+    )
+    artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+    # Live factory-bench L1-01 (2026-06-17, after the symbol-coherence fix):
+    # py_compile + scan_workspace_artifact_quality pass for a calculator.py
+    # whose __main__ block raises at call time. The deterministic ladder
+    # must actually run the code to surface this kind of failure.
+    artifact_quality_errors += _apply_deterministic_python_static_smoke(
+        adapter,
+        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+    )
+    artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+        adapter,
+        task_id=target_task_id,
+        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+    )
+    artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
+        artifact_quality_errors,
+        _adapter_workspace,
+    )
+    # Progress-aware repair budget: the base budget is 2 attempts, but while
+    # an attempt makes measurable progress on EITHER dimension — fewer missing
+    # declared targets OR fewer quality errors overall — the loop keeps going
+    # (hard cap 5). Live factory-bench L2-11 r1: missing-count convergence
+    # (3→2→1) was cut one file short by the fixed budget. L2-11 r6: an attempt
+    # repaired the truncated index.html (errors 2→1, real progress) but the
+    # missing-only metric (1→1) still cut the loop before diff.test.html.
+    prev_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
+    prev_error_count = len(artifact_quality_errors)
+    for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
+        if not artifact_quality_errors:
+            break
+        current_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
+        current_error_count = len(artifact_quality_errors)
+        if repair_attempt > _QUALITY_REPAIR_BASE_ATTEMPTS:
+            missing_progress = 0 < current_missing_count < prev_missing_count
+            error_progress = 0 < current_error_count < prev_error_count
+            if not (missing_progress or error_progress):
+                break
+        prev_missing_count = current_missing_count
+        prev_error_count = current_error_count
+        deterministic_quality_tool_results, deterministic_quality_summary = (
+            _apply_deterministic_materialization_quality_repairs(
+                adapter,
+                task=task,
+                task_id=target_task_id,
+                artifact_quality_errors=artifact_quality_errors,
+            )
+        )
+        if deterministic_quality_tool_results:
+            tool_results.extend(deterministic_quality_tool_results)
+            quality_repair_summary = deterministic_quality_summary
+            quality_repair_attempts.append(deterministic_quality_summary)
+            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+                adapter,
+                baseline_files,
+                task=task,
+                workspace_name=workspace_name,
+            )
+            all_affected_files = _merge_successful_write_paths(
+                all_affected_files,
+                _extract_successful_write_paths(deterministic_quality_tool_results),
+            )
+            artifact_quality_errors = _collect_materialization_quality_errors(
+                adapter,
+                task=task,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                workspace_name=workspace_name,
+                context=context,
+            )
+            artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+            artifact_quality_errors += _apply_deterministic_python_static_smoke(
+                adapter,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            )
+            artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+                adapter,
+                task_id=target_task_id,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            )
+            artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
+                artifact_quality_errors,
+                _adapter_workspace,
+            )
+            if not artifact_quality_errors:
+                break
+        repair_tool_results, quality_repair_summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            original_message=message,
+            llm_call_timeout=llm_call_timeout,
+            artifact_quality_errors=artifact_quality_errors,
+            changed_files=all_affected_files,
+            repair_attempt=repair_attempt,
+        )
+        quality_repair_attempts.append(quality_repair_summary)
+        if not repair_tool_results:
+            break
+        if repair_tool_results:
+            tool_results.extend(repair_tool_results)
+            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+                adapter,
+                baseline_files,
+                task=task,
+                workspace_name=workspace_name,
+            )
+            all_affected_files = _merge_successful_write_paths(
+                all_affected_files,
+                _extract_successful_write_paths(repair_tool_results),
+            )
+            artifact_quality_errors = _collect_materialization_quality_errors(
+                adapter,
+                task=task,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                workspace_name=workspace_name,
+                context=context,
+            )
+            artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+            artifact_quality_errors += _apply_deterministic_python_static_smoke(
+                adapter,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            )
+            artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+                adapter,
+                task_id=target_task_id,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            )
+            artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
+                artifact_quality_errors,
+                _adapter_workspace,
+            )
+            if artifact_quality_errors:
+                deterministic_quality_tool_results, deterministic_quality_summary = (
+                    _apply_deterministic_materialization_quality_repairs(
+                        adapter,
+                        task=task,
+                        task_id=target_task_id,
+                        artifact_quality_errors=artifact_quality_errors,
+                    )
+                )
+                if deterministic_quality_tool_results:
+                    tool_results.extend(deterministic_quality_tool_results)
+                    quality_repair_summary = deterministic_quality_summary
+                    quality_repair_attempts.append(deterministic_quality_summary)
+                    current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+                        adapter,
+                        baseline_files,
+                        task=task,
+                        workspace_name=workspace_name,
+                    )
+                    all_affected_files = _merge_successful_write_paths(
+                        all_affected_files,
+                        _extract_successful_write_paths(deterministic_quality_tool_results),
+                    )
+                    artifact_quality_errors = _collect_materialization_quality_errors(
+                        adapter,
+                        task=task,
+                        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                        workspace_name=workspace_name,
+                        context=context,
+                    )
+                    artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+                    artifact_quality_errors += _apply_deterministic_python_static_smoke(
+                        adapter,
+                        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                    )
+                    artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+                        adapter,
+                        task_id=target_task_id,
+                        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                    )
+                    artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
+                        artifact_quality_errors,
+                        _adapter_workspace,
+                    )
+                    if not artifact_quality_errors:
+                        break
+
+    return (
+        MaterializationState.from_locals(
+            current_files,
+            new_files,
+            modified_files,
+            all_affected_files,
+            tool_results,
+        ),
+        artifact_quality_errors,
+        quality_repair_summary,
+        write_tool_evidence,
+    )
+
+
+async def _phase_semantic_quality_repair_loop(
+    adapter: Any,
+    *,
+    adapter_workspace: str,
+    baseline_files: dict[str, str],
+    context: dict[str, Any],
+    llm_call_timeout: float,
+    message: str,
+    run_id: str,
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    state: MaterializationState,
+) -> tuple[MaterializationState, str | None, dict[str, Any] | None, list[dict[str, Any]]]:
+    """Semantic-quality + missing-declared-target LLM repair loop (Block C).
+
+    Runs ``validate_generated_output`` plus the missing-declared-target check,
+    and while either fails drives an LLM repair retry (hard-capped), recomputing
+    the artifact-quality error set after each write. Returns the updated state,
+    the residual semantic-quality error (or ``None``), the latest repair summary,
+    and the list of per-attempt repair summaries.
+    """
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    _adapter_workspace = adapter_workspace
+
+    semantic_quality_repair_summary: dict[str, Any] | None = None
+    semantic_quality_repair_attempts: list[dict[str, Any]] = []
+    semantic_quality_error = adapter._execution.validate_generated_output(task, all_affected_files)
+    for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
+        missing_declared_targets = _missing_declared_target_files(task, _adapter_workspace)
+        if not semantic_quality_error and not missing_declared_targets:
+            break
+        semantic_repair_errors: list[str] = []
+        if semantic_quality_error:
+            semantic_repair_errors.append(semantic_quality_error)
+        semantic_repair_errors.extend(
+            f"Artifact quality scan failed: declared target file missing '{path}'" for path in missing_declared_targets
+        )
+        if not semantic_repair_errors:
+            break
+        repair_tool_results, semantic_quality_repair_summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            original_message=message,
+            llm_call_timeout=llm_call_timeout,
+            artifact_quality_errors=semantic_repair_errors,
+            changed_files=all_affected_files,
+            repair_attempt=repair_attempt,
+        )
+        semantic_quality_repair_attempts.append(semantic_quality_repair_summary)
+        if not repair_tool_results:
+            break
+        tool_results.extend(repair_tool_results)
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
+            task=task,
+            workspace_name=workspace_name,
+        )
+        all_affected_files = _merge_successful_write_paths(
+            all_affected_files,
+            _extract_successful_write_paths(repair_tool_results),
+        )
+        artifact_quality_errors = _collect_materialization_quality_errors(
+            adapter,
+            task=task,
+            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            workspace_name=workspace_name,
+            context=context,
+        )
+        artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+        artifact_quality_errors += _apply_deterministic_python_static_smoke(
+            adapter,
+            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+        )
+        artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id=target_task_id,
+            all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+        )
+        artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
+            artifact_quality_errors,
+            str(getattr(adapter, "workspace", "") or ""),
+        )
+        if artifact_quality_errors:
+            semantic_quality_error = "Director output quality gate failed after semantic repair: " + "; ".join(
+                artifact_quality_errors[:6]
+            )
+            break
+        semantic_quality_error = adapter._execution.validate_generated_output(task, all_affected_files)
+
+    return (
+        MaterializationState.from_locals(
+            current_files,
+            new_files,
+            modified_files,
+            all_affected_files,
+            tool_results,
+        ),
+        semantic_quality_error,
+        semantic_quality_repair_summary,
+        semantic_quality_repair_attempts,
     )
 
 

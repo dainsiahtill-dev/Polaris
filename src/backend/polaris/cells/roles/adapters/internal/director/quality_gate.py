@@ -689,9 +689,15 @@ async def _run_materialization_quality_repair_retry(
         workspace_full=workspace_full,
     )
     repair_target_candidates = semantic_quality_target_files or runtime_smoke_target_files or missing_target_files
+    rotate_repair_targets = bool(
+        len(repair_target_candidates) > 1
+        and semantic_quality_target_files
+        and _should_rotate_materialization_quality_repair_targets(artifact_quality_errors)
+    )
     repair_target_files = _select_materialization_quality_repair_target_batch(
         repair_target_candidates,
         repair_attempt=repair_attempt,
+        rotate_after_first_attempt=rotate_repair_targets,
     )
     missing_target_set = set(missing_target_files)
     missing_repair_target_files = [path for path in repair_target_files if path in missing_target_set]
@@ -790,6 +796,7 @@ async def _run_materialization_quality_repair_retry(
             "runtime_smoke_target_files": runtime_smoke_target_files[:12],
             "semantic_quality_target_files": semantic_quality_target_files[:12],
             "repair_target_files": repair_target_files[:12],
+            "rotated_repair_targets": rotate_repair_targets,
         }
     )
     return repair_tool_results, summary
@@ -808,12 +815,28 @@ def _select_materialization_quality_repair_target_batch(
     missing_target_files: list[str],
     *,
     repair_attempt: int = 1,
+    rotate_after_first_attempt: bool = False,
 ) -> list[str]:
     """Select the missing targets to repair in a single LLM attempt."""
 
     if repair_attempt > 1 and missing_target_files:
+        if rotate_after_first_attempt:
+            target_index = (repair_attempt - 1) % len(missing_target_files)
+            return [missing_target_files[target_index]]
         return [missing_target_files[0]]
     return list(missing_target_files[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT])
+
+
+def _should_rotate_materialization_quality_repair_targets(artifact_quality_errors: list[str]) -> bool:
+    joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
+    return any(
+        hint in joined_errors
+        for hint in (
+            "typescript project typecheck failed",
+            "tsc --noemit failed",
+            "error ts",
+        )
+    )
 
 
 _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (

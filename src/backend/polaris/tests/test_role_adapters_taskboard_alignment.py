@@ -29,6 +29,33 @@ def test_pm_adapter_fallback_domain_prefers_workspace_slug_over_directive_noise(
     assert token == "expense"
 
 
+def test_pm_typescript_package_contract_uses_requirement_checks_not_fixed_template(tmp_path: Path) -> None:
+    adapter = PMAdapter(workspace=str(tmp_path))
+    directive = """
+# Product Requirements - Glow Garden
+
+用 TypeScript 实现一个发光昆虫花园模拟器，交付 index.html、package.json、tsconfig.json 和源码。
+必须在工作区根目录生成可运行项目，支持 npm run build/test/start。
+
+## Deterministic Checks
+- html
+- ts_syntax
+- package_scripts
+- content_any:firefly|flower|moon|humidity
+"""
+
+    contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+    payload = json.dumps(contracts, ensure_ascii=False)
+    lowered_payload = payload.lower()
+
+    assert len(contracts) == 3
+    assert "src/models/" not in payload
+    assert "content_any:firefly|flower|moon|humidity" in payload
+    assert "package_scripts" in payload
+    for token in ("firefly", "flower", "moon", "humidity"):
+        assert token in lowered_payload
+
+
 def test_director_ephemeral_task_includes_pending_taskboard_contract(tmp_path: Path) -> None:
     adapter = DirectorAdapter(workspace=str(tmp_path))
     adapter.task_board.create(

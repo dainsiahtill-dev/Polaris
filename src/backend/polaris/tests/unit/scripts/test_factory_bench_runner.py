@@ -142,6 +142,35 @@ def test_runtime_dir_candidates_merge_artifacts_and_chain_results(
     assert chain_results["director"] == {"total": 2, "successes": 1, "failures": 1}
 
 
+def test_runtime_dir_candidates_prefer_exact_workspace_evidence(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "L1-01"
+    workspace.mkdir()
+    runtime_base = tmp_path / "projects"
+    current_runtime = runtime_base / "l1-01-current" / "runtime"
+    stale_runtime = runtime_base / "l1-01-stale" / "runtime"
+    (current_runtime / "events").mkdir(parents=True)
+    (stale_runtime / "events").mkdir(parents=True)
+    other_workspace = tmp_path / "other" / "L1-01"
+    (current_runtime / "events" / "task_runtime.execution.jsonl").write_text(
+        json.dumps({"workspace": str(workspace.resolve())}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (stale_runtime / "events" / "task_runtime.execution.jsonl").write_text(
+        json.dumps({"workspace": str(other_workspace.resolve())}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    os.utime(current_runtime, (100, 100))
+    os.utime(stale_runtime, (200, 200))
+    monkeypatch.setattr(bench, "_RUNTIME_PROJECT_BASES", (runtime_base,))
+
+    runtime_dirs = resolve_runtime_dirs_for_workspace(workspace)
+
+    assert runtime_dirs == [current_runtime]
+
+
 def test_clean_chain_preserves_static_pass() -> None:
     record = _record(
         real_run_gate={"ok": True, "summary": "real run gate passed"},

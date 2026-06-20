@@ -477,7 +477,7 @@ def test_llm_route_audit_can_relax_director_route_coverage_for_serial_bench() ->
     assert audit["roles"]["director"]["missing_bindings"]
 
 
-def test_llm_route_audit_rejects_providerless_and_cached_events() -> None:
+def test_llm_route_audit_resolves_providerless_via_expected_bindings_and_rejects_cached() -> None:
     expected = {
         "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-for-coding", "binding_id": "pm0"}],
         "chief_engineer": [
@@ -485,18 +485,26 @@ def test_llm_route_audit_rejects_providerless_and_cached_events() -> None:
         ],
         "qa": [{"role": "qa", "provider_id": "minimax-a", "model": "MiniMax-M3", "binding_id": "qa0"}],
         "director": [
-            {"role": "director", "provider_id": "qwen-a", "model": "qwen3.6-27b-gpu0", "binding_id": "d0"},
-            {"role": "director", "provider_id": "qwen-b", "model": "qwen3.6-27b-gpu1", "binding_id": "d1"},
+            {"role": "director", "provider_id": "qwen-gpu0", "model": "qwen3.6-27b-gpu0", "binding_id": "d0"},
+            {"role": "director", "provider_id": "qwen-gpu1", "model": "qwen3.6-27b-gpu1", "binding_id": "d1"},
         ],
     }
     events = [
-        {"event": "llm_call_end", "role": "pm", "model": "kimi-for-coding", "terminal": True, "invocation": True},
+        {
+            "event": "llm_call_end",
+            "role": "pm",
+            "source": "roles.kernel.events",
+            "terminal": True,
+            "invocation": True,
+            "data": {"model": "kimi-for-coding", "metadata": {"source": "llm"}},
+        },
         {
             "event": "llm_call_end",
             "role": "chief_engineer",
-            "model": "kimi-for-coding",
+            "source": "roles.kernel.events",
             "terminal": True,
             "invocation": True,
+            "data": {"model": "kimi-for-coding", "metadata": {"source": "llm"}},
         },
         {
             "event": "llm_call_end",
@@ -510,30 +518,35 @@ def test_llm_route_audit_rejects_providerless_and_cached_events() -> None:
         {
             "event": "llm_call_end",
             "role": "director",
-            "model": "qwen3.6-27b-gpu0",
-            "source": "llm",
+            "source": "roles.kernel.events",
             "terminal": True,
             "invocation": True,
+            "data": {"model": "qwen3.6-27b-gpu0", "metadata": {"source": "llm"}},
         },
         {
             "event": "llm_call_end",
             "role": "director",
-            "provider_id": "qwen-b",
+            "provider_id": "qwen-gpu1",
             "model": "qwen3.6-27b-gpu1",
-            "source": "llm",
-            "cache_hit": True,
+            "source": "roles.kernel.events",
             "terminal": True,
             "invocation": True,
+            "data": {"metadata": {"source": "llm", "cached": True}},
         },
     ]
 
     audit = build_llm_route_audit(events, expected_bindings=expected)
 
     assert audit["ok"] is False
-    assert audit["events_rejected"] == len(events)
-    assert audit["roles"]["pm"]["observed_count"] == 0
+    assert audit["events_observed"] == 3
+    assert audit["events_rejected"] == 2
+    assert audit["roles"]["pm"]["observed_count"] == 1
+    assert audit["roles"]["pm"]["observed_bindings"] == ["kimi-a|kimi-for-coding"]
+    assert audit["roles"]["chief_engineer"]["observed_count"] == 1
+    assert audit["roles"]["chief_engineer"]["observed_bindings"] == ["kimi-a|kimi-for-coding"]
     assert audit["roles"]["qa"]["observed_count"] == 0
-    assert audit["roles"]["director"]["missing_bindings"]
+    assert audit["roles"]["director"]["observed_count"] == 1
+    assert audit["roles"]["director"]["observed_bindings"] == ["qwen-gpu0|qwen3.6-27b-gpu0"]
 
 
 def test_failure_taxonomy_prefers_llm_route_before_generic_chain_failure() -> None:
@@ -617,3 +630,111 @@ def test_aggregate_goal_audit_counts_real_route_and_root_causes() -> None:
     assert aggregate["real_run_gate"] == {"passed": 1, "total": 2}
     assert aggregate["llm_route_audit"] == {"passed": 1, "total": 2}
     assert aggregate["failure_categories"]["target_project_baseline"] == 1
+
+
+def test_nested_roles_kernel_events_passes_with_model_only_and_expected_binding() -> None:
+    expected = {
+        "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": "pm0"}],
+        "chief_engineer": [],
+        "qa": [],
+        "director": [{"role": "director", "provider_id": "qwen-gpu0", "model": "qwen3.6-27b", "binding_id": "d0"}],
+    }
+    events = [
+        {
+            "event": "llm_call_end",
+            "role": "pm",
+            "source": "roles.kernel.events",
+            "terminal": True,
+            "invocation": True,
+            "data": {"model": "kimi-k2", "metadata": {"source": "llm"}},
+        },
+        {
+            "event": "llm_call_end",
+            "role": "director",
+            "source": "roles.kernel.events",
+            "terminal": True,
+            "invocation": True,
+            "data": {"model": "qwen3.6-27b", "metadata": {"source": "llm"}},
+        },
+    ]
+
+    audit = build_llm_route_audit(events, expected_bindings=expected, required_roles=("pm", "director"))
+
+    assert audit["ok"] is True
+    assert audit["events_observed"] == 2
+    assert audit["events_rejected"] == 0
+    assert audit["roles"]["pm"]["observed_count"] == 1
+    assert audit["roles"]["pm"]["observed_bindings"] == ["kimi-a|kimi-k2"]
+    assert audit["roles"]["director"]["observed_count"] == 1
+    assert audit["roles"]["director"]["observed_bindings"] == ["qwen-gpu0|qwen3.6-27b"]
+
+
+def test_metadata_cached_true_rejected() -> None:
+    expected = {
+        "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": "pm0"}],
+        "chief_engineer": [],
+        "qa": [],
+        "director": [],
+    }
+    events = [
+        {
+            "event": "llm_call_end",
+            "role": "pm",
+            "provider_id": "kimi-a",
+            "model": "kimi-k2",
+            "source": "roles.kernel.events",
+            "terminal": True,
+            "invocation": True,
+            "data": {"metadata": {"source": "llm", "cached": True}},
+        },
+    ]
+
+    audit = build_llm_route_audit(events, expected_bindings=expected, required_roles=("pm",))
+
+    assert audit["ok"] is False
+    assert audit["events_observed"] == 0
+    assert audit["events_rejected"] == 1
+    assert audit["roles"]["pm"]["observed_count"] == 0
+
+
+def test_director_multi_binding_missing_one_fails() -> None:
+    expected = {
+        "pm": [],
+        "chief_engineer": [],
+        "qa": [],
+        "director": [
+            {"role": "director", "provider_id": "qwen-gpu0", "model": "qwen3.6-27b", "binding_id": "d0"},
+            {"role": "director", "provider_id": "qwen-gpu1", "model": "qwen3.6-27b", "binding_id": "d1"},
+        ],
+    }
+    events = [
+        _real_llm_event("director", "qwen-gpu0", "qwen3.6-27b", "d0"),
+    ]
+
+    audit = build_llm_route_audit(events, expected_bindings=expected, required_roles=("director",))
+
+    assert audit["ok"] is False
+    assert audit["roles"]["director"]["multi_route_ok"] is False
+    assert audit["roles"]["director"]["missing_bindings"]
+
+
+def test_director_multi_binding_all_pass() -> None:
+    expected = {
+        "pm": [],
+        "chief_engineer": [],
+        "qa": [],
+        "director": [
+            {"role": "director", "provider_id": "qwen-gpu0", "model": "qwen3.6-27b", "binding_id": "d0"},
+            {"role": "director", "provider_id": "qwen-gpu1", "model": "qwen3.6-27b", "binding_id": "d1"},
+        ],
+    }
+    events = [
+        _real_llm_event("director", "qwen-gpu0", "qwen3.6-27b", "d0"),
+        _real_llm_event("director", "qwen-gpu1", "qwen3.6-27b", "d1"),
+    ]
+
+    audit = build_llm_route_audit(events, expected_bindings=expected, required_roles=("director",))
+
+    assert audit["ok"] is True
+    assert audit["roles"]["director"]["multi_route_ok"] is True
+    assert audit["roles"]["director"]["observed_count"] == 2
