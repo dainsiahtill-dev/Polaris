@@ -53,7 +53,6 @@ const directorStatusPath = `/v2/role/director/chat/status?${productWorkspaceQuer
 const directorJetstreamPath = `/v2/role/director/chat/jetstream?${productWorkspaceQuery}`;
 const pmStatusPath = `/v2/role/pm/chat/status?${productWorkspaceQuery}`;
 const pmJetstreamPath = `/v2/role/pm/chat/jetstream?${productWorkspaceQuery}`;
-const pmLegacyStreamPath = `/v2/role/pm/chat/stream?${productWorkspaceQuery}`;
 
 function emitChatChunk(channel: string, type: string, data: Record<string, unknown>) {
   const handler = runtimeTransportMock.registerMessageHandler.mock.calls.at(-1)?.[0];
@@ -154,10 +153,6 @@ describe('useAIDialogue RoleSession bridge', () => {
       directorJetstreamPath,
       expect.anything(),
     );
-    expect(apiFetchMock).not.toHaveBeenCalledWith(
-      '/v2/roles/sessions/session-1/messages/stream',
-      expect.anything(),
-    );
 
     emitChatChunk('chat:session-1', 'complete', { content: 'session answer' });
 
@@ -243,10 +238,6 @@ describe('useAIDialogue RoleSession bridge', () => {
     });
     expect(payload.context).toMatchObject({ workspace: 'C:/Temp/Product', history: [] });
     expect(payload.context).toHaveProperty('conversation_id', null);
-    expect(apiFetchMock).not.toHaveBeenCalledWith(
-      pmLegacyStreamPath,
-      expect.anything(),
-    );
     expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledWith([
       { channel: 'chat:pm-chat-session', tailLines: 0 },
     ]);

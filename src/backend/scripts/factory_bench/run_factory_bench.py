@@ -137,7 +137,9 @@ def load_projects(projects_file: str | Path | None = None) -> list[dict[str, Any
             duplicates.append(project_id)
         seen.add(project_id)
     if duplicates:
-        raise ValueError("factory-bench catalog contains duplicate project id(s): " + ", ".join(sorted(set(duplicates))))
+        raise ValueError(
+            "factory-bench catalog contains duplicate project id(s): " + ", ".join(sorted(set(duplicates)))
+        )
     return projects
 
 
@@ -1090,7 +1092,7 @@ def main() -> int:
     ap.add_argument(
         "--projects-file",
         default=str(_FIXTURE),
-        help="factory-bench project catalog JSON; defaults to projects_v2.json, which extends v1",
+        help="factory-bench project catalog JSON; defaults to standalone creative projects_v2.json",
     )
     ap.add_argument("--work-dir", default=os.path.expanduser("~/Temp/factory-bench"))
     ap.add_argument("--timeout", type=int, default=5400, help="per-project chain timeout seconds")

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
+from polaris.cells.factory.pipeline.internal import bench_gates
 from polaris.cells.factory.pipeline.internal.bench_gates import (
     aggregate_goal_audit,
     build_llm_route_audit,
@@ -212,6 +214,42 @@ def test_real_run_gate_accepts_pure_static_html_css_smoke(tmp_path: Path) -> Non
     assert gate["requirements"]["build_test_lint_ran"]["ok"] is True
     assert gate["requirements"]["build_test_lint_ran"]["detail"] == "static HTML/CSS entrypoint smoke passed"
     assert gate["entrypoint"]["kind"] == "web_static"
+
+
+def test_real_run_gate_executes_go_build_and_cli_entrypoint(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "main.go").write_text(
+        'package main\nimport "fmt"\nfunc main() { fmt.Println("usage: app") }\n',
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/go" if name == "go" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "usage: app\n" if "run" in command else "",
+            "stderr_tail": "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["main.go"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    assert gate["requirements"]["environment_prepared"]["detail"] == "go toolchain available"
+    assert gate["requirements"]["build_test_lint_ran"]["detail"] == "go test passed"
+    assert gate["entrypoint"]["kind"] == "go_cli"
+    assert [command[1] for command in commands] == ["test", "run"]
 
 
 def test_collect_llm_events_reads_runtime_role_jsonl(tmp_path: Path) -> None:
@@ -557,6 +595,24 @@ def test_failure_taxonomy_classifies_integration_qa_before_generic_chain_failure
     assert taxonomy["category"] == "llm_output"
     assert taxonomy["root_cause_signature"] == "llm_output:integration_qa_failed"
     assert taxonomy["evidence"] == ["qa_passed=False; qa_score=34"]
+
+
+def test_failure_taxonomy_classifies_missing_toolchain_check_as_runtime_environment() -> None:
+    record = {
+        "all_checks_passed": False,
+        "factory_gates": [],
+        "real_run_gate": {"ok": True, "summary": "real run gate passed"},
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain_state": "clean",
+        "checks": [{"check": "go_compile", "ok": False, "detail": "go unavailable for Go project"}],
+        "has_plan_doc": True,
+        "wrong_product_suspect": False,
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:go_compile"
 
 
 def test_aggregate_goal_audit_counts_real_route_and_root_causes() -> None:

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
+from typing import Any
 
+from polaris.kernelone.benchmark import factory_audit
 from polaris.kernelone.benchmark.factory_audit import (
     FACTORY_AUDIT_SCHEMA_VERSION,
     aggregate_factory_audits,
@@ -288,3 +291,39 @@ def test_content_any_bad_pattern_fails_closed(tmp_path) -> None:
     results = run_checks(str(tmp_path), ["content_any:[unclosed"])
     assert results[0]["ok"] is False
     assert "bad pattern" in results[0]["detail"]
+
+
+def test_multilanguage_compile_checks_dispatch_to_toolchains(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "app.ts").write_text("export const answer: number = 42;\n", encoding="utf-8")
+    (tmp_path / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+    (tmp_path / "main.rs").write_text("fn main() {}\n", encoding="utf-8")
+    (tmp_path / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+    (tmp_path / "Main.java").write_text(
+        "public class Main { public static void main(String[] args) {} }\n", encoding="utf-8"
+    )
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str:
+        return f"/tool/{name}"
+
+    def fake_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(factory_audit.shutil, "which", fake_which)
+    monkeypatch.setattr(factory_audit.subprocess, "run", fake_run)
+
+    results = run_checks(str(tmp_path), ["ts_syntax", "go_compile", "rust_compile", "cpp_compile", "java_compile"])
+
+    assert [item["ok"] for item in results] == [True, True, True, True, True]
+    assert [Path(command[0]).name for command in commands] == ["tsc", "go", "rustc", "g++", "javac"]
+
+
+def test_multilanguage_compile_check_reports_missing_toolchain(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
+    monkeypatch.setattr(factory_audit.shutil, "which", lambda _name: None)
+
+    results = run_checks(str(tmp_path), ["go_compile"])
+
+    assert results[0]["ok"] is False
+    assert "go unavailable" in results[0]["detail"]

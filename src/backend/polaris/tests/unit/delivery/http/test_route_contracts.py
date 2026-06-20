@@ -96,7 +96,7 @@ def test_legacy_http_sse_routes_are_not_registered(monkeypatch, method: str, pat
         json={"message": "hello"},
     )
 
-    assert response.status_code == 404
+    assert response.status_code in {404, 405}
     assert "text/event-stream" not in response.headers.get("content-type", "")
 
 

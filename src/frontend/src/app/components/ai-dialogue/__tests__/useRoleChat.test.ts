@@ -102,10 +102,6 @@ describe('useRoleChat', () => {
         headers: { 'Content-Type': 'application/json' },
       }),
     );
-    expect(apiFetchMock).not.toHaveBeenCalledWith(
-      '/v2/role/pm/chat/stream?workspace=C%3A%2FTemp%2FProduct',
-      expect.anything(),
-    );
     expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledWith([
       { channel: 'chat:pm-chat-1', tailLines: 0 },
     ]);

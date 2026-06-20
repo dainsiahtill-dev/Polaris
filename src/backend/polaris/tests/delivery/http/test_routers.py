@@ -541,10 +541,10 @@ class TestRoleSessionRouter:
                 json={"role": "pm"},
             )
 
-            assert response.status_code == 200
+            assert response.status_code == 400
             data = response.json()
-            assert data["ok"] is False
-            assert "error" in data
+            assert data["detail"]["code"] == "REQUEST_ERROR"
+            assert "Service error" in data["detail"]["message"]
 
     def test_list_sessions_returns_sessions(self) -> None:
         """GET /v2/roles/sessions should return session list."""
@@ -605,7 +605,7 @@ class TestRoleSessionRouter:
 
             assert response.status_code == 404
             data = response.json()
-            assert data["ok"] is False
+            assert data["detail"]["code"] == "SESSION_NOT_FOUND"
 
     def test_update_session(self) -> None:
         """PUT /v2/roles/sessions/{id} should update session."""
@@ -667,7 +667,7 @@ class TestRoleSessionRouter:
 
             assert response.status_code == 404
             data = response.json()
-            assert data["ok"] is False
+            assert data["detail"]["code"] == "SESSION_NOT_FOUND"
 
     def test_send_message(self) -> None:
         """POST /v2/roles/sessions/{id}/messages should send message."""

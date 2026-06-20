@@ -12,9 +12,9 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
-import tempfile
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -283,7 +283,9 @@ def _rust_compile_command(workspace: Path, rust_files: list[str]) -> list[str]:
     return [rustc, "--edition=2021", "--emit=metadata", root] if root else []
 
 
-def _run_language_build_gate(workspace: Path, code_files: list[str], *, timeout_s: int) -> tuple[bool, str, list[dict[str, Any]]]:
+def _run_language_build_gate(
+    workspace: Path, code_files: list[str], *, timeout_s: int
+) -> tuple[bool, str, list[dict[str, Any]]]:
     ts_files = [rel for rel in _files_with_suffix(code_files, (".ts", ".tsx")) if not rel.endswith(".d.ts")]
     if ts_files:
         tsc = shutil.which("tsc")
@@ -375,7 +377,9 @@ def _smoke_go_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -> 
         entrypoint = "main.go"
     else:
         return {"ok": False, "kind": "go_cli", "detail": "no main.go or go.mod entrypoint discovered"}
-    return _cli_smoke_result("go_cli", entrypoint, _run_command(command, workspace, timeout_s=min(max(3, int(timeout_s)), 10)))
+    return _cli_smoke_result(
+        "go_cli", entrypoint, _run_command(command, workspace, timeout_s=min(max(3, int(timeout_s)), 10))
+    )
 
 
 def _smoke_rust_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -> dict[str, Any]:
@@ -387,7 +391,9 @@ def _smoke_rust_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -
         return _cli_smoke_result(
             "rust_cli",
             "cargo run",
-            _run_command([cargo, "run", "--quiet", "--", "--help"], workspace, timeout_s=min(max(3, int(timeout_s)), 10)),
+            _run_command(
+                [cargo, "run", "--quiet", "--", "--help"], workspace, timeout_s=min(max(3, int(timeout_s)), 10)
+            ),
         )
     rustc = shutil.which("rustc")
     main_rel = next((rel for rel in ("src/main.rs", "main.rs") if rel in rust_files), "")
@@ -395,7 +401,9 @@ def _smoke_rust_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -
         return {"ok": False, "kind": "rust_cli", "detail": "rustc or main.rs entrypoint unavailable"}
     with tempfile.TemporaryDirectory(prefix="polaris-factory-rust-") as out_dir:
         binary = str(Path(out_dir) / "app")
-        compile_result = _run_command([rustc, "--edition=2021", main_rel, "-o", binary], workspace, timeout_s=max(10, int(timeout_s)))
+        compile_result = _run_command(
+            [rustc, "--edition=2021", main_rel, "-o", binary], workspace, timeout_s=max(10, int(timeout_s))
+        )
         if not compile_result.get("ok"):
             return {"kind": "rust_cli", "entrypoint": main_rel, "compile": compile_result, **compile_result}
         result = _run_command([binary, "--help"], workspace, timeout_s=min(max(3, int(timeout_s)), 10))
@@ -421,7 +429,9 @@ def _smoke_cpp_cli(workspace: Path, code_files: list[str], *, timeout_s: int) ->
         return {"ok": False, "kind": "cpp_cli", "detail": "no C++ int main entrypoint discovered"}
     with tempfile.TemporaryDirectory(prefix="polaris-factory-cpp-") as out_dir:
         binary = str(Path(out_dir) / "app")
-        compile_result = _run_command([compiler, "-std=c++17", main_rel, "-o", binary], workspace, timeout_s=max(10, int(timeout_s)))
+        compile_result = _run_command(
+            [compiler, "-std=c++17", main_rel, "-o", binary], workspace, timeout_s=max(10, int(timeout_s))
+        )
         if not compile_result.get("ok"):
             return {"kind": "cpp_cli", "entrypoint": main_rel, "compile": compile_result, **compile_result}
         result = _run_command([binary, "--help"], workspace, timeout_s=min(max(3, int(timeout_s)), 10))
@@ -448,7 +458,9 @@ def _smoke_java_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -
         )
         if not compile_result.get("ok"):
             return {"kind": "java_cli", "entrypoint": main_rel, "compile": compile_result, **compile_result}
-        result = _run_command([java, "-cp", out_dir, main_class, "--help"], workspace, timeout_s=min(max(3, int(timeout_s)), 10))
+        result = _run_command(
+            [java, "-cp", out_dir, main_class, "--help"], workspace, timeout_s=min(max(3, int(timeout_s)), 10)
+        )
     payload = _cli_smoke_result("java_cli", main_rel, result)
     payload["compile"] = compile_result
     return payload
@@ -1165,7 +1177,9 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     elif _check_failures(record):
         first_check = _check_failures(record)[0]
         reason = str(first_check.get("check") or "check_failed")
-        category = "runtime_environment" if _check_failure_is_runtime_environment(first_check) else "target_project_baseline"
+        category = (
+            "runtime_environment" if _check_failure_is_runtime_environment(first_check) else "target_project_baseline"
+        )
     else:
         failed_gates = _gate_failures(record)
         category = "unknown"

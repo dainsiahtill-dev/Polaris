@@ -335,6 +335,58 @@ def test_bench_record_counts_do_not_mark_pending_projects_failed() -> None:
     }
 
 
+def test_load_projects_v2_is_standalone_creative_catalog_covering_l1_to_l12() -> None:
+    projects = bench.load_projects()
+    project_ids = {str(project["id"]) for project in projects}
+    levels = {int(project["level"]) for project in projects}
+    languages = {str(project.get("primary_language") or "") for project in projects if project.get("primary_language")}
+    checks = {str(check) for project in projects for check in project.get("checks", [])}
+    by_level = dict.fromkeys(range(1, 13), 0)
+    for project in projects:
+        by_level[int(project["level"])] += 1
+
+    assert len(projects) == 96
+    assert "L1-01" in project_ids
+    assert "L12-96" in project_ids
+    assert next(project for project in projects if project["id"] == "L1-01")["title"] == "发光昆虫花园模拟器"
+    assert levels == set(range(1, 13))
+    assert set(by_level.values()) == {8}
+    assert {"typescript", "javascript", "go", "rust", "cpp", "java", "python"}.issubset(languages)
+    assert {"ts_syntax", "go_compile", "rust_compile", "cpp_compile", "java_compile"}.issubset(checks)
+    assert all(str(project.get("creative_hook") or "").strip() for project in projects)
+    assert all(len(project.get("novelty_tags") or []) >= 3 for project in projects)
+    assert all(
+        "creative_hook" in str(project.get("brief") or "") or "创意钩子" in str(project.get("brief") or "")
+        for project in projects
+    )
+
+
+def test_load_projects_rejects_duplicate_ids_in_extended_catalog(tmp_path: Path) -> None:
+    parent = tmp_path / "parent.json"
+    child = tmp_path / "child.json"
+    parent.write_text(
+        json.dumps({"schema_version": "factory-bench/test", "projects": [{"id": "L1-X", "level": 1}]}),
+        encoding="utf-8",
+    )
+    child.write_text(
+        json.dumps(
+            {
+                "schema_version": "factory-bench/test",
+                "extends": "parent.json",
+                "projects": [{"id": "L1-X", "level": 1}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        bench.load_projects(child)
+    except ValueError as exc:
+        assert "duplicate project id" in str(exc)
+    else:
+        raise AssertionError("duplicate ids must fail closed")
+
+
 def _capture_run_chain_command(
     monkeypatch: Any,
     tmp_path: Path,
