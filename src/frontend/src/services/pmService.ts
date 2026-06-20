@@ -510,7 +510,7 @@ export interface CancelDirectorTaskResponse {
   [key: string]: unknown;
 }
 
-export interface DirectorFallbackTaskRow {
+export interface DirectorTaskSnapshotRow {
   id: string;
   metadata?: {
     director_task_source?: DirectorTaskSource;
@@ -776,7 +776,7 @@ function readDirectorTaskMetadata(task: DirectorTask): Record<string, unknown> {
   return task.metadata && typeof task.metadata === 'object' ? task.metadata : {};
 }
 
-function isDirectorFallbackTaskRow(value: unknown): value is DirectorTask {
+function isDirectorTaskSnapshotRow(value: unknown): value is DirectorTask {
   return Boolean(value && typeof value === 'object' && String((value as { id?: unknown }).id || '').trim());
 }
 
@@ -785,17 +785,17 @@ export function resolveDirectorTaskSources(directorRunning: boolean): DirectorTa
 }
 
 /**
- * Load Director fallback rows for desktop task boards.
+ * Load Director task snapshot rows for explicit desktop task actions.
  *
  * Runtime push rows own volatile execution state; these backend rows fill in
  * task-contract details such as PM linkage, blueprint refs, steps, and
- * acceptance criteria.
+ * acceptance criteria after a user-issued create/cancel command.
  */
-export async function listDirectorTaskFallbackRows(
+export async function listDirectorTaskSnapshotRows(
   directorRunning: boolean,
   workspace = '',
-): Promise<ApiResult<DirectorFallbackTaskRow[]>> {
-  const rows = new Map<string, DirectorFallbackTaskRow>();
+): Promise<ApiResult<DirectorTaskSnapshotRow[]>> {
+  const rows = new Map<string, DirectorTaskSnapshotRow>();
   let sawSuccessfulSource = false;
   let lastError = '';
 
@@ -808,11 +808,11 @@ export async function listDirectorTaskFallbackRows(
 
     sawSuccessfulSource = true;
     for (const item of result.data) {
-      if (!isDirectorFallbackTaskRow(item)) {
+      if (!isDirectorTaskSnapshotRow(item)) {
         continue;
       }
       rows.set(String(item.id), {
-        ...(item as unknown as DirectorFallbackTaskRow),
+        ...(item as unknown as DirectorTaskSnapshotRow),
         metadata: {
           ...readDirectorTaskMetadata(item),
           director_task_source: source,

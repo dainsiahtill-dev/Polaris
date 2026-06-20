@@ -2012,60 +2012,14 @@ def _apply_deterministic_npm_test_script_repair(
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
+    del adapter, task_id
     if not any(_is_repairable_npm_test_script_error(error) for error in artifact_quality_errors):
         return []
-
-    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
-    package_path = workspace_path / "package.json"
-    if not package_path.is_file():
-        return []
-    try:
-        payload = json.loads(package_path.read_text(encoding="utf-8"))
-    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
-        return []
-    if not isinstance(payload, dict):
-        return []
-
-    scripts_raw = payload.get("scripts")
-    scripts: dict[str, Any] = dict(scripts_raw) if isinstance(scripts_raw, dict) else {}
-    scripts["test"] = (
-        "node -e \"const fs=require('fs');"
-        "const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));"
-        "if(!pkg.name||!pkg.version) throw new Error('invalid package manifest');"
-        "console.log('package manifest check passed');\" --"
-    )
-    payload["scripts"] = dict(sorted(scripts.items()))
-    content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
-    write_result = DirectorToolExecutor(
-        str(workspace_path),
-        message_bus=message_bus,
-        worker_id="director",
-    ).execute_tool(
-        "write_file",
-        {"file": "package.json", "content": content},
-        task_id=task_id,
-    )
-    if not bool(write_result.get("ok")):
-        return []
-    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
-        adapter._update_task_progress(task_id, "executing", current_file="package.json")
-    return [
-        {
-            "tool": "write_file",
-            "tool_name": "write_file",
-            "success": True,
-            "result": {
-                "ok": True,
-                "source_tool": "deterministic_npm_test_script_repair",
-                "file": "package.json",
-                "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
-                "operation": str(write_result.get("operation") or "modify"),
-                "broadcast_ok": bool(write_result.get("broadcast_ok")),
-                "director_policy": write_result.get("director_policy"),
-            },
-        }
-    ]
+    # Do not fabricate a manifest-only `npm test` script. That made generated
+    # projects look runnable while exercising only package.json parsing. Let the
+    # normal LLM quality-repair path create a project-specific test/check, or
+    # fail closed with the original quality error.
+    return []
 
 
 def _is_repairable_npm_test_script_error(error: Any) -> bool:

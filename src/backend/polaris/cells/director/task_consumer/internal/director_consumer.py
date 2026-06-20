@@ -98,25 +98,54 @@ class UnrecoverableExecutionError(RuntimeError):
 DirectorTaskExecutor = Callable[[str, dict[str, Any], str], dict[str, Any]]
 
 
-def _run_coroutine_sync(coro: Coroutine[Any, Any, dict[str, Any]]) -> dict[str, Any]:
+def _director_execution_timeout_seconds(visibility_timeout_seconds: int) -> float:
+    default_timeout = min(600.0, float(max(1, int(visibility_timeout_seconds))))
+    raw = os.environ.get("KERNELONE_TASK_MARKET_DIRECTOR_EXECUTION_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return default_timeout
+    try:
+        configured = float(raw)
+    except ValueError:
+        return default_timeout
+    if configured <= 0:
+        return default_timeout
+    return min(configured, float(max(1, int(visibility_timeout_seconds))))
+
+
+async def _await_with_optional_timeout(
+    coro: Coroutine[Any, Any, dict[str, Any]],
+    timeout_seconds: float | None,
+) -> dict[str, Any]:
+    if timeout_seconds is not None and timeout_seconds > 0:
+        return await asyncio.wait_for(coro, timeout=timeout_seconds)
+    return await coro
+
+
+def _run_coroutine_sync(
+    coro: Coroutine[Any, Any, dict[str, Any]],
+    *,
+    timeout_seconds: float | None = None,
+) -> dict[str, Any]:
     """Run an async Director adapter call from the synchronous consumer loop."""
 
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(coro)
+        return asyncio.run(_await_with_optional_timeout(coro, timeout_seconds))
 
     result_box: dict[str, Any] = {}
 
     def _runner() -> None:
         try:
-            result_box["result"] = asyncio.run(coro)
+            result_box["result"] = asyncio.run(_await_with_optional_timeout(coro, timeout_seconds))
         except BaseException as exc:  # noqa: BLE001
             result_box["error"] = exc
 
     thread = threading.Thread(target=_runner, daemon=True)
     thread.start()
-    thread.join()
+    thread.join(timeout_seconds if timeout_seconds is not None and timeout_seconds > 0 else None)
+    if thread.is_alive():
+        raise TimeoutError(f"Director adapter execution timed out after {timeout_seconds:.1f}s")
     error = result_box.get("error")
     if isinstance(error, BaseException):
         raise error
@@ -679,7 +708,8 @@ class DirectorExecutionConsumer:
         self._active_claim_lock = threading.Lock()
         self._active_claim_task_id = ""
         self._active_claim_started_monotonic: float | None = None
-        self._active_claim_timeout_seconds = float(max(1, int(self._visibility_timeout)))
+        self._execution_timeout_seconds = _director_execution_timeout_seconds(self._visibility_timeout)
+        self._active_claim_timeout_seconds = self._execution_timeout_seconds
 
     def active_claim_watchdog_snapshot(self) -> dict[str, Any]:
         """Return the currently executing claim, if any, for outer pool watchdogs."""
@@ -922,6 +952,20 @@ class DirectorExecutionConsumer:
             )
             return {"task_id": task_id, "ok": False, "reason": str(exc), "dead_lettered": True}
 
+        except TimeoutError as exc:
+            logger.warning("Execution timed out for task %s: %s", task_id, exc)
+            self._svc.fail_task_stage(
+                FailTaskStageCommandV1(
+                    workspace=self._workspace,
+                    task_id=task_id,
+                    lease_token=lease_token,
+                    error_code="EXEC_TIMEOUT",
+                    error_message=str(exc),
+                    requeue_stage="pending_exec",
+                )
+            )
+            return {"task_id": task_id, "ok": False, "reason": "exec_timeout"}
+
         except Exception as exc:
             logger.exception("Execution failed for task %s: %s", task_id, exc)
             self._svc.fail_task_stage(
@@ -1097,7 +1141,8 @@ class DirectorExecutionConsumer:
         if isinstance(last_failure, dict) and str(last_failure.get("error_message") or "").strip():
             context["last_failure"] = last_failure
         adapter_result = _run_coroutine_sync(
-            adapter.execute(task_id=task_id, input_data=adapter_input, context=context)
+            adapter.execute(task_id=task_id, input_data=adapter_input, context=context),
+            timeout_seconds=self._execution_timeout_seconds,
         )
         duration = time.monotonic() - started_at
 

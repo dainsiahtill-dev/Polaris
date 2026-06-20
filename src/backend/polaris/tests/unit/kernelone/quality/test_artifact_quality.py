@@ -196,6 +196,27 @@ def test_scan_detects_node_test_runner_without_test_files_when_sources_exist(tmp
     assert any("test runner script but no test/spec files exist" in error for error in errors)
 
 
+def test_scan_detects_manifest_only_npm_test_script(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "name": "typescript-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node -e \\"const fs=require('fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));if(!pkg.name||!pkg.version) throw new Error('invalid package manifest');console.log('package manifest check passed');\\" --"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("manifest-only test script" in error for error in errors)
+
+
 def test_scan_allows_self_contained_node_test_script_without_test_files(tmp_path: Path) -> None:
     package_json = tmp_path / "package.json"
     package_json.write_text(
@@ -753,9 +774,7 @@ class TestTypescriptCrossFileSymbolCoherence:
             "export abstract class H {}\n",
             encoding="utf-8",
         )
-        (tmp_path / "index.ts").write_text(
-            "import { A, B, C, D, E, F, G, H } from './sibling';\n", encoding="utf-8"
-        )
+        (tmp_path / "index.ts").write_text("import { A, B, C, D, E, F, G, H } from './sibling';\n", encoding="utf-8")
         assert self._errors(tmp_path) == []
 
     def test_aliased_export_recognized(self, tmp_path: Path, monkeypatch) -> None:
@@ -798,7 +817,9 @@ class TestTypescriptCrossFileSymbolCoherence:
 
     def test_destructured_export_fails_open(self, tmp_path: Path, monkeypatch) -> None:
         self._on(monkeypatch)
-        (tmp_path / "sibling.ts").write_text("const o = { a: 1, b: 2 };\nexport const { a, b } = o;\n", encoding="utf-8")
+        (tmp_path / "sibling.ts").write_text(
+            "const o = { a: 1, b: 2 };\nexport const { a, b } = o;\n", encoding="utf-8"
+        )
         (tmp_path / "index.ts").write_text("import { missing } from './sibling';\n", encoding="utf-8")
         assert self._errors(tmp_path) == []
 

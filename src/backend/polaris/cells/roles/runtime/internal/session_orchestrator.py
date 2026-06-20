@@ -10,7 +10,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,14 +52,42 @@ from polaris.cells.roles.runtime.internal.continuation_policy import (
     get_active_findings,
     strip_session_patch_block,
 )
+from polaris.cells.roles.runtime.internal.session_artifact_errors import (
+    ArtifactPersistError,
+)
 from polaris.cells.roles.runtime.internal.session_artifact_store import (
     SessionArtifactStore,
 )
+from polaris.kernelone.fs.text_ops import write_text_atomic
 
 # Lazy-loaded role profile cache (avoids circular import at module level)
 _role_profile_cache: dict[str, tuple[str, list[dict[str, Any]]]] = {}  # role -> (role_definition, tool_definitions)
 
 logger = logging.getLogger(__name__)
+
+
+def _write_checkpoint_sync(checkpoint_path: Path, serialized: str) -> None:
+    """Atomically persist a serialized checkpoint (atomic replace + fsync).
+
+    Runs in a worker thread via ``asyncio.to_thread`` so the event loop is never
+    blocked by filesystem I/O. Any durable failure is surfaced as
+    :class:`ArtifactPersistError` rather than a bare ``OSError``.
+    """
+    try:
+        write_text_atomic(str(checkpoint_path), serialized)
+    except (OSError, TimeoutError) as exc:
+        logger.error(
+            "session checkpoint write failed: path=%s error=%s",
+            checkpoint_path,
+            exc,
+        )
+        raise ArtifactPersistError(
+            f"Failed to persist session checkpoint: {checkpoint_path}",
+            path=str(checkpoint_path),
+            mode="w",
+            cause=exc,
+        ) from exc
+
 
 _WRITE_TOOL_NAMES = {
     "write_file",
@@ -1043,13 +1070,9 @@ class RoleSessionOrchestrator:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_path = checkpoint_dir / f"{self.session_id}.json"
         payload = self._state_reducer.checkpoint_payload()
-        tmp_path = checkpoint_path.with_suffix(f"{checkpoint_path.suffix}.tmp")
+        serialized = json.dumps(payload, ensure_ascii=False, default=str)
 
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, default=str)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, checkpoint_path)
+        await asyncio.to_thread(_write_checkpoint_sync, checkpoint_path, serialized)
 
         # Phase 1.5: 将 structured_findings 作为派生记忆持久化到 artifact store
         # 标记为 derived_memory（非独立 truth source，可从 truthlog 重建）

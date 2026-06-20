@@ -5,11 +5,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
+
+from polaris.kernelone.fs.jsonl.locking import file_lock
+from polaris.kernelone.fs.text_ops import write_text_atomic
+
+from .session_artifact_errors import ArtifactPersistError
+
+logger = logging.getLogger(__name__)
+
+_DELTA_APPEND_MODE = "a"
+_FULL_WRITE_MODE = "w"
 
 
 class SessionArtifactStore:
@@ -160,24 +172,76 @@ class SessionArtifactStore:
         }
 
 
-async def _async_write_text(path: Path, content: str, mode: str = "w") -> None:
-    if mode == "w":
-        tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-        with open(tmp_path, mode, encoding="utf-8") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, path)
+async def _async_write_text(path: Path, content: str, mode: str = _FULL_WRITE_MODE) -> None:
+    """Persist ``content`` to ``path`` off the event loop, fail-closed.
+
+    The blocking filesystem work runs in a worker thread (``asyncio.to_thread``)
+    so the event loop is never stalled. ``mode == "w"`` performs an atomic
+    replace + fsync via the KernelOne UoW primitive; ``mode == "a"`` performs a
+    file-locked append that preserves the caller-supplied delta payload (incl.
+    the ``---END_DELTA---`` marker) verbatim. Any durable failure surfaces as
+    :class:`ArtifactPersistError` instead of a bare ``OSError``.
+    """
+    if mode == _FULL_WRITE_MODE:
+        await asyncio.to_thread(_write_full_sync, path, content)
         return
+    if mode == _DELTA_APPEND_MODE:
+        await asyncio.to_thread(_append_delta_sync, path, content)
+        return
+    raise ArtifactPersistError(
+        f"Unsupported artifact write mode: {mode!r}",
+        path=str(path),
+        mode=mode,
+    )
 
+
+def _write_full_sync(path: Path, content: str) -> None:
+    """Atomically replace ``path`` with ``content`` (atomic write + fsync)."""
     try:
-        import aiofiles
+        write_text_atomic(str(path), content)
+    except (OSError, TimeoutError) as exc:
+        logger.error(
+            "session-artifact full write failed: path=%s error=%s",
+            path,
+            exc,
+        )
+        raise ArtifactPersistError(
+            f"Failed to persist artifact: {path}",
+            path=str(path),
+            mode=_FULL_WRITE_MODE,
+            cause=exc,
+        ) from exc
 
-        async with aiofiles.open(path, mode, encoding="utf-8") as handle:
-            await handle.write(content)
-    except ImportError:
-        with open(path, mode, encoding="utf-8") as handle:
-            handle.write(content)
+
+def _append_delta_sync(path: Path, content: str) -> None:
+    """Append ``content`` under a file lock, preserving the delta marker."""
+    str_path = str(path)
+    lock_path = f"{str_path}.lock"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with file_lock(lock_path) as acquired:
+            if not acquired:
+                raise ArtifactPersistError(
+                    f"Failed to acquire delta lock: {path}",
+                    path=str_path,
+                    mode=_DELTA_APPEND_MODE,
+                )
+            with open(str_path, _DELTA_APPEND_MODE, encoding="utf-8", newline="\n") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+    except (OSError, TimeoutError) as exc:
+        logger.error(
+            "session-artifact delta append failed: path=%s error=%s",
+            path,
+            exc,
+        )
+        raise ArtifactPersistError(
+            f"Failed to append artifact delta: {path}",
+            path=str_path,
+            mode=_DELTA_APPEND_MODE,
+            cause=exc,
+        ) from exc
 
 
 def _iso_timestamp() -> str:

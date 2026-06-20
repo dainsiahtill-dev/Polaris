@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
 from scripts.factory_bench.run_factory_bench import (
+    build_requirements_doc,
     map_factory_run_to_chain_results,
     run_factory_chain,
 )
@@ -130,6 +131,26 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self.addCleanup(self._server.shutdown)
         self.addCleanup(self._server.server_close)
         self.addCleanup(self._thread.join, 1.0)
+
+    def test_requirements_doc_preserves_entrypoint_and_deterministic_checks(self) -> None:
+        project = {
+            "id": "L1-01",
+            "title": "Glow Garden",
+            "brief": "Build a TypeScript visual simulation.",
+            "level": 1,
+            "test_focus": "entrypoint and core rules",
+            "checks": ["html", "ts_syntax", "package_scripts"],
+        }
+
+        doc = build_requirements_doc(project)
+
+        self.assertIn("真实可执行入口", doc)
+        self.assertIn("<html>", doc)
+        self.assertIn("package.json 脚本不得是只检查 manifest 的占位脚本", doc)
+        self.assertIn("## Deterministic Checks", doc)
+        self.assertIn("- html", doc)
+        self.assertIn("- ts_syntax", doc)
+        self.assertIn("- package_scripts", doc)
 
     def _expected_run_id(self) -> str:
         """Return the run_id the mock will assign on the next POST.

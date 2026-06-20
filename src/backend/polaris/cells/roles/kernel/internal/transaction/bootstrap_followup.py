@@ -525,31 +525,7 @@ def _synthesize_deterministic_bootstrap_write_content(relative_path: str, latest
             hint in lowered_user for hint in ("index.html", "styles.css", "html", "css", "resume", "简历", "静态页面")
         ):
             return _synthesize_static_web_pytest_content()
-        return (
-            "from __future__ import annotations\n\n"
-            "from pathlib import Path\n\n\n"
-            "ROOT = Path(__file__).resolve().parents[1]\n\n\n"
-            "def test_workspace_has_non_empty_source_artifacts() -> None:\n"
-            "    source_files = [\n"
-            "        path for path in ROOT.rglob('*')\n"
-            "        if path.is_file()\n"
-            "        and '.polaris' not in path.parts\n"
-            "        and path.suffix.lower() in {'.py', '.js', '.ts', '.tsx', '.html', '.css', '.md'}\n"
-            "        and 'tests' not in path.parts\n"
-            "    ]\n"
-            "    assert source_files, 'missing source artifacts'\n"
-            "    for path in source_files:\n"
-            "        assert path.read_text(encoding='utf-8').strip(), f'empty artifact: {path}'\n\n\n"
-            "def test_workspace_has_no_unfinished_markers() -> None:\n"
-            "    combined = '\\n'.join(\n"
-            "        path.read_text(encoding='utf-8', errors='replace')\n"
-            "        for path in ROOT.rglob('*')\n"
-            "        if path.is_file() and '.polaris' not in path.parts and path.suffix.lower() in {'.py', '.md'}\n"
-            "    ).lower()\n"
-            "    assert 'todo' not in combined\n"
-            "    assert 'fixme' not in combined\n"
-            "    assert 'notimplemented' not in combined\n"
-        )
+        return ""
     if lowered == "tests/qa_report.md" and _has_calculator_bootstrap_hints(latest_user):
         return _synthesize_calculator_qa_report_content()
     if lowered.endswith((".md", ".txt")):
@@ -563,34 +539,12 @@ def _synthesize_deterministic_bootstrap_write_content(relative_path: str, latest
         )
     if lowered.endswith("dag.service.ts") or ("dag" in lowered_user and "dependency" in lowered_user):
         return _synthesize_deterministic_dag_service_content()
-    if lowered.endswith((".ts", ".tsx")):
-        return (
-            "export interface WorkspaceArtifactStatus {\n"
-            "  ready: boolean;\n"
-            "  source: string;\n"
-            "}\n\n"
-            "export const workspaceArtifactStatus: WorkspaceArtifactStatus = {\n"
-            "  ready: true,\n"
-            "  source: 'polaris-deterministic-bootstrap',\n"
-            "};\n\n"
-            "export function describeWorkspaceArtifact(): string {\n"
-            "  return workspaceArtifactStatus.ready ? 'verified artifact' : 'unverified artifact';\n"
-            "}\n"
-        )
-    if lowered.endswith((".js", ".mjs", ".cjs")):
-        return (
-            "export const workspaceArtifactStatus = {\n"
-            "  ready: true,\n"
-            "  source: 'polaris-deterministic-bootstrap',\n"
-            "};\n\n"
-            "export function describeWorkspaceArtifact() {\n"
-            "  return workspaceArtifactStatus.ready ? 'verified artifact' : 'unverified artifact';\n"
-            "}\n"
-        )
+    if lowered.endswith((".ts", ".tsx", ".js", ".mjs", ".cjs")):
+        return ""
     if lowered.endswith(".py"):
         if _is_calculator_source_bootstrap_target(path, latest_user):
             return _synthesize_calculator_source_content()
-        return "from __future__ import annotations\n\n\ndef workspace_artifact_ready() -> bool:\n    return True\n"
+        return ""
     return "workspace_artifact_ready=true\n"
 
 
@@ -1026,13 +980,19 @@ def build_deterministic_bootstrap_followup_write_decision(
         if target and _is_safe_test_bootstrap_target(target):
             latest_user = extract_latest_user_message(original_context)
             synthesis_context = f"{latest_user}\n{json.dumps(declared_step, ensure_ascii=False, sort_keys=True)}"
+            content = _synthesize_deterministic_bootstrap_write_content(target, synthesis_context)
+            if not content.strip():
+                logger.info(
+                    "deterministic bootstrap test fallback suppressed for unknown business test target "
+                    "(turn_id=%s declared_target=%s)",
+                    turn_id,
+                    target,
+                )
+                return None
             invocation = ToolInvocation(
                 call_id=ToolCallId(f"{turn_id}:deterministic-leaf-test-write:1"),
                 tool_name="write_file",
-                arguments={
-                    "file": target,
-                    "content": _synthesize_deterministic_bootstrap_write_content(target, synthesis_context),
-                },
+                arguments={"file": target, "content": content},
                 effect_type=ToolEffectType.WRITE,
                 execution_mode=ToolExecutionMode.WRITE_SERIAL,
             )
@@ -1149,13 +1109,19 @@ def build_deterministic_bootstrap_followup_write_decision(
         if safe_targets and len(safe_targets) == len(viable_targets):
             invocations: list[ToolInvocation] = []
             for index, target in enumerate(safe_targets, start=1):
+                content = _synthesize_deterministic_bootstrap_write_content(target, latest_user)
+                if not content.strip():
+                    logger.warning(
+                        "deterministic bootstrap support-file fallback skipped empty synthesized content "
+                        "(turn_id=%s target=%s)",
+                        turn_id,
+                        target,
+                    )
+                    return None
                 invocation = ToolInvocation(
                     call_id=ToolCallId(f"{turn_id}:deterministic-write:{index}"),
                     tool_name="write_file",
-                    arguments={
-                        "file": target,
-                        "content": _synthesize_deterministic_bootstrap_write_content(target, latest_user),
-                    },
+                    arguments={"file": target, "content": content},
                     effect_type=ToolEffectType.WRITE,
                     execution_mode=ToolExecutionMode.WRITE_SERIAL,
                 )
@@ -1186,6 +1152,13 @@ def build_deterministic_bootstrap_followup_write_decision(
         return None
     target = viable_targets[0]
     content = _synthesize_deterministic_bootstrap_write_content(target, latest_user)
+    if not content.strip():
+        logger.warning(
+            "deterministic bootstrap write fallback skipped empty synthesized content (turn_id=%s target=%s)",
+            turn_id,
+            target,
+        )
+        return None
     invocation = ToolInvocation(
         call_id=ToolCallId(f"{turn_id}:deterministic-write:1"),
         tool_name="write_file",

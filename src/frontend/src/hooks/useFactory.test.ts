@@ -237,55 +237,57 @@ describe('useFactory', () => {
     expect(retryFactoryRunFromCheckpointMock).toHaveBeenCalledWith('run-1', undefined);
   });
 
-  it('falls back to fetch and reconnects after connection errors', async () => {
-    // First subscribe call throws — the hook should still resolve startRun
-    // (returning the run, not throwing), then re-attempt the subscription.
-    let subscribeCalls = 0;
+  it('does not replace a failed realtime subscription with an HTTP status fetch on start', async () => {
     transportSubscribeMock.mockImplementation(() => {
-      subscribeCalls += 1;
-      if (subscribeCalls === 1) {
-        throw new Error('transient ws error');
-      }
-      return () => {};
+      throw new Error('runtime ws unavailable');
     });
 
-    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
+    const { result } = renderHook(
+      () => useFactory({ workspace: '/tmp/ws', autoResumeLatest: false }),
+      { wrapper: createWrapper() },
+    );
     await act(async () => {
       const run = await result.current.startRun({ workspace: 'ws' });
       expect(run?.run_id).toBe('run-1');
     });
-    // Hook did not crash; first subscribe failed but it was caught.
-    expect(subscribeCalls).toBeGreaterThanOrEqual(1);
+    expect(transportSubscribeMock).toHaveBeenCalled();
+    expect(getFactoryRunMock).not.toHaveBeenCalled();
+    expect(result.current.isStreaming).toBe(false);
+    expect(toastErrorMock).toHaveBeenCalledWith('runtime ws unavailable');
   });
 
-  it('does not reconnect after connection errors when fetched status is terminal blocked', async () => {
-    getFactoryRunMock.mockResolvedValue({
-      ok: true,
-      data: { ...baseRun, status: 'blocked', phase: 'planning' },
-    });
+  it('does not replace a failed realtime subscription with an HTTP status fetch on retry', async () => {
     transportSubscribeMock.mockImplementation(() => {
-      throw new Error('transient');
+      throw new Error('runtime ws unavailable');
     });
-    const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
+
+    const { result } = renderHook(
+      () => useFactory({ workspace: '/tmp/ws', autoResumeLatest: false }),
+      { wrapper: createWrapper() },
+    );
     await act(async () => {
-      await result.current.startRun({ workspace: 'ws' });
+      const run = await result.current.retryRunFromCheckpoint('run-1');
+      expect(run?.status).toBe('recovering');
     });
-    expect(getFactoryRunMock).toHaveBeenCalled();
+    expect(retryFactoryRunFromCheckpointMock).toHaveBeenCalledWith('run-1', undefined);
+    expect(transportSubscribeMock).toHaveBeenCalled();
+    expect(getFactoryRunMock).not.toHaveBeenCalled();
+    expect(result.current.isStreaming).toBe(false);
   });
 
-  it('does not reconnect after connection errors when fetched phase is terminal timeout', async () => {
-    getFactoryRunMock.mockResolvedValue({
-      ok: true,
-      data: { ...baseRun, status: 'timeout', phase: 'timeout' },
-    });
+  it('does not replace a failed realtime subscription with an HTTP status fetch on auto resume', async () => {
     transportSubscribeMock.mockImplementation(() => {
-      throw new Error('transient');
+      throw new Error('runtime ws unavailable');
     });
+
     const { result } = renderHook(() => useFactory({ workspace: '/tmp/ws' }), { wrapper: createWrapper() });
-    await act(async () => {
-      await result.current.startRun({ workspace: 'ws' });
+    await waitFor(() => {
+      expect(result.current.currentRun?.run_id).toBe('run-1');
     });
-    expect(getFactoryRunMock).toHaveBeenCalled();
+    expect(listFactoryRunsMock).toHaveBeenCalledWith(1);
+    expect(transportSubscribeMock).toHaveBeenCalled();
+    expect(getFactoryRunMock).not.toHaveBeenCalled();
+    expect(result.current.isStreaming).toBe(false);
   });
 
   it('resumes the latest non-terminal run for the active workspace', async () => {

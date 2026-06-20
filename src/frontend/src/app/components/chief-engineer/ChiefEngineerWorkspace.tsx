@@ -41,10 +41,8 @@ import {
   getRoleKernelCacheStats,
   getRoleKernelLLMEvents,
   getRoleKernelTokenBudgetStats,
-  listDirectorTaskFallbackRows,
   listDirectorWorkers,
   type DirectorStatus,
-  type DirectorFallbackTaskRow,
   type DirectorWorker,
   type RoleKernelCacheStats,
   type RoleKernelLLMEvent,
@@ -101,7 +99,7 @@ type RuntimeBlueprintDetailResponse = ChiefEngineerBlueprintDetailV1;
 type DiagnosticsResponse = ChiefEngineerDiagnosticsResponse;
 type DiagnosticTone = 'ready' | 'degraded' | 'error' | 'checking';
 type ChiefEngineerActiveView = 'control' | 'workbench';
-type TaskEvidenceRow = PmTask | DirectorFallbackTaskRow;
+type TaskEvidenceRow = PmTask;
 
 interface BlueprintStatusCheckState {
   loading: boolean;
@@ -402,26 +400,6 @@ function buildRuntimeBlueprintEvidence(rows: RuntimeBlueprintSummary[]): Bluepri
     });
 }
 
-function mergeTaskEvidenceRows(
-  liveTasks: PmTask[],
-  backendTasks: DirectorFallbackTaskRow[],
-): TaskEvidenceRow[] {
-  const merged = new Map<string, TaskEvidenceRow>();
-  for (const task of backendTasks) {
-    const id = String(task.id || '').trim();
-    if (id) {
-      merged.set(id, task);
-    }
-  }
-  for (const task of liveTasks) {
-    const id = String(task.id || '').trim();
-    if (id) {
-      merged.set(id, task);
-    }
-  }
-  return Array.from(merged.values());
-}
-
 function roleStatus(engineStatus: EngineStatus | null, role: string): string {
   const roles = engineStatus?.roles;
   const rolePayload = roles?.[role] || roles?.[role.toLowerCase()];
@@ -698,9 +676,6 @@ export function ChiefEngineerWorkspace({
   const [bulkGenerateError, setBulkGenerateError] = useState('');
   const [bulkGenerateEvidence, setBulkGenerateEvidence] = useState('');
   const [blueprintStatusChecks, setBlueprintStatusChecks] = useState<Record<string, BlueprintStatusCheckState>>({});
-  const [backendDirectorTasks, setBackendDirectorTasks] = useState<DirectorFallbackTaskRow[]>([]);
-  const [directorTaskApiError, setDirectorTaskApiError] = useState('');
-  const [directorTaskLoading, setDirectorTaskLoading] = useState(false);
   const [backendDirectorWorkers, setBackendDirectorWorkers] = useState<RuntimeWorkerState[]>([]);
   const [directorWorkerApiError, setDirectorWorkerApiError] = useState('');
   const [directorWorkerLoading, setDirectorWorkerLoading] = useState(false);
@@ -842,9 +817,6 @@ export function ChiefEngineerWorkspace({
 
   useEffect(() => {
     if (!workspace) {
-      setBackendDirectorTasks([]);
-      setDirectorTaskApiError('');
-      setDirectorTaskLoading(false);
       setBackendDirectorWorkers([]);
       setDirectorWorkerApiError('');
       setDirectorWorkerLoading(false);
@@ -876,31 +848,6 @@ export function ChiefEngineerWorkspace({
       }
     };
 
-    const syncDirectorTasks = async () => {
-      setDirectorTaskLoading(true);
-      try {
-        const result = await listDirectorTaskFallbackRows(directorRunning, workspace);
-        if (cancelled) {
-          return;
-        }
-        if (result.ok && Array.isArray(result.data)) {
-          setBackendDirectorTasks(result.data);
-          setDirectorTaskApiError('');
-        } else {
-          setDirectorTaskApiError(result.error || 'Director task backend unavailable');
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setDirectorTaskApiError(err instanceof Error ? err.message : 'Director task backend unavailable');
-        }
-      } finally {
-        if (!cancelled) {
-          setDirectorTaskLoading(false);
-        }
-      }
-    };
-
-    void syncDirectorTasks();
     void syncDirectorWorkers();
 
     return () => {
@@ -909,8 +856,8 @@ export function ChiefEngineerWorkspace({
   }, [workspace, directorRunning]);
 
   const directorTaskEvidenceRows = useMemo(
-    () => mergeTaskEvidenceRows(tasks, backendDirectorTasks),
-    [tasks, backendDirectorTasks],
+    () => tasks as TaskEvidenceRow[],
+    [tasks],
   );
   const taskBlueprintEvidence = useMemo(
     () => buildBlueprintEvidence(directorTaskEvidenceRows),
@@ -2076,14 +2023,9 @@ export function ChiefEngineerWorkspace({
                 data-testid="chief-engineer-director-task-source"
                 className="rounded border border-white/10 bg-slate-950/60 px-1.5 py-0.5 text-[9px] text-slate-500"
               >
-                {directorTaskEvidenceRows.length > tasks.length ? 'backend fallback' : 'runtime snapshot'}
+                runtime push
               </span>
             </div>
-            {directorTaskApiError ? (
-              <div data-testid="chief-engineer-director-task-error" className="mb-2 rounded-md border border-amber-500/25 bg-amber-500/10 p-2 text-xs text-amber-100">
-                {directorTaskApiError}
-              </div>
-            ) : null}
             <div className="grid grid-cols-2 gap-2 text-center">
               <Metric label="未领取" value={stats.unclaimed} tone="slate" />
               <Metric label="执行中" value={stats.running} tone="blue" />
@@ -2095,11 +2037,6 @@ export function ChiefEngineerWorkspace({
             {lastDirectorStatus ? (
               <div className="mt-3 rounded-md border border-white/10 bg-slate-950/50 px-2 py-2 text-xs text-slate-300">
                 最近 Director 状态: {lastDirectorStatus}
-              </div>
-            ) : null}
-            {directorTaskLoading && stats.total === 0 ? (
-              <div data-testid="chief-engineer-director-task-loading" className="mt-3 rounded-md border border-white/10 bg-slate-950/50 px-2 py-2 text-xs text-slate-400">
-                正在读取 Director 任务池...
               </div>
             ) : null}
           </section>

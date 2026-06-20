@@ -260,7 +260,7 @@ def test_deterministic_fallback_skips_existing_file(tmp_path: Path) -> None:
     assert decision is None
 
 
-def test_deterministic_fallback_fires_for_user_named_new_file(tmp_path: Path) -> None:
+def test_deterministic_fallback_suppresses_unknown_user_named_new_file(tmp_path: Path) -> None:
     decision = build_deterministic_bootstrap_followup_write_decision(
         turn_id="t-3",
         original_context=[{"role": "user", "content": "please create demo_app.py with an entry point"}],
@@ -268,8 +268,7 @@ def test_deterministic_fallback_fires_for_user_named_new_file(tmp_path: Path) ->
         allowed_tool_names={"write_file"},
         workspace=str(tmp_path),
     )
-    assert decision is not None
-    assert decision.metadata.get("target_file") == "demo_app.py"
+    assert decision is None
 
 
 def test_deterministic_fallback_prefers_structured_scope_over_design_mentions(tmp_path: Path) -> None:
@@ -364,6 +363,22 @@ def test_leaf_test_target_uses_safe_calculator_test_fallback(tmp_path: Path) -> 
     assert "unittest.main()" in content
     assert "index.html" not in content
     assert "styles.css" not in content
+
+
+def test_leaf_unknown_typescript_test_target_suppresses_placeholder_fallback(tmp_path: Path) -> None:
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001",
+        original_context=_leaf_step_context(
+            "src/tests/core.test.ts",
+            verify="npx jest src/tests/core.test.ts --testNamePattern='Flower emotion|MoonPhase progression'",
+            named_files="src/models/flower.ts src/models/moonphase.ts src/tests/core.test.ts",
+        ),
+        bootstrap_receipt=_failed_read_receipt("src/tests/core.test.ts"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is None
 
 
 def test_failed_existing_calculator_test_repair_rewrites_safe_test_target(tmp_path: Path) -> None:
@@ -847,9 +862,10 @@ def test_static_web_fallback_does_not_rewrite_requirements_input_doc(tmp_path: P
     assert all(item["arguments"]["file"] != "requirements.md" for item in invocations)
 
 
-def test_non_leaf_single_target_still_fires(tmp_path: Path) -> None:
-    """The legitimate non-leaf scaffold case (exactly one user-named new file)
-    is unchanged — the rank-1 guard only refuses when the choice is ambiguous."""
+def test_non_leaf_unknown_single_target_suppressed(tmp_path: Path) -> None:
+    """A single unknown source target must still fail closed instead of getting
+    a generic workspace_artifact_ready placeholder."""
+
     decision = build_deterministic_bootstrap_followup_write_decision(
         turn_id="t-single",
         original_context=[{"role": "user", "content": "please create config_app.py with an entry point"}],
@@ -857,8 +873,7 @@ def test_non_leaf_single_target_still_fires(tmp_path: Path) -> None:
         allowed_tool_names={"write_file"},
         workspace=str(tmp_path),
     )
-    assert decision is not None
-    assert decision.metadata.get("target_file") == "config_app.py"
+    assert decision is None
 
 
 # ---------------------------------------------------------------------------

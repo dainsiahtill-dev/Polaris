@@ -19,11 +19,14 @@ This file is a local hard gate for frontend work. It does not weaken the root
    copy-toast expiry, WebSocket heartbeat, reconnect backoff, and tests.
 4. HTTP reads are allowed only for initial snapshot hydration, explicit user
    refresh, or a one-shot command/query response. They must not run in a loop.
-5. Required realtime surfaces are the main workspace, Factory workspace,
+5. A failed WebSocket subscription must surface as disconnected/subscription
+   failed. Do not automatically call HTTP status/get/list endpoints to mask the
+   failure, and do not keep showing stale snapshots as if realtime push is live.
+6. Required realtime surfaces are the main workspace, Factory workspace,
    PM workspace, Chief Engineer workspace, Director workspace, and ContextOS
    realtime view. Changes touching these surfaces must include browser evidence
    that WebSocket push updates the page without reload and without polling.
-6. New realtime channels must be added to the runtime.v2 channel/subject mapping
+7. New realtime channels must be added to the runtime.v2 channel/subject mapping
    and consumed through the shared transport. Components must not create a
    second realtime client.
 
@@ -39,6 +42,8 @@ paths for:
 - `pollInterval`
 - `polling`
 - `轮询`
+- `fallback`
+- `fetchRunStatus`
 
 Any hit in a product data-refresh path is a failure unless it is removed or
 converted to Nat-JetStream/WebSocket push. Test waits and UI-only timers must be

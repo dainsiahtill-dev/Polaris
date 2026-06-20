@@ -28,6 +28,17 @@ def test_parse_agents_write_policy_extracts_forbidden_files() -> None:
     assert "webpack.config.js" in paths
 
 
+def test_parse_agents_write_policy_ignores_package_manifest_quality_requirement() -> None:
+    policy = parse_agents_write_policy(
+        """
+        - package.json 脚本不得是只检查 manifest 的占位脚本。
+        - package.json scripts must run real local checks, not placeholders.
+        """
+    )
+
+    assert policy.forbidden_paths == ()
+
+
 def test_parse_agents_write_policy_derives_forbidden_language_artifacts() -> None:
     policy = parse_agents_write_policy(
         "Do not introduce Rust, Cargo, Go, Python, Webpack, Jest, Vite, Vitest, or any new dependency."

@@ -49,6 +49,7 @@ _VERIFY_COMMAND_TOKEN_RE = re.compile(
     r"(?:^|&&|\|\|)\s*"
     r"(?:pytest|python|python3|node|npm|pnpm|test|grep|ruff|mypy|make|bash|sh)\b"
 )
+_HTML_OPEN_TAG_LITERAL_GREP_PATTERNS = {"<html>": "<html"}
 _NATURAL_LANGUAGE_TAIL_MARKERS = (
     " 通过",
     " 验证",
@@ -171,6 +172,11 @@ def _normalize_simple_literal_grep_clause(clause: str) -> str:
     flag_text = raw_flags[1:]
     if not flag_text or any(char in flag_text for char in "EPG") or "q" not in flag_text:
         return clause
+
+    html_open_tag_pattern = _HTML_OPEN_TAG_LITERAL_GREP_PATTERNS.get(parts[2].lower())
+    if html_open_tag_pattern is not None:
+        normalized_flags = "-" + "".join(_dedupe_flag_order("Fi" + flag_text.replace("F", "")))
+        return " ".join(shlex.quote(part) for part in ("grep", normalized_flags, html_open_tag_pattern, parts[3]))
 
     alternate_patterns = _split_basic_grep_or_pattern(parts[2])
     if alternate_patterns is not None:

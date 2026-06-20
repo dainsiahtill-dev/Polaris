@@ -107,6 +107,21 @@ _DETERMINISTIC_SCAFFOLD_MARKER_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 _PM_EXECUTABLE_BACKTICK_RE = re.compile(r"`([^`]{2,})`")
+_PM_PLACEHOLDER_ACCEPTANCE_RE = re.compile(
+    r"("
+    r"占位\s*(?:输出|脚本|检查|测试|即可|可以)"
+    r"|(?:placeholder|stub|dummy)[\w\s-]*(?:output|script|only|suffices?|is\s+ok)"
+    r"|manifest[\w\s-]*only"
+    r"|只检查\s*(?:manifest|package\.json)"
+    r"|仅检查\s*(?:manifest|package\.json)"
+    r"|(?:only|just|merely)\s+(?:checks?|parses?|reads?)\s+(?:the\s+)?(?:manifest|package\.json)"
+    r")",
+    re.IGNORECASE,
+)
+_PM_PLACEHOLDER_CLEANUP_ACCEPTANCE_RE = re.compile(
+    r"\b(?:replace|remove|removing|replacing)\b[^\n。；;]*(?:placeholder|stub|dummy)",
+    re.IGNORECASE,
+)
 _PM_SCOPE_ROOTS = {
     "app",
     "backend",
@@ -787,6 +802,18 @@ def _has_executable_or_file_acceptance_anchor(acceptance_items: list[str]) -> bo
             if _PM_MEASURABLE_COMMAND_RE.search(match.group(1)):
                 return True
         if _PM_MEASURABLE_ASSERT_RE.search(normalized) and _PM_FILE_EVIDENCE_PATH_RE.search(normalized):
+            return True
+    return False
+
+
+def _has_placeholder_or_manifest_only_acceptance(acceptance_items: list[str]) -> bool:
+    for item in acceptance_items:
+        normalized = _normalize_text(item)
+        if (
+            normalized
+            and not _PM_PLACEHOLDER_CLEANUP_ACCEPTANCE_RE.search(normalized)
+            and _PM_PLACEHOLDER_ACCEPTANCE_RE.search(normalized)
+        ):
             return True
     return False
 

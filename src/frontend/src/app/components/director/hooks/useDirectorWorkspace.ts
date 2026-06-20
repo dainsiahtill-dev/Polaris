@@ -3,7 +3,6 @@
  * 将业务逻辑从组件中抽离，实现容器/展示分离
  */
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { listDirectorTaskFallbackRows } from '@/services';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 import type { FileEditEvent, RuntimeWorkerState } from '@/app/hooks/useRuntime';
@@ -191,7 +190,6 @@ interface UseDirectorWorkspaceReturn {
   session: ExecutionSession;
   selectedTaskId: string | null;
   terminalOutput: string;
-  fallbackTasks: PmTask[];
   userSwitchedViewRef: React.MutableRefObject<boolean>;
 
   // 计算值
@@ -258,7 +256,6 @@ export function useDirectorWorkspace({
   });
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [terminalOutput, setTerminalOutput] = useState<string>('');
-  const [fallbackTasks, setFallbackTasks] = useState<PmTask[]>([]);
 
   // 文件写入事件和任务进度跟踪
   const [taskFileEvents, setTaskFileEvents] = useState<Map<string, FileWriteEvent[]>>(new Map());
@@ -366,45 +363,11 @@ export function useDirectorWorkspace({
     setActiveViewState(view);
   }, []);
 
-  // 同步任务
-  useEffect(() => {
-    if (!workspace) {
-      setFallbackTasks([]);
-      return;
-    }
-
-    let cancelled = false;
-    const syncTasks = async () => {
-      try {
-        const result = await listDirectorTaskFallbackRows(directorRunning, workspace);
-        if (!result.ok || !Array.isArray(result.data) || cancelled) {
-          return;
-        }
-        setFallbackTasks(result.data as unknown as PmTask[]);
-      } catch {
-        // Ignore snapshot errors and keep using live push data.
-      }
-    };
-
-    void syncTasks();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [workspace, directorRunning]);
-
-  // 合并任务
+  // Runtime task rows are owned by Nat-JetStream/runtime.v2 push. Do not merge
+  // automatic HTTP task snapshots here; that masks missing realtime delivery.
   const visibleTasks = useMemo(() => {
     const toTaskId = (task: PmTask): string => String(task.id || '').trim();
     const merged = new Map<string, PmTask>();
-
-    // fallback tasks only fill gaps; live realtime tasks are source of truth.
-    for (const task of fallbackTasks) {
-      const taskId = toTaskId(task);
-      if (taskId) {
-        merged.set(taskId, task);
-      }
-    }
 
     for (const task of tasks) {
       const taskId = toTaskId(task);
@@ -414,12 +377,6 @@ export function useDirectorWorkspace({
     }
 
     const orderedIds: string[] = [];
-    for (const task of fallbackTasks) {
-      const taskId = toTaskId(task);
-      if (taskId && !orderedIds.includes(taskId)) {
-        orderedIds.push(taskId);
-      }
-    }
     for (const task of tasks) {
       const taskId = toTaskId(task);
       if (taskId && !orderedIds.includes(taskId)) {
@@ -430,7 +387,7 @@ export function useDirectorWorkspace({
     return orderedIds
       .map((taskId) => merged.get(taskId))
       .filter((task): task is PmTask => Boolean(task));
-  }, [tasks, fallbackTasks]);
+  }, [tasks]);
 
   // 转换执行任务
   const executionTasks: ExecutionTask[] = useMemo(() => {
@@ -639,7 +596,6 @@ export function useDirectorWorkspace({
     session,
     selectedTaskId,
     terminalOutput,
-    fallbackTasks,
     userSwitchedViewRef,
 
     // 计算值

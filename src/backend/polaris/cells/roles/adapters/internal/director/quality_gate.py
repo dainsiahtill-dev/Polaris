@@ -348,6 +348,86 @@ def _first_failing_verify_clause(verify: str, *, cwd: str) -> str:
     return first_failing_verify_clause(verify, cwd=cwd)
 
 
+_VERIFY_TEST_FILE_RE = re.compile(r"^test\s+-[fe]\s+(?P<path>\S+)$")
+_VERIFY_GREP_FILE_RE = re.compile(r"^grep\s+(?:-[A-Za-z]+\s+)*(?P<quote>['\"]).*?(?P=quote)\s+(?P<path>\S+)\s*$")
+_VERIFY_WC_PATH_RE = re.compile(r"wc\s+-l\s*<\s*(?P<path>[^)\]\s]+)")
+
+
+def _clean_verify_path_token(raw: str) -> str:
+    value = str(raw or "").strip().strip("'\"")
+    if not value:
+        return ""
+    normalized = value.replace("\\", "/").removeprefix("./")
+    if normalized.startswith("/") or normalized.startswith("~") or ".." in normalized.split("/"):
+        return ""
+    return normalized
+
+
+def _verify_referenced_file_paths(verify: str) -> list[str]:
+    from polaris.kernelone.quality.step_verify import split_verify_clauses
+
+    paths: list[str] = []
+    for clause in split_verify_clauses(verify):
+        for pattern in (_VERIFY_TEST_FILE_RE, _VERIFY_GREP_FILE_RE):
+            match = pattern.match(clause)
+            if match is not None:
+                cleaned = _clean_verify_path_token(match.group("path"))
+                if cleaned:
+                    paths.append(cleaned)
+                break
+        for match in _VERIFY_WC_PATH_RE.finditer(clause):
+            cleaned = _clean_verify_path_token(match.group("path"))
+            if cleaned:
+                paths.append(cleaned)
+    return _dedupe_preserve_order(paths)
+
+
+def _path_stem_identity(path: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", Path(path).stem.lower())
+
+
+def _near_miss_verify_target_paths(*, target_file: str, verify_paths: list[str]) -> list[str]:
+    target = _clean_verify_path_token(target_file)
+    if not target:
+        return []
+    if target in verify_paths:
+        return []
+    target_path = Path(target)
+    target_suffix = target_path.suffix.lower()
+    target_stem = _path_stem_identity(target)
+    if not target_suffix or not target_stem:
+        return []
+    drifted: list[str] = []
+    for item in verify_paths:
+        candidate = Path(item)
+        if candidate == target_path:
+            return []
+        if candidate.parent != target_path.parent:
+            continue
+        if candidate.suffix.lower() != target_suffix:
+            continue
+        if _path_stem_identity(item) == target_stem:
+            drifted.append(item)
+    return _dedupe_preserve_order(drifted)
+
+
+def _step_verify_target_mismatch_error(step: dict[str, Any], verify: str) -> str:
+    target = _single_file_step_target({"construction_step": step})
+    if not target:
+        return ""
+    near_miss_paths = _near_miss_verify_target_paths(
+        target_file=target,
+        verify_paths=_verify_referenced_file_paths(verify),
+    )
+    if not near_miss_paths:
+        return ""
+    return (
+        f"step verify target mismatch for {target}: verify references near-miss path(s) "
+        f"{', '.join(near_miss_paths)}. Align construction_step.target_file and verify path before rerunning. "
+        f"full: {verify}"
+    )
+
+
 def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) -> list[str]:
     """写后即查（三层裂变 DO 层自查）: run the construction step's machine
     verify inside the execution turn so the repair ladder sees the failure
@@ -364,6 +444,9 @@ def _collect_step_verify_errors(adapter: Any, context: dict[str, Any] | None) ->
     verify = normalize_step_verify(step.get("verify"))
     if not verify:
         return []
+    target_mismatch = _step_verify_target_mismatch_error(step, verify)
+    if target_mismatch:
+        return [target_mismatch]
     workspace = str(getattr(adapter, "workspace", "") or "")
     if not workspace or not os.path.isdir(workspace):
         return []
@@ -722,7 +805,7 @@ _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 _PYTHON_TRACEBACK_FILE_RE = re.compile(r'File "(?P<path>[^"]+)", line \d+', re.IGNORECASE)
 _SEMANTIC_QUALITY_EXPLICIT_PATH_RE = re.compile(
-    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:css|html|js|jsx|json|md|py|ts|tsx))(?=[:\s])",
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:c|cc|cpp|cxx|go|h|hpp|html|java|js|jsx|json|md|py|rs|ts|tsx|css))(?=[:\s])",
     re.IGNORECASE,
 )
 
@@ -859,17 +942,27 @@ _SEMANTIC_QUALITY_SINGLE_TARGET_HINTS: tuple[str, ...] = (
     "npm package manifest script",
     "npm package manifest contains",
     "npm package manifest declares",
+    "step verify target mismatch",
 )
 
 _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES: frozenset[str] = frozenset(
     {
         ".css",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".go",
+        ".h",
+        ".hpp",
         ".html",
+        ".java",
         ".js",
         ".jsx",
         ".json",
         ".md",
         ".py",
+        ".rs",
         ".ts",
         ".tsx",
     }

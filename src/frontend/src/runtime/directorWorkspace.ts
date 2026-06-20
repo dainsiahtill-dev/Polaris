@@ -10,7 +10,6 @@ import type { PmTask, TaskStatus } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 import type { FileEditEvent, RuntimeWorkerState } from '@/app/hooks/useRuntime';
 import type { TaskTraceMap } from '@/types/taskTrace';
-import { listDirectorTaskFallbackRows } from '@/services';
 
 // ============================================================
 // 类型定义
@@ -394,62 +393,27 @@ export function useDirectorWorkspaceVM(
   const runtime = useRuntime({ roles: ['pm', 'chief_engineer', 'director', 'qa'] });
   
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [fallbackTasks, setFallbackTasks] = useState<PmTask[]>([]);
   const [terminalOutput, setTerminalOutput] = useState<string>('');
-  
-  // One-shot fallback task snapshot; live runtime tasks remain the source of truth.
-  useEffect(() => {
-    if (!workspace) {
-      setFallbackTasks([]);
-      return;
-    }
-    
-    let cancelled = false;
-    
-    const syncTasks = async () => {
-      try {
-        const result = await listDirectorTaskFallbackRows(runtime.directorStatus?.running === true, workspace);
-        if (!result.ok || !Array.isArray(result.data) || cancelled) return;
-        setFallbackTasks(result.data as unknown as PmTask[]);
-      } catch {
-        // Ignore snapshot errors
-      }
-    };
-    
-    void syncTasks();
-    
-    return () => {
-      cancelled = true;
-    };
-  }, [workspace, runtime.directorStatus?.running]);
-  
-  // Merge tasks
+
+  // Runtime task rows are owned by Nat-JetStream/runtime.v2 push. Do not merge
+  // automatic HTTP task snapshots here; that masks missing realtime delivery.
   const visibleTasks = useMemo(() => {
     const toTaskId = (task: PmTask): string => String(task.id || '').trim();
     const merged = new Map<string, PmTask>();
-    
-    for (const task of fallbackTasks) {
-      const taskId = toTaskId(task);
-      if (taskId) merged.set(taskId, task);
-    }
-    
+
     for (const task of runtime.tasks) {
       const taskId = toTaskId(task);
       if (taskId) merged.set(taskId, task);
     }
-    
+
     const orderedIds: string[] = [];
-    for (const task of fallbackTasks) {
-      const taskId = toTaskId(task);
-      if (taskId && !orderedIds.includes(taskId)) orderedIds.push(taskId);
-    }
     for (const task of runtime.tasks) {
       const taskId = toTaskId(task);
       if (taskId && !orderedIds.includes(taskId)) orderedIds.push(taskId);
     }
-    
+
     return orderedIds.map((taskId) => merged.get(taskId)).filter((task): task is PmTask => Boolean(task));
-  }, [runtime.tasks, fallbackTasks]);
+  }, [runtime.tasks]);
   
   // Build telemetry
   const taskRealtimeTelemetry = useMemo(
@@ -590,8 +554,7 @@ export function useDirectorWorkspaceVM(
   }, []);
   
   const handleRefresh = useCallback(() => {
-    // Trigger a re-sync
-    setFallbackTasks([]);
+    // Runtime data refreshes through the shared WebSocket transport.
   }, []);
   
   // Compute statistics

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from typing import Any
@@ -12,6 +13,7 @@ from polaris.cells.director.task_consumer.internal.director_consumer import (
     DirectorExecutionConsumer,
     ScopeConflictDetector,
     UnrecoverableExecutionError,
+    _run_coroutine_sync,
 )
 
 
@@ -27,6 +29,7 @@ class TestDirectorExecutionConsumerInit:
             assert consumer._visibility_timeout == 1800
             assert consumer._poll_interval == 5.0
             assert consumer._enable_safe_parallel is False
+            assert consumer._execution_timeout_seconds == 600.0
 
     def test_custom_params(self) -> None:
         with patch(
@@ -44,6 +47,16 @@ class TestDirectorExecutionConsumerInit:
             assert consumer._poll_interval == 10.0
             assert consumer._enable_safe_parallel is True
             assert consumer._lease_renew_interval_seconds == 60.0
+            assert consumer._execution_timeout_seconds == 600.0
+
+    def test_execution_timeout_env_is_bounded_by_visibility(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("KERNELONE_TASK_MARKET_DIRECTOR_EXECUTION_TIMEOUT_SECONDS", "120")
+        with patch(
+            "polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service"
+        ) as mock_get:
+            mock_get.return_value = MagicMock()
+            consumer = DirectorExecutionConsumer(workspace="/test", visibility_timeout_seconds=60)
+            assert consumer._execution_timeout_seconds == 60.0
 
     def test_stop_event_initial_state(self) -> None:
         with patch(
@@ -53,6 +66,16 @@ class TestDirectorExecutionConsumerInit:
             consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
             assert consumer._stop_event is not None
             assert not consumer._stop_event.is_set()
+
+
+class TestRunCoroutineSync:
+    def test_timeout_raises(self) -> None:
+        async def slow_result() -> dict[str, Any]:
+            await asyncio.sleep(0.05)
+            return {"ok": True}
+
+        with pytest.raises(TimeoutError):
+            _run_coroutine_sync(slow_result(), timeout_seconds=0.001)
 
 
 class TestDirectorExecutionConsumerPollOnce:
@@ -330,6 +353,33 @@ class TestDirectorExecutionConsumerPollOnce:
         assert fail_call.error_code == "EXEC_TARGET_MISSING"
         assert fail_call.requeue_stage == "pending_exec"
         assert "worker_3.py" in fail_call.error_message
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_execution_timeout_requeues(self, mock_get_svc: MagicMock) -> None:
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "PM-1-SLOW"
+        claim_result.lease_token = "lease-slow"
+        claim_result.payload = {
+            "route": "direct_to_director",
+            "construction_step": {"step_id": "PM-1-SLOW", "target_file": "README.md"},
+        }
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.fail_task_stage.return_value = MagicMock(ok=True, status="pending_exec")
+
+        consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
+        with patch.object(consumer, "_execute_task", side_effect=TimeoutError("timed out")):
+            results = consumer.poll_once()
+
+        assert results == [{"task_id": "PM-1-SLOW", "ok": False, "reason": "exec_timeout"}]
+        fail_call = mock_svc.fail_task_stage.call_args[0][0]
+        assert fail_call.error_code == "EXEC_TIMEOUT"
+        assert fail_call.requeue_stage == "pending_exec"
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_execute_task_forwards_bounce_teaching_to_adapter_context(

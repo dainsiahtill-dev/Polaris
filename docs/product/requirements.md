@@ -36,6 +36,7 @@ Polaris 是一个**单人云端主模型 + 本地 SLM 协同**的自动化编程
 **验收标准**：
 - Provider 层可以解析上游模型的原生流式格式，但产品/前端实时通道禁止 SSE、HTTP 长轮询、文件轮询和定时 fetch 轮询
 - 所有 PM、Chief Engineer、Director、Factory、ContextOS 运行态事件必须发布到 Nat-JetStream，并通过 `/v2/ws/runtime` runtime.v2 WebSocket 推送给前端
+- WebSocket 订阅/连接失败时，前端必须显示断线或订阅失败；禁止自动改用 HTTP status/get/list 接口作为实时兜底，禁止展示旧快照冒充实时推送
 - Token 输出延迟 < 100ms
 - 支持中断和恢复机制
 - 兼容 OpenAI SDK 的流式接口

@@ -114,6 +114,15 @@ class TestNormalize:
 
         assert normalize_step_verify(verify) == "grep -Fq '3 + (4 - 2) * 5' README.md"
 
+    def test_html_open_tag_grep_allows_attributes(self, tmp_path: Path) -> None:
+        (tmp_path / "index.html").write_text('<!doctype html>\n<html lang="en">\n</html>\n', encoding="utf-8")
+        verify = normalize_step_verify("grep -q '<html>' index.html")
+        outcome = run_step_verify(verify, cwd=str(tmp_path))
+
+        assert verify == "grep -Fiq '<html' index.html"
+        assert outcome is not None
+        assert outcome[0] == 0
+
     def test_explicit_regex_grep_is_preserved(self) -> None:
         verify = "grep -Eq 'class .+App' src/main.js"
 

@@ -17,6 +17,12 @@ const mockSendCommand = vi.hoisted(() => vi.fn());
 const mockReconnect = vi.hoisted(() => vi.fn());
 const mockRegisterMessageHandler = vi.hoisted(() => vi.fn(() => vi.fn()));
 const mockGetLastCursor = vi.hoisted(() => vi.fn(() => 0));
+const mockTransportState = vi.hoisted(() => ({
+  connected: false,
+  reconnecting: false,
+  error: null as string | null,
+  attemptCount: 0,
+}));
 
 // Mock dependencies
 vi.mock('@/app/hooks/useRuntimeStore', () => ({
@@ -35,10 +41,10 @@ vi.mock('@/app/hooks/useRuntimeStore', () => ({
 
 vi.mock('@/runtime/transport', () => ({
   useRuntimeTransport: vi.fn(() => ({
-    connected: false,
-    reconnecting: false,
-    error: null,
-    attemptCount: 0,
+    connected: mockTransportState.connected,
+    reconnecting: mockTransportState.reconnecting,
+    error: mockTransportState.error,
+    attemptCount: mockTransportState.attemptCount,
     subscribeChannels: mockSubscribeChannels,
     sendCommand: mockSendCommand,
     reconnect: mockReconnect,
@@ -57,6 +63,10 @@ vi.mock('@/hooks', () => ({
 describe('useRuntimeConnection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTransportState.connected = false;
+    mockTransportState.reconnecting = false;
+    mockTransportState.error = null;
+    mockTransportState.attemptCount = 0;
   });
 
   afterEach(() => {
@@ -89,6 +99,18 @@ describe('useRuntimeConnection', () => {
 
       expect(result.current.reconnecting).toBe(false);
       expect(result.current.attemptCount).toBe(0);
+    });
+
+    it('should expose transport connection state when the runtime store cache is stale', () => {
+      mockTransportState.connected = true;
+
+      const { result } = renderHook(() =>
+        useRuntimeConnection({ autoConnect: false, workspace: '/test' })
+      );
+
+      expect(result.current.live).toBe(true);
+      expect(result.current.connected).toBe(true);
+      expect(result.current.isConnected).toBe(true);
     });
   });
 

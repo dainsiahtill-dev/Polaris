@@ -14,6 +14,7 @@ import os as os
 import re as re
 import subprocess as subprocess
 import sys as sys
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -934,6 +935,72 @@ def _pin_materialize_context_delivery_mode(
     return context
 
 
+@dataclass(frozen=True)
+class MaterializationState:
+    """Immutable accumulator threaded through the standard-LLM-flow phases.
+
+    Carries the five mutable workspace-diff values that every repair stage in
+    ``_execute_standard_llm_flow`` recomputes after a write attempt. Each phase
+    helper receives this state and returns a successor produced via
+    :func:`dataclasses.replace`, so the linear retry/repair ladder stays a pure
+    state-threading pipeline instead of a 1,200-line mutation soup.
+    """
+
+    current_files: dict[str, str]
+    new_files: list[str]
+    modified_files: list[str]
+    all_affected_files: list[str]
+    tool_results: list[dict[str, Any]]
+
+    @classmethod
+    def from_locals(
+        cls,
+        current_files: dict[str, str],
+        new_files: list[str],
+        modified_files: list[str],
+        all_affected_files: list[str],
+        tool_results: list[dict[str, Any]],
+    ) -> MaterializationState:
+        """Pack the orchestrator's plain locals into a state before a phase call."""
+        return cls(
+            current_files=current_files,
+            new_files=new_files,
+            modified_files=modified_files,
+            all_affected_files=all_affected_files,
+            tool_results=tool_results,
+        )
+
+    def as_locals(
+        self,
+    ) -> tuple[dict[str, str], list[str], list[str], list[str], list[dict[str, Any]]]:
+        """Unpack a state back into the orchestrator's plain locals after a phase."""
+        return (
+            self.current_files,
+            self.new_files,
+            self.modified_files,
+            self.all_affected_files,
+            self.tool_results,
+        )
+
+    def with_diff(
+        self,
+        diff: tuple[dict[str, str], list[str], list[str], list[str]],
+    ) -> MaterializationState:
+        """Return a successor state from a ``_collect_workspace_code_diff`` tuple."""
+        current_files, new_files, modified_files, all_affected_files = diff
+        return replace(
+            self,
+            current_files=current_files,
+            new_files=new_files,
+            modified_files=modified_files,
+            all_affected_files=all_affected_files,
+        )
+
+    def with_affected(self, all_affected_files: list[str]) -> MaterializationState:
+        """Return a successor state with a merged ``all_affected_files`` list."""
+        return replace(self, all_affected_files=all_affected_files)
+
+
 async def _execute_standard_llm_flow(
     adapter: Any,
     task: dict[str, Any],
@@ -965,297 +1032,104 @@ async def _execute_standard_llm_flow(
     primary_llm_summary: dict[str, Any] | None = None
     quality_repair_summary: dict[str, Any] | None = None
     quality_repair_attempts: list[dict[str, Any]] = []
-    deterministic_tool_results: list[dict[str, Any]] = []
-    deterministic_tool_results.extend(
-        _apply_deterministic_scaffold_marker_cleanup(
-            adapter,
-            task=task,
-            task_id=target_task_id,
-        )
+    state = MaterializationState(
+        current_files=baseline_files,
+        new_files=[],
+        modified_files=[],
+        all_affected_files=[],
+        tool_results=[],
     )
-    deterministic_tool_results.extend(
-        _apply_deterministic_node_test_script_contract_repair(
-            adapter,
-            task=task,
-            task_id=target_task_id,
-        )
-    )
-    deterministic_tool_results.extend(
-        _apply_deterministic_patch_residue_cleanup(
-            adapter,
-            task=task,
-            task_id=target_task_id,
-        )
-    )
-    if deterministic_tool_results:
-        tool_results.extend(deterministic_tool_results)
-        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-            adapter,
-            baseline_files,
-            task=task,
-            workspace_name=workspace_name,
-        )
-    preflight_existing_contract_evidence = _build_existing_workspace_task_evidence(
+    state = _phase_deterministic_cleanup(
+        adapter,
         task=task,
-        current_files=current_files,
-        workspace_full=str(getattr(adapter, "workspace", "") or ""),
+        target_task_id=target_task_id,
+        baseline_files=baseline_files,
         workspace_name=workspace_name,
+        state=state,
     )
-    preflight_can_accept_existing_scope = bool(
-        preflight_existing_contract_evidence.get("ok")
-    ) and _can_accept_existing_workspace_scope(
+
+    preflight_result = _phase_existing_scope_preflight(
+        adapter,
         task=task,
+        target_task_id=target_task_id,
+        run_id=run_id,
+        context=context,
+        board_claim_applied=board_claim_applied,
+        task_claim_session_id=task_claim_session_id,
+        decision_signals=decision_signals,
         requires_fresh_materialization=requires_fresh_materialization,
-        write_tool_evidence=False,
-        primary_llm_summary=None,
+        workspace_name=workspace_name,
+        state=state,
     )
-    if (
-        not all_affected_files
-        and _director_existing_scope_preflight_enabled(context)
-        and preflight_can_accept_existing_scope
-    ):
-        completion_metadata: dict[str, Any] = {
-            "adapter_result": {
-                "tools_executed": 0,
-                "qa_passed": None,
-                "qa_required_for_final_verdict": True,
-                "new_files": [],
-                "new_file_count": 0,
-                "modified_files": [],
-                "modified_file_count": 0,
-                "materialization_mode": "preflight_verified_existing_workspace_scope",
-                "existing_contract_evidence": preflight_existing_contract_evidence,
-            }
-        }
-        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
-            adapter,
-            task=task,
-            target_task_id=target_task_id,
-            run_id=run_id,
-            context=context,
-            receipt_type="director_adapter_existing_scope_preflight",
-            payload={
-                "status": "completed",
-                "materialization_mode": "preflight_verified_existing_workspace_scope",
-                "changed_files": [],
-                "tools_executed": 0,
-            },
-            export_handoff=True,
-        )
-        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
-        if board_claim_applied and task_claim_session_id:
-            finalize_result = _finalize_claimed_execution(
-                adapter,
-                target_task_id=target_task_id,
-                outcome="completed",
-                session_id=task_claim_session_id,
-                result_summary=(
-                    "preflight_verified_existing_workspace_scope="
-                    f"{len(preflight_existing_contract_evidence.get('existing_paths') or [])}"
-                ),
-                metadata=completion_metadata,
-            )
-            if finalize_result.get("success") is not True:
-                return _task_runtime_finalization_failed_result(
-                    target_task_id=target_task_id,
-                    requested_outcome="completed",
-                    finalize_result=finalize_result,
-                    decision_signals=decision_signals,
-                    materialization_mode="preflight_verified_existing_workspace_scope",
-                )
-        adapter._update_task_progress(target_task_id, "completed")
-        decision_signals.append(
-            {
-                "code": "director.existing_workspace_scope_preflight_verified",
-                "severity": "info",
-                "detail": "Declared task scope already exists in workspace before Director writes.",
-            }
-        )
-        return {
-            "success": True,
-            "task_id": target_task_id,
-            "tools_executed": 0,
-            "tool_results": [],
-            "cognitive_runtime_receipt": cognitive_receipt,
-            "decision_signals": decision_signals,
-            "qa_required_for_final_verdict": True,
-            "artifacts": [],
-            "materialization_mode": "preflight_verified_existing_workspace_scope",
-            "existing_contract_evidence": preflight_existing_contract_evidence,
-        }
+    if preflight_result is not None:
+        return preflight_result
 
-    if not all_affected_files:
-        if _director_direct_text_patch_only_enabled(context):
-            result = {
-                "content": "",
-                "success": False,
-                "error": "director_direct_text_patch_only",
-                "raw_response": {"direct_text_patch_only": True},
-            }
-        else:
-            try:
-                result = await adapter._invoke_role_dialogue_with_timeout(
-                    message,
-                    context=context,
-                    timeout_seconds=llm_call_timeout,
-                    stage_label="first_call",
-                )
-            except asyncio.CancelledError:
-                raise
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
-                if not _is_recoverable_no_write_mutation_contract_exception(exc):
-                    raise
-                error_text = str(exc)
-                if not error_text.lower().startswith("transactionkernel execution failed"):
-                    error_text = f"TransactionKernel execution failed: {error_text}"
-                result = {
-                    "content": "",
-                    "success": False,
-                    "error": error_text,
-                    "raw_response": {
-                        "recoverable_mutation_contract_exception": True,
-                        "exception_type": type(exc).__name__,
-                    },
-                }
-                decision_signals.append(
-                    {
-                        "code": "director.recoverable_no_write_mutation_contract_exception",
-                        "severity": "warning",
-                        "detail": str(exc),
-                    }
-                )
-        primary_llm_summary = _summarize_llm_stage_result(result, stage="first_call")
-        content = result.get("content", "")
+    state, primary_llm_summary = await _phase_first_llm_call(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        context=context,
+        message=message,
+        baseline_files=baseline_files,
+        llm_call_timeout=llm_call_timeout,
+        decision_signals=decision_signals,
+        workspace_name=workspace_name,
+        state=state,
+    )
 
-        # 执行工具
-        extracted_tool_results = adapter._execution.extract_kernel_tool_results(result)
-        tool_results.extend(extracted_tool_results)
-        if not extracted_tool_results or not has_successful_write_tool(extracted_tool_results):
-            fallback_tool_results = await adapter._execution.execute_tools(
-                content, target_task_id, adapter._update_task_progress
-            )
-            if fallback_tool_results:
-                tool_results.extend(fallback_tool_results)
+    state, direct_fallback_summary = _phase_direct_fallback(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        context=context,
+        baseline_files=baseline_files,
+        llm_call_timeout=llm_call_timeout,
+        workspace_name=workspace_name,
+        state=state,
+    )
 
-        # 收集变更文件
-        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-            adapter,
-            baseline_files,
-            task=task,
-            workspace_name=workspace_name,
-        )
+    state, empty_write_content_retry_summary = await _phase_empty_write_retry(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        context=context,
+        message=message,
+        baseline_files=baseline_files,
+        llm_call_timeout=llm_call_timeout,
+        workspace_name=workspace_name,
+        state=state,
+    )
 
-    if not all_affected_files:
-        direct_timeout = adapter._execution.resolve_direct_fallback_timeout_seconds(context, llm_call_timeout)
-        direct_content = ""
-        direct_tool_results: list[dict[str, Any]] = []
-        direct_fallback_summary = {
-            "timeout_seconds": direct_timeout,
-            "content_length": len(direct_content),
-            "error": "",
-            "skipped_reason": "direct_runtime_provider_removed",
-            "tool_results": len(direct_tool_results),
-            "provider": "",
-            "model": "",
-            "success": False,
-        }
-        adapter._state_tracker.append_debug_event(
-            target_task_id,
-            "direct_patch_fallback_result",
-            direct_fallback_summary,
-        )
-        if direct_tool_results:
-            tool_results.extend(direct_tool_results)
+    state = _phase_typescript_reexport_repair(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        baseline_files=baseline_files,
+        workspace_name=workspace_name,
+        state=state,
+    )
 
-        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-            adapter,
-            baseline_files,
-            task=task,
-            workspace_name=workspace_name,
-        )
+    state = _phase_python_unittest_repair(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        baseline_files=baseline_files,
+        workspace_name=workspace_name,
+        state=state,
+    )
 
-    if not all_affected_files and _empty_write_content_retry_needed(tool_results):
-        (
-            empty_retry_tool_results,
-            empty_write_content_retry_summary,
-        ) = await _run_empty_write_content_materialization_retry(
-            adapter,
-            task=task,
-            target_task_id=target_task_id,
-            context=context,
-            original_message=message,
-            tool_results=tool_results,
-            llm_call_timeout=llm_call_timeout,
-        )
-        if empty_retry_tool_results:
-            tool_results.extend(empty_retry_tool_results)
-        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-            adapter,
-            baseline_files,
-            task=task,
-            workspace_name=workspace_name,
-        )
+    state, quality_repair_summary = _phase_pre_materialization_target_repair(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        baseline_files=baseline_files,
+        primary_llm_summary=primary_llm_summary,
+        quality_repair_attempts=quality_repair_attempts,
+        workspace_name=workspace_name,
+        state=state,
+    )
 
-    if not all_affected_files:
-        deterministic_tool_results = _apply_deterministic_typescript_reexport_repair(
-            adapter,
-            task=task,
-            task_id=target_task_id,
-        )
-        if deterministic_tool_results:
-            tool_results.extend(deterministic_tool_results)
-            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-                adapter,
-                baseline_files,
-                task=task,
-                workspace_name=workspace_name,
-            )
-
-    if not all_affected_files:
-        deterministic_tool_results = _apply_deterministic_python_unittest_missing_target_repair(
-            adapter,
-            task=task,
-            task_id=target_task_id,
-        )
-        if deterministic_tool_results:
-            tool_results.extend(deterministic_tool_results)
-            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-                adapter,
-                baseline_files,
-                task=task,
-                workspace_name=workspace_name,
-            )
-            all_affected_files = _merge_successful_write_paths(
-                all_affected_files,
-                _extract_successful_write_paths(deterministic_tool_results),
-            )
-
-    if not all_affected_files or (
-        not has_successful_write_tool(tool_results)
-        and _stage_summary_has_recoverable_no_write_mutation_contract_exception(primary_llm_summary)
-    ):
-        deterministic_prematerialization_tool_results, deterministic_prematerialization_summary = (
-            _apply_deterministic_pre_materialization_declared_target_repairs(
-                adapter,
-                task=task,
-                task_id=target_task_id,
-                workspace_name=workspace_name,
-            )
-        )
-        if deterministic_prematerialization_tool_results:
-            tool_results.extend(deterministic_prematerialization_tool_results)
-            quality_repair_summary = deterministic_prematerialization_summary
-            quality_repair_attempts.append(deterministic_prematerialization_summary)
-            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
-                adapter,
-                baseline_files,
-                task=task,
-                workspace_name=workspace_name,
-            )
-            all_affected_files = _merge_successful_write_paths(
-                all_affected_files,
-                _extract_successful_write_paths(deterministic_prematerialization_tool_results),
-            )
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
 
     existing_contract_evidence = _build_existing_workspace_task_evidence(
         task=task,
@@ -1337,280 +1211,80 @@ async def _execute_standard_llm_flow(
             existing_contract_evidence = dict(existing_contract_evidence)
             existing_contract_evidence["acceptance_verify_exists"] = acceptance_verify_evidence
 
-    if (
-        not all_affected_files
-        and not can_accept_existing_scope
-        and (requires_fresh_materialization or not bool(existing_contract_evidence.get("ok")))
-    ):
-        out_of_scope_diff = _collect_workspace_out_of_scope_diff(
-            task=task,
-            baseline_files=baseline_files,
-            current_files=current_files,
-            workspace_name=workspace_name,
-        )
-        out_of_scope_files = list(out_of_scope_diff.get("affected_files") or [])
-        if out_of_scope_files:
-            error = "director_materialized_out_of_scope"
-            materialization_mode = "materialized_out_of_scope"
-        else:
-            error = "director_no_materialized_changes"
-            materialization_mode = "no_materialized_changes"
-        # Wall 2 diagnostic (F16 follow-up): the forced write emitted but the
-        # workspace diff is empty. Surface the discriminating signals so a single
-        # solo rerun reveals whether the write content ARG was empty (prose lands
-        # in reasoning, structured `content` stays blank) or the write was
-        # non-authoritative — directs the Wall 2 fix without guessing.
-        logger.warning(
-            "%s DIAGNOSTIC: write_tool_evidence=%s tools_executed=%s "
-            "new_files=%s modified_files=%s out_of_scope_files=%s requires_fresh=%s "
-            "write_args(name,content_len)=%s",
-            error,
-            write_tool_evidence,
-            len(tool_results),
-            len(new_files),
-            len(modified_files),
-            out_of_scope_files[:20],
-            requires_fresh_materialization,
-            _diag_write_results_summary(tool_results),
-        )
-        completion_metadata = {
-            "adapter_result": {
-                "tools_executed": len(tool_results),
-                "write_tool_evidence": write_tool_evidence,
-                "qa_passed": None,
-                "qa_required_for_final_verdict": True,
-                "new_files": new_files[:20],
-                "new_file_count": len(new_files),
-                "modified_files": modified_files[:20],
-                "modified_file_count": len(modified_files),
-                "materialization_error": error,
-                "materialization_mode": materialization_mode,
-                "out_of_scope_files": out_of_scope_files[:20],
-                "out_of_scope_file_count": len(out_of_scope_files),
-                "out_of_scope_diff": out_of_scope_diff,
-                "existing_contract_evidence": existing_contract_evidence,
-            }
-        }
-        if primary_llm_summary is not None:
-            completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
-        if direct_fallback_summary is not None:
-            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
-        if empty_write_content_retry_summary is not None:
-            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
-        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
-            adapter,
-            task=task,
-            target_task_id=target_task_id,
-            run_id=run_id,
-            context=context,
-            receipt_type="director_adapter_materialization_failed",
-            payload={
-                "status": "failed",
-                "error": error,
-                "materialization_mode": materialization_mode,
-                "changed_files": out_of_scope_files if out_of_scope_files else [],
-                "out_of_scope_files": out_of_scope_files[:20],
-                "tools_executed": len(tool_results),
-                "write_tool_evidence": write_tool_evidence,
-            },
-        )
-        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
-        if board_claim_applied and task_claim_session_id:
-            _finalize_claimed_execution(
-                adapter,
-                target_task_id=target_task_id,
-                outcome="failed",
-                session_id=task_claim_session_id,
-                error=error,
-                metadata=completion_metadata,
-            )
-        adapter._update_task_progress(target_task_id, "failed")
-        return {
-            "success": False,
-            "task_id": target_task_id,
-            "tools_executed": len(tool_results),
-            "tool_results": tool_results,
-            "error": error,
-            "error_code": error,
-            "failure_stage": "director_materialization",
-            "root_cause_hint": "no_changed_files",
-            "cognitive_runtime_receipt": cognitive_receipt,
-            "decision_signals": [
-                {
-                    "code": error,
-                    "severity": "error",
-                    "detail": (
-                        "Director returned no workspace file changes; "
-                        "fresh materialization is required for repair/update tasks."
-                        if requires_fresh_materialization
-                        else "Director returned no workspace file changes."
-                    ),
-                }
-            ],
-            "qa_required_for_final_verdict": True,
-            "artifacts": [],
-        }
+    state = MaterializationState.from_locals(
+        current_files,
+        new_files,
+        modified_files,
+        all_affected_files,
+        tool_results,
+    )
 
-    if not all_affected_files and can_accept_existing_scope:
-        completion_metadata = {
-            "adapter_result": {
-                "tools_executed": len(tool_results),
-                "write_tool_evidence": write_tool_evidence,
-                "qa_passed": None,
-                "qa_required_for_final_verdict": True,
-                "new_files": [],
-                "new_file_count": 0,
-                "modified_files": [],
-                "modified_file_count": 0,
-                "materialization_mode": "verified_existing_workspace_scope",
-                "existing_contract_evidence": existing_contract_evidence,
-            }
-        }
-        if primary_llm_summary is not None:
-            completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
-        if direct_fallback_summary is not None:
-            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
-        if empty_write_content_retry_summary is not None:
-            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
-        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
-            adapter,
-            task=task,
-            target_task_id=target_task_id,
-            run_id=run_id,
-            context=context,
-            receipt_type="director_adapter_existing_scope_verified",
-            payload={
-                "status": "completed",
-                "materialization_mode": "verified_existing_workspace_scope",
-                "changed_files": [],
-                "tools_executed": len(tool_results),
-                "write_tool_evidence": write_tool_evidence,
-            },
-            export_handoff=True,
-        )
-        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
-        if board_claim_applied and task_claim_session_id:
-            finalize_result = _finalize_claimed_execution(
-                adapter,
-                target_task_id=target_task_id,
-                outcome="completed",
-                session_id=task_claim_session_id,
-                result_summary=(
-                    "verified_existing_workspace_scope="
-                    f"{len(existing_contract_evidence.get('existing_paths') or [])}; "
-                    f"tools_executed={len(tool_results)}"
-                ),
-                metadata=completion_metadata,
-            )
-            if finalize_result.get("success") is not True:
-                return _task_runtime_finalization_failed_result(
-                    target_task_id=target_task_id,
-                    requested_outcome="completed",
-                    finalize_result=finalize_result,
-                    tool_results=tool_results,
-                    decision_signals=decision_signals,
-                    materialization_mode="verified_existing_workspace_scope",
-                )
-        adapter._update_task_progress(target_task_id, "completed")
-        decision_signals.append(
-            {
-                "code": "director.existing_workspace_scope_verified",
-                "severity": "info",
-                "detail": "No fresh file diff was required because declared task scope already exists in workspace.",
-            }
-        )
-        return {
-            "success": True,
-            "task_id": target_task_id,
-            "tools_executed": len(tool_results),
-            "tool_results": tool_results,
-            "cognitive_runtime_receipt": cognitive_receipt,
-            "decision_signals": decision_signals,
-            "qa_required_for_final_verdict": True,
-            "artifacts": [],
-            "materialization_mode": "verified_existing_workspace_scope",
-            "existing_contract_evidence": existing_contract_evidence,
-        }
+    no_materialized_result = _phase_no_materialized_changes(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        run_id=run_id,
+        context=context,
+        baseline_files=baseline_files,
+        board_claim_applied=board_claim_applied,
+        can_accept_existing_scope=can_accept_existing_scope,
+        direct_fallback_summary=direct_fallback_summary,
+        empty_write_content_retry_summary=empty_write_content_retry_summary,
+        existing_contract_evidence=existing_contract_evidence,
+        primary_llm_summary=primary_llm_summary,
+        requires_fresh_materialization=requires_fresh_materialization,
+        task_claim_session_id=task_claim_session_id,
+        workspace_name=workspace_name,
+        write_tool_evidence=write_tool_evidence,
+        state=state,
+    )
+    if no_materialized_result is not None:
+        return no_materialized_result
+
+    existing_verified_result = _phase_existing_scope_verified(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        run_id=run_id,
+        context=context,
+        board_claim_applied=board_claim_applied,
+        can_accept_existing_scope=can_accept_existing_scope,
+        decision_signals=decision_signals,
+        direct_fallback_summary=direct_fallback_summary,
+        empty_write_content_retry_summary=empty_write_content_retry_summary,
+        existing_contract_evidence=existing_contract_evidence,
+        primary_llm_summary=primary_llm_summary,
+        task_claim_session_id=task_claim_session_id,
+        write_tool_evidence=write_tool_evidence,
+        state=state,
+    )
+    if existing_verified_result is not None:
+        return existing_verified_result
 
     materialization_mode = (
         "write_tool_and_workspace_diff" if write_tool_evidence else "workspace_diff_without_write_tool"
     )
-    if all_affected_files and not write_tool_evidence:
-        error = "director_missing_write_receipt"
-        completion_metadata = {
-            "adapter_result": {
-                "tools_executed": len(tool_results),
-                "write_tool_evidence": write_tool_evidence,
-                "qa_passed": None,
-                "qa_required_for_final_verdict": True,
-                "new_files": new_files[:20],
-                "new_file_count": len(new_files),
-                "modified_files": modified_files[:20],
-                "modified_file_count": len(modified_files),
-                "materialization_mode": materialization_mode,
-                "materialization_error": error,
-            }
-        }
-        if primary_llm_summary is not None:
-            completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
-        if direct_fallback_summary is not None:
-            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
-        if empty_write_content_retry_summary is not None:
-            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
-        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
-            adapter,
-            task=task,
-            target_task_id=target_task_id,
-            run_id=run_id,
-            context=context,
-            receipt_type="director_adapter_materialization_receipt_failed",
-            payload={
-                "status": "failed",
-                "error": error,
-                "materialization_mode": materialization_mode,
-                "changed_files": all_affected_files,
-                "new_files": new_files[:20],
-                "modified_files": modified_files[:20],
-                "tools_executed": len(tool_results),
-                "write_tool_evidence": write_tool_evidence,
-            },
-        )
-        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
-        if board_claim_applied and task_claim_session_id:
-            _finalize_claimed_execution(
-                adapter,
-                target_task_id=target_task_id,
-                outcome="failed",
-                session_id=task_claim_session_id,
-                error=error,
-                metadata=completion_metadata,
-            )
-        adapter._update_task_progress(target_task_id, "failed")
-        missing_receipt_signal = {
-            "code": error,
-            "severity": "error",
-            "detail": (
-                "Director observed workspace changes, but no normalized write-tool receipt was returned. "
-                "Mutation tasks must fail closed instead of trusting ambient diffs."
-            ),
-            "new_file_count": len(new_files),
-            "modified_file_count": len(modified_files),
-        }
-        return {
-            "success": False,
-            "task_id": target_task_id,
-            "tools_executed": len(tool_results),
-            "tool_results": tool_results,
-            "error": error,
-            "error_code": error,
-            "failure_stage": "director_materialization_receipt",
-            "root_cause_hint": "missing_write_tool_receipt",
-            "cognitive_runtime_receipt": cognitive_receipt,
-            "decision_signals": [*decision_signals, missing_receipt_signal],
-            "qa_required_for_final_verdict": True,
-            "artifacts": [],
-            "materialization_mode": materialization_mode,
-        }
+
+    missing_receipt_result = _phase_missing_write_receipt(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        run_id=run_id,
+        context=context,
+        board_claim_applied=board_claim_applied,
+        decision_signals=decision_signals,
+        direct_fallback_summary=direct_fallback_summary,
+        empty_write_content_retry_summary=empty_write_content_retry_summary,
+        materialization_mode=materialization_mode,
+        primary_llm_summary=primary_llm_summary,
+        task_claim_session_id=task_claim_session_id,
+        write_tool_evidence=write_tool_evidence,
+        state=state,
+    )
+    if missing_receipt_result is not None:
+        return missing_receipt_result
+
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
 
     deterministic_contract_tool_results, deterministic_contract_summary = (
         _apply_deterministic_declared_target_contract_repairs(
@@ -1821,93 +1495,38 @@ async def _execute_standard_llm_flow(
                     )
                     if not artifact_quality_errors:
                         break
-    if artifact_quality_errors:
-        error = "director_materialization_quality_failed"
-        completion_metadata = {
-            "adapter_result": {
-                "tools_executed": len(tool_results),
-                "write_tool_evidence": write_tool_evidence,
-                "qa_passed": None,
-                "qa_required_for_final_verdict": True,
-                "new_files": new_files[:20],
-                "new_file_count": len(new_files),
-                "modified_files": modified_files[:20],
-                "modified_file_count": len(modified_files),
-                "materialization_mode": materialization_mode,
-                "materialization_error": error,
-                "artifact_quality_errors": artifact_quality_errors[:20],
-            }
-        }
-        if primary_llm_summary is not None:
-            completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
-        if direct_fallback_summary is not None:
-            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
-        if empty_write_content_retry_summary is not None:
-            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
-        if quality_repair_summary is not None:
-            completion_metadata["adapter_result"]["quality_repair"] = quality_repair_summary
-        if quality_repair_attempts:
-            completion_metadata["adapter_result"]["quality_repair_attempts"] = quality_repair_attempts
-        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
-            adapter,
-            task=task,
-            target_task_id=target_task_id,
-            run_id=run_id,
-            context=context,
-            receipt_type="director_adapter_materialization_quality_failed",
-            payload={
-                "status": "failed",
-                "error": error,
-                "materialization_mode": materialization_mode,
-                "changed_files": all_affected_files,
-                "new_files": new_files[:20],
-                "modified_files": modified_files[:20],
-                "tools_executed": len(tool_results),
-                "write_tool_evidence": write_tool_evidence,
-                "artifact_quality_errors": artifact_quality_errors[:20],
-                "quality_repair": quality_repair_summary or {},
-                "quality_repair_attempts": quality_repair_attempts,
-            },
-        )
-        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
-        if board_claim_applied and task_claim_session_id:
-            _finalize_claimed_execution(
-                adapter,
-                target_task_id=target_task_id,
-                outcome="failed",
-                session_id=task_claim_session_id,
-                error=error,
-                metadata=completion_metadata,
-            )
-        adapter._update_task_progress(target_task_id, "failed")
-        quality_signal = {
-            "code": error,
-            "severity": "error",
-            "detail": (
-                "Director changed workspace files, but the changed artifacts still contain known "
-                "worthless scaffold or placeholder-test patterns."
-            ),
-            "artifact_quality_errors": artifact_quality_errors[:20],
-        }
-        return {
-            "success": False,
-            "task_id": target_task_id,
-            "tools_executed": len(tool_results),
-            "tool_results": tool_results,
-            "error": error,
-            "error_code": error,
-            "failure_stage": "director_materialization_quality",
-            "root_cause_hint": "artifact_quality_failed",
-            "cognitive_runtime_receipt": cognitive_receipt,
-            "decision_signals": [*decision_signals, quality_signal],
-            "qa_required_for_final_verdict": True,
-            "artifacts": [],
-            "materialization_mode": materialization_mode,
-            "artifact_quality_errors": artifact_quality_errors[:20],
-            # Forensic trail: without this, a repair attempt that died before
-            # its LLM call is indistinguishable from one that never ran.
-            "quality_repair_attempts": quality_repair_attempts,
-        }
+
+    state = MaterializationState.from_locals(
+        current_files,
+        new_files,
+        modified_files,
+        all_affected_files,
+        tool_results,
+    )
+
+    quality_failed_result = _phase_quality_failed(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        run_id=run_id,
+        context=context,
+        artifact_quality_errors=artifact_quality_errors,
+        board_claim_applied=board_claim_applied,
+        decision_signals=decision_signals,
+        direct_fallback_summary=direct_fallback_summary,
+        empty_write_content_retry_summary=empty_write_content_retry_summary,
+        materialization_mode=materialization_mode,
+        primary_llm_summary=primary_llm_summary,
+        quality_repair_attempts=quality_repair_attempts,
+        quality_repair_summary=quality_repair_summary,
+        task_claim_session_id=task_claim_session_id,
+        write_tool_evidence=write_tool_evidence,
+        state=state,
+    )
+    if quality_failed_result is not None:
+        return quality_failed_result
+
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
 
     semantic_quality_repair_summary: dict[str, Any] | None = None
     semantic_quality_repair_attempts: list[dict[str, Any]] = []
@@ -1977,90 +1596,41 @@ async def _execute_standard_llm_flow(
             )
             break
         semantic_quality_error = adapter._execution.validate_generated_output(task, all_affected_files)
-    if semantic_quality_error:
-        error = "director_materialization_semantic_quality_failed"
-        completion_metadata = {
-            "adapter_result": {
-                "tools_executed": len(tool_results),
-                "write_tool_evidence": write_tool_evidence,
-                "qa_passed": None,
-                "qa_required_for_final_verdict": True,
-                "new_files": new_files[:20],
-                "new_file_count": len(new_files),
-                "modified_files": modified_files[:20],
-                "modified_file_count": len(modified_files),
-                "materialization_mode": materialization_mode,
-                "materialization_error": error,
-                "semantic_quality_error": semantic_quality_error,
-            }
-        }
-        if primary_llm_summary is not None:
-            completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
-        if direct_fallback_summary is not None:
-            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
-        if empty_write_content_retry_summary is not None:
-            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
-        if semantic_quality_repair_summary is not None:
-            completion_metadata["adapter_result"]["semantic_quality_repair"] = semantic_quality_repair_summary
-        if semantic_quality_repair_attempts:
-            completion_metadata["adapter_result"]["semantic_quality_repair_attempts"] = semantic_quality_repair_attempts
-        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
-            adapter,
-            task=task,
-            target_task_id=target_task_id,
-            run_id=run_id,
-            context=context,
-            receipt_type="director_adapter_materialization_semantic_quality_failed",
-            payload={
-                "status": "failed",
-                "error": error,
-                "materialization_mode": materialization_mode,
-                "changed_files": all_affected_files,
-                "new_files": new_files[:20],
-                "modified_files": modified_files[:20],
-                "tools_executed": len(tool_results),
-                "write_tool_evidence": write_tool_evidence,
-                "semantic_quality_error": semantic_quality_error,
-                "semantic_quality_repair": semantic_quality_repair_summary or {},
-                "semantic_quality_repair_attempts": semantic_quality_repair_attempts,
-            },
-        )
-        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
-        if board_claim_applied and task_claim_session_id:
-            _finalize_claimed_execution(
-                adapter,
-                target_task_id=target_task_id,
-                outcome="failed",
-                session_id=task_claim_session_id,
-                error=error,
-                metadata=completion_metadata,
-            )
-        adapter._update_task_progress(target_task_id, "failed")
-        semantic_signal = {
-            "code": error,
-            "severity": "error",
-            "detail": semantic_quality_error,
-        }
-        return {
-            "success": False,
-            "task_id": target_task_id,
-            "tools_executed": len(tool_results),
-            "tool_results": tool_results,
-            "error": error,
-            "error_code": error,
-            "failure_stage": "director_materialization_semantic_quality",
-            "root_cause_hint": "semantic_quality_failed",
-            "cognitive_runtime_receipt": cognitive_receipt,
-            "decision_signals": [*decision_signals, semantic_signal],
-            "qa_required_for_final_verdict": True,
-            "artifacts": [],
-            "materialization_mode": materialization_mode,
-            "semantic_quality_error": semantic_quality_error,
-            "semantic_quality_repair_attempts": semantic_quality_repair_attempts,
-        }
+
+    state = MaterializationState.from_locals(
+        current_files,
+        new_files,
+        modified_files,
+        all_affected_files,
+        tool_results,
+    )
+
+    semantic_failed_result = _phase_semantic_quality_failed(
+        adapter,
+        task=task,
+        target_task_id=target_task_id,
+        run_id=run_id,
+        context=context,
+        board_claim_applied=board_claim_applied,
+        decision_signals=decision_signals,
+        direct_fallback_summary=direct_fallback_summary,
+        empty_write_content_retry_summary=empty_write_content_retry_summary,
+        materialization_mode=materialization_mode,
+        primary_llm_summary=primary_llm_summary,
+        semantic_quality_error=semantic_quality_error,
+        semantic_quality_repair_attempts=semantic_quality_repair_attempts,
+        semantic_quality_repair_summary=semantic_quality_repair_summary,
+        task_claim_session_id=task_claim_session_id,
+        write_tool_evidence=write_tool_evidence,
+        state=state,
+    )
+    if semantic_failed_result is not None:
+        return semantic_failed_result
+
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
 
     # 返回结果
-    completion_metadata = {
+    completion_metadata: dict[str, Any] = {
         "adapter_result": {
             "tools_executed": len(tool_results),
             "write_tool_evidence": write_tool_evidence,
@@ -2146,6 +1716,1050 @@ async def _execute_standard_llm_flow(
         "artifacts": [],
         "materialization_mode": materialization_mode,
     }
+
+
+def _phase_deterministic_cleanup(
+    adapter: Any,
+    *,
+    baseline_files: dict[str, str],
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    state: MaterializationState,
+) -> MaterializationState:
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    deterministic_tool_results: list[dict[str, Any]] = []
+    deterministic_tool_results.extend(
+        _apply_deterministic_scaffold_marker_cleanup(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+        )
+    )
+    deterministic_tool_results.extend(
+        _apply_deterministic_node_test_script_contract_repair(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+        )
+    )
+    deterministic_tool_results.extend(
+        _apply_deterministic_patch_residue_cleanup(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+        )
+    )
+    if deterministic_tool_results:
+        tool_results.extend(deterministic_tool_results)
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
+            task=task,
+            workspace_name=workspace_name,
+        )
+    return MaterializationState.from_locals(
+        current_files,
+        new_files,
+        modified_files,
+        all_affected_files,
+        tool_results,
+    )
+
+
+def _phase_existing_scope_preflight(
+    adapter: Any,
+    *,
+    board_claim_applied: bool,
+    context: dict[str, Any],
+    decision_signals: list[dict[str, Any]],
+    requires_fresh_materialization: bool,
+    run_id: str,
+    target_task_id: str,
+    task: dict[str, Any],
+    task_claim_session_id: str,
+    workspace_name: str,
+    state: MaterializationState,
+) -> dict[str, Any] | None:
+    current_files, all_affected_files = (
+        state.current_files,
+        state.all_affected_files,
+    )
+    preflight_existing_contract_evidence = _build_existing_workspace_task_evidence(
+        task=task,
+        current_files=current_files,
+        workspace_full=str(getattr(adapter, "workspace", "") or ""),
+        workspace_name=workspace_name,
+    )
+    preflight_can_accept_existing_scope = bool(
+        preflight_existing_contract_evidence.get("ok")
+    ) and _can_accept_existing_workspace_scope(
+        task=task,
+        requires_fresh_materialization=requires_fresh_materialization,
+        write_tool_evidence=False,
+        primary_llm_summary=None,
+    )
+    if (
+        not all_affected_files
+        and _director_existing_scope_preflight_enabled(context)
+        and preflight_can_accept_existing_scope
+    ):
+        completion_metadata: dict[str, Any] = {
+            "adapter_result": {
+                "tools_executed": 0,
+                "qa_passed": None,
+                "qa_required_for_final_verdict": True,
+                "new_files": [],
+                "new_file_count": 0,
+                "modified_files": [],
+                "modified_file_count": 0,
+                "materialization_mode": "preflight_verified_existing_workspace_scope",
+                "existing_contract_evidence": preflight_existing_contract_evidence,
+            }
+        }
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_existing_scope_preflight",
+            payload={
+                "status": "completed",
+                "materialization_mode": "preflight_verified_existing_workspace_scope",
+                "changed_files": [],
+                "tools_executed": 0,
+            },
+            export_handoff=True,
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
+        if board_claim_applied and task_claim_session_id:
+            finalize_result = _finalize_claimed_execution(
+                adapter,
+                target_task_id=target_task_id,
+                outcome="completed",
+                session_id=task_claim_session_id,
+                result_summary=(
+                    "preflight_verified_existing_workspace_scope="
+                    f"{len(preflight_existing_contract_evidence.get('existing_paths') or [])}"
+                ),
+                metadata=completion_metadata,
+            )
+            if finalize_result.get("success") is not True:
+                return _task_runtime_finalization_failed_result(
+                    target_task_id=target_task_id,
+                    requested_outcome="completed",
+                    finalize_result=finalize_result,
+                    decision_signals=decision_signals,
+                    materialization_mode="preflight_verified_existing_workspace_scope",
+                )
+        adapter._update_task_progress(target_task_id, "completed")
+        decision_signals.append(
+            {
+                "code": "director.existing_workspace_scope_preflight_verified",
+                "severity": "info",
+                "detail": "Declared task scope already exists in workspace before Director writes.",
+            }
+        )
+        return {
+            "success": True,
+            "task_id": target_task_id,
+            "tools_executed": 0,
+            "tool_results": [],
+            "cognitive_runtime_receipt": cognitive_receipt,
+            "decision_signals": decision_signals,
+            "qa_required_for_final_verdict": True,
+            "artifacts": [],
+            "materialization_mode": "preflight_verified_existing_workspace_scope",
+            "existing_contract_evidence": preflight_existing_contract_evidence,
+        }
+    return None
+
+
+async def _phase_first_llm_call(
+    adapter: Any,
+    *,
+    baseline_files: dict[str, str],
+    context: dict[str, Any],
+    decision_signals: list[dict[str, Any]],
+    llm_call_timeout: float,
+    message: str,
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    state: MaterializationState,
+) -> tuple[MaterializationState, dict[str, Any] | None]:
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    primary_llm_summary: dict[str, Any] | None = None
+    if not all_affected_files:
+        if _director_direct_text_patch_only_enabled(context):
+            result = {
+                "content": "",
+                "success": False,
+                "error": "director_direct_text_patch_only",
+                "raw_response": {"direct_text_patch_only": True},
+            }
+        else:
+            try:
+                result = await adapter._invoke_role_dialogue_with_timeout(
+                    message,
+                    context=context,
+                    timeout_seconds=llm_call_timeout,
+                    stage_label="first_call",
+                )
+            except asyncio.CancelledError:
+                raise
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                if not _is_recoverable_no_write_mutation_contract_exception(exc):
+                    raise
+                error_text = str(exc)
+                if not error_text.lower().startswith("transactionkernel execution failed"):
+                    error_text = f"TransactionKernel execution failed: {error_text}"
+                result = {
+                    "content": "",
+                    "success": False,
+                    "error": error_text,
+                    "raw_response": {
+                        "recoverable_mutation_contract_exception": True,
+                        "exception_type": type(exc).__name__,
+                    },
+                }
+                decision_signals.append(
+                    {
+                        "code": "director.recoverable_no_write_mutation_contract_exception",
+                        "severity": "warning",
+                        "detail": str(exc),
+                    }
+                )
+        primary_llm_summary = _summarize_llm_stage_result(result, stage="first_call")
+        content = result.get("content", "")
+
+        # 执行工具
+        extracted_tool_results = adapter._execution.extract_kernel_tool_results(result)
+        tool_results.extend(extracted_tool_results)
+        if not extracted_tool_results or not has_successful_write_tool(extracted_tool_results):
+            fallback_tool_results = await adapter._execution.execute_tools(
+                content, target_task_id, adapter._update_task_progress
+            )
+            if fallback_tool_results:
+                tool_results.extend(fallback_tool_results)
+
+        # 收集变更文件
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
+            task=task,
+            workspace_name=workspace_name,
+        )
+    return (
+        MaterializationState.from_locals(
+            current_files,
+            new_files,
+            modified_files,
+            all_affected_files,
+            tool_results,
+        ),
+        primary_llm_summary,
+    )
+
+
+def _phase_direct_fallback(
+    adapter: Any,
+    *,
+    baseline_files: dict[str, str],
+    context: dict[str, Any],
+    llm_call_timeout: float,
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    state: MaterializationState,
+) -> tuple[MaterializationState, dict[str, Any] | None]:
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    direct_fallback_summary: dict[str, Any] | None = None
+    if not all_affected_files:
+        direct_timeout = adapter._execution.resolve_direct_fallback_timeout_seconds(context, llm_call_timeout)
+        direct_content = ""
+        direct_tool_results: list[dict[str, Any]] = []
+        direct_fallback_summary = {
+            "timeout_seconds": direct_timeout,
+            "content_length": len(direct_content),
+            "error": "",
+            "skipped_reason": "direct_runtime_provider_removed",
+            "tool_results": len(direct_tool_results),
+            "provider": "",
+            "model": "",
+            "success": False,
+        }
+        adapter._state_tracker.append_debug_event(
+            target_task_id,
+            "direct_patch_fallback_result",
+            direct_fallback_summary,
+        )
+        if direct_tool_results:
+            tool_results.extend(direct_tool_results)
+
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
+            task=task,
+            workspace_name=workspace_name,
+        )
+    return (
+        MaterializationState.from_locals(
+            current_files,
+            new_files,
+            modified_files,
+            all_affected_files,
+            tool_results,
+        ),
+        direct_fallback_summary,
+    )
+
+
+async def _phase_empty_write_retry(
+    adapter: Any,
+    *,
+    baseline_files: dict[str, str],
+    context: dict[str, Any],
+    llm_call_timeout: float,
+    message: str,
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    state: MaterializationState,
+) -> tuple[MaterializationState, dict[str, Any] | None]:
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    empty_write_content_retry_summary: dict[str, Any] | None = None
+    if not all_affected_files and _empty_write_content_retry_needed(tool_results):
+        (
+            empty_retry_tool_results,
+            empty_write_content_retry_summary,
+        ) = await _run_empty_write_content_materialization_retry(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            context=context,
+            original_message=message,
+            tool_results=tool_results,
+            llm_call_timeout=llm_call_timeout,
+        )
+        if empty_retry_tool_results:
+            tool_results.extend(empty_retry_tool_results)
+        current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+            adapter,
+            baseline_files,
+            task=task,
+            workspace_name=workspace_name,
+        )
+    return (
+        MaterializationState.from_locals(
+            current_files,
+            new_files,
+            modified_files,
+            all_affected_files,
+            tool_results,
+        ),
+        empty_write_content_retry_summary,
+    )
+
+
+def _phase_typescript_reexport_repair(
+    adapter: Any,
+    *,
+    baseline_files: dict[str, str],
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    state: MaterializationState,
+) -> MaterializationState:
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    if not all_affected_files:
+        deterministic_tool_results = _apply_deterministic_typescript_reexport_repair(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+        )
+        if deterministic_tool_results:
+            tool_results.extend(deterministic_tool_results)
+            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+                adapter,
+                baseline_files,
+                task=task,
+                workspace_name=workspace_name,
+            )
+    return MaterializationState.from_locals(
+        current_files,
+        new_files,
+        modified_files,
+        all_affected_files,
+        tool_results,
+    )
+
+
+def _phase_python_unittest_repair(
+    adapter: Any,
+    *,
+    baseline_files: dict[str, str],
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    state: MaterializationState,
+) -> MaterializationState:
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    if not all_affected_files:
+        deterministic_tool_results = _apply_deterministic_python_unittest_missing_target_repair(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+        )
+        if deterministic_tool_results:
+            tool_results.extend(deterministic_tool_results)
+            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+                adapter,
+                baseline_files,
+                task=task,
+                workspace_name=workspace_name,
+            )
+            all_affected_files = _merge_successful_write_paths(
+                all_affected_files,
+                _extract_successful_write_paths(deterministic_tool_results),
+            )
+    return MaterializationState.from_locals(
+        current_files,
+        new_files,
+        modified_files,
+        all_affected_files,
+        tool_results,
+    )
+
+
+def _phase_pre_materialization_target_repair(
+    adapter: Any,
+    *,
+    baseline_files: dict[str, str],
+    primary_llm_summary: dict[str, Any] | None,
+    quality_repair_attempts: list[dict[str, Any]],
+    target_task_id: str,
+    task: dict[str, Any],
+    workspace_name: str,
+    state: MaterializationState,
+) -> tuple[MaterializationState, dict[str, Any] | None]:
+    current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    quality_repair_summary: dict[str, Any] | None = None
+    if not all_affected_files or (
+        not has_successful_write_tool(tool_results)
+        and _stage_summary_has_recoverable_no_write_mutation_contract_exception(primary_llm_summary)
+    ):
+        deterministic_prematerialization_tool_results, deterministic_prematerialization_summary = (
+            _apply_deterministic_pre_materialization_declared_target_repairs(
+                adapter,
+                task=task,
+                task_id=target_task_id,
+                workspace_name=workspace_name,
+            )
+        )
+        if deterministic_prematerialization_tool_results:
+            tool_results.extend(deterministic_prematerialization_tool_results)
+            quality_repair_summary = deterministic_prematerialization_summary
+            quality_repair_attempts.append(deterministic_prematerialization_summary)
+            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+                adapter,
+                baseline_files,
+                task=task,
+                workspace_name=workspace_name,
+            )
+            all_affected_files = _merge_successful_write_paths(
+                all_affected_files,
+                _extract_successful_write_paths(deterministic_prematerialization_tool_results),
+            )
+    return (
+        MaterializationState.from_locals(
+            current_files,
+            new_files,
+            modified_files,
+            all_affected_files,
+            tool_results,
+        ),
+        quality_repair_summary,
+    )
+
+
+def _phase_no_materialized_changes(
+    adapter: Any,
+    *,
+    baseline_files: dict[str, str],
+    board_claim_applied: bool,
+    can_accept_existing_scope: bool,
+    context: dict[str, Any],
+    direct_fallback_summary: dict[str, Any] | None,
+    empty_write_content_retry_summary: dict[str, Any] | None,
+    existing_contract_evidence: dict[str, Any],
+    primary_llm_summary: dict[str, Any] | None,
+    requires_fresh_materialization: bool,
+    run_id: str,
+    target_task_id: str,
+    task: dict[str, Any],
+    task_claim_session_id: str,
+    workspace_name: str,
+    write_tool_evidence: bool,
+    state: MaterializationState,
+) -> dict[str, Any] | None:
+    current_files, new_files, modified_files, all_affected_files, tool_results = (
+        state.current_files,
+        state.new_files,
+        state.modified_files,
+        state.all_affected_files,
+        state.tool_results,
+    )
+    if (
+        not all_affected_files
+        and not can_accept_existing_scope
+        and (requires_fresh_materialization or not bool(existing_contract_evidence.get("ok")))
+    ):
+        out_of_scope_diff = _collect_workspace_out_of_scope_diff(
+            task=task,
+            baseline_files=baseline_files,
+            current_files=current_files,
+            workspace_name=workspace_name,
+        )
+        out_of_scope_files = list(out_of_scope_diff.get("affected_files") or [])
+        primary_llm_claimed_success = bool(primary_llm_summary.get("success")) if primary_llm_summary else False
+        direct_side_effect_success = primary_llm_claimed_success and not tool_results
+        if out_of_scope_files and (write_tool_evidence or direct_side_effect_success):
+            error = "director_materialized_out_of_scope"
+            materialization_mode = "materialized_out_of_scope"
+        else:
+            error = "director_no_materialized_changes"
+            materialization_mode = "no_materialized_changes"
+        # Wall 2 diagnostic (F16 follow-up): the forced write emitted but the
+        # workspace diff is empty. Surface the discriminating signals so a single
+        # solo rerun reveals whether the write content ARG was empty (prose lands
+        # in reasoning, structured `content` stays blank) or the write was
+        # non-authoritative — directs the Wall 2 fix without guessing.
+        logger.warning(
+            "%s DIAGNOSTIC: write_tool_evidence=%s tools_executed=%s "
+            "new_files=%s modified_files=%s out_of_scope_files=%s requires_fresh=%s "
+            "write_args(name,content_len)=%s",
+            error,
+            write_tool_evidence,
+            len(tool_results),
+            len(new_files),
+            len(modified_files),
+            out_of_scope_files[:20],
+            requires_fresh_materialization,
+            _diag_write_results_summary(tool_results),
+        )
+        completion_metadata: dict[str, Any] = {
+            "adapter_result": {
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+                "qa_passed": None,
+                "qa_required_for_final_verdict": True,
+                "new_files": new_files[:20],
+                "new_file_count": len(new_files),
+                "modified_files": modified_files[:20],
+                "modified_file_count": len(modified_files),
+                "materialization_error": error,
+                "materialization_mode": materialization_mode,
+                "out_of_scope_files": out_of_scope_files[:20],
+                "out_of_scope_file_count": len(out_of_scope_files),
+                "out_of_scope_diff": out_of_scope_diff,
+                "existing_contract_evidence": existing_contract_evidence,
+            }
+        }
+        if primary_llm_summary is not None:
+            completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
+        if direct_fallback_summary is not None:
+            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if empty_write_content_retry_summary is not None:
+            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_materialization_failed",
+            payload={
+                "status": "failed",
+                "error": error,
+                "materialization_mode": materialization_mode,
+                "changed_files": out_of_scope_files if out_of_scope_files else [],
+                "out_of_scope_files": out_of_scope_files[:20],
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+            },
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
+        if board_claim_applied and task_claim_session_id:
+            _finalize_claimed_execution(
+                adapter,
+                target_task_id=target_task_id,
+                outcome="failed",
+                session_id=task_claim_session_id,
+                error=error,
+                metadata=completion_metadata,
+            )
+        adapter._update_task_progress(target_task_id, "failed")
+        return {
+            "success": False,
+            "task_id": target_task_id,
+            "tools_executed": len(tool_results),
+            "tool_results": tool_results,
+            "error": error,
+            "error_code": error,
+            "failure_stage": "director_materialization",
+            "root_cause_hint": "no_changed_files",
+            "cognitive_runtime_receipt": cognitive_receipt,
+            "decision_signals": [
+                {
+                    "code": error,
+                    "severity": "error",
+                    "detail": (
+                        "Director returned no workspace file changes; "
+                        "fresh materialization is required for repair/update tasks."
+                        if requires_fresh_materialization
+                        else "Director returned no workspace file changes."
+                    ),
+                }
+            ],
+            "qa_required_for_final_verdict": True,
+            "artifacts": [],
+        }
+    return None
+
+
+def _phase_existing_scope_verified(
+    adapter: Any,
+    *,
+    board_claim_applied: bool,
+    can_accept_existing_scope: bool,
+    context: dict[str, Any],
+    decision_signals: list[dict[str, Any]],
+    direct_fallback_summary: dict[str, Any] | None,
+    empty_write_content_retry_summary: dict[str, Any] | None,
+    existing_contract_evidence: dict[str, Any],
+    primary_llm_summary: dict[str, Any] | None,
+    run_id: str,
+    target_task_id: str,
+    task: dict[str, Any],
+    task_claim_session_id: str,
+    write_tool_evidence: bool,
+    state: MaterializationState,
+) -> dict[str, Any] | None:
+    all_affected_files, tool_results = (
+        state.all_affected_files,
+        state.tool_results,
+    )
+    if not all_affected_files and can_accept_existing_scope:
+        completion_metadata: dict[str, Any] = {
+            "adapter_result": {
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+                "qa_passed": None,
+                "qa_required_for_final_verdict": True,
+                "new_files": [],
+                "new_file_count": 0,
+                "modified_files": [],
+                "modified_file_count": 0,
+                "materialization_mode": "verified_existing_workspace_scope",
+                "existing_contract_evidence": existing_contract_evidence,
+            }
+        }
+        if primary_llm_summary is not None:
+            completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
+        if direct_fallback_summary is not None:
+            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if empty_write_content_retry_summary is not None:
+            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_existing_scope_verified",
+            payload={
+                "status": "completed",
+                "materialization_mode": "verified_existing_workspace_scope",
+                "changed_files": [],
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+            },
+            export_handoff=True,
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
+        if board_claim_applied and task_claim_session_id:
+            finalize_result = _finalize_claimed_execution(
+                adapter,
+                target_task_id=target_task_id,
+                outcome="completed",
+                session_id=task_claim_session_id,
+                result_summary=(
+                    "verified_existing_workspace_scope="
+                    f"{len(existing_contract_evidence.get('existing_paths') or [])}; "
+                    f"tools_executed={len(tool_results)}"
+                ),
+                metadata=completion_metadata,
+            )
+            if finalize_result.get("success") is not True:
+                return _task_runtime_finalization_failed_result(
+                    target_task_id=target_task_id,
+                    requested_outcome="completed",
+                    finalize_result=finalize_result,
+                    tool_results=tool_results,
+                    decision_signals=decision_signals,
+                    materialization_mode="verified_existing_workspace_scope",
+                )
+        adapter._update_task_progress(target_task_id, "completed")
+        decision_signals.append(
+            {
+                "code": "director.existing_workspace_scope_verified",
+                "severity": "info",
+                "detail": "No fresh file diff was required because declared task scope already exists in workspace.",
+            }
+        )
+        return {
+            "success": True,
+            "task_id": target_task_id,
+            "tools_executed": len(tool_results),
+            "tool_results": tool_results,
+            "cognitive_runtime_receipt": cognitive_receipt,
+            "decision_signals": decision_signals,
+            "qa_required_for_final_verdict": True,
+            "artifacts": [],
+            "materialization_mode": "verified_existing_workspace_scope",
+            "existing_contract_evidence": existing_contract_evidence,
+        }
+    return None
+
+
+def _phase_missing_write_receipt(
+    adapter: Any,
+    *,
+    board_claim_applied: bool,
+    context: dict[str, Any],
+    decision_signals: list[dict[str, Any]],
+    direct_fallback_summary: dict[str, Any] | None,
+    empty_write_content_retry_summary: dict[str, Any] | None,
+    materialization_mode: str,
+    primary_llm_summary: dict[str, Any] | None,
+    run_id: str,
+    target_task_id: str,
+    task: dict[str, Any],
+    task_claim_session_id: str,
+    write_tool_evidence: bool,
+    state: MaterializationState,
+) -> dict[str, Any] | None:
+    all_affected_files, new_files, modified_files, tool_results = (
+        state.all_affected_files,
+        state.new_files,
+        state.modified_files,
+        state.tool_results,
+    )
+    if all_affected_files and not write_tool_evidence:
+        error = "director_missing_write_receipt"
+        completion_metadata: dict[str, Any] = {
+            "adapter_result": {
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+                "qa_passed": None,
+                "qa_required_for_final_verdict": True,
+                "new_files": new_files[:20],
+                "new_file_count": len(new_files),
+                "modified_files": modified_files[:20],
+                "modified_file_count": len(modified_files),
+                "materialization_mode": materialization_mode,
+                "materialization_error": error,
+            }
+        }
+        if primary_llm_summary is not None:
+            completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
+        if direct_fallback_summary is not None:
+            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if empty_write_content_retry_summary is not None:
+            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_materialization_receipt_failed",
+            payload={
+                "status": "failed",
+                "error": error,
+                "materialization_mode": materialization_mode,
+                "changed_files": all_affected_files,
+                "new_files": new_files[:20],
+                "modified_files": modified_files[:20],
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+            },
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
+        if board_claim_applied and task_claim_session_id:
+            _finalize_claimed_execution(
+                adapter,
+                target_task_id=target_task_id,
+                outcome="failed",
+                session_id=task_claim_session_id,
+                error=error,
+                metadata=completion_metadata,
+            )
+        adapter._update_task_progress(target_task_id, "failed")
+        missing_receipt_signal = {
+            "code": error,
+            "severity": "error",
+            "detail": (
+                "Director observed workspace changes, but no normalized write-tool receipt was returned. "
+                "Mutation tasks must fail closed instead of trusting ambient diffs."
+            ),
+            "new_file_count": len(new_files),
+            "modified_file_count": len(modified_files),
+        }
+        return {
+            "success": False,
+            "task_id": target_task_id,
+            "tools_executed": len(tool_results),
+            "tool_results": tool_results,
+            "error": error,
+            "error_code": error,
+            "failure_stage": "director_materialization_receipt",
+            "root_cause_hint": "missing_write_tool_receipt",
+            "cognitive_runtime_receipt": cognitive_receipt,
+            "decision_signals": [*decision_signals, missing_receipt_signal],
+            "qa_required_for_final_verdict": True,
+            "artifacts": [],
+            "materialization_mode": materialization_mode,
+        }
+    return None
+
+
+def _phase_quality_failed(
+    adapter: Any,
+    *,
+    artifact_quality_errors: list[str],
+    board_claim_applied: bool,
+    context: dict[str, Any],
+    decision_signals: list[dict[str, Any]],
+    direct_fallback_summary: dict[str, Any] | None,
+    empty_write_content_retry_summary: dict[str, Any] | None,
+    materialization_mode: str,
+    primary_llm_summary: dict[str, Any] | None,
+    quality_repair_attempts: list[dict[str, Any]],
+    quality_repair_summary: dict[str, Any] | None,
+    run_id: str,
+    target_task_id: str,
+    task: dict[str, Any],
+    task_claim_session_id: str,
+    write_tool_evidence: bool,
+    state: MaterializationState,
+) -> dict[str, Any] | None:
+    all_affected_files, new_files, modified_files, tool_results = (
+        state.all_affected_files,
+        state.new_files,
+        state.modified_files,
+        state.tool_results,
+    )
+    if artifact_quality_errors:
+        error = "director_materialization_quality_failed"
+        completion_metadata: dict[str, Any] = {
+            "adapter_result": {
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+                "qa_passed": None,
+                "qa_required_for_final_verdict": True,
+                "new_files": new_files[:20],
+                "new_file_count": len(new_files),
+                "modified_files": modified_files[:20],
+                "modified_file_count": len(modified_files),
+                "materialization_mode": materialization_mode,
+                "materialization_error": error,
+                "artifact_quality_errors": artifact_quality_errors[:20],
+            }
+        }
+        if primary_llm_summary is not None:
+            completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
+        if direct_fallback_summary is not None:
+            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if empty_write_content_retry_summary is not None:
+            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
+        if quality_repair_summary is not None:
+            completion_metadata["adapter_result"]["quality_repair"] = quality_repair_summary
+        if quality_repair_attempts:
+            completion_metadata["adapter_result"]["quality_repair_attempts"] = quality_repair_attempts
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_materialization_quality_failed",
+            payload={
+                "status": "failed",
+                "error": error,
+                "materialization_mode": materialization_mode,
+                "changed_files": all_affected_files,
+                "new_files": new_files[:20],
+                "modified_files": modified_files[:20],
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+                "artifact_quality_errors": artifact_quality_errors[:20],
+                "quality_repair": quality_repair_summary or {},
+                "quality_repair_attempts": quality_repair_attempts,
+            },
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
+        if board_claim_applied and task_claim_session_id:
+            _finalize_claimed_execution(
+                adapter,
+                target_task_id=target_task_id,
+                outcome="failed",
+                session_id=task_claim_session_id,
+                error=error,
+                metadata=completion_metadata,
+            )
+        adapter._update_task_progress(target_task_id, "failed")
+        quality_signal = {
+            "code": error,
+            "severity": "error",
+            "detail": (
+                "Director changed workspace files, but the changed artifacts still contain known "
+                "worthless scaffold or placeholder-test patterns."
+            ),
+            "artifact_quality_errors": artifact_quality_errors[:20],
+        }
+        return {
+            "success": False,
+            "task_id": target_task_id,
+            "tools_executed": len(tool_results),
+            "tool_results": tool_results,
+            "error": error,
+            "error_code": error,
+            "failure_stage": "director_materialization_quality",
+            "root_cause_hint": "artifact_quality_failed",
+            "cognitive_runtime_receipt": cognitive_receipt,
+            "decision_signals": [*decision_signals, quality_signal],
+            "qa_required_for_final_verdict": True,
+            "artifacts": [],
+            "materialization_mode": materialization_mode,
+            "artifact_quality_errors": artifact_quality_errors[:20],
+            # Forensic trail: without this, a repair attempt that died before
+            # its LLM call is indistinguishable from one that never ran.
+            "quality_repair_attempts": quality_repair_attempts,
+        }
+    return None
+
+
+def _phase_semantic_quality_failed(
+    adapter: Any,
+    *,
+    board_claim_applied: bool,
+    context: dict[str, Any],
+    decision_signals: list[dict[str, Any]],
+    direct_fallback_summary: dict[str, Any] | None,
+    empty_write_content_retry_summary: dict[str, Any] | None,
+    materialization_mode: str,
+    primary_llm_summary: dict[str, Any] | None,
+    run_id: str,
+    semantic_quality_error: str | None,
+    semantic_quality_repair_attempts: list[dict[str, Any]],
+    semantic_quality_repair_summary: dict[str, Any] | None,
+    target_task_id: str,
+    task: dict[str, Any],
+    task_claim_session_id: str,
+    write_tool_evidence: bool,
+    state: MaterializationState,
+) -> dict[str, Any] | None:
+    all_affected_files, new_files, modified_files, tool_results = (
+        state.all_affected_files,
+        state.new_files,
+        state.modified_files,
+        state.tool_results,
+    )
+    if semantic_quality_error:
+        error = "director_materialization_semantic_quality_failed"
+        completion_metadata: dict[str, Any] = {
+            "adapter_result": {
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+                "qa_passed": None,
+                "qa_required_for_final_verdict": True,
+                "new_files": new_files[:20],
+                "new_file_count": len(new_files),
+                "modified_files": modified_files[:20],
+                "modified_file_count": len(modified_files),
+                "materialization_mode": materialization_mode,
+                "materialization_error": error,
+                "semantic_quality_error": semantic_quality_error,
+            }
+        }
+        if primary_llm_summary is not None:
+            completion_metadata["adapter_result"]["primary_llm"] = primary_llm_summary
+        if direct_fallback_summary is not None:
+            completion_metadata["adapter_result"]["direct_fallback"] = direct_fallback_summary
+        if empty_write_content_retry_summary is not None:
+            completion_metadata["adapter_result"]["empty_write_content_retry"] = empty_write_content_retry_summary
+        if semantic_quality_repair_summary is not None:
+            completion_metadata["adapter_result"]["semantic_quality_repair"] = semantic_quality_repair_summary
+        if semantic_quality_repair_attempts:
+            completion_metadata["adapter_result"]["semantic_quality_repair_attempts"] = semantic_quality_repair_attempts
+        cognitive_receipt = _emit_director_adapter_cognitive_receipt(
+            adapter,
+            task=task,
+            target_task_id=target_task_id,
+            run_id=run_id,
+            context=context,
+            receipt_type="director_adapter_materialization_semantic_quality_failed",
+            payload={
+                "status": "failed",
+                "error": error,
+                "materialization_mode": materialization_mode,
+                "changed_files": all_affected_files,
+                "new_files": new_files[:20],
+                "modified_files": modified_files[:20],
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+                "semantic_quality_error": semantic_quality_error,
+                "semantic_quality_repair": semantic_quality_repair_summary or {},
+                "semantic_quality_repair_attempts": semantic_quality_repair_attempts,
+            },
+        )
+        completion_metadata["adapter_result"]["cognitive_runtime_receipt"] = cognitive_receipt
+        if board_claim_applied and task_claim_session_id:
+            _finalize_claimed_execution(
+                adapter,
+                target_task_id=target_task_id,
+                outcome="failed",
+                session_id=task_claim_session_id,
+                error=error,
+                metadata=completion_metadata,
+            )
+        adapter._update_task_progress(target_task_id, "failed")
+        semantic_signal = {
+            "code": error,
+            "severity": "error",
+            "detail": semantic_quality_error,
+        }
+        return {
+            "success": False,
+            "task_id": target_task_id,
+            "tools_executed": len(tool_results),
+            "tool_results": tool_results,
+            "error": error,
+            "error_code": error,
+            "failure_stage": "director_materialization_semantic_quality",
+            "root_cause_hint": "semantic_quality_failed",
+            "cognitive_runtime_receipt": cognitive_receipt,
+            "decision_signals": [*decision_signals, semantic_signal],
+            "qa_required_for_final_verdict": True,
+            "artifacts": [],
+            "materialization_mode": materialization_mode,
+            "semantic_quality_error": semantic_quality_error,
+            "semantic_quality_repair_attempts": semantic_quality_repair_attempts,
+        }
+    return None
 
 
 async def _attach_director_file_event_bus(adapter: Any) -> None:

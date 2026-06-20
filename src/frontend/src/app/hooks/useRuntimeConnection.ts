@@ -80,11 +80,8 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
     [subscriptionRoles]
   );
 
-  // Store state
-  const live = useRuntimeStore((s) => s.live);
-  const error = useRuntimeStore((s) => s.error);
-  const reconnecting = useRuntimeStore((s) => s.reconnecting);
-  const attemptCount = useRuntimeStore((s) => s.attemptCount);
+  // Store state is a compatibility cache for legacy selectors. The transport
+  // context remains the authoritative source for live connection state.
   const setConnectionState = useRuntimeStore((s) => s.setConnectionState);
   const resetForWorkspace = useRuntimeStore((s) => s.resetForWorkspace);
 
@@ -221,12 +218,12 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
   return useMemo(
     () => ({
       // State
-      live,
-      connected: live,
-      isConnected: live,
-      error,
-      reconnecting,
-      attemptCount,
+      live: transportConnected,
+      connected: transportConnected,
+      isConnected: transportConnected,
+      error: transportError,
+      reconnecting: transportReconnecting,
+      attemptCount: transportAttemptCount,
 
       // Actions
       connect,
@@ -249,10 +246,6 @@ export function useRuntimeConnection(options: UseRuntimeConnectionOptions = {}) 
       activeRef,
     }),
     [
-      live,
-      error,
-      reconnecting,
-      attemptCount,
       connect,
       disconnect,
       reconnect,

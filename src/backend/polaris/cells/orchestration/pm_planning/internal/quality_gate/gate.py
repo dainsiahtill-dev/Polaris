@@ -52,6 +52,7 @@ from polaris.cells.orchestration.pm_planning.internal.quality_gate.primitives im
     _drop_unknown_dependency_refs_in_place,
     _has_executable_or_file_acceptance_anchor,
     _has_measurable_acceptance_anchor,
+    _has_placeholder_or_manifest_only_acceptance,
     _is_concrete_pm_scope_path,
     _is_directory_scope_evidenced,
     _is_file_like_pm_scope_path,
@@ -169,6 +170,8 @@ def evaluate_pm_task_quality(
         acceptance_items = [_normalize_text(item) for item in (acceptance or []) if _normalize_text(item)]
         if not acceptance_items:
             critical_issues.append(f"{task_id}: acceptance criteria is missing")
+        elif _has_placeholder_or_manifest_only_acceptance(acceptance_items):
+            critical_issues.append(f"{task_id}: acceptance permits placeholder or manifest-only execution")
         elif _has_fragile_game_acceptance(acceptance_items):
             critical_issues.append(f"{task_id}: acceptance uses fragile random-sequence assertions")
         elif not _has_executable_or_file_acceptance_anchor(acceptance_items):

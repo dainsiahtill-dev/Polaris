@@ -5,15 +5,14 @@
  * Provides:
  * - React Query caching for run status
  * - Automatic request cancellation via AbortController
- * - Nat-JetStream/WebSocket event subscription with reconnection logic
+ * - Nat-JetStream/WebSocket event subscription through runtime.v2
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useRuntimeTransport } from '@/runtime/transport';
 import {
-  
   getFactoryRun,
   getFactoryRunArtifacts,
   listFactoryRuns,
@@ -41,8 +40,6 @@ export type {
   FactoryStartOptions,
 };
 
-const MAX_RECONNECT_ATTEMPTS = 3;
-const RECONNECT_DELAY_MS = 1000;
 const CANCELLED_FACTORY_RUN_STATUSES = new Set(['cancelled', 'canceled']);
 const FAILED_FACTORY_RUN_STATUSES = new Set(['failed', 'error', 'blocked', 'timeout']);
 const TERMINAL_FACTORY_RUN_STATUSES = new Set([
@@ -199,8 +196,6 @@ export function useFactory(options: UseFactoryOptions = {}) {
   const transport = useRuntimeTransport();
 
   const connectionRef = useRef<{ close: () => void } | null>(null);
-  const reconnectTimerRef = useRef<number | null>(null);
-  const reconnectAttemptsRef = useRef(0);
   const latestRunIdRef = useRef<string | null>(null);
   const manualDisconnectRef = useRef(false);
   const activeWorkspaceRef = useRef<string>('');
@@ -210,16 +205,6 @@ export function useFactory(options: UseFactoryOptions = {}) {
   // Query keys
   const factoryRunsKey = QueryKeys.factoryRuns();
   const factoryRunKey = (runId: string) => QueryKeys.factoryRun(runId);
-
-  // Query for fetching a single run status (with cancellation support)
-  const fetchRunQuery = useQuery({
-    queryKey: ['factory', 'run', 'fetching'] as const,
-    queryFn: async ({ queryKey }) => {
-      // This is a placeholder - actual fetching is done via fetchRunStatus
-      return null;
-    },
-    enabled: false,
-  });
 
   // Mutation for starting a new run
   const startRunMutation = useMutation({
@@ -314,16 +299,8 @@ export function useFactory(options: UseFactoryOptions = {}) {
     },
   });
 
-  const clearReconnectTimer = useCallback(() => {
-    if (reconnectTimerRef.current !== null) {
-      window.clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-  }, []);
-
   const disconnectStream = useCallback(() => {
     manualDisconnectRef.current = true;
-    clearReconnectTimer();
 
     // Cancel any pending requests
     if (abortControllerRef.current) {
@@ -336,7 +313,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
       connectionRef.current = null;
     }
     setIsStreaming(false);
-  }, [clearReconnectTimer]);
+  }, []);
 
   const fetchRunArtifacts = useCallback(async (runId: string) => {
     const normalizedRunId = String(runId || '').trim();
@@ -440,7 +417,6 @@ export function useFactory(options: UseFactoryOptions = {}) {
 
   const connectStream = useCallback(async (runId: string): Promise<boolean> => {
     manualDisconnectRef.current = false;
-    clearReconnectTimer();
 
     if (connectionRef.current) {
       connectionRef.current.close();
@@ -519,7 +495,6 @@ export function useFactory(options: UseFactoryOptions = {}) {
     try {
       channelUnsubscribe = transport.subscribeChannels([{ channel, tailLines: 0 }]);
       messageUnregister = transport.registerMessageHandler(handler);
-      reconnectAttemptsRef.current = 0;
       setIsStreaming(true);
       connectionRef.current = {
         close: () => {
@@ -536,7 +511,7 @@ export function useFactory(options: UseFactoryOptions = {}) {
       setIsStreaming(false);
       return false;
     }
-  }, [clearReconnectTimer, currentRun, fetchRunArtifacts, queryClient, factoryRunKey, factoryRunsKey, transport]);
+  }, [currentRun, fetchRunArtifacts, queryClient, factoryRunKey, factoryRunsKey, transport]);
 
   const startRun = useCallback(async (opts: FactoryStartOptions): Promise<FactoryRunStatus | null> => {
     setEvents([]);
@@ -546,17 +521,14 @@ export function useFactory(options: UseFactoryOptions = {}) {
     try {
       const run = await startRunMutation.mutateAsync(opts);
 
-      const connected = await connectStream(run.run_id);
-      if (!connected) {
-        await fetchRunStatus(run.run_id);
-      }
+      await connectStream(run.run_id);
 
       toast.success(`Factory 已启动: ${run.run_id}`);
       return run;
     } catch {
       return null;
     }
-  }, [connectStream, fetchRunStatus, startRunMutation]);
+  }, [connectStream, startRunMutation]);
 
   const stopRun = useCallback(async (runId: string, reason?: string) => {
     try {
@@ -591,13 +563,10 @@ export function useFactory(options: UseFactoryOptions = {}) {
   const retryRunFromCheckpoint = useCallback(async (runId: string, reason?: string) => {
     const run = await controlRun(runId, 'retry_from_checkpoint', reason);
     if (run && !isTerminalRun(run)) {
-      const connected = await connectStream(run.run_id);
-      if (!connected) {
-        await fetchRunStatus(run.run_id);
-      }
+      await connectStream(run.run_id);
     }
     return run;
-  }, [connectStream, controlRun, fetchRunStatus]);
+  }, [connectStream, controlRun]);
 
   const fetchRuns = useCallback(async (limit = 20) => {
     // Cancel any pending requests
@@ -640,17 +609,14 @@ export function useFactory(options: UseFactoryOptions = {}) {
     if (latest) {
       latestRunIdRef.current = latest.run_id;
       if (!isTerminalRun(latest)) {
-        const connected = await connectStream(latest.run_id);
-        if (!connected) {
-          await fetchRunStatus(latest.run_id);
-        }
+        await connectStream(latest.run_id);
       } else {
         await fetchRunArtifacts(latest.run_id);
       }
     }
 
     return latest;
-  }, [autoResumeLatest, connectStream, fetchRunArtifacts, fetchRunStatus, fetchRuns, workspace]);
+  }, [autoResumeLatest, connectStream, fetchRunArtifacts, fetchRuns, workspace]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -667,7 +633,6 @@ export function useFactory(options: UseFactoryOptions = {}) {
 
     activeWorkspaceRef.current = workspace;
     disconnectStream();
-    reconnectAttemptsRef.current = 0;
     latestRunIdRef.current = null;
     artifactsRequestSeqRef.current += 1;
     setCurrentRun(null);

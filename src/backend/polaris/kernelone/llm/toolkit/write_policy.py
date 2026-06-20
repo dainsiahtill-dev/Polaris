@@ -14,6 +14,10 @@ _FORBIDDEN_LINE_RE = re.compile(
     r"(?:禁止|不得|不要|严禁|do\s+not|never|forbidden|disallow|deny).{0,80}",
     re.IGNORECASE,
 )
+_FORBIDDEN_WRITE_ACTION_RE = re.compile(
+    r"(?:修改|改动|写入|编辑|删除|覆盖|创建|新增|write|edit|modify|change|delete|remove|overwrite|touch|create)",
+    re.IGNORECASE,
+)
 _PATH_TOKEN_RE = re.compile(
     r"(?:[A-Za-z]:[\\/])?(?:[\w.@~+-]+[\\/])+[\w.@~+-]+(?:\.[A-Za-z0-9_-]+)?|"
     r"(?:^|[\s:：])(?:package\.json|AGENTS\.md|Cargo\.toml|webpack\.config\.js|jest\.config\.js|tsconfig\.json)(?=$|[\s,，;；。.])",
@@ -128,13 +132,14 @@ def parse_agents_write_policy(agents_md: str | None) -> AgentWritePolicyObject:
         line = raw_line.strip()
         if not line or not _FORBIDDEN_LINE_RE.search(line):
             continue
-        for match in _PATH_TOKEN_RE.finditer(line):
-            path_token = match.group(0).strip(" \t:：,，;；。")
-            normalized = _normalize_policy_path(path_token)
-            if not normalized or normalized in seen:
-                continue
-            seen.add(normalized)
-            rules.append(ForbiddenPathRule(path=normalized, source_line=line))
+        if _FORBIDDEN_WRITE_ACTION_RE.search(line):
+            for match in _PATH_TOKEN_RE.finditer(line):
+                path_token = match.group(0).strip(" \t:：,，;；。")
+                normalized = _normalize_policy_path(path_token)
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                rules.append(ForbiddenPathRule(path=normalized, source_line=line))
         for pattern in _derived_forbidden_file_patterns(line):
             if pattern in seen_patterns:
                 continue

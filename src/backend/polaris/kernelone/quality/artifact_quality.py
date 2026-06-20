@@ -161,6 +161,10 @@ _NODE_BUILTIN_IMPORTS = {
 }
 _TEST_FRAMEWORK_IMPORTS = {"@jest/globals", "jest", "vitest", "mocha"}
 _NPM_TEST_RUNNER_SCRIPT_RE = re.compile(r"(?:^|[\s;&|])(vitest|jest|mocha|ava)(?:$|[\s;&|])", re.IGNORECASE)
+_NPM_MANIFEST_ONLY_TEST_SCRIPT_RE = re.compile(
+    r"package\s+manifest\s+check\s+passed|invalid\s+package\s+manifest|readFileSync\s*\(\s*['\"]package\.json",
+    re.IGNORECASE,
+)
 _PYTHON_COMMAND_IN_NPM_SCRIPT_RE = re.compile(r"(?:^|[\s;&|])(python3?|pytest|pip3?)(?:$|[\s;&|])", re.IGNORECASE)
 _PYTHON_PACKAGE_MANIFEST_DEPENDENCIES = {
     "django",
@@ -454,6 +458,8 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
         lowered = test_script.lower()
         if "no test specified" in lowered or "no tests specified" in lowered:
             errors.append(f"Artifact quality scan failed: npm default failing test script in {relative_path}")
+        if _NPM_MANIFEST_ONLY_TEST_SCRIPT_RE.search(test_script):
+            errors.append(f"Artifact quality scan failed: npm manifest-only test script in {relative_path}")
         if (
             _NPM_TEST_RUNNER_SCRIPT_RE.search(test_script)
             and _workspace_has_node_source_files(root_full)

@@ -2169,7 +2169,7 @@ describe('ChiefEngineerWorkspace', () => {
     expect(onToggleDirector).not.toHaveBeenCalled();
   });
 
-  it('loads Director task pool metrics through the backend route when runtime tasks are absent', async () => {
+  it('keeps Director task pool metrics on runtime push data when runtime tasks are absent', async () => {
     apiFetchMock.mockImplementation((path: string, init?: RequestInit) => {
       if (path === directorPath('/v2/director/tasks?source=auto')) {
         return Promise.resolve({
@@ -2282,19 +2282,20 @@ describe('ChiefEngineerWorkspace', () => {
 
     render(<ChiefEngineerWorkspace {...baseProps} tasks={[]} />);
 
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto')));
-    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=local')));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledWith(directorPath('/v2/director/workers')));
+    expect(apiFetchMock).not.toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=auto'));
+    expect(apiFetchMock).not.toHaveBeenCalledWith(directorPath('/v2/director/tasks?source=local'));
     const pool = await screen.findByTestId('chief-engineer-director-task-pool');
     expect(pool).not.toHaveTextContent('/v2/director/tasks');
     expect(screen.getByTestId('chief-engineer-director-task-pool-endpoint')).toHaveAttribute('data-endpoint', '/v2/director/tasks');
-    expect(screen.getByTestId('chief-engineer-director-task-source')).toHaveTextContent('backend fallback');
+    expect(screen.getByTestId('chief-engineer-director-task-source')).toHaveTextContent('runtime push');
 
-    expect(within(pool).getByText('未领取').parentElement).toHaveTextContent('1');
-    expect(within(pool).getByText('执行中').parentElement).toHaveTextContent('1');
-    expect(within(pool).getByText('完成').parentElement).toHaveTextContent('1');
-    expect(within(pool).getByText('总计').parentElement).toHaveTextContent('3');
-    expect(screen.getByTestId('chief-engineer-blueprint-generate-PM-backlog')).toBeInTheDocument();
-    expect(screen.getByTestId('chief-engineer-blueprint-status-PM-running')).toBeInTheDocument();
+    expect(within(pool).getByText('未领取').parentElement).toHaveTextContent('0');
+    expect(within(pool).getByText('执行中').parentElement).toHaveTextContent('0');
+    expect(within(pool).getByText('完成').parentElement).toHaveTextContent('0');
+    expect(within(pool).getByText('总计').parentElement).toHaveTextContent('0');
+    expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-backlog')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('chief-engineer-blueprint-status-PM-running')).not.toBeInTheDocument();
     expect(screen.queryByTestId('chief-engineer-blueprint-generate-PM-done')).not.toBeInTheDocument();
     expect(screen.getByTestId('chief-engineer-start-director')).toBeDisabled();
   });

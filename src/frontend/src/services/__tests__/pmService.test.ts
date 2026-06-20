@@ -1138,8 +1138,8 @@ describe('pmService', () => {
     });
   });
 
-  describe('listDirectorTaskFallbackRows', () => {
-    it('should load idle fallback rows from auto and local sources with source metadata', async () => {
+  describe('listDirectorTaskSnapshotRows', () => {
+    it('should load idle snapshot rows from auto and local sources with source metadata', async () => {
       mockApiGet
         .mockResolvedValueOnce({
           ok: true,
@@ -1161,7 +1161,7 @@ describe('pmService', () => {
           ],
         });
 
-      const result = await pmService.listDirectorTaskFallbackRows(false);
+      const result = await pmService.listDirectorTaskSnapshotRows(false);
 
       expect(mockApiGet).toHaveBeenNthCalledWith(
         1,
@@ -1188,7 +1188,7 @@ describe('pmService', () => {
       ]);
     });
 
-    it('should pass workspace through each Director fallback source request', async () => {
+    it('should pass workspace through each Director snapshot source request', async () => {
       mockApiGet
         .mockResolvedValueOnce({
           ok: true,
@@ -1199,7 +1199,7 @@ describe('pmService', () => {
           data: [{ id: 'director-task-2', subject: 'Local task' }],
         });
 
-      const result = await pmService.listDirectorTaskFallbackRows(false, 'C:/Temp/Product');
+      const result = await pmService.listDirectorTaskSnapshotRows(false, 'C:/Temp/Product');
 
       expect(mockApiGet).toHaveBeenNthCalledWith(
         1,
@@ -1225,7 +1225,7 @@ describe('pmService', () => {
           data: [{ id: 'director-task-1', subject: 'Local task' }],
         });
 
-      const result = await pmService.listDirectorTaskFallbackRows(true);
+      const result = await pmService.listDirectorTaskSnapshotRows(true);
 
       expect(mockApiGet).toHaveBeenNthCalledWith(
         1,
@@ -1247,18 +1247,18 @@ describe('pmService', () => {
       ]);
     });
 
-    it('should deduplicate local rows already returned by idle auto fallback', async () => {
+    it('should deduplicate local rows already returned by idle auto snapshot source', async () => {
       mockApiGet
         .mockResolvedValueOnce({
           ok: true,
-          data: [{ id: 'director-task-1', subject: 'Auto local fallback' }],
+          data: [{ id: 'director-task-1', subject: 'Auto local snapshot' }],
         })
         .mockResolvedValueOnce({
           ok: true,
           data: [{ id: 'director-task-1', subject: 'Local task canonical' }],
         });
 
-      const result = await pmService.listDirectorTaskFallbackRows(false);
+      const result = await pmService.listDirectorTaskSnapshotRows(false);
 
       expect(mockApiGet).toHaveBeenNthCalledWith(
         1,
@@ -1285,7 +1285,7 @@ describe('pmService', () => {
         .mockResolvedValueOnce({ ok: false, error: 'workflow unavailable' })
         .mockResolvedValueOnce({ ok: false, error: 'local unavailable' });
 
-      const result = await pmService.listDirectorTaskFallbackRows(true);
+      const result = await pmService.listDirectorTaskSnapshotRows(true);
 
       expect(result.ok).toBe(false);
       expect(result.error).toBe('local unavailable');
@@ -1797,7 +1797,7 @@ describe('pmService', () => {
       expect(typeof pmService.startDirector).toBe('function');
       expect(typeof pmService.stopDirector).toBe('function');
       expect(typeof pmService.listDirectorTasks).toBe('function');
-      expect(typeof pmService.listDirectorTaskFallbackRows).toBe('function');
+      expect(typeof pmService.listDirectorTaskSnapshotRows).toBe('function');
       expect(typeof pmService.resolveDirectorTaskSources).toBe('function');
       expect(typeof pmService.listPmTasks).toBe('function');
       expect(typeof pmService.getPmTask).toBe('function');

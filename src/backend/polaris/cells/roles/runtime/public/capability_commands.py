@@ -23,7 +23,7 @@ import hashlib
 import json
 from collections.abc import Callable, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.runtime.public.contracts import (
     AssembleRoleRuntimeChainCommandV1,
@@ -46,6 +46,9 @@ from polaris.cells.roles.runtime.public.contracts import (
     RoleTaskMarketLifecycleResultV1,
     get_builtin_role_runtime_spec,
 )
+
+if TYPE_CHECKING:
+    from polaris.cells.roles.runtime.internal.capability import CapabilityHandlerRegistry
 
 
 def _capability_invocation_failure(
@@ -1491,8 +1494,23 @@ def execute_role_capability_invocation(
     architect_design_service: Any | None = None,
     llm_control_plane_service: Any | None = None,
     director_execution_service: Any | None = None,
+    handlers: CapabilityHandlerRegistry | None = None,
 ) -> RoleCapabilityInvocationResultV1:
-    """Execute a mounted role capability through its declared public contract."""
+    """Execute a mounted role capability through its declared public contract.
+
+    ``handlers`` is an optional typed :class:`CapabilityHandlerRegistry` seam for
+    the in-progress decomposition of this dispatcher. Capability families that
+    have been migrated onto a :class:`CapabilityHandler` are routed through the
+    registry (the explicit ``handlers`` argument, else the process-wide
+    :func:`default_capability_registry`); families not yet migrated fall through
+    to the legacy ``if/elif`` ladder below. Behavior is byte-identical either way.
+
+    The twelve ``*_service`` kwargs remain ``Any | None`` while the legacy ladder
+    still consumes them directly; they are funnelled into the typed
+    :class:`CapabilityDeps` at the dispatch seam so migrated handlers see a
+    zero-``Any`` port surface. Phase 4 retypes the public kwargs once every family
+    is migrated and the legacy ladder is gone.
+    """
     if not isinstance(command, ExecuteRoleCapabilityInvocationCommandV1):
         raise TypeError("command must be an ExecuteRoleCapabilityInvocationCommandV1")
 
@@ -1617,6 +1635,68 @@ def execute_role_capability_invocation(
             },
         )
 
+    # --- Typed CapabilityHandler dispatch seam --------------------------------
+    # After the verbatim cross-cutting prelude guards above, route migrated
+    # capability families through the typed registry. ``deps`` bundles the twelve
+    # optional service ports; the identity triple is exactly what the legacy
+    # ``is_*`` flags reconstruct (capability_id / owner_cell / contract_name).
+    # Families with no registered handler fall through to the legacy ``if/elif``
+    # ladder below, so this is additive and independently revertible. This single
+    # try/except is the reusable catch for EVERY migrated handler.
+    from polaris.cells.roles.runtime.internal.capability import (
+        CapabilityDeps,
+        CapabilityInvocationError,
+        default_capability_registry,
+    )
+
+    deps = CapabilityDeps(
+        task_market_service=task_market_service,
+        blueprint_service=blueprint_service,
+        code_intelligence_service=code_intelligence_service,
+        verification_guard_service=verification_guard_service,
+        qa_audit_service=qa_audit_service,
+        runtime_projection_service=runtime_projection_service,
+        budget_guard_service=budget_guard_service,
+        workspace_guard_service=workspace_guard_service,
+        permission_service=permission_service,
+        architect_design_service=architect_design_service,
+        llm_control_plane_service=llm_control_plane_service,
+        director_execution_service=director_execution_service,
+    )
+    capability_identity = (
+        capability.capability_id,
+        capability.owner_cell,
+        capability.contract_name,
+    )
+    registry = handlers or default_capability_registry()
+    handler = registry.lookup(*capability_identity)
+    if handler is not None:
+        try:
+            handler.validate(command)
+        except CapabilityInvocationError as exc:
+            return _capability_invocation_failure(
+                command,
+                error_code=exc.code,
+                error_message=str(exc),
+                owner_cell=exc.owner_cell,
+                capability_available=exc.capability_available,
+                evidence_refs=exc.evidence_refs,
+                metadata=exc.metadata,
+            )
+        try:
+            raw_result = handler.invoke(command, deps)
+        except CapabilityInvocationError as exc:
+            return _capability_invocation_failure(
+                command,
+                error_code=exc.code,
+                error_message=str(exc),
+                owner_cell=exc.owner_cell,
+                capability_available=exc.capability_available,
+                evidence_refs=exc.evidence_refs,
+                metadata=exc.metadata,
+            )
+        return handler.map_result(raw_result, command)
+
     is_not_task_market_dispatch = (
         capability.capability_id != "dispatch_task_to_market"
         or capability.owner_cell != "runtime.task_market"
@@ -1666,11 +1746,6 @@ def execute_role_capability_invocation(
         capability.capability_id == "validate_cell_boundary_change"
         and capability.owner_cell == "architect.design"
         and capability.contract_name == "GenerateArchitectureDesignCommandV1"
-    )
-    is_director_task_execution = (
-        capability.capability_id == "execute_director_task"
-        and capability.owner_cell == "director.execution"
-        and capability.contract_name == "ExecuteDirectorTaskCommandV1"
     )
 
     if is_architect_budget_reservation:
@@ -3051,119 +3126,6 @@ def execute_role_capability_invocation(
             result_ref=blueprint_ref,
             task_id=blueprint_result.task_id,
             status=blueprint_result.status,
-            metadata=metadata,
-        )
-
-    if is_director_task_execution:
-        director_metadata = _payload_mapping(command.payload, "metadata")
-        if director_metadata is None:
-            return _capability_invocation_failure(
-                command,
-                capability_available=True,
-                owner_cell=capability.owner_cell,
-                error_code="invalid_director_execution_metadata",
-                error_message="payload.metadata must be a mapping when provided",
-            )
-        director_asset_refs = {
-            "execution_task": _asset_mount_ref(runtime_object, "ExecutionTask"),
-            "director_execution_state": _asset_mount_ref(runtime_object, "DirectorExecutionState"),
-            "director_evidence_trail": _asset_mount_ref(runtime_object, "DirectorEvidenceTrail"),
-        }
-        director_metadata.update(
-            {
-                "role_invocation_id": invocation.invocation_id,
-                "role_payload_ref": invocation.payload_ref,
-                "role_fingerprint_ref": invocation.fingerprint_ref,
-                "role_capability_id": capability.capability_id,
-                "asset_refs": director_asset_refs,
-            }
-        )
-        instruction = (
-            _payload_string(command.payload, "instruction")
-            or _payload_string(command.payload, "objective")
-            or _payload_string(command.payload, "summary")
-        )
-        try:
-            from polaris.cells.director.execution.public.contracts import ExecuteDirectorTaskCommandV1
-            from polaris.cells.director.execution.public.service import execute_director_task
-
-            director_command = ExecuteDirectorTaskCommandV1(
-                task_id=_payload_string(command.payload, "task_id", runtime_object.identity.task_id or ""),
-                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
-                instruction=instruction,
-                run_id=_payload_string(command.payload, "run_id", runtime_object.identity.run_id or "") or None,
-                attempt=int(command.payload.get("attempt", 1)),
-                metadata=director_metadata,
-            )
-        except (TypeError, ValueError) as exc:
-            return _capability_invocation_failure(
-                command,
-                capability_available=True,
-                owner_cell=capability.owner_cell,
-                error_code="invalid_director_execution_command",
-                error_message=str(exc),
-            )
-
-        try:
-            if director_execution_service is None:
-                director_result = execute_director_task(director_command)
-            elif callable(director_execution_service):
-                director_result = director_execution_service(director_command)
-            else:
-                director_result = director_execution_service.execute_director_task(director_command)
-        except Exception as exc:  # noqa: BLE001 - public RPC boundary returns structured failure
-            return _capability_invocation_failure(
-                command,
-                capability_available=True,
-                owner_cell=capability.owner_cell,
-                error_code="director_execution_failed",
-                error_message=str(exc),
-            )
-
-        result_ref = f"director.execution:task:{director_result.task_id}"
-        evidence_paths = tuple(director_result.evidence_paths)
-        audit_evidence_refs = _audit_evidence_refs(evidence_paths)
-        metadata = _capability_available_metadata(
-            capability.capability_id,
-            {
-                "director_status": director_result.status,
-                "output_summary": director_result.output_summary,
-                "evidence_paths": evidence_paths,
-                "audit_evidence_refs": audit_evidence_refs,
-                "asset_refs": director_asset_refs,
-            },
-        )
-        if not director_result.ok:
-            return RoleCapabilityInvocationResultV1(
-                ok=False,
-                invocation_id=invocation.invocation_id,
-                role_id=role_id,
-                capability_id=capability.capability_id,
-                command_contract=capability.contract_name,
-                allowed=False,
-                owner_cell=capability.owner_cell,
-                payload_ref=result_ref,
-                result_ref=result_ref,
-                task_id=director_result.task_id,
-                status=director_result.status,
-                evidence_refs=audit_evidence_refs,
-                metadata=metadata,
-                error_code=director_result.error_code or "director_execution_rejected",
-                error_message=director_result.error_message or "director execution rejected the task",
-            )
-        return RoleCapabilityInvocationResultV1(
-            ok=True,
-            invocation_id=invocation.invocation_id,
-            role_id=role_id,
-            capability_id=capability.capability_id,
-            command_contract=capability.contract_name,
-            allowed=True,
-            owner_cell=capability.owner_cell,
-            payload_ref=result_ref,
-            result_ref=result_ref,
-            task_id=director_result.task_id,
-            status=director_result.status,
-            evidence_refs=audit_evidence_refs,
             metadata=metadata,
         )
 

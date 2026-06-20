@@ -984,6 +984,102 @@ class TestDirectorFailureClosure:
         assert adapter_result.get("modified_files") == []
 
     @pytest.mark.asyncio
+    async def test_execute_keeps_failed_no_write_separate_from_sibling_diff(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Implement garden simulator module",
+            description="Update only the declared garden module.",
+            metadata={
+                "target_files": ["src/garden.ts"],
+                "scope_paths": ["src/garden.ts"],
+                "steps": ["Implement src/garden.ts"],
+                "acceptance": ["src/garden.ts is changed"],
+            },
+        )
+
+        async def _failed_dialogue_with_sibling_diff(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            sibling = tmp_path / "scripts" / "verify.js"
+            sibling.parent.mkdir(parents=True, exist_ok=True)
+            sibling.write_text("console.log('sibling task changed this file');\n", encoding="utf-8")
+            return {"content": "", "success": False, "error": "single_batch_contract_violation"}
+
+        async def _empty_direct_fallback(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            return {"content": "", "success": False, "error": "runtime_provider_unavailable"}
+
+        adapter._invoke_role_dialogue_with_timeout = _failed_dialogue_with_sibling_diff  # type: ignore[method-assign]
+        adapter._invoke_direct_runtime_provider = _empty_direct_fallback  # type: ignore[method-assign]
+
+        result = await adapter.execute(
+            task_id=str(task.id),
+            input_data={"task_id": str(task.id)},
+            context={"run_id": "run-director-sibling-diff"},
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "director_no_materialized_changes"
+        updated = adapter.task_board.get_task(str(task.id))
+        assert updated is not None
+        raw_metadata = updated.get("metadata")
+        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        raw_adapter_result = metadata.get("adapter_result")
+        adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
+        assert adapter_result.get("materialization_error") == "director_no_materialized_changes"
+        assert adapter_result.get("out_of_scope_files") == ["scripts/verify.js"]
+
+    def test_no_materialized_changes_ignores_sibling_diff_after_failed_write_tool(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            MaterializationState,
+            _phase_no_materialized_changes,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        task = adapter.task_board.create(
+            subject="Bootstrap package manifest",
+            description="Create only package.json.",
+            metadata={"target_files": ["package.json"], "scope_paths": ["package.json"]},
+        )
+        state = MaterializationState(
+            current_files={"tsconfig.json": "sibling-fingerprint"},
+            new_files=[],
+            modified_files=[],
+            all_affected_files=[],
+            tool_results=[
+                {
+                    "tool": "write_file",
+                    "success": False,
+                    "args": {"file": "package.json", "content": ""},
+                    "error": "Director write policy denied",
+                }
+            ],
+        )
+
+        result = _phase_no_materialized_changes(
+            adapter,
+            baseline_files={},
+            board_claim_applied=False,
+            can_accept_existing_scope=False,
+            context={},
+            direct_fallback_summary=None,
+            empty_write_content_retry_summary=None,
+            existing_contract_evidence={},
+            primary_llm_summary={"success": True},
+            requires_fresh_materialization=True,
+            run_id="run-failed-write-sibling-diff",
+            target_task_id=str(task.id),
+            task={"target_files": ["package.json"], "scope_paths": ["package.json"]},
+            task_claim_session_id="",
+            workspace_name=tmp_path.name,
+            write_tool_evidence=False,
+            state=state,
+        )
+
+        assert result is not None
+        assert result["success"] is False
+        assert result["error_code"] == "director_no_materialized_changes"
+
+    @pytest.mark.asyncio
     async def test_execute_fails_when_changed_test_file_keeps_placeholder_arithmetic(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         test_file = tmp_path / "tests" / "unit" / "card-rules.test.ts"
@@ -1164,7 +1260,7 @@ class TestDirectorFailureClosure:
         assert "Error: no test specified" not in (tmp_path / "package.json").read_text(encoding="utf-8")
 
     @pytest.mark.asyncio
-    async def test_execute_repairs_npm_default_test_script_deterministically(
+    async def test_execute_does_not_repair_npm_default_test_script_with_manifest_only_check(
         self,
         tmp_path: Any,
     ) -> None:
@@ -1219,23 +1315,13 @@ class TestDirectorFailureClosure:
         )
 
         package_text = (tmp_path / "package.json").read_text(encoding="utf-8")
-        test_run = subprocess.run(
-            ["npm", "run", "test", "--", "--watch=false"],
-            cwd=tmp_path,
-            capture_output=True,
-            encoding="utf-8",
-            check=False,
-        )
-        assert result["success"] is True
-        assert stage_labels == ["first_call"]
-        assert "Error: no test specified" not in package_text
-        assert "package manifest check passed" in package_text
-        assert test_run.returncode == 0
-        assert "package manifest check passed" in test_run.stdout
-        assert "package.json" in result["changed_files"]
+        assert result["success"] is False
+        assert stage_labels[0] == "first_call"
+        assert "Error: no test specified" in package_text
+        assert "package manifest check passed" not in package_text
 
     @pytest.mark.asyncio
-    async def test_execute_repairs_invalid_npm_test_script_shell_syntax_deterministically(
+    async def test_execute_does_not_repair_invalid_npm_test_script_with_manifest_only_check(
         self,
         tmp_path: Any,
     ) -> None:
@@ -1290,21 +1376,11 @@ class TestDirectorFailureClosure:
 
         package_text = (tmp_path / "package.json").read_text(encoding="utf-8")
         quality_errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
-        test_run = subprocess.run(
-            ["npm", "run", "test", "--", "--watch=false"],
-            cwd=tmp_path,
-            capture_output=True,
-            encoding="utf-8",
-            check=False,
-        )
-        assert result["success"] is True
-        assert stage_labels == ["first_call"]
-        assert quality_errors == []
-        assert "unterminated npm script" not in package_text
-        assert "package manifest check passed" in package_text
-        assert test_run.returncode == 0
-        assert "package manifest check passed" in test_run.stdout
-        assert "package.json" in result["changed_files"]
+        assert result["success"] is False
+        assert stage_labels[0] == "first_call"
+        assert quality_errors
+        assert "unterminated npm script" in package_text
+        assert "package manifest check passed" not in package_text
 
     @pytest.mark.asyncio
     async def test_execute_repairs_typescript_return_object_property_semicolon(
@@ -5167,6 +5243,25 @@ class TestQualityRepairMissingTargetContract:
 
         assert targets == ["tests/test_product.py"]
 
+    def test_semantic_quality_repair_accepts_new_catalog_languages(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _semantic_quality_repair_target_files,
+        )
+
+        source = tmp_path / "src" / "dragon_factory.go"
+        source.parent.mkdir(parents=True)
+        source.write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
+
+        targets = _semantic_quality_repair_target_files(
+            artifact_quality_errors=[
+                "Director output quality gate failed: generic/placeholder content detected: src/dragon_factory.go:TODO"
+            ],
+            changed_files=["README.md", "src/dragon_factory.go"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/dragon_factory.go"]
+
     @pytest.mark.asyncio
     async def test_multi_missing_target_repair_forces_write_tool_choice(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
@@ -5569,6 +5664,37 @@ class TestCollectStepVerifyErrors:
     def test_list_verify_joined(self, tmp_path: Any) -> None:
         (tmp_path / "a.md").write_text("x", encoding="utf-8")
         context = {"construction_step": {"verify": ["test -f ./a.md", "grep -q x ./a.md"]}}
+        assert self._collect(context, str(tmp_path)) == []
+
+    def test_near_miss_verify_target_path_is_repairable_error(self, tmp_path: Any) -> None:
+        target = tmp_path / "src" / "rules" / "dancerule.ts"
+        target.parent.mkdir(parents=True)
+        target.write_text("export interface DanceRule {}\n", encoding="utf-8")
+        context = {
+            "construction_step": {
+                "target_file": "src/rules/dancerule.ts",
+                "verify": ("test -f ./src/rules/dance-rule.ts && grep -q 'DanceRule' ./src/rules/dance-rule.ts"),
+            }
+        }
+        errors = self._collect(context, str(tmp_path))
+        assert len(errors) == 1
+        assert "step verify target mismatch" in errors[0]
+        assert "src/rules/dancerule.ts" in errors[0]
+        assert "src/rules/dance-rule.ts" in errors[0]
+
+    def test_verify_may_reference_test_file_for_source_target(self, tmp_path: Any) -> None:
+        source = tmp_path / "src" / "main.ts"
+        test_file = tmp_path / "tests" / "main.test.ts"
+        source.parent.mkdir(parents=True)
+        test_file.parent.mkdir(parents=True)
+        source.write_text("export const answer = 42;\n", encoding="utf-8")
+        test_file.write_text("import '../src/main';\n", encoding="utf-8")
+        context = {
+            "construction_step": {
+                "target_file": "src/main.ts",
+                "verify": "test -f ./tests/main.test.ts",
+            }
+        }
         assert self._collect(context, str(tmp_path)) == []
 
     def test_failure_names_first_failing_clause(self, tmp_path: Any) -> None:

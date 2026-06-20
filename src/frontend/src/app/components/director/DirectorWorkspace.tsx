@@ -87,7 +87,7 @@ import {
   getRoleKernelCacheStats,
   getRoleKernelLLMEvents,
   getRoleKernelTokenBudgetStats,
-  listDirectorTaskFallbackRows,
+  listDirectorTaskSnapshotRows,
   listDirectorWorkers,
   runDirector,
   type DirectorCapabilitiesResponse,
@@ -519,7 +519,7 @@ function normalizeDirectorCreatedTaskRow(
   } as PmTask;
 }
 
-function upsertDirectorFallbackTaskRow(current: PmTask[], task: PmTask): PmTask[] {
+function upsertDirectorCommandSnapshotTaskRow(current: PmTask[], task: PmTask): PmTask[] {
   const taskId = String(task.id || '').trim();
   if (!taskId) {
     return current;
@@ -1714,7 +1714,7 @@ export function DirectorWorkspace({
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [terminalOutput, setTerminalOutput] = useState<string>('');
   const [terminalClearedAt, setTerminalClearedAt] = useState(0);
-  const [fallbackTasks, setFallbackTasks] = useState<PmTask[]>([]);
+  const [commandSnapshotTasks, setCommandSnapshotTasks] = useState<PmTask[]>([]);
   const [backendWorkers, setBackendWorkers] = useState<RuntimeWorkerState[]>([]);
   const [workerFallbackError, setWorkerFallbackError] = useState<string | null>(null);
   const [workerBackendDetail, setWorkerBackendDetail] = useState<DirectorWorkerDetailState>({
@@ -1823,6 +1823,10 @@ export function DirectorWorkspace({
       setActiveView('activity');
     }
   }, [activeView, directorRunning, executionLogs.length, llmStreamEvents.length, processStreamEvents.length]);
+
+  useEffect(() => {
+    setCommandSnapshotTasks([]);
+  }, [workspace]);
 
   // 用户手动点击导航时记录偏好
   const handleViewChange = useCallback((view: DirectorActiveView) => {
@@ -1995,34 +1999,6 @@ export function DirectorWorkspace({
 
   useEffect(() => {
     if (!workspace) {
-      setFallbackTasks([]);
-      return;
-    }
-
-    let cancelled = false;
-    const syncTasks = async () => {
-      try {
-        const result = await listDirectorTaskFallbackRows(directorRunning, workspace);
-        if (cancelled) {
-          return;
-        }
-        if (result.ok && Array.isArray(result.data)) {
-          setFallbackTasks(result.data as unknown as PmTask[]);
-        }
-      } catch {
-        // Ignore snapshot errors and keep using live push data.
-      }
-    };
-
-    void syncTasks();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [workspace, directorRunning]);
-
-  useEffect(() => {
-    if (!workspace) {
       setBackendWorkers([]);
       setWorkerFallbackError(null);
       setWorkerBackendDetail({
@@ -2157,9 +2133,9 @@ export function DirectorWorkspace({
     const toTaskId = (task: PmTask): string => String(task.id || '').trim();
     const merged = new Map<string, PmTask>();
 
-    // Live realtime rows own volatile state; fallback rows fill the task contract details
-    // that runtime projection may omit.
-    for (const task of fallbackTasks) {
+    // Live realtime rows own volatile state. The local command snapshot only
+    // reflects explicit create/cancel actions and must not replace runtime push.
+    for (const task of commandSnapshotTasks) {
       const taskId = toTaskId(task);
       if (taskId) {
         merged.set(taskId, task);
@@ -2175,7 +2151,7 @@ export function DirectorWorkspace({
     }
 
     const orderedIds: string[] = [];
-    for (const task of fallbackTasks) {
+    for (const task of commandSnapshotTasks) {
       const taskId = toTaskId(task);
       if (taskId && !orderedIds.includes(taskId)) {
         orderedIds.push(taskId);
@@ -2191,7 +2167,7 @@ export function DirectorWorkspace({
     return orderedIds
       .map((taskId) => merged.get(taskId))
       .filter((task): task is PmTask => Boolean(task));
-  }, [tasks, fallbackTasks]);
+  }, [tasks, commandSnapshotTasks]);
 
   const visibleWorkers = useMemo(
     () => mergeDirectorWorkers(workers, backendWorkers),
@@ -2501,7 +2477,7 @@ export function DirectorWorkspace({
       const createdTaskId = String(result.data.id || result.data.task_id || subject).trim();
       const createdTask = normalizeDirectorCreatedTaskRow(result.data, payload, createdTaskId);
       if (createdTask) {
-        setFallbackTasks((current) => upsertDirectorFallbackTaskRow(current, createdTask));
+        setCommandSnapshotTasks((current) => upsertDirectorCommandSnapshotTaskRow(current, createdTask));
       }
       setTaskCreateState({
         loading: false,
@@ -2515,13 +2491,13 @@ export function DirectorWorkspace({
       }
 
       try {
-        const refreshed = await listDirectorTaskFallbackRows(directorRunning, workspace);
+        const refreshed = await listDirectorTaskSnapshotRows(directorRunning, workspace);
         if (refreshed.ok && Array.isArray(refreshed.data)) {
           const refreshedTasks = refreshed.data as unknown as PmTask[];
-          setFallbackTasks(createdTask ? upsertDirectorFallbackTaskRow(refreshedTasks, createdTask) : refreshedTasks);
+          setCommandSnapshotTasks(createdTask ? upsertDirectorCommandSnapshotTaskRow(refreshedTasks, createdTask) : refreshedTasks);
         }
       } catch {
-        // The create evidence is still valid if the best-effort list refresh fails.
+        // The create evidence is still valid if the command snapshot read fails.
       }
     } catch (error) {
       setTaskCreateState({
@@ -2578,12 +2554,12 @@ export function DirectorWorkspace({
       );
 
       try {
-        const refreshed = await listDirectorTaskFallbackRows(directorRunning, workspace);
+        const refreshed = await listDirectorTaskSnapshotRows(directorRunning, workspace);
         if (refreshed.ok && Array.isArray(refreshed.data)) {
-          setFallbackTasks(refreshed.data as unknown as PmTask[]);
+          setCommandSnapshotTasks(refreshed.data as unknown as PmTask[]);
         }
       } catch {
-        // Keep the submitted cancellation evidence visible even if the best-effort refresh fails.
+        // Keep the submitted cancellation evidence visible even if the command snapshot read fails.
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error || 'Director task cancel failed');

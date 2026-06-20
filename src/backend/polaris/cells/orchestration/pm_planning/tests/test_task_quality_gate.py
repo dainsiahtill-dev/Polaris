@@ -15,6 +15,7 @@ from polaris.cells.orchestration.pm_planning.internal.task_quality_gate import (
     _contains_prompt_leakage,
     _has_executable_or_file_acceptance_anchor,
     _has_measurable_acceptance_anchor,
+    _has_placeholder_or_manifest_only_acceptance,
     _is_card3d_pm_contract,
     _normalize_path,
     _normalize_path_list,
@@ -201,6 +202,25 @@ class TestHasExecutableOrFileAcceptanceAnchor:
         assert _has_executable_or_file_acceptance_anchor(["page returns 200"]) is False
 
 
+class TestHasPlaceholderOrManifestOnlyAcceptance:
+    def test_placeholder_output_is_flagged(self) -> None:
+        assert _has_placeholder_or_manifest_only_acceptance(["运行 npm start 能执行且不报错（占位输出即可）"]) is True
+        assert _has_placeholder_or_manifest_only_acceptance(["placeholder output is ok for now"]) is True
+
+    def test_manifest_only_is_flagged(self) -> None:
+        assert _has_placeholder_or_manifest_only_acceptance(["npm test only checks package.json"]) is True
+        assert _has_placeholder_or_manifest_only_acceptance(["package.json manifest-only script passes"]) is True
+
+    def test_real_execution_acceptance_is_not_flagged(self) -> None:
+        assert (
+            _has_placeholder_or_manifest_only_acceptance(["`npm run test` validates the firefly dance rules"]) is False
+        )
+        assert (
+            _has_placeholder_or_manifest_only_acceptance(["replace placeholder arithmetic tests with domain checks"])
+            is False
+        )
+
+
 # ---------------------------------------------------------------------------
 # evaluate_pm_task_quality
 # ---------------------------------------------------------------------------
@@ -325,6 +345,25 @@ class TestEvaluatePmTaskQualityHappyPath:
         }
         report = evaluate_pm_task_quality(payload)
         assert any("requires executable command or file evidence" in i for i in report["critical_issues"])
+
+    def test_placeholder_acceptance_is_critical(self) -> None:
+        payload = {
+            "tasks": [
+                {
+                    "id": "T01",
+                    "title": "Setup real runtime",
+                    "goal": "Initialize the project with real runnable scripts",
+                    "acceptance_criteria": ["运行 npm start 能执行且不报错（占位输出即可）"],
+                    "assigned_to": "director",
+                    "phase": "bootstrap",
+                    "depends_on": [],
+                    "execution_checklist": ["create package.json", "write src/main.ts"],
+                    "scope_paths": ["package.json"],
+                }
+            ]
+        }
+        report = evaluate_pm_task_quality(payload)
+        assert any("placeholder or manifest-only execution" in i for i in report["critical_issues"])
 
     def test_director_task_accepts_verified_file_evidence(self) -> None:
         payload = {

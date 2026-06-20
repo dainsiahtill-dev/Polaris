@@ -25,7 +25,7 @@ const serviceMocks = vi.hoisted(() => ({
   clearRoleKernelCache: vi.fn(),
   getDirectorTaskKernelLLMEvents: vi.fn(),
   listDirectorWorkers: vi.fn(),
-  listDirectorTaskFallbackRows: vi.fn(),
+  listDirectorTaskSnapshotRows: vi.fn(),
   runDirector: vi.fn(),
 }));
 const apiMocks = vi.hoisted(() => ({
@@ -89,7 +89,7 @@ describe.sequential('Director capability desktop integration', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     apiMocks.openPath.mockResolvedValue({ ok: true });
-    serviceMocks.listDirectorTaskFallbackRows.mockResolvedValue({
+    serviceMocks.listDirectorTaskSnapshotRows.mockResolvedValue({
       ok: true,
       data: [],
     });
@@ -1392,7 +1392,7 @@ describe.sequential('Director capability desktop integration', () => {
         tasks_failed: 0,
       },
     });
-    serviceMocks.listDirectorTaskFallbackRows.mockResolvedValueOnce({
+    serviceMocks.listDirectorTaskSnapshotRows.mockResolvedValueOnce({
       ok: true,
       data: [
         {
@@ -1451,7 +1451,7 @@ describe.sequential('Director capability desktop integration', () => {
       ok: true,
       data: { ok: true, role: 'director', capabilities: { electron_workbench: ['read_files'] } },
     });
-    serviceMocks.listDirectorTaskFallbackRows.mockResolvedValueOnce({
+    serviceMocks.listDirectorTaskSnapshotRows.mockResolvedValueOnce({
       ok: true,
       data: [
         {
@@ -1584,7 +1584,7 @@ describe.sequential('Director capability desktop integration', () => {
       ok: true,
       data: { id: 'director-created-1', subject: 'Create backend task', status: 'PENDING' },
     });
-    serviceMocks.listDirectorTaskFallbackRows.mockResolvedValue({
+    serviceMocks.listDirectorTaskSnapshotRows.mockResolvedValue({
       ok: true,
       data: [],
     });
@@ -1639,12 +1639,12 @@ describe.sequential('Director capability desktop integration', () => {
     });
   });
 
-  it('loads fallback Director task rows through the shared Director fallback service', async () => {
+  it('does not load Director task snapshots automatically while waiting for runtime push', async () => {
     serviceMocks.getDirectorCapabilities.mockResolvedValueOnce({
       ok: true,
       data: { ok: true, role: 'director', capabilities: { electron_workbench: ['read_files'] } },
     });
-    serviceMocks.listDirectorTaskFallbackRows.mockResolvedValueOnce({
+    serviceMocks.listDirectorTaskSnapshotRows.mockResolvedValueOnce({
       ok: true,
       data: [
         {
@@ -1672,28 +1672,10 @@ describe.sequential('Director capability desktop integration', () => {
       />,
     );
 
-    await waitFor(() => expect(serviceMocks.listDirectorTaskFallbackRows).toHaveBeenCalledWith(false, 'C:/Temp/Product'));
-    expect(await screen.findByText('Implement runtime contract')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId('director-task-item'));
-    fireEvent.click(screen.getByTestId('director-workspace-execute'));
-
-    await waitFor(() => expect(serviceMocks.runDirector).toHaveBeenCalledWith({
-      workspace: 'C:/Temp/Product',
-      task_id: 'director-task-1',
-      task_filter: 'director-task-1',
-      execution_mode: 'parallel',
-    }));
-    await waitFor(() => expect(serviceMocks.getDirectorRun).toHaveBeenCalledWith('director-run-1', 'C:/Temp/Product'));
-    const runEvidence = await screen.findByTestId('director-run-evidence');
-    expect(runEvidence).not.toHaveTextContent('/v2/director/runs/director-run-1');
-    expect(screen.getByTestId('director-run-evidence-endpoint')).toHaveAttribute(
-      'data-endpoint',
-      '/v2/director/runs/director-run-1?workspace=C%3A%2FTemp%2FProduct',
-    );
-    expect(runEvidence).toHaveTextContent('queued · queued=1');
-    fireEvent.click(screen.getByTitle('终端'));
-    expect(await screen.findByText(/Director run 已创建: director-run-1 queued=1/)).toBeInTheDocument();
+    await waitFor(() => expect(serviceMocks.getDirectorCapabilities).toHaveBeenCalled());
+    expect(serviceMocks.listDirectorTaskSnapshotRows).not.toHaveBeenCalled();
+    expect(screen.queryByText('Implement runtime contract')).not.toBeInTheDocument();
+    expect(screen.getByText('暂无 Director 任务')).toBeInTheDocument();
   });
 
   it('runs the Director queue through orchestration when no task is selected', async () => {

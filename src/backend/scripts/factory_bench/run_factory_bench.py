@@ -819,14 +819,21 @@ def apply_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
 
 def build_requirements_doc(project: dict[str, Any]) -> str:
     """Frame the project brief as the requirements file the PM chain consumes."""
+    checks = [str(item).strip() for item in project.get("checks", []) if str(item).strip()]
+    checks_block = "\n".join(f"- {item}" for item in checks) if checks else "- 未声明额外 deterministic checks。"
     return (
         f"# Product Requirements — {project['title']}\n\n"
         "## Goal\n"
         f"- {project['brief']}\n\n"
         "## Acceptance Criteria\n"
         "- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。\n"
+        "- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口; CLI 项目提供 package.json 脚本或可直接执行的 main 文件; API 项目提供可启动服务入口和健康检查说明。\n"
+        "- package.json 脚本不得是只检查 manifest 的占位脚本; build/test/start 或等价脚本必须实际运行产品入口或核心规则验证。\n"
         "- 附 README.md 说明如何运行。\n"
         f"- 关键验收维度: {project.get('test_focus', '')}。\n"
+        "\n## Deterministic Checks\n"
+        "PM/CE/Director/QA 必须把以下检查转成任务目标和验收标准, 缺失任一项应视为未完成:\n"
+        f"{checks_block}\n"
     )
 
 
