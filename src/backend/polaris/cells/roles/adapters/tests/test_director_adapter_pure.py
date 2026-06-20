@@ -4483,11 +4483,7 @@ def test_materialization_quality_errors_scan_declared_target_files(tmp_path: Any
     src.mkdir(parents=True)
     (src / "changed.ts").write_text("export const changed = 1;\n", encoding="utf-8")
     (src / "declared.ts").write_text(
-        "export function broken() {\n"
-        "  return {\n"
-        "    value: 1;\n"
-        "  };\n"
-        "}\n",
+        "export function broken() {\n  return {\n    value: 1;\n  };\n}\n",
         encoding="utf-8",
     )
     adapter = SimpleNamespace(workspace=str(tmp_path))
@@ -4511,11 +4507,7 @@ def test_materialization_quality_errors_keep_pinned_step_single_file_scope(tmp_p
     src.mkdir(parents=True)
     (src / "pinned.ts").write_text("export const pinned = 1;\n", encoding="utf-8")
     (src / "other.ts").write_text(
-        "export function broken() {\n"
-        "  return {\n"
-        "    value: 1;\n"
-        "  };\n"
-        "}\n",
+        "export function broken() {\n  return {\n    value: 1;\n  };\n}\n",
         encoding="utf-8",
     )
     adapter = SimpleNamespace(workspace=str(tmp_path))
@@ -5050,6 +5042,89 @@ class TestQualityRepairMissingTargetContract:
             "target_file": "package.json",
         }
         assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
+
+    @pytest.mark.asyncio
+    async def test_package_manifest_quality_error_takes_priority_over_missing_targets(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self.repair_message = ""
+                self.repair_context: dict[str, Any] = {}
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_message = message
+                self.repair_context = context
+                return {"content": ""}
+
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {"build": "tsc", "start": "node dist/main.js", "test": "node dist/main.js"},
+                    "devDependencies": {"typescript": "^5.3.0"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        adapter = _Adapter()
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["package.json", "README.md", "src/main.ts", "index.html"]},
+            target_task_id="task-1",
+            run_id="run-1",
+            context={},
+            original_message="Create TypeScript project scaffold.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: npm package manifest script "
+                "'start' references missing local entrypoint 'dist/main.js'",
+                "Artifact quality scan failed: declared target file 'README.md' is missing",
+                "Artifact quality scan failed: declared target file 'src/main.ts' is missing",
+                "Artifact quality scan failed: declared target file 'index.html' is missing",
+            ],
+            changed_files=["package.json"],
+        )
+
+        assert summary["semantic_quality_target_files"] == ["package.json"]
+        assert summary["missing_target_files"] == ["README.md", "src/main.ts", "index.html"]
+        assert summary["repair_target_files"] == ["package.json"]
+        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
+            "tool": "write_file",
+            "target_file": "package.json",
+        }
+        assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
+        assert "MISSING TARGET FILE REPAIR" not in adapter.repair_message
 
     def test_repair_targets_existing_import_case_variant_is_not_missing(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

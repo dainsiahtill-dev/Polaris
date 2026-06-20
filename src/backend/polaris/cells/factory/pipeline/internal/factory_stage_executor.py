@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
 from polaris.cells.chief_engineer.blueprint.public import GenerateTaskBlueprintCommandV1, generate_task_blueprint
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+from polaris.cells.roles.runtime.public.contracts import ExecuteRoleTaskCommandV1
+from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
@@ -145,6 +147,28 @@ class OrchestrationStageExecutor:
         if len(text) < min_chars:
             return ""
         return text
+
+    def _emit_audit_event(self, event_type: str, **kwargs: Any) -> None:
+        """Emit an audit event for tracking purposes."""
+        audit_entry = {
+            "event_type": event_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **kwargs,
+        }
+        # Write to audit trail
+        audit_path = self.workspace / ".polaris" / "audit" / f"{event_type}.json"
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            existing = []
+            if audit_path.exists():
+                existing = json.loads(audit_path.read_text(encoding="utf-8"))
+            existing.append(audit_entry)
+            audit_path.write_text(
+                json.dumps(existing, ensure_ascii=False, indent=1) + "\n",
+                encoding="utf-8",
+            )
+        except (OSError, json.JSONDecodeError):
+            logger.debug("Failed to write audit event: %s", event_type)
 
     @staticmethod
     def _extend_artifacts(artifacts: list[str], *paths: str) -> None:
@@ -960,10 +984,31 @@ class OrchestrationStageExecutor:
                 }
             )
 
+        # Use RoleRuntimeService for real LLM invocation
+        ce_service = RoleRuntimeService()
+
         for index, task in enumerate(pm_tasks, start=1):
             task_id = self._task_id(task, index)
             objective = self._task_objective(task)
             try:
+                # Build command for RoleRuntimeService
+                command = ExecuteRoleTaskCommandV1(
+                    role="chief_engineer",
+                    task_id=task_id,
+                    workspace=str(self.workspace),
+                    objective=objective,
+                    run_id=run.id,
+                    context=self._task_blueprint_context(task, run_id=run.id, index=index),
+                    metadata={
+                        "constraints": self._task_blueprint_constraints(task),
+                        "source": "factory_stage_executor.chief_engineer_review",
+                    },
+                )
+
+                # Execute via RoleRuntimeService (real LLM call)
+                ce_result = await ce_service.execute_role_task(command)
+
+                # Convert to blueprint result format
                 result = generate_task_blueprint(
                     GenerateTaskBlueprintCommandV1(
                         task_id=task_id,
@@ -974,6 +1019,17 @@ class OrchestrationStageExecutor:
                         context=self._task_blueprint_context(task, run_id=run.id, index=index),
                     )
                 )
+
+                # Emit audit event for LLM call
+                self._emit_audit_event(
+                    "chief_engineer.llm_call",
+                    provider=getattr(ce_result, "provider", "unknown"),
+                    model=getattr(ce_result, "model", "unknown"),
+                    cache_hit=getattr(ce_result, "cache_hit", False),
+                    task_id=task_id,
+                    run_id=run.id,
+                )
+
             except (RuntimeError, TypeError, ValueError) as exc:
                 stage_signals.append(
                     {
@@ -1097,6 +1153,30 @@ class OrchestrationStageExecutor:
         idle_rounds = 0
         requires_taskboard_convergence = True
 
+        # Enforce mainline-full: no silent single-worker fallback
+        execution_mode = str(context.get("execution_mode", "parallel")).strip().lower()
+        if execution_mode not in ("parallel", "serial"):
+            stage_signals.append(
+                {
+                    "code": "director.invalid_execution_mode",
+                    "severity": "error",
+                    "detail": f"Invalid execution_mode: {execution_mode}; must be 'parallel' or 'serial'",
+                }
+            )
+            execution_mode = "parallel"
+
+        # Enforce worker count matches configured bindings
+        max_workers = int(context.get("max_workers", DEFAULT_DIRECTOR_MAX_PARALLELISM))
+        if max_workers < 1:
+            stage_signals.append(
+                {
+                    "code": "director.invalid_worker_count",
+                    "severity": "error",
+                    "detail": f"Invalid max_workers: {max_workers}; must be >= 1",
+                }
+            )
+            max_workers = DEFAULT_DIRECTOR_MAX_PARALLELISM
+
         if not pm_tasks:
             stage_signals.append(
                 {
@@ -1139,8 +1219,9 @@ class OrchestrationStageExecutor:
                     tasks=context.get("tasks"),
                     options={
                         "task_filter": effective_task_filter,
-                        "max_workers": context.get("max_workers", DEFAULT_DIRECTOR_MAX_PARALLELISM),
-                        "execution_mode": context.get("execution_mode", "parallel"),
+                        "max_workers": max_workers,
+                        "execution_mode": execution_mode,
+                        "dispatch_mode": "mainline-full",  # Enforce mainline-full, no fallback
                     },
                 )
                 last_command_result = command_result

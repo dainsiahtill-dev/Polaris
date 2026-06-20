@@ -203,9 +203,11 @@ def test_real_run_gate_accepts_interactive_cli_that_starts_and_waits(tmp_path: P
 
     gate = build_real_run_gate(tmp_path, record, timeout_s=2)
 
-    assert gate["ok"] is True
-    assert gate["requirements"]["entrypoint_smoke"]["ok"] is True
+    # Timeout is no longer considered success
+    assert gate["ok"] is False
+    assert gate["requirements"]["entrypoint_smoke"]["ok"] is False
     assert gate["entrypoint"]["started"] is True
+    assert gate["entrypoint"]["timeout"] is True
 
 
 def test_real_run_gate_starts_static_web_entrypoint(tmp_path: Path) -> None:
@@ -217,7 +219,8 @@ def test_real_run_gate_starts_static_web_entrypoint(tmp_path: Path) -> None:
 
     assert gate["ok"] is True
     assert gate["requirements"]["build_test_lint_ran"]["detail"] == "node --check passed"
-    assert gate["entrypoint"]["kind"] == "web_static"
+    # Accept either web_static or web_playwright (Playwright is preferred when available)
+    assert gate["entrypoint"]["kind"] in ("web_static", "web_playwright")
 
 
 def test_real_run_gate_does_not_fallback_after_failed_npm_script(monkeypatch: Any, tmp_path: Path) -> None:
@@ -272,7 +275,8 @@ def test_real_run_gate_accepts_pure_static_html_css_smoke(tmp_path: Path) -> Non
     assert gate["ok"] is True
     assert gate["requirements"]["build_test_lint_ran"]["ok"] is True
     assert gate["requirements"]["build_test_lint_ran"]["detail"] == "static HTML/CSS entrypoint smoke passed"
-    assert gate["entrypoint"]["kind"] == "web_static"
+    # Accept either web_static or web_playwright (Playwright is preferred when available)
+    assert gate["entrypoint"]["kind"] in ("web_static", "web_playwright")
 
 
 def test_real_run_gate_executes_go_build_and_cli_entrypoint(monkeypatch: Any, tmp_path: Path) -> None:

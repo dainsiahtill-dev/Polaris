@@ -1,0 +1,124 @@
+"""Deterministic npm runtime-dependency + test-script repairs, carved verbatim."""
+
+from __future__ import annotations
+
+import contextlib
+import json
+from pathlib import Path
+from typing import Any
+
+from ..execution_tools import DirectorToolExecutor
+from ._common import (
+    _KNOWN_DEV_DEPENDENCY_VERSIONS,
+    _KNOWN_RUNTIME_DEPENDENCY_VERSIONS,
+    _package_declared_in_manifest,
+    _parse_required_dev_dependency_packages,
+    _parse_undeclared_runtime_import_packages,
+)
+
+
+def _apply_deterministic_runtime_dependency_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    package_names = _parse_undeclared_runtime_import_packages(artifact_quality_errors)
+    runtime_package_names = [name for name in package_names if name in _KNOWN_RUNTIME_DEPENDENCY_VERSIONS]
+    dev_package_names = _parse_required_dev_dependency_packages(artifact_quality_errors)
+    dev_package_names = [name for name in dev_package_names if name in _KNOWN_DEV_DEPENDENCY_VERSIONS]
+    if not runtime_package_names and not dev_package_names:
+        return []
+
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    package_path = workspace_path / "package.json"
+    if not package_path.is_file():
+        return []
+    try:
+        payload = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+
+    dependencies_raw = payload.get("dependencies")
+    dependencies: dict[str, Any] = dict(dependencies_raw) if isinstance(dependencies_raw, dict) else {}
+    dev_dependencies_raw = payload.get("devDependencies")
+    dev_dependencies: dict[str, Any] = dict(dev_dependencies_raw) if isinstance(dev_dependencies_raw, dict) else {}
+    added_runtime: list[str] = []
+    added_dev: list[str] = []
+    for package_name in runtime_package_names:
+        if _package_declared_in_manifest(payload, package_name):
+            continue
+        dependencies[package_name] = _KNOWN_RUNTIME_DEPENDENCY_VERSIONS[package_name]
+        added_runtime.append(package_name)
+    for package_name in dev_package_names:
+        if _package_declared_in_manifest(payload, package_name):
+            continue
+        dev_dependencies[package_name] = _KNOWN_DEV_DEPENDENCY_VERSIONS[package_name]
+        added_dev.append(package_name)
+    added = [*added_runtime, *added_dev]
+    if not added:
+        return []
+
+    if added_runtime:
+        payload["dependencies"] = dict(sorted(dependencies.items()))
+    if added_dev:
+        payload["devDependencies"] = dict(sorted(dev_dependencies.items()))
+    content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    write_result = DirectorToolExecutor(
+        str(workspace_path),
+        message_bus=message_bus,
+        worker_id="director",
+    ).execute_tool(
+        "write_file",
+        {"file": "package.json", "content": content},
+        task_id=task_id,
+    )
+    if not bool(write_result.get("ok")):
+        return []
+    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+        adapter._update_task_progress(task_id, "executing", current_file="package.json")
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_runtime_dependency_repair",
+                "file": "package.json",
+                "packages": added,
+                "runtime_packages": added_runtime,
+                "dev_packages": added_dev,
+                "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
+                "operation": str(write_result.get("operation") or "modify"),
+                "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                "director_policy": write_result.get("director_policy"),
+            },
+        }
+    ]
+
+
+def _apply_deterministic_npm_test_script_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    del adapter, task_id
+    if not any(_is_repairable_npm_test_script_error(error) for error in artifact_quality_errors):
+        return []
+    # Do not fabricate a manifest-only `npm test` script. That made generated
+    # projects look runnable while exercising only package.json parsing. Let the
+    # normal LLM quality-repair path create a project-specific test/check, or
+    # fail closed with the original quality error.
+    return []
+
+
+def _is_repairable_npm_test_script_error(error: Any) -> bool:
+    text = str(error or "")
+    return "npm default failing test script" in text or (
+        "npm package manifest script 'test' has invalid shell syntax" in text
+    )

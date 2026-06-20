@@ -1203,6 +1203,7 @@ def main() -> int:
 
     # Compute catalog hash for immutable audit trail
     import hashlib as _hashlib
+
     catalog_hash = _hashlib.sha256(
         json.dumps(projects, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()[:16]
@@ -1213,6 +1214,7 @@ def main() -> int:
         workspace = base / pid
         # Purge project directory completely to prevent stale contamination
         import shutil as _shutil
+
         if workspace.exists():
             _shutil.rmtree(workspace, ignore_errors=True)
         workspace.mkdir(parents=True, exist_ok=True)
@@ -1221,6 +1223,7 @@ def main() -> int:
         run_id = os.environ.get("FACTORY_BENCH_RUN_ID") or ""
         if not run_id:
             import uuid as _uuid
+
             run_id = _uuid.uuid4().hex[:12]
         catalog_meta = {
             "catalog_schema_version": catalog_schema_version,

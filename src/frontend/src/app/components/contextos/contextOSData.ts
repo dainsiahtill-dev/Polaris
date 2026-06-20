@@ -559,17 +559,18 @@ export function buildContextOSModel(input: {
   const configuredRoleWindows = Object.values(roleWindowByKey)
     .map((entry) => entry.tokens)
     .filter((value): value is number => typeof value === 'number' && value > 0);
-  const contextWindowTokens = configuredRoleWindows.length > 0 ? Math.min(...configuredRoleWindows) : NOMINAL_CONTEXT_WINDOW;
-  const contextWindowSource: ContextOSModel['contextWindowSource'] = configuredRoleWindows.length > 0 ? 'binding' : 'fallback';
-  const contextWindowLabel = contextWindowSource === 'binding' ? '最小绑定窗口' : '兜底窗口';
+  const contextWindowTokens = configuredRoleWindows.length > 0 ? Math.min(...configuredRoleWindows) : null;
+  const contextWindowSource: ContextOSModel['contextWindowSource'] = configuredRoleWindows.length > 0 ? 'binding' : 'unknown';
+  const contextWindowLabel = contextWindowSource === 'binding' ? '最小绑定窗口' : '未知';
   const contextWindowDetail = contextWindowSource === 'binding'
     ? '按当前角色绑定中的最小 max_context_tokens 估算'
-    : 'LLM status 未提供窗口字段，使用兜底值';
+    : 'LLM status 未提供窗口字段，显示未知';
 
   // 估算单次上下文窗口占用：以「平均单次提示 token」近似当前窗口压力。
-  const avgPromptPerCall = calls > 0 ? promptTokens / calls : promptTokens;
-  const windowOccupancyTokens = Math.round(avgPromptPerCall);
-  const windowOccupancy = Math.max(0, Math.min(1, windowOccupancyTokens / contextWindowTokens));
+  const avgPromptPerCall = calls > 0 ? promptTokens / calls : 0;
+  const totalContextTokens = promptTokens;  // 真实上下文 token
+  const windowOccupancyTokens = Math.round(avgPromptPerCall);  // 平均 prompt 估算
+  const windowOccupancy = contextWindowTokens !== null ? Math.max(0, Math.min(1, windowOccupancyTokens / contextWindowTokens)) : 0;
 
   const blockedRoles = new Set(llmRuntimeState.blockedRoles.map((role) => role.toLowerCase()));
   const llmBlocked = llmRuntimeState.state === 'BLOCKED';

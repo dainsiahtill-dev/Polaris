@@ -190,6 +190,72 @@ def test_scan_detects_npm_no_tests_specified_plural(tmp_path: Path) -> None:
     assert "npm default failing test script" in errors[0]
 
 
+def test_scan_detects_npm_no_tests_yet_placeholder(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "echo \\"No tests yet\\" && exit 0"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert errors
+    assert "npm placeholder test script" in errors[0]
+
+
+def test_scan_detects_start_script_missing_local_entrypoint(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node dist/main.js",
+    "test": "node scripts/test.mjs"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("references missing local entrypoint 'dist/main.js'" in error for error in errors)
+
+
+def test_scan_allows_start_script_that_builds_before_dist_entrypoint(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "npm run build && node dist/main.js",
+    "test": "node scripts/test.mjs"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert not any("missing local entrypoint" in error for error in errors)
+
+
 def test_scan_detects_node_test_runner_without_test_files_when_sources_exist(tmp_path: Path) -> None:
     package_json = tmp_path / "package.json"
     package_json.write_text(
@@ -735,7 +801,7 @@ class TestPythonCrossFileSymbolCoherence:
 
 
 class TestTypescriptCrossFileSymbolCoherence:
-    """Dark-launched TS/JS symbol coherence (KERNELONE_TS_SYMBOL_COHERENCE).
+    """TS/JS symbol coherence with an emergency opt-out flag.
 
     Mirrors TestPythonCrossFileSymbolCoherence but for TS/JS named imports. The
     gate runs on every materialization including L2 JS projects, so the matrix is
@@ -752,12 +818,18 @@ class TestTypescriptCrossFileSymbolCoherence:
     def _errors(self, tmp_path: Path) -> list[str]:
         return _symbol_errors(scan_workspace_artifact_quality(str(tmp_path)))
 
-    # --- floor-safety: dark-launch is inert unless explicitly enabled ----------
-    def test_flag_off_is_inert_even_with_missing_symbol(self, tmp_path: Path, monkeypatch) -> None:
-        monkeypatch.delenv(self._FLAG, raising=False)
+    # --- floor-safety: explicit kill switch remains available ------------------
+    def test_explicit_flag_off_is_inert_even_with_missing_symbol(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv(self._FLAG, "0")
         (tmp_path / "sibling.ts").write_text("export const Other = 1;\n", encoding="utf-8")
         (tmp_path / "index.ts").write_text("import { Missing } from './sibling';\n", encoding="utf-8")
         assert self._errors(tmp_path) == []
+
+    def test_default_on_flags_missing_named_symbol(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.delenv(self._FLAG, raising=False)
+        (tmp_path / "sibling.ts").write_text("export const Other = 1;\n", encoding="utf-8")
+        (tmp_path / "index.ts").write_text("import { Missing } from './sibling';\n", encoding="utf-8")
+        assert any("Missing" in e for e in self._errors(tmp_path))
 
     # --- positive detection ----------------------------------------------------
     def test_missing_named_symbol_flagged(self, tmp_path: Path, monkeypatch) -> None:

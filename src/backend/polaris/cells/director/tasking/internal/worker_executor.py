@@ -28,9 +28,18 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.audit.evidence.public.service import EvidenceService
+from polaris.cells.director.tasking.internal import path_predicates as _path_predicates
 from polaris.cells.director.tasking.internal.bootstrap_template_catalog import (
     get_intelligent_bootstrap_files,
 )
+from polaris.cells.director.tasking.internal.response_parser import (
+    extract_files_from_response as _extract_files_from_response_impl,
+)
+from polaris.cells.director.tasking.internal.task_classifier import (
+    classify_task as _classify_task_impl,
+    extract_tech_stack as _extract_tech_stack_impl,
+)
+from polaris.cells.director.tasking.internal.workspace_probe import WorkspaceProbe
 from polaris.domain.entities import Task, TaskResult
 from polaris.domain.services import get_token_service
 from polaris.kernelone.exceptions import PathSecurityError
@@ -78,17 +87,6 @@ _SCOPE_INFERENCE_IGNORED_DIRS = {
     "dist",
     "node_modules",
     "runtime",
-}
-_TASK_TOKEN_STOPWORDS = {
-    "according",
-    "acceptance",
-    "criteria",
-    "execute",
-    "goal",
-    "implementation",
-    "task",
-    "test",
-    "tests",
 }
 
 
@@ -207,6 +205,7 @@ class WorkerExecutor:
         self.token_service = get_token_service()
         self._bus = message_bus
         self._worker_id = worker_id
+        self._workspace_probe = WorkspaceProbe(workspace)
 
         # Initialize specialized services (Phase 4 deps deferred)
         if _FileApplyService is not None:
@@ -291,142 +290,18 @@ class WorkerExecutor:
             )
 
     def _classify_task(self, task: Task) -> str:
-        """Classify task type based on subject and description."""
-        subject = task.subject.lower()
-        description = task.description.lower()
+        """Classify task type based on subject and description.
 
-        # Bootstrap tasks
-        if "bootstrap" in subject or "init" in subject:
-            return "bootstrap"
-
-        # File creation tasks
-        if "create file" in subject or "create directory" in subject:
-            return "file_creation"
-
-        # Code generation tasks
-        if any(
-            kw in subject or kw in description
-            for kw in [
-                "implement",
-                "create",
-                "build",
-                "generate",
-                "function",
-                "class",
-                "module",
-                "api",
-                "endpoint",
-            ]
-        ):
-            return "code_generation"
-
-        return "generic"
+        Delegates to ``task_classifier.classify_task``.
+        """
+        return _classify_task_impl(task)
 
     def _extract_tech_stack(self, task: Task) -> dict:
-        """Extract technology stack from task metadata (set by PM)."""
-        tech_stack: dict[str, str] = {}
+        """Extract technology stack from task metadata (set by PM).
 
-        # First try to get from metadata (new PM sets this)
-        if task.metadata:
-            if "tech_stack" in task.metadata:
-                return dict(task.metadata["tech_stack"])
-            if "detected_language" in task.metadata:
-                tech_stack["language"] = task.metadata["detected_language"]
-            if "detected_framework" in task.metadata:
-                tech_stack["framework"] = task.metadata["detected_framework"]
-            if "project_type" in task.metadata:
-                tech_stack["project_type"] = task.metadata["project_type"]
-            if tech_stack:
-                return tech_stack
-
-        # Fallback: detect from task description
-        description = (task.description or "").lower()
-        subject = (task.subject or "").lower()
-        text = f"{subject} {description}"
-
-        language_patterns: dict[str, list[str]] = {
-            "python": [
-                r"\bpython\b",
-                r"\bfastapi\b",
-                r"\bflask\b",
-                r"\bdjango\b",
-                r"\bpytest\b",
-                r"requirements\.txt",
-                r"\.py\b",
-            ],
-            "typescript": [
-                r"\btypescript\b",
-                r"\bts-node\b",
-                r"tsconfig\.json",
-                r"\bts\b(?=\s+(project|service|app|api|module|code|conventions))",
-                r"\.tsx?\b",
-            ],
-            "javascript": [
-                r"\bjavascript\b",
-                r"\bnode\.?js\b",
-                r"\bnode\b",
-                r"\bexpress\b",
-                r"\bjs\b(?=\s+(project|service|app|api|module|code|conventions))",
-                r"\.jsx?\b",
-            ],
-            "go": [
-                r"\bgolang\b",
-                r"\bgo\b(?=\s+(project|service|app|api|module|code|conventions|test|build))",
-                r"go\.mod",
-                r"\.go\b",
-                r"\bgin\b",
-                r"\bfiber\b",
-            ],
-            "rust": [
-                r"\brust\b",
-                r"\bcargo\b",
-                r"cargo\.toml",
-                r"\.rs\b",
-            ],
-            "java": [
-                r"\bjava\b",
-                r"\bspring\b",
-                r"\bgradle\b",
-                r"pom\.xml",
-            ],
-        }
-        language_scores: dict[str, int] = {}
-        for language, patterns in language_patterns.items():
-            score = sum(1 for pattern in patterns if re.search(pattern, text))
-            if score > 0:
-                language_scores[language] = score
-        if language_scores:
-            tech_stack["language"] = max(language_scores, key=language_scores.get)  # type: ignore[arg-type]
-        else:
-            tech_stack["language"] = "unknown"
-
-        framework_patterns: dict[str, str] = {
-            "fastapi": r"\bfastapi\b",
-            "flask": r"\bflask\b",
-            "django": r"\bdjango\b",
-            "react": r"\breact\b",
-            "vue": r"\bvue\b",
-            "express": r"\bexpress\b",
-        }
-        for framework, pattern in framework_patterns.items():
-            if re.search(pattern, text):
-                tech_stack["framework"] = framework
-                break
-
-        if re.search(r"\bapi\b|\brest\b|\bendpoint\b", text):
-            tech_stack["project_type"] = "api"
-        elif re.search(r"\bcli\b|\bcommand\b|\bterminal\b", text):
-            tech_stack["project_type"] = "cli"
-        elif re.search(r"\bweb\b|\bfrontend\b|\bui\b", text):
-            tech_stack["project_type"] = "web"
-        elif re.search(r"\bservice\b|\bmicroservice\b", text):
-            tech_stack["project_type"] = "microservice"
-        elif re.search(r"\blibrary\b|\bpackage\b|\bsdk\b", text):
-            tech_stack["project_type"] = "library"
-        else:
-            tech_stack["project_type"] = "generic"
-
-        return tech_stack
+        Delegates to ``task_classifier.extract_tech_stack``.
+        """
+        return _extract_tech_stack_impl(task)
 
     # === Execution Methods ===
 
@@ -787,10 +662,11 @@ class WorkerExecutor:
         return lowered.endswith(_SCOPE_INFERENCE_SOURCE_EXTENSIONS)
 
     def _scope_candidate_sort_key(self, path: str, tokens: list[str]) -> tuple[int, int, str]:
-        """Prefer paths whose names match task tokens, then shorter paths."""
-        lowered = str(path or "").lower()
-        token_hits = sum(1 for token in tokens if token and token in lowered)
-        return (-token_hits, len(lowered), lowered)
+        """Prefer paths whose names match task tokens, then shorter paths.
+
+        Delegates to ``path_predicates.scope_candidate_sort_key``.
+        """
+        return _path_predicates.scope_candidate_sort_key(path, tokens)
 
     def _synthesize_scope_target_file(self, scope: str, task: Task) -> str | None:
         """Create a conservative target filename inside an empty declared scope."""
@@ -807,34 +683,18 @@ class WorkerExecutor:
         return f"{normalized_scope}/{filename}"
 
     def _task_slug(self, task: Task) -> str:
-        """Build an ASCII slug from task text for synthesized file names."""
-        tokens = self._task_ascii_tokens(task)
-        if not tokens:
-            return "implementation"
-        return "-".join(tokens[:4])
+        """Build an ASCII slug from task text for synthesized file names.
+
+        Delegates to ``path_predicates.task_slug``.
+        """
+        return _path_predicates.task_slug(task)
 
     def _task_ascii_tokens(self, task: Task) -> list[str]:
-        """Extract stable ASCII tokens from task fields."""
-        parts = [
-            str(getattr(task, "subject", "") or ""),
-            str(getattr(task, "description", "") or ""),
-        ]
-        metadata = task.metadata if isinstance(task.metadata, dict) else {}
-        for key in ("acceptance_criteria", "execution_checklist"):
-            value = metadata.get(key)
-            if isinstance(value, list):
-                parts.extend(str(item or "") for item in value)
-        text = " ".join(parts).replace("_", " ").replace("-", " ").lower()
-        tokens: list[str] = []
-        seen: set[str] = set()
-        for token in re.findall(r"[a-z][a-z0-9]{1,}", text):
-            if token in _TASK_TOKEN_STOPWORDS or token in seen:
-                continue
-            seen.add(token)
-            tokens.append(token)
-            if len(tokens) >= 12:
-                break
-        return tokens
+        """Extract stable ASCII tokens from task fields.
+
+        Delegates to ``path_predicates.task_ascii_tokens``.
+        """
+        return _path_predicates.task_ascii_tokens(task)
 
     def _preferred_source_extension(self) -> str:
         """Infer the most suitable source extension for new scope targets."""
@@ -847,89 +707,40 @@ class WorkerExecutor:
         return ".ts"
 
     def _looks_like_test_scope(self, scope: str) -> bool:
-        """Return whether a scope is intended for tests."""
-        scope_text = str(scope or "").strip().lower().replace("\\", "/")
-        normalized = f"/{scope_text}/"
-        return (
-            "/test/" in normalized
-            or "/tests/" in normalized
-            or normalized.endswith("/test/")
-            or normalized.endswith("/tests/")
-        )
+        """Return whether a scope is intended for tests.
+
+        Delegates to ``path_predicates.looks_like_test_scope``.
+        """
+        return _path_predicates.looks_like_test_scope(scope)
 
     def _test_filename(self, slug: str) -> str:
-        """Return a conventional test filename for the current workspace."""
-        extension = self._preferred_source_extension()
-        if extension == ".py":
-            return f"test_{slug.replace('-', '_')}.py"
-        if extension == ".js":
-            return f"{slug}.test.js"
-        return f"{slug}.test.ts"
+        """Return a conventional test filename for the current workspace.
+
+        Delegates to ``path_predicates.test_filename`` using the
+        workspace-resolved source extension.
+        """
+        return _path_predicates.test_filename(slug, self._preferred_source_extension())
 
     def _extract_description_target_path(self, line: str) -> str | None:
         """Extract an explicit target path from one description line.
 
-        This fallback is intentionally conservative. PM acceptance text can
-        contain API routes, filenames used as evidence labels, or prose with
-        punctuation; those are not target-file contracts and must not pollute
-        Director prompts.
+        Delegates to ``path_predicates.extract_description_target_path``.
         """
-        cleaned = str(line or "").strip()
-        if not cleaned:
-            return None
-        cleaned = re.sub(r"^[\d]+[.)]\s*", "", cleaned)
-        cleaned = re.sub(r"^[-*•]\s*", "", cleaned)
-        cleaned = cleaned.strip()
-        labeled = re.match(
-            r"(?i)^(?:file|path|target|target_file|target files?|目标文件|文件)\s*[:：]\s*(.+?)\s*$",
-            cleaned,
-        )
-        if labeled:
-            cleaned = labeled.group(1).strip()
-        cleaned = cleaned.strip("`'\"")
-        if any(ch.isspace() for ch in cleaned):
-            return None
-        if any(ch in cleaned for ch in "[]{}()，。；；：,;"):
-            return None
-        normalized = cleaned.replace("\\", "/")
-        if self._is_probable_file_path(normalized) and self._is_concrete_target_file_path(normalized):
-            return normalized
-        return None
+        return _path_predicates.extract_description_target_path(line)
 
     def _is_probable_file_path(self, path: str) -> bool:
-        """Check if string looks like a file path."""
-        if not path:
-            return False
-        # Must have extension or look like a path
-        has_ext = "." in path and len(path.rsplit(".", maxsplit=1)[-1]) <= 5
-        has_slash = "/" in path or "\\" in path
-        return has_ext or has_slash
+        """Check if string looks like a file path.
+
+        Delegates to ``path_predicates.is_probable_file_path``.
+        """
+        return _path_predicates.is_probable_file_path(path)
 
     def _is_concrete_target_file_path(self, path: str) -> bool:
-        """Return true when a PM target path names a file, not a directory scope."""
-        token = str(path or "").strip().replace("\\", "/")
-        if not token or token.endswith("/"):
-            return False
-        if os.path.isabs(token) or ".." in token.split("/"):
-            return False
-        leaf = os.path.basename(token)
-        if not leaf:
-            return False
-        known_extensionless = {
-            ".dockerignore",
-            ".env",
-            ".env.example",
-            ".gitignore",
-            "dockerfile",
-            "go.mod",
-            "go.sum",
-            "license",
-            "makefile",
-            "readme",
-        }
-        if leaf.lower() in known_extensionless:
-            return True
-        return "." in leaf
+        """Return true when a PM target path names a file, not a directory scope.
+
+        Delegates to ``path_predicates.is_concrete_target_file_path``.
+        """
+        return _path_predicates.is_concrete_target_file_path(path)
 
     def _normalize_scope_paths(self, task: Task) -> list[str]:
         """Return directory/module scopes declared by PM without treating them as files."""
@@ -1030,13 +841,8 @@ class WorkerExecutor:
 
     @staticmethod
     def _path_under_scope(path: str, scope: str) -> bool:
-        normalized_path = path.strip().replace("\\", "/").strip("/")
-        normalized_scope = scope.strip().replace("\\", "/").strip("/")
-        if not normalized_path or not normalized_scope:
-            return False
-        if "." in os.path.basename(normalized_scope):
-            normalized_scope = os.path.dirname(normalized_scope).replace("\\", "/").strip("/")
-        return normalized_path == normalized_scope or normalized_path.startswith(f"{normalized_scope}/")
+        """Delegates to ``path_predicates.path_under_scope``."""
+        return _path_predicates.path_under_scope(path, scope)
 
     def _repair_path_allowed(self, task: Task, path: str) -> bool:
         normalized = str(path or "").strip().replace("\\", "/")
@@ -1219,20 +1025,11 @@ class WorkerExecutor:
 
     @staticmethod
     def _is_test_like_target_file(path: str) -> bool:
-        """Return whether a target path is likely to produce expensive test/spec output."""
-        normalized = str(path or "").strip().replace("\\", "/").lower()
-        if not normalized:
-            return False
-        return (
-            "/test/" in f"/{normalized}"
-            or "/tests/" in f"/{normalized}"
-            or normalized.endswith(".test.ts")
-            or normalized.endswith(".test.tsx")
-            or normalized.endswith(".test.js")
-            or normalized.endswith(".spec.ts")
-            or normalized.endswith(".spec.tsx")
-            or normalized.endswith(".spec.js")
-        )
+        """Return whether a target path is likely to produce expensive test/spec output.
+
+        Delegates to ``path_predicates.is_test_like_target_file``.
+        """
+        return _path_predicates.is_test_like_target_file(path)
 
     def _generated_artifact_quality_error(self, files_created: list[dict], *, phase: str) -> str | None:
         """Return a fail-closed quality error for generated artifact receipts."""
@@ -1691,41 +1488,11 @@ Requirements:
         return self._compact_prompt_fragment(prompt, max_chars=max_chars)
 
     def _extract_files_from_response(self, response: str) -> list[dict]:
-        """Extract file paths and contents from LLM response."""
-        files: list[dict] = []
-        seen: set[str] = set()
+        """Extract file paths and contents from LLM response.
 
-        def _append_file(path: str, content: str) -> None:
-            normalized_path = str(path or "").strip().strip("`")
-            normalized_content = str(content or "").strip()
-            if not normalized_path or not normalized_content:
-                return
-            if normalized_path in seen:
-                return
-            seen.add(normalized_path)
-            files.append({"path": normalized_path, "content": normalized_content})
-
-        # Pattern 1: explicit file fences
-        for file_path, content in re.findall(r"```file:\s*(.+?)\n(.*?)```", response, re.DOTALL):
-            _append_file(file_path, content)
-
-        # Pattern 2: heading + code block
-        for file_path, content in re.findall(
-            r"(?:^|\n)(?:###|##|#)\s*`?([A-Za-z0-9_./\\-]+\.[A-Za-z0-9_]+)`?\s*\n```[^\n]*\n(.*?)```",
-            response,
-            re.DOTALL,
-        ):
-            _append_file(file_path, content)
-
-        # Pattern 3: File: path followed by fenced code block
-        for file_path, content in re.findall(
-            r"(?:^|\n)(?:File|Path)\s*:\s*([A-Za-z0-9_./\\-]+\.[A-Za-z0-9_]+)\s*\n```[^\n]*\n(.*?)```",
-            response,
-            re.DOTALL,
-        ):
-            _append_file(file_path, content)
-
-        return files
+        Delegates to ``response_parser.extract_files_from_response``.
+        """
+        return _extract_files_from_response_impl(response)
 
     def _fallback_code_files(self, task: Task, round_files: list[str] | None = None) -> list[dict]:
         """Legacy entry point retained only to fail closed."""

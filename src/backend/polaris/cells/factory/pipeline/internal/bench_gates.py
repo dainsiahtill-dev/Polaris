@@ -162,6 +162,25 @@ class _QuietStaticHandler(SimpleHTTPRequestHandler):
 
 
 def _smoke_static_web(workspace: Path, html_rel: str, *, timeout_s: int) -> dict[str, Any]:
+    """Smoke-test a static HTML entrypoint using Playwright for real browser verification.
+
+    Falls back to simple HTTP check if Playwright is unavailable.
+    """
+    # Try Playwright first for real browser verification
+    try:
+        return _smoke_static_web_playwright(workspace, html_rel, timeout_s=timeout_s)
+    except ImportError:
+        pass  # Playwright not available, fall back to HTTP check
+    except (OSError, RuntimeError, ValueError) as exc:
+        return {
+            "kind": "web_playwright",
+            "ok": False,
+            "entrypoint": html_rel,
+            "duration_s": 0,
+            "detail": f"Playwright error: {exc}",
+        }
+
+    # Fallback: simple HTTP check
     handler = partial(_QuietStaticHandler, directory=str(workspace))
     started = time.time()
     server: ThreadingHTTPServer | None = None
@@ -192,6 +211,54 @@ def _smoke_static_web(workspace: Path, html_rel: str, *, timeout_s: int) -> dict
             "entrypoint": html_rel,
             "duration_s": round(time.time() - started, 3),
             "detail": str(exc),
+        }
+    finally:
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+
+
+def _smoke_static_web_playwright(workspace: Path, html_rel: str, *, timeout_s: int) -> dict[str, Any]:
+    """Use Playwright to verify the HTML entrypoint renders correctly."""
+    from playwright.sync_api import sync_playwright
+
+    handler = partial(_QuietStaticHandler, directory=str(workspace))
+    started = time.time()
+    server: ThreadingHTTPServer | None = None
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        port = int(server.server_address[1])
+        path = urllib.request.pathname2url(html_rel)
+        url = f"http://127.0.0.1:{port}/{path}"
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            console_errors: list[str] = []
+            page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+
+            page.goto(url, timeout=max(1, min(10, int(timeout_s))) * 1000)
+            page.wait_for_load_state("networkidle", timeout=5000)
+
+            # Check for canvas elements
+            canvas = page.query_selector("canvas")
+
+            browser.close()
+
+        # Filter out resource loading errors (CSS, JS, images)
+        critical_errors = [err for err in console_errors if "Failed to load resource" not in err]
+        ok = len(critical_errors) == 0
+        return {
+            "kind": "web_playwright",
+            "ok": ok,
+            "url": url,
+            "entrypoint": html_rel,
+            "duration_s": round(time.time() - started, 3),
+            "console_errors": console_errors,
+            "has_canvas": canvas is not None,
+            "detail": "Playwright verification passed" if ok else f"Console errors: {'; '.join(critical_errors[:3])}",
         }
     finally:
         if server is not None:
@@ -580,6 +647,16 @@ def _smoke_python_cli(workspace: Path, entrypoint: str, *, timeout_s: int) -> di
                     **fallback,
                 }
             )
+        # Timeout is NOT success - mark as failure
+        if fallback.get("timeout"):
+            return {
+                "kind": "python_cli",
+                "entrypoint": entrypoint,
+                "started": True,
+                "timeout": True,
+                "ok": False,
+                "detail": "CLI timed out - not considered successful",
+            }
         return {
             "kind": "python_cli",
             "entrypoint": entrypoint,
@@ -736,7 +813,7 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
     if (
         not build_command_ok
         and bool(entrypoint.get("ok"))
-        and str(entrypoint.get("kind") or "") == "web_static"
+        and str(entrypoint.get("kind") or "") in ("web_static", "web_playwright")
         and not package
         and code_files
         and all(rel.endswith((".html", ".css")) for rel in code_files)

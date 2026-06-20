@@ -688,13 +688,14 @@ async def _run_materialization_quality_repair_retry(
         changed_files=changed_files,
         workspace_full=workspace_full,
     )
-    repair_target_candidates = missing_target_files or runtime_smoke_target_files or semantic_quality_target_files
+    repair_target_candidates = semantic_quality_target_files or runtime_smoke_target_files or missing_target_files
     repair_target_files = _select_materialization_quality_repair_target_batch(
         repair_target_candidates,
         repair_attempt=repair_attempt,
     )
-    missing_repair_target_files = repair_target_files if missing_target_files else []
-    existing_repair_target_files = repair_target_files if not missing_target_files else []
+    missing_target_set = set(missing_target_files)
+    missing_repair_target_files = [path for path in repair_target_files if path in missing_target_set]
+    existing_repair_target_files = [path for path in repair_target_files if path not in missing_target_set]
     repair_message = _build_materialization_quality_repair_message(
         original_message=original_message,
         artifact_quality_errors=artifact_quality_errors,

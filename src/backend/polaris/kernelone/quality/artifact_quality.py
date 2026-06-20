@@ -97,12 +97,9 @@ _IMPORT_SPECIFIER_RE = re.compile(
 _TS_JS_SOURCE_EXTS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
 _TS_SOURCE_EXTS = {".ts", ".tsx"}
 
-# Cross-file symbol-coherence detection for TS/JS named imports. Dark-launched:
-# the live gate runs on every materialization (including L2 JS projects), and a
-# regex export-surface (no TS parser available in-process) cannot be ast-proven
-# free of false positives, which would break the L2 floor. Default OFF until
-# codex bench-validates ON across L2 + L4-L8 TS projects (zero false positives),
-# then flips the default. See blueprints/TS_SYMBOL_COHERENCE_DETECTION_20260617.md.
+# Cross-file symbol-coherence detection for TS/JS named imports. The regex
+# export-surface intentionally fails open on ambiguous modules; keep an env kill
+# switch for emergency false-positive triage.
 _TS_SYMBOL_COHERENCE_FLAG = "KERNELONE_TS_SYMBOL_COHERENCE"
 
 # Surface-unknowable constructs: ANY occurrence (even in a comment/string) forces
@@ -167,6 +164,11 @@ _NPM_MANIFEST_ONLY_TEST_SCRIPT_RE = re.compile(
     r"package\s+manifest\s+check\s+passed|invalid\s+package\s+manifest|readFileSync\s*\(\s*['\"]package\.json",
     re.IGNORECASE,
 )
+_NPM_PLACEHOLDER_TEST_SCRIPT_RE = re.compile(
+    r"\b(?:no\s+tests?\s+(?:specified|yet)|tests?\s+not\s+(?:implemented|available))\b",
+    re.IGNORECASE,
+)
+_NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(r"(?:npm\s+run\s+build|pnpm\s+build|yarn\s+build|\btsc\b)")
 _PYTHON_COMMAND_IN_NPM_SCRIPT_RE = re.compile(r"(?:^|[\s;&|])(python3?|pytest|pip3?)(?:$|[\s;&|])", re.IGNORECASE)
 _PYTHON_PACKAGE_MANIFEST_DEPENDENCIES = {
     "django",
@@ -460,6 +462,8 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
         lowered = test_script.lower()
         if "no test specified" in lowered or "no tests specified" in lowered:
             errors.append(f"Artifact quality scan failed: npm default failing test script in {relative_path}")
+        if _NPM_PLACEHOLDER_TEST_SCRIPT_RE.search(test_script):
+            errors.append(f"Artifact quality scan failed: npm placeholder test script in {relative_path}")
         if _NPM_MANIFEST_ONLY_TEST_SCRIPT_RE.search(test_script):
             errors.append(f"Artifact quality scan failed: npm manifest-only test script in {relative_path}")
         if (
@@ -487,6 +491,8 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
                     f"Python command in script {str(script_name)!r} in {relative_path}"
                 )
                 break
+            if str(script_name) in {"start", "serve"}:
+                errors.extend(_scan_npm_script_missing_local_entrypoints(root_full, script_text, str(script_name)))
     main_entry = str(payload.get("main") or "").strip().replace("\\", "/").lower()
     if main_entry.endswith(".py"):
         errors.append(
@@ -520,6 +526,34 @@ def _workspace_has_node_test_files(root_full: Path) -> bool:
     return any(
         _is_test_like_artifact_path(relative_path) for relative_path in _iter_workspace_relative_files(root_full)
     )
+
+
+def _scan_npm_script_missing_local_entrypoints(root_full: Path, script_text: str, script_name: str) -> list[str]:
+    if _NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE.search(script_text):
+        return []
+    try:
+        tokens = shlex.split(script_text, posix=(os.name != "nt"))
+    except ValueError:
+        return []
+    errors: list[str] = []
+    for index, token in enumerate(tokens[:-1]):
+        command = token.strip().lower()
+        if command not in {"node", "tsx", "ts-node"}:
+            continue
+        entrypoint = tokens[index + 1].strip()
+        if not entrypoint or entrypoint.startswith("-"):
+            continue
+        normalized = entrypoint.replace("\\", "/")
+        if normalized.startswith(("/", "http://", "https://")) or ".." in normalized.split("/"):
+            continue
+        if Path(normalized).suffix.lower() not in {".js", ".mjs", ".cjs", ".ts", ".tsx"}:
+            continue
+        if not (root_full / normalized).is_file():
+            errors.append(
+                "Artifact quality scan failed: npm package manifest script "
+                f"{script_name!r} references missing local entrypoint {normalized!r}"
+            )
+    return errors
 
 
 def _iter_workspace_relative_files(root_full: Path) -> Iterable[str]:
@@ -793,8 +827,8 @@ _TS_MODULE_READ_CAP_BYTES = 512 * 1024
 
 
 def _ts_symbol_coherence_enabled() -> bool:
-    """Dark-launch gate: TS/JS cross-file symbol coherence is OFF by default."""
-    return os.environ.get(_TS_SYMBOL_COHERENCE_FLAG, "").strip().lower() in {"1", "true", "yes", "on"}
+    """TS/JS cross-file symbol coherence is ON unless explicitly disabled."""
+    return os.environ.get(_TS_SYMBOL_COHERENCE_FLAG, "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _parse_ts_clause_names(inner: str, *, for_export: bool) -> set[str]:
