@@ -111,15 +111,115 @@ const providerInfos = [
   },
 ];
 
-function sse(event: string, data: unknown): string {
-  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-}
-
 async function fulfillJson(route: Route, body: unknown): Promise<void> {
   await route.fulfill({
     status: 200,
     contentType: "application/json; charset=utf-8",
     body: JSON.stringify(body),
+  });
+}
+
+async function installRuntimeWebSocketMock(window: Page): Promise<void> {
+  await window.addInitScript(() => {
+    type FakeRuntimeSocket = {
+      readyState: number;
+      onopen?: ((event: Event) => void) | null;
+      onmessage?: ((event: MessageEvent) => void) | null;
+      onclose?: ((event: CloseEvent) => void) | null;
+      onerror?: ((event: Event) => void) | null;
+      send(data: string): void;
+      close(code?: number, reason?: string): void;
+      emit(data: unknown): void;
+    };
+    type RuntimeTestWindow = Window & {
+      __polarisRuntimeSockets?: FakeRuntimeSocket[];
+      __polarisRuntimeSocketSent?: string[];
+      __polarisEmitRuntimeV2?: (channel: string, type: string, data: unknown, cursor: number) => void;
+    };
+
+    const testWindow = window as RuntimeTestWindow;
+    const NativeWebSocket = window.WebSocket;
+    const sockets: FakeRuntimeSocket[] = [];
+    const sentFrames: string[] = [];
+    testWindow.__polarisRuntimeSockets = sockets;
+    testWindow.__polarisRuntimeSocketSent = sentFrames;
+
+    class PolarisRuntimeWebSocket extends EventTarget {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSING = 2;
+      static CLOSED = 3;
+
+      readonly url: string;
+      readyState = PolarisRuntimeWebSocket.CONNECTING;
+      onopen: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super();
+        const urlText = String(url);
+        if (!urlText.includes("/v2/ws/runtime")) {
+          return new NativeWebSocket(url, protocols) as unknown as PolarisRuntimeWebSocket;
+        }
+        this.url = urlText;
+        sockets.push(this);
+        window.setTimeout(() => {
+          this.readyState = PolarisRuntimeWebSocket.OPEN;
+          const event = new Event("open");
+          this.onopen?.(event);
+          this.dispatchEvent(event);
+        }, 0);
+      }
+
+      send(data: string): void {
+        sentFrames.push(data);
+        try {
+          const parsed = JSON.parse(data) as { type?: string };
+          if (parsed.type === "PING") {
+            window.setTimeout(() => this.emit({ type: "PONG" }), 0);
+          }
+        } catch {
+          // ignored in test mock
+        }
+      }
+
+      close(code = 1000, reason = ""): void {
+        this.readyState = PolarisRuntimeWebSocket.CLOSED;
+        const event = new CloseEvent("close", { code, reason });
+        this.onclose?.(event);
+        this.dispatchEvent(event);
+      }
+
+      emit(data: unknown): void {
+        const event = new MessageEvent("message", { data: JSON.stringify(data) });
+        this.onmessage?.(event);
+        this.dispatchEvent(event);
+      }
+    }
+
+    testWindow.__polarisEmitRuntimeV2 = (channel: string, type: string, data: unknown, cursor: number) => {
+      const envelope = {
+        type: "EVENT",
+        protocol: "runtime.v2",
+        cursor,
+        event: {
+          channel,
+          payload: {
+            type,
+            data,
+          },
+        },
+      };
+      for (const socket of sockets) {
+        if (socket.readyState === PolarisRuntimeWebSocket.OPEN) {
+          socket.emit(envelope);
+        }
+      }
+    };
+
+    window.WebSocket = PolarisRuntimeWebSocket as unknown as typeof WebSocket;
   });
 }
 
@@ -140,37 +240,54 @@ async function installLlmDeepLayoutRoutes(window: Page): Promise<void> {
       models: ["kimi-for-coding-long-layout-verification-model", "deepseek-v4-pro-super-long-model-name"],
     }),
   );
-  await window.route("**/llm/interview/cancel", async (route) => fulfillJson(route, { ok: true }));
-  await window.route("**/llm/interview/stream", async (route) => {
+  await window.route("**/v2/llm/interview/cancel", async (route) => fulfillJson(route, { ok: true }));
+  await window.route("**/v2/llm/interview/jetstream", async (route) => {
+    const requestBody = route.request().postDataJSON() as { session_id?: string } | null;
+    const sessionId = requestBody?.session_id || "layout-session-1";
+    const channel = `llm-interview:${sessionId}`;
     const thinking =
       "我会先识别风险分类，然后按影响范围、复现路径、修复收益和验证成本排序。这里故意放入较长内容，用来验证实时思考过程不会被挤压或隐藏。";
     const answer = [
       "建议从四层审计：入口参数、状态同步、异步流、持久化回写。",
       "第一，检查配置删除后 roles/provider 引用是否同时清理，避免旧 provider 被保存动作重新合并回来。",
-      "第二，检查 SSE content_chunk 的标签解析，确认 thinking 和 answer 分区在分片、换行、CRLF 下都能实时更新。",
+      "第二，检查 runtime.v2 content_chunk 的标签解析，确认 thinking 和 answer 分区在分片、换行、CRLF 下都能实时更新。",
       "第三，检查设置面板布局，问答区必须拥有独立滚动容器，右侧日志必须留在 modal 内部。",
       "第四，把布局验收固化为 Playwright 尺寸门禁，避免再次依赖人工截图。",
     ].join("\n");
-    const body = [
-      sse("start", { session_id: "layout-session-1" }),
-      sse("content_chunk", { content: `<thinking>${thinking.slice(0, 38)}`, timestamp: "2026-06-02T12:00:00.000Z" }),
-      sse("content_chunk", {
+    const events = [
+      { type: "start", data: { session_id: sessionId } },
+      { type: "content_chunk", data: { content: `<thinking>${thinking.slice(0, 38)}`, timestamp: "2026-06-02T12:00:00.000Z" } },
+      { type: "content_chunk", data: {
         content: `${thinking.slice(38)}</thinking>\n<answer>${answer.slice(0, 80)}`,
         timestamp: "2026-06-02T12:00:00.100Z",
-      }),
-      sse("content_chunk", { content: answer.slice(80, 180), timestamp: "2026-06-02T12:00:00.200Z" }),
-      sse("content_chunk", { content: `${answer.slice(180)}</answer>`, timestamp: "2026-06-02T12:00:00.300Z" }),
-      sse("complete", { ok: true, sessionId: "layout-session-1", answer, thinking }),
-    ].join("");
+      } },
+      { type: "content_chunk", data: { content: answer.slice(80, 180), timestamp: "2026-06-02T12:00:00.200Z" } },
+      { type: "content_chunk", data: { content: `${answer.slice(180)}</answer>`, timestamp: "2026-06-02T12:00:00.300Z" } },
+      { type: "complete", data: { ok: true, sessionId, answer, thinking } },
+    ];
 
-    await route.fulfill({
-      status: 200,
-      headers: {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache",
-      },
-      body,
+    await fulfillJson(route, {
+      ok: true,
+      session_id: sessionId,
+      status: "started",
+      channel,
+      subject: `hp.runtime.llm.interview.${sessionId}`,
+      transport: "nat-jetstream",
     });
+
+    setTimeout(() => {
+      void window.evaluate(
+        ({ runtimeChannel, runtimeEvents }) => {
+          const testWindow = window as Window & {
+            __polarisEmitRuntimeV2?: (channel: string, type: string, data: unknown, cursor: number) => void;
+          };
+          runtimeEvents.forEach((event, index) => {
+            testWindow.__polarisEmitRuntimeV2?.(runtimeChannel, event.type, event.data, index + 1);
+          });
+        },
+        { runtimeChannel: channel, runtimeEvents: events },
+      );
+    }, 0);
   });
 }
 
@@ -209,6 +326,7 @@ const layoutViewports = [
 for (const viewport of layoutViewports) {
 test(`LLM deep test layout keeps streaming panels, conversation, and logs contained (${viewport.name})`, async ({ window }, testInfo) => {
   await window.setViewportSize({ width: viewport.width, height: viewport.height });
+  await installRuntimeWebSocketMock(window);
   await installLlmDeepLayoutRoutes(window);
   await window.reload({ waitUntil: "domcontentloaded" });
   await expect(window.locator("#root")).toHaveCount(1);

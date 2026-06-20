@@ -1229,20 +1229,6 @@ export interface SessionMemoryResponse {
   items: SessionMemoryItem[];
 }
 
-export interface StreamChatRequest {
-  role?: string;
-  message: string;
-  provider_id?: string;
-  model?: string;
-  context?: Record<string, unknown>;
-  options?: Record<string, unknown>;
-}
-
-export interface StreamChatResponse {
-  status: string;
-  message: string;
-}
-
 export interface ConversationV2 {
   id: string;
   title?: string;

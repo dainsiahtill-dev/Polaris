@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from polaris.bootstrap.config import Settings
-from polaris.cells.factory.pipeline.internal.factory_run_service import FactoryConfig, FactoryRunService, StageResult
+from polaris.cells.factory.pipeline.internal.factory_run_service import FactoryRunService, StageResult
 from polaris.delivery.http.app_factory import create_app
 from polaris.delivery.http.routers import factory as factory_router_module
 
@@ -81,18 +81,11 @@ def test_factory_status_response_contract_is_stable(client: TestClient, temp_wor
     }
 
 
-def test_factory_stream_route_fails_closed_to_nat_jetstream(client: TestClient) -> None:
+def test_factory_stream_route_is_not_registered(client: TestClient) -> None:
     response = client.get(
         "/v2/factory/runs/snapshot-run/stream",
         headers={"Authorization": f"Bearer {_TEST_TOKEN}"},
     )
 
-    assert response.status_code == 410
-    assert response.headers.get("content-type", "").startswith("application/json")
+    assert response.status_code == 404
     assert "text/event-stream" not in response.headers.get("content-type", "")
-    body = response.json()
-    assert body["error"]["code"] == "SSE_REMOVED"
-    assert body["error"]["details"] == {
-        "replacement": "/v2/ws/runtime",
-        "transport": "nat-jetstream",
-    }

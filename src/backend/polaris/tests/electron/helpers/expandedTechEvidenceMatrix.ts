@@ -633,7 +633,7 @@ export const EXPANDED_TECH_CANDIDATES: ExpandedTechCandidate[] = [
       "src/backend/polaris/cells/llm/provider_config/internal/test_context.py",
       "src/frontend/src/app/components/llm/test/streamingTest.ts",
     ],
-    gates: ["POST /v2/llm/test", "POST /v2/llm/test/stream"],
+    gates: ["POST /v2/llm/test", "POST /v2/llm/test/jetstream", "WS /v2/ws/runtime"],
     e2eFields: ["target.provider_id=direct_<type>", "target.role=connectivity", "final.ready", "final.grade"],
   },
   {
@@ -765,7 +765,7 @@ export const EXPANDED_TECH_CANDIDATES: ExpandedTechCandidate[] = [
       "src/backend/polaris/cells/factory/pipeline/internal/factory_run_service.py",
       "src/backend/polaris/tests/integration/delivery/routers/test_factory_router.py",
     ],
-    gates: ["GET /v2/factory/runs/{run_id}/audit-bundle", "GET /v2/factory/runs/{run_id}/stream"],
+    gates: ["GET /v2/factory/runs/{run_id}/audit-bundle", "WS /v2/ws/runtime"],
     e2eFields: ["evidence_counts.events_total", "events_tail", "summary_json", "Nat-JetStream status/event/complete"],
   },
   {

@@ -1,6 +1,6 @@
 """Tests for Polaris unified role chat endpoints.
 
-Covers POST /v2/role/{role}/chat and POST /v2/role/{role}/chat/stream.
+Covers POST /v2/role/{role}/chat and the removed legacy stream routes.
 External services are mocked to avoid LLM provider and storage dependencies.
 """
 
@@ -326,156 +326,21 @@ async def test_role_chat_with_context(client: AsyncClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /v2/role/{role}/chat/stream
+# Removed legacy POST /v2/role/{role}/chat/stream routes
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_role_chat_stream_fails_closed_to_nat_jetstream(client: AsyncClient) -> None:
-    """PM streaming role chat should fail closed to the Nat-JetStream route."""
+@pytest.mark.parametrize("role", ["pm", "director", "chief_engineer", "unknown"])
+async def test_role_chat_stream_route_is_not_registered(client: AsyncClient, role: str) -> None:
+    """Legacy stream role chat routes must not exist as a second realtime transport."""
     from polaris.delivery.http.routers import role_chat
 
-    with (
-        patch(
-            "polaris.delivery.http.routers.role_chat.get_registered_roles",
-            return_value=["pm", "architect", "director", "qa", "chief_engineer"],
-        ),
-        patch(
-            "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
-        ),
-    ):
-        response = await client.post(
-            "/v2/role/pm/chat/stream",
-            json={"message": "hello", "context": {"source": "desktop"}},
-        )
+    response = await client.post(
+        f"/v2/role/{role}/chat/stream",
+        json={"message": f"{role} hello", "context": {"source": "desktop"}},
+    )
 
-    assert response.status_code == 410
+    assert response.status_code == 404
     assert "text/event-stream" not in response.headers.get("content-type", "")
-    body = response.json()
-    assert body["error"]["code"] == "SSE_REMOVED"
-    assert body["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
-    assert body["error"]["details"]["transport"] == "nat-jetstream"
-    assert not hasattr(role_chat, "execute_role_chat_streaming")
-
-
-@pytest.mark.asyncio
-async def test_role_chat_stream_empty_message_fails_closed(client: AsyncClient) -> None:
-    """Empty message on removed stream route still returns the transport removal contract."""
-    with (
-        patch(
-            "polaris.delivery.http.routers.role_chat.get_registered_roles",
-            return_value=["pm"],
-        ),
-    ):
-        response = await client.post(
-            "/v2/role/pm/chat/stream",
-            json={"message": ""},
-        )
-        assert response.status_code == 410
-        body = response.json()
-        assert body["error"]["code"] == "SSE_REMOVED"
-        assert body["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
-
-
-@pytest.mark.asyncio
-async def test_role_chat_stream_does_not_execute_legacy_generator(
-    client: AsyncClient,
-    mock_settings: Settings,
-) -> None:
-    """Removed stream route should not execute the in-process stream generator."""
-    from polaris.delivery.http.routers import role_chat
-
-    mock_settings.workspace = "C:/Repo/Polaris"
-    mock_settings.workspace_path = "C:/Temp/Product"
-
-    with (
-        patch(
-            "polaris.delivery.http.routers.role_chat.get_registered_roles",
-            return_value=["pm"],
-        ),
-        patch(
-            "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
-        ),
-    ):
-        response = await client.post(
-            "/v2/role/pm/chat/stream",
-            json={"message": "hello"},
-        )
-
-    assert response.status_code == 410
-    assert not hasattr(role_chat, "execute_role_chat_streaming")
-
-
-@pytest.mark.asyncio
-async def test_role_chat_stream_unsupported_role(client: AsyncClient) -> None:
-    """Unsupported role on stream should return 400 (raised before SSE starts)."""
-    with (
-        patch(
-            "polaris.delivery.http.routers.role_chat.get_registered_roles",
-            return_value=["pm"],
-        ),
-    ):
-        response = await client.post(
-            "/v2/role/unknown/chat/stream",
-            json={"message": "hello"},
-        )
-        assert response.status_code == 400
-        data = response.json()
-        assert data["error"]["code"] == "UNSUPPORTED_ROLE"
-        assert "unknown" in data["error"]["message"]
-
-
-@pytest.mark.asyncio
-async def test_role_chat_stream_llm_not_ready_fails_closed_before_runtime_check(client: AsyncClient) -> None:
-    """Removed stream route should not run legacy runtime readiness checks."""
-    from polaris.delivery.http.routers._shared import StructuredHTTPException
-
-    with (
-        patch(
-            "polaris.delivery.http.routers.role_chat.get_registered_roles",
-            return_value=["pm"],
-        ),
-        patch(
-            "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
-            side_effect=StructuredHTTPException(
-                status_code=409,
-                code="RUNTIME_ROLES_NOT_READY",
-                message="PM LLM not ready",
-            ),
-        ),
-    ):
-        response = await client.post(
-            "/v2/role/pm/chat/stream",
-            json={"message": "hello"},
-        )
-        assert response.status_code == 410
-        body = response.json()
-        assert body["error"]["code"] == "SSE_REMOVED"
-        assert body["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("role", ["director", "chief_engineer"])
-async def test_role_chat_stream_engineering_roles(client: AsyncClient, role: str) -> None:
-    """Director and Chief Engineer removed stream routes should fail closed."""
-    from polaris.delivery.http.routers import role_chat
-
-    with (
-        patch(
-            "polaris.delivery.http.routers.role_chat.get_registered_roles",
-            return_value=["pm", "architect", "director", "qa", "chief_engineer"],
-        ),
-        patch(
-            "polaris.delivery.http.routers.role_chat.ensure_required_roles_ready",
-        ),
-    ):
-        response = await client.post(
-            f"/v2/role/{role}/chat/stream",
-            json={"message": f"{role} hello"},
-        )
-
-    assert response.status_code == 410
-    body = response.json()
-    assert body["error"]["code"] == "SSE_REMOVED"
-    assert body["error"]["details"]["replacement"] == f"/v2/role/{role}/chat/jetstream"
     assert not hasattr(role_chat, "execute_role_chat_streaming")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Factory-bench runner — drive the FULL Polaris role chain per project.
 
-For each project in ``projects_v1.json`` (L1→L8, sequential — the local vLLM
+For each project in ``projects_v2.json`` (L1→L12, sequential — the local vLLM
 is a shared single GPU, so this runner IS the load mutex):
 
 1. create a fresh workspace directory;
@@ -48,7 +48,7 @@ from scripts.factory_bench.factory_http_client import (
     wait_run_until_terminal,
 )
 
-_FIXTURE = Path(__file__).resolve().parent / "projects_v1.json"
+_FIXTURE = Path(__file__).resolve().parent / "projects_v2.json"
 _BACKEND_ROOT = Path("/home/dains/Documents/polaris/src/backend")
 
 # Artifact layout (2026-06-11 recon): most chain artifacts live OUTSIDE the
@@ -95,9 +95,50 @@ _WORKSPACE_ARTIFACT_GLOBS: dict[str, tuple[str, ...]] = {
 }
 
 
-def load_projects() -> list[dict[str, Any]]:
-    data = json.loads(_FIXTURE.read_text(encoding="utf-8"))
-    return list(data["projects"])
+def _resolve_catalog_path(path: str | Path, *, base_dir: Path | None = None) -> Path:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = (base_dir or Path(__file__).resolve().parent) / candidate
+    return candidate.resolve()
+
+
+def _load_project_catalog(path: Path, *, seen: set[Path] | None = None) -> list[dict[str, Any]]:
+    seen = set(seen or set())
+    if path in seen:
+        raise ValueError(f"factory-bench catalog extends cycle: {path}")
+    seen.add(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    projects: list[dict[str, Any]] = []
+    extends = data.get("extends") or []
+    if isinstance(extends, str):
+        extends = [extends]
+    if not isinstance(extends, list):
+        raise ValueError(f"factory-bench catalog {path} has invalid extends")
+    for parent in extends:
+        if not isinstance(parent, str) or not parent.strip():
+            raise ValueError(f"factory-bench catalog {path} has invalid extends entry")
+        projects.extend(_load_project_catalog(_resolve_catalog_path(parent, base_dir=path.parent), seen=seen))
+    raw_projects = data.get("projects")
+    if not isinstance(raw_projects, list):
+        raise ValueError(f"factory-bench catalog {path} missing projects[]")
+    projects.extend(item for item in raw_projects if isinstance(item, dict))
+    return projects
+
+
+def load_projects(projects_file: str | Path | None = None) -> list[dict[str, Any]]:
+    projects = _load_project_catalog(_resolve_catalog_path(projects_file or _FIXTURE))
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for project in projects:
+        project_id = str(project.get("id") or "").strip()
+        if not project_id:
+            raise ValueError("factory-bench catalog contains a project without id")
+        if project_id in seen:
+            duplicates.append(project_id)
+        seen.add(project_id)
+    if duplicates:
+        raise ValueError("factory-bench catalog contains duplicate project id(s): " + ", ".join(sorted(set(duplicates))))
+    return projects
 
 
 def resolve_runtime_dir_for_workspace(workspace: Path) -> Path | None:
@@ -1046,6 +1087,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Polaris factory-bench full-chain runner")
     ap.add_argument("--project-ids", default="", help="comma-separated ids (e.g. L1-01,L1-02); empty = use --levels")
     ap.add_argument("--levels", default="1", help="comma-separated levels to run when no ids given")
+    ap.add_argument(
+        "--projects-file",
+        default=str(_FIXTURE),
+        help="factory-bench project catalog JSON; defaults to projects_v2.json, which extends v1",
+    )
     ap.add_argument("--work-dir", default=os.path.expanduser("~/Temp/factory-bench"))
     ap.add_argument("--timeout", type=int, default=5400, help="per-project chain timeout seconds")
     ap.add_argument("--max-failed", type=int, default=3, help="early stop after N audit failures")
@@ -1074,7 +1120,7 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    projects = load_projects()
+    projects = load_projects() if args.projects_file == str(_FIXTURE) else load_projects(args.projects_file)
     if args.project_ids.strip():
         wanted_ids = [s.strip() for s in args.project_ids.split(",") if s.strip()]
         available_ids = {str(p["id"]) for p in projects}

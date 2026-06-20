@@ -89,10 +89,6 @@ describe('useTestStream', () => {
       'http://127.0.0.1:49977/v2/llm/test/jetstream',
       expect.objectContaining({ method: 'POST' }),
     );
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      'http://127.0.0.1:49977/v2/llm/test/stream',
-      expect.anything(),
-    );
 
     emitTestChunk('llm-test:hook-run-1', 'complete', {
       schema_version: 1,

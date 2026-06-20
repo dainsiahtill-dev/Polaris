@@ -111,10 +111,6 @@ describe('runStreamingTest', () => {
         }),
       }),
     );
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      'http://127.0.0.1:49977/v2/llm/test/stream',
-      expect.anything(),
-    );
     expect(runtimeSocketManagerMock.subscribeChannels).toHaveBeenCalledWith([
       { channel: 'llm-test:run-1', tailLines: 0 },
     ]);

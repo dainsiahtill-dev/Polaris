@@ -1,7 +1,7 @@
 """Tests for Polaris v2 interview router.
 
 Covers POST /v2/llm/interview/ask, POST /v2/llm/interview/save,
-POST /v2/llm/interview/cancel, and POST /v2/llm/interview/stream.
+POST /v2/llm/interview/cancel, and the removed legacy interview stream route.
 External services are mocked to avoid LLM provider dependencies.
 """
 
@@ -591,13 +591,13 @@ async def test_v2_llm_interview_jetstream_starts_nat_channel_and_publishes_event
 
 
 # ---------------------------------------------------------------------------
-# POST /v2/llm/interview/stream
+# Removed legacy POST /v2/llm/interview/stream route
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_v2_llm_interview_stream_headers(client: AsyncClient) -> None:
-    """POST /v2/llm/interview/stream should fail closed to Nat-JetStream."""
+async def test_v2_llm_interview_stream_route_is_not_registered(client: AsyncClient) -> None:
+    """POST /v2/llm/interview/stream must not exist."""
     response = await client.post(
         "/v2/llm/interview/stream",
         json={
@@ -609,9 +609,5 @@ async def test_v2_llm_interview_stream_headers(client: AsyncClient) -> None:
         },
     )
 
-    assert response.status_code == 410
+    assert response.status_code == 404
     assert "text/event-stream" not in response.headers.get("content-type", "")
-    data = response.json()
-    assert data["error"]["code"] == "SSE_REMOVED"
-    assert data["error"]["details"]["replacement"] == "/v2/llm/interview/jetstream"
-    assert data["error"]["details"]["transport"] == "nat-jetstream"

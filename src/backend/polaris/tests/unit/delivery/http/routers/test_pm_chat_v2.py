@@ -1,6 +1,6 @@
 """Tests for Polaris PM chat endpoints.
 
-Covers POST /v2/pm/chat, POST /v2/pm/chat/stream,
+Covers POST /v2/pm/chat, removed legacy POST /v2/pm/chat/stream,
 GET /v2/pm/chat/status, and GET /v2/pm/chat/ping.
 External services are mocked to avoid LLM provider and storage dependencies.
 """
@@ -259,29 +259,25 @@ async def test_pm_chat_honors_workspace_query_param(client: AsyncClient, mock_se
 
 
 # ---------------------------------------------------------------------------
-# POST /v2/pm/chat/stream
+# Removed legacy POST /v2/pm/chat/stream route
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_pm_chat_stream_fails_closed_to_nat_jetstream(client: AsyncClient) -> None:
-    """Legacy PM stream route must fail closed to the Nat-JetStream endpoint."""
+async def test_pm_chat_stream_route_is_not_registered(client: AsyncClient) -> None:
+    """Legacy PM stream route must not exist as a second realtime transport."""
 
     response = await client.post(
         "/v2/pm/chat/stream",
         json={"message": "hello", "context": {"source": "pm-desktop"}},
     )
 
-    assert response.status_code == 410
+    assert response.status_code == 404
     assert "text/event-stream" not in response.headers.get("content-type", "")
-    body = response.json()
-    assert body["error"]["code"] == "SSE_REMOVED"
-    assert body["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
-    assert body["error"]["details"]["transport"] == "nat-jetstream"
 
 
 @pytest.mark.asyncio
-async def test_pm_chat_stream_does_not_execute_legacy_generator(
+async def test_pm_chat_stream_route_does_not_execute_legacy_generator(
     client: AsyncClient,
     mock_settings: Settings,
 ) -> None:
@@ -296,21 +292,19 @@ async def test_pm_chat_stream_does_not_execute_legacy_generator(
         json={"message": "hello"},
     )
 
-    assert response.status_code == 410
+    assert response.status_code == 404
     assert not hasattr(pm_chat, "execute_role_chat_streaming")
 
 
 @pytest.mark.asyncio
-async def test_pm_chat_stream_empty_message_fails_closed(client: AsyncClient) -> None:
-    """Empty message on removed stream route still returns the transport removal contract."""
+async def test_pm_chat_stream_empty_message_route_absent(client: AsyncClient) -> None:
+    """Empty message on removed stream route still returns route absence."""
     response = await client.post(
         "/v2/pm/chat/stream",
         json={"message": ""},
     )
-    assert response.status_code == 410
-    body = response.json()
-    assert body["error"]["code"] == "SSE_REMOVED"
-    assert body["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
+    assert response.status_code == 404
+    assert "text/event-stream" not in response.headers.get("content-type", "")
 
 
 # ---------------------------------------------------------------------------

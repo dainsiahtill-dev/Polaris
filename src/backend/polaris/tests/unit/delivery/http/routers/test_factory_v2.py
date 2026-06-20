@@ -3,7 +3,7 @@
 Covers GET /v2/factory/runs, POST /v2/factory/runs,
 GET /v2/factory/runs/{run_id}, GET /v2/factory/runs/{run_id}/events,
 GET /v2/factory/runs/{run_id}/audit-bundle,
-GET /v2/factory/runs/{run_id}/stream,
+removed legacy GET /v2/factory/runs/{run_id}/stream,
 POST /v2/factory/runs/{run_id}/control,
 and GET /v2/factory/runs/{run_id}/artifacts.
 External services are mocked to avoid storage and orchestration dependencies.
@@ -660,32 +660,26 @@ async def test_get_factory_run_audit_bundle_not_found(client: AsyncClient) -> No
 
 
 # ---------------------------------------------------------------------------
-# GET /v2/factory/runs/{run_id}/stream
+# Removed legacy GET /v2/factory/runs/{run_id}/stream route
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_stream_factory_run_events_headers(client: AsyncClient) -> None:
-    """GET /v2/factory/runs/{run_id}/stream should fail closed to runtime WS."""
+async def test_stream_factory_run_events_route_is_not_registered(client: AsyncClient) -> None:
+    """GET /v2/factory/runs/{run_id}/stream must not exist."""
     response = await client.get("/v2/factory/runs/factory_abc/stream")
 
-    assert response.status_code == 410
+    assert response.status_code == 404
     assert "text/event-stream" not in response.headers.get("content-type", "")
-    payload = response.json()
-    assert payload["error"]["code"] == "SSE_REMOVED"
-    assert payload["error"]["details"]["replacement"] == "/v2/ws/runtime"
-    assert payload["error"]["details"]["transport"] == "nat-jetstream"
 
 
 @pytest.mark.asyncio
-async def test_stream_factory_run_events_not_found(client: AsyncClient) -> None:
+async def test_stream_factory_run_events_missing_run_still_route_absent(client: AsyncClient) -> None:
     """Removed stream route should not leak run existence checks."""
     response = await client.get("/v2/factory/runs/missing/stream")
 
-    assert response.status_code == 410
-    data = response.json()
-    assert data["error"]["code"] == "SSE_REMOVED"
-    assert data["error"]["details"]["replacement"] == "/v2/ws/runtime"
+    assert response.status_code == 404
+    assert "text/event-stream" not in response.headers.get("content-type", "")
 
 
 # ---------------------------------------------------------------------------

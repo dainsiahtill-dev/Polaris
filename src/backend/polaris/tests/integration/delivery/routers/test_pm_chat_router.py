@@ -112,8 +112,8 @@ class TestPMChatRouter:
         payload: dict[str, Any] = response.json()
         assert payload["error"]["message"] == "Generation failed"
 
-    async def test_chat_stream_fails_closed_to_nat_jetstream(self) -> None:
-        """POST /v2/pm/chat/stream must not expose a second realtime transport."""
+    async def test_chat_stream_route_is_not_registered(self) -> None:
+        """POST /v2/pm/chat/stream must not exist as a second realtime transport."""
         app = _build_app()
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -122,15 +122,11 @@ class TestPMChatRouter:
                 json={"message": "Hello PM", "context": {"source": "pm-integration"}},
             )
 
-        assert response.status_code == 410
+        assert response.status_code == 404
         assert "text/event-stream" not in response.headers.get("content-type", "")
-        payload: dict[str, Any] = response.json()
-        assert payload["error"]["code"] == "SSE_REMOVED"
-        assert payload["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
-        assert payload["error"]["details"]["transport"] == "nat-jetstream"
 
-    async def test_chat_stream_empty_message_still_fails_closed(self) -> None:
-        """POST /v2/pm/chat/stream should fail closed before streaming validation."""
+    async def test_chat_stream_empty_message_route_absent(self) -> None:
+        """POST /v2/pm/chat/stream should be absent before request validation."""
         app = _build_app()
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -138,10 +134,8 @@ class TestPMChatRouter:
                 json={},
             )
 
-        assert response.status_code == 410
-        payload: dict[str, Any] = response.json()
-        assert payload["error"]["code"] == "SSE_REMOVED"
-        assert payload["error"]["details"]["replacement"] == "/v2/role/pm/chat/jetstream"
+        assert response.status_code == 404
+        assert "text/event-stream" not in response.headers.get("content-type", "")
 
     async def test_status_returns_200(self) -> None:
         """GET /v2/pm/chat/status returns 200 with status info."""

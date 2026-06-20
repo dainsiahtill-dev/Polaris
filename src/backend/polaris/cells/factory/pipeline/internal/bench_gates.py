@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -42,6 +43,7 @@ _ROLE_FAMILIES: dict[str, tuple[tuple[str, ...], ...]] = {
     "director": (("qwen", "3.6", "27"), ("qwen3.6",), ("qwen", "27b")),
 }
 _PY_ENTRYPOINT_NAMES = ("main.py", "app.py", "cli.py", "__main__.py")
+_CPP_SOURCE_SUFFIXES = (".cc", ".cpp", ".cxx")
 _ENTRYPOINT_FAILURE_MARKER_RE = re.compile(r"(?im)^\s*FAIL(?:ED)?(?:\b|:)")
 _FAILURE_CATEGORIES = {
     "pm_contract",
@@ -221,6 +223,237 @@ def _find_python_entrypoint(workspace: Path, code_files: list[str]) -> str:
     return ""
 
 
+def _files_with_suffix(code_files: list[str], suffixes: tuple[str, ...]) -> list[str]:
+    lowered = tuple(suffix.lower() for suffix in suffixes)
+    return [rel for rel in code_files if rel.lower().endswith(lowered)]
+
+
+def _which_any(*names: str) -> str:
+    for name in names:
+        resolved = shutil.which(name)
+        if resolved:
+            return resolved
+    return ""
+
+
+def _cli_smoke_result(kind: str, entrypoint: str, result: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {"kind": kind, "entrypoint": entrypoint, **result}
+    if _entrypoint_has_failure_marker(payload):
+        return _mark_entrypoint_failure(payload)
+    if result.get("ok"):
+        return payload
+    output = f"{result.get('stdout_tail') or ''}\n{result.get('stderr_tail') or ''}".lower()
+    if result.get("timeout"):
+        payload["ok"] = True
+        payload["started"] = True
+        return payload
+    if (
+        result.get("returncode") in {1, 2}
+        and "usage" in output
+        and "traceback" not in output
+        and "syntaxerror" not in output
+        and "exception" not in output
+    ):
+        payload["ok"] = True
+        payload["usage_screen"] = True
+        return payload
+    return payload
+
+
+def _go_command(workspace: Path, go_files: list[str]) -> list[str]:
+    go = shutil.which("go")
+    if not go:
+        return []
+    if (workspace / "go.mod").is_file():
+        return [go, "test", "./..."]
+    return [go, "test", *go_files[:80]]
+
+
+def _rust_compile_command(workspace: Path, rust_files: list[str]) -> list[str]:
+    cargo = shutil.which("cargo")
+    if (workspace / "Cargo.toml").is_file() and cargo:
+        return [cargo, "check", "--quiet"]
+    rustc = shutil.which("rustc")
+    if not rustc:
+        return []
+    root = next(
+        (rel for rel in ("src/main.rs", "main.rs", "src/lib.rs", "lib.rs") if rel in rust_files),
+        rust_files[0] if rust_files else "",
+    )
+    return [rustc, "--edition=2021", "--emit=metadata", root] if root else []
+
+
+def _run_language_build_gate(workspace: Path, code_files: list[str], *, timeout_s: int) -> tuple[bool, str, list[dict[str, Any]]]:
+    ts_files = [rel for rel in _files_with_suffix(code_files, (".ts", ".tsx")) if not rel.endswith(".d.ts")]
+    if ts_files:
+        tsc = shutil.which("tsc")
+        if not tsc:
+            return False, "tsc unavailable for TypeScript project", []
+        cmd = _run_command(
+            [
+                tsc,
+                "--noEmit",
+                "--target",
+                "ES2020",
+                "--module",
+                "ESNext",
+                "--jsx",
+                "react-jsx",
+                *ts_files[:80],
+            ],
+            workspace,
+            timeout_s=max(10, int(timeout_s)),
+        )
+        cmd["phase"] = "build_test_lint"
+        return bool(cmd.get("ok")), "tsc --noEmit passed" if cmd.get("ok") else "tsc --noEmit failed", [cmd]
+
+    go_files = _files_with_suffix(code_files, (".go",))
+    if go_files:
+        command = _go_command(workspace, go_files)
+        if not command:
+            return False, "go unavailable for Go project", []
+        cmd = _run_command(command, workspace, timeout_s=max(10, int(timeout_s)))
+        cmd["phase"] = "build_test_lint"
+        return bool(cmd.get("ok")), "go test passed" if cmd.get("ok") else "go test failed", [cmd]
+
+    rust_files = _files_with_suffix(code_files, (".rs",))
+    if rust_files:
+        command = _rust_compile_command(workspace, rust_files)
+        if not command:
+            return False, "rustc/cargo unavailable for Rust project", []
+        cmd = _run_command(command, workspace, timeout_s=max(10, int(timeout_s)))
+        cmd["phase"] = "build_test_lint"
+        return bool(cmd.get("ok")), "Rust compile check passed" if cmd.get("ok") else "Rust compile check failed", [cmd]
+
+    cpp_files = _files_with_suffix(code_files, _CPP_SOURCE_SUFFIXES)
+    if cpp_files:
+        compiler = _which_any("g++", "c++")
+        if not compiler:
+            return False, "g++/c++ unavailable for C++ project", []
+        commands: list[dict[str, Any]] = []
+        failures: list[str] = []
+        for rel in cpp_files[:20]:
+            cmd = _run_command(
+                [compiler, "-std=c++17", "-fsyntax-only", rel],
+                workspace,
+                timeout_s=max(10, int(timeout_s)),
+            )
+            cmd["phase"] = "build_test_lint"
+            commands.append(cmd)
+            if not cmd.get("ok"):
+                failures.append(rel)
+        ok = not failures
+        return ok, "C++ syntax check passed" if ok else f"C++ syntax check failed: {', '.join(failures[:3])}", commands
+
+    java_files = _files_with_suffix(code_files, (".java",))
+    if java_files:
+        javac = shutil.which("javac")
+        if not javac:
+            return False, "javac unavailable for Java project", []
+        with tempfile.TemporaryDirectory(prefix="polaris-factory-javac-") as out_dir:
+            cmd = _run_command(
+                [javac, "-encoding", "UTF-8", "-d", out_dir, *java_files[:120]],
+                workspace,
+                timeout_s=max(10, int(timeout_s)),
+            )
+        cmd["phase"] = "build_test_lint"
+        return bool(cmd.get("ok")), "javac compile passed" if cmd.get("ok") else "javac compile failed", [cmd]
+
+    return False, "no language build command was discovered", []
+
+
+def _smoke_go_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -> dict[str, Any]:
+    go_files = _files_with_suffix(code_files, (".go",))
+    go = shutil.which("go")
+    if not go or not go_files:
+        return {"ok": False, "kind": "go_cli", "detail": "go CLI entrypoint unavailable"}
+    if (workspace / "go.mod").is_file():
+        command = [go, "run", ".", "--help"]
+        entrypoint = "go run ."
+    elif "main.go" in go_files:
+        command = [go, "run", "main.go", "--help"]
+        entrypoint = "main.go"
+    else:
+        return {"ok": False, "kind": "go_cli", "detail": "no main.go or go.mod entrypoint discovered"}
+    return _cli_smoke_result("go_cli", entrypoint, _run_command(command, workspace, timeout_s=min(max(3, int(timeout_s)), 10)))
+
+
+def _smoke_rust_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -> dict[str, Any]:
+    rust_files = _files_with_suffix(code_files, (".rs",))
+    if not rust_files:
+        return {"ok": False, "kind": "rust_cli", "detail": "no Rust entrypoint discovered"}
+    cargo = shutil.which("cargo")
+    if (workspace / "Cargo.toml").is_file() and cargo:
+        return _cli_smoke_result(
+            "rust_cli",
+            "cargo run",
+            _run_command([cargo, "run", "--quiet", "--", "--help"], workspace, timeout_s=min(max(3, int(timeout_s)), 10)),
+        )
+    rustc = shutil.which("rustc")
+    main_rel = next((rel for rel in ("src/main.rs", "main.rs") if rel in rust_files), "")
+    if not rustc or not main_rel:
+        return {"ok": False, "kind": "rust_cli", "detail": "rustc or main.rs entrypoint unavailable"}
+    with tempfile.TemporaryDirectory(prefix="polaris-factory-rust-") as out_dir:
+        binary = str(Path(out_dir) / "app")
+        compile_result = _run_command([rustc, "--edition=2021", main_rel, "-o", binary], workspace, timeout_s=max(10, int(timeout_s)))
+        if not compile_result.get("ok"):
+            return {"kind": "rust_cli", "entrypoint": main_rel, "compile": compile_result, **compile_result}
+        result = _run_command([binary, "--help"], workspace, timeout_s=min(max(3, int(timeout_s)), 10))
+    payload = _cli_smoke_result("rust_cli", main_rel, result)
+    payload["compile"] = compile_result
+    return payload
+
+
+def _smoke_cpp_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -> dict[str, Any]:
+    compiler = _which_any("g++", "c++")
+    if not compiler:
+        return {"ok": False, "kind": "cpp_cli", "detail": "g++/c++ unavailable for C++ entrypoint"}
+    main_rel = ""
+    for rel in _files_with_suffix(code_files, _CPP_SOURCE_SUFFIXES):
+        try:
+            text = (workspace / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "int main" in text:
+            main_rel = rel
+            break
+    if not main_rel:
+        return {"ok": False, "kind": "cpp_cli", "detail": "no C++ int main entrypoint discovered"}
+    with tempfile.TemporaryDirectory(prefix="polaris-factory-cpp-") as out_dir:
+        binary = str(Path(out_dir) / "app")
+        compile_result = _run_command([compiler, "-std=c++17", main_rel, "-o", binary], workspace, timeout_s=max(10, int(timeout_s)))
+        if not compile_result.get("ok"):
+            return {"kind": "cpp_cli", "entrypoint": main_rel, "compile": compile_result, **compile_result}
+        result = _run_command([binary, "--help"], workspace, timeout_s=min(max(3, int(timeout_s)), 10))
+    payload = _cli_smoke_result("cpp_cli", main_rel, result)
+    payload["compile"] = compile_result
+    return payload
+
+
+def _smoke_java_cli(workspace: Path, code_files: list[str], *, timeout_s: int) -> dict[str, Any]:
+    javac = shutil.which("javac")
+    java = shutil.which("java")
+    if not javac or not java:
+        return {"ok": False, "kind": "java_cli", "detail": "javac/java unavailable for Java entrypoint"}
+    java_files = _files_with_suffix(code_files, (".java",))
+    if not java_files:
+        return {"ok": False, "kind": "java_cli", "detail": "no Java entrypoint discovered"}
+    main_rel = next((rel for rel in java_files if Path(rel).name == "Main.java"), java_files[0])
+    main_class = Path(main_rel).stem
+    with tempfile.TemporaryDirectory(prefix="polaris-factory-java-") as out_dir:
+        compile_result = _run_command(
+            [javac, "-encoding", "UTF-8", "-d", out_dir, *java_files[:120]],
+            workspace,
+            timeout_s=max(10, int(timeout_s)),
+        )
+        if not compile_result.get("ok"):
+            return {"kind": "java_cli", "entrypoint": main_rel, "compile": compile_result, **compile_result}
+        result = _run_command([java, "-cp", out_dir, main_class, "--help"], workspace, timeout_s=min(max(3, int(timeout_s)), 10))
+    payload = _cli_smoke_result("java_cli", main_rel, result)
+    payload["compile"] = compile_result
+    return payload
+
+
 def _looks_like_python_test(rel_path: str) -> bool:
     path = Path(rel_path)
     name = path.name
@@ -384,6 +617,21 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
     elif any(rel.endswith(".html") for rel in code_files):
         environment_ok = True
         environment_detail = "static web project has no dependency manifest"
+    elif _files_with_suffix(code_files, (".go",)):
+        environment_ok = bool(shutil.which("go"))
+        environment_detail = "go toolchain available" if environment_ok else "go toolchain unavailable"
+    elif _files_with_suffix(code_files, (".rs",)):
+        environment_ok = bool(_which_any("cargo", "rustc"))
+        environment_detail = "rust toolchain available" if environment_ok else "rust toolchain unavailable"
+    elif _files_with_suffix(code_files, _CPP_SOURCE_SUFFIXES):
+        environment_ok = bool(_which_any("g++", "c++"))
+        environment_detail = "C++ compiler available" if environment_ok else "g++/c++ unavailable"
+    elif _files_with_suffix(code_files, (".java",)):
+        environment_ok = bool(shutil.which("javac") and shutil.which("java"))
+        environment_detail = "Java toolchain available" if environment_ok else "javac/java unavailable"
+    elif _files_with_suffix(code_files, (".ts", ".tsx")):
+        environment_ok = bool(shutil.which("tsc"))
+        environment_detail = "TypeScript compiler available" if environment_ok else "tsc unavailable"
 
     build_command_ok = False
     build_detail = "no build/test/lint command was discovered"
@@ -434,6 +682,16 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
                 failures.append(rel)
         build_command_ok = bool(js_files) and not failures
         build_detail = "node --check passed" if build_command_ok else f"node --check failed: {', '.join(failures[:3])}"
+    if not build_command_ok:
+        language_ok, language_detail, language_commands = _run_language_build_gate(
+            workspace,
+            code_files,
+            timeout_s=timeout_s,
+        )
+        commands.extend(language_commands)
+        if language_detail != "no language build command was discovered":
+            build_command_ok = language_ok
+            build_detail = language_detail
 
     entrypoint: dict[str, Any] = {"ok": False, "kind": "", "detail": "no CLI/Web/API entrypoint discovered"}
     html_entry = _find_html_entrypoint(workspace, code_files)
@@ -451,6 +709,14 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
         py_entry = _find_python_entrypoint(workspace, code_files)
         if py_entry:
             entrypoint = _smoke_python_cli(workspace, py_entry, timeout_s=timeout_s)
+        elif _files_with_suffix(code_files, (".go",)):
+            entrypoint = _smoke_go_cli(workspace, code_files, timeout_s=timeout_s)
+        elif _files_with_suffix(code_files, (".rs",)):
+            entrypoint = _smoke_rust_cli(workspace, code_files, timeout_s=timeout_s)
+        elif _files_with_suffix(code_files, _CPP_SOURCE_SUFFIXES):
+            entrypoint = _smoke_cpp_cli(workspace, code_files, timeout_s=timeout_s)
+        elif _files_with_suffix(code_files, (".java",)):
+            entrypoint = _smoke_java_cli(workspace, code_files, timeout_s=timeout_s)
 
     if (
         not build_command_ok
@@ -844,6 +1110,11 @@ def _category_signature(category: str, reason: str) -> str:
     return f"{stable_category}:{stable_reason}"
 
 
+def _check_failure_is_runtime_environment(check: dict[str, Any]) -> bool:
+    text = json.dumps(check, ensure_ascii=False, default=str)
+    return bool(re.search(r"\bunavailable\b|not found|toolchain unavailable|compiler unavailable", text, re.IGNORECASE))
+
+
 def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     """Assign one stable root-cause category to a per-project bench record."""
     if record.get("all_checks_passed"):
@@ -892,7 +1163,9 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
         else:
             category, reason = "runtime_environment", f"chain_state.{record.get('chain_state') or 'unknown'}"
     elif _check_failures(record):
-        category, reason = "target_project_baseline", str(_check_failures(record)[0].get("check") or "check_failed")
+        first_check = _check_failures(record)[0]
+        reason = str(first_check.get("check") or "check_failed")
+        category = "runtime_environment" if _check_failure_is_runtime_environment(first_check) else "target_project_baseline"
     else:
         failed_gates = _gate_failures(record)
         category = "unknown"

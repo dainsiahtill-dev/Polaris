@@ -147,10 +147,6 @@ describe('useInterviewStream', () => {
         }),
       }),
     );
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      'http://127.0.0.1:49977/v2/llm/interview/stream',
-      expect.anything(),
-    );
     expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledWith([
       { channel: 'llm-interview:interactive-1', tailLines: 0 },
     ]);

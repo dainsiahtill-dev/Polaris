@@ -228,7 +228,7 @@ def test_cancel_factory_run_without_workspace(
     assert payload["phase"] == "cancelled"
 
 
-def test_stream_route_fails_closed_to_runtime_websocket(
+def test_stream_route_is_not_registered(
     client: TestClient,
     service: FactoryRunService,
 ) -> None:
@@ -238,12 +238,8 @@ def test_stream_route_fails_closed_to_runtime_websocket(
 
     response = client.get(f"/v2/factory/runs/{run.id}/stream")
 
-    assert response.status_code == 410
+    assert response.status_code == 404
     assert "text/event-stream" not in response.headers.get("content-type", "")
-    payload = response.json()
-    assert payload["error"]["code"] == "SSE_REMOVED"
-    assert payload["error"]["details"]["replacement"] == "/v2/ws/runtime"
-    assert payload["error"]["details"]["transport"] == "nat-jetstream"
 
 
 def test_start_from_director_builds_director_to_qa_chain(

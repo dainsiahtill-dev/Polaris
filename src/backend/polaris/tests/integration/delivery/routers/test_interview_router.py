@@ -294,8 +294,8 @@ class TestInterviewRouterMockedHappyPath:
         assert payload["ok"] is True
         assert payload["cancelled"] is True
 
-    def test_interview_stream_fails_closed_to_nat_jetstream(self) -> None:
-        """POST /llm/interview/stream must not expose HTTP SSE."""
+    def test_interview_stream_route_is_not_registered(self) -> None:
+        """POST /llm/interview/stream must not exist."""
         client = _build_client()
 
         response = client.post(
@@ -309,10 +309,5 @@ class TestInterviewRouterMockedHappyPath:
             },
         )
 
-        assert response.status_code == 410
+        assert response.status_code == 404
         assert "text/event-stream" not in response.headers.get("content-type", "")
-        payload: dict[str, Any] = response.json()
-        detail = payload["detail"]
-        assert detail["code"] == "SSE_REMOVED"
-        assert detail["details"]["replacement"] == "/v2/llm/interview/jetstream"
-        assert detail["details"]["transport"] == "nat-jetstream"

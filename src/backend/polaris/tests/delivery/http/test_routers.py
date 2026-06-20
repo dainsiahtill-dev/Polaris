@@ -1,12 +1,11 @@
 """Comprehensive tests for polaris.delivery.http.routers module.
 
-This module provides test coverage for the 6 key routers in polaris/delivery/http/routers/:
-1. stream_router.py - SSE streaming endpoints
-2. _shared.py - Shared utilities (409 error handling, etc)
-3. pm_management.py (tasks_router) - Task management endpoints
-4. role_session.py (session_router) - Session management
-5. system.py / primary.py (health_router) - Health check endpoints
-6. files.py (files_router) - File operations
+This module provides test coverage for the key routers in polaris/delivery/http/routers/:
+1. _shared.py - Shared utilities (409 error handling, etc)
+2. pm_management.py (tasks_router) - Task management endpoints
+3. role_session.py (session_router) - Session management
+4. system.py / primary.py (health_router) - Health check endpoints
+5. files.py (files_router) - File operations
 
 Uses pytest and pytest-asyncio with comprehensive coverage of:
 - Happy path tests for each endpoint
@@ -29,7 +28,6 @@ from polaris.delivery.http.routers import (
     pm_management as pm_management_router,
     primary as primary_router,
     role_session as role_session_router,
-    stream_router,
     system as system_router,
 )
 from polaris.delivery.http.routers._shared import (
@@ -141,113 +139,6 @@ class TestSharedUtilities:
         assert result["code"] == "ROLES_NOT_READY"
         assert result["message"] == "Required roles not ready"
         assert result["details"] == {"missing_roles": ["director"]}
-
-
-# =============================================================================
-# Test: stream_router.py - removed legacy HTTP stream endpoints
-# =============================================================================
-
-
-class TestStreamRouter:
-    """Tests for stream_router.py fail-closed legacy stream endpoints."""
-
-    def _build_stream_app(self) -> FastAPI:
-        """Build app with stream router and auth override."""
-        app = _build_minimal_app()
-        _override_auth(app)
-        app.include_router(stream_router.router)
-        return app
-
-    def test_stream_health_returns_healthy_status(self) -> None:
-        """GET /v2/stream/health should report the legacy stream as removed."""
-        app = self._build_stream_app()
-        client = TestClient(app)
-
-        response = client.get("/v2/stream/health")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "removed"
-        assert data["streaming"] == "disabled"
-        assert data["transport"] == "nat-jetstream"
-
-    def test_stream_chat_requires_auth(self) -> None:
-        """POST /v2/stream/chat should require authentication."""
-        app = _build_minimal_app()
-        app.include_router(stream_router.router)
-        # Don't override auth
-
-        client = TestClient(app)
-
-        response = client.post(
-            "/v2/stream/chat",
-            json={"message": "Hello"},
-        )
-
-        assert response.status_code == 401
-
-    def test_stream_chat_request_validation(self) -> None:
-        """POST /v2/stream/chat should validate request body."""
-        app = self._build_stream_app()
-        client = TestClient(app)
-
-        # Missing required 'message' field
-        response = client.post(
-            "/v2/stream/chat",
-            json={"role": "user"},
-        )
-
-        assert response.status_code == 422  # Validation error
-
-    def test_stream_chat_fails_closed_to_nat_jetstream(self) -> None:
-        """POST /v2/stream/chat must not expose a second realtime transport."""
-        app = self._build_stream_app()
-        client = TestClient(app)
-
-        response = client.post(
-            "/v2/stream/chat",
-            json={
-                "message": "Hello",
-                "role": "user",
-                "provider_id": "openai",
-                "model": "gpt-4",
-            },
-        )
-
-        assert response.status_code == 410
-        body = response.json()
-        assert body["code"] == "SSE_REMOVED"
-        assert body["details"]["transport"] == "nat-jetstream"
-        assert body["details"]["replacement"] == "/v2/role/{role}/chat/jetstream"
-
-    def test_stream_chat_backpressure_requires_auth(self) -> None:
-        """POST /v2/stream/chat/backpressure should require authentication."""
-        app = _build_minimal_app()
-        app.include_router(stream_router.router)
-
-        client = TestClient(app)
-
-        response = client.post(
-            "/v2/stream/chat/backpressure",
-            json={"message": "Hello"},
-        )
-
-        assert response.status_code == 401
-
-    def test_stream_chat_backpressure_fails_closed_to_nat_jetstream(self) -> None:
-        """POST /v2/stream/chat/backpressure must fail closed."""
-        app = self._build_stream_app()
-        client = TestClient(app)
-
-        response = client.post(
-            "/v2/stream/chat/backpressure",
-            json={"message": "Hello"},
-        )
-
-        assert response.status_code == 410
-        body = response.json()
-        assert body["code"] == "SSE_REMOVED"
-        assert body["details"]["transport"] == "nat-jetstream"
 
 
 # =============================================================================
@@ -1454,7 +1345,6 @@ class TestRouterRegistration:
 
     def test_all_routers_have_router_instance(self) -> None:
         """Each router module should have a router instance."""
-        assert hasattr(stream_router, "router")
         assert hasattr(system_router, "router")
         assert hasattr(pm_management_router, "router")
         assert hasattr(role_session_router, "router")
@@ -1463,10 +1353,6 @@ class TestRouterRegistration:
 
     def test_routers_use_correct_api_prefixes(self) -> None:
         """Routers should use correct path prefixes."""
-        # Check stream router has v2/stream prefix
-        routes = [r.path for r in stream_router.router.routes]
-        assert any("stream" in r for r in routes)
-
         # Check PM management router has /pm prefix
         # The router is created with prefix="/pm", so routes include it
         routes = [r.path for r in pm_management_router.router.routes]

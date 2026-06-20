@@ -535,7 +535,7 @@ async def test_docs_init_apply_unsafe_path(client: AsyncClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /v2/docs/init/dialogue/stream
+# Removed legacy POST /v2/docs/init/dialogue/stream route
 # ---------------------------------------------------------------------------
 
 
@@ -620,23 +620,19 @@ async def test_docs_init_dialogue_jetstream_starts_nat_channel_and_publishes_eve
 
 
 @pytest.mark.asyncio
-async def test_docs_init_dialogue_stream_headers(client: AsyncClient) -> None:
-    """Legacy dialogue stream must fail closed instead of exposing SSE."""
+async def test_docs_init_dialogue_stream_route_is_not_registered(client: AsyncClient) -> None:
+    """Legacy dialogue stream route must not exist."""
     response = await client.post(
         "/v2/docs/init/dialogue/stream",
         json={"message": "hello", "session_id": "docs-dialogue-legacy"},
     )
 
-    assert response.status_code == 410
+    assert response.status_code == 404
     assert "text/event-stream" not in response.headers.get("content-type", "")
-    data = response.json()
-    assert data["error"]["code"] == "SSE_REMOVED"
-    assert data["error"]["details"]["replacement"] == "/v2/docs/init/dialogue/jetstream"
-    assert data["error"]["details"]["transport"] == "nat-jetstream"
 
 
 # ---------------------------------------------------------------------------
-# POST /v2/docs/init/preview/stream
+# Removed legacy POST /v2/docs/init/preview/stream route
 # ---------------------------------------------------------------------------
 
 
@@ -717,19 +713,15 @@ async def test_docs_init_preview_jetstream_starts_nat_channel_and_publishes_even
 
 
 @pytest.mark.asyncio
-async def test_docs_init_preview_stream_headers(client: AsyncClient) -> None:
-    """Legacy preview stream must fail closed instead of exposing SSE."""
+async def test_docs_init_preview_stream_route_is_not_registered(client: AsyncClient) -> None:
+    """Legacy preview stream route must not exist."""
     response = await client.post(
         "/v2/docs/init/preview/stream",
         json={"mode": "minimal", "goal": "Build", "session_id": "docs-preview-legacy"},
     )
 
-    assert response.status_code == 410
+    assert response.status_code == 404
     assert "text/event-stream" not in response.headers.get("content-type", "")
-    data = response.json()
-    assert data["error"]["code"] == "SSE_REMOVED"
-    assert data["error"]["details"]["replacement"] == "/v2/docs/init/preview/jetstream"
-    assert data["error"]["details"]["transport"] == "nat-jetstream"
 
 
 # ---------------------------------------------------------------------------

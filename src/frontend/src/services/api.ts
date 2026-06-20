@@ -586,8 +586,6 @@ export type {
   SessionMessageRequest,
   SessionMessageResponse,
   SessionMemoryResponse,
-  StreamChatRequest,
-  StreamChatResponse,
   ConversationV2,
   ConversationMessageV2,
   ConversationListResponseV2,

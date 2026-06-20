@@ -8,7 +8,8 @@ HTML present, JS syntax, minimum file counts).
 
 Check vocabulary (mirrors ``scripts/factory_bench/projects_v1.json``):
 ``py_compile`` / ``html`` / ``js_syntax`` / ``min_files:N`` /
-``package_scripts``.
+``package_scripts`` / ``ts_syntax`` / ``go_compile`` / ``rust_compile`` /
+``cpp_compile`` / ``java_compile``.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 from typing import Any
 
 FACTORY_AUDIT_SCHEMA_VERSION = "factory-audit/1"
@@ -81,6 +83,25 @@ def _iter_files(workspace: str, suffix: str) -> list[str]:
             if filename.lower().endswith(suffix):
                 matches.append(os.path.join(current_root, filename))
     return sorted(matches)
+
+
+def _iter_files_any(workspace: str, suffixes: tuple[str, ...]) -> list[str]:
+    matches: list[str] = []
+    lowered = tuple(suffix.lower() for suffix in suffixes)
+    for current_root, dirnames, filenames in os.walk(workspace):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
+        for filename in filenames:
+            if filename.lower().endswith(lowered):
+                matches.append(os.path.join(current_root, filename))
+    return sorted(matches)
+
+
+def _rel_paths(workspace: str, paths: list[str]) -> list[str]:
+    return [os.path.relpath(path, workspace).replace("\\", "/") for path in paths]
+
+
+def _tool_unavailable_detail(tool: str, language: str, count: int) -> str:
+    return f"{tool} unavailable — {count} {language} file(s) present but compile check could not run"
 
 
 def _check_py_compile(workspace: str) -> tuple[bool, str]:
@@ -145,6 +166,136 @@ def _check_js_syntax(workspace: str) -> tuple[bool, str]:
     if failures:
         return False, f"{len(failures)}/{len(js_files)} js files fail --check: " + "; ".join(failures[:3])
     return True, f"{len(js_files)} js files pass node --check"
+
+
+def _check_ts_syntax(workspace: str) -> tuple[bool, str]:
+    ts_files = [path for path in _iter_files_any(workspace, (".ts", ".tsx")) if not path.endswith(".d.ts")]
+    if not ts_files:
+        return False, "no .ts/.tsx files found"
+    tsc = shutil.which("tsc")
+    if not tsc:
+        return False, _tool_unavailable_detail("tsc", "TypeScript", len(ts_files))
+    cmd = [
+        tsc,
+        "--noEmit",
+        "--target",
+        "ES2020",
+        "--module",
+        "ESNext",
+        "--jsx",
+        "react-jsx",
+        *_rel_paths(workspace, ts_files[:80]),
+    ]
+    proc = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True, timeout=60, check=False)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        return False, "tsc --noEmit failed: " + (detail[0] if detail else "unknown TypeScript error")
+    return True, f"{len(ts_files)} TypeScript files pass tsc --noEmit"
+
+
+def _check_go_compile(workspace: str) -> tuple[bool, str]:
+    go_files = _iter_files(workspace, ".go")
+    if not go_files:
+        return False, "no .go files found"
+    go = shutil.which("go")
+    if not go:
+        return False, _tool_unavailable_detail("go", "Go", len(go_files))
+    if os.path.exists(os.path.join(workspace, "go.mod")):
+        cmd = [go, "test", "./..."]
+    else:
+        cmd = [go, "test", *_rel_paths(workspace, go_files[:80])]
+    proc = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True, timeout=60, check=False)
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        return False, "go test compile failed: " + (detail[0] if detail else "unknown Go error")
+    return True, f"{len(go_files)} Go files compile via go test"
+
+
+def _check_rust_compile(workspace: str) -> tuple[bool, str]:
+    rust_files = _iter_files(workspace, ".rs")
+    if not rust_files:
+        return False, "no .rs files found"
+    cargo = shutil.which("cargo")
+    if os.path.exists(os.path.join(workspace, "Cargo.toml")) and cargo:
+        proc = subprocess.run(
+            [cargo, "check", "--quiet"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip().splitlines()
+            return False, "cargo check failed: " + (detail[0] if detail else "unknown Rust error")
+        return True, f"{len(rust_files)} Rust files compile via cargo check"
+    rustc = shutil.which("rustc")
+    if not rustc:
+        return False, _tool_unavailable_detail("rustc/cargo", "Rust", len(rust_files))
+    rels = _rel_paths(workspace, rust_files)
+    root = next(
+        (rel for rel in ("src/main.rs", "main.rs", "src/lib.rs", "lib.rs") if rel in rels),
+        rels[0],
+    )
+    proc = subprocess.run(
+        [rustc, "--edition=2021", "--emit=metadata", root],
+        cwd=workspace,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        return False, "rustc metadata compile failed: " + (detail[0] if detail else "unknown Rust error")
+    return True, f"{len(rust_files)} Rust files compile via rustc metadata"
+
+
+def _check_cpp_compile(workspace: str) -> tuple[bool, str]:
+    cpp_files = _iter_files_any(workspace, (".cc", ".cpp", ".cxx"))
+    if not cpp_files:
+        return False, "no C++ source files found"
+    compiler = shutil.which("g++") or shutil.which("c++")
+    if not compiler:
+        return False, _tool_unavailable_detail("g++/c++", "C++", len(cpp_files))
+    failures: list[str] = []
+    for rel in _rel_paths(workspace, cpp_files[:80]):
+        proc = subprocess.run(
+            [compiler, "-std=c++17", "-fsyntax-only", rel],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout).strip().splitlines()
+            failures.append(f"{rel}: {detail[0] if detail else 'syntax error'}")
+    if failures:
+        return False, f"{len(failures)}/{len(cpp_files)} C++ files fail syntax check: " + "; ".join(failures[:3])
+    return True, f"{len(cpp_files)} C++ files pass g++ -fsyntax-only"
+
+
+def _check_java_compile(workspace: str) -> tuple[bool, str]:
+    java_files = _iter_files(workspace, ".java")
+    if not java_files:
+        return False, "no .java files found"
+    javac = shutil.which("javac")
+    if not javac:
+        return False, _tool_unavailable_detail("javac", "Java", len(java_files))
+    with tempfile.TemporaryDirectory(prefix="polaris-factory-javac-") as out_dir:
+        proc = subprocess.run(
+            [javac, "-encoding", "UTF-8", "-d", out_dir, *_rel_paths(workspace, java_files[:120])],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        return False, "javac compile failed: " + (detail[0] if detail else "unknown Java error")
+    return True, f"{len(java_files)} Java files compile via javac"
 
 
 def _is_local_script_reference(token: str) -> bool:
@@ -251,6 +402,16 @@ def run_checks(workspace: str, checks: list[str]) -> list[dict[str, Any]]:
             ok, detail = _check_html(workspace)
         elif kind == "js_syntax":
             ok, detail = _check_js_syntax(workspace)
+        elif kind == "ts_syntax":
+            ok, detail = _check_ts_syntax(workspace)
+        elif kind == "go_compile":
+            ok, detail = _check_go_compile(workspace)
+        elif kind == "rust_compile":
+            ok, detail = _check_rust_compile(workspace)
+        elif kind == "cpp_compile":
+            ok, detail = _check_cpp_compile(workspace)
+        elif kind == "java_compile":
+            ok, detail = _check_java_compile(workspace)
         elif kind == "package_scripts":
             ok, detail = _check_package_scripts(workspace)
         elif kind == "runnable_any":

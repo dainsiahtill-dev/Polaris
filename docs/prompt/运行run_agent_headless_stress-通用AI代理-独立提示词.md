@@ -93,7 +93,6 @@ python scripts/run_agent_headless_stress.py --agent-label <AGENT_LABEL>
 - `GET /v2/factory/runs/{run_id}`
 - `GET /v2/factory/runs/{run_id}/events`
 - `GET /v2/factory/runs/{run_id}/artifacts`
-- `GET /v2/factory/runs/{run_id}/stream`
 - `WS /v2/ws/runtime`
 
 如果某个动作不在这份白名单里，就不要做。

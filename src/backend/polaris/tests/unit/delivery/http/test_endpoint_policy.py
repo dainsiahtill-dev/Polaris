@@ -28,8 +28,16 @@ def test_public_probes_are_public_but_only_health_is_low_signal() -> None:
 
 
 def test_v2_probes_are_auth_probes_and_diagnostic_visible() -> None:
-    for path in ("/v2/health", "/v2/ready", "/v2/live", "/v2/stream/health"):
+    for path in ("/v2/health", "/v2/ready", "/v2/live"):
         assert classify_endpoint(path) == EndpointPolicy.AUTH_PROBE
+        assert is_public_probe(path) is False
+        assert is_always_rate_limit_exempt(path) is False
+        assert is_observability_exempt(path) is False
+
+
+def test_removed_stream_paths_are_normal_absent_actions() -> None:
+    for path in ("/v2/stream/health", "/v2/stream/chat", "/v2/stream/chat/backpressure"):
+        assert classify_endpoint(path) == EndpointPolicy.AUTH_ACTION
         assert is_public_probe(path) is False
         assert is_always_rate_limit_exempt(path) is False
         assert is_observability_exempt(path) is False

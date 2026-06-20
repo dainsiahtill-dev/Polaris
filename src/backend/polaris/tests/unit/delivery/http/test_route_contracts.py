@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
-import pytest
 from polaris.delivery.http.app_factory import create_app
 from polaris.delivery.http.schemas.common import PrimaryHealthResponse
 
@@ -55,31 +55,39 @@ def test_enhanced_system_health_is_versioned() -> None:
 
 
 @pytest.mark.parametrize(
-    ("method", "path", "replacement"),
+    ("method", "path"),
     [
-        ("POST", "/v2/role/pm/chat/stream", "/v2/role/pm/chat/jetstream"),
-        ("POST", "/v2/pm/chat/stream", "/v2/role/pm/chat/jetstream"),
-        ("POST", "/v2/stream/chat", "/v2/role/{role}/chat/jetstream"),
-        ("POST", "/v2/stream/chat/backpressure", "/v2/role/{role}/chat/jetstream"),
-        ("POST", "/v2/llm/interview/stream", "/v2/llm/interview/jetstream"),
-        ("POST", "/llm/interview/stream", "/v2/llm/interview/jetstream"),
-        ("POST", "/v2/llm/test/stream", "/v2/llm/test/jetstream"),
-        ("POST", "/llm/test/stream", "/v2/llm/test/jetstream"),
-        ("POST", "/v2/docs/init/dialogue/stream", "/v2/docs/init/dialogue/jetstream"),
-        ("POST", "/docs/init/dialogue/stream", "/v2/docs/init/dialogue/jetstream"),
-        ("POST", "/v2/docs/init/preview/stream", "/v2/docs/init/preview/jetstream"),
-        ("POST", "/docs/init/preview/stream", "/v2/docs/init/preview/jetstream"),
-        ("POST", "/v2/roles/sessions/session-1/messages/stream", "/v2/roles/sessions/session-1/messages/jetstream"),
-        ("POST", "/v2/agent/sessions/session-1/messages/stream", "/v2/roles/sessions/session-1/messages/jetstream"),
-        ("POST", "/v2/agent/v2/sessions/session-1/messages/stream", "/v2/roles/sessions/session-1/messages/jetstream"),
-        ("GET", "/v2/factory/runs/run-1/stream", "/v2/ws/runtime"),
-        ("GET", "/factory/runs/run-1/stream", "/v2/ws/runtime"),
+        ("POST", "/v2/role/pm/chat/stream"),
+        ("POST", "/v2/pm/chat/stream"),
+        ("POST", "/v2/stream/chat"),
+        ("POST", "/v2/stream/chat/backpressure"),
+        ("POST", "/v2/llm/interview/stream"),
+        ("POST", "/llm/interview/stream"),
+        ("POST", "/v2/llm/test/stream"),
+        ("POST", "/llm/test/stream"),
+        ("POST", "/v2/docs/init/dialogue/stream"),
+        ("POST", "/docs/init/dialogue/stream"),
+        ("POST", "/v2/docs/init/preview/stream"),
+        ("POST", "/docs/init/preview/stream"),
+        ("POST", "/v2/roles/sessions/session-1/messages/stream"),
+        ("POST", "/v2/agent/sessions/session-1/messages/stream"),
+        ("POST", "/v2/agent/v2/sessions/session-1/messages/stream"),
+        ("GET", "/v2/factory/runs/run-1/stream"),
+        ("GET", "/factory/runs/run-1/stream"),
     ],
 )
-def test_legacy_http_sse_routes_fail_closed(monkeypatch, method: str, path: str, replacement: str) -> None:
-    """Legacy HTTP SSE routes must not expose a second realtime transport."""
+def test_legacy_http_sse_routes_are_not_registered(monkeypatch, method: str, path: str) -> None:
+    """Legacy HTTP SSE routes must not exist as a second realtime transport."""
     monkeypatch.setenv("KERNELONE_TOKEN", "test-token")
     app = create_app()
+    route_keys = {
+        (registered_method, route.path)
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        for registered_method in (route.methods or set())
+    }
+    assert (method, path) not in route_keys
+
     client = TestClient(app)
     response = client.request(
         method,
@@ -88,13 +96,8 @@ def test_legacy_http_sse_routes_fail_closed(monkeypatch, method: str, path: str,
         json={"message": "hello"},
     )
 
-    assert response.status_code == 410
-    assert response.headers.get("content-type", "").startswith("application/json")
+    assert response.status_code == 404
     assert "text/event-stream" not in response.headers.get("content-type", "")
-    body = response.json()
-    assert body["error"]["code"] == "SSE_REMOVED"
-    assert body["error"]["details"]["replacement"] == replacement
-    assert body["error"]["details"]["transport"] == "nat-jetstream"
 
 
 def test_role_runtime_chat_does_not_expose_queue_streaming_helper() -> None:

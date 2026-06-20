@@ -425,24 +425,20 @@ async def test_v2_send_agent_message(client: AsyncClient) -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /v2/agent/sessions/{session_id}/messages/stream
+# Removed legacy POST /v2/agent/sessions/{session_id}/messages/stream route
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_v2_send_agent_message_stream(client: AsyncClient) -> None:
-    """V2 stream message should fail closed to the role-session Nat-JetStream route."""
+async def test_v2_send_agent_message_stream_route_is_not_registered(client: AsyncClient) -> None:
+    """V2 stream message route must not exist."""
     response = await client.post(
         "/v2/agent/sessions/sess-123/messages/stream",
         json={"message": "hello", "role": "assistant"},
     )
 
-    assert response.status_code == 410
+    assert response.status_code == 404
     assert "text/event-stream" not in response.headers.get("content-type", "")
-    data = response.json()
-    assert data["error"]["code"] == "SSE_REMOVED"
-    assert data["error"]["details"]["replacement"] == "/v2/roles/sessions/sess-123/messages/jetstream"
-    assert data["error"]["details"]["transport"] == "nat-jetstream"
 
 
 # ---------------------------------------------------------------------------
