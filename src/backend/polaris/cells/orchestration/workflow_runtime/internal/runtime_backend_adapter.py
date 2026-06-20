@@ -252,18 +252,17 @@ class RuntimeBackendAdapter:
             input=input if isinstance(input, dict) else {},
         )
 
-        deadline = asyncio.get_running_loop().time() + 60.0
-        while True:
-            status = await self._engine._activity_runner.get_activity_status(activity_id)
-            if status is not None:
-                token = str(status.status or "").strip().lower()
-                if token == "completed":
-                    return status.result
-                if token in {"failed", "cancelled"}:
-                    raise RuntimeError(f"Activity `{activity_name}` failed: {str(status.error or '').strip()}")
-            if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError("Activity timed out after 60s")
-            await asyncio.sleep(0.05)
+        status = await self._engine._activity_runner.wait_activity_status(
+            activity_id,
+            timeout_seconds=60.0,
+            terminal_only=True,
+        )
+        if status is None:
+            raise TimeoutError("Activity timed out after 60s")
+        token = str(status.status or "").strip().lower()
+        if token == "completed":
+            return status.result
+        raise RuntimeError(f"Activity `{activity_name}` failed: {str(status.error or '').strip()}")
 
 
 # Async-safe global adapter using contextvars.

@@ -723,6 +723,41 @@ class TestContractGate:
         assert "content_any:firefly|flower|moon|humidity" in msg
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_rejects_verify_script_that_recursively_invokes_itself(
+        self, mock_get_svc: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir()
+        (tmp_path / "package.json").write_text(
+            (
+                '{"scripts":{"build":"node scripts/verify.js",'
+                '"start":"node scripts/verify.js","test":"node scripts/verify.js"}}\n'
+            ),
+            encoding="utf-8",
+        )
+        (scripts_dir / "verify.js").write_text(
+            "const { execSync } = require('child_process');\n"
+            "execSync('node scripts/verify.js');\n"
+            "console.log('PASS');\n",
+            encoding="utf-8",
+        )
+
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-contract")
+        msg = consumer._run_contract_gate(
+            {
+                "construction_step": {
+                    "target_file": "scripts/verify.js",
+                    "signatures": ["function verifyTsSyntax()"],
+                },
+                "changed_files": ["scripts/verify.js"],
+            }
+        )
+
+        assert msg
+        assert "recursively invokes itself" in msg
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_contract_gate_failure_requeues_to_pending_exec(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:
         mock_svc = MagicMock()
         mock_get_svc.return_value = mock_svc

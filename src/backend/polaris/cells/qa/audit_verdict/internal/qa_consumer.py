@@ -214,11 +214,18 @@ def _extract_verify_script_requirements(payload: dict[str, Any]) -> dict[str, st
 def _verify_script_covers_requirement(script_text: str, kind: str, requirement: str) -> bool:
     content = script_text.lower()
     if kind == "ts_syntax":
-        return "ts_syntax" in content or "tsc" in content or "typescript" in content
+        return "ts_syntax" in content or re.search(r"\btsc\b", content) is not None
     if kind == "package_scripts":
-        return "package_scripts" in content or ("package.json" in content and "scripts" in content)
+        return "package_scripts" in content or (
+            "package.json" in content
+            and "scripts" in content
+            and any(token in content for token in ("placeholder", "占位", "echo", "node scripts/verify.js"))
+        )
     if kind == "min_files":
-        return "min_files" in content or any(token in content for token in ("readdir", "recursive", "glob", "walk"))
+        return "min_files" in content or (
+            re.search(r"(>=\s*3|>\s*2|至少\s*3|min(?:imum)?[^\n]{0,24}3|3\s*个文件)", content) is not None
+            and any(token in content for token in ("readdir", "recursive", "glob", "walk"))
+        )
     if kind == "content_any":
         if "content_any" in content:
             return True
@@ -252,6 +259,9 @@ def _verify_script_gate_failure(workspace: str, payload: dict[str, Any]) -> str:
             script_text = handle.read()
     except (OSError, UnicodeDecodeError) as exc:
         return f"verification script gate failed: could not read scripts/verify.js: {exc}"
+
+    if re.search(r"\bnode\s+scripts/verify\.js\b", script_text.lower()):
+        return "verification script gate failed: scripts/verify.js recursively invokes itself"
 
     missing = [
         f"{requirement} ({_VERIFY_SCRIPT_CHECK_LABELS.get(kind, kind)})"

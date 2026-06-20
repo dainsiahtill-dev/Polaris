@@ -49,7 +49,21 @@ from polaris.cells.roles.runtime.public.contracts import (
 )
 
 if TYPE_CHECKING:
-    from polaris.cells.roles.runtime.internal.capability import CapabilityHandlerRegistry
+    from polaris.cells.roles.runtime.internal.capability import (
+        ArchitectDesignPort,
+        BlueprintPort,
+        BudgetGuardPort,
+        CapabilityHandlerRegistry,
+        CodeIntelligencePort,
+        DirectorExecutionPort,
+        LlmControlPlanePort,
+        PermissionPort,
+        QaAuditPort,
+        RuntimeProjectionPort,
+        TaskMarketPort,
+        VerificationGuardPort,
+        WorkspaceGuardPort,
+    )
 
 FutureTimeoutError = futures.TimeoutError
 
@@ -1485,18 +1499,18 @@ def assemble_role_runtime_chain(
 def execute_role_capability_invocation(
     command: ExecuteRoleCapabilityInvocationCommandV1,
     *,
-    task_market_service: Any | None = None,
-    blueprint_service: Any | None = None,
-    code_intelligence_service: Any | None = None,
-    verification_guard_service: Any | None = None,
-    qa_audit_service: Any | None = None,
-    runtime_projection_service: Any | None = None,
-    budget_guard_service: Any | None = None,
-    workspace_guard_service: Any | None = None,
-    permission_service: Any | None = None,
-    architect_design_service: Any | None = None,
-    llm_control_plane_service: Any | None = None,
-    director_execution_service: Any | None = None,
+    task_market_service: TaskMarketPort | None = None,
+    blueprint_service: BlueprintPort | None = None,
+    code_intelligence_service: CodeIntelligencePort | None = None,
+    verification_guard_service: VerificationGuardPort | None = None,
+    qa_audit_service: QaAuditPort | None = None,
+    runtime_projection_service: RuntimeProjectionPort | None = None,
+    budget_guard_service: BudgetGuardPort | None = None,
+    workspace_guard_service: WorkspaceGuardPort | None = None,
+    permission_service: PermissionPort | None = None,
+    architect_design_service: ArchitectDesignPort | None = None,
+    llm_control_plane_service: LlmControlPlanePort | None = None,
+    director_execution_service: DirectorExecutionPort | None = None,
     handlers: CapabilityHandlerRegistry | None = None,
 ) -> RoleCapabilityInvocationResultV1:
     """Execute a mounted role capability through its declared public contract.

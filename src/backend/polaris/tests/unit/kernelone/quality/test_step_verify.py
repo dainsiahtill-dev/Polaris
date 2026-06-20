@@ -110,6 +110,22 @@ class TestNormalize:
         assert outcome is not None
         assert outcome[0] == 0
 
+    def test_verify_script_self_recursion_fails_fast(self, tmp_path: Path) -> None:
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir()
+        (scripts_dir / "verify.js").write_text(
+            "const { execSync } = require('child_process');\n"
+            "execSync('node scripts/verify.js');\n"
+            "console.log('PASS');\n",
+            encoding="utf-8",
+        )
+
+        outcome = run_step_verify("node scripts/verify.js", cwd=str(tmp_path))
+
+        assert outcome is not None
+        assert outcome[0] == 1
+        assert "recursively invokes itself" in outcome[1]
+
     def test_simple_grep_q_is_normalized_to_literal_grep(self) -> None:
         verify = "grep -q '3 + (4 - 2) * 5' README.md"
 

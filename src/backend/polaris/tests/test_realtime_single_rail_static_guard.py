@@ -73,6 +73,61 @@ PM_DISPATCH_WORKER_POOL_EVENT_WAKE_FILES = (
     / "dispatch"
     / "worker_pool.py",
 )
+WORKFLOW_CLIENT_EVENT_WAIT_FILES = (
+    REPO_ROOT
+    / "src"
+    / "backend"
+    / "polaris"
+    / "cells"
+    / "orchestration"
+    / "workflow_runtime"
+    / "internal"
+    / "workflow_client.py",
+    REPO_ROOT
+    / "src"
+    / "backend"
+    / "polaris"
+    / "cells"
+    / "orchestration"
+    / "workflow_runtime"
+    / "internal"
+    / "runtime_backend_adapter.py",
+    REPO_ROOT / "src" / "backend" / "polaris" / "kernelone" / "workflow" / "engine.py",
+)
+WORKFLOW_EMBEDDED_EVENT_WAIT_FILES = (
+    REPO_ROOT
+    / "src"
+    / "backend"
+    / "polaris"
+    / "cells"
+    / "orchestration"
+    / "workflow_runtime"
+    / "internal"
+    / "embedded_api.py",
+    REPO_ROOT
+    / "src"
+    / "backend"
+    / "polaris"
+    / "cells"
+    / "orchestration"
+    / "workflow_activity"
+    / "internal"
+    / "embedded_api.py",
+    REPO_ROOT
+    / "src"
+    / "backend"
+    / "polaris"
+    / "cells"
+    / "orchestration"
+    / "workflow_runtime"
+    / "internal"
+    / "runtime_backend_adapter.py",
+    REPO_ROOT / "src" / "backend" / "polaris" / "kernelone" / "workflow" / "activity_runner.py",
+)
+JETSTREAM_BRIDGE_EVENT_DRAIN_FILES = (
+    REPO_ROOT / "src" / "backend" / "polaris" / "delivery" / "http" / "routers" / "docs.py",
+    REPO_ROOT / "src" / "backend" / "polaris" / "delivery" / "http" / "routers" / "interview.py",
+)
 DIRECTOR_EXECUTION_EVENT_WAKE_FILES = (
     REPO_ROOT / "src" / "backend" / "polaris" / "cells" / "director" / "execution" / "service.py",
 )
@@ -173,6 +228,25 @@ PM_DISPATCH_WORKER_POOL_FORBIDDEN_INTERVAL_WAKEUPS = (
     "Yield one poll_interval",
     "poll_interval: idle back-off",
     "a sibling is still executing; it may unblock a step",
+)
+
+WORKFLOW_CLIENT_FORBIDDEN_INTERVAL_WAKEUPS = (
+    "await asyncio.sleep(interval",
+    "time.sleep(interval",
+    "interval = max(0.2",
+    "describe_workflow_sync(normalized_id",
+)
+
+WORKFLOW_EMBEDDED_FORBIDDEN_INTERVAL_WAKEUPS = (
+    "runner.get_activity_status(activity_id",
+    "runtime_engine.describe_workflow(child_id",
+    "deadline = asyncio.get_running_loop().time() + timeout_seconds",
+    "await asyncio.sleep(0.05",
+)
+
+JETSTREAM_BRIDGE_FORBIDDEN_INTERVAL_WAKEUPS = (
+    "wait_for(queue.get(), timeout=",
+    "await asyncio.sleep(",
 )
 
 ACTIVE_DOC_FORBIDDEN_ADVERTISING = (
@@ -373,6 +447,67 @@ def test_pm_dispatch_worker_pool_uses_task_market_wake_events_not_interval_polli
                 findings.append(f"{path.relative_to(REPO_ROOT)} contains {token!r}")
 
         for token in ("get_task_market_work_event", "threading.Condition", "_run_wake_bridge", "_wait_for_pool_signal"):
+            if token not in text:
+                findings.append(f"{path.relative_to(REPO_ROOT)} missing {token!r}")
+
+    assert findings == []
+
+
+def test_workflow_client_wait_uses_runtime_task_completion_not_status_polling() -> None:
+    """Workflow wait APIs must wait on runtime task completion, not describe/sleep loops."""
+
+    findings: list[str] = []
+    for path in WORKFLOW_CLIENT_EVENT_WAIT_FILES:
+        text = path.read_text(encoding="utf-8")
+        if path.name == "workflow_client.py":
+            for token in WORKFLOW_CLIENT_FORBIDDEN_INTERVAL_WAKEUPS:
+                if token in text:
+                    findings.append(f"{path.relative_to(REPO_ROOT)} contains {token!r}")
+        if "wait_workflow_completion" not in text:
+            findings.append(f"{path.relative_to(REPO_ROOT)} missing wait_workflow_completion")
+
+    assert findings == []
+
+
+def test_embedded_workflow_waits_use_event_completion_not_status_polling() -> None:
+    """Embedded activity/child-workflow waits must block on runtime completion events."""
+
+    findings: list[str] = []
+    for path in WORKFLOW_EMBEDDED_EVENT_WAIT_FILES:
+        text = path.read_text(encoding="utf-8")
+        for token in WORKFLOW_EMBEDDED_FORBIDDEN_INTERVAL_WAKEUPS:
+            if token in text:
+                findings.append(f"{path.relative_to(REPO_ROOT)} contains {token!r}")
+
+    for path in WORKFLOW_EMBEDDED_EVENT_WAIT_FILES[:2]:
+        text = path.read_text(encoding="utf-8")
+        for token in ("_wait_child_workflow_completion", "wait_workflow_completion", "wait_activity_status"):
+            if token not in text:
+                findings.append(f"{path.relative_to(REPO_ROOT)} missing {token!r}")
+
+    adapter_text = WORKFLOW_EMBEDDED_EVENT_WAIT_FILES[2].read_text(encoding="utf-8")
+    for token in ("wait_workflow_completion", "wait_activity_status"):
+        if token not in adapter_text:
+            findings.append(f"runtime_backend_adapter.py missing {token!r}")
+
+    runner_text = WORKFLOW_EMBEDDED_EVENT_WAIT_FILES[3].read_text(encoding="utf-8")
+    for token in ("wait_activity_status", "asyncio.Condition", "_notify_status_change"):
+        if token not in runner_text:
+            findings.append(f"activity_runner.py missing {token!r}")
+
+    assert findings == []
+
+
+def test_http_jetstream_bridges_drain_queues_without_interval_polling() -> None:
+    """HTTP-triggered JetStream bridge tasks must wait on producer/queue events."""
+
+    findings: list[str] = []
+    for path in JETSTREAM_BRIDGE_EVENT_DRAIN_FILES:
+        text = path.read_text(encoding="utf-8")
+        for token in JETSTREAM_BRIDGE_FORBIDDEN_INTERVAL_WAKEUPS:
+            if token in text:
+                findings.append(f"{path.relative_to(REPO_ROOT)} contains {token!r}")
+        for token in ("asyncio.wait", "FIRST_COMPLETED", "queue.get_nowait"):
             if token not in text:
                 findings.append(f"{path.relative_to(REPO_ROOT)} missing {token!r}")
 

@@ -14,12 +14,21 @@ type WindowWithDevBackend = Window & {
   __DEV_BACKEND__?: DevBackendInfo;
 };
 
+type BackendInfoOptions = {
+  ignoreStoredBase?: boolean;
+  ignoreStoredToken?: boolean;
+  bypassCache?: boolean;
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Default Configuration Constants
 // ═══════════════════════════════════════════════════════════════════════════════
 const DEFAULT_BACKEND_PORT = 49977;
 const DEFAULT_BACKEND_HOST = "127.0.0.1";
 const DEFAULT_BACKEND_TOKEN = "polaris-local-dev";
+const BACKEND_PROBE_TIMEOUT_MS = 2000;
+const STORED_BASE_URL_KEY = "polaris.baseUrl";
+const STORED_TOKEN_KEY = "polaris.token";
 
 let cachedInfo: BackendInfo | null = null;
 
@@ -45,19 +54,91 @@ const isViteWebDevMode =
   typeof window !== "undefined" &&
   !window.polaris?.getBackendInfo;
 
-export async function getBackendInfo(): Promise<BackendInfo> {
-  if (cachedInfo) {
+function shouldUseCachedInfo(options: BackendInfoOptions): boolean {
+  return !options.bypassCache && !options.ignoreStoredBase && !options.ignoreStoredToken;
+}
+
+function sameBackendInfo(left: BackendInfo, right: BackendInfo): boolean {
+  return left.baseUrl === right.baseUrl && left.token === right.token;
+}
+
+function rememberRecoveredBackend(info: BackendInfo): void {
+  cachedInfo = info;
+  if (!isViteWebDevMode || !info.baseUrl) {
+    return;
+  }
+  if (info.baseUrl === getDefaultBackendUrl()) {
+    localStorage.removeItem(STORED_BASE_URL_KEY);
+  }
+  if (info.token === DEFAULT_BACKEND_TOKEN) {
+    localStorage.removeItem(STORED_TOKEN_KEY);
+  }
+}
+
+async function getDefaultLocalBackendInfo(): Promise<BackendInfo> {
+  clearBackendInfoCache();
+  return getBackendInfo({
+    ignoreStoredBase: true,
+    ignoreStoredToken: true,
+    bypassCache: true,
+  });
+}
+
+async function isBackendReachable(info: BackendInfo): Promise<boolean> {
+  if (!info.baseUrl) {
+    return false;
+  }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), BACKEND_PROBE_TIMEOUT_MS);
+  try {
+    const headers = new Headers();
+    if (info.token) {
+      headers.set("Authorization", `Bearer ${info.token}`);
+    }
+    const res = await fetch(`${info.baseUrl}/v2/live`, {
+      cache: "no-store",
+      headers,
+      signal: controller.signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function resolveReachableBackendInfo(info: BackendInfo): Promise<BackendInfo> {
+  if (!isViteWebDevMode || !info.baseUrl) {
+    return info;
+  }
+  if (await isBackendReachable(info)) {
+    return info;
+  }
+  const fallback = await getDefaultLocalBackendInfo();
+  if (sameBackendInfo(info, fallback)) {
+    return info;
+  }
+  if (await isBackendReachable(fallback)) {
+    rememberRecoveredBackend(fallback);
+    return fallback;
+  }
+  return info;
+}
+
+export async function getBackendInfo(options: BackendInfoOptions = {}): Promise<BackendInfo> {
+  if (cachedInfo && shouldUseCachedInfo(options)) {
     return cachedInfo;
   }
   if (!window.polaris?.getBackendInfo) {
     const devBackend = (window as WindowWithDevBackend).__DEV_BACKEND__;
-    const storedBase = localStorage.getItem("polaris.baseUrl");
+    const storedBase = options.ignoreStoredBase ? null : localStorage.getItem(STORED_BASE_URL_KEY);
     const explicitBase = devBackend?.baseUrl || getEnvBackendUrl() || storedBase;
     const fallbackBase = explicitBase || getDefaultBackendUrl();
     const fallbackToken =
       devBackend?.token ||
       getEnvBackendToken() ||
-      localStorage.getItem("polaris.token") ||
+      (options.ignoreStoredToken ? null : localStorage.getItem(STORED_TOKEN_KEY)) ||
       (isViteWebDevMode ? DEFAULT_BACKEND_TOKEN : null);
     const info: BackendInfo = {
       port: null,
@@ -65,11 +146,15 @@ export async function getBackendInfo(): Promise<BackendInfo> {
       baseUrl: fallbackBase,
       pid: null,
     };
-    cachedInfo = info;
+    if (shouldUseCachedInfo(options)) {
+      cachedInfo = info;
+    }
     return info;
   }
   const info = await window.polaris.getBackendInfo();
-  cachedInfo = info;
+  if (shouldUseCachedInfo(options)) {
+    cachedInfo = info;
+  }
   return info;
 }
 
@@ -126,20 +211,39 @@ export async function apiFetch(
     });
   };
 
+  const doFallbackFetch = async (previousInfo: BackendInfo): Promise<Response | null> => {
+    const fallbackInfo = await getDefaultLocalBackendInfo();
+    if (sameBackendInfo(previousInfo, fallbackInfo)) {
+      return null;
+    }
+    const fallbackResponse = await doFetch(fallbackInfo);
+    if (fallbackResponse.status !== 401) {
+      rememberRecoveredBackend(fallbackInfo);
+    }
+    return fallbackResponse;
+  };
+
   try {
     let info = await getBackendInfo();
     try {
       const res = await doFetch(info);
       if (res.status === 401) {
         clearBackendInfoCache();
-        info = await getBackendInfo();
+        const fallbackResponse = await doFallbackFetch(info);
+        if (fallbackResponse) {
+          return fallbackResponse;
+        }
+        info = await getBackendInfo({ bypassCache: true });
         return await doFetch(info);
       }
       return res;
     } catch (err) {
       clearBackendInfoCache();
-      info = await getBackendInfo();
-      return await doFetch(info);
+      const fallbackResponse = await doFallbackFetch(info);
+      if (fallbackResponse) {
+        return fallbackResponse;
+      }
+      throw err;
     }
   } finally {
     externalSignal?.removeEventListener('abort', abortFromExternalSignal);
@@ -161,8 +265,9 @@ export async function connectWebSocket(_forceRefresh = false): Promise<WebSocket
   let info = await getBackendInfo();
   if (!info.baseUrl) {
     clearBackendInfoCache();
-    info = await getBackendInfo();
+    info = await getBackendInfo({ bypassCache: true });
   }
+  info = await resolveReachableBackendInfo(info);
   const wsBaseUrl = info.baseUrl
     ? info.baseUrl.replace(/^http/, "ws")
     : getSameOriginWebSocketBaseUrl();

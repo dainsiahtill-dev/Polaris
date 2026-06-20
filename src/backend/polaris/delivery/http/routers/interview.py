@@ -248,13 +248,31 @@ async def _run_interview_jetstream(
             output_queue=queue,
         )
     )
+    producer_finished = asyncio.Event()
+    producer.add_done_callback(lambda _task: producer_finished.set())
     try:
         while True:
-            if producer.done() and queue.empty():
-                break
-            try:
-                chunk = await asyncio.wait_for(queue.get(), timeout=0.5)
-            except asyncio.TimeoutError:
+            if producer.done():
+                try:
+                    chunk = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            else:
+                next_chunk = asyncio.ensure_future(queue.get())
+                producer_done = asyncio.ensure_future(producer_finished.wait())
+                done, _ = await asyncio.wait({producer_done, next_chunk}, return_when=asyncio.FIRST_COMPLETED)
+                if producer_done in done and next_chunk not in done:
+                    next_chunk.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await next_chunk
+                    producer_done.result()
+                    continue
+                producer_done.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await producer_done
+                chunk = next_chunk.result()
+
+            if not isinstance(chunk, dict):
                 continue
             await _publish_interview_chunk(session_id=session_id, chunk=chunk, seq=seq)
             seq += 1
@@ -391,4 +409,3 @@ async def v2_llm_interview_jetstream(request: Request, payload: InterviewAskPayl
         "subject": f"hp.runtime.llm.interview.{session_id}",
         "transport": "nat-jetstream",
     }
-

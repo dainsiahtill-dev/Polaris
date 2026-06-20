@@ -50,6 +50,7 @@ _VERIFY_COMMAND_TOKEN_RE = re.compile(
     r"(?:^|&&|\|\|)\s*"
     r"(?:pytest|python|python3|node|npm|pnpm|test|grep|ruff|mypy|make|bash|sh)\b"
 )
+_NODE_VERIFY_SCRIPT_RE = re.compile(r"\bnode\s+(?:\./)?scripts/verify\.js\b", re.IGNORECASE)
 _HTML_OPEN_TAG_LITERAL_GREP_PATTERNS = {"<html>": "<html"}
 _NATURAL_LANGUAGE_TAIL_MARKERS = (
     " 通过",
@@ -430,6 +431,9 @@ def run_step_verify(verify: str, *, cwd: str) -> tuple[int, str] | None:
     """Run the full verify command. Returns (exit_code, output_tail) or None
     when it could not run at all."""
     verify = _prefix_typescript_dist_build_if_needed(verify, cwd=cwd)
+    recursion_failure = _verify_script_self_recursion_failure(verify, cwd=cwd)
+    if recursion_failure:
+        return 1, recursion_failure
     try:
         proc = subprocess.run(
             verify,
@@ -443,6 +447,22 @@ def run_step_verify(verify: str, *, cwd: str) -> tuple[int, str] | None:
     except (OSError, subprocess.TimeoutExpired):
         return None
     return proc.returncode, ((proc.stdout or "") + (proc.stderr or ""))
+
+
+def _verify_script_self_recursion_failure(verify: str, *, cwd: str) -> str:
+    command = str(verify or "")
+    if not _NODE_VERIFY_SCRIPT_RE.search(command):
+        return ""
+    script_path = Path(cwd) / "scripts" / "verify.js"
+    if not script_path.exists():
+        return ""
+    try:
+        content = script_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    if not _NODE_VERIFY_SCRIPT_RE.search(content):
+        return ""
+    return "verify script recursively invokes itself: scripts/verify.js must not run node scripts/verify.js"
 
 
 def _prefix_typescript_dist_build_if_needed(verify: str, *, cwd: str) -> str:

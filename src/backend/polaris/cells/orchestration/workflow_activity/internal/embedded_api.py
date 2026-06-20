@@ -409,6 +409,38 @@ def _unwrap_workflow_result(snapshot_result: Any) -> Any:
     return snapshot_result
 
 
+def _snapshot_status(snapshot: Any) -> str:
+    if isinstance(snapshot, dict):
+        return str(snapshot.get("status") or "").strip().lower()
+    return str(getattr(snapshot, "status", "") or "").strip().lower()
+
+
+def _snapshot_result(snapshot: Any) -> Any:
+    if isinstance(snapshot, dict):
+        return snapshot.get("result")
+    return getattr(snapshot, "result", None)
+
+
+async def _wait_child_workflow_completion(runtime_engine: Any, child_id: str, timeout_seconds: float) -> Any:
+    waiter = getattr(runtime_engine, "wait_workflow_completion", None)
+    if callable(waiter):
+        snapshot = waiter(child_id, timeout_seconds=timeout_seconds)
+        if inspect.isawaitable(snapshot):
+            return await snapshot
+        if isinstance(snapshot, dict):
+            return snapshot
+        if not callable(snapshot) and hasattr(snapshot, "status"):
+            return snapshot
+
+    describer = getattr(runtime_engine, "describe_workflow", None)
+    if not callable(describer):
+        raise RuntimeError("Runtime does not support workflow completion wait")
+    snapshot = describer(child_id)
+    if inspect.isawaitable(snapshot):
+        return await snapshot
+    return snapshot
+
+
 # ---------------------------------------------------------------------------
 # Embedded Activity API
 # ---------------------------------------------------------------------------
@@ -544,21 +576,20 @@ async def _execute_activity_with_engine(
         input=input_payload,
         config=config,
     )
-    deadline = asyncio.get_running_loop().time() + max(timeout_seconds, 1.0)
-    while True:
-        status = await runner.get_activity_status(activity_id)
-        if status is not None:
-            token = str(status.status or "").strip().lower()
-            if token == "completed":
-                return status.result
-            if token in {"failed", "cancelled"}:
-                detail = str(status.error or "").strip()
-                if detail:
-                    raise RuntimeError(f"Activity `{activity_name}` failed: {detail}")
-                raise RuntimeError(f"Activity `{activity_name}` failed with status `{token}`")
-        if asyncio.get_running_loop().time() >= deadline:
-            raise TimeoutError(f"Activity `{activity_name}` timed out after {timeout_seconds:.2f}s")
-        await asyncio.sleep(0.05)
+    status = await runner.wait_activity_status(
+        activity_id,
+        timeout_seconds=max(timeout_seconds, 1.0),
+        terminal_only=True,
+    )
+    if status is None:
+        raise TimeoutError(f"Activity `{activity_name}` timed out after {timeout_seconds:.2f}s")
+    token = str(status.status or "").strip().lower()
+    if token == "completed":
+        return status.result
+    detail = str(status.error or "").strip()
+    if detail:
+        raise RuntimeError(f"Activity `{activity_name}` failed: {detail}")
+    raise RuntimeError(f"Activity `{activity_name}` failed with status `{token}`")
 
 
 class EmbeddedWorkflowAPI:
@@ -795,24 +826,21 @@ class EmbeddedWorkflowAPI:
             kwargs.get("execution_timeout", kwargs.get("run_timeout")),
             default=120.0,
         )
-        deadline = asyncio.get_running_loop().time() + timeout_seconds
         try:
-            while True:
-                snapshot = await runtime_engine.describe_workflow(child_id)
-                status = str(snapshot.status or "").strip().lower()
-                if status in {"completed", "failed", "cancelled"}:
-                    if status != "completed":
-                        detail = ""
-                        if isinstance(snapshot.result, dict):
-                            detail = str(snapshot.result.get("error") or "").strip()
-                        suffix = f": {detail}" if detail else ""
-                        raise RuntimeError(f"Child workflow `{workflow_name}` finished with `{status}`{suffix}")
-                    return _unwrap_workflow_result(snapshot.result)
-                if asyncio.get_running_loop().time() >= deadline:
-                    await runtime_engine.cancel_workflow(child_id, reason="parent_workflow_timeout")
-                    raise TimeoutError(f"Child workflow `{workflow_name}` timed out after {timeout_seconds:.2f}s")
-                await asyncio.sleep(0.05)
-        except (RuntimeError, TimeoutError):
+            snapshot = await _wait_child_workflow_completion(runtime_engine, child_id, timeout_seconds)
+            status = _snapshot_status(snapshot)
+            result = _snapshot_result(snapshot)
+            if status != "completed":
+                detail = ""
+                if isinstance(result, dict):
+                    detail = str(result.get("error") or "").strip()
+                suffix = f": {detail}" if detail else ""
+                raise RuntimeError(f"Child workflow `{workflow_name}` finished with `{status}`{suffix}")
+            return _unwrap_workflow_result(result)
+        except TimeoutError:
+            await runtime_engine.cancel_workflow(child_id, reason="parent_workflow_timeout")
+            raise TimeoutError(f"Child workflow `{workflow_name}` timed out after {timeout_seconds:.2f}s") from None
+        except RuntimeError:
             try:
                 await runtime_engine.cancel_workflow(child_id, reason="parent_workflow_error")
             except (RuntimeError, ValueError) as e:

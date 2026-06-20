@@ -64,6 +64,18 @@ const plant = plants.find((item) => item.humidity > 0.5);
 console.log(index, plant?.id);
 """
 
+_VALID_TS_WITH_ENV_TYPE_ERROR = """\
+class TimerOwner {
+  private timer: NodeJS.Timeout | null = null;
+
+  stop(): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+    }
+  }
+}
+"""
+
 
 class TestExtensionMapping:
     def test_known_extensions(self) -> None:
@@ -164,6 +176,13 @@ class TestTypescriptSyntax:
     def test_es2020_array_helpers_are_not_syntax_failures(self, tmp_path: Path) -> None:
         f = tmp_path / "garden.ts"
         f.write_text(_VALID_TS_ES2020, encoding="utf-8")
+        result = check_file_syntax(str(f))
+        assert result.checked is True
+        assert result.ok is True
+
+    def test_typescript_type_environment_diagnostics_are_not_syntax_failures(self, tmp_path: Path) -> None:
+        f = tmp_path / "timer.ts"
+        f.write_text(_VALID_TS_WITH_ENV_TYPE_ERROR, encoding="utf-8")
         result = check_file_syntax(str(f))
         assert result.checked is True
         assert result.ok is True

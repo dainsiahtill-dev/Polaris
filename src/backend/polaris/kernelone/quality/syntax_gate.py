@@ -17,6 +17,7 @@ broken". Generic: extension → checker mapping carries no project specifics.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,7 @@ _SYNTAX_CHECKERS: dict[tuple[str, ...], list[str]] = {
 }
 
 _DEFAULT_TIMEOUT_SECONDS = 20
+_TS_SYNTAX_DIAGNOSTIC_RE = re.compile(r"\bTS1\d{3}\b")
 
 
 @dataclass(frozen=True)
@@ -90,7 +92,20 @@ def check_file_syntax(path: str, *, timeout_seconds: int = _DEFAULT_TIMEOUT_SECO
     except (OSError, subprocess.TimeoutExpired) as exc:
         return SyntaxCheckResult(path=path, checked=False, ok=True, error="", reason=str(exc))
     ok = proc.returncode == 0
-    error = "" if ok else (proc.stderr or proc.stdout or "").strip()[:500]
+    raw_error = (proc.stderr or proc.stdout or "").strip()
+    if (
+        not ok
+        and os.path.splitext(path)[1].lower() in {".ts", ".tsx"}
+        and not _TS_SYNTAX_DIAGNOSTIC_RE.search(raw_error)
+    ):
+        return SyntaxCheckResult(
+            path=path,
+            checked=True,
+            ok=True,
+            error="",
+            reason="tsc reported non-syntax diagnostics only",
+        )
+    error = "" if ok else raw_error[:500]
     return SyntaxCheckResult(path=path, checked=True, ok=ok, error=error, reason="")
 
 

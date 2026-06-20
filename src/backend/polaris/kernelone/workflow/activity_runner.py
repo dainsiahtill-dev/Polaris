@@ -114,6 +114,7 @@ class ActivityRunner:
         self._pending_starts: asyncio.Queue[tuple[str, str, dict[str, Any]]] = asyncio.Queue(maxsize=500)
 
         self._lock = asyncio.Lock()
+        self._status_condition = asyncio.Condition()
 
     def register_handler(
         self,
@@ -195,13 +196,16 @@ class ActivityRunner:
                     still_running = [exec for exec in self._activities.values() if exec.status == "running"]
                 if not still_running:
                     break
-                if asyncio.get_running_loop().time() >= shutdown_deadline:
+                remaining = shutdown_deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
                     logger.warning(
                         "ActivityRunner stop timeout with %s running activities",
                         len(still_running),
                     )
                     break
-                await asyncio.sleep(0.1)
+                with contextlib.suppress(asyncio.TimeoutError):
+                    async with self._status_condition:
+                        await asyncio.wait_for(self._status_condition.wait(), timeout=remaining)
 
         logger.info("ActivityRunner stopped")
 
@@ -229,8 +233,13 @@ class ActivityRunner:
 
         # 使用信号量控制并发
         _spawn_task(self._run_activity(activity_id, config))
+        await self._notify_status_change()
 
         logger.debug(f"Submitted activity {activity_id} ({activity_name})")
+
+    async def _notify_status_change(self) -> None:
+        async with self._status_condition:
+            self._status_condition.notify_all()
 
     async def _run_activity(
         self,
@@ -349,6 +358,7 @@ class ActivityRunner:
 
         # 启动带重试的执行
         await _execute_with_retry()
+        await self._notify_status_change()
 
         # 保留最近终态记录用于查询，并做有界裁剪防止内存泄漏。
         await self._prune_terminal_activities()
@@ -469,6 +479,38 @@ class ActivityRunner:
         """获取 Activity 状态"""
         async with self._lock:
             return self._activities.get(activity_id)
+
+    async def wait_activity_status(
+        self,
+        activity_id: str,
+        *,
+        timeout_seconds: float | None = None,
+        terminal_only: bool = True,
+    ) -> ActivityExecution | None:
+        """Wait for an activity status change or terminal state without polling."""
+
+        terminal_statuses = {"completed", "failed", "cancelled"}
+
+        def _current() -> ActivityExecution | None:
+            execution = self._activities.get(activity_id)
+            if execution is None:
+                return None
+            if not terminal_only or execution.status in terminal_statuses:
+                return execution
+            return None
+
+        async with self._status_condition:
+            current = _current()
+            if current is not None:
+                return current
+            if timeout_seconds is None:
+                await self._status_condition.wait_for(lambda: _current() is not None)
+            else:
+                await asyncio.wait_for(
+                    self._status_condition.wait_for(lambda: _current() is not None),
+                    timeout=max(0.0, float(timeout_seconds)),
+                )
+            return _current()
 
     async def list_running_activities(self, workflow_id: str | None = None) -> list[ActivityExecution]:
         """列出运行中的 Activities"""
