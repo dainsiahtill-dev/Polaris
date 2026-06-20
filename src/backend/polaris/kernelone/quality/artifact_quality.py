@@ -186,7 +186,7 @@ _NPM_MANIFEST_ONLY_TEST_SCRIPT_RE = re.compile(
     re.IGNORECASE,
 )
 _NPM_PLACEHOLDER_TEST_SCRIPT_RE = re.compile(
-    r"\b(?:no\s+tests?\s+(?:specified|yet)|tests?\s+not\s+(?:implemented|available))\b",
+    r"\b(?:no\s+tests?\s+(?:specified|yet)|tests?\s+not\s+(?:implemented|available)|all\s+tests?\s+passed)\b",
     re.IGNORECASE,
 )
 _NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(

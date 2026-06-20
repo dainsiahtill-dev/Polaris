@@ -9,11 +9,8 @@ keeps all cross-cell edges lazy (in-function) exactly as before.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
-import os
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -30,9 +27,10 @@ from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
-from polaris.kernelone.storage import resolve_logical_path
 
 from . import factory_stage_helpers as helpers
+from .factory_artifact_store import ArtifactStore
+from .factory_run_completion import RunCompletionWaiter
 from .factory_run_models import (
     _PM_ARCHITECT_DOC_MAX_CHARS,
     _PM_DIRECTIVE_MAX_CHARS,
@@ -43,6 +41,7 @@ from .factory_run_models import (
     FactoryRun,
     StageResult,
 )
+from .factory_workspace_quality import WorkspaceQualityRunner
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +52,9 @@ class OrchestrationStageExecutor:
     def __init__(self, workspace: Path) -> None:
         self.workspace = Path(workspace)
         self._fs = KernelFileSystem(str(workspace), get_default_adapter())
+        self._artifact_store = ArtifactStore(self.workspace, self._fs)
+        self._workspace_quality = WorkspaceQualityRunner(self.workspace)
+        self._run_completion_waiter = RunCompletionWaiter(self.workspace)
 
     async def execute(self, stage: str, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         handlers = {
@@ -68,26 +70,13 @@ class OrchestrationStageExecutor:
         return await handler(run, context)
 
     def _artifact_path(self, relative_path: str) -> Path:
-        rel = str(relative_path or "").replace("\\", "/").strip().lstrip("/")
-        if rel == "docs" or rel.startswith("docs/"):
-            rel = f"workspace/{rel}"
-        elif rel.startswith(("tasks/", "dispatch/")):
-            rel = f"runtime/{rel}"
-        # 使用逻辑路径解析：workspace/* -> runtime/workspace/*, runtime/* -> runtime/...
-        resolved = resolve_logical_path(str(self.workspace), rel)
-        return Path(resolved).resolve()
+        return self._artifact_store.artifact_path(relative_path)
 
     def _write_json_artifact(self, relative_path: str, payload: dict[str, Any]) -> Path:
-        target = self._artifact_path(relative_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        self._fs.write_json(str(target), payload)
-        return target
+        return self._artifact_store.write_json_artifact(relative_path, payload)
 
     def _write_text_artifact(self, relative_path: str, content: str) -> Path:
-        target = self._artifact_path(relative_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        self._fs.write_text(str(target), str(content or ""))
-        return target
+        return self._artifact_store.write_text_artifact(relative_path, content)
 
     def _write_stage_signal_artifact(
         self,
@@ -96,24 +85,10 @@ class OrchestrationStageExecutor:
         run_id: str,
         signals: list[dict[str, Any]],
     ) -> str:
-        target_rel = f"runtime/signals/{stage}.signals.json"
-        payload = {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "source": "factory_stage_executor",
-            "factory_run_id": run_id,
-            "stage": stage,
-            "signals": signals,
-        }
-        self._write_json_artifact(target_rel, payload)
-        return target_rel
+        return self._artifact_store.write_stage_signal_artifact(stage=stage, run_id=run_id, signals=signals)
 
     def _copy_text_artifact(self, source_relative_path: str, target_relative_path: str) -> str:
-        source = self._artifact_path(source_relative_path)
-        if not source.exists() or not source.is_file():
-            return ""
-        content = source.read_text(encoding="utf-8")
-        self._write_text_artifact(target_relative_path, content)
-        return str(target_relative_path or "").replace("\\", "/").strip().lstrip("/")
+        return self._artifact_store.copy_text_artifact(source_relative_path, target_relative_path)
 
     def _copy_text_artifact_if_present(
         self,
@@ -122,51 +97,16 @@ class OrchestrationStageExecutor:
         *,
         min_chars: int = 1,
     ) -> str:
-        if not self._artifact_exists(source_relative_path, min_chars=min_chars):
-            return ""
-        try:
-            return self._copy_text_artifact(source_relative_path, target_relative_path)
-        except (OSError, UnicodeDecodeError):
-            logger.debug(
-                "Failed to mirror factory artifact: source=%s target=%s",
-                source_relative_path,
-                target_relative_path,
-            )
-            return ""
+        return self._artifact_store.copy_text_artifact_if_present(
+            source_relative_path, target_relative_path, min_chars=min_chars
+        )
 
     def _read_text_artifact(self, relative_path: str, *, min_chars: int = 1) -> str:
-        target = self._artifact_path(relative_path)
-        if not target.exists() or not target.is_file():
-            return ""
-        try:
-            text = target.read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeDecodeError):
-            return ""
-        if len(text) < min_chars:
-            return ""
-        return text
+        return self._artifact_store.read_text_artifact(relative_path, min_chars=min_chars)
 
     def _emit_audit_event(self, event_type: str, **kwargs: Any) -> None:
         """Emit an audit event for tracking purposes."""
-        audit_entry = {
-            "event_type": event_type,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            **kwargs,
-        }
-        # Write to audit trail
-        audit_path = self.workspace / ".polaris" / "audit" / f"{event_type}.json"
-        audit_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            existing = []
-            if audit_path.exists():
-                existing = json.loads(audit_path.read_text(encoding="utf-8"))
-            existing.append(audit_entry)
-            audit_path.write_text(
-                json.dumps(existing, ensure_ascii=False, indent=1) + "\n",
-                encoding="utf-8",
-            )
-        except (OSError, json.JSONDecodeError):
-            logger.debug("Failed to write audit event: %s", event_type)
+        self._artifact_store.emit_audit_event(event_type, **kwargs)
 
     @staticmethod
     def _extend_artifacts(artifacts: list[str], *paths: str) -> None:
@@ -202,28 +142,10 @@ class OrchestrationStageExecutor:
         return missing
 
     def _mirror_docs_artifacts(self, run_id: str, artifacts: list[str]) -> None:
-        role_root = f"workspace/roles/architect/{run_id}"
-        for source_rel, filename in (
-            ("docs/plan.md", "plan.md"),
-            ("docs/architecture.md", "architecture.md"),
-        ):
-            mirrored = self._copy_text_artifact_if_present(
-                source_rel,
-                f"{role_root}/{filename}",
-                min_chars=1,
-            )
-            self._extend_artifacts(artifacts, mirrored)
+        self._artifact_store.mirror_docs_artifacts(run_id, artifacts)
 
     def _mirror_pm_plan_artifacts(self, run_id: str, artifacts: list[str]) -> None:
-        mirrors = (
-            f"workspace/roles/pm/{run_id}/plan.json",
-            f"workspace/plans/{run_id}.plan.json",
-            "workspace/plans/latest.plan.json",
-        )
-        copied = [
-            self._copy_text_artifact_if_present("tasks/plan.json", target_rel, min_chars=1) for target_rel in mirrors
-        ]
-        self._extend_artifacts(artifacts, *copied)
+        self._artifact_store.mirror_pm_plan_artifacts(run_id, artifacts)
 
     def _mirror_chief_engineer_artifacts(
         self,
@@ -232,108 +154,23 @@ class OrchestrationStageExecutor:
         review_artifact: str,
         artifacts: list[str],
     ) -> None:
-        review_mirrors = (
-            f"workspace/roles/chief_engineer/{run_id}/review.json",
-            f"workspace/blueprints/{run_id}.review.json",
-            "workspace/blueprints/latest.review.json",
-        )
-        copied_review = [
-            self._copy_text_artifact_if_present(review_artifact, target_rel, min_chars=1)
-            for target_rel in review_mirrors
-            if review_artifact
-        ]
-        self._extend_artifacts(artifacts, *copied_review)
-
-        copied_blueprints: list[str] = []
-        for row in blueprint_rows:
-            source_rel = str(row.get("blueprint_path") or "").strip()
-            blueprint_id = str(row.get("blueprint_id") or Path(source_rel).stem).strip()
-            if not source_rel or not blueprint_id:
-                continue
-            copied_blueprints.append(
-                self._copy_text_artifact_if_present(
-                    source_rel,
-                    f"workspace/roles/chief_engineer/{run_id}/blueprints/{blueprint_id}.json",
-                    min_chars=1,
-                )
-            )
-            copied_blueprints.append(
-                self._copy_text_artifact_if_present(
-                    source_rel,
-                    f"workspace/blueprints/{blueprint_id}.json",
-                    min_chars=1,
-                )
-            )
-        self._extend_artifacts(artifacts, *copied_blueprints)
+        self._artifact_store.mirror_chief_engineer_artifacts(run_id, blueprint_rows, review_artifact, artifacts)
 
     def _mirror_director_artifacts(self, run_id: str, artifacts: list[str]) -> None:
-        mirrors = (
-            f"workspace/roles/director/{run_id}/dispatch.log.json",
-            f"workspace/dispatch/{run_id}.log.json",
-            "workspace/dispatch/latest.log.json",
-        )
-        copied = [
-            self._copy_text_artifact_if_present("dispatch/log.json", target_rel, min_chars=1) for target_rel in mirrors
-        ]
-        self._extend_artifacts(artifacts, *copied)
+        self._artifact_store.mirror_director_artifacts(run_id, artifacts)
 
     def _mirror_quality_gate_artifacts(self, run_id: str, artifacts: list[str]) -> None:
-        report_mirrors = (
-            f"workspace/roles/qa/{run_id}/report.json",
-            f"workspace/qa/{run_id}.report.json",
-            "workspace/qa/latest.report.json",
-        )
-        copied = [
-            self._copy_text_artifact_if_present("runtime/qa/report.json", target_rel, min_chars=1)
-            for target_rel in report_mirrors
-        ]
-        validation_mirrors = (
-            f"workspace/roles/qa/{run_id}/workspace-validation.json",
-            f"workspace/qa/{run_id}.workspace-validation.json",
-            "workspace/qa/latest.workspace-validation.json",
-        )
-        copied.extend(
-            self._copy_text_artifact_if_present("runtime/qa/workspace-validation.json", target_rel, min_chars=1)
-            for target_rel in validation_mirrors
-        )
-        self._extend_artifacts(artifacts, *copied)
+        self._artifact_store.mirror_quality_gate_artifacts(run_id, artifacts)
 
     def _workspace_package_has_external_dependencies(self) -> bool:
-        package_path = (self.workspace / "package.json").resolve()
-        if not package_path.exists() or not package_path.is_file():
-            return False
-        try:
-            payload = json.loads(package_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return False
-        if not isinstance(payload, dict):
-            return False
-        for key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
-            value = payload.get(key)
-            if isinstance(value, dict) and value:
-                return True
-        return False
+        return self._workspace_quality.workspace_package_has_external_dependencies()
 
     def _workspace_quality_prepare_commands(
         self,
         commands: list[list[str]],
         context: dict[str, Any],
     ) -> list[list[str]]:
-        if not self._bool_from_context_or_env(
-            context,
-            "workspace_validation_install_dependencies",
-            "qa_workspace_validation_install_dependencies",
-            env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION_INSTALL_DEPENDENCIES",
-            default=True,
-        ):
-            return []
-        if not any(command and str(command[0]).strip().lower() == "npm" for command in commands):
-            return []
-        if (self.workspace / "node_modules").is_dir():
-            return []
-        if not self._workspace_package_has_external_dependencies():
-            return []
-        return [["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]]
+        return self._workspace_quality.workspace_quality_prepare_commands(commands, context)
 
     @staticmethod
     def _artifact_file_ready(target: Path) -> bool:
@@ -1368,112 +1205,17 @@ class OrchestrationStageExecutor:
         return helpers.bool_from_context_or_env(context, *keys, env_var=env_var, default=default)
 
     def _load_package_scripts(self) -> dict[str, str]:
-        package_path = (self.workspace / "package.json").resolve()
-        if not package_path.exists() or not package_path.is_file():
-            return {}
-        try:
-            payload = json.loads(package_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return {}
-        if not isinstance(payload, dict):
-            return {}
-        scripts = payload.get("scripts")
-        if not isinstance(scripts, dict):
-            return {}
-        return {str(key): str(value) for key, value in scripts.items() if key and value}
+        return self._workspace_quality.load_package_scripts()
 
     def _workspace_quality_commands(self, context: dict[str, Any]) -> list[list[str]]:
-        if not self._bool_from_context_or_env(
-            context,
-            "workspace_validation",
-            "qa_workspace_validation",
-            env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION",
-            default=True,
-        ):
-            return []
-
-        configured = context.get("quality_commands") or context.get("workspace_quality_commands")
-        if isinstance(configured, list):
-            commands: list[list[str]] = []
-            for item in configured:
-                if isinstance(item, list) and all(isinstance(part, str) and part.strip() for part in item):
-                    commands.append([part.strip() for part in item])
-                elif isinstance(item, str) and item.strip():
-                    commands.append([part for part in item.strip().split(" ") if part])
-            return commands
-
-        scripts = self._load_package_scripts()
-        commands = []
-        if "test" in scripts:
-            commands.append(["npm", "test"])
-        if "build" in scripts:
-            commands.append(["npm", "run", "build"])
-        return commands
+        return self._workspace_quality.workspace_quality_commands(context)
 
     @staticmethod
     def _trim_command_output(text: str, limit: int = _WORKSPACE_VALIDATION_OUTPUT_MAX_CHARS) -> str:
         return helpers.trim_command_output(text, limit)
 
     def _run_workspace_quality_command(self, command: list[str], timeout_seconds: float) -> dict[str, Any]:
-        started_at = datetime.now(timezone.utc).isoformat()
-        resolved_command = self._resolve_workspace_quality_command(command)
-        if not resolved_command:
-            executable = command[0] if command else ""
-            return {
-                "command": command,
-                "started_at": started_at,
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "exit_code": None,
-                "passed": False,
-                "error": f"executable not found: {executable}",
-                "stdout_tail": "",
-                "stderr_tail": "",
-            }
-        try:
-            completed = subprocess.run(
-                resolved_command,
-                cwd=str(self.workspace),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=max(1.0, float(timeout_seconds or _WORKSPACE_VALIDATION_TIMEOUT_SECONDS)),
-                env={**os.environ, "CI": os.environ.get("CI", "1")},
-                check=False,
-            )
-            stdout = self._trim_command_output(completed.stdout)
-            stderr = self._trim_command_output(completed.stderr)
-            return {
-                "command": command,
-                "started_at": started_at,
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "exit_code": int(completed.returncode),
-                "passed": int(completed.returncode) == 0,
-                "stdout_tail": stdout,
-                "stderr_tail": stderr,
-            }
-        except subprocess.TimeoutExpired as exc:
-            return {
-                "command": command,
-                "started_at": started_at,
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "exit_code": None,
-                "passed": False,
-                "error": f"timeout after {float(timeout_seconds):.1f}s",
-                "stdout_tail": self._trim_command_output(str(exc.stdout or "")),
-                "stderr_tail": self._trim_command_output(str(exc.stderr or "")),
-            }
-        except (OSError, RuntimeError, TypeError, ValueError) as exc:
-            return {
-                "command": command,
-                "started_at": started_at,
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "exit_code": None,
-                "passed": False,
-                "error": f"{type(exc).__name__}: {exc}",
-                "stdout_tail": "",
-                "stderr_tail": "",
-            }
+        return self._workspace_quality.run_command(command, timeout_seconds)
 
     @staticmethod
     def _resolve_workspace_quality_command(command: list[str]) -> list[str]:
@@ -1618,11 +1360,7 @@ class OrchestrationStageExecutor:
         )
 
     def _build_orchestration_service(self, context: dict[str, Any]) -> Any:
-        from polaris.bootstrap.config import Settings
-        from polaris.cells.orchestration.pm_dispatch.public.service import OrchestrationCommandService
-
-        settings = context.get("settings") or Settings(workspace=Path(self.workspace))
-        return OrchestrationCommandService(settings)
+        return self._run_completion_waiter.build_orchestration_service(context)
 
     async def _wait_run_completion(
         self,
@@ -1633,108 +1371,20 @@ class OrchestrationStageExecutor:
         cancel_event: asyncio.Event | None = None,
         abort_checker: Callable[[], Awaitable[str | None]] | None = None,
     ) -> CommandResult:
-        terminal_statuses = {"completed", "failed", "cancelled", "timeout", "blocked"}
-        run_id = str(initial_result.run_id or "").strip()
-
-        if initial_result.status in terminal_statuses or not run_id:
-            return initial_result
-
-        if abort_checker is not None:
-            try:
-                abort_reason = await abort_checker()
-            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                logger.debug("Factory abort checker failed for run %s: %s", run_id, exc)
-                abort_reason = None
-            if abort_reason:
-                return CommandResult(
-                    run_id=run_id,
-                    status="cancelled",
-                    message=f"Run cancelled: {abort_reason}",
-                )
-
-        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
-            get_orchestration_service,
+        return await self._run_completion_waiter.wait(
+            service,
+            initial_result,
+            timeout_seconds,
+            cancel_event=cancel_event,
+            abort_checker=abort_checker,
         )
-
-        orchestration_service = await get_orchestration_service()
-        active_runs = getattr(orchestration_service, "_active_runs", {})
-        active_task = active_runs.get(run_id) if isinstance(active_runs, dict) else None
-        if not isinstance(active_task, asyncio.Task):
-            return await service.query_run_status(run_id)
-
-        waiters: dict[asyncio.Future[Any], str] = {
-            asyncio.ensure_future(asyncio.shield(active_task)): "orchestration",
-            asyncio.create_task(asyncio.sleep(max(0.0, float(timeout_seconds)))): "timeout",
-        }
-        if cancel_event is not None:
-            waiters[asyncio.create_task(cancel_event.wait())] = "cancel"
-
-        try:
-            done, _pending = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
-            completed_reason = ""
-            completed_waiter: asyncio.Future[Any] | None = None
-            for preferred_reason in ("cancel", "orchestration", "timeout"):
-                for waiter in done:
-                    if waiters.get(waiter) == preferred_reason:
-                        completed_reason = preferred_reason
-                        completed_waiter = waiter
-                        break
-                if completed_waiter is not None:
-                    break
-
-            if completed_reason == "cancel":
-                return CommandResult(
-                    run_id=run_id,
-                    status="cancelled",
-                    message="Run cancelled: factory_cancelled",
-                )
-
-            if completed_reason == "timeout":
-                return CommandResult(
-                    run_id=run_id,
-                    status="timeout",
-                    message=f"Run timed out after {timeout_seconds} seconds",
-                )
-
-            if completed_waiter is None:
-                return await service.query_run_status(run_id)
-
-            try:
-                completed_waiter.result()
-            except asyncio.CancelledError:
-                return CommandResult(
-                    run_id=run_id,
-                    status="cancelled",
-                    message="Run cancelled: orchestration_task_cancelled",
-                )
-            except (RuntimeError, ValueError, OSError, TypeError) as exc:
-                return CommandResult(
-                    run_id=run_id,
-                    status="failed",
-                    message=f"Run failed: {exc}",
-                )
-
-            return await service.query_run_status(run_id)
-        finally:
-            for waiter in waiters:
-                if waiter.done():
-                    continue
-                waiter.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await asyncio.gather(*waiters.keys(), return_exceptions=True)
 
     @staticmethod
     def _resolve_cancel_event(context: dict[str, Any]) -> asyncio.Event | None:
-        event = context.get("_factory_cancel_event")
-        if isinstance(event, asyncio.Event):
-            return event
-        return None
+        return RunCompletionWaiter.resolve_cancel_event(context)
 
     @staticmethod
     def _resolve_abort_checker(
         context: dict[str, Any],
     ) -> Callable[[], Awaitable[str | None]] | None:
-        checker = context.get("_factory_abort_checker")
-        if callable(checker):
-            return checker
-        return None
+        return RunCompletionWaiter.resolve_abort_checker(context)

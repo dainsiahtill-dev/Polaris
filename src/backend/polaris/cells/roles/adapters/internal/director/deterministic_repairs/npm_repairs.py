@@ -184,6 +184,7 @@ def _is_repairable_npm_test_script_error(error: Any) -> bool:
     text = str(error or "")
     return (
         "npm default failing test script" in text
+        or "npm placeholder test script" in text
         or "npm manifest-only test script" in text
         or "npm package manifest script 'test' has invalid shell syntax" in text
         or "npm package manifest script 'start' references missing local entrypoint" in text
@@ -194,6 +195,7 @@ def _is_manifest_only_or_default_test_script_error(errors: list[str]) -> bool:
     joined = "\n".join(str(error or "") for error in errors)
     return (
         "npm default failing test script" in joined
+        or "npm placeholder test script" in joined
         or "npm manifest-only test script" in joined
         or "npm package manifest script 'test' has invalid shell syntax" in joined
     )

@@ -222,6 +222,28 @@ def test_scan_detects_npm_no_tests_yet_placeholder(tmp_path: Path) -> None:
     assert "npm placeholder test script" in errors[0]
 
 
+def test_scan_detects_npm_all_tests_passed_placeholder(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "typescript-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "echo \\"All tests passed\\""
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert errors
+    assert "npm placeholder test script" in errors[0]
+
+
 def test_scan_detects_standalone_manifest_check_passed_test_script(tmp_path: Path) -> None:
     target = tmp_path / "package.json"
     target.write_text(

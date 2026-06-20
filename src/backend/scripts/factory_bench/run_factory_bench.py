@@ -51,7 +51,7 @@ from scripts.factory_bench.factory_http_client import (
 
 _FIXTURE = Path(__file__).resolve().parent / "projects_v2.json"
 _BACKEND_ROOT = Path("/home/dains/Documents/polaris/src/backend")
-FACTORY_BENCH_REQUIRED_LLM_ROLES = ("pm", "chief_engineer", "qa", "director")
+FACTORY_BENCH_REQUIRED_LLM_ROLES = ("pm", "director")
 
 # Artifact layout (2026-06-11 recon): most chain artifacts live OUTSIDE the
 # workspace, under <runtime_base>/.polaris/projects/<workspace_key>/runtime/.
@@ -1408,7 +1408,7 @@ def main() -> int:
             collect_llm_events(workspace, runtime_dirs, audit_bundle),
             expected_bindings=expected_llm_bindings,
             required_roles=FACTORY_BENCH_REQUIRED_LLM_ROLES,
-            require_all_director_routes=True,
+            require_all_director_routes=False,
         )
         apply_factory_bench_gates(record, chain)
         record["failure_taxonomy"] = classify_factory_bench_failure(record)

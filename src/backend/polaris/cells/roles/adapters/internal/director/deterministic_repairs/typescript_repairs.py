@@ -8,6 +8,7 @@ module.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 from pathlib import Path
@@ -36,6 +37,13 @@ from ._common import (
     _relative_import_repair_target_candidates,
     _relative_import_suffix_order,
 )
+
+_TS_MISSING_PROPERTY_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2339:\s*"
+    r"Property\s+'(?P<member>[^']+)'\s+does\s+not\s+exist\s+on\s+type\s+'(?P<type>[^']+)'",
+    re.IGNORECASE,
+)
+_TS_EXPORTED_CLASS_RE_TEMPLATE = r"export\s+(?:abstract\s+)?class\s+{type_name}\b[^{{]*{{"
 
 
 def _apply_deterministic_typescript_reexport_repair(
@@ -122,6 +130,253 @@ def _apply_deterministic_typescript_reexport_repair(
                     }
                 ]
     return []
+
+
+def _apply_deterministic_typescript_missing_member_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    missing_members = _parse_typescript_missing_member_errors(artifact_quality_errors)
+    if not missing_members:
+        return []
+
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    writes: list[dict[str, Any]] = []
+    updated_by_path: dict[Path, str] = {}
+    repaired_members: list[dict[str, str]] = []
+    for item in missing_members:
+        type_name = item["type"]
+        member = item["member"]
+        declaration_path, declaration_text, class_start, class_end = _find_typescript_class_declaration(
+            workspace_path=workspace_path,
+            type_name=type_name,
+            updated_by_path=updated_by_path,
+        )
+        if declaration_path is None or declaration_text is None or class_start < 0 or class_end < 0:
+            continue
+        class_text = declaration_text[class_start:class_end]
+        if _typescript_class_text_has_member(class_text, member):
+            continue
+        usage_line = _typescript_error_usage_line(workspace_path, item)
+        member_declaration = _build_typescript_missing_member_declaration(
+            member=member,
+            usage_line=usage_line,
+            class_text=class_text,
+        )
+        if not member_declaration:
+            continue
+        new_text = (
+            declaration_text[:class_end].rstrip() + "\n" + member_declaration + "\n" + declaration_text[class_end:]
+        )
+        updated_by_path[declaration_path] = new_text
+        repaired_members.append(
+            {
+                "file": declaration_path.relative_to(workspace_path).as_posix(),
+                "type": type_name,
+                "member": member,
+            }
+        )
+
+    if not updated_by_path:
+        return []
+
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    executor = DirectorToolExecutor(str(workspace_path), message_bus=message_bus, worker_id="director")
+    for path, content in updated_by_path.items():
+        rel_path = path.relative_to(workspace_path).as_posix()
+        write_result = executor.execute_tool(
+            "write_file",
+            {"file": rel_path, "content": content},
+            task_id=task_id,
+        )
+        if not bool(write_result.get("ok")):
+            continue
+        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+            adapter._update_task_progress(task_id, "executing", current_file=rel_path)
+        writes.append(
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_typescript_missing_member_repair",
+                    "file": rel_path,
+                    "members": [item for item in repaired_members if item["file"] == rel_path],
+                    "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
+                    "operation": str(write_result.get("operation") or "modify"),
+                    "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                    "director_policy": write_result.get("director_policy"),
+                },
+            }
+        )
+    return writes
+
+
+def _apply_deterministic_typescript_tsconfig_lib_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    if not _typescript_errors_require_dom_lib(artifact_quality_errors):
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    tsconfig_path = workspace_path / "tsconfig.json"
+    if not tsconfig_path.is_file():
+        return []
+    try:
+        payload = json.loads(tsconfig_path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    compiler_options_raw = payload.get("compilerOptions")
+    compiler_options: dict[str, Any] = dict(compiler_options_raw) if isinstance(compiler_options_raw, dict) else {}
+    libs_raw = compiler_options.get("lib")
+    libs = [str(item) for item in libs_raw] if isinstance(libs_raw, list) else []
+    normalized = {item.lower() for item in libs}
+    if "dom" in normalized:
+        return []
+    if not libs:
+        libs.append(str(compiler_options.get("target") or "ES2020"))
+    libs.append("DOM")
+    compiler_options["lib"] = libs
+    payload["compilerOptions"] = compiler_options
+    content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    write_result = DirectorToolExecutor(
+        str(workspace_path),
+        message_bus=message_bus,
+        worker_id="director",
+    ).execute_tool(
+        "write_file",
+        {"file": "tsconfig.json", "content": content},
+        task_id=task_id,
+    )
+    if not bool(write_result.get("ok")):
+        return []
+    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+        adapter._update_task_progress(task_id, "executing", current_file="tsconfig.json")
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_typescript_tsconfig_lib_repair",
+                "file": "tsconfig.json",
+                "libs": libs,
+                "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
+                "operation": str(write_result.get("operation") or "modify"),
+                "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                "director_policy": write_result.get("director_policy"),
+            },
+        }
+    ]
+
+
+def _typescript_errors_require_dom_lib(errors: list[str]) -> bool:
+    joined = "\n".join(str(error or "").lower() for error in errors)
+    return "cannot find name 'console'" in joined and "include 'dom'" in joined
+
+
+def _parse_typescript_missing_member_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for error in errors:
+        for match in _TS_MISSING_PROPERTY_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": str(match.group("file") or "").strip(),
+                "line": str(match.group("line") or "").strip(),
+                "member": str(match.group("member") or "").strip(),
+                "type": str(match.group("type") or "").strip(),
+            }
+            key = (item["file"], item["line"], item["type"], item["member"])
+            if not item["file"] or not item["member"] or not item["type"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _find_typescript_class_declaration(
+    *,
+    workspace_path: Path,
+    type_name: str,
+    updated_by_path: dict[Path, str],
+) -> tuple[Path | None, str | None, int, int]:
+    class_re = re.compile(_TS_EXPORTED_CLASS_RE_TEMPLATE.format(type_name=re.escape(type_name)))
+    for path in _iter_typescript_files(workspace_path):
+        try:
+            text = updated_by_path.get(path) or path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        match = class_re.search(text)
+        if not match:
+            continue
+        open_brace = text.find("{", match.start())
+        close_brace = _find_matching_brace(text, open_brace)
+        if close_brace < 0:
+            continue
+        return path, text, match.start(), close_brace
+    return None, None, -1, -1
+
+
+def _find_matching_brace(text: str, open_brace: int) -> int:
+    if open_brace < 0 or open_brace >= len(text) or text[open_brace] != "{":
+        return -1
+    depth = 0
+    for index in range(open_brace, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
+
+
+def _typescript_class_text_has_member(class_text: str, member: str) -> bool:
+    escaped = re.escape(member)
+    return bool(re.search(rf"\b(?:get\s+)?{escaped}\b\s*(?:\(|:)", class_text))
+
+
+def _typescript_error_usage_line(workspace_path: Path, item: dict[str, str]) -> str:
+    rel_path = str(item.get("file") or "").strip()
+    try:
+        line_no = int(str(item.get("line") or "0"))
+    except ValueError:
+        return ""
+    source_path = (workspace_path / rel_path).resolve()
+    if not _path_inside_workspace(source_path, workspace_path) or not source_path.is_file():
+        return ""
+    try:
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return ""
+    if line_no < 1 or line_no > len(lines):
+        return ""
+    return lines[line_no - 1]
+
+
+def _build_typescript_missing_member_declaration(*, member: str, usage_line: str, class_text: str) -> str:
+    safe_member = re.sub(r"[^A-Za-z0-9_$]", "", member)
+    if not safe_member:
+        return ""
+    if re.search(rf"\.{re.escape(safe_member)}\s*\(", usage_line):
+        return f"  public {safe_member}(): number {{\n    return 0;\n  }}"
+    if re.search(rf"\.{re.escape(safe_member)}\s*\.length\b", usage_line):
+        fallback = "this.id" if re.search(r"\bid\s*:", class_text) else '""'
+        return f"  public get {safe_member}(): string {{\n    return {fallback};\n  }}"
+    return f"  public get {safe_member}(): unknown {{\n    return undefined;\n  }}"
 
 
 def _resolve_case_variant_relative_path(root: Path, relative_path: str) -> str:

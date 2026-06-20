@@ -6,12 +6,11 @@ Phase 6 Update: 新增统一编排兼容端点，内部可转发到 UnifiedOrche
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import time
 import warnings
-from pathlib import Path
+from pathlib import Path  # noqa: F401  # patched via director.Path / dereferenced by support helpers
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -50,9 +49,9 @@ from polaris.cells.runtime.projection.public.service import (
     RuntimeProjectionService,
     build_cache_root,
     build_llm_status,  # noqa: F401  # patched/dereferenced via director.<name>
-    build_workflow_status_payload,
-    build_workflow_task_rows,
-    get_workflow_runtime_status,
+    build_workflow_status_payload,  # noqa: F401  # dereferenced via director.<name> from support
+    build_workflow_task_rows,  # noqa: F401  # patched/dereferenced via director.<name>
+    get_workflow_runtime_status,  # noqa: F401  # dereferenced via director.<name> from support
     merge_director_status,
     select_task_rows_from_projection,  # noqa: F401  # patched/dereferenced via director.<name>
 )
@@ -167,6 +166,22 @@ from polaris.delivery.http.v2.director_models import (  # noqa: F401
     TaskResponse,
 )
 
+# Request-bound support helpers (workspace / snapshot / projection IO + optional
+# debug evidence) extracted to a sibling module. Re-imported here so
+# ``director.<name>`` keeps resolving for callers/tests (notably the direct
+# ``_append_debug`` import) and so route handlers can keep calling them by bare
+# name. These helpers dereference their patchable collaborators through the
+# ``director`` module object at call time.
+from polaris.delivery.http.v2.director_support import (  # noqa: F401
+    _append_debug,
+    _ensure_snapshot_workspace,
+    _get_workflow_snapshot,
+    _get_workflow_snapshot_sync,
+    _projected_task_response,
+    _projected_worker_rows,
+    _workspace_from_request,
+)
+
 # Row-assembly + task-market projection helpers extracted to a sibling module.
 # Re-imported here so ``director.<name>`` keeps resolving for callers/tests and so
 # in-module call sites can keep using bare names. These helpers dereference their
@@ -184,7 +199,7 @@ from polaris.delivery.http.workspace import (
     active_workspace_value,  # noqa: F401  # dereferenced via director.<name> from diagnostics
     requested_or_active_workspace,
     settings_with_workspace_override,  # noqa: F401  # dereferenced via director.<name> from diagnostics
-    workspace_values_match,
+    workspace_values_match,  # noqa: F401  # dereferenced via director.<name> from support
 )
 from polaris.domain.entities import TaskPriority  # noqa: F401  # dereferenced via director.<name>
 from polaris.kernelone._runtime_config import resolve_env_str
@@ -220,128 +235,8 @@ def _merge_director_status(*args, **kwargs):
 router = APIRouter(prefix="/director", tags=["Director v2"])
 
 
-def _append_debug(event: str, payload: dict[str, Any]) -> None:
-    log_target = str(os.environ.get("KERNELONE_BACKEND_DEBUG_LOG", "") or "").strip()
-    if not log_target:
-        return
-
-    try:
-        log_path = Path(log_target)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        record = {
-            "ts": time.time(),
-            "event": event,
-            "payload": payload,
-        }
-        with log_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except (OSError, RuntimeError, TypeError, ValueError) as exc:
-        # Event logging failure should not break main flow, but visibility is compromised.
-        logger.debug("Director debug event append failed: %s", exc, exc_info=True)
-
-
-def _workspace_from_request(request: Request, workspace: str | None = None) -> str:
-    state = getattr(request.app.state, "app_state", None) or request.app.state
-    return requested_or_active_workspace(state.settings, workspace or "")
-
-
-def _ensure_snapshot_workspace(request: Request, snapshot: Any, run_id: str, workspace: str) -> None:
-    """Hide orchestration runs that do not belong to the requested desktop workspace."""
-
-    if not str(workspace or "").strip():
-        return
-    resolved_workspace = _workspace_from_request(request, workspace)
-    if not workspace_values_match(getattr(snapshot, "workspace", ""), resolved_workspace):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run not found: {run_id}",
-        )
-
-
-async def _projected_task_response(request: Request, task_id: str, workspace: str | None = None) -> TaskResponse | None:
-    """Return a workflow/projection task detail when local Director queue misses."""
-    state = getattr(request.app.state, "app_state", None) or request.app.state
-    resolved_workspace = _workspace_from_request(request, workspace)
-
-    projection_rows: list[dict[str, Any]] = []
-    try:
-        projection = await RuntimeProjectionService.build_async(resolved_workspace, state=state)
-    except (RuntimeError, ValueError, TypeError, AttributeError):
-        logger.debug("Failed to build Director task projection for task_id=%s", task_id, exc_info=True)
-    else:
-        projection_rows = _projection_task_rows(projection)
-
-    for row in projection_rows:
-        if _task_row_matches_id(row, task_id):
-            return _task_response_from_row(row)
-    for row in _task_market_execution_rows_for_workspace(resolved_workspace):
-        if _task_row_matches_id(row, task_id):
-            return _task_response_from_row(row)
-    return None
-
-
-def _get_workflow_snapshot_sync(
-    workspace: str,
-    *,
-    ramdisk_root: str = "",
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    workspace_value = str(workspace or "").strip()
-    if not workspace_value:
-        return None, []
-    runtime_root = str(ramdisk_root or resolve_env_str("ramdisk_root") or "").strip()
-    try:
-        if not runtime_root:
-            from polaris.bootstrap.config import get_settings
-
-            settings = get_settings()
-            runtime_root = str(getattr(settings, "ramdisk_root", "") or "").strip()
-        cache_root = build_cache_root(runtime_root, workspace_value)
-        workflow_status = get_workflow_runtime_status(workspace_value, cache_root)
-    except (RuntimeError, ValueError):
-        # Workflow status unavailable - return empty to maintain graceful degradation
-        logger.debug("Failed to get workflow status for workspace=%s", workspace_value)
-        return None, []
-
-    status_payload = build_workflow_status_payload(
-        workflow_status,
-        workspace=workspace_value,
-        cache_root=cache_root,
-    )
-    if not isinstance(status_payload, dict):
-        return None, []
-    task_rows = build_workflow_task_rows(
-        workflow_status,
-        workspace=workspace_value,
-        cache_root=cache_root,
-    )
-    return status_payload, task_rows
-
-
-async def _get_workflow_snapshot(
-    workspace: str,
-    *,
-    ramdisk_root: str = "",
-) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    return await asyncio.to_thread(
-        _get_workflow_snapshot_sync,
-        workspace,
-        ramdisk_root=ramdisk_root,
-    )
-
-
 # Request/Response models are declared in ``director_models`` and re-exported
 # at the top of this module (see ``from .director_models import ...``).
-
-
-async def _projected_worker_rows(request: Request, workspace: str | None = None) -> list[dict[str, Any]]:
-    state = getattr(request.app.state, "app_state", None) or request.app.state
-    resolved_workspace = _workspace_from_request(request, workspace)
-    try:
-        projection = await RuntimeProjectionService.build_async(resolved_workspace, state=state)
-    except (RuntimeError, ValueError):
-        logger.debug("Director worker projection unavailable for workspace=%s", resolved_workspace, exc_info=True)
-        return []
-    return _worker_rows_from_projection(projection)
 
 
 @router.post("/start", dependencies=[Depends(require_auth)])

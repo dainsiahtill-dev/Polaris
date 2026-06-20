@@ -490,6 +490,11 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 "goal": f"完成 {domain_label} 领域核心功能落地，形成可执行主流程",
                 "description": "建立核心数据结构、领域服务与入口调用链，确保关键场景可运行。",
                 "scope": [f"src/{domain}", f"src/{domain}_core", "tests/"],
+                "target_files": [
+                    f"src/{domain}/core.py",
+                    f"src/{domain}_core/service.py",
+                    f"tests/test_{domain}.py",
+                ],
                 "steps": [
                     f"梳理并实现 {domain_label} 核心数据模型与服务接口",
                     "补齐主流程入口与基础错误处理",
@@ -497,7 +502,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 ],
                 "acceptance": [
                     f"执行 `pytest -q` 或 `npm test` 时，{domain_label} 核心模块测试通过",
-                    f"运行主流程后可看到 {domain_label} 关键业务输出，无 TODO/FIXME/stub",
+                    f"运行主流程后可看到 {domain_label} 关键业务输出，并覆盖错误路径处理",
                 ],
                 "phase": "requirements",
                 "depends_on": [],
@@ -510,6 +515,11 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 "goal": f"补齐 {secondary_label} 相关增强特性并接入主流程",
                 "description": "实现增强功能、状态同步与异常回退路径，确保与核心模块联动。",
                 "scope": [f"src/{domain}_feature", f"src/{secondary}", "tests/integration/"],
+                "target_files": [
+                    f"src/{domain}_feature/integration.py",
+                    f"src/{secondary}/service.py",
+                    f"tests/integration/test_{secondary}.py",
+                ],
                 "steps": [
                     f"实现 {secondary_label} 增强逻辑并与核心模块集成",
                     "补齐失败重试、异常处理与边界校验",
@@ -530,6 +540,11 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 "goal": f"固化 {domain_label} 交付基线，确保回归可复现",
                 "description": "补齐单元/集成验证与质量检查脚本，形成可重复验收证据。",
                 "scope": [f"tests/{domain}", "scripts/", "tui_runtime.md"],
+                "target_files": [
+                    f"tests/{domain}/test_acceptance.py",
+                    "scripts/verify_delivery.py",
+                    "tui_runtime.md",
+                ],
                 "steps": [
                     "补充关键路径单元测试与回归测试",
                     "编写或更新质量检查脚本与执行说明",

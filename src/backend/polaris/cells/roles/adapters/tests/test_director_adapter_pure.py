@@ -138,6 +138,84 @@ def test_deterministic_npm_script_repair_builds_before_missing_dist_entrypoint(t
     assert not any("references missing local entrypoint" in error for error in repaired_errors)
 
 
+def test_deterministic_typescript_missing_member_repair_adds_class_members(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "models" / "flower.ts").write_text(
+        "export class Flower {\n  public id: string;\n  constructor(id: string) {\n    this.id = id;\n  }\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "gardenengine.ts").write_text(
+        "import { Flower } from '../models/flower.js';\n"
+        "const flower = new Flower('f1');\n"
+        "flower.getAttraction();\n"
+        "flower.name.length;\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/engine/gardenengine.ts(3,8): error TS2339: Property 'getAttraction' "
+        "does not exist on type 'Flower'.\n"
+        "src/engine/gardenengine.ts(4,8): error TS2339: Property 'name' does not exist on type 'Flower'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "models" / "flower.ts").read_text(encoding="utf-8")
+    assert "public getAttraction(): number" in repaired
+    assert "public get name(): string" in repaired
+    assert "return this.id;" in repaired
+
+
+def test_deterministic_typescript_tsconfig_lib_repair_adds_dom(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_tsconfig_lib_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("console.log('hello');\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps(
+            {
+                "compilerOptions": {
+                    "target": "ES2020",
+                    "module": "ES2020",
+                    "lib": ["ES2020"],
+                },
+                "include": ["src/**/*.ts"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/main.ts(1,1): error TS2584: Cannot find name 'console'. "
+        "Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'."
+    ]
+
+    results = _apply_deterministic_typescript_tsconfig_lib_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "tsconfig.json").read_text(encoding="utf-8"))
+    assert repaired["compilerOptions"]["lib"] == ["ES2020", "DOM"]
+
+
 def test_empty_write_content_retry_needed_only_for_blank_write() -> None:
     assert (
         _empty_write_content_retry_needed(

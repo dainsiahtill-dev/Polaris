@@ -51,12 +51,12 @@ def test_chain_failure_overrides_static_artifact_checks() -> None:
     assert gates["integration_qa_passed"]["ok"] is False
 
 
-def test_runner_requires_all_director_routes_for_llm_route_audit() -> None:
+def test_runner_audits_llm_routes_for_llm_backed_roles_only() -> None:
     source = Path(bench.__file__).read_text(encoding="utf-8")
 
-    assert bench.FACTORY_BENCH_REQUIRED_LLM_ROLES == ("pm", "chief_engineer", "qa", "director")
-    assert "require_all_director_routes=True" in source
-    assert "require_all_director_routes=False" not in source
+    assert bench.FACTORY_BENCH_REQUIRED_LLM_ROLES == ("pm", "director")
+    assert "require_all_director_routes=False" in source
+    assert "require_all_director_routes=True" not in source
     assert "required_roles=FACTORY_BENCH_REQUIRED_LLM_ROLES" in source
 
 

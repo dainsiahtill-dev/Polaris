@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -674,6 +675,81 @@ def _first_ok_command(commands: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
+_BUILD_OUTPUT_DIR_NAMES = frozenset({"dist", "build", "out", "bin"})
+
+
+def _is_build_output_path(path: str) -> bool:
+    """Check if a path starts with a build output directory as its first segment."""
+    normalized = path.replace("\\", "/")
+    clean = normalized
+    while clean.startswith("./"):
+        clean = clean[2:]
+    parts = clean.split("/")
+    if not parts:
+        return False
+    first_segment = parts[0].lower()
+    return first_segment in _BUILD_OUTPUT_DIR_NAMES
+
+
+def _token_references_build_output(token: str) -> bool:
+    """Check if a single command token references a build output directory."""
+    if "=" in token:
+        _, _, value = token.partition("=")
+        value = value.strip("'\"")
+        if _is_build_output_path(value):
+            return True
+    return _is_build_output_path(token)
+
+
+def _has_build_output_path_reference(command: str) -> bool:
+    """Check if command contains a build output dir used as a path root."""
+    normalized = command.replace("\\", "/")
+    try:
+        tokens = shlex.split(normalized)
+    except ValueError:
+        tokens = normalized.split()
+    return any(_token_references_build_output(t) for t in tokens)
+
+
+def _command_serves_build_output(command: str) -> bool:
+    """Check if the command is known to serve build output (e.g. vite preview, serve -s dist)."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+    if not tokens:
+        return False
+    idx = 0
+    if tokens[0] == "npx" and len(tokens) >= 2:
+        idx = 1
+    if len(tokens) > idx + 1 and tokens[idx] == "vite" and tokens[idx + 1] == "preview":
+        return True
+    if tokens[idx] in ("serve", "http-server"):
+        remaining = tokens[idx + 1 :]
+        return any(_token_references_build_output(t) for t in remaining)
+    return False
+
+
+def _script_depends_on_build_output(scripts: dict[str, Any], script_name: str) -> bool:
+    """Check if an npm script's command references build artifact directories.
+
+    Detects build output dirs as path roots (dist, ./dist, dist/index.js),
+    flag values (--dir=dist), and known build-serving commands (serve, vite preview).
+    Avoids false positives for source paths like scripts/build/start.js.
+    """
+    command = str(scripts.get(script_name) or "").strip()
+    if not command:
+        return False
+    if _command_serves_build_output(command):
+        return True
+    return _has_build_output_path_reference(command)
+
+
+def _any_script_references_build_output(scripts: dict[str, Any], script_names: tuple[str, ...]) -> bool:
+    """Check if any of the given npm scripts reference build artifact directories."""
+    return any(_script_depends_on_build_output(scripts, name) for name in script_names if name in scripts)
+
+
 def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: int = 60) -> dict[str, Any]:
     """Run the platform's real-runnability gate for one generated project."""
     code_files = [str(item) for item in record.get("code_files") or []]
@@ -726,16 +802,52 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
     build_detail = "no build/test/lint command was discovered"
     package_script_failed = False
     if package and shutil.which("npm"):
-        for script_name in ("test", "build", "lint", "check"):
-            if script_name in scripts:
-                cmd = _run_command(["npm", "run", script_name], workspace, timeout_s=max(10, int(timeout_s)))
-                cmd["phase"] = "build_test_lint"
-                cmd["script"] = script_name
-                commands.append(cmd)
-                build_command_ok = bool(cmd.get("ok"))
-                package_script_failed = not build_command_ok
-                build_detail = f"npm run {script_name} {'passed' if build_command_ok else 'failed'}"
-                break
+        has_build_script = "build" in scripts
+        has_ts_files = _files_with_suffix(code_files, (".ts", ".tsx"))
+
+        build_cmd_str = str(scripts.get("build") or "")
+        has_build_output_ref = _any_script_references_build_output(scripts, ("test", "start", "check", "lint"))
+        should_build_first = has_build_script and (has_ts_files or has_build_output_ref or "tsc" in build_cmd_str)
+        if should_build_first:
+            cmd = _run_command(["npm", "run", "build"], workspace, timeout_s=max(10, int(timeout_s)))
+            cmd["phase"] = "build_test_lint"
+            cmd["script"] = "build"
+            commands.append(cmd)
+            build_command_ok = bool(cmd.get("ok"))
+            package_script_failed = not build_command_ok
+            if build_command_ok:
+                build_detail = "npm run build passed"
+                ran_quality = False
+                for script_name in ("test", "lint", "check"):
+                    if script_name in scripts:
+                        cmd = _run_command(["npm", "run", script_name], workspace, timeout_s=max(10, int(timeout_s)))
+                        cmd["phase"] = "build_test_lint"
+                        cmd["script"] = script_name
+                        commands.append(cmd)
+                        ran_quality = True
+                        if not cmd.get("ok"):
+                            build_command_ok = False
+                            package_script_failed = True
+                            build_detail = f"npm run {script_name} failed"
+                            break
+                        build_detail = f"npm run build and npm run {script_name} passed"
+                        break
+                if not ran_quality and build_command_ok:
+                    build_detail = "npm run build passed"
+            else:
+                stderr = str(cmd.get("stderr_tail") or "")
+                build_detail = "npm run build failed" + (f": {stderr}" if stderr else "")
+        else:
+            for script_name in ("test", "build", "lint", "check"):
+                if script_name in scripts:
+                    cmd = _run_command(["npm", "run", script_name], workspace, timeout_s=max(10, int(timeout_s)))
+                    cmd["phase"] = "build_test_lint"
+                    cmd["script"] = script_name
+                    commands.append(cmd)
+                    build_command_ok = bool(cmd.get("ok"))
+                    package_script_failed = not build_command_ok
+                    build_detail = f"npm run {script_name} {'passed' if build_command_ok else 'failed'}"
+                    break
     python_test_files = _discover_python_test_files(workspace, code_files)
     if not build_command_ok and not package_script_failed and any(rel.endswith(".py") for rel in code_files):
         cmd = _run_command(
@@ -790,18 +902,31 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
     if html_entry:
         entrypoint = _smoke_static_web(workspace, html_entry, timeout_s=timeout_s)
     elif package and shutil.which("npm") and "start" in scripts:
-        cmd = _run_command(["npm", "run", "start"], workspace, timeout_s=min(max(3, int(timeout_s)), 8))
-        # npm start timeout 不得直接算成功；server 项目需要端口/health probe 或明确启动成功证据
-        has_success_evidence = bool(cmd.get("ok")) and not bool(cmd.get("timeout"))
-        entrypoint = {
-            "kind": "npm_start",
-            "entrypoint": "npm run start",
-            "ok": has_success_evidence,
-            "detail": "npm run start completed successfully"
-            if has_success_evidence
-            else "npm run start timed out or failed",
-            **cmd,
-        }
+        start_needs_build = _script_depends_on_build_output(scripts, "start")
+        build_was_attempted = any(cmd.get("script") == "build" for cmd in commands)
+        if start_needs_build and (not build_was_attempted or not build_command_ok):
+            fail_detail = "build did not succeed"
+            if build_was_attempted and build_detail:
+                fail_detail = build_detail
+            entrypoint = {
+                "kind": "npm_start",
+                "entrypoint": "npm run start",
+                "ok": False,
+                "detail": f"npm start depends on build output but {fail_detail}",
+            }
+        else:
+            cmd = _run_command(["npm", "run", "start"], workspace, timeout_s=min(max(3, int(timeout_s)), 8))
+            # npm start timeout 不得直接算成功；server 项目需要端口/health probe 或明确启动成功证据
+            has_success_evidence = bool(cmd.get("ok")) and not bool(cmd.get("timeout"))
+            entrypoint = {
+                "kind": "npm_start",
+                "entrypoint": "npm run start",
+                "ok": has_success_evidence,
+                "detail": "npm run start completed successfully"
+                if has_success_evidence
+                else "npm run start timed out or failed",
+                **cmd,
+            }
     else:
         py_entry = _find_python_entrypoint(workspace, code_files)
         if py_entry:

@@ -185,6 +185,26 @@ class TestAuditRecord:
 
         assert results[0]["ok"] is True
 
+    def test_package_script_validation_allows_build_before_dist_entrypoint(self, tmp_path: Path) -> None:
+        ws = _project_workspace(tmp_path)
+        (ws / "src").mkdir()
+        (ws / "src" / "main.ts").write_text("console.log('ok');\n", encoding="utf-8")
+        (ws / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "build": "tsc",
+                        "start": "npm run build && node dist/main.js",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        results = run_checks(str(ws), ["package_scripts"])
+
+        assert results[0]["ok"] is True
+
     def test_package_script_missing_node_preload_fails_record(self, tmp_path: Path) -> None:
         ws = _project_workspace(tmp_path)
         (ws / "test").mkdir()

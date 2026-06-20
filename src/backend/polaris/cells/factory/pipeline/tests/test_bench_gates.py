@@ -6,6 +6,8 @@ from typing import Any
 
 from polaris.cells.factory.pipeline.internal import bench_gates
 from polaris.cells.factory.pipeline.internal.bench_gates import (
+    _command_serves_build_output,
+    _script_depends_on_build_output,
     aggregate_goal_audit,
     build_llm_route_audit,
     build_real_run_gate,
@@ -313,6 +315,630 @@ def test_real_run_gate_executes_go_build_and_cli_entrypoint(monkeypatch: Any, tm
     assert gate["requirements"]["build_test_lint_ran"]["detail"] == "go test passed"
     assert gate["entrypoint"]["kind"] == "go_cli"
     assert [command[1] for command in commands] == ["test", "run"]
+
+
+def test_real_run_gate_ts_build_before_test_order(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "tsc",
+                    "test": "node dist/index.js",
+                    "start": "node dist/index.js",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.ts").write_text("export const hello = () => 'world';\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "timeout": False,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["index.ts"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is True
+    script_calls = [cmd for cmd in commands if cmd[0] == "npm"]
+    script_names = [cmd[2] for cmd in script_calls]
+    assert "build" in script_names
+    assert "test" in script_names
+    build_idx = script_names.index("build")
+    test_idx = script_names.index("test")
+    assert build_idx < test_idx
+
+
+def test_real_run_gate_ts_build_failure_blocks_gate(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "tsc",
+                    "test": "node dist/index.js",
+                    "start": "node dist/index.js",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.ts").write_text("export const hello = () => 'world';\n", encoding="utf-8")
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        is_build = command == ["npm", "run", "build"]
+        return {
+            "command": command,
+            "ok": not is_build,
+            "returncode": 1 if is_build else 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "TS1005: ';' expected." if is_build else "",
+            "timeout": False,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["index.ts"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is False
+    assert "TS1005" in gate["requirements"]["build_test_lint_ran"]["detail"]
+
+
+def test_real_run_gate_non_compiled_js_can_run_test_only(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"test": "jest", "start": "node app.js"}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "app.js").write_text("console.log('ok');\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "timeout": False,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["app.js"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is True
+    assert gate["requirements"]["build_test_lint_ran"]["detail"] == "npm run test passed"
+    build_test_calls = [
+        cmd for cmd in commands if cmd[0] == "npm" and cmd[1] == "run" and cmd[2] in ("test", "build", "lint", "check")
+    ]
+    assert len(build_test_calls) == 1
+    assert build_test_calls[0][2] == "test"
+
+
+def test_real_run_gate_build_failure_blocks_npm_start(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "tsc",
+                    "start": "node dist/index.js",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.ts").write_text("export const hello = () => 'world';\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        is_build = command == ["npm", "run", "build"]
+        return {
+            "command": command,
+            "ok": not is_build,
+            "returncode": 1 if is_build else 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "TS1005: ';' expected." if is_build else "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["index.ts"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is False
+    assert "TS1005" in gate["requirements"]["build_test_lint_ran"]["detail"]
+    script_calls = [cmd for cmd in commands if cmd[0] == "npm"]
+    script_names = [cmd[2] for cmd in script_calls]
+    assert "build" in script_names
+    assert "start" not in script_names
+    assert gate["entrypoint"]["kind"] == "npm_start"
+    assert gate["entrypoint"]["ok"] is False
+    assert "build did not succeed" in gate["entrypoint"]["detail"] or "TS1005" in gate["entrypoint"]["detail"]
+
+
+def test_real_run_gate_build_first_when_no_ts_but_build_is_tsc(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "tsc",
+                    "test": "node dist/index.js",
+                    "start": "node dist/index.js",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.js").write_text("console.log('ok');\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["index.js"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    script_calls = [cmd for cmd in commands if cmd[0] == "npm"]
+    script_names = [cmd[2] for cmd in script_calls]
+    assert "build" in script_names
+    assert "test" in script_names
+    build_idx = script_names.index("build")
+    test_idx = script_names.index("test")
+    assert build_idx < test_idx
+
+
+def test_real_run_gate_build_first_when_test_references_dist(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "webpack",
+                    "test": "node dist/bundle.js",
+                    "start": "node dist/bundle.js",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.js").write_text("console.log('ok');\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["index.js"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    script_calls = [cmd for cmd in commands if cmd[0] == "npm"]
+    script_names = [cmd[2] for cmd in script_calls]
+    assert "build" in script_names
+    assert "test" in script_names
+    build_idx = script_names.index("build")
+    test_idx = script_names.index("test")
+    assert build_idx < test_idx
+
+
+def test_real_run_gate_non_compiled_js_test_only_no_forced_build(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"test": "jest", "start": "node app.js"}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "app.js").write_text("console.log('ok');\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["app.js"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is True
+    assert gate["requirements"]["build_test_lint_ran"]["detail"] == "npm run test passed"
+    build_test_calls = [
+        cmd for cmd in commands if cmd[0] == "npm" and cmd[1] == "run" and cmd[2] in ("test", "build", "lint", "check")
+    ]
+    assert len(build_test_calls) == 1
+    assert build_test_calls[0][2] == "test"
+
+
+class TestScriptDependsOnBuildOutput:
+    """Direct tests for _script_depends_on_build_output helper."""
+
+    def test_serve_s_dist(self) -> None:
+        assert _script_depends_on_build_output({"start": "serve -s dist"}, "start") is True
+
+    def test_node_build(self) -> None:
+        assert _script_depends_on_build_output({"start": "node build"}, "start") is True
+
+    def test_node_dot_slash_out_server(self) -> None:
+        assert _script_depends_on_build_output({"start": "node ./out/server.js"}, "start") is True
+
+    def test_node_backslash_dist_index(self) -> None:
+        assert _script_depends_on_build_output({"start": "node .\\dist\\index.js"}, "start") is True
+
+    def test_vite_preview(self) -> None:
+        assert _script_depends_on_build_output({"start": "vite preview"}, "start") is True
+
+    def test_node_flag_dir_equals_dist(self) -> None:
+        assert _script_depends_on_build_output({"start": "node --dir=dist"}, "start") is True
+
+    def test_npx_serve(self) -> None:
+        assert _script_depends_on_build_output({"start": "npx serve -s dist"}, "start") is True
+
+    def test_dist_slash_index_js(self) -> None:
+        assert _script_depends_on_build_output({"start": "node dist/index.js"}, "start") is True
+
+    def test_build_slash_server_js(self) -> None:
+        assert _script_depends_on_build_output({"start": "node build/server.js"}, "start") is True
+
+    def test_dot_slash_dist(self) -> None:
+        assert _script_depends_on_build_output({"start": "node ./dist"}, "start") is True
+
+    def test_outdir_flag_equals_dist(self) -> None:
+        assert _script_depends_on_build_output({"build": "tsc --outDir=dist"}, "build") is True
+
+    def test_node_scripts_build_start_js(self) -> None:
+        assert _script_depends_on_build_output({"start": "node scripts/build/start.js"}, "start") is False
+
+    def test_node_src_build_helper_js(self) -> None:
+        assert _script_depends_on_build_output({"start": "node src/build-helper.js"}, "start") is False
+
+    def test_node_tools_outdated_check_js(self) -> None:
+        assert _script_depends_on_build_output({"start": "node tools/outdated-check.js"}, "start") is False
+
+    def test_empty_command(self) -> None:
+        assert _script_depends_on_build_output({"start": ""}, "start") is False
+
+    def test_missing_script(self) -> None:
+        assert _script_depends_on_build_output({"test": "jest"}, "start") is False
+
+    def test_none_value(self) -> None:
+        assert _script_depends_on_build_output({"start": None}, "start") is False
+
+
+class TestCommandServesBuildOutput:
+    """Direct tests for _command_serves_build_output helper."""
+
+    def test_vite_preview_true(self) -> None:
+        assert _command_serves_build_output("vite preview") is True
+
+    def test_npx_vite_preview_true(self) -> None:
+        assert _command_serves_build_output("npx vite preview") is True
+
+    def test_serve_s_dist_true(self) -> None:
+        assert _command_serves_build_output("serve -s dist") is True
+
+    def test_npx_serve_s_dist_true(self) -> None:
+        assert _command_serves_build_output("npx serve -s dist") is True
+
+    def test_http_server_dist_true(self) -> None:
+        assert _command_serves_build_output("http-server dist") is True
+
+    def test_serve_dot_slash_dist_true(self) -> None:
+        assert _command_serves_build_output("serve ./dist") is True
+
+    def test_serve_dist_index_js_true(self) -> None:
+        assert _command_serves_build_output("serve dist/index.js") is True
+
+    def test_serve_build_true(self) -> None:
+        assert _command_serves_build_output("serve build") is True
+
+    def test_serve_out_true(self) -> None:
+        assert _command_serves_build_output("serve out") is True
+
+    def test_serve_dir_equals_dist_true(self) -> None:
+        assert _command_serves_build_output("serve --dir=dist") is True
+
+    def test_serve_public_false(self) -> None:
+        assert _command_serves_build_output("serve public") is False
+
+    def test_serve_src_false(self) -> None:
+        assert _command_serves_build_output("serve src") is False
+
+    def test_serve_no_args_false(self) -> None:
+        assert _command_serves_build_output("serve") is False
+
+    def test_npx_serve_public_false(self) -> None:
+        assert _command_serves_build_output("npx serve public") is False
+
+    def test_npx_serve_no_args_false(self) -> None:
+        assert _command_serves_build_output("npx serve") is False
+
+    def test_http_server_public_false(self) -> None:
+        assert _command_serves_build_output("http-server public") is False
+
+    def test_http_server_no_args_false(self) -> None:
+        assert _command_serves_build_output("http-server") is False
+
+    def test_npx_http_server_dist_true(self) -> None:
+        assert _command_serves_build_output("npx http-server dist") is True
+
+    def test_serve_scripts_false(self) -> None:
+        assert _command_serves_build_output("serve scripts") is False
+
+    def test_empty_command_false(self) -> None:
+        assert _command_serves_build_output("") is False
+
+
+def test_real_run_gate_build_first_when_start_serves_dist(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "webpack",
+                    "test": "jest",
+                    "start": "serve -s dist",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.js").write_text("console.log('ok');\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["index.js"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    script_calls = [cmd for cmd in commands if cmd[0] == "npm"]
+    script_names = [cmd[2] for cmd in script_calls]
+    assert "build" in script_names
+    assert "test" in script_names
+    assert "start" in script_names
+    build_idx = script_names.index("build")
+    test_idx = script_names.index("test")
+    start_idx = script_names.index("start")
+    assert build_idx < test_idx < start_idx
+
+
+def test_real_run_gate_build_failure_blocks_start_with_serve_dist(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "webpack",
+                    "start": "serve -s dist",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.js").write_text("console.log('ok');\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        is_build = command == ["npm", "run", "build"]
+        return {
+            "command": command,
+            "ok": not is_build,
+            "returncode": 1 if is_build else 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "BUILD FAILED" if is_build else "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["index.js"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    script_calls = [cmd for cmd in commands if cmd[0] == "npm"]
+    script_names = [cmd[2] for cmd in script_calls]
+    assert "build" in script_names
+    assert "start" not in script_names
+    assert gate["entrypoint"]["ok"] is False
+
+
+def test_real_run_gate_build_first_when_start_vite_preview(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "vite build",
+                    "start": "vite preview",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.js").write_text("console.log('ok');\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["index.js"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    script_calls = [cmd for cmd in commands if cmd[0] == "npm"]
+    script_names = [cmd[2] for cmd in script_calls]
+    assert "build" in script_names
+    assert "start" in script_names
+    build_idx = script_names.index("build")
+    start_idx = script_names.index("start")
+    assert build_idx < start_idx
+
+
+def test_real_run_gate_false_positive_guard_no_forced_build(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "webpack",
+                    "test": "jest",
+                    "start": "node scripts/build/start.js",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "index.js").write_text("console.log('ok');\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        return "/tool/npm" if name == "npm" else None
+
+    def fake_run_command(command: list[str], _cwd: Path, *, timeout_s: int) -> dict[str, Any]:
+        commands.append(command)
+        return {
+            "command": command,
+            "ok": True,
+            "returncode": 0,
+            "duration_s": 0.01,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "timeout": False,
+            "timeout_s": timeout_s,
+        }
+
+    monkeypatch.setattr(bench_gates.shutil, "which", fake_which)
+    monkeypatch.setattr(bench_gates, "_run_command", fake_run_command)
+    record = {"code_files": ["index.js"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    script_calls = [cmd for cmd in commands if cmd[0] == "npm"]
+    script_names = [cmd[2] for cmd in script_calls]
+    assert "test" in script_names
+    build_test_calls = [
+        cmd for cmd in commands if cmd[0] == "npm" and cmd[1] == "run" and cmd[2] in ("test", "build", "lint", "check")
+    ]
+    assert len(build_test_calls) == 1
+    assert build_test_calls[0][2] == "test"
 
 
 def test_collect_llm_events_reads_runtime_role_jsonl(tmp_path: Path) -> None:

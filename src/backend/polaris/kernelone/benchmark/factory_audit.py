@@ -53,6 +53,10 @@ _SCRIPT_INTERPRETERS = {"node", "python", "python3", "bash", "sh"}
 _SCRIPT_PATH_EXTENSIONS = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
 _SHELL_OPERATORS = {"&&", "||", ";", "|"}
 _PLACEHOLDER_SCRIPT_COMMANDS = {"echo", "printf"}
+_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(
+    r"(?:npm\s+run\s+(?:build|compile)|pnpm\s+(?:build|compile)|yarn\s+(?:build|compile))",
+    re.IGNORECASE,
+)
 
 
 def collect_workspace_inventory(workspace: str) -> dict[str, Any]:
@@ -328,6 +332,10 @@ def _script_reference_exists(workspace: str, token: str) -> bool:
     return any(os.path.exists(base + suffix) for suffix in _SCRIPT_PATH_EXTENSIONS)
 
 
+def _script_builds_before_interpreter(tokens: list[str], interpreter_index: int) -> bool:
+    return bool(_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE.search(" ".join(tokens[:interpreter_index])))
+
+
 def _missing_package_script_entrypoints(workspace: str, script_name: str, command: str) -> list[str]:
     try:
         tokens = shlex.split(command)
@@ -336,6 +344,7 @@ def _missing_package_script_entrypoints(workspace: str, script_name: str, comman
     missing: list[str] = []
     index = 0
     while index < len(tokens):
+        interpreter_index = index
         token = os.path.basename(tokens[index])
         if token not in _SCRIPT_INTERPRETERS:
             index += 1
@@ -361,6 +370,8 @@ def _missing_package_script_entrypoints(workspace: str, script_name: str, comman
                 index += 1
                 continue
             if _is_local_script_reference(candidate) and not _script_reference_exists(workspace, candidate):
+                if _script_builds_before_interpreter(tokens, interpreter_index):
+                    break
                 missing.append(f"script {script_name!r} references missing local entrypoint: {candidate}")
             break
     return missing
