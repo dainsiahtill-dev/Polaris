@@ -1,6 +1,8 @@
 # Runtime Protocol V1 契约快照
 
-本文档记录了当前 Polaris Runtime WebSocket/SSE 的协议契约，作为迁移到 v2 前的基线对比输入。
+本文档记录迁移前的历史 Runtime WebSocket/SSE 契约，仅作为基线对比输入。
+
+**当前强制约束**：产品实时链路已经统一为 Nat-JetStream + `/v2/ws/runtime` runtime.v2。禁止恢复或新增 SSE、HTTP 长轮询、timer fetch 轮询、文件轮询或轮询兜底；HTTP 只允许初始快照、显式用户刷新和一次性查询。
 
 ## 1. WebSocket 端点
 
@@ -57,28 +59,30 @@
 }
 ```
 
-## 2. SSE 端点
+## 2. 历史 SSE 端点（已移除，禁止恢复）
 
 ### 2.1 Factory SSE
 
-**路径**: `/factory/sse`
+**历史路径**: `/factory/sse`
 
 ### 2.2 Docs SSE
 
-**路径**: `/docs/sse`
+**历史路径**: `/docs/sse`
 
 ### 2.3 Interview SSE
 
-**路径**: `/interview/sse`
+**历史路径**: `/interview/sse`
 
 ### 2.4 Role Session SSE
 
-**路径**: `/v2/role/{role}/sse`
+**历史路径**: `/v2/role/{role}/sse`
 
-**当前数据格式**:
+**历史数据格式**:
 - 纯文本行推送
 - 无 cursor 机制
 - 无断线恢复能力
+
+这些端点不得作为产品实时方案、测试实时观测方案或兼容兜底重新启用。
 
 ## 3. 健康检查
 
@@ -153,7 +157,7 @@ class MessageType(Enum):
 | 事件分发 | RuntimeEventFanout (内存) | JetStream (持久化) |
 | 日志推送 | LogRealtimeFanout (内存队列) | JetStream 消费 |
 | 状态推送 | 文件轮询 + 信号 | JetStream 推送 |
-| SSE | 路由直推 | NATS 消费者桥接 |
+| SSE | 路由直推 | 已移除；统一 runtime.v2 WebSocket |
 
 ## 6. 测试基线
 

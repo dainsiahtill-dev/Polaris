@@ -536,16 +536,6 @@ class StructuredHTTPException(HTTPException):
         }
 
 
-def legacy_sse_removed(replacement: str) -> None:
-    """Fail closed for removed HTTP SSE endpoints."""
-    raise StructuredHTTPException(
-        status_code=410,
-        code="SSE_REMOVED",
-        message="HTTP SSE streaming has been removed; use the Nat-JetStream WebSocket transport instead.",
-        details={"replacement": replacement, "transport": "nat-jetstream"},
-    )
-
-
 def structured_error_response(
     status_code: int,
     code: str,

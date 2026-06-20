@@ -873,6 +873,11 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
         else:
             category = "target_project_baseline"
         evidence.append(str(record["real_run_gate"].get("summary") or ""))
+    elif any(gate.get("gate") == "integration_qa_passed" and not gate.get("ok") for gate in _gate_failures(record)):
+        category, reason = "llm_output", "integration_qa_failed"
+        chain_results = record.get("chain_results") if isinstance(record.get("chain_results"), dict) else {}
+        if isinstance(chain_results, dict):
+            evidence.append(str(chain_results.get("qa_reason") or ""))
     elif not record.get("has_plan_doc") or record.get("wrong_product_suspect"):
         category = "pm_contract"
         reason = "missing_or_wrong_contract"

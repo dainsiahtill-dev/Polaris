@@ -21,6 +21,7 @@ from unittest.mock import MagicMock
 import pytest
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
 from polaris.cells.roles.adapters.internal.director.execute_method import (
+    _apply_deterministic_javascript_test_missing_target_repair,
     _apply_deterministic_patch_residue_cleanup,
     _apply_deterministic_python_unittest_missing_target_repair,
     _apply_deterministic_python_unittest_runtime_failure_repair,
@@ -3516,6 +3517,81 @@ class TestDeterministicPythonRuntimeSmoke:
         )
         assert completed.returncode == 0, completed.stdout + completed.stderr
         assert "Ran 2 tests" in completed.stderr
+
+    def test_javascript_test_missing_target_repair_creates_frontend_smoke(self, tmp_path: Any) -> None:
+        class _Adapter:
+            workspace = str(tmp_path)
+
+            def __init__(self) -> None:
+                self.progress_files: list[str] = []
+                self._execution = SimpleNamespace(_message_bus=None)
+
+            def _update_task_progress(self, task_id: str, status: str, **kwargs: Any) -> None:
+                del task_id, status
+                current_file = str(kwargs.get("current_file") or "")
+                if current_file:
+                    self.progress_files.append(current_file)
+
+        (tmp_path / "index.html").write_text(
+            '<!doctype html><html><body><input id="taskInput"><button id="addBtn"></button>'
+            '<script src="app.js"></script></body></html>\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "app.js").write_text(
+            "const input = document.getElementById('taskInput');\n"
+            "const add = document.getElementById('addBtn');\n"
+            "localStorage.setItem('todo_app_data', JSON.stringify([]));\n"
+            "void input; void add;\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "style.css").write_text("body { font-family: sans-serif; }\n", encoding="utf-8")
+        adapter = _Adapter()
+
+        results = _apply_deterministic_javascript_test_missing_target_repair(
+            adapter,
+            task={"target_files": ["index.html", "app.js", "style.css", "tests/app.test.js"]},
+            task_id="TASK-1",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: declared target file missing 'tests/app.test.js'",
+            ],
+        )
+
+        test_file = tmp_path / "tests" / "app.test.js"
+        assert [item["result"]["file"] for item in results] == ["tests/app.test.js"]
+        assert test_file.exists()
+        content = test_file.read_text(encoding="utf-8")
+        assert "getElementById" in content
+        assert "localStorage" in content
+        assert adapter.progress_files == ["tests/app.test.js"]
+
+        completed = subprocess.run(
+            ["node", "tests/app.test.js"],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert "frontend smoke checks passed" in completed.stdout
+
+        (tmp_path / "index.html").write_text(
+            '<!doctype html><html><body><input id="renamedTaskInput"><button id="addBtn"></button>'
+            '<script src="app.js"></script></body></html>\n',
+            encoding="utf-8",
+        )
+        failed = subprocess.run(
+            ["node", "tests/app.test.js"],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+        )
+        assert failed.returncode != 0
+        assert "references missing DOM id taskInput" in failed.stderr
 
     def test_python_runtime_smoke_skips_module_without_main(self, tmp_path: Any) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

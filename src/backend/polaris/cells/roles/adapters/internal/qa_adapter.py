@@ -55,9 +55,9 @@ _IGNORE_ROOTS = {
     "venv",
 }
 _PLACEHOLDER_PATTERNS = (
-    re.compile(r"\bTODO\b", re.IGNORECASE),
-    re.compile(r"\bFIXME\b", re.IGNORECASE),
-    re.compile(r"\bTBD\b", re.IGNORECASE),
+    re.compile(r"\bTODO\b"),
+    re.compile(r"\bFIXME\b"),
+    re.compile(r"\bTBD\b"),
     re.compile(r"\bNotImplemented(?:Error|Exception)?\b", re.IGNORECASE),
     re.compile(r"\bplaceholder\b", re.IGNORECASE),
     re.compile(r"\bstub\b", re.IGNORECASE),

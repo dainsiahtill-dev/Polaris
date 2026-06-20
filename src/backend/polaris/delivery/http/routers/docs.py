@@ -26,7 +26,7 @@ from polaris.cells.workspace.integrity.public import (
     select_docs_target_root,
     workspace_has_docs,
 )
-from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, legacy_sse_removed, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.schemas import (
     DocsInitApplyPayload,
     DocsInitApplyResponse,
@@ -584,20 +584,6 @@ async def docs_init_dialogue_jetstream_v2(request: Request, payload: DocsInitDia
     }
 
 
-@router.post("/v2/docs/init/dialogue/stream", dependencies=[Depends(require_auth)])
-async def docs_init_dialogue_stream_v2(request: Request, payload: DocsInitDialoguePayload) -> None:
-    """Removed SSE endpoint; use docs dialogue Nat-JetStream."""
-    del request, payload
-    legacy_sse_removed("/v2/docs/init/dialogue/jetstream")
-
-
-@router.post("/docs/init/dialogue/stream", dependencies=[Depends(require_auth)])
-async def docs_init_dialogue_stream(request: Request, payload: DocsInitDialoguePayload) -> None:
-    """Removed SSE endpoint; use docs dialogue Nat-JetStream."""
-    del request, payload
-    legacy_sse_removed("/v2/docs/init/dialogue/jetstream")
-
-
 async def _docs_init_suggest_core(request: Request, payload: DocsInitSuggestPayload) -> DocsInitSuggestResponse:
     state = get_state(request)
     workspace = state.settings.workspace
@@ -844,20 +830,6 @@ async def docs_init_preview_jetstream_v2(request: Request, payload: DocsInitPrev
         "subject": _docs_init_subject("preview", session_id),
         "transport": "nat-jetstream",
     }
-
-
-@router.post("/v2/docs/init/preview/stream", dependencies=[Depends(require_auth)])
-async def docs_init_preview_stream_v2(request: Request, payload: DocsInitPreviewPayload) -> None:
-    """Removed SSE endpoint; use docs preview Nat-JetStream."""
-    del request, payload
-    legacy_sse_removed("/v2/docs/init/preview/jetstream")
-
-
-@router.post("/docs/init/preview/stream", dependencies=[Depends(require_auth)])
-async def docs_init_preview_stream(request: Request, payload: DocsInitPreviewPayload) -> None:
-    """Removed SSE endpoint; use docs preview Nat-JetStream."""
-    del request, payload
-    legacy_sse_removed("/v2/docs/init/preview/jetstream")
 
 
 def _docs_init_apply_core(request: Request, payload: DocsInitApplyPayload) -> DocsInitApplyResponse:

@@ -15,7 +15,7 @@ from polaris.cells.llm.evaluation.public.service import (
     generate_interview_answer_streaming,
     save_interview_report,
 )
-from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, legacy_sse_removed, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.schemas import (
     InterviewAskResponse,
     InterviewCancelResponse,
@@ -392,16 +392,3 @@ async def v2_llm_interview_jetstream(request: Request, payload: InterviewAskPayl
         "transport": "nat-jetstream",
     }
 
-
-@router.post("/llm/interview/stream", dependencies=[Depends(require_auth)])  # DEPRECATED
-async def llm_interview_stream(request: Request, payload: Any | None = None) -> None:
-    """Removed SSE endpoint; use the Nat-JetStream interview endpoint."""
-    del request, payload
-    legacy_sse_removed("/v2/llm/interview/jetstream")
-
-
-@router.post("/v2/llm/interview/stream", dependencies=[Depends(require_auth)])
-async def v2_llm_interview_stream(request: Request, payload: Any | None = None) -> None:
-    """Removed SSE endpoint; use the Nat-JetStream interview endpoint."""
-    del request, payload
-    legacy_sse_removed("/v2/llm/interview/jetstream")

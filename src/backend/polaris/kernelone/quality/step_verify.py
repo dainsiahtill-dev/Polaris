@@ -181,6 +181,10 @@ def _normalize_simple_literal_grep_clause(clause: str) -> str:
         grep_parts.append(parts[3])
         return " ".join(shlex.quote(part) for part in grep_parts)
 
+    if _grep_pattern_looks_regex_like(parts[2]):
+        normalized_flags = "-" + "".join(_dedupe_flag_order("E" + flag_text.replace("F", "")))
+        return " ".join(shlex.quote(part) for part in ("grep", normalized_flags, parts[2], parts[3]))
+
     if "F" in flag_text:
         return clause
 
@@ -195,6 +199,18 @@ def _split_basic_grep_or_pattern(pattern: str) -> list[str] | None:
     if len(parts) < 2 or any(not part.strip() for part in parts):
         return None
     return parts
+
+
+def _grep_pattern_looks_regex_like(pattern: str) -> bool:
+    if re.search(r"(?<!\\)\[(?:[^\]]*[A-Za-z0-9]-[A-Za-z0-9][^\]]*|[^\]]*\\[dDsSwW][^\]]*)\]", pattern):
+        return True
+    if re.search(r"\\[dDsSwW]", pattern):
+        return True
+    if re.search(r"(?<!\\)\.\*|(?<!\\)\.\+|(?<!\\)\.\?", pattern):
+        return True
+    if re.search(r"(?<!\\)\|", pattern):
+        return True
+    return pattern.startswith("^") or pattern.endswith("$")
 
 
 def _dedupe_flag_order(flags: str) -> list[str]:

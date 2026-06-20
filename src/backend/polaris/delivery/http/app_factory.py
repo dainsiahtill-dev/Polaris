@@ -189,7 +189,6 @@ def _register_routers(app: FastAPI) -> None:
         role_chat,
         role_session,
         runtime,
-        stream_router,
         system,
         tests,
     )
@@ -212,7 +211,6 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(conversations.router)
     app.include_router(runtime.router)
     app.include_router(system.router)
-    app.include_router(stream_router.router)
     app.include_router(history.router)
     app.include_router(files.router)
     app.include_router(docs.router)

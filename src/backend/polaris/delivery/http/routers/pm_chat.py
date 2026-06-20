@@ -12,7 +12,7 @@ from polaris.delivery.http.workspace import active_workspace_value, requested_or
 from polaris.kernelone.llm import config_store as llm_config
 from polaris.kernelone.storage.io_paths import build_cache_root
 
-from ._shared import StructuredHTTPException, get_state, legacy_sse_removed, require_auth
+from ._shared import StructuredHTTPException, get_state, require_auth
 from .role_runtime_chat import execute_role_chat_nonstreaming
 
 router = APIRouter()
@@ -83,13 +83,6 @@ async def pm_chat(request: Request, payload: dict[str, Any], workspace: str = ""
             code="ROLE_RESPONSE_ERROR",
             message="Generation failed",
         ) from exc
-
-
-@router.post("/v2/pm/chat/stream", dependencies=[Depends(require_auth)])
-async def pm_chat_stream(request: Request, payload: dict[str, Any]):
-    """Removed SSE endpoint; use role chat Nat-JetStream."""
-    del request, payload
-    legacy_sse_removed("/v2/role/pm/chat/jetstream")
 
 
 @router.get("/v2/pm/chat/status", response_model=PMChatStatusResponse, dependencies=[Depends(require_auth)])

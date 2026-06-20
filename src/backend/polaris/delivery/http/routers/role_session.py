@@ -63,7 +63,7 @@ from polaris.kernelone.events.constants import (
 )
 from pydantic import BaseModel
 
-from ._shared import StructuredHTTPException, ensure_required_roles_ready, get_state, legacy_sse_removed, require_auth
+from ._shared import StructuredHTTPException, ensure_required_roles_ready, get_state, require_auth
 from .role_chat_jetstream import execute_role_chat_jetstream
 
 logger = logging.getLogger(__name__)
@@ -724,17 +724,6 @@ async def send_message(
             code="REQUEST_ERROR",
             message=str(e),
         ) from e
-
-
-@router.post("/v2/roles/sessions/{session_id}/messages/stream", dependencies=[Depends(require_auth)])
-async def send_message_stream(
-    request: Request,
-    session_id: str,
-    payload: Any | None = None,
-) -> Any:
-    """Removed SSE endpoint; use the Nat-JetStream role-session endpoint."""
-    del request, payload
-    legacy_sse_removed(f"/v2/roles/sessions/{session_id}/messages/jetstream")
 
 
 @router.post("/v2/roles/sessions/{session_id}/messages/jetstream", dependencies=[Depends(require_auth)])

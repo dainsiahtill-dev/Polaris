@@ -242,6 +242,28 @@ class TestStaticReview:
         assert any(str(item).startswith("feature:dom_event_listener=") for item in review["evidence"])
         assert any(str(item).startswith("feature:dom_selector=") for item in review["evidence"])
 
+    def test_todo_domain_comments_are_not_todo_markers(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tmp_path / "app.js").write_text(
+            "/**\n"
+            " * Todo List Application - Pure Vanilla JavaScript\n"
+            " */\n"
+            "const form = document.getElementById('todo-form');\n"
+            "form.addEventListener('submit', (event) => event.preventDefault());\n",
+            encoding="utf-8",
+        )
+        (tests / "app.test.js").write_text(
+            "/** Unit tests for the Todo App (app.js) */\ndescribe('Todo App - Data Layer', function () {});\n",
+            encoding="utf-8",
+        )
+
+        review = adapter._run_static_review("原生本地待办事项")
+
+        assert "placeholder_content_detected" not in review["critical_issues"]
+        assert not any(":\\bTODO\\b" in str(item) for item in review["evidence"])
+
     def test_targeted_repair_does_not_fail_on_out_of_scope_placeholder(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         src = tmp_path / "src"

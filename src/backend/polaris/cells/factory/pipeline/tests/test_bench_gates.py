@@ -534,6 +534,31 @@ def test_failure_taxonomy_prefers_llm_route_before_generic_chain_failure() -> No
     assert taxonomy["root_cause_signature"] == "llm_output:llm_route_audit"
 
 
+def test_failure_taxonomy_classifies_integration_qa_before_generic_chain_failure() -> None:
+    record = {
+        "all_checks_passed": False,
+        "factory_gates": [
+            {"gate": "chain_clean", "ok": False, "detail": "chain_state=partial exit_code=1"},
+            {"gate": "integration_qa_passed", "ok": False, "detail": "qa_ran=True qa_passed=False"},
+            {"gate": "real_run_gate", "ok": True, "detail": "real run gate passed"},
+            {"gate": "llm_route_audit", "ok": True, "detail": "LLM route audit passed"},
+        ],
+        "real_run_gate": {"ok": True, "summary": "real run gate passed"},
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain_results": {"qa_reason": "qa_passed=False; qa_score=34"},
+        "chain_state": "partial",
+        "checks": [],
+        "has_plan_doc": True,
+        "wrong_product_suspect": False,
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "llm_output"
+    assert taxonomy["root_cause_signature"] == "llm_output:integration_qa_failed"
+    assert taxonomy["evidence"] == ["qa_passed=False; qa_score=34"]
+
+
 def test_aggregate_goal_audit_counts_real_route_and_root_causes() -> None:
     records = [
         {

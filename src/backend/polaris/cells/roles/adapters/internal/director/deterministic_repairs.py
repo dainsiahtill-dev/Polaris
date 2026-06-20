@@ -248,6 +248,77 @@ if __name__ == "__main__":
 '''
 
 
+def _is_javascript_test_target_path(rel_path: str) -> bool:
+    normalized = str(rel_path or "").strip().replace("\\", "/")
+    if not normalized:
+        return False
+    path = Path(normalized)
+    if path.suffix.lower() not in {".js", ".mjs", ".cjs"}:
+        return False
+    name = path.name.lower()
+    return normalized.startswith("tests/") or ".test." in name or ".spec." in name
+
+
+def _is_plain_frontend_declared_path(rel_path: str) -> bool:
+    normalized = str(rel_path or "").strip().replace("\\", "/")
+    if not normalized or _is_javascript_test_target_path(normalized):
+        return False
+    return Path(normalized).suffix.lower() in {".html", ".js", ".css"}
+
+
+def _build_javascript_frontend_smoke_test_content(test_rel_path: str, declared_paths: list[str]) -> str:
+    root_depth = len(Path(test_rel_path).parent.parts)
+    root_args = ", ".join(["'..'"] * root_depth)
+    root_expr = f"path.resolve(__dirname, {root_args})" if root_args else "path.resolve(__dirname)"
+    declared_json = json.dumps(declared_paths, ensure_ascii=True)
+    return f"""const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+
+const projectRoot = {root_expr};
+const declaredFiles = {declared_json};
+const htmlFiles = declaredFiles.filter((file) => /\\.html$/i.test(file));
+const scriptFiles = declaredFiles.filter((file) => /\\.(?:js|mjs|cjs)$/i.test(file));
+
+function read(relativePath) {{
+  const absolutePath = path.join(projectRoot, relativePath);
+  assert.ok(fs.existsSync(absolutePath), `missing declared file ${{relativePath}}`);
+  const text = fs.readFileSync(absolutePath, 'utf8');
+  assert.ok(text.trim().length > 0, `empty declared file ${{relativePath}}`);
+  return text;
+}}
+
+for (const file of declaredFiles) {{
+  read(file);
+}}
+
+const htmlText = htmlFiles.map(read).join('\\n');
+const htmlIds = new Set([...htmlText.matchAll(/\\bid\\s*=\\s*["']([^"']+)["']/g)].map((match) => match[1]));
+
+for (const scriptFile of scriptFiles) {{
+  const scriptText = read(scriptFile);
+  const scriptName = path.posix.basename(scriptFile);
+  if (htmlFiles.length > 0) {{
+    assert.ok(htmlText.includes(scriptName), `${{scriptFile}} is not referenced by declared HTML`);
+  }}
+  const referencedIds = [
+    ...scriptText.matchAll(/getElementById\\s*\\(\\s*["']([^"']+)["']\\s*\\)/g),
+  ].map((match) => match[1]);
+  for (const id of referencedIds) {{
+    assert.ok(htmlIds.has(id), `${{scriptFile}} references missing DOM id ${{id}}`);
+  }}
+  if (/\\blocalStorage\\b/.test(scriptText)) {{
+    assert.ok(
+      /localStorage\\.(?:getItem|setItem|removeItem)\\s*\\(/.test(scriptText),
+      `${{scriptFile}} mentions localStorage without using the item API`,
+    );
+  }}
+}}
+
+console.log(`frontend smoke checks passed for ${{declaredFiles.length}} declared files`);
+"""
+
+
 def _apply_deterministic_python_unittest_missing_target_repair(
     adapter: Any,
     *,
@@ -320,6 +391,91 @@ def _apply_deterministic_python_unittest_missing_target_repair(
                     "source_tool": "deterministic_python_unittest_missing_target_repair",
                     "file": target,
                     "modules": list(module_names),
+                    "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
+                    "operation": str(write_result.get("operation") or "create"),
+                    "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                    "director_policy": write_result.get("director_policy"),
+                },
+            }
+        )
+    return results
+
+
+def _apply_deterministic_javascript_test_missing_target_repair(
+    adapter: Any,
+    *,
+    task: dict[str, Any],
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    """Create a missing declared JS smoke test for already-materialized static frontend targets."""
+
+    missing_paths = _parse_missing_declared_target_files(artifact_quality_errors)
+    if not missing_paths:
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    workspace_name = workspace_path.name
+    task_candidates = {
+        _normalize_declared_task_path(candidate, workspace_name=workspace_name)
+        for candidate in _extract_task_target_path_candidates(task)
+    }
+    declared_frontend_paths: list[str] = []
+    for candidate in task_candidates:
+        if not candidate or not _is_plain_frontend_declared_path(candidate):
+            continue
+        target_path = (workspace_path / candidate).resolve()
+        try:
+            target_path.relative_to(workspace_path)
+        except ValueError:
+            continue
+        if target_path.is_file():
+            declared_frontend_paths.append(candidate)
+    declared_frontend_paths = _dedupe_preserve_order(sorted(declared_frontend_paths))
+    if not any(path.endswith(".html") for path in declared_frontend_paths):
+        return []
+    if not any(Path(path).suffix.lower() in {".js", ".mjs", ".cjs"} for path in declared_frontend_paths):
+        return []
+
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    executor = DirectorToolExecutor(
+        str(workspace_path),
+        message_bus=message_bus,
+        worker_id="director",
+    )
+    results: list[dict[str, Any]] = []
+    for missing_rel in missing_paths:
+        if missing_rel not in task_candidates or not _is_javascript_test_target_path(missing_rel):
+            continue
+        target_path = (workspace_path / missing_rel).resolve()
+        try:
+            target_path.relative_to(workspace_path)
+        except ValueError:
+            continue
+        if target_path.exists():
+            continue
+        content = _build_javascript_frontend_smoke_test_content(missing_rel, declared_frontend_paths)
+        write_result = executor.execute_tool(
+            "write_file",
+            {"file": missing_rel, "content": content},
+            task_id=task_id,
+        )
+        if not bool(write_result.get("ok")):
+            continue
+        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+            adapter._update_task_progress(task_id, "executing", current_file=missing_rel)
+        results.append(
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_javascript_test_missing_target_repair",
+                    "file": missing_rel,
+                    "declared_files": list(declared_frontend_paths),
                     "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
                     "operation": str(write_result.get("operation") or "create"),
                     "broadcast_ok": bool(write_result.get("broadcast_ok")),
@@ -1262,6 +1418,14 @@ def _apply_deterministic_materialization_quality_repairs(
     )
     results.extend(
         _apply_deterministic_missing_declared_target_repair(
+            adapter,
+            task=task,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_javascript_test_missing_target_repair(
             adapter,
             task=task,
             task_id=task_id,

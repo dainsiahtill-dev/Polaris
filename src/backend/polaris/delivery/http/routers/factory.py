@@ -55,7 +55,7 @@ from polaris.kernelone.storage import resolve_logical_path
 from polaris.kernelone.trace import create_task_with_context
 from pydantic import BaseModel, Field
 
-from ._shared import get_state, legacy_sse_removed, require_auth
+from ._shared import get_state, require_auth
 
 if TYPE_CHECKING:
     from polaris.cells.runtime.state_owner.public.service import AppState
@@ -1477,13 +1477,6 @@ async def get_factory_run_artifacts_v2(
     return await _get_factory_run_artifacts_core(run_id=run_id, workspace=workspace, state=state)
 
 
-@router.get("/v2/factory/runs/{run_id}/stream")
-async def get_factory_run_stream_removed_v2(run_id: str) -> None:
-    """Removed SSE endpoint; observe factory runs via runtime.v2 WebSocket."""
-    del run_id
-    legacy_sse_removed("/v2/ws/runtime")
-
-
 # ---- Deprecated non-v2 routes ----
 
 
@@ -1558,13 +1551,6 @@ async def get_factory_run_artifacts(
 ) -> FactoryRunArtifactsResponse:
     # DEPRECATED
     return await _get_factory_run_artifacts_core(run_id=run_id, workspace=workspace, state=state)
-
-
-@router.get("/factory/runs/{run_id}/stream")
-async def get_factory_run_stream_removed(run_id: str) -> None:
-    # DEPRECATED
-    del run_id
-    legacy_sse_removed("/v2/ws/runtime")
 
 
 # =============================================================================

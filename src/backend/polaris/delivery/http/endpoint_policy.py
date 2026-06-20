@@ -29,7 +29,6 @@ _AUTH_PROBES = frozenset(
         "/v2/health",
         "/v2/ready",
         "/v2/live",
-        "/v2/stream/health",
         "/v2/observability/health",
         "/v2/observability/health/backend",
     }
@@ -51,7 +50,7 @@ _AUTH_BOOTSTRAP_EXACT = frozenset(
         "/v2/memos/list",
     }
 )
-_STREAM_PREFIXES = ("/v2/ws/", "/v2/stream/")
+_STREAM_PREFIXES = ("/v2/ws/",)
 
 
 def normalize_path(path: str) -> str:

@@ -40,7 +40,6 @@ from ._shared import (
     StructuredHTTPException,
     ensure_required_roles_ready,
     get_state,
-    legacy_sse_removed,
     require_auth,
     require_role,
 )
@@ -392,19 +391,6 @@ async def role_chat(
             code="GENERATION_FAILED",
             message=f"Generation failed: {exc}",
         ) from exc
-
-
-@router.post("/v2/role/{role}/chat/stream", dependencies=[Depends(require_auth)])
-async def role_chat_stream(
-    request: Request,
-    role: str,
-    payload: dict[str, Any],
-    workspace: str = "",
-) -> Any:
-    """Removed SSE endpoint; use the Nat-JetStream role chat endpoint."""
-    del request, payload, workspace
-    _validate_role(role)
-    legacy_sse_removed(f"/v2/role/{role}/chat/jetstream")
 
 
 # ============================================================================

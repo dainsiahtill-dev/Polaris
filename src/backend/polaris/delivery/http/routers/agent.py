@@ -45,7 +45,7 @@ from polaris.kernelone.context.session_continuity import (
 )
 from pydantic import BaseModel, Field
 
-from ._shared import StructuredHTTPException, get_state, legacy_sse_removed, require_auth
+from ._shared import StructuredHTTPException, get_state, require_auth
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -785,28 +785,6 @@ async def send_agent_message_v2(
 ) -> dict[str, Any]:
     """Send a message to an agent session (non-streaming)."""
     return await send_agent_message(request, session_id, payload)
-
-
-@router.post("/sessions/{session_id}/messages/stream", dependencies=[Depends(require_auth)])
-async def send_agent_message_stream(
-    request: Request,
-    session_id: str,
-    payload: Any | None = None,
-) -> None:
-    """Removed SSE endpoint; use role-session Nat-JetStream."""
-    del request, payload
-    legacy_sse_removed(f"/v2/roles/sessions/{session_id}/messages/jetstream")
-
-
-@router.post("/v2/sessions/{session_id}/messages/stream", dependencies=[Depends(require_auth)])
-async def send_agent_message_stream_v2(
-    request: Request,
-    session_id: str,
-    payload: Any | None = None,
-) -> None:
-    """Removed SSE endpoint; use role-session Nat-JetStream."""
-    del request, payload
-    legacy_sse_removed(f"/v2/roles/sessions/{session_id}/messages/jetstream")
 
 
 @router.delete("/sessions/{session_id}", dependencies=[Depends(require_auth)])

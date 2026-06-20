@@ -17,7 +17,7 @@
 
 - Polaris 的 `Architect/Court -> PM -> Director -> QA` AI 代理链是否稳定
 - Claude / Codex 这类代理在 Polaris 里是否持续输出有效任务合同与执行结果
-- runtime WebSocket、Factory SSE、PM 合同、Director 血缘、QA 结果是否一致
+- Nat-JetStream + `/v2/ws/runtime` runtime.v2 推送、PM 合同、Director 血缘、QA 结果是否一致
 - 当链路失败时，Polaris 能否自行定位根因、修复并回归
 
 ## 当前正式无头执行面
@@ -36,12 +36,13 @@
 
 实时观测面只使用：
 
-- `GET /v2/factory/runs/{run_id}/stream` 作为 Factory SSE
-- `WS /v2/ws/runtime` 作为统一 runtime 实时流
+- `WS /v2/ws/runtime?protocol=runtime.v2` 作为唯一实时流
+- Factory、PM、ChiefEngineer、Director、ContextOS 事件必须经 Nat-JetStream 进入 runtime WebSocket
 
 说明：
 
 - 不要再为本场景新增旧兼容接口或旁路接口
+- 禁止使用 SSE、HTTP 长轮询、timer fetch 轮询、文件轮询或任何轮询兜底模拟实时；HTTP 只允许初始快照、显式用户刷新和一次性审计查询
 - 压测脚本只能通过 Polaris 现有正式接口驱动；不得替 Polaris 预写目标项目代码、文档、配置、AGENTS、runtime 工件
 - 允许的外部准备动作仅限：创建一个空目标目录作为 workspace 容器，以及把审计报告写到独立 report 目录
 - backend context 自动发现与 workspace/self-upgrade 门禁由脚本实现负责，不需要在提示词里重复展开低层参数细节
@@ -60,7 +61,7 @@ python scripts/run_agent_headless_stress.py --agent-label codex
    - `architect`、`pm`、`director`、`qa` 必须在 `/v2/role/{role}/chat/status` 返回 `ready=true`
 2. Factory 主链门禁
    - 必须通过 `/v2/factory/runs` 创建 run
-   - Factory SSE 必须看到 `done` 事件
+   - runtime.v2 WebSocket 必须看到对应 Factory run 的终态事件
 3. Runtime 可观测性门禁
    - `/v2/ws/runtime` 必须收到有效消息
    - 不允许整轮无 status / process / runtime 观测
@@ -97,7 +98,7 @@ python scripts/run_agent_headless_stress.py --agent-label codex
 - qa result
 - runtime 事件文件路径
 - runtime WebSocket 统计
-- Factory SSE 统计
+- Nat-JetStream/runtime.v2 Factory 事件统计
 
 ## 失败后的动作
 

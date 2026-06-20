@@ -19,7 +19,7 @@ from polaris.cells.llm.provider_config.public.contracts import (
     RoleNotConfiguredError,
 )
 from polaris.cells.llm.provider_config.public.service import resolve_llm_test_execution_context
-from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, legacy_sse_removed, require_auth
+from polaris.delivery.http.routers._shared import StructuredHTTPException, get_state, require_auth
 from polaris.delivery.http.schemas.common import LlmTestReportResponse, LlmTestTranscriptResponse
 from polaris.infrastructure.messaging.nats.nats_types import create_runtime_event
 from polaris.kernelone.storage.io_paths import build_cache_root, resolve_artifact_path
@@ -120,13 +120,6 @@ async def llm_test(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
         skip_persistence=False,  # Always persist test results (connectivity matters!)
     )
     return report
-
-
-@router.post("/llm/test/stream", dependencies=[Depends(require_auth)])  # DEPRECATED
-async def llm_test_stream(request: Request, payload: LlmTestPayload):
-    """Removed SSE endpoint; use the Nat-JetStream LLM test endpoint."""
-    del request, payload
-    legacy_sse_removed("/v2/llm/test/jetstream")
 
 
 @router.get(
@@ -285,13 +278,6 @@ async def v2_llm_test_jetstream(request: Request, payload: LlmTestPayload) -> di
         "subject": f"hp.runtime.llm.test.{run_id}",
         "transport": "nat-jetstream",
     }
-
-
-@router.post("/v2/llm/test/stream", dependencies=[Depends(require_auth)])
-async def v2_llm_test_stream(request: Request, payload: LlmTestPayload):
-    """Removed SSE endpoint; use the Nat-JetStream LLM test endpoint."""
-    del request, payload
-    legacy_sse_removed("/v2/llm/test/jetstream")
 
 
 @router.get("/v2/llm/test/{test_run_id}", response_model=LlmTestReportResponse, dependencies=[Depends(require_auth)])

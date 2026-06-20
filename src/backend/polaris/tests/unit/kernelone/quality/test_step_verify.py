@@ -119,6 +119,28 @@ class TestNormalize:
 
         assert normalize_step_verify(verify) == verify
 
+    def test_regex_like_grep_is_not_forced_to_literal(self) -> None:
+        verify = "grep -q '[0-9]' README.md"
+
+        assert normalize_step_verify(verify) == "grep -Eq '[0-9]' README.md"
+
+    def test_misflagged_fixed_grep_digit_class_is_normalized_to_regex(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text(
+            "Example: 3 + 4 = 7\n",
+            encoding="utf-8",
+        )
+        verify = normalize_step_verify("grep -Fq '[0-9]' README.md")
+        outcome = run_step_verify(verify, cwd=str(tmp_path))
+
+        assert verify == "grep -Eq '[0-9]' README.md"
+        assert outcome is not None
+        assert outcome[0] == 0
+
+    def test_literal_bracket_text_stays_fixed_grep(self) -> None:
+        verify = "grep -Fq '[TODO]' README.md"
+
+        assert normalize_step_verify(verify) == verify
+
     def test_normalized_literal_grep_runs_under_bin_sh(self, tmp_path: Path) -> None:
         (tmp_path / "README.md").write_text(
             'python calculator.py "3 + (4 - 2) * 5"\n',
