@@ -69,6 +69,16 @@ def test_scan_detects_generated_structural_marker(tmp_path: Path) -> None:
     assert "structural build passed" in errors[0]
 
 
+def test_scan_detects_generic_typescript_project_scaffold(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "main.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('console.log("Hello from TypeScript project.");\n', encoding="utf-8")
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/main.ts"])
+
+    assert any("Hello from TypeScript project" in error for error in errors)
+
+
 def test_scan_detects_audit_seed_scenario_scaffold(tmp_path: Path) -> None:
     target = tmp_path / "src" / "game" / "rules-engine.ts"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -234,6 +244,31 @@ def test_scan_detects_start_script_missing_local_entrypoint(tmp_path: Path) -> N
     assert any("references missing local entrypoint 'dist/main.js'" in error for error in errors)
 
 
+def test_scan_detects_start_script_direct_tsc_then_missing_dist_entrypoint(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "web-e2e-workspace",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "tsc && node dist/main.js",
+    "test": "node scripts/test.mjs"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    test_script = tmp_path / "scripts" / "test.mjs"
+    test_script.parent.mkdir(parents=True, exist_ok=True)
+    test_script.write_text("console.log('ok');\n", encoding="utf-8")
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("references missing local entrypoint 'dist/main.js'" in error for error in errors)
+
+
 def test_scan_detects_test_script_missing_local_entrypoint_after_node_loader(tmp_path: Path) -> None:
     target = tmp_path / "package.json"
     target.write_text(
@@ -322,6 +357,48 @@ def test_scan_detects_manifest_only_npm_test_script(tmp_path: Path) -> None:
   "version": "1.0.0",
   "scripts": {
     "test": "node -e \\"const fs=require('fs');const pkg=JSON.parse(fs.readFileSync('package.json','utf8'));if(!pkg.name||!pkg.version) throw new Error('invalid package manifest');console.log('package manifest check passed');\\" --"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("manifest-only test script" in error for error in errors)
+
+
+def test_scan_detects_dist_only_npm_test_script(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "name": "typescript-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node -e \\"const fs=require('fs');const p=require('./package.json');if(!fs.existsSync('dist/main.js')){console.error('FAIL: dist/main.js not found');process.exit(1);}if(!p.scripts.build){console.error('FAIL: missing build script');process.exit(1);}console.log('OK');\\""
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("manifest-only test script" in error for error in errors)
+
+
+def test_scan_detects_structural_node_e_scaffold_test_script(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "name": "typescript-bootstrap",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node -e \\"const fs=require('fs'); const ts=fs.readFileSync('tsconfig.json','utf8'); const src=fs.readFileSync('src/main.ts','utf8'); if(!ts.includes('compilerOptions')) throw new Error('tsconfig missing compilerOptions'); if(!src.includes('console')) throw new Error('main.ts has no output'); console.log('All checks passed');\\""
   }
 }
 """.strip()
@@ -521,6 +598,81 @@ def test_scan_detects_typescript_project_typecheck_failure(tmp_path: Path, monke
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/config.ts"])
 
     assert any("TypeScript project typecheck failed" in error and "src/config.ts" in error for error in errors)
+
+
+def test_scan_skips_global_tsc_when_package_declares_uninstalled_typescript(tmp_path: Path, monkeypatch) -> None:
+    from polaris.kernelone.quality import artifact_quality as aq
+
+    (tmp_path / "package.json").write_text(
+        '{"devDependencies":{"typescript":"^5.3.0"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"moduleResolution":"bundler"},"include":["src/**/*.ts"]}\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "src" / "main.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("export const ok = true;\n", encoding="utf-8")
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("global tsc must not run when project declares its own TypeScript dependency")
+
+    monkeypatch.setattr(aq.shutil, "which", lambda name: "tsc" if name == "tsc" else None)
+    monkeypatch.setattr(aq.subprocess, "run", fail_if_called)
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/main.ts"])
+
+    assert errors == []
+
+
+def test_scan_detects_html_typescript_module_script(tmp_path: Path) -> None:
+    target = tmp_path / "index.html"
+    target.write_text(
+        """
+<!doctype html>
+<html>
+  <body>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["index.html"])
+
+    assert any("HTML module script references TypeScript source" in error for error in errors)
+
+
+def test_scan_detects_isolated_modules_type_reexport_without_export_type(tmp_path: Path) -> None:
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"isolatedModules":true}}\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "src" / "main.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        """
+interface Firefly {
+  id: string;
+}
+
+const DEFAULT_FIREFLY: Firefly = { id: "ff-1" };
+
+export {
+  Firefly,
+  DEFAULT_FIREFLY,
+};
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/main.ts"])
+
+    assert any("isolatedModules requires `export type` for Firefly" in error for error in errors)
 
 
 def test_scan_allows_node_builtin_import_when_node_types_declared(tmp_path: Path) -> None:

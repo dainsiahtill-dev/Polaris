@@ -791,10 +791,13 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
         entrypoint = _smoke_static_web(workspace, html_entry, timeout_s=timeout_s)
     elif package and shutil.which("npm") and "start" in scripts:
         cmd = _run_command(["npm", "run", "start"], workspace, timeout_s=min(max(3, int(timeout_s)), 8))
+        # npm start timeout 不得直接算成功；server 项目需要端口/health probe 或明确启动成功证据
+        has_success_evidence = bool(cmd.get("ok")) and not bool(cmd.get("timeout"))
         entrypoint = {
             "kind": "npm_start",
             "entrypoint": "npm run start",
-            "ok": bool(cmd.get("ok") or cmd.get("timeout")),
+            "ok": has_success_evidence,
+            "detail": "npm run start completed successfully" if has_success_evidence else "npm run start timed out or failed",
             **cmd,
         }
     else:

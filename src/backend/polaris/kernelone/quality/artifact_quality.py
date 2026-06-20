@@ -51,6 +51,13 @@ _DETERMINISTIC_SCAFFOLD_MARKERS = (
     "test verification completed",
     "structural build passed",
     "structural tests passed",
+    "Hello from TypeScript project",
+    "polaris-typescript-scaffold",
+    "typescript-bootstrap",
+    "Bootstrap TypeScript project scaffold",
+    "Polaris TypeScript scaffold",
+    "TypeScript scaffold",
+    "TypeScript project scaffold",
 )
 _NUMERIC_HELPER_FILLER_RE = re.compile(
     r"export\s+function\s+\w+Helper\d+\s*"
@@ -84,6 +91,10 @@ _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE = re.compile(
     r"//[^\r\n]*\\n\s*(?:export|import|const|let|var|class|function|interface|type|enum)\b",
     re.IGNORECASE,
 )
+_HTML_TYPESCRIPT_MODULE_SCRIPT_RE = re.compile(
+    r"<script\b(?=[^>]*\btype\s*=\s*['\"]module['\"])[^>]*\bsrc\s*=\s*['\"](?P<src>[^'\"]+\.(?:ts|tsx))['\"][^>]*>",
+    re.IGNORECASE,
+)
 _TS_ZOD_INFERRED_TYPE_RE = re.compile(
     r"(?:^|\n)\s*(?:export\s+)?type\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*"
     r"z\.infer\s*<\s*typeof\s+[A-Za-z_$][\w$]*\s*>\s*;",
@@ -96,6 +107,10 @@ _IMPORT_SPECIFIER_RE = re.compile(
 )
 _TS_JS_SOURCE_EXTS = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"}
 _TS_SOURCE_EXTS = {".ts", ".tsx"}
+_TS_TYPE_DECL_RE = re.compile(
+    r"(?:^|\n)\s*(?:export\s+)?(?:interface|type)\s+(?P<name>[A-Za-z_$][\w$]*)\b",
+    re.MULTILINE,
+)
 
 # Cross-file symbol-coherence detection for TS/JS named imports. The regex
 # export-surface intentionally fails open on ambiguous modules; keep an env kill
@@ -161,14 +176,20 @@ _NODE_BUILTIN_IMPORTS = {
 _TEST_FRAMEWORK_IMPORTS = {"@jest/globals", "jest", "vitest", "mocha"}
 _NPM_TEST_RUNNER_SCRIPT_RE = re.compile(r"(?:^|[\s;&|])(vitest|jest|mocha|ava)(?:$|[\s;&|])", re.IGNORECASE)
 _NPM_MANIFEST_ONLY_TEST_SCRIPT_RE = re.compile(
-    r"package\s+manifest\s+check\s+passed|invalid\s+package\s+manifest|readFileSync\s*\(\s*['\"]package\.json",
+    r"package\s+manifest\s+check\s+passed|invalid\s+package\s+manifest|readFileSync\s*\(\s*['\"]package\.json"
+    r"|readFileSync\s*\(\s*['\"](?:tsconfig\.json|README\.md|src/main\.ts|index\.html)"
+    r"|existsSync\s*\(\s*['\"]dist/"
+    r"|missing\s+(?:build|start|test)\s+script"
+    r"|tsconfig\s+missing\s+compilerOptions"
+    r"|main\.ts\s+has\s+no\s+output"
+    r"|dist/[^'\"]+\s+not\s+found",
     re.IGNORECASE,
 )
 _NPM_PLACEHOLDER_TEST_SCRIPT_RE = re.compile(
     r"\b(?:no\s+tests?\s+(?:specified|yet)|tests?\s+not\s+(?:implemented|available))\b",
     re.IGNORECASE,
 )
-_NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(r"(?:npm\s+run\s+build|pnpm\s+build|yarn\s+build|\btsc\b)")
+_NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(r"(?:npm\s+run\s+build|pnpm\s+build|yarn\s+build)")
 _NPM_SCRIPT_ENTRYPOINT_COMMANDS = {"node", "tsx", "ts-node"}
 _NPM_NODE_INLINE_CODE_FLAGS = {"-e", "--eval", "-p", "--print", "-c", "--check"}
 _NPM_NODE_OPTION_VALUE_FLAGS = {"--loader", "--require", "-r", "--import"}
@@ -388,7 +409,8 @@ def _scan_file(root_full: Path, full_path: Path, relative_path: str) -> list[str
         errors.extend(_scan_package_manifest(root_full, text, relative_path))
     errors.extend(_scan_typescript_imports(root_full, full_path, text, relative_path))
     errors.extend(_scan_python_imports(root_full, full_path, text, relative_path))
-    errors.extend(_scan_typescript_syntax_red_flags(full_path, text, relative_path))
+    errors.extend(_scan_typescript_syntax_red_flags(root_full, full_path, text, relative_path))
+    errors.extend(_scan_html_typescript_module_scripts(full_path, text, relative_path))
     for marker in _DETERMINISTIC_SCAFFOLD_MARKERS:
         if marker in text:
             errors.append(f"Artifact quality scan failed: deterministic scaffold marker {marker!r} in {relative_path}")
@@ -412,7 +434,7 @@ def _scan_file(root_full: Path, full_path: Path, relative_path: str) -> list[str
     return errors
 
 
-def _scan_typescript_syntax_red_flags(full_path: Path, text: str, relative_path: str) -> list[str]:
+def _scan_typescript_syntax_red_flags(root_full: Path, full_path: Path, text: str, relative_path: str) -> list[str]:
     if full_path.suffix.lower() not in _TS_JS_SOURCE_EXTS:
         return []
     if _typescript_line_comment_contains_escaped_newline_code(text):
@@ -431,7 +453,56 @@ def _scan_typescript_syntax_red_flags(full_path: Path, text: str, relative_path:
                 "Artifact quality scan failed: TypeScript return object contains "
                 f"semicolon-terminated property in {relative_path}"
             ]
+    type_export_error = _typescript_isolated_modules_type_reexport_error(root_full, text)
+    if type_export_error:
+        return [
+            "Artifact quality scan failed: TypeScript isolatedModules requires "
+            f"`export type` for {type_export_error} in {relative_path}"
+        ]
     return []
+
+
+def _scan_html_typescript_module_scripts(full_path: Path, text: str, relative_path: str) -> list[str]:
+    if full_path.suffix.lower() not in {".html", ".htm"}:
+        return []
+    errors: list[str] = []
+    for match in _HTML_TYPESCRIPT_MODULE_SCRIPT_RE.finditer(text):
+        src = str(match.group("src") or "").strip()
+        if src:
+            errors.append(
+                "Artifact quality scan failed: HTML module script references TypeScript source "
+                f"{src!r} in {relative_path}; static entrypoints must load JavaScript"
+            )
+    return errors
+
+
+def _typescript_isolated_modules_type_reexport_error(root_full: Path, text: str) -> str:
+    if not _typescript_project_uses_isolated_modules(root_full):
+        return ""
+    type_names = {str(match.group("name") or "") for match in _TS_TYPE_DECL_RE.finditer(text)}
+    if not type_names:
+        return ""
+    for match in _TS_EXPORT_CLAUSE_RE.finditer(text):
+        inner = str(match.group("inner") or "")
+        for raw in inner.split(","):
+            token = raw.strip()
+            if not token or token.startswith("type "):
+                continue
+            exported_name = re.split(r"\s+as\s+", token)[0].strip()
+            if exported_name in type_names:
+                return exported_name
+    return ""
+
+
+def _typescript_project_uses_isolated_modules(root_full: Path) -> bool:
+    try:
+        payload = json.loads((root_full / "tsconfig.json").read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    compiler_options = payload.get("compilerOptions")
+    return isinstance(compiler_options, dict) and compiler_options.get("isolatedModules") is True
 
 
 def _typescript_zod_inferred_type_class_collision_name(text: str) -> str:
@@ -626,7 +697,23 @@ def _typescript_project_typecheck_command(root_full: Path) -> str:
     local_tsc = root_full / "node_modules" / ".bin" / local_name
     if local_tsc.is_file():
         return str(local_tsc)
+    if "typescript" in _declared_package_dependencies(root_full) and _typescript_project_requires_local_tsc(root_full):
+        return ""
     return shutil.which("tsc") or ""
+
+
+def _typescript_project_requires_local_tsc(root_full: Path) -> bool:
+    try:
+        payload = json.loads((root_full / "tsconfig.json").read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    compiler_options = payload.get("compilerOptions")
+    if not isinstance(compiler_options, dict):
+        return False
+    module_resolution = str(compiler_options.get("moduleResolution") or "").strip().lower()
+    return module_resolution == "bundler"
 
 
 def _first_nonempty_line(text: str) -> str:

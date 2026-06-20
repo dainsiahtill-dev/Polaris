@@ -1230,7 +1230,7 @@ class TestOrchestrationStageExecutor:
         assert "runtime/signals/chief_engineer_review.signals.json" in result.artifacts
 
     @pytest.mark.asyncio
-    async def test_chief_engineer_stage_generates_blueprint_artifacts(self, temp_workspace):
+    async def test_chief_engineer_stage_generates_blueprint_artifacts(self, temp_workspace, monkeypatch):
         command_service = _CompletedCommandService()
         executor = _TestStageExecutor(temp_workspace, command_service)
         run = FactoryRun(
@@ -1258,8 +1258,38 @@ class TestOrchestrationStageExecutor:
             encoding="utf-8",
         )
 
-        result = await executor._execute_chief_engineer_review(run, context={})
+        # Mock RoleRuntimeService to return successful result
+        from polaris.cells.roles.runtime.public.contracts._execution_contracts import RoleExecutionResultV1
 
+        class FakeRoleRuntimeService:
+            async def execute_role_task(self, command):
+                return RoleExecutionResultV1(
+                    ok=True,
+                    status="success",
+                    role="chief_engineer",
+                    workspace=str(temp_workspace),
+                    task_id=command.task_id,
+                    run_id=command.run_id,
+                    output="CE review completed",
+                    metadata={
+                        "provider": "test-provider",
+                        "model": "test-model",
+                        "cache_hit": False,
+                    },
+                )
+
+        # Patch RoleRuntimeService in the module - it's instantiated in the method
+        # so we need to patch the class itself
+        original_role_runtime_service = factory_stage_module.RoleRuntimeService
+        factory_stage_module.RoleRuntimeService = FakeRoleRuntimeService
+
+        try:
+            result = await executor._execute_chief_engineer_review(run, context={})
+        finally:
+            # Restore original
+            factory_stage_module.RoleRuntimeService = original_role_runtime_service
+
+        # Verify the result
         assert result.status == "success"
         assert any(path.startswith("runtime/blueprints/ce_TASK-1_") for path in result.artifacts)
         assert f"runtime/state/blueprints/{run.id}.review.json" in result.artifacts

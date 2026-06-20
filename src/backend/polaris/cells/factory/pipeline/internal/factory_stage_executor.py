@@ -1008,7 +1008,36 @@ class OrchestrationStageExecutor:
                 # Execute via RoleRuntimeService (real LLM call)
                 ce_result = await ce_service.execute_role_task(command)
 
-                # Convert to blueprint result format
+                # Check if CE LLM call succeeded (fail-closed)
+                if not ce_result.ok:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.llm_review_failed",
+                            "severity": "error",
+                            "detail": ce_result.error_message or ce_result.error_code or "CE LLM call failed",
+                            "task_id": task_id,
+                            "provider": getattr(ce_result, "provider", "unknown"),
+                            "model": getattr(ce_result, "model", "unknown"),
+                        }
+                    )
+                    continue
+
+                # Extract LLM evidence from ce_result
+                ce_provider = getattr(ce_result, "provider", "unknown")
+                ce_model = getattr(ce_result, "model", "unknown")
+                ce_cache_hit = getattr(ce_result, "cache_hit", False)
+
+                # Emit audit event for LLM call
+                self._emit_audit_event(
+                    "chief_engineer.llm_call",
+                    provider=ce_provider,
+                    model=ce_model,
+                    cache_hit=ce_cache_hit,
+                    task_id=task_id,
+                    run_id=run.id,
+                )
+
+                # Convert to blueprint result format (deterministic structure generator)
                 result = generate_task_blueprint(
                     GenerateTaskBlueprintCommandV1(
                         task_id=task_id,
@@ -1018,16 +1047,6 @@ class OrchestrationStageExecutor:
                         constraints=self._task_blueprint_constraints(task),
                         context=self._task_blueprint_context(task, run_id=run.id, index=index),
                     )
-                )
-
-                # Emit audit event for LLM call
-                self._emit_audit_event(
-                    "chief_engineer.llm_call",
-                    provider=getattr(ce_result, "provider", "unknown"),
-                    model=getattr(ce_result, "model", "unknown"),
-                    cache_hit=getattr(ce_result, "cache_hit", False),
-                    task_id=task_id,
-                    run_id=run.id,
                 )
 
             except (RuntimeError, TypeError, ValueError) as exc:
@@ -1061,6 +1080,14 @@ class OrchestrationStageExecutor:
                     "summary": result.summary,
                     "recommendations": list(result.recommendations),
                     "risks": list(result.risks),
+                    "llm_evidence": {
+                        "provider": ce_provider,
+                        "model": ce_model,
+                        "cache_hit": ce_cache_hit,
+                        "role": "chief_engineer",
+                        "task_id": task_id,
+                        "run_id": run.id,
+                    },
                 }
             )
 

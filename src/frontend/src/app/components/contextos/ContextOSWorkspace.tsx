@@ -1281,7 +1281,7 @@ export function ContextOSWorkspace({
                   >
                     <span>{budgetWindowOccupancyTokens !== null ? `~${contextOSFormat.tokens(budgetWindowOccupancyTokens)}` : '无 usage'}</span>
                     <span>/</span>
-                    <span>{contextOSFormat.windowTokens(budgetWindowTokens)}</span>
+                    <span>{budgetWindowTokens !== null ? contextOSFormat.windowTokens(budgetWindowTokens) : '未知'}</span>
                     <span className="max-w-[120px] truncate">{budgetWindowOccupancyLabel}</span>
                     <span className="max-w-[170px] truncate">{budgetWindowLabel}</span>
                   </div>

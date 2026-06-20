@@ -309,58 +309,133 @@ def _ensure_llm_ready(state: AppState, role: str) -> None:
     provider_id = str(role_cfg.get("provider_id") or "").strip() if isinstance(role_cfg, dict) else ""
     model = str(role_cfg.get("model") or "").strip() if isinstance(role_cfg, dict) else ""
 
-    role_status, provider_status = _select_binding_status(
-        indexes=index_candidates,
-        role=role_key,
-        provider_id=provider_id,
-        model=model,
-    )
-    if isinstance(role_status, dict) and not bool(role_status.get("ready")):
-        issue = _readiness_failed_issue(
-            provider_id=provider_id,
-            model=model,
-            tested_provider_id=str(role_status.get("provider_id") or "").strip(),
-            tested_model=str(role_status.get("model") or "").strip(),
-            tested_timestamp=role_status.get("timestamp"),
-        )
-        raise HTTPException(status_code=409, detail=f"{role_key} {issue}")
+    # Check bindings for multi-bound roles (e.g., Director)
+    bindings_raw = role_cfg.get("bindings") if isinstance(role_cfg, dict) else None
+    bindings: list[dict[str, Any]] = []
+    if isinstance(bindings_raw, list):
+        for binding in bindings_raw:
+            if isinstance(binding, dict):
+                bindings.append(binding)
 
-    candidates: list[tuple[str, str, Any]] = []
-    if isinstance(role_status, dict) and bool(role_status.get("ready")):
-        candidates.append(
-            (
-                str(role_status.get("provider_id") or "").strip(),
-                str(role_status.get("model") or "").strip(),
-                role_status.get("timestamp"),
-            )
-        )
-    if (
-        isinstance(provider_status, dict)
-        and bool(provider_status.get("ready"))
-        and _provider_role_compatible(role_key, provider_status)
-    ):
-        candidates.append(
-            (
-                provider_id,
-                str(provider_status.get("model") or "").strip(),
-                provider_status.get("timestamp"),
-            )
-        )
+    # If bindings exist, check each binding's readiness
+    if bindings:
+        for binding in bindings:
+            binding_provider_id = str(binding.get("provider_id") or "").strip()
+            binding_model = str(binding.get("model") or "").strip()
+            binding_id = str(binding.get("binding_id") or "").strip()
 
-    first_issue = f"{role_key} LLM not ready; run tests first"
-    for tested_provider_id, tested_model, tested_timestamp in candidates:
-        issue = _readiness_candidate_issue(
-            provider_id=provider_id,
-            model=model,
-            tested_provider_id=tested_provider_id,
-            tested_model=tested_model,
-            tested_timestamp=tested_timestamp,
-        )
-        if not issue:
-            break
-        first_issue = f"{role_key} {issue}"
+            if not binding_provider_id or not binding_model:
+                continue
+
+            role_status, provider_status = _select_binding_status(
+                indexes=index_candidates,
+                role=role_key,
+                provider_id=binding_provider_id,
+                model=binding_model,
+            )
+            if isinstance(role_status, dict) and not bool(role_status.get("ready")):
+                issue = _readiness_failed_issue(
+                    provider_id=binding_provider_id,
+                    model=binding_model,
+                    tested_provider_id=str(role_status.get("provider_id") or "").strip(),
+                    tested_model=str(role_status.get("model") or "").strip(),
+                    tested_timestamp=role_status.get("timestamp"),
+                )
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{role_key} binding {binding_id} ({binding_provider_id}/{binding_model}) {issue}",
+                )
+
+            binding_candidates: list[tuple[str, str, Any]] = []
+            if isinstance(role_status, dict) and bool(role_status.get("ready")):
+                binding_candidates.append(
+                    (
+                        str(role_status.get("provider_id") or "").strip(),
+                        str(role_status.get("model") or "").strip(),
+                        role_status.get("timestamp"),
+                    )
+                )
+            if (
+                isinstance(provider_status, dict)
+                and bool(provider_status.get("ready"))
+                and _provider_role_compatible(role_key, provider_status)
+            ):
+                binding_candidates.append(
+                    (
+                        binding_provider_id,
+                        str(provider_status.get("model") or "").strip(),
+                        provider_status.get("timestamp"),
+                    )
+                )
+
+            first_issue = f"{role_key} binding {binding_id} LLM not ready; run tests first"
+            for tested_provider_id, tested_model, tested_timestamp in binding_candidates:
+                issue = _readiness_candidate_issue(
+                    provider_id=binding_provider_id,
+                    model=binding_model,
+                    tested_provider_id=tested_provider_id,
+                    tested_model=tested_model,
+                    tested_timestamp=tested_timestamp,
+                )
+                if not issue:
+                    break
+                first_issue = f"{role_key} binding {binding_id} ({binding_provider_id}/{binding_model}) {issue}"
+            else:
+                raise HTTPException(status_code=409, detail=first_issue)
     else:
-        raise HTTPException(status_code=409, detail=first_issue)
+        # No bindings - check single provider/model
+        role_status, provider_status = _select_binding_status(
+            indexes=index_candidates,
+            role=role_key,
+            provider_id=provider_id,
+            model=model,
+        )
+        if isinstance(role_status, dict) and not bool(role_status.get("ready")):
+            issue = _readiness_failed_issue(
+                provider_id=provider_id,
+                model=model,
+                tested_provider_id=str(role_status.get("provider_id") or "").strip(),
+                tested_model=str(role_status.get("model") or "").strip(),
+                tested_timestamp=role_status.get("timestamp"),
+            )
+            raise HTTPException(status_code=409, detail=f"{role_key} {issue}")
+
+        candidates: list[tuple[str, str, Any]] = []
+        if isinstance(role_status, dict) and bool(role_status.get("ready")):
+            candidates.append(
+                (
+                    str(role_status.get("provider_id") or "").strip(),
+                    str(role_status.get("model") or "").strip(),
+                    role_status.get("timestamp"),
+                )
+            )
+        if (
+            isinstance(provider_status, dict)
+            and bool(provider_status.get("ready"))
+            and _provider_role_compatible(role_key, provider_status)
+        ):
+            candidates.append(
+                (
+                    provider_id,
+                    str(provider_status.get("model") or "").strip(),
+                    provider_status.get("timestamp"),
+                )
+            )
+
+        first_issue = f"{role_key} LLM not ready; run tests first"
+        for tested_provider_id, tested_model, tested_timestamp in candidates:
+            issue = _readiness_candidate_issue(
+                provider_id=provider_id,
+                model=model,
+                tested_provider_id=tested_provider_id,
+                tested_model=tested_model,
+                tested_timestamp=tested_timestamp,
+            )
+            if not issue:
+                break
+            first_issue = f"{role_key} {issue}"
+        else:
+            raise HTTPException(status_code=409, detail=first_issue)
 
     provider_cfg = providers.get(provider_id, {}) if isinstance(providers, dict) else {}
     runtime_issue = role_runtime_support_issue(role_key, provider_id, provider_cfg)
