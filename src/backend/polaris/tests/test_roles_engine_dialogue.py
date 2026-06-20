@@ -193,7 +193,7 @@ class TestAdapterCallsRuntimeBoundary:
         "polaris.delivery.cli.director.director_llm_tools",
         "polaris.cells.orchestration.pm_planning.internal.pipeline_ports",
         "polaris.cells.factory.pipeline.internal.projection_lab",
-        "polaris.cells.director.execution.internal.code_generation_engine",
+        "polaris.cells.director.tasking.internal.code_generation_engine",
         "polaris.cells.audit.evidence.internal.task_audit_llm_binding",
     )
     PRODUCTION_PM_BACKEND_MODULES = (

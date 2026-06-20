@@ -16,10 +16,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from polaris.cells.director.tasking.public import (
-    parse_full_file_blocks,
-    parse_search_replace_blocks,
-)
 from polaris.cells.director.execution.public.contracts import (
     DirectorExecutionError,
     DirectorExecutionResultV1,
@@ -28,6 +24,10 @@ from polaris.cells.director.execution.public.contracts import (
     ExecuteDirectorTaskCommandV1,
     GetDirectorTaskStatusQueryV1,
     RetryDirectorTaskCommandV1,
+)
+from polaris.cells.director.tasking.public import (
+    parse_full_file_blocks,
+    parse_search_replace_blocks,
 )
 
 # ---------------------------------------------------------------------------

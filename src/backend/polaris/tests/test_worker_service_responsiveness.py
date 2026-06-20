@@ -3,8 +3,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from polaris.cells.director.tasking.public import TaskQueueConfig, TaskService
-from polaris.cells.director.tasking.public import WorkerPoolConfig, WorkerService
+from polaris.cells.director.tasking.public import TaskQueueConfig, TaskService, WorkerPoolConfig, WorkerService
 from polaris.domain.entities import TaskResult
 
 
@@ -26,7 +25,7 @@ class _BlockingExecutor:
 @pytest.mark.asyncio
 async def test_worker_execution_does_not_block_event_loop(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
-        "polaris.cells.director.execution.internal.worker_executor.WorkerExecutor",
+        "polaris.cells.director.tasking.internal.worker_executor.WorkerExecutor",
         _BlockingExecutor,
     )
 

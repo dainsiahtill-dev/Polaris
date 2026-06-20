@@ -7,8 +7,8 @@ import pytest
 from polaris.cells.director.tasking.public import (
     CODE_WRITING_FORBIDDEN_WARNING,
     CodeGenerationPolicyViolationError,
+    WorkerExecutor,
 )
-from polaris.cells.director.tasking.public import WorkerExecutor
 from polaris.domain.entities import Task
 
 

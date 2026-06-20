@@ -1201,11 +1201,38 @@ def main() -> int:
             flush=True,
         )
 
+    # Compute catalog hash for immutable audit trail
+    import hashlib as _hashlib
+    catalog_hash = _hashlib.sha256(
+        json.dumps(projects, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:16]
+    catalog_schema_version = "factory-bench/2"
+
     for project in selected:
         pid = project["id"]
         workspace = base / pid
+        # Purge project directory completely to prevent stale contamination
+        import shutil as _shutil
+        if workspace.exists():
+            _shutil.rmtree(workspace, ignore_errors=True)
         workspace.mkdir(parents=True, exist_ok=True)
         log_path = base / f"{pid}.chain.log"
+        # Write catalog metadata for audit traceability
+        run_id = os.environ.get("FACTORY_BENCH_RUN_ID") or ""
+        if not run_id:
+            import uuid as _uuid
+            run_id = _uuid.uuid4().hex[:12]
+        catalog_meta = {
+            "catalog_schema_version": catalog_schema_version,
+            "catalog_hash": catalog_hash,
+            "run_id": run_id,
+            "project_id": pid,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        (workspace / ".catalog_meta.json").write_text(
+            json.dumps(catalog_meta, ensure_ascii=False, indent=1) + "\n",
+            encoding="utf-8",
+        )
         print(f"[factory-bench] === {pid} {project['title']} ===", flush=True)
         _emit_bench_event(
             workspace=base,
@@ -1415,6 +1442,21 @@ def main() -> int:
                 indent=1,
             )
             + "\n",
+            encoding="utf-8",
+        )
+        # Write immutable per-run audit package
+        audit_dir = base / "audits" / run_id
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        project_audit = {
+            "catalog_schema_version": catalog_schema_version,
+            "catalog_hash": catalog_hash,
+            "run_id": run_id,
+            "project_id": pid,
+            "record": record,
+            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        (audit_dir / f"{pid}.audit.json").write_text(
+            json.dumps(project_audit, ensure_ascii=False, indent=1) + "\n",
             encoding="utf-8",
         )
         if not record["all_checks_passed"]:

@@ -445,7 +445,7 @@ def required_ready_roles(
                 continue
             roles.append(role)
     if not roles:
-        roles = list(default_roles or ["director", "qa"])
+        roles = list(default_roles or ["director", "qa", "chief_engineer"])
     if not _settings_qa_enabled(state.settings):
         roles = [role for role in roles if role != "qa"]
     forced: list[str] = []

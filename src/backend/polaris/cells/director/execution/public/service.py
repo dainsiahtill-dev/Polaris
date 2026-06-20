@@ -16,14 +16,6 @@ from threading import Thread
 from typing import Any
 
 from polaris.cells.director.execution.internal.director_agent import DirectorAgent
-from polaris.cells.director.tasking.public import (
-    ApplyIntegrity,
-    EditType,
-    parse_all_operations,
-    parse_full_file_blocks,
-    parse_search_replace_blocks,
-    validate_before_apply,
-)
 from polaris.cells.director.execution.logic import extract_defect_ticket, parse_acceptance, write_gate_check
 from polaris.cells.director.execution.public.contracts import (
     DirectorExecutionError,
@@ -32,10 +24,16 @@ from polaris.cells.director.execution.public.contracts import (
 )
 from polaris.cells.director.execution.service import DirectorConfig, DirectorService, DirectorState
 from polaris.cells.director.tasking.public import (
+    ApplyIntegrity,
+    EditType,
     TaskQueueConfig,
     TaskService,
     WorkerPoolConfig,
     WorkerService,
+    parse_all_operations,
+    parse_full_file_blocks,
+    parse_search_replace_blocks,
+    validate_before_apply,
 )
 from polaris.domain.entities import Task, TaskResult
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS
