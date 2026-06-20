@@ -118,7 +118,7 @@ class SqliteRuntimeStore:
         return self._write_locks[bucket]
 
     def _get_conn(self) -> sqlite3.Connection:
-        return self._kernel_db.sqlite(
+        conn = self._kernel_db.sqlite(
             self._db_path,
             timeout_seconds=DEFAULT_SHORT_TIMEOUT_SECONDS,
             check_same_thread=False,
@@ -129,6 +129,28 @@ class SqliteRuntimeStore:
             },
             ensure_parent=True,
         )
+        self._ensure_core_tables(conn)
+        return conn
+
+    def _ensure_core_tables(self, conn: sqlite3.Connection) -> None:
+        required = {
+            "workflow_execution",
+            "workflow_event",
+            "workflow_event_sequence",
+            "workflow_task_state",
+        }
+        try:
+            rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?, ?, ?)",
+                tuple(sorted(required)),
+            ).fetchall()
+            existing = {str(row["name"]) for row in rows}
+        except sqlite3.OperationalError:
+            existing = set()
+        if required.issubset(existing):
+            return
+        self._ensure_schema_on_conn(conn)
+        conn.commit()
 
     @staticmethod
     def _now() -> str:
@@ -162,72 +184,75 @@ class SqliteRuntimeStore:
     def _init_schema(self) -> None:
         conn = self._get_conn()
         try:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS workflow_execution (
-                    workflow_id TEXT PRIMARY KEY,
-                    workflow_name TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'running',
-                    run_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    close_time TEXT,
-                    result_json TEXT,
-                    metadata_json TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS workflow_event (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    workflow_id TEXT NOT NULL,
-                    seq INTEGER NOT NULL,
-                    event_type TEXT NOT NULL,
-                    payload_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    UNIQUE(workflow_id, seq)
-                );
-
-                CREATE TABLE IF NOT EXISTS workflow_event_sequence (
-                    workflow_id TEXT PRIMARY KEY,
-                    next_seq INTEGER NOT NULL DEFAULT 1
-                );
-
-                CREATE TABLE IF NOT EXISTS workflow_task_state (
-                    workflow_id TEXT NOT NULL,
-                    task_id TEXT NOT NULL,
-                    task_type TEXT NOT NULL,
-                    handler_name TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    attempt INTEGER NOT NULL DEFAULT 0,
-                    max_attempts INTEGER NOT NULL DEFAULT 1,
-                    started_at TEXT,
-                    ended_at TEXT,
-                    result_json TEXT,
-                    error_text TEXT,
-                    metadata_json TEXT NOT NULL DEFAULT '{}',
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (workflow_id, task_id)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_event_workflow
-                    ON workflow_event(workflow_id, seq);
-
-                CREATE INDEX IF NOT EXISTS idx_event_sequence_workflow
-                    ON workflow_event_sequence(workflow_id);
-
-                CREATE INDEX IF NOT EXISTS idx_task_state_workflow_status
-                    ON workflow_task_state(workflow_id, status);
-                """
-            )
-            self._ensure_column(
-                conn,
-                table="workflow_execution",
-                column="metadata_json",
-                column_sql="TEXT",
-            )
+            self._ensure_schema_on_conn(conn)
             conn.commit()
             logger.info("SQLite runtime store initialized at %s", self._db_path)
         finally:
             conn.close()
+
+    def _ensure_schema_on_conn(self, conn: sqlite3.Connection) -> None:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_execution (
+                workflow_id TEXT PRIMARY KEY,
+                workflow_name TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                run_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                close_time TEXT,
+                result_json TEXT,
+                metadata_json TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS workflow_event (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workflow_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(workflow_id, seq)
+            );
+
+            CREATE TABLE IF NOT EXISTS workflow_event_sequence (
+                workflow_id TEXT PRIMARY KEY,
+                next_seq INTEGER NOT NULL DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS workflow_task_state (
+                workflow_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                handler_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempt INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 1,
+                started_at TEXT,
+                ended_at TEXT,
+                result_json TEXT,
+                error_text TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (workflow_id, task_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_event_workflow
+                ON workflow_event(workflow_id, seq);
+
+            CREATE INDEX IF NOT EXISTS idx_event_sequence_workflow
+                ON workflow_event_sequence(workflow_id);
+
+            CREATE INDEX IF NOT EXISTS idx_task_state_workflow_status
+                ON workflow_task_state(workflow_id, status);
+            """
+        )
+        self._ensure_column(
+            conn,
+            table="workflow_execution",
+            column="metadata_json",
+            column_sql="TEXT",
+        )
 
     def init_schema(self) -> None:
         self._init_schema()

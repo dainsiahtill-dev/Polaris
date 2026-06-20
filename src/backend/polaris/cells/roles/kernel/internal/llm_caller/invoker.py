@@ -54,6 +54,7 @@ from .helpers import (
     extract_native_tool_calls,
     resolve_tool_call_provider,
 )
+from .invoker_phases import FallbackLadderResult, read_response_status
 from .response_types import LLMResponse, PreparedLLMRequest, StructuredLLMResponse
 from .stream_engine import StreamEngine
 from .stream_handler import (
@@ -455,6 +456,517 @@ class LLMInvoker:
                 return ref.strip()
         return None
 
+    def _build_call_error_response(
+        self,
+        *,
+        prepared: PreparedLLMRequest,
+        active_request: Any,
+        response_error: str,
+        native_tool_fallback: bool,
+        native_response_fallback: bool,
+        allow_native_tool_text_fallback: bool,
+        model: str,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        call_id: str,
+        event_emitter: Any | None,
+        start_time: float,
+    ) -> LLMResponse:
+        """Emit the call_error event and build the failure ``LLMResponse``."""
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        classified = classify_error(response_error)
+        active_context = active_request.context if isinstance(active_request.context, dict) else {}
+        self._emit_call_error_event(
+            event_emitter=event_emitter,
+            role=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            model=model,
+            error_category=classified,
+            error_message=response_error or "LLM call failed",
+            call_id=call_id,
+            elapsed_ms=elapsed_ms,
+            metadata=_with_context_os_audit(
+                {
+                    "native_tool_calling_fallback": native_tool_fallback,
+                    "native_response_format_fallback": native_response_fallback,
+                    "native_tool_mode": str(active_context.get("native_tool_mode") or prepared.native_tool_mode),
+                    "response_format_mode": str(
+                        active_context.get("response_format_mode") or prepared.response_format_mode
+                    ),
+                    "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+                },
+                prepared,
+            ),
+        )
+        return LLMResponse(
+            content="",
+            error=response_error or "LLM call failed",
+            error_category=classified,
+            metadata=_with_context_os_audit(
+                {
+                    "model": model,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "native_tool_calling_fallback": native_tool_fallback,
+                    "native_response_format_fallback": native_response_fallback,
+                    "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
+                    "run_id": run_id,
+                    "workspace": self.workspace,
+                    "attempt": attempt,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+                },
+                prepared,
+            ),
+        )
+
+    def _finalize_call_response(
+        self,
+        *,
+        cache: Any,
+        prepared: PreparedLLMRequest,
+        active_request: Any,
+        response: Any,
+        cache_eligible: bool,
+        prompt_fingerprint: str | None,
+        temperature: float,
+        model: str,
+        prompt_tokens: int,
+        turn_round: int,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        call_id: str,
+        event_emitter: Any | None,
+        start_time: float,
+    ) -> LLMResponse:
+        """Normalize a successful response, store cache, emit end, and build result."""
+        raw_payload = response.raw if isinstance(response.raw, dict) else {}
+        # DEBUG: Log raw LLM response for debugging parsing issues
+        output_text = str(getattr(response, "output", "") or "")
+        logger.debug(
+            "[LLMInvoker] Raw LLM response received: model=%s provider=%s output_length=%d output_preview=%r",
+            raw_payload.get("model", "unknown"),
+            raw_payload.get("provider", "unknown"),
+            len(output_text),
+            output_text[:500] if output_text else "<empty>",
+        )
+        response_text = output_text
+        if not response_text.strip() and raw_payload:
+            try:
+                from polaris.kernelone.llm.engine import ResponseNormalizer
+
+                response_text = ResponseNormalizer.extract_text(raw_payload)
+            except (RuntimeError, ValueError):
+                response_text = str(getattr(response, "output", "") or "")
+
+        response_model_name = str((getattr(response, "model", None) or raw_payload.get("model") or model) or "")
+        response_provider = str(
+            (
+                getattr(response, "provider_id", None)
+                or raw_payload.get("provider_id")
+                or raw_payload.get("provider")
+                or ""
+            )
+            or ""
+        )
+        native_tool_calls, native_tool_provider = extract_native_tool_calls(
+            raw_payload, provider_id=response_provider, model=response_model_name, response_text=response_text
+        )
+
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        completion_tokens = len(response_text) // 2
+
+        self._store_cache(
+            cache=cache,
+            prepared=prepared,
+            cache_eligible=cache_eligible,
+            prompt_fingerprint=prompt_fingerprint,
+            temperature=temperature,
+            model=model,
+            response_text=response_text,
+            completion_tokens=completion_tokens,
+        )
+
+        self._emit_call_end_event(
+            event_emitter=event_emitter,
+            role=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            model=response_model_name,
+            provider=response_provider,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            call_id=call_id,
+            context_tokens_after=prepared.context_result.token_estimate if prepared.context_result else None,
+            compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
+            response_content=response_text,
+            tool_calls_count=len(native_tool_calls),
+            metadata=_with_context_os_audit(
+                {
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "cached": False,
+                    "source": "llm",
+                    "compression_applied": prepared.context_result.compression_applied
+                    if prepared.context_result
+                    else False,
+                    "turn_round": turn_round,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+                },
+                prepared,
+            ),
+        )
+
+        return LLMResponse(
+            content=response_text,
+            token_estimate=prepared.context_result.token_estimate + completion_tokens
+            if prepared.context_result
+            else completion_tokens,
+            tool_calls=native_tool_calls,
+            tool_call_provider=native_tool_provider,
+            metadata=_with_context_os_audit(
+                {
+                    "model": response_model_name,
+                    "provider": response_provider,
+                    "native_tool_calls_count": len(native_tool_calls),
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "run_id": run_id,
+                    "workspace": self.workspace,
+                    "attempt": attempt,
+                    "turn_round": turn_round,
+                    # SSOT Fix: Pass context token count for context panel display
+                    "context_tokens": int(prepared.context_result.token_estimate) if prepared.context_result else 0,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+                },
+                prepared,
+            ),
+        )
+
+    async def _run_fallback_ladder(
+        self,
+        *,
+        caller: Any,
+        executor: Any,
+        prepared: PreparedLLMRequest,
+        profile: RoleProfile,
+        context: ContextRequest,
+        response: Any,
+        active_request: Any,
+        response_model: type | None,
+        response_error: str,
+        is_response_ok: bool,
+        allow_native_tool_text_fallback: bool,
+        native_tool_fallback: bool,
+        native_response_fallback: bool,
+        system_prompt: str,
+        temperature: float,
+        effective_max_tokens: int,
+        platform_retry_max: int,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        model: str,
+        call_id: str,
+        event_emitter: Any | None,
+    ) -> FallbackLadderResult:
+        """Run the call-phase fallback ladder after the primary invoke.
+
+        Four rungs in fixed order: native-tool text fallback, response_format
+        fallback, reasoning-truncation re-ask, and role-binding fallback. Returns
+        a :class:`FallbackLadderResult` carrying the mutated state so the
+        orchestrator can repoint its locals.
+        """
+        if (
+            not is_response_ok
+            and prepared.native_tool_schemas
+            and allow_native_tool_text_fallback
+            and is_native_tool_calling_unsupported(response_error)
+        ):
+            active_request = caller._build_native_tool_fallback_request(prepared=prepared, profile=profile, mode="chat")
+            response = await executor.invoke(active_request)
+            native_tool_fallback = True
+            is_response_ok, response_error = read_response_status(response)
+
+        if not is_response_ok and prepared.native_response_format and is_response_format_unsupported(response_error):
+            active_request = caller._build_structured_fallback_request(
+                prepared=prepared, profile=profile, response_model=response_model or dict, mode="chat"
+            )
+            response = await executor.invoke(active_request)
+            native_response_fallback = True
+            is_response_ok, response_error = read_response_status(response)
+
+        # 5th floor: a reasoning model truncated mid-thought (finish_reason=length)
+        # and emitted no visible output / tool call. Re-ask ONCE with a reserved
+        # output budget + a "minimal reasoning, emit the tool call now" directive so
+        # the write actually lands instead of dying as director_no_materialized_changes.
+        _is_reasoning_truncation = (
+            "empty visible output" in response_error.lower() and "reasoning truncated" in response_error.lower()
+        )
+        if not is_response_ok and _is_reasoning_truncation:
+            active_request = caller._build_reasoning_truncation_retry_request(prepared=prepared, profile=profile)
+            response = await executor.invoke(active_request)
+            logger.warning(
+                "[invoker] reasoning-truncation re-ask: reserved output budget + minimal-reasoning directive"
+            )
+            is_response_ok, response_error = read_response_status(response)
+
+        if not is_response_ok:
+            classified = classify_error(response_error)
+            if is_retryable_error(classified):
+                fallback = await self._try_role_binding_fallback(
+                    caller=caller,
+                    profile=profile,
+                    system_prompt=system_prompt,
+                    context=context,
+                    temperature=temperature,
+                    max_tokens=effective_max_tokens,
+                    response_model=response_model,
+                    platform_retry_max=platform_retry_max,
+                    executor=executor,
+                    role_id=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    model=model,
+                    call_id=call_id,
+                    event_emitter=event_emitter,
+                    original_error=response_error,
+                )
+                if fallback is not None:
+                    profile, prepared, active_request, response = fallback
+                    model = str(getattr(profile, "model", "") or model)
+                    native_tool_fallback = False
+                    native_response_fallback = False
+                    is_response_ok, response_error = read_response_status(response)
+
+        return FallbackLadderResult(
+            response=response,
+            active_request=active_request,
+            profile=profile,
+            prepared=prepared,
+            model=model,
+            native_tool_fallback=native_tool_fallback,
+            native_response_fallback=native_response_fallback,
+            is_response_ok=is_response_ok,
+            response_error=response_error,
+        )
+
+    def _try_cache_hit(
+        self,
+        *,
+        cache: Any,
+        prepared: PreparedLLMRequest,
+        context_result: Any,
+        cache_eligible: bool,
+        prompt_fingerprint: str | None,
+        temperature: float,
+        model: str,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        turn_round: int,
+        call_id: str,
+        event_emitter: Any | None,
+        start_time: float,
+    ) -> LLMResponse | None:
+        """Return a cached ``LLMResponse`` on cache hit, else ``None`` to continue.
+
+        Falls through (returns ``None``) when caching is disabled, no
+        fingerprint is supplied, the turn is not cache-eligible, or the cache
+        lookup misses.
+        """
+        if not (self._enable_cache and prompt_fingerprint and cache_eligible):
+            return None
+        cached = cache.get(
+            prompt_fingerprint=prompt_fingerprint,
+            context_summary=prepared.context_summary,
+            temperature=temperature,
+            model=model,
+        )
+        if not cached:
+            return None
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.debug(
+            "[LLMInvoker] Cache hit, returning cached response: model=%s length=%d",
+            model,
+            len(cached),
+        )
+        self._emit_call_end_event(
+            event_emitter=event_emitter,
+            role=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            model=model,
+            call_id=call_id,
+            completion_tokens=len(cached) // 2,
+            context_tokens_after=context_result.token_estimate if context_result else None,
+            compression_strategy=context_result.compression_strategy if context_result else None,
+            response_content=cached,
+            metadata=_with_context_os_audit(
+                {
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "cached": True,
+                    "source": "cache",
+                    "compression_applied": context_result.compression_applied if context_result else False,
+                    "turn_round": turn_round,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                },
+                prepared,
+            ),
+        )
+        return LLMResponse(
+            content=cached,
+            token_estimate=len(cached) // 2,
+            metadata=_with_context_os_audit(
+                {
+                    "cached": True,
+                    "model": model,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "run_id": run_id,
+                    "workspace": self.workspace,
+                    "attempt": attempt,
+                    "turn_round": turn_round,
+                    "native_tool_mode": prepared.native_tool_mode,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                },
+                prepared,
+            ),
+        )
+
+    def _store_cache(
+        self,
+        *,
+        cache: Any,
+        prepared: PreparedLLMRequest,
+        cache_eligible: bool,
+        prompt_fingerprint: str | None,
+        temperature: float,
+        model: str,
+        response_text: str,
+        completion_tokens: int,
+    ) -> None:
+        """Persist a successful response to the LLM cache when eligible.
+
+        Re-checks the SAME eligibility flags used by :meth:`_try_cache_hit` so
+        get/put stay consistent.
+        """
+        if self._enable_cache and prompt_fingerprint and cache_eligible:
+            cache.put(
+                prompt_fingerprint=prompt_fingerprint,
+                context_summary=prepared.context_summary,
+                temperature=temperature,
+                model=model,
+                response_content=response_text,
+                token_estimate=completion_tokens,
+            )
+
+    async def _handle_native_tools_unavailable(
+        self,
+        *,
+        caller: Any,
+        prepared: PreparedLLMRequest,
+        profile: RoleProfile,
+        context: ContextRequest,
+        model: str,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        call_id: str,
+        event_emitter: Any | None,
+        start_time: float,
+    ) -> LLMResponse:
+        """Handle ``native_tool_mode == 'native_tools_unavailable'`` (call phase).
+
+        Attempts a prompt-described text fallback when allowed and schemas are
+        present; otherwise (or on fallback failure) emits a call_error event and
+        returns the ``native_tool_unavailable`` error response. This branch
+        ALWAYS returns an ``LLMResponse`` in the original control flow.
+        """
+        # Try text-based fallback instead of immediately returning error
+        allow_native_tool_text_fallback = self._allow_native_tool_text_fallback(context)
+        if allow_native_tool_text_fallback and prepared.native_tool_schemas:
+            # Build and invoke fallback request (tools described in prompt, not native)
+            executor = self._get_executor()
+            fallback_request = caller._build_native_tool_fallback_request(
+                prepared=prepared, profile=profile, mode="chat"
+            )
+            response = await executor.invoke(fallback_request)
+            native_tool_fallback = True
+            response_ok = getattr(response, "ok", True)
+            if response_ok:
+                # Fallback succeeded, return the response
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                return LLMResponse(
+                    content=getattr(response, "content", "") or "",
+                    error=None,
+                    error_category=None,
+                    metadata=_with_context_os_audit(
+                        {
+                            "model": model,
+                            "native_tool_mode": "native_tools_text_fallback",
+                            "response_format_mode": prepared.response_format_mode,
+                            "native_tool_calling_fallback": native_tool_fallback,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "run_id": run_id,
+                            "workspace": self.workspace,
+                            "attempt": attempt,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(fallback_request),
+                        },
+                        prepared,
+                    ),
+                )
+            # Fallback failed, proceed to return error
+
+        # Fallback not allowed or failed - return error
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        tool_error = build_native_tool_unavailable_error(profile)
+        self._emit_call_error_event(
+            event_emitter=event_emitter,
+            role=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            model=model,
+            error_category="provider",
+            error_message=tool_error,
+            call_id=call_id,
+            elapsed_ms=elapsed_ms,
+            metadata=_with_context_os_audit(
+                {
+                    "native_tool_mode": prepared.native_tool_mode,
+                    "response_format_mode": prepared.response_format_mode,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                },
+                prepared,
+            ),
+        )
+        return LLMResponse(
+            content="",
+            error=tool_error,
+            error_category="provider",
+            metadata=_with_context_os_audit(
+                {
+                    "model": model,
+                    "native_tool_mode": prepared.native_tool_mode,
+                    "response_format_mode": prepared.response_format_mode,
+                    "run_id": run_id,
+                    "workspace": self.workspace,
+                    "attempt": attempt,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                },
+                prepared,
+            ),
+        )
+
     async def call(
         self,
         profile: RoleProfile,
@@ -543,140 +1055,41 @@ class LLMInvoker:
             cache_eligible = self._is_cache_eligible(prepared=prepared, response_model=response_model)
 
             if prepared.native_tool_mode == "native_tools_unavailable":
-                # Try text-based fallback instead of immediately returning error
-                allow_native_tool_text_fallback = self._allow_native_tool_text_fallback(context)
-                if allow_native_tool_text_fallback and prepared.native_tool_schemas:
-                    # Build and invoke fallback request (tools described in prompt, not native)
-                    executor = self._get_executor()
-                    fallback_request = caller._build_native_tool_fallback_request(
-                        prepared=prepared, profile=profile, mode="chat"
-                    )
-                    response = await executor.invoke(fallback_request)
-                    native_tool_fallback = True
-                    response_ok = getattr(response, "ok", True)
-                    response_error = getattr(response, "error", None)
-                    if response_ok:
-                        # Fallback succeeded, return the response
-                        elapsed_ms = (time.perf_counter() - start_time) * 1000
-                        return LLMResponse(
-                            content=getattr(response, "content", "") or "",
-                            error=None,
-                            error_category=None,
-                            metadata=_with_context_os_audit(
-                                {
-                                    "model": model,
-                                    "native_tool_mode": "native_tools_text_fallback",
-                                    "response_format_mode": prepared.response_format_mode,
-                                    "native_tool_calling_fallback": native_tool_fallback,
-                                    "elapsed_ms": round(elapsed_ms, 2),
-                                    "run_id": run_id,
-                                    "workspace": self.workspace,
-                                    "attempt": attempt,
-                                    "context_snapshot_ref": self._extract_context_snapshot_ref(fallback_request),
-                                },
-                                prepared,
-                            ),
-                        )
-                    # Fallback failed, proceed to return error
-
-                # Fallback not allowed or failed - return error
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                tool_error = build_native_tool_unavailable_error(profile)
-                self._emit_call_error_event(
-                    event_emitter=event_emitter,
-                    role=role_id,
+                return await self._handle_native_tools_unavailable(
+                    caller=caller,
+                    prepared=prepared,
+                    profile=profile,
+                    context=context,
+                    model=model,
+                    role_id=role_id,
                     run_id=run_id,
                     task_id=task_id,
                     attempt=attempt,
-                    model=model,
-                    error_category="provider",
-                    error_message=tool_error,
                     call_id=call_id,
-                    elapsed_ms=elapsed_ms,
-                    metadata=_with_context_os_audit(
-                        {
-                            "native_tool_mode": prepared.native_tool_mode,
-                            "response_format_mode": prepared.response_format_mode,
-                            "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                        },
-                        prepared,
-                    ),
-                )
-                return LLMResponse(
-                    content="",
-                    error=tool_error,
-                    error_category="provider",
-                    metadata=_with_context_os_audit(
-                        {
-                            "model": model,
-                            "native_tool_mode": prepared.native_tool_mode,
-                            "response_format_mode": prepared.response_format_mode,
-                            "run_id": run_id,
-                            "workspace": self.workspace,
-                            "attempt": attempt,
-                            "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                        },
-                        prepared,
-                    ),
+                    event_emitter=event_emitter,
+                    start_time=start_time,
                 )
 
             cache = get_global_llm_cache()
-            if self._enable_cache and prompt_fingerprint and cache_eligible:
-                cached = cache.get(
-                    prompt_fingerprint=prompt_fingerprint,
-                    context_summary=prepared.context_summary,
-                    temperature=temperature,
-                    model=model,
-                )
-                if cached:
-                    elapsed_ms = (time.perf_counter() - start_time) * 1000
-                    logger.debug(
-                        "[LLMInvoker] Cache hit, returning cached response: model=%s length=%d",
-                        model,
-                        len(cached),
-                    )
-                    self._emit_call_end_event(
-                        event_emitter=event_emitter,
-                        role=role_id,
-                        run_id=run_id,
-                        task_id=task_id,
-                        attempt=attempt,
-                        model=model,
-                        call_id=call_id,
-                        completion_tokens=len(cached) // 2,
-                        context_tokens_after=context_result.token_estimate if context_result else None,
-                        compression_strategy=context_result.compression_strategy if context_result else None,
-                        response_content=cached,
-                        metadata=_with_context_os_audit(
-                            {
-                                "elapsed_ms": round(elapsed_ms, 2),
-                                "cached": True,
-                                "source": "cache",
-                                "compression_applied": context_result.compression_applied if context_result else False,
-                                "turn_round": turn_round,
-                                "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                            },
-                            prepared,
-                        ),
-                    )
-                    return LLMResponse(
-                        content=cached,
-                        token_estimate=len(cached) // 2,
-                        metadata=_with_context_os_audit(
-                            {
-                                "cached": True,
-                                "model": model,
-                                "elapsed_ms": round(elapsed_ms, 2),
-                                "run_id": run_id,
-                                "workspace": self.workspace,
-                                "attempt": attempt,
-                                "turn_round": turn_round,
-                                "native_tool_mode": prepared.native_tool_mode,
-                                "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                            },
-                            prepared,
-                        ),
-                    )
+            cache_hit = self._try_cache_hit(
+                cache=cache,
+                prepared=prepared,
+                context_result=context_result,
+                cache_eligible=cache_eligible,
+                prompt_fingerprint=prompt_fingerprint,
+                temperature=temperature,
+                model=model,
+                role_id=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                turn_round=turn_round,
+                call_id=call_id,
+                event_emitter=event_emitter,
+                start_time=start_time,
+            )
+            if cache_hit is not None:
+                return cache_hit
 
             executor = self._get_executor()
             active_request = prepared.ai_request
@@ -685,253 +1098,80 @@ class LLMInvoker:
             response = await executor.invoke(active_request)
             native_response_fallback = False
 
-            response_ok = getattr(response, "ok", True)
-            # Detect error: hasattr checks instance __dict__ first (True for explicitly set None).
-            # getattr with default only triggers for truly missing attributes.
-            _has_error = hasattr(response, "error")
-            _raw_error = getattr(response, "error", None) if _has_error else None
-            response_error = str(_raw_error or "").strip() if _raw_error is not None else ""
-            # Treat as failed if ok=False or if error string is present (handles providers
-            # that return ok=True with an error field like "Unknown field: tools")
-            is_response_ok = (bool(response_ok) if isinstance(response_ok, bool) else True) and not response_error
+            is_response_ok, response_error = read_response_status(response)
 
-            if (
-                not is_response_ok
-                and prepared.native_tool_schemas
-                and allow_native_tool_text_fallback
-                and is_native_tool_calling_unsupported(response_error)
-            ):
-                active_request = caller._build_native_tool_fallback_request(
-                    prepared=prepared, profile=profile, mode="chat"
-                )
-                response = await executor.invoke(active_request)
-                native_tool_fallback = True
-                response_ok = getattr(response, "ok", True)
-                _has_error = hasattr(response, "error")
-                _raw_error = getattr(response, "error", None) if _has_error else None
-                response_error = str(_raw_error or "").strip() if _raw_error is not None else ""
-                is_response_ok = (bool(response_ok) if isinstance(response_ok, bool) else True) and not response_error
-
-            if (
-                not is_response_ok
-                and prepared.native_response_format
-                and is_response_format_unsupported(response_error)
-            ):
-                active_request = caller._build_structured_fallback_request(
-                    prepared=prepared, profile=profile, response_model=response_model or dict, mode="chat"
-                )
-                response = await executor.invoke(active_request)
-                native_response_fallback = True
-                response_ok = getattr(response, "ok", True)
-                _has_error = hasattr(response, "error")
-                _raw_error = getattr(response, "error", None) if _has_error else None
-                response_error = str(_raw_error or "").strip() if _raw_error is not None else ""
-                is_response_ok = (bool(response_ok) if isinstance(response_ok, bool) else True) and not response_error
-
-            # 5th floor: a reasoning model truncated mid-thought (finish_reason=length)
-            # and emitted no visible output / tool call. Re-ask ONCE with a reserved
-            # output budget + a "minimal reasoning, emit the tool call now" directive so
-            # the write actually lands instead of dying as director_no_materialized_changes.
-            _is_reasoning_truncation = (
-                "empty visible output" in response_error.lower() and "reasoning truncated" in response_error.lower()
-            )
-            if not is_response_ok and _is_reasoning_truncation:
-                active_request = caller._build_reasoning_truncation_retry_request(prepared=prepared, profile=profile)
-                response = await executor.invoke(active_request)
-                logger.warning(
-                    "[invoker] reasoning-truncation re-ask: reserved output budget + minimal-reasoning directive"
-                )
-                response_ok = getattr(response, "ok", True)
-                _has_error = hasattr(response, "error")
-                _raw_error = getattr(response, "error", None) if _has_error else None
-                response_error = str(_raw_error or "").strip() if _raw_error is not None else ""
-                is_response_ok = (bool(response_ok) if isinstance(response_ok, bool) else True) and not response_error
-
-            if not is_response_ok:
-                classified = classify_error(response_error)
-                if is_retryable_error(classified):
-                    fallback = await self._try_role_binding_fallback(
-                        caller=caller,
-                        profile=profile,
-                        system_prompt=system_prompt,
-                        context=context,
-                        temperature=temperature,
-                        max_tokens=effective_max_tokens,
-                        response_model=response_model,
-                        platform_retry_max=platform_retry_max,
-                        executor=executor,
-                        role_id=role_id,
-                        run_id=run_id,
-                        task_id=task_id,
-                        attempt=attempt,
-                        model=model,
-                        call_id=call_id,
-                        event_emitter=event_emitter,
-                        original_error=response_error,
-                    )
-                    if fallback is not None:
-                        profile, prepared, active_request, response = fallback
-                        model = str(getattr(profile, "model", "") or model)
-                        native_tool_fallback = False
-                        native_response_fallback = False
-                        response_ok = getattr(response, "ok", True)
-                        _has_error = hasattr(response, "error")
-                        _raw_error = getattr(response, "error", None) if _has_error else None
-                        response_error = str(_raw_error or "").strip() if _raw_error is not None else ""
-                        is_response_ok = (
-                            bool(response_ok) if isinstance(response_ok, bool) else True
-                        ) and not response_error
-
-            if not is_response_ok:
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                classified = classify_error(response_error)
-                active_context = active_request.context if isinstance(active_request.context, dict) else {}
-                self._emit_call_error_event(
-                    event_emitter=event_emitter,
-                    role=role_id,
-                    run_id=run_id,
-                    task_id=task_id,
-                    attempt=attempt,
-                    model=model,
-                    error_category=classified,
-                    error_message=response_error or "LLM call failed",
-                    call_id=call_id,
-                    elapsed_ms=elapsed_ms,
-                    metadata=_with_context_os_audit(
-                        {
-                            "native_tool_calling_fallback": native_tool_fallback,
-                            "native_response_format_fallback": native_response_fallback,
-                            "native_tool_mode": str(
-                                active_context.get("native_tool_mode") or prepared.native_tool_mode
-                            ),
-                            "response_format_mode": str(
-                                active_context.get("response_format_mode") or prepared.response_format_mode
-                            ),
-                            "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
-                            "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
-                        },
-                        prepared,
-                    ),
-                )
-                return LLMResponse(
-                    content="",
-                    error=response_error or "LLM call failed",
-                    error_category=classified,
-                    metadata=_with_context_os_audit(
-                        {
-                            "model": model,
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "native_tool_calling_fallback": native_tool_fallback,
-                            "native_response_format_fallback": native_response_fallback,
-                            "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
-                            "run_id": run_id,
-                            "workspace": self.workspace,
-                            "attempt": attempt,
-                            "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
-                        },
-                        prepared,
-                    ),
-                )
-
-            raw_payload = response.raw if isinstance(response.raw, dict) else {}
-            # DEBUG: Log raw LLM response for debugging parsing issues
-            output_text = str(getattr(response, "output", "") or "")
-            logger.debug(
-                "[LLMInvoker] Raw LLM response received: model=%s provider=%s output_length=%d output_preview=%r",
-                raw_payload.get("model", "unknown"),
-                raw_payload.get("provider", "unknown"),
-                len(output_text),
-                output_text[:500] if output_text else "<empty>",
-            )
-            response_text = output_text
-            if not response_text.strip() and raw_payload:
-                try:
-                    from polaris.kernelone.llm.engine import ResponseNormalizer
-
-                    response_text = ResponseNormalizer.extract_text(raw_payload)
-                except (RuntimeError, ValueError):
-                    response_text = str(getattr(response, "output", "") or "")
-
-            response_model_name = str((getattr(response, "model", None) or raw_payload.get("model") or model) or "")
-            response_provider = str(
-                (
-                    getattr(response, "provider_id", None)
-                    or raw_payload.get("provider_id")
-                    or raw_payload.get("provider")
-                    or ""
-                )
-                or ""
-            )
-            native_tool_calls, native_tool_provider = extract_native_tool_calls(
-                raw_payload, provider_id=response_provider, model=response_model_name, response_text=response_text
-            )
-
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
-            completion_tokens = len(response_text) // 2
-
-            if self._enable_cache and prompt_fingerprint and cache_eligible:
-                cache.put(
-                    prompt_fingerprint=prompt_fingerprint,
-                    context_summary=prepared.context_summary,
-                    temperature=temperature,
-                    model=model,
-                    response_content=response_text,
-                    token_estimate=completion_tokens,
-                )
-
-            self._emit_call_end_event(
-                event_emitter=event_emitter,
-                role=role_id,
+            ladder = await self._run_fallback_ladder(
+                caller=caller,
+                executor=executor,
+                prepared=prepared,
+                profile=profile,
+                context=context,
+                response=response,
+                active_request=active_request,
+                response_model=response_model,
+                response_error=response_error,
+                is_response_ok=is_response_ok,
+                allow_native_tool_text_fallback=allow_native_tool_text_fallback,
+                native_tool_fallback=native_tool_fallback,
+                native_response_fallback=native_response_fallback,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                effective_max_tokens=effective_max_tokens,
+                platform_retry_max=platform_retry_max,
+                role_id=role_id,
                 run_id=run_id,
                 task_id=task_id,
                 attempt=attempt,
-                model=response_model_name,
-                provider=response_provider,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
+                model=model,
                 call_id=call_id,
-                context_tokens_after=prepared.context_result.token_estimate if prepared.context_result else None,
-                compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
-                response_content=response_text,
-                tool_calls_count=len(native_tool_calls),
-                metadata=_with_context_os_audit(
-                    {
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "cached": False,
-                        "source": "llm",
-                        "compression_applied": prepared.context_result.compression_applied
-                        if prepared.context_result
-                        else False,
-                        "turn_round": turn_round,
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
-                    },
-                    prepared,
-                ),
+                event_emitter=event_emitter,
             )
+            response = ladder.response
+            active_request = ladder.active_request
+            profile = ladder.profile
+            prepared = ladder.prepared
+            model = ladder.model
+            native_tool_fallback = ladder.native_tool_fallback
+            native_response_fallback = ladder.native_response_fallback
+            is_response_ok = ladder.is_response_ok
+            response_error = ladder.response_error
 
-            return LLMResponse(
-                content=response_text,
-                token_estimate=prepared.context_result.token_estimate + completion_tokens
-                if prepared.context_result
-                else completion_tokens,
-                tool_calls=native_tool_calls,
-                tool_call_provider=native_tool_provider,
-                metadata=_with_context_os_audit(
-                    {
-                        "model": response_model_name,
-                        "provider": response_provider,
-                        "native_tool_calls_count": len(native_tool_calls),
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                        "turn_round": turn_round,
-                        # SSOT Fix: Pass context token count for context panel display
-                        "context_tokens": int(prepared.context_result.token_estimate) if prepared.context_result else 0,
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
-                    },
-                    prepared,
-                ),
+            if not is_response_ok:
+                return self._build_call_error_response(
+                    prepared=prepared,
+                    active_request=active_request,
+                    response_error=response_error,
+                    native_tool_fallback=native_tool_fallback,
+                    native_response_fallback=native_response_fallback,
+                    allow_native_tool_text_fallback=allow_native_tool_text_fallback,
+                    model=model,
+                    role_id=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    call_id=call_id,
+                    event_emitter=event_emitter,
+                    start_time=start_time,
+                )
+
+            return self._finalize_call_response(
+                cache=cache,
+                prepared=prepared,
+                active_request=active_request,
+                response=response,
+                cache_eligible=cache_eligible,
+                prompt_fingerprint=prompt_fingerprint,
+                temperature=temperature,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                turn_round=turn_round,
+                role_id=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                call_id=call_id,
+                event_emitter=event_emitter,
+                start_time=start_time,
             )
 
         except asyncio.CancelledError:
@@ -960,88 +1200,437 @@ class LLMInvoker:
             raise
 
         except (ImportError, AttributeError, TypeError, ValueError) as e:
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
-            error_category = classify_error(str(e))
             logger.error(f"LLM call failed: {e}")
-            self._emit_call_error_event(
-                event_emitter=event_emitter,
-                role=role_id,
+            return self._call_exception_response(
+                e,
+                prepared=prepared,
+                model=model,
+                role_id=role_id,
                 run_id=run_id,
                 task_id=task_id,
                 attempt=attempt,
-                model=model,
-                error_category=error_category,
-                error_message=str(e),
                 call_id=call_id,
-                elapsed_ms=elapsed_ms,
-                metadata=_with_context_os_audit(
-                    {
-                        "error_type": type(e).__name__,
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
-                        if prepared
-                        else None,
-                    },
-                    prepared,
-                ),
-            )
-            return LLMResponse(
-                content="",
-                error=f"LLM call failed: {e}",
-                error_category=error_category,
-                metadata=_with_context_os_audit(
-                    {
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                    },
-                    prepared,
-                ),
+                event_emitter=event_emitter,
+                start_time=start_time,
             )
 
         except RuntimeError as e:
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
-            error_category = classify_error(str(e))
             logger.exception(f"LLM call unexpected error: {e}")
-            self._emit_call_error_event(
-                event_emitter=event_emitter,
-                role=role_id,
+            return self._call_exception_response(
+                e,
+                prepared=prepared,
+                model=model,
+                role_id=role_id,
                 run_id=run_id,
                 task_id=task_id,
                 attempt=attempt,
-                model=model,
-                error_category=error_category,
-                error_message=str(e),
                 call_id=call_id,
-                elapsed_ms=elapsed_ms,
-                metadata=_with_context_os_audit(
-                    {
-                        "error_type": type(e).__name__,
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
-                        if prepared
-                        else None,
-                    },
-                    prepared,
-                ),
+                event_emitter=event_emitter,
+                start_time=start_time,
             )
-            return LLMResponse(
-                content="",
-                error=f"LLM call failed: {e}",
-                error_category=error_category,
-                metadata=_with_context_os_audit(
-                    {
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                    },
-                    prepared,
-                ),
-            )
+
+    def _call_exception_response(
+        self,
+        exc: BaseException,
+        *,
+        prepared: PreparedLLMRequest | None,
+        model: str,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        call_id: str,
+        event_emitter: Any | None,
+        start_time: float,
+    ) -> LLMResponse:
+        """Shared builder for the call-phase return-except arms (NOT CancelledError).
+
+        Emits the call_error event and returns the failure ``LLMResponse`` with
+        byte-identical metadata. The caller is responsible for the distinct log
+        severity (``logger.error`` vs ``logger.exception``) before invoking this.
+        """
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        error_category = classify_error(str(exc))
+        self._emit_call_error_event(
+            event_emitter=event_emitter,
+            role=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            model=model,
+            error_category=error_category,
+            error_message=str(exc),
+            call_id=call_id,
+            elapsed_ms=elapsed_ms,
+            metadata=_with_context_os_audit(
+                {
+                    "error_type": type(exc).__name__,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
+                    if prepared
+                    else None,
+                },
+                prepared,
+            ),
+        )
+        return LLMResponse(
+            content="",
+            error=f"LLM call failed: {exc}",
+            error_category=error_category,
+            metadata=_with_context_os_audit(
+                {
+                    "run_id": run_id,
+                    "workspace": self.workspace,
+                    "attempt": attempt,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                },
+                prepared,
+            ),
+        )
 
     # ========================================================================
     # Structured call (migrated from call_structured.py)
     # ========================================================================
+
+    async def _try_native_response_format_structured(
+        self,
+        *,
+        prepared: PreparedLLMRequest,
+        response_model: type,
+        model: str,
+        prompt_tokens: int,
+        turn_round: int,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        call_id: str,
+        event_emitter: Any | None,
+        start_time: float,
+    ) -> StructuredLLMResponse | None:
+        """Structured strategy 1: native response_format.
+
+        Returns a ``StructuredLLMResponse`` on success, or ``None`` to fall
+        through to the next strategy. A non-``response_format_unsupported`` error
+        is raised as ``RuntimeError`` then swallowed-and-warned (still falling
+        through), preserving the original two-level control flow.
+        """
+        if not prepared.native_response_format:
+            return None
+        try:
+            executor = self._get_executor()
+            response = await executor.invoke(prepared.ai_request)
+            if bool(getattr(response, "ok", True)):
+                content = str(getattr(response, "output", "") or "")
+                if not content.strip() and isinstance(getattr(response, "raw", None), dict):
+                    content = json.dumps(response.raw, ensure_ascii=False)
+                data = extract_json_from_text(content)
+                validated = response_model(**data)
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                self._emit_call_end_event(
+                    event_emitter=event_emitter,
+                    role=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    model=str(getattr(response, "model", "") or model),
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=len(content) // 2,
+                    call_id=call_id,
+                    context_tokens_after=prepared.context_result.token_estimate if prepared.context_result else None,
+                    compression_strategy=prepared.context_result.compression_strategy
+                    if prepared.context_result
+                    else None,
+                    response_content=content,
+                    metadata=_with_context_os_audit(
+                        {
+                            "structured": True,
+                            "native_response_format": True,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "compression_applied": prepared.context_result.compression_applied
+                            if prepared.context_result
+                            else False,
+                            "turn_round": turn_round,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                        },
+                        prepared,
+                    ),
+                )
+                return StructuredLLMResponse(
+                    data=validated.model_dump(),
+                    raw_content=content,
+                    token_estimate=prepared.context_result.token_estimate + len(content) // 2
+                    if prepared.context_result
+                    else len(content) // 2,
+                    metadata=_with_context_os_audit(
+                        {
+                            "native_response_format": True,
+                            "response_format_mode": prepared.response_format_mode,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "turn_round": turn_round,
+                        },
+                        prepared,
+                    ),
+                )
+            response_error = str(getattr(response, "error", "") or "").strip()
+            if not is_response_format_unsupported(response_error):
+                raise RuntimeError(response_error or "structured_llm_call_failed")
+        except RuntimeError as e:
+            logger.warning("Native structured response_format call failed: %s", e)
+        return None
+
+    async def _try_instructor_structured(
+        self,
+        *,
+        prepared: PreparedLLMRequest,
+        profile: RoleProfile,
+        messages: list[dict[str, str]],
+        response_model: type,
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        max_retries: int,
+        prompt_tokens: int,
+        turn_round: int,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        call_id: str,
+        event_emitter: Any | None,
+        start_time: float,
+    ) -> StructuredLLMResponse | None:
+        """Structured strategy 2: Instructor ``create_structured``.
+
+        Returns a ``StructuredLLMResponse`` on success, or ``None`` (after a
+        warned ``RuntimeError``) to fall through to the deterministic fallback.
+        """
+        try:
+            provider = resolve_tool_call_provider(
+                provider_id=str(getattr(profile, "provider_id", "") or ""), model=model
+            )
+            structured_client = create_structured_client(provider=provider, enable_instructor=True, async_mode=True)
+            result: Any = await structured_client.create_structured(
+                messages=messages,
+                response_model=response_model,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                max_retries=max_retries,
+            )
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            self._emit_call_end_event(
+                event_emitter=event_emitter,
+                role=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                model=model,
+                call_id=call_id,
+                completion_tokens=len(result.model_dump_json()) // 2,
+                context_tokens_after=prepared.context_result.token_estimate if prepared.context_result else None,
+                compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
+                response_content=result.model_dump_json(),
+                metadata=_with_context_os_audit(
+                    {
+                        "structured": True,
+                        "instructor_used": True,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "compression_applied": prepared.context_result.compression_applied
+                        if prepared.context_result
+                        else False,
+                        "turn_round": turn_round,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                    },
+                    prepared,
+                ),
+            )
+            return StructuredLLMResponse(
+                data=result.model_dump(),
+                raw_content=result.model_dump_json(),
+                token_estimate=prompt_tokens + len(result.model_dump_json()) // 2,
+                metadata=_with_context_os_audit(
+                    {
+                        "model": model,
+                        "instructor_used": True,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                        "turn_round": turn_round,
+                    },
+                    prepared,
+                ),
+            )
+        except RuntimeError as e:
+            logger.warning(f"Instructor structured call failed: {e}, falling back")
+        return None
+
+    async def _run_structured_fallback(
+        self,
+        *,
+        caller: Any,
+        prepared: PreparedLLMRequest,
+        profile: RoleProfile,
+        response_model: type,
+        model: str,
+        prompt_tokens: int,
+        turn_round: int,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        call_id: str,
+        event_emitter: Any | None,
+        start_time: float,
+    ) -> StructuredLLMResponse:
+        """Structured strategy 3: deterministic text-JSON fallback.
+
+        Builds the structured fallback request, invokes, and either returns the
+        not-ok error response, the validated success response, or the parse-fail
+        ``validation_fail`` response. This strategy ALWAYS returns.
+        """
+        ai_request = caller._build_structured_fallback_request(
+            prepared=prepared, profile=profile, response_model=response_model
+        )
+        executor = self._get_executor()
+        response = await executor.invoke(ai_request)
+        is_response_ok, response_error = read_response_status(response)
+        response_format_mode = ""
+        if isinstance(getattr(ai_request, "context", None), dict):
+            response_format_mode = str(ai_request.context.get("response_format_mode", "") or "")
+        if not is_response_ok:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            classified = classify_error(response_error)
+            normalized_error = response_error or "structured_llm_call_failed"
+            self._emit_call_error_event(
+                event_emitter=event_emitter,
+                role=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                model=model,
+                error_category=classified,
+                error_message=normalized_error,
+                call_id=call_id,
+                elapsed_ms=elapsed_ms,
+                metadata=_with_context_os_audit(
+                    {
+                        "structured": True,
+                        "response_format_mode": response_format_mode,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
+                    },
+                    prepared,
+                ),
+            )
+            return StructuredLLMResponse(
+                data={},
+                raw_content="",
+                error=normalized_error,
+                error_category=classified,
+                metadata=_with_context_os_audit(
+                    {
+                        "model": model,
+                        "response_format_mode": response_format_mode,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                    },
+                    prepared,
+                ),
+            )
+
+        content = str(getattr(response, "output", "") or "")
+        if not content.strip() and isinstance(getattr(response, "raw", None), dict):
+            try:
+                content = json.dumps(response.raw, ensure_ascii=False)
+            except (RuntimeError, ValueError):
+                content = str(getattr(response, "output", "") or "")
+
+        try:
+            data = extract_json_from_text(content)
+            validated = response_model(**data)
+            validated_data = validated.model_dump() if hasattr(validated, "model_dump") else dict(validated)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            self._emit_call_end_event(
+                event_emitter=event_emitter,
+                role=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                model=model,
+                call_id=call_id,
+                completion_tokens=len(content) // 2,
+                context_tokens_after=prepared.context_result.token_estimate if prepared.context_result else None,
+                compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
+                response_content=content,
+                metadata=_with_context_os_audit(
+                    {
+                        "structured": True,
+                        "instructor_used": False,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "compression_applied": prepared.context_result.compression_applied
+                        if prepared.context_result
+                        else False,
+                        "turn_round": turn_round,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
+                    },
+                    prepared,
+                ),
+            )
+            return StructuredLLMResponse(
+                data=validated_data,
+                raw_content=content,
+                token_estimate=prompt_tokens + len(content) // 2,
+                metadata=_with_context_os_audit(
+                    {
+                        "model": model,
+                        "instructor_used": False,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                        "turn_round": turn_round,
+                    },
+                    prepared,
+                ),
+            )
+        except (RuntimeError, ValueError) as parse_error:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            error_msg = f"Failed to parse structured output: {parse_error}"
+            self._emit_call_error_event(
+                event_emitter=event_emitter,
+                role=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                model=model,
+                error_category="validation_fail",
+                error_message=error_msg,
+                call_id=call_id,
+                elapsed_ms=elapsed_ms,
+                metadata=_with_context_os_audit(
+                    {"structured": True, "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request)},
+                    prepared,
+                ),
+            )
+            return StructuredLLMResponse(
+                data={},
+                raw_content=content,
+                error=error_msg,
+                error_category="validation_fail",
+                validation_errors=[str(parse_error)],
+                metadata=_with_context_os_audit(
+                    {
+                        "model": model,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                    },
+                    prepared,
+                ),
+            )
 
     async def call_structured(
         self,
@@ -1124,287 +1713,64 @@ class LLMInvoker:
             )
 
             # Try native response_format
-            if prepared.native_response_format:
-                try:
-                    executor = self._get_executor()
-                    response = await executor.invoke(prepared.ai_request)
-                    if bool(getattr(response, "ok", True)):
-                        content = str(getattr(response, "output", "") or "")
-                        if not content.strip() and isinstance(getattr(response, "raw", None), dict):
-                            content = json.dumps(response.raw, ensure_ascii=False)
-                        data = extract_json_from_text(content)
-                        validated = response_model(**data)
-                        elapsed_ms = (time.perf_counter() - start_time) * 1000
-                        self._emit_call_end_event(
-                            event_emitter=event_emitter,
-                            role=role_id,
-                            run_id=run_id,
-                            task_id=task_id,
-                            attempt=attempt,
-                            model=str(getattr(response, "model", "") or model),
-                            prompt_tokens=prompt_tokens,
-                            completion_tokens=len(content) // 2,
-                            call_id=call_id,
-                            context_tokens_after=prepared.context_result.token_estimate
-                            if prepared.context_result
-                            else None,
-                            compression_strategy=prepared.context_result.compression_strategy
-                            if prepared.context_result
-                            else None,
-                            response_content=content,
-                            metadata=_with_context_os_audit(
-                                {
-                                    "structured": True,
-                                    "native_response_format": True,
-                                    "elapsed_ms": round(elapsed_ms, 2),
-                                    "compression_applied": prepared.context_result.compression_applied
-                                    if prepared.context_result
-                                    else False,
-                                    "turn_round": turn_round,
-                                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                                },
-                                prepared,
-                            ),
-                        )
-                        return StructuredLLMResponse(
-                            data=validated.model_dump(),
-                            raw_content=content,
-                            token_estimate=prepared.context_result.token_estimate + len(content) // 2
-                            if prepared.context_result
-                            else len(content) // 2,
-                            metadata=_with_context_os_audit(
-                                {
-                                    "native_response_format": True,
-                                    "response_format_mode": prepared.response_format_mode,
-                                    "elapsed_ms": round(elapsed_ms, 2),
-                                    "turn_round": turn_round,
-                                },
-                                prepared,
-                            ),
-                        )
-                    response_error = str(getattr(response, "error", "") or "").strip()
-                    if not is_response_format_unsupported(response_error):
-                        raise RuntimeError(response_error or "structured_llm_call_failed")
-                except RuntimeError as e:
-                    logger.warning("Native structured response_format call failed: %s", e)
+            native_result = await self._try_native_response_format_structured(
+                prepared=prepared,
+                response_model=response_model,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                turn_round=turn_round,
+                role_id=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                call_id=call_id,
+                event_emitter=event_emitter,
+                start_time=start_time,
+            )
+            if native_result is not None:
+                return native_result
 
             # Try Instructor
             if INSTRUCTOR_AVAILABLE:
-                try:
-                    provider = resolve_tool_call_provider(
-                        provider_id=str(getattr(profile, "provider_id", "") or ""), model=model
-                    )
-                    structured_client = create_structured_client(
-                        provider=provider, enable_instructor=True, async_mode=True
-                    )
-                    result: Any = await structured_client.create_structured(
-                        messages=messages,
-                        response_model=response_model,
-                        model=model,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        max_retries=max_retries,
-                    )
-                    elapsed_ms = (time.perf_counter() - start_time) * 1000
-                    self._emit_call_end_event(
-                        event_emitter=event_emitter,
-                        role=role_id,
-                        run_id=run_id,
-                        task_id=task_id,
-                        attempt=attempt,
-                        model=model,
-                        call_id=call_id,
-                        completion_tokens=len(result.model_dump_json()) // 2,
-                        context_tokens_after=prepared.context_result.token_estimate
-                        if prepared.context_result
-                        else None,
-                        compression_strategy=prepared.context_result.compression_strategy
-                        if prepared.context_result
-                        else None,
-                        response_content=result.model_dump_json(),
-                        metadata=_with_context_os_audit(
-                            {
-                                "structured": True,
-                                "instructor_used": True,
-                                "elapsed_ms": round(elapsed_ms, 2),
-                                "compression_applied": prepared.context_result.compression_applied
-                                if prepared.context_result
-                                else False,
-                                "turn_round": turn_round,
-                                "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                            },
-                            prepared,
-                        ),
-                    )
-                    return StructuredLLMResponse(
-                        data=result.model_dump(),
-                        raw_content=result.model_dump_json(),
-                        token_estimate=prompt_tokens + len(result.model_dump_json()) // 2,
-                        metadata=_with_context_os_audit(
-                            {
-                                "model": model,
-                                "instructor_used": True,
-                                "elapsed_ms": round(elapsed_ms, 2),
-                                "run_id": run_id,
-                                "workspace": self.workspace,
-                                "attempt": attempt,
-                                "turn_round": turn_round,
-                            },
-                            prepared,
-                        ),
-                    )
-                except RuntimeError as e:
-                    logger.warning(f"Instructor structured call failed: {e}, falling back")
+                instructor_result = await self._try_instructor_structured(
+                    prepared=prepared,
+                    profile=profile,
+                    messages=messages,
+                    response_model=response_model,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    max_retries=max_retries,
+                    prompt_tokens=prompt_tokens,
+                    turn_round=turn_round,
+                    role_id=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    call_id=call_id,
+                    event_emitter=event_emitter,
+                    start_time=start_time,
+                )
+                if instructor_result is not None:
+                    return instructor_result
 
             # Fallback
-            ai_request = caller._build_structured_fallback_request(
-                prepared=prepared, profile=profile, response_model=response_model
+            return await self._run_structured_fallback(
+                caller=caller,
+                prepared=prepared,
+                profile=profile,
+                response_model=response_model,
+                model=model,
+                prompt_tokens=prompt_tokens,
+                turn_round=turn_round,
+                role_id=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                call_id=call_id,
+                event_emitter=event_emitter,
+                start_time=start_time,
             )
-            executor = self._get_executor()
-            response = await executor.invoke(ai_request)
-            response_ok = getattr(response, "ok", True)
-            _has_error = hasattr(response, "error")
-            _raw_error = getattr(response, "error", None) if _has_error else None
-            response_error = str(_raw_error or "").strip() if _raw_error is not None else ""
-            is_response_ok = (bool(response_ok) if isinstance(response_ok, bool) else True) and not response_error
-            response_format_mode = ""
-            if isinstance(getattr(ai_request, "context", None), dict):
-                response_format_mode = str(ai_request.context.get("response_format_mode", "") or "")
-            if not is_response_ok:
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                classified = classify_error(response_error)
-                normalized_error = response_error or "structured_llm_call_failed"
-                self._emit_call_error_event(
-                    event_emitter=event_emitter,
-                    role=role_id,
-                    run_id=run_id,
-                    task_id=task_id,
-                    attempt=attempt,
-                    model=model,
-                    error_category=classified,
-                    error_message=normalized_error,
-                    call_id=call_id,
-                    elapsed_ms=elapsed_ms,
-                    metadata=_with_context_os_audit(
-                        {
-                            "structured": True,
-                            "response_format_mode": response_format_mode,
-                            "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
-                        },
-                        prepared,
-                    ),
-                )
-                return StructuredLLMResponse(
-                    data={},
-                    raw_content="",
-                    error=normalized_error,
-                    error_category=classified,
-                    metadata=_with_context_os_audit(
-                        {
-                            "model": model,
-                            "response_format_mode": response_format_mode,
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "run_id": run_id,
-                            "workspace": self.workspace,
-                            "attempt": attempt,
-                        },
-                        prepared,
-                    ),
-                )
-
-            content = str(getattr(response, "output", "") or "")
-            if not content.strip() and isinstance(getattr(response, "raw", None), dict):
-                try:
-                    content = json.dumps(response.raw, ensure_ascii=False)
-                except (RuntimeError, ValueError):
-                    content = str(getattr(response, "output", "") or "")
-
-            try:
-                data = extract_json_from_text(content)
-                validated = response_model(**data)
-                validated_data = validated.model_dump() if hasattr(validated, "model_dump") else dict(validated)
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                self._emit_call_end_event(
-                    event_emitter=event_emitter,
-                    role=role_id,
-                    run_id=run_id,
-                    task_id=task_id,
-                    attempt=attempt,
-                    model=model,
-                    call_id=call_id,
-                    completion_tokens=len(content) // 2,
-                    context_tokens_after=prepared.context_result.token_estimate if prepared.context_result else None,
-                    compression_strategy=prepared.context_result.compression_strategy
-                    if prepared.context_result
-                    else None,
-                    response_content=content,
-                    metadata=_with_context_os_audit(
-                        {
-                            "structured": True,
-                            "instructor_used": False,
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "compression_applied": prepared.context_result.compression_applied
-                            if prepared.context_result
-                            else False,
-                            "turn_round": turn_round,
-                            "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
-                        },
-                        prepared,
-                    ),
-                )
-                return StructuredLLMResponse(
-                    data=validated_data,
-                    raw_content=content,
-                    token_estimate=prompt_tokens + len(content) // 2,
-                    metadata=_with_context_os_audit(
-                        {
-                            "model": model,
-                            "instructor_used": False,
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "run_id": run_id,
-                            "workspace": self.workspace,
-                            "attempt": attempt,
-                            "turn_round": turn_round,
-                        },
-                        prepared,
-                    ),
-                )
-            except (RuntimeError, ValueError) as parse_error:
-                elapsed_ms = (time.perf_counter() - start_time) * 1000
-                error_msg = f"Failed to parse structured output: {parse_error}"
-                self._emit_call_error_event(
-                    event_emitter=event_emitter,
-                    role=role_id,
-                    run_id=run_id,
-                    task_id=task_id,
-                    attempt=attempt,
-                    model=model,
-                    error_category="validation_fail",
-                    error_message=error_msg,
-                    call_id=call_id,
-                    elapsed_ms=elapsed_ms,
-                    metadata=_with_context_os_audit(
-                        {"structured": True, "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request)},
-                        prepared,
-                    ),
-                )
-                return StructuredLLMResponse(
-                    data={},
-                    raw_content=content,
-                    error=error_msg,
-                    error_category="validation_fail",
-                    validation_errors=[str(parse_error)],
-                    metadata=_with_context_os_audit(
-                        {
-                            "model": model,
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "run_id": run_id,
-                            "workspace": self.workspace,
-                            "attempt": attempt,
-                        },
-                        prepared,
-                    ),
-                )
 
         except asyncio.CancelledError:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -1433,44 +1799,76 @@ class LLMInvoker:
             raise
 
         except RuntimeError as e:
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
-            error_category = classify_error(str(e))
-            self._emit_call_error_event(
-                event_emitter=event_emitter,
-                role=role_id,
+            return self._structured_exception_response(
+                e,
+                prepared=prepared,
+                model=model,
+                role_id=role_id,
                 run_id=run_id,
                 task_id=task_id,
                 attempt=attempt,
-                model=model,
-                error_category=error_category,
-                error_message=str(e),
                 call_id=call_id,
-                elapsed_ms=elapsed_ms,
-                metadata=_with_context_os_audit(
-                    {
-                        "structured": True,
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
-                        if prepared
-                        else None,
-                    },
-                    prepared,
-                ),
+                event_emitter=event_emitter,
+                start_time=start_time,
             )
-            return StructuredLLMResponse(
-                data={},
-                error=f"Structured LLM call failed: {e}",
-                error_category=error_category,
-                metadata=_with_context_os_audit(
-                    {
-                        "model": model,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                    },
-                    prepared,
-                ),
-            )
+
+    def _structured_exception_response(
+        self,
+        exc: BaseException,
+        *,
+        prepared: PreparedLLMRequest | None,
+        model: str,
+        role_id: str,
+        run_id: str,
+        task_id: str | None,
+        attempt: int,
+        call_id: str,
+        event_emitter: Any | None,
+        start_time: float,
+    ) -> StructuredLLMResponse:
+        """Shared builder for the structured RuntimeError except arm (NOT CancelledError).
+
+        Emits the call_error event and returns the failure
+        ``StructuredLLMResponse`` with byte-identical structured metadata.
+        """
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        error_category = classify_error(str(exc))
+        self._emit_call_error_event(
+            event_emitter=event_emitter,
+            role=role_id,
+            run_id=run_id,
+            task_id=task_id,
+            attempt=attempt,
+            model=model,
+            error_category=error_category,
+            error_message=str(exc),
+            call_id=call_id,
+            elapsed_ms=elapsed_ms,
+            metadata=_with_context_os_audit(
+                {
+                    "structured": True,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
+                    if prepared
+                    else None,
+                },
+                prepared,
+            ),
+        )
+        return StructuredLLMResponse(
+            data={},
+            error=f"Structured LLM call failed: {exc}",
+            error_category=error_category,
+            metadata=_with_context_os_audit(
+                {
+                    "model": model,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "run_id": run_id,
+                    "workspace": self.workspace,
+                    "attempt": attempt,
+                },
+                prepared,
+            ),
+        )
 
     # ========================================================================
     # Streaming call (migrated from call_stream.py)

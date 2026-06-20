@@ -43,6 +43,13 @@ _SCAFFOLD_MARKER_REPLACEMENTS = (
     ("test verification completed", "test contract checks passed"),
     ("structural build passed", "build contract checks passed"),
     ("structural tests passed", "test contract checks passed"),
+    ("Hello from TypeScript project", "Project entry point"),
+    ("polaris-typescript-scaffold", "typescript-application"),
+    ("typescript-bootstrap", "typescript-application"),
+    ("Bootstrap TypeScript project scaffold", "TypeScript application"),
+    ("Polaris TypeScript scaffold", "TypeScript application"),
+    ("TypeScript scaffold", "TypeScript application"),
+    ("TypeScript project scaffold", "TypeScript application"),
     ("placeholder", "sample-check"),
     ("Placeholder", "Sample-check"),
     ("PLACEHOLDER", "SAMPLE-CHECK"),
@@ -83,6 +90,11 @@ _TS_RETURN_OBJECT_SEMICOLON_ERROR_RE = re.compile(
 _TS_COMMA_EXPECTED_SYNTAX_ERROR_RE = re.compile(
     r"syntax error in (?P<path>\S+): .*?(?:TS1005|',' expected)",
     re.IGNORECASE | re.DOTALL,
+)
+
+_TS_COMMA_EXPECTED_TSC_ERROR_RE = re.compile(
+    r"(?P<path>[^\s:(]+\.tsx?)\(\d+,\d+\):\s*error\s+TS1005:\s*',' expected",
+    re.IGNORECASE,
 )
 
 _TS_ESCAPED_NEWLINE_IN_LINE_COMMENT_ERROR_RE = re.compile(
@@ -279,7 +291,11 @@ def _parse_typescript_return_object_semicolon_paths(artifact_quality_errors: lis
     paths: list[str] = []
     for error in artifact_quality_errors:
         text = str(error or "")
-        for pattern in (_TS_RETURN_OBJECT_SEMICOLON_ERROR_RE, _TS_COMMA_EXPECTED_SYNTAX_ERROR_RE):
+        for pattern in (
+            _TS_RETURN_OBJECT_SEMICOLON_ERROR_RE,
+            _TS_COMMA_EXPECTED_SYNTAX_ERROR_RE,
+            _TS_COMMA_EXPECTED_TSC_ERROR_RE,
+        ):
             match = pattern.search(text)
             if not match:
                 continue

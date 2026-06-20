@@ -52,9 +52,7 @@ TurnTransactionController 是**新架构**的事务化执行器，与 TurnEngine
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
-import os
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any
@@ -78,8 +76,6 @@ from polaris.cells.roles.kernel.internal.transaction import (
     kernel_guard_asserts,
 )
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
-    has_available_write_tool,
-    has_successful_recon_execution,
     is_mutation_contract_violation,
 )
 from polaris.cells.roles.kernel.internal.transaction.correlation import (
@@ -87,50 +83,54 @@ from polaris.cells.roles.kernel.internal.transaction.correlation import (
     _TURN_REQUEST_ID_CONTEXT,
     _TURN_SPAN_ID_CONTEXT,
 )
-from polaris.cells.roles.kernel.internal.transaction.decode_corrective import (
-    build_corrective_context,
-    evaluate_decode_corrective,
+from polaris.cells.roles.kernel.internal.transaction.decision_message_builder import (
+    build_decision_messages as _build_decision_messages_impl,
+)
+from polaris.cells.roles.kernel.internal.transaction.decision_pipeline import (
+    run_decision_pipeline,
 )
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
-    BlockedReason,
     DeliveryContract,
-    DeliveryMode,
+)
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract_resolver import (
+    resolve_turn_delivery_contract,
 )
 from polaris.cells.roles.kernel.internal.transaction.delivery_intent_resolver import (
     _EXPLICIT_MATERIALIZE_MODE_MARKERS,
     enforce_explicit_materialize_delivery_marker as _enforce_explicit_materialize_delivery_marker,
     has_explicit_materialize_delivery_marker as _has_explicit_materialize_delivery_marker,
 )
+from polaris.cells.roles.kernel.internal.transaction.final_answer_gates import (
+    evaluate_materialize_violation_gate,
+    evaluate_recon_required_gate,
+)
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
 from polaris.cells.roles.kernel.internal.transaction.handoff_handlers import HandoffHandler
-from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
-    detect_inline_patch_escape,
-)
 from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.modification_contract import ModificationContract
+from polaris.cells.roles.kernel.internal.transaction.mutation_contract_guard import (
+    apply_mutation_contract_guard,
+)
 from polaris.cells.roles.kernel.internal.transaction.phase_manager import PhaseManager
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import RetryOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.stream_orchestrator import StreamOrchestrator
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
-    build_single_batch_task_contract_hint,
     extract_allowed_tool_names_from_definitions,
-    extract_latest_user_message,
 )
 from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import ToolBatchExecutor
 from polaris.cells.roles.kernel.internal.transaction.truthlog_recorder import TurnTruthLogRecorder
+from polaris.cells.roles.kernel.internal.transaction.turn_session_scope import turn_session_scope
 from polaris.cells.roles.kernel.internal.turn_decision_decoder import DecodeConfig, TurnDecisionDecoder
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
     RawLLMResponse,
     TurnDecision,
     TurnDecisionKind,
-    TurnId,
 )
 from polaris.cells.roles.kernel.public.turn_events import (
     CompletionEvent,
     ErrorEvent,
     TurnEvent,
-    TurnPhaseEvent,
 )
 
 logger = logging.getLogger(__name__)
@@ -751,41 +751,19 @@ class TurnTransactionController:
 
         Returns TurnResult dict
         """
-        state_machine = TurnStateMachine(turn_id=turn_id)
-        ledger = TurnLedger(turn_id=turn_id)
-        # FIX-20250422: Restore session-level PhaseManager so phase survives across turns
-        if self._session_phase_manager is not None:
-            _restored_phase = self._session_phase_manager.current_phase.value
-            ledger.phase_manager = self._session_phase_manager
-            logger.debug(
-                "[DEBUG][FIX-20250422] PhaseManager restored from session: phase=%s turn_id=%s",
-                _restored_phase,
-                turn_id,
-            )
-        else:
-            self._session_phase_manager = ledger.phase_manager
-            logger.debug(
-                "[DEBUG][FIX-20250422] PhaseManager created fresh: phase=%s turn_id=%s",
-                ledger.phase_manager.current_phase.value,
-                turn_id,
-            )
-
-        # FIX-20250422-v3: Restore session-level ModificationContract
-        if self._session_modification_contract is not None:
-            ledger.modification_contract = self._session_modification_contract
-        else:
-            self._session_modification_contract = ledger.modification_contract
-
         # Correlation context vars — mirror execute_stream() so that
         # _emit_phase_event() can attach request/span IDs in non-stream mode.
-        effective_turn_request_id = self._generate_turn_request_id()
-        effective_turn_span_id = self._generate_span_id(prefix="turnspan")
-        request_id_token = _TURN_REQUEST_ID_CONTEXT.set(effective_turn_request_id)
-        span_id_token = _TURN_SPAN_ID_CONTEXT.set(effective_turn_span_id)
-        parent_span_token = _TURN_PARENT_SPAN_ID_CONTEXT.set(None)
-        truthlog_recorder = self._build_turn_truthlog_recorder(context)
-        self._active_truthlog_recorder = truthlog_recorder
-        try:
+        # Session/correlation/truthlog setup + teardown is shared with
+        # execute_stream via turn_session_scope.
+        async with turn_session_scope(
+            self,
+            turn_id=turn_id,
+            context=context,
+            turn_request_id=None,
+            parent_span_id=None,
+        ) as scope:
+            state_machine = scope.state_machine
+            ledger = scope.ledger
             try:
                 logger.debug("[DEBUG] turn_execute_start: turn_id=%s mode=run", turn_id)
                 result = await self._execute_turn(
@@ -830,16 +808,6 @@ class TurnTransactionController:
                     )
                 )
                 raise
-        finally:
-            self._active_truthlog_recorder = None
-            if truthlog_recorder is not None:
-                await self._shutdown_turn_truthlog_recorder(truthlog_recorder)
-            with contextlib.suppress(ValueError):
-                _TURN_REQUEST_ID_CONTEXT.reset(request_id_token)
-            with contextlib.suppress(ValueError):
-                _TURN_SPAN_ID_CONTEXT.reset(span_id_token)
-            with contextlib.suppress(ValueError):
-                _TURN_PARENT_SPAN_ID_CONTEXT.reset(parent_span_token)
 
     async def execute_stream(
         self,
@@ -854,39 +822,20 @@ class TurnTransactionController:
 
         产出事件序列，供CLI实时渲染
         """
-        state_machine = TurnStateMachine(turn_id=turn_id)
-        ledger = TurnLedger(turn_id=turn_id)
-        # FIX-20250422: Restore session-level PhaseManager so phase survives across turns
-        if self._session_phase_manager is not None:
-            _restored_phase = self._session_phase_manager.current_phase.value
-            ledger.phase_manager = self._session_phase_manager
-            logger.debug(
-                "[DEBUG][FIX-20250422] PhaseManager restored from session: phase=%s turn_id=%s",
-                _restored_phase,
-                turn_id,
-            )
-        else:
-            self._session_phase_manager = ledger.phase_manager
-            logger.debug(
-                "[DEBUG][FIX-20250422] PhaseManager created fresh: phase=%s turn_id=%s",
-                ledger.phase_manager.current_phase.value,
-                turn_id,
-            )
-
-        # FIX-20250422-v3: Restore session-level ModificationContract
-        if self._session_modification_contract is not None:
-            ledger.modification_contract = self._session_modification_contract
-        else:
-            self._session_modification_contract = ledger.modification_contract
-
-        effective_turn_request_id = turn_request_id or self._generate_turn_request_id()
-        effective_turn_span_id = self._generate_span_id(prefix="turnspan")
-        request_id_token = _TURN_REQUEST_ID_CONTEXT.set(effective_turn_request_id)
-        span_id_token = _TURN_SPAN_ID_CONTEXT.set(effective_turn_span_id)
-        parent_span_token = _TURN_PARENT_SPAN_ID_CONTEXT.set(parent_span_id)
-        truthlog_recorder = self._build_turn_truthlog_recorder(context)
-        self._active_truthlog_recorder = truthlog_recorder
-        try:
+        # Session/correlation/truthlog setup + teardown is shared with
+        # execute() via turn_session_scope.
+        async with turn_session_scope(
+            self,
+            turn_id=turn_id,
+            context=context,
+            turn_request_id=turn_request_id,
+            parent_span_id=parent_span_id,
+        ) as scope:
+            state_machine = scope.state_machine
+            ledger = scope.ledger
+            effective_turn_request_id = scope.effective_turn_request_id
+            effective_turn_span_id = scope.effective_turn_span_id
+            truthlog_recorder = scope.truthlog_recorder
             try:
                 async for event in self._execute_turn_stream(turn_id, context, tool_definitions, state_machine, ledger):
                     event_with_request_id = self._attach_event_correlation(
@@ -926,16 +875,6 @@ class TurnTransactionController:
                     )
                 yield error_event
                 raise
-        finally:
-            self._active_truthlog_recorder = None
-            if truthlog_recorder is not None:
-                await self._shutdown_turn_truthlog_recorder(truthlog_recorder)
-            with contextlib.suppress(ValueError):
-                _TURN_REQUEST_ID_CONTEXT.reset(request_id_token)
-            with contextlib.suppress(ValueError):
-                _TURN_SPAN_ID_CONTEXT.reset(span_id_token)
-            with contextlib.suppress(ValueError):
-                _TURN_PARENT_SPAN_ID_CONTEXT.reset(parent_span_token)
 
     # ---------------------------------------------------------------------------
     # Core orchestration
@@ -958,108 +897,17 @@ class TurnTransactionController:
         logger.debug("[DEBUG] turn_phase: turn_id=%s phase=CONTEXT_BUILT", turn_id)
 
         # === Phase 1b: 解析交付契约 ===
-        latest_user_request = extract_latest_user_message(context)
-        if os.getenv("KERNELONE_DELIVERY_MODE_TRACE") == "1":
-            context_has_materialize_marker = any(
-                isinstance(message, Mapping)
-                and str(message.get("role") or "").strip().lower() == "user"
-                and (
-                    "[mode:materialize]" in str(message.get("content") or "").lower()
-                    or "[mode:materialize_changes]" in str(message.get("content") or "").lower()
-                )
-                for message in context
-            )
-            logger.warning(
-                "delivery-mode-controller-trace: turn_id=%s latest_marker=%s context_marker=%s latest_user_preview=%r",
-                turn_id,
-                "[mode:materialize]" in latest_user_request.lower()
-                or "[mode:materialize_changes]" in latest_user_request.lower(),
-                context_has_materialize_marker,
-                latest_user_request[:160],
-            )
-        if not latest_user_request and context:
-            # A user-turn-free context resolves to the ANALYZE_ONLY default and
-            # silently neuters mutation turns (write tools filtered). The
-            # projection layer must always preserve the current instruction
-            # (see CompressionEngine.emergency_truncate); flag loudly if not.
-            logger.warning(
-                "delivery-contract-no-user-turn: turn_id=%s context_roles=%s — "
-                "defaulting to ANALYZE_ONLY with no user intent available",
-                turn_id,
-                [str(m.get("role") or "") for m in context if isinstance(m, Mapping)][:12],
-            )
-            ledger.anomaly_flags.append(
-                {
-                    "type": "DELIVERY_CONTRACT_NO_USER_TURN",
-                    "turn_id": turn_id,
-                    "message_count": len(context),
-                }
-            )
-        delivery_contract = await self._resolve_delivery_mode_hybrid(latest_user_request)
-        enforced_contract = _enforce_explicit_materialize_delivery_marker(latest_user_request, delivery_contract)
-        if enforced_contract is not delivery_contract:
-            logger.warning(
-                "delivery-contract-explicit-marker-overrode: turn_id=%s previous_mode=%s latest_msg=%r",
-                turn_id,
-                delivery_contract.mode.value,
-                latest_user_request[:160],
-            )
-            ledger.anomaly_flags.append(
-                {
-                    "type": "DELIVERY_CONTRACT_EXPLICIT_MARKER_OVERRIDDEN",
-                    "turn_id": turn_id,
-                    "previous_mode": delivery_contract.mode.value,
-                    "latest_request": latest_user_request,
-                }
-            )
-            delivery_contract = enforced_contract
-
-        # 多轮对话保护：如果最新消息丢失 mutation 意图（如"继续""开始吧"），
-        # 但历史消息中最近存在 MATERIALIZE_CHANGES 意图，则继承该意图
-        if delivery_contract.mode != DeliveryMode.MATERIALIZE_CHANGES:
-            inherited = self._inherit_materialize_from_history(context, latest_user_request)
-            if inherited is not None:
-                logger.warning(
-                    "delivery-contract-inherited: turn_id=%s latest_msg=%r "
-                    "inherited MATERIALIZE_CHANGES from historical user message",
-                    turn_id,
-                    latest_user_request,
-                )
-                delivery_contract = inherited
-                ledger.anomaly_flags.append(
-                    {
-                        "type": "DELIVERY_CONTRACT_INHERITED",
-                        "turn_id": turn_id,
-                        "reason": "latest_message_lost_mutation_intent",
-                        "latest_request": latest_user_request,
-                    }
-                )
-
-        if delivery_contract.mode == DeliveryMode.MATERIALIZE_CHANGES and not has_available_write_tool(
-            tool_definitions
-        ):
-            logger.warning(
-                "delivery-contract-downgraded-no-write-tools: turn_id=%s latest_msg=%r "
-                "downgrading MATERIALIZE_CHANGES -> PROPOSE_PATCH",
-                turn_id,
-                latest_user_request,
-            )
-            delivery_contract = DeliveryContract(
-                mode=DeliveryMode.PROPOSE_PATCH,
-                requires_mutation=False,
-                requires_verification=delivery_contract.requires_verification,
-                allow_inline_code=True,
-                allow_patch_proposal=True,
-                enrichment=delivery_contract.enrichment,
-            )
-            ledger.anomaly_flags.append(
-                {
-                    "type": "DELIVERY_CONTRACT_DOWNGRADED_NO_WRITE_TOOLS",
-                    "turn_id": turn_id,
-                    "reason": "no_write_tools_exposed_for_current_role",
-                    "latest_request": latest_user_request,
-                }
-            )
+        # Facade-bound helpers are passed as callables so test-time monkeypatch
+        # of ``_resolve_delivery_mode_hybrid`` / ``_inherit_materialize_from_history``
+        # on the instance still penetrates the resolver module.
+        delivery_contract = await resolve_turn_delivery_contract(
+            turn_id=turn_id,
+            context=context,
+            tool_definitions=tool_definitions,
+            ledger=ledger,
+            resolve_delivery_mode_hybrid=self._resolve_delivery_mode_hybrid,
+            inherit_materialize_from_history=self._inherit_materialize_from_history,
+        )
 
         ledger.set_delivery_contract(delivery_contract)
         ledger.mutation_obligation.target_files_known = self._detect_target_files_known(context)
@@ -1070,184 +918,46 @@ class TurnTransactionController:
             delivery_contract.requires_mutation,
         )
 
-        # === Phase 2: 请求决策 ===
-        state_machine.transition_to(TurnState.DECISION_REQUESTED)
-        ledger.state_history.append(("DECISION_REQUESTED", int(time.time() * 1000)))
-        logger.debug("[DEBUG] turn_phase: turn_id=%s phase=DECISION_REQUESTED", turn_id)
-        self._emit_phase_event(TurnPhaseEvent.create(turn_id, "decision_requested"))
-
-        llm_response = await self._call_llm_for_decision(context, tool_definitions, ledger)
-
-        # ADR-0090 I3: one corrective re-ask before a degraded decode kills the
-        # turn (all native tool calls unparseable, or a fully empty response).
-        probe_decision = self.decoder.decode(llm_response, TurnId(turn_id))
-        corrective_ask = evaluate_decode_corrective(probe_decision, llm_response)
-        if corrective_ask is not None:
-            logger.warning(
-                "decode_corrective_retry: reason=%s turn_id=%s",
-                corrective_ask.reason,
-                turn_id,
-            )
-            llm_response = await self._call_llm_for_decision(
-                build_corrective_context(context, corrective_ask),
-                tool_definitions,
-                ledger,
-            )
-
-        state_machine.transition_to(TurnState.DECISION_RECEIVED)
-        ledger.state_history.append(("DECISION_RECEIVED", int(time.time() * 1000)))
-        logger.debug("[DEBUG] turn_phase: turn_id=%s phase=DECISION_RECEIVED", turn_id)
-
-        # === Phase 3: 解码决策 ===
-        decision = probe_decision if corrective_ask is None else self.decoder.decode(llm_response, TurnId(turn_id))
-
-        # PROPOSE_PATCH / ANALYZE_ONLY 边界保护：过滤 write tools
-        decision = self._apply_delivery_mode_filter(decision, ledger)
-        allowed_tool_names_for_turn = extract_allowed_tool_names_from_definitions(tool_definitions)
-        if decision.get("kind") == TurnDecisionKind.TOOL_BATCH and not allowed_tool_names_for_turn:
-            logger.warning(
-                "text-only-tool-batch-suppressed: turn_id=%s no tool definitions were exposed; "
-                "treating decoded tool call text as final answer",
-                turn_id,
-            )
-            ledger.anomaly_flags.append(
-                {
-                    "type": "TEXT_ONLY_TOOL_BATCH_SUPPRESSED",
-                    "turn_id": turn_id,
-                    "reason": "no_tool_definitions_exposed",
-                }
-            )
-            decision = TurnDecision(
-                turn_id=decision["turn_id"],
-                kind=TurnDecisionKind.FINAL_ANSWER,
-                visible_message=str(decision.get("visible_message") or llm_response.content or ""),
-                reasoning_summary=decision.get("reasoning_summary"),
-                tool_batch=None,
-                finalize_mode=decision["finalize_mode"],
-                domain=decision["domain"],
-                metadata={
-                    **dict(decision.get("metadata") or {}),
-                    "suppressed_tool_batch_due_to_no_tools": True,
-                },
-            )
-
-        ledger.record_decision(decision)
-        self._guard_assert_single_decision(
+        # === Phase 2+3: 请求决策 + 解码 ===
+        # Facade-bound helpers are passed as callables/objects so test-time
+        # monkeypatch of decoder / _call_llm_for_decision / _apply_delivery_mode_filter
+        # on the instance still penetrates the pipeline module.
+        decision = await run_decision_pipeline(
             turn_id=turn_id,
-            decision_count=len(ledger.decisions),
-            tool_batch_count=ledger.tool_batch_count,
+            context=context,
+            tool_definitions=tool_definitions,
+            state_machine=state_machine,
             ledger=ledger,
-        )
-
-        state_machine.transition_to(TurnState.DECISION_DECODED)
-        ledger.state_history.append(("DECISION_DECODED", int(time.time() * 1000)))
-        decision_kind_str = (
-            decision.get("kind").value if hasattr(decision.get("kind"), "value") else str(decision.get("kind"))
-        )
-        logger.debug(
-            "[DEBUG] turn_phase: turn_id=%s phase=DECISION_DECODED kind=%s",
-            turn_id,
-            decision_kind_str,
-        )
-        self._emit_phase_event(
-            TurnPhaseEvent.create(
-                turn_id,
-                "decision_completed",
-                {
-                    "kind": decision_kind_str,
-                    "finalize_mode": decision.get("finalize_mode").value
-                    if hasattr(decision.get("finalize_mode"), "value")
-                    else str(decision.get("finalize_mode")),
-                },
-            )
+            decoder=self.decoder,
+            call_llm_for_decision=self._call_llm_for_decision,
+            apply_delivery_mode_filter=self._apply_delivery_mode_filter,
+            guard_assert_single_decision=self._guard_assert_single_decision,
+            emit_event=self._emit_phase_event,
         )
 
         # === Phase 4: 执行决策 ===
         decision_kind = decision.get("kind")
-        latest_user_request = extract_latest_user_message(context)
         guard_mode = str(getattr(self.config, "mutation_guard_mode", "warn"))
-        # 统一 mutation 判断：delivery contract + intent hybrid 任一判定需要 mutation 即触发 guard
-        requires_mutation_by_contract = ledger.delivery_contract.requires_mutation
-        requires_mutation_by_intent = await self._requires_mutation_intent_hybrid(latest_user_request)
-        # 两套系统不一致时，以"需要 mutation"为准，自动升级 delivery contract
-        # FIX-20250422: 但如果当前角色没有写工具，不能升级，否则会导致死循环
-        if requires_mutation_by_intent and not requires_mutation_by_contract:
-            if not has_available_write_tool(tool_definitions):
-                logger.warning(
-                    "delivery-contract-upgrade-blocked: intent_classifier detected mutation but "
-                    "current role has no write tools. Keeping PROPOSE_PATCH for turn_id=%s",
-                    turn_id,
-                )
-                ledger.anomaly_flags.append(
-                    {
-                        "type": "DELIVERY_CONTRACT_UPGRADE_BLOCKED",
-                        "turn_id": turn_id,
-                        "reason": "no_write_tools_for_intent",
-                        "user_request": latest_user_request,
-                    }
-                )
-            else:
-                logger.warning(
-                    "delivery-contract-upgrade: intent_classifier detected mutation but delivery_contract was not "
-                    "MATERIALIZE_CHANGES. Upgrading for turn_id=%s",
-                    turn_id,
-                )
-                ledger.delivery_contract = DeliveryContract(
-                    mode=DeliveryMode.MATERIALIZE_CHANGES,
-                    requires_mutation=True,
-                    requires_verification=ledger.delivery_contract.requires_verification,
-                    allow_inline_code=False,
-                    allow_patch_proposal=False,
-                )
-                requires_mutation_by_contract = True
-                ledger.anomaly_flags.append(
-                    {
-                        "type": "DELIVERY_CONTRACT_AUTO_UPGRADED",
-                        "turn_id": turn_id,
-                        "reason": "intent_classifier_mismatch",
-                        "user_request": latest_user_request,
-                    }
-                )
-
-        if (
-            decision_kind != TurnDecisionKind.TOOL_BATCH
-            and (requires_mutation_by_contract or requires_mutation_by_intent)
-            and has_available_write_tool(tool_definitions)
-        ):
-            # MATERIALIZE_CHANGES 模式下必须阻止 non-tool 决策（Invariant A）
-            force_block = ledger.delivery_contract.mode == DeliveryMode.MATERIALIZE_CHANGES
-            if guard_mode == "strict" or force_block:
-                if force_block and guard_mode == "warn":
-                    logger.warning(
-                        "mutation-contract guard: MATERIALIZE_CHANGES mode forces block despite warn mode. "
-                        "turn_id=%s decision_kind=%s",
-                        turn_id,
-                        decision_kind,
-                    )
-                shadow_engine = self._build_stream_shadow_engine(
-                    workspace=self._resolve_shadow_workspace(context),
-                    turn_id=turn_id,
-                )
-                return await self._retry_orchestrator.retry_tool_batch_after_contract_violation(
-                    turn_id=turn_id,
-                    context=context,
-                    tool_definitions=tool_definitions,
-                    state_machine=state_machine,
-                    ledger=ledger,
-                    stream=False,
-                    shadow_engine=shadow_engine,
-                )
-            elif guard_mode == "warn":
-                logger.warning(
-                    "mutation-contract guard (soft): non-tool decision (%s) for mutation request, "
-                    "but mutation_guard_mode=warn allows passthrough. turn_id=%s",
-                    decision_kind,
-                    turn_id,
-                )
-                ledger.record_mutation_guard_warning(
-                    reason=f"non_tool_decision_for_mutation_request:{decision_kind.value if hasattr(decision_kind, 'value') else decision_kind}",
-                    user_request=latest_user_request,
-                )
+        # Phase-4 mutation-contract guard reconciliation. Facade-bound helpers are
+        # passed as callables so test-time monkeypatch on the instance penetrates.
+        # A non-None result is the blocking retry result to return directly.
+        guard_result = await apply_mutation_contract_guard(
+            turn_id=turn_id,
+            context=context,
+            tool_definitions=tool_definitions,
+            decision_kind=decision_kind,
+            state_machine=state_machine,
+            ledger=ledger,
+            guard_mode=guard_mode,
+            requires_mutation_intent_hybrid=self._requires_mutation_intent_hybrid,
+            build_stream_shadow_engine=self._build_stream_shadow_engine,
+            resolve_shadow_workspace=self._resolve_shadow_workspace,
+            retry_tool_batch_after_contract_violation=(
+                self._retry_orchestrator.retry_tool_batch_after_contract_violation
+            ),
+        )
+        if guard_result is not None:
+            return guard_result
 
         if decision_kind == TurnDecisionKind.FINAL_ANSWER:
             return await self._handle_final_answer(decision, state_machine, ledger)
@@ -1436,184 +1146,13 @@ class TurnTransactionController:
         tool_definitions: list[dict],
         ledger: TurnLedger | None = None,
     ) -> list[dict]:
-        """Build decision-stage messages with single-batch execution constraints."""
-        messages: list[dict] = [
-            dict(message) for message in context if message.get("metadata", {}).get("plane") != "control"
-        ]
-        if not tool_definitions:
-            return messages
+        """Build decision-stage messages with single-batch execution constraints.
 
-        # BUG-01 fix: detect benchmark single-batch mode from user message.
-        # When [Benchmark Tool Contract] is present the execution is always
-        # single-turn; the multi-turn "first turn read_file" wording must NOT
-        # be used because it gives the model explicit permission to defer
-        # writes to a non-existent next turn.
-        _latest_user_for_guard = ""
-        for _m in reversed(context):
-            if isinstance(_m, dict) and str(_m.get("role", "")).strip().lower() == "user":
-                _latest_user_for_guard = str(_m.get("content", ""))
-                break
-        _is_benchmark_single_batch = "[Benchmark Tool Contract]" in _latest_user_for_guard
-        _is_super_readonly_stage = "[SUPER_MODE_READONLY_STAGE]" in _latest_user_for_guard
-        _latest_user_for_guard_lower = _latest_user_for_guard.lower()
-        _is_toolless_proposal_stage = (
-            "[mode:propose]" in _latest_user_for_guard_lower and "do not call tools" in _latest_user_for_guard_lower
-        )
-        _ledger_delivery_mode = getattr(getattr(ledger, "delivery_contract", None), "mode", None)
-        _is_materialize_single_batch = _ledger_delivery_mode in {
-            DeliveryMode.MATERIALIZE_CHANGES,
-            DeliveryMode.PROPOSE_PATCH,
-        }
-
-        if _is_toolless_proposal_stage:
-            proposal_guard = (
-                "SYSTEM CONSTRAINT (Proposal): Tool calls are disabled for this proposal turn. "
-                "Return only the requested parsable patch or fenced file sections. "
-                "Do not include progress notes, execution narration, or write-tool instructions."
-            )
-            messages.append({"role": "system", "content": proposal_guard, "metadata": {"plane": "control"}})
-            return messages
-
-        if _is_super_readonly_stage:
-            single_batch_guard = (
-                "SYSTEM CONSTRAINT (Execution): This is a SUPER readonly planning stage. "
-                "Your role is read-only for this stage. Use only read/exploration tools exposed to your current role. "
-                "Do NOT attempt to satisfy a write contract in this stage. "
-                "Produce planning or analysis output for the next stage, then stop.\\n"
-                "系统约束 (只读规划): 当前为 SUPER 的只读规划阶段。"
-                "只允许使用当前角色暴露的读取/探索工具，禁止尝试写入，禁止把本阶段当成代码落地阶段。"
-            )
-        elif _is_benchmark_single_batch or _is_materialize_single_batch:
-            single_batch_guard = (
-                "SYSTEM CONSTRAINT (Execution): This is a SINGLE-BATCH execution. "
-                "ALL required tool calls MUST be emitted in this single turn. "
-                "Do NOT defer any tool call (especially write/edit tools) to a subsequent turn — "
-                "there is no subsequent turn in this execution path.\\n"
-                "Complete the entire workflow (search → read → write if required) in one batch. "
-                "Proceed immediately with tool calls; do not ask for confirmation.\\n"
-                "系统约束 (单批次): 本次执行为单轮单批次。所有工具调用必须在本轮一次性完成，"
-                "严禁将写入工具推迟到下一轮——当前执行路径不存在下一轮。"
-            )
-        else:
-            single_batch_guard = (
-                "SYSTEM CONSTRAINT (Execution): This turn supports multi-turn workflow. "
-                "For code modification tasks, follow the 'inspect-then-modify' pattern across turns:\\n"
-                "1. First turn: You may call read_file to inspect existing code. "
-                "2. Subsequent turns: You MUST call write/edit tools (edit_file, write_file, etc.) to materialize changes.\\n"
-                "3. NEVER output large code blocks in text — always use tools to write files.\\n"
-                "4. DO NOT ask the user for confirmation, approval, or plan review. "
-                "The user has already authorized execution. Proceed immediately with tool calls.\\n"
-                "系统约束 (执行层): 当前回合支持多回合工作流. 代码修改任务遵循'先勘察后修改': "
-                "第一轮允许调用 read_file 了解现状, 后续回合必须调用写工具落盘修改. "
-                "严禁在对话中直接输出大段代码替代工具调用. "
-                "严禁请求用户确认或等待批准——用户已授权执行，请立即调用工具实施修改。"
-            )
-        messages.append({"role": "system", "content": single_batch_guard, "metadata": {"plane": "control"}})
-
-        # FIX-20250421: 在 MATERIALIZE_CHANGES 模式下也注入 Task Contract 的正例模板和恢复协议。
-        # 根因：CLI 模式下 MATERIALIZE_CHANGES 跳过 Task Contract，导致模型缺乏正例指导。
-        # 修复：只注入 POSITIVE 模板（序列模板 + 恢复协议），不注入 NEGATIVE 的 HARD GATE 规则，
-        # 避免与多回合先读后写规则冲突。
-        # FIX-20250422-SUPER: SUPER_MODE 下保留 HARD GATE，Director 必须立即执行写操作。
-        is_materialize = ledger is not None and getattr(ledger.delivery_contract, "mode", None) in {
-            DeliveryMode.MATERIALIZE_CHANGES,
-            DeliveryMode.PROPOSE_PATCH,
-        }
-        _is_super_mode = any(
-            marker in str(m.get("content", ""))
-            for m in context
-            for marker in (
-                "[SUPER_MODE_HANDOFF]",
-                "[/SUPER_MODE_HANDOFF]",
-                "[SUPER_MODE_DIRECTOR_CONTINUE]",
-                "[/SUPER_MODE_DIRECTOR_CONTINUE]",
-            )
-        )
-        task_contract_hint, _task_contract_metadata = build_single_batch_task_contract_hint(context, tool_definitions)
-        if task_contract_hint and not _is_super_readonly_stage:
-            if is_materialize and not _is_super_mode:
-                # MATERIALIZE 模式（非 SUPER）: 只保留正例模板和恢复协议，过滤掉 NEGATIVE/HARD GATE 规则
-                positive_lines = []
-                for line in task_contract_hint.split("\n"):
-                    # 跳过 NEGATIVE 规则行（包含 "INVALID", "HARD GATE", "rejected" 等）
-                    lowered_line = line.lower()
-                    if any(
-                        marker in lowered_line
-                        for marker in (
-                            "invalid",
-                            "hard gate",
-                            "rejected",
-                            "do not stop",
-                            "read-only",
-                            "single-batch",
-                            "same batch",
-                            "this request requires mutation",
-                            "valid pattern",
-                        )
-                    ):
-                        continue
-                    positive_lines.append(line)
-                if positive_lines:
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": "\n".join(positive_lines),
-                            "metadata": {"plane": "control", "kind": "task_contract_positive"},
-                        }
-                    )
-            else:
-                # SUPER_MODE 或非 MATERIALIZE: 保留完整 Task Contract（含 HARD GATE）
-                messages.append({"role": "system", "content": task_contract_hint})
-
-        # 【修复根因 C】：implementing 阶段追加 HARD GATE 强制约束。
-        # FIX-20250421: 允许 read_file/repo_read_head（针对目标文件的定向读取），
-        # 只禁止 broad exploration（glob/repo_tree/repo_rg），避免模型因缺乏上下文而盲写。
-        _is_implementing_turn = any(
-            "当前阶段: implementing" in str(m.get("content", ""))
-            for m in context
-            if str(m.get("role", "")).strip().lower() == "user"
-        )
-        if _is_implementing_turn:
-            enforcing_constraint = (
-                "HARD GATE (Implementing Phase): You are now in the MODIFY phase. "
-                "You MUST call at least one write tool (edit_file, write_file, create_file, etc.) in this turn. "
-                "Text-only responses, plan outlines, or 'I will now...' are INVALID and will be rejected. "
-                "DO NOT ask for confirmation. DO NOT output code blocks in text. Use tools immediately.\n"
-                "CRITICAL: Broad exploration tools (glob, repo_rg, repo_tree) are FORBIDDEN in this phase. "
-                "You have already gathered enough context. Proceed directly to write.\n"
-                "ALLOWED: You may call read_file or repo_read_head on SPECIFIC target files "
-                "if you need to verify exact content before editing. But prioritize write tools.\n"
-                "强制约束（修改阶段）：本回合必须调用至少一个写工具。"
-                "严禁调用 broad 探索工具（glob/repo_rg/repo_tree）——直接写入。"
-                "允许：如需确认目标文件内容，可调用 read_file/repo_read_head 读取特定文件，但优先写工具。"
-            )
-            messages.append(
-                {
-                    "role": "system",
-                    "content": enforcing_constraint,
-                    "metadata": {"plane": "control", "kind": "execution_constraint"},
-                }
-            )
-
-        _is_bootstrap_write_retry = any(
-            "WRITE RETRY MODE" in str(m.get("content", ""))
-            for m in context
-            if str(m.get("role", "")).strip().lower() == "system"
-        )
-        if (
-            _is_bootstrap_write_retry
-            and _latest_user_for_guard.strip()
-            and (not messages or str(messages[-1].get("role", "")).strip().lower() != "user")
-        ):
-            messages.append(
-                {
-                    "role": "user",
-                    "content": _latest_user_for_guard,
-                    "metadata": {"plane": "control", "kind": "retry_write_user_anchor"},
-                }
-            )
-
-        return messages
+        Delegates to ``decision_message_builder.build_decision_messages``; the
+        method is preserved on the facade because it is injected as a callback
+        into ``StreamOrchestrator`` and is monkeypatched by tests.
+        """
+        return _build_decision_messages_impl(context, tool_definitions, ledger)
 
     # ---------------------------------------------------------------------------
     # 结果构建
@@ -1836,124 +1375,42 @@ class TurnTransactionController:
 
         visible_content = decision.get("visible_message", "")
 
-        # MATERIALIZE_CHANGES 模式下，FINAL_ANSWER 意味着没有 write receipt —— 违反 Invariant A
-        if ledger.delivery_contract.must_materialize and not ledger.mutation_obligation.mutation_satisfied:
-            # 例外：明确的拒绝响应
-            lowered_visible = visible_content.lower()
-            is_refusal = any(marker in lowered_visible for marker in tx_constants.REFUSAL_MARKERS)
-
-            if not is_refusal:
-                # Inline Patch Escape 检测（附加诊断）
-                escape_result = detect_inline_patch_escape(visible_content)
-                if escape_result["is_escape"]:
-                    ledger.mutation_obligation.record_inline_patch_rejected()
-                    ledger.anomaly_flags.append(
-                        {
-                            "type": "INLINE_PATCH_ESCAPE",
-                            "turn_id": turn_id,
-                            "ratio": escape_result["ratio"],
-                            "code_block_chars": escape_result["code_block_chars"],
-                            "total_chars": escape_result["total_chars"],
-                            "code_blocks_count": escape_result["code_blocks_count"],
-                        }
-                    )
-                    blocked_reason = BlockedReason.SAFETY_CONSTRAINT
-                    blocked_detail = (
-                        f"INLINE_PATCH_ESCAPE detected: token density ratio={escape_result['ratio']:.2f}. "
-                        "MATERIALIZE_CHANGES mode requires write tools, not inline code blocks."
-                    )
-                    kind = "inline_patch_escape_blocked"
-                else:
-                    blocked_reason = BlockedReason.NO_WRITE_TOOL_AVAILABLE
-                    blocked_detail = (
-                        "MATERIALIZE_CHANGES mode requires at least one successful write tool invocation, "
-                        "but FINAL_ANSWER was received without any write receipt."
-                    )
-                    kind = "mutation_bypass_blocked"
-
-                logger.warning(
-                    "materialize-violation-blocked: turn_id=%s kind=%s reason=%s detail=%s",
-                    turn_id,
-                    kind,
-                    blocked_reason.value,
-                    blocked_detail,
-                )
-                ledger.mutation_obligation.mark_blocked(blocked_reason, detail=blocked_detail)
-                state_machine.transition_to(TurnState.COMPLETED)
-                ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
-                ledger.finalize()
-                self._emit_phase_event(
-                    CompletionEvent(
-                        turn_id=turn_id,
-                        status="failed",
-                        duration_ms=ledger.get_duration_ms(),
-                        llm_calls=len(ledger.llm_calls),
-                        tool_calls=0,
-                    )
-                )
-                return self._build_turn_result(
+        # MATERIALIZE_CHANGES 写侧门禁（Invariant A）与 recon_required 读侧门禁
+        # (ADR-0091 R1) 共享同一 block tail。门禁判定 + 账本副作用下沉到
+        # ``final_answer_gates``；两个门禁均为 block-only（不注入第二个
+        # TurnDecision、不注入 ToolBatch，ADR-0071 兼容）。
+        block = evaluate_materialize_violation_gate(
+            turn_id=turn_id,
+            visible_content=visible_content,
+            ledger=ledger,
+        ) or evaluate_recon_required_gate(
+            turn_id=turn_id,
+            visible_content=visible_content,
+            ledger=ledger,
+            recon_required=self.config.recon_required,
+        )
+        if block is not None:
+            state_machine.transition_to(TurnState.COMPLETED)
+            ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
+            ledger.finalize()
+            self._emit_phase_event(
+                CompletionEvent(
                     turn_id=turn_id,
-                    kind=kind,
-                    visible_content=visible_content,
-                    decision=decision,
-                    batch_receipt=None,
-                    finalization={
-                        "error": kind.upper(),
-                        "blocked_reason": blocked_reason.value,
-                        "blocked_detail": blocked_detail,
-                        "escape_metrics": escape_result if escape_result["is_escape"] else None,
-                    },
-                    ledger=ledger,
+                    status="failed",
+                    duration_ms=ledger.get_duration_ms(),
+                    llm_calls=len(ledger.llm_calls),
+                    tool_calls=0,
                 )
-
-        # recon_required 内核中，零侦察的 FINAL_ANSWER —— 违反读侧落地不变量
-        # (ADR-0091 R1，与上方 must_materialize 写侧门禁对称)。block-only：
-        # 不注入第二个 TurnDecision、不注入 ToolBatch（ADR-0071 兼容）。
-        if self.config.recon_required and not has_successful_recon_execution(ledger.tool_executions):
-            # 例外：明确的拒绝响应（ADR-0091 R2，与写侧豁免一致）
-            lowered_visible = visible_content.lower()
-            is_refusal = any(marker in lowered_visible for marker in tx_constants.REFUSAL_MARKERS)
-
-            if not is_refusal:
-                blocked_reason = BlockedReason.NO_RECON_PERFORMED
-                blocked_detail = (
-                    "recon_required mode demands at least one successful reconnaissance "
-                    "tool execution (read/search) before FINAL_ANSWER, but none was recorded."
-                )
-                kind = "recon_bypass_blocked"
-                logger.warning(
-                    "recon-violation-blocked: turn_id=%s kind=%s reason=%s detail=%s",
-                    turn_id,
-                    kind,
-                    blocked_reason.value,
-                    blocked_detail,
-                )
-                ledger.mutation_obligation.mark_blocked(blocked_reason, detail=blocked_detail)
-                state_machine.transition_to(TurnState.COMPLETED)
-                ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))
-                ledger.finalize()
-                self._emit_phase_event(
-                    CompletionEvent(
-                        turn_id=turn_id,
-                        status="failed",
-                        duration_ms=ledger.get_duration_ms(),
-                        llm_calls=len(ledger.llm_calls),
-                        tool_calls=0,
-                    )
-                )
-                return self._build_turn_result(
-                    turn_id=turn_id,
-                    kind=kind,
-                    visible_content=visible_content,
-                    decision=decision,
-                    batch_receipt=None,
-                    finalization={
-                        "error": kind.upper(),
-                        "blocked_reason": blocked_reason.value,
-                        "blocked_detail": blocked_detail,
-                    },
-                    ledger=ledger,
-                )
+            )
+            return self._build_turn_result(
+                turn_id=turn_id,
+                kind=block.kind,
+                visible_content=visible_content,
+                decision=decision,
+                batch_receipt=None,
+                finalization=block.finalization,
+                ledger=ledger,
+            )
 
         state_machine.transition_to(TurnState.COMPLETED)
         ledger.state_history.append(("COMPLETED", int(time.time() * 1000)))

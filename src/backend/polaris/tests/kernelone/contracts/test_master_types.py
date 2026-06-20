@@ -6,6 +6,8 @@ Health types, Lock types, and Scheduler types.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 from polaris.kernelone.contracts.technical.master_types import (
     Effect,
@@ -54,7 +56,7 @@ class TestIdentityHelpers:
 
 class TestEnvelope:
     def test_default_construction(self) -> None:
-        env = Envelope()
+        env: Envelope[object] = Envelope()
         assert env.event_id
         assert env.version == "2.0"
         assert env.correlation_id == ""
@@ -94,7 +96,7 @@ class TestEnvelope:
         assert restored.payload == original.payload
 
     def test_from_dict_with_z_timestamp(self) -> None:
-        d = {
+        d: dict[str, Any] = {
             "event_id": "abc",
             "timestamp": "2024-01-15T10:30:00Z",
             "version": "1.0",
@@ -109,7 +111,7 @@ class TestEnvelope:
         assert env.timestamp.day == 15
 
     def test_wrap_response(self) -> None:
-        req = Envelope(event_id="req-1", source="client")
+        req: Envelope[object] = Envelope(event_id="req-1", source="client")
         resp = req.wrap_response({"result": "ok"})
         assert resp.correlation_id == "req-1"
         assert resp.payload == {"result": "ok"}
@@ -117,7 +119,7 @@ class TestEnvelope:
         assert resp.source == "client"
 
     def test_frozen_immutable(self) -> None:
-        env = Envelope()
+        env: Envelope[object] = Envelope()
         with pytest.raises(AttributeError):
             env.version = "3.0"  # type: ignore[misc]
 
@@ -155,11 +157,11 @@ class TestEffect:
 
 class TestEffectTracker:
     def test_empty_tracker(self) -> None:
-        tracker = EffectTracker("op-1")
+        tracker: EffectTracker[None] = EffectTracker("op-1")
         assert tracker.effects == []
 
     def test_declare_effect(self) -> None:
-        tracker = EffectTracker("op-1")
+        tracker: EffectTracker[None] = EffectTracker("op-1")
         eff = tracker.declare(EffectType.FS_READ, "/path/to/file")
         assert len(tracker.effects) == 1
         assert eff.effect_type == EffectType.FS_READ
@@ -167,26 +169,26 @@ class TestEffectTracker:
         assert eff.principal == "kernel"
 
     def test_declare_fs_read(self) -> None:
-        tracker = EffectTracker("op-1")
+        tracker: EffectTracker[None] = EffectTracker("op-1")
         eff = tracker.declare_fs_read("/tmp/test.txt")
         assert eff.effect_type == EffectType.FS_READ
         assert eff.resource == "/tmp/test.txt"
 
     def test_declare_fs_write(self) -> None:
-        tracker = EffectTracker("op-1")
+        tracker: EffectTracker[None] = EffectTracker("op-1")
         eff = tracker.declare_fs_write("/tmp/out.txt", payload_bytes=256)
         assert eff.effect_type == EffectType.FS_WRITE
         assert eff.payload_bytes == 256
 
     def test_declare_llm_call(self) -> None:
-        tracker = EffectTracker("op-1")
+        tracker: EffectTracker[None] = EffectTracker("op-1")
         eff = tracker.declare_llm_call("claude-3", prompt_tokens=100)
         assert eff.effect_type == EffectType.LLM_CALL
         assert eff.resource == "claude-3"
         assert eff.metadata.get("prompt_tokens") == 100
 
     def test_finalize(self) -> None:
-        tracker = EffectTracker("op-1", principal="agent")
+        tracker: EffectTracker[None] = EffectTracker("op-1", principal="agent")
         tracker.declare_fs_read("/a")
         tracker.declare_fs_read("/b")
         op_id, effects = tracker.finalize()
@@ -194,14 +196,14 @@ class TestEffectTracker:
         assert len(effects) == 2
 
     def test_clear(self) -> None:
-        tracker = EffectTracker("op-1")
+        tracker: EffectTracker[None] = EffectTracker("op-1")
         tracker.declare_fs_read("/a")
         assert len(tracker.effects) == 1
         tracker.clear()
         assert len(tracker.effects) == 0
 
     def test_custom_principal(self) -> None:
-        tracker = EffectTracker("op-1", principal="custom")
+        tracker: EffectTracker[None] = EffectTracker("op-1", principal="custom")
         eff = tracker.declare(EffectType.DB_QUERY, "SELECT 1")
         assert eff.principal == "custom"
 
@@ -283,12 +285,16 @@ class TestHealthTypes:
         assert len(d["subsystems"]) == 1
 
     def test_subsystem_status_values(self) -> None:
-        assert SubsystemStatus.HEALTHY == "healthy"
-        assert SubsystemStatus.UNHEALTHY == "unhealthy"
-        assert SubsystemStatus.DEGRADED == "degraded"
-        assert SubsystemStatus.INITIALIZING == "initializing"
-        assert SubsystemStatus.STOPPED == "stopped"
-        assert SubsystemStatus.UNKNOWN == "unknown"
+        # SubsystemStatus subclasses str; these assertions verify the inherited
+        # str equality against the canonical wire values. cast(str, ...) keeps the
+        # runtime object (the enum member) unchanged while letting mypy see the
+        # comparison as str-vs-str (otherwise flagged as non-overlapping).
+        assert cast(str, SubsystemStatus.HEALTHY) == "healthy"
+        assert cast(str, SubsystemStatus.UNHEALTHY) == "unhealthy"
+        assert cast(str, SubsystemStatus.DEGRADED) == "degraded"
+        assert cast(str, SubsystemStatus.INITIALIZING) == "initializing"
+        assert cast(str, SubsystemStatus.STOPPED) == "stopped"
+        assert cast(str, SubsystemStatus.UNKNOWN) == "unknown"
 
 
 class TestLockTypes:
@@ -312,10 +318,12 @@ class TestLockTypes:
 
 class TestSchedulerTypes:
     def test_schedule_kind_values(self) -> None:
-        assert ScheduleKind.ONCE == "once"
-        assert ScheduleKind.PERIODIC == "periodic"
-        assert ScheduleKind.CRON == "cron"
-        assert ScheduleKind.DELAYED == "delayed"
+        # ScheduleKind subclasses str; cast(str, ...) preserves the enum member at
+        # runtime while letting mypy treat the comparison as str-vs-str.
+        assert cast(str, ScheduleKind.ONCE) == "once"
+        assert cast(str, ScheduleKind.PERIODIC) == "periodic"
+        assert cast(str, ScheduleKind.CRON) == "cron"
+        assert cast(str, ScheduleKind.DELAYED) == "delayed"
 
     def test_schedule_spec_defaults(self) -> None:
         spec = ScheduleSpec()

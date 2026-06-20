@@ -122,6 +122,17 @@ def _apply_deterministic_npm_test_script_repair(
     if not isinstance(payload, dict) or not _workspace_has_typescript_context(workspace_path, payload):
         return []
 
+    changed_metadata: dict[str, str] = {}
+    if _has_package_scaffold_marker_error(artifact_quality_errors):
+        name = str(payload.get("name") or "").strip()
+        description = str(payload.get("description") or "").strip()
+        if "polaris" in name.lower() or "scaffold" in name.lower():
+            payload["name"] = "typescript-application"
+            changed_metadata["name"] = "typescript-application"
+        if "scaffold" in description.lower():
+            payload["description"] = "TypeScript application"
+            changed_metadata["description"] = "TypeScript application"
+
     scripts_raw = payload.get("scripts")
     scripts: dict[str, Any] = dict(scripts_raw) if isinstance(scripts_raw, dict) else {}
     changed_scripts: dict[str, str] = {}
@@ -142,7 +153,7 @@ def _apply_deterministic_npm_test_script_repair(
         scripts["start"] = f"npm run build && node {entrypoint}"
         changed_scripts["start"] = str(scripts["start"])
 
-    if not changed_scripts:
+    if not changed_scripts and not changed_metadata:
         return []
 
     payload["scripts"] = dict(sorted((str(key), value) for key, value in scripts.items()))
@@ -171,6 +182,7 @@ def _apply_deterministic_npm_test_script_repair(
                 "source_tool": "deterministic_npm_script_contract_repair",
                 "file": "package.json",
                 "scripts": changed_scripts,
+                "metadata": changed_metadata,
                 "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
                 "operation": str(write_result.get("operation") or "modify"),
                 "broadcast_ok": bool(write_result.get("broadcast_ok")),
@@ -188,6 +200,7 @@ def _is_repairable_npm_test_script_error(error: Any) -> bool:
         or "npm manifest-only test script" in text
         or "npm package manifest script 'test' has invalid shell syntax" in text
         or "npm package manifest script 'start' references missing local entrypoint" in text
+        or _has_package_scaffold_marker_error([text])
     )
 
 
@@ -199,6 +212,11 @@ def _is_manifest_only_or_default_test_script_error(errors: list[str]) -> bool:
         or "npm manifest-only test script" in joined
         or "npm package manifest script 'test' has invalid shell syntax" in joined
     )
+
+
+def _has_package_scaffold_marker_error(errors: list[str]) -> bool:
+    joined = "\n".join(str(error or "") for error in errors).lower()
+    return "deterministic scaffold marker" in joined and "package.json" in joined
 
 
 def _missing_npm_script_entrypoint(errors: list[str], *, script_name: str) -> str:

@@ -10,7 +10,7 @@ import logging
 import os
 import time
 import warnings
-from pathlib import Path  # noqa: F401  # patched via director.Path / dereferenced by support helpers
+from pathlib import Path  # patched via director.Path / dereferenced by support helpers
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 # Phase 6: 统一编排集成
 from polaris.cells.chief_engineer.blueprint.public import (
-    BlueprintPersistence,  # noqa: F401  # patched/dereferenced via director.<name>
+    BlueprintPersistence,  # patched/dereferenced via director.<name>
 )
 from polaris.cells.orchestration.workflow_runtime.public.service import (
     OrchestrationError,
@@ -35,7 +35,7 @@ from polaris.cells.runtime.artifact_store.public.service import resolve_artifact
 # ``director_models``; the model bodies that referenced them now live there.
 # They are re-imported here purely to preserve the module surface for any
 # caller or test that resolved them via this module.
-from polaris.cells.runtime.projection.public.role_contracts import (  # noqa: F401
+from polaris.cells.runtime.projection.public.role_contracts import (
     RoleTaskContractV1,
 )
 
@@ -48,21 +48,21 @@ from polaris.cells.runtime.projection.public.role_contracts import (  # noqa: F4
 from polaris.cells.runtime.projection.public.service import (
     RuntimeProjectionService,
     build_cache_root,
-    build_llm_status,  # noqa: F401  # patched/dereferenced via director.<name>
-    build_workflow_status_payload,  # noqa: F401  # dereferenced via director.<name> from support
-    build_workflow_task_rows,  # noqa: F401  # patched/dereferenced via director.<name>
-    get_workflow_runtime_status,  # noqa: F401  # dereferenced via director.<name> from support
+    build_llm_status,  # patched/dereferenced via director.<name>
+    build_workflow_status_payload,  # dereferenced via director.<name> from support
+    build_workflow_task_rows,  # patched/dereferenced via director.<name>
+    get_workflow_runtime_status,  # dereferenced via director.<name> from support
     merge_director_status,
-    select_task_rows_from_projection,  # noqa: F401  # patched/dereferenced via director.<name>
+    select_task_rows_from_projection,  # patched/dereferenced via director.<name>
 )
 from polaris.cells.runtime.task_market.public.contracts import (
-    QueryTaskMarketStatusV1,  # noqa: F401  # referenced via director.<name>
+    QueryTaskMarketStatusV1,  # referenced via director.<name>
 )
 from polaris.cells.runtime.task_market.public.service import (
-    get_task_market_service,  # noqa: F401  # patched/dereferenced via director.<name>
+    get_task_market_service,  # patched/dereferenced via director.<name>
 )
 from polaris.cells.runtime.task_runtime.public.service import (
-    TaskRuntimeService,  # noqa: F401  # referenced via director.<name>
+    TaskRuntimeService,  # referenced via director.<name>
 )
 from polaris.delivery.http.dependencies import (
     get_director_service as get_director_service_dep,
@@ -70,7 +70,7 @@ from polaris.delivery.http.dependencies import (
 )
 from polaris.delivery.http.routers._shared import (
     StructuredHTTPException,
-    ensure_required_roles_ready,  # noqa: F401  # patched/dereferenced via director.<name>
+    ensure_required_roles_ready,  # patched/dereferenced via director.<name>
 )
 from polaris.delivery.http.schemas.common import RoleCapabilitiesResponse
 
@@ -79,7 +79,7 @@ from polaris.delivery.http.schemas.common import RoleCapabilitiesResponse
 # and so route handlers can keep calling them by bare name. These helpers
 # dereference their patchable collaborators through the ``director`` module object
 # at call time.
-from polaris.delivery.http.v2.director_diagnostics import (  # noqa: F401
+from polaris.delivery.http.v2.director_diagnostics import (
     _blueprint_artifact_state,
     _build_director_diagnostics,
     _build_director_diagnostics_for_request,
@@ -98,7 +98,7 @@ from polaris.delivery.http.v2.director_diagnostics import (  # noqa: F401
 # split. They are re-imported here so that ``director.<name>`` keeps resolving
 # for every existing caller/test, and so that the helpers and route handlers
 # that remain in this module can keep calling them by bare name.
-from polaris.delivery.http.v2.director_helpers import (  # noqa: F401
+from polaris.delivery.http.v2.director_helpers import (
     _as_dict,
     _blueprint_contract_list,
     _blueprint_handoff_missing_fields,
@@ -151,7 +151,7 @@ from polaris.delivery.http.v2.director_helpers import (  # noqa: F401
 # section models are consumed by helpers in ``director_diagnostics`` (via the
 # ``director`` namespace) and are part of the frozen public surface, so they are
 # imported here even though this module no longer references them by bare name.
-from polaris.delivery.http.v2.director_models import (  # noqa: F401
+from polaris.delivery.http.v2.director_models import (
     DirectorDiagnosticsLLMSection,
     DirectorDiagnosticsResponse,
     DirectorDiagnosticsStatusSection,
@@ -172,7 +172,7 @@ from polaris.delivery.http.v2.director_models import (  # noqa: F401
 # ``_append_debug`` import) and so route handlers can keep calling them by bare
 # name. These helpers dereference their patchable collaborators through the
 # ``director`` module object at call time.
-from polaris.delivery.http.v2.director_support import (  # noqa: F401
+from polaris.delivery.http.v2.director_support import (
     _append_debug,
     _ensure_snapshot_workspace,
     _get_workflow_snapshot,
@@ -186,7 +186,7 @@ from polaris.delivery.http.v2.director_support import (  # noqa: F401
 # Re-imported here so ``director.<name>`` keeps resolving for callers/tests and so
 # in-module call sites can keep using bare names. These helpers dereference their
 # patchable collaborators through the ``director`` module object at call time.
-from polaris.delivery.http.v2.director_task_rows import (  # noqa: F401
+from polaris.delivery.http.v2.director_task_rows import (
     _contract_backed_task_rows,
     _projection_task_rows,
     _runtime_backed_task_rows,
@@ -196,14 +196,14 @@ from polaris.delivery.http.v2.director_task_rows import (  # noqa: F401
 )
 from polaris.delivery.http.v2.llm_event_filters import filter_llm_events_by_workspace
 from polaris.delivery.http.workspace import (
-    active_workspace_value,  # noqa: F401  # dereferenced via director.<name> from diagnostics
+    active_workspace_value,  # dereferenced via director.<name> from diagnostics
     requested_or_active_workspace,
-    settings_with_workspace_override,  # noqa: F401  # dereferenced via director.<name> from diagnostics
-    workspace_values_match,  # noqa: F401  # dereferenced via director.<name> from support
+    settings_with_workspace_override,  # dereferenced via director.<name> from diagnostics
+    workspace_values_match,  # dereferenced via director.<name> from support
 )
-from polaris.domain.entities import TaskPriority  # noqa: F401  # dereferenced via director.<name>
+from polaris.domain.entities import TaskPriority  # dereferenced via director.<name>
 from polaris.kernelone._runtime_config import resolve_env_str
-from polaris.kernelone.constants import (  # noqa: F401
+from polaris.kernelone.constants import (
     DEFAULT_DIRECTOR_MAX_PARALLELISM,
     DEFAULT_OPERATION_TIMEOUT_SECONDS,
 )
@@ -214,13 +214,167 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Explicit re-export surface. The lossless module split moved ~90 helpers into
+# sibling modules (``director_diagnostics``, ``director_support``,
+# ``director_task_rows``, ``director_helpers``). Those siblings dereference their
+# patchable collaborators (and each other) through this module object at call
+# time (``from . import director as _d; _d.X(...)``) so that the monkeypatch
+# contract is honored — tests patch ``polaris.delivery.http.v2.director.<name>``
+# (e.g. ``BlueprintPersistence``, ``RuntimeProjectionService``,
+# ``ensure_required_roles_ready``, ``select_task_rows_from_projection``,
+# ``build_workflow_task_rows``, ``resolve_artifact_path``, ``get_task_market_service``,
+# ``_contract_backed_task_rows`` ...) and drive full routes. Because those names
+# are imported (not defined) here, ``mypy --strict --no-implicit-reexport`` would
+# otherwise flag every ``_d.<name>`` access with ``[attr-defined]``. Declaring the
+# re-export surface explicitly via ``__all__`` marks them as exported (behavior is
+# unchanged: same objects, same ``_d.<name>`` dereference, same patch points).
+__all__ = [
+    "DEFAULT_DIRECTOR_MAX_PARALLELISM",
+    "DEFAULT_OPERATION_TIMEOUT_SECONDS",
+    "BlueprintPersistence",
+    "DirectorDiagnosticsLLMSection",
+    "DirectorDiagnosticsResponse",
+    "DirectorDiagnosticsStatusSection",
+    "DirectorDiagnosticsTaskSection",
+    "DirectorDiagnosticsWorkerSection",
+    "DirectorIntegrationQaRequest",
+    "DirectorIntegrationQaResponse",
+    "DirectorOrchestrationResponse",
+    "DirectorRunOrchestrationRequest",
+    "DirectorStatusResponse",
+    "OrchestrationError",
+    "Path",
+    "QueryTaskMarketStatusV1",
+    "RoleCapabilitiesResponse",
+    "RoleTaskContractV1",
+    "RuntimeProjectionService",
+    "StructuredHTTPException",
+    "TaskCreateRequest",
+    "TaskPriority",
+    "TaskResponse",
+    "TaskRuntimeService",
+    "_append_debug",
+    "_as_dict",
+    "_blueprint_artifact_state",
+    "_blueprint_contract_list",
+    "_blueprint_handoff_missing_fields",
+    "_blueprint_payload_is_handoff_ready",
+    "_blueprint_payload_is_traceability_only",
+    "_blueprint_payload_matches_task",
+    "_blueprint_reference_values",
+    "_build_director_diagnostics",
+    "_build_director_diagnostics_for_request",
+    "_build_llm_diagnostics",
+    "_cancel_failure_detail",
+    "_cancel_success_payload",
+    "_contract_backed_task_rows",
+    "_director_diagnostic_issues",
+    "_director_execution_blockers",
+    "_director_orchestration_response",
+    "_director_run_task_ids_from_diagnostics",
+    "_director_snapshot_status",
+    "_director_snapshot_task_count",
+    "_director_tasks_queued",
+    "_ensure_director_can_execute",
+    "_ensure_director_lifecycle_can_start",
+    "_ensure_snapshot_workspace",
+    "_first_string_list",
+    "_first_text",
+    "_flatten_director_status",
+    "_get_workflow_snapshot",
+    "_get_workflow_snapshot_sync",
+    "_is_workflow_shell_task",
+    "_load_all_blueprint_payloads",
+    "_load_blueprint_payload_by_id",
+    "_load_blueprint_payload_by_path",
+    "_merge_director_status",
+    "_merge_task_rows_by_identity",
+    "_normalize_task_status_token",
+    "_parse_task_priority",
+    "_path_is_within",
+    "_payload_task_identity_values",
+    "_projected_task_response",
+    "_projected_worker_rows",
+    "_projection_source_for_task_rows",
+    "_projection_task_rows",
+    "_resolve_blueprint_path",
+    "_role_payload",
+    "_row_requires_blueprint_evidence",
+    "_runtime_backed_task_rows",
+    "_runtime_task_rows_for_workspace",
+    "_state_token",
+    "_string_list",
+    "_task_details",
+    "_task_diagnostics_from_rows",
+    "_task_id_from_row",
+    "_task_identity_tokens",
+    "_task_market_execution_rows_for_workspace",
+    "_task_market_row_to_director_task_row",
+    "_task_response_from_row",
+    "_task_row_from_object",
+    "_task_row_matches_id",
+    "_task_rows_from_local_tasks",
+    "_text_or_none",
+    "_utc_now",
+    "_with_task_projection_source",
+    "_worker_diagnostics_from_workers",
+    "_worker_id_from_row",
+    "_worker_payload_from_object",
+    "_worker_row_matches_id",
+    "_worker_rows_from_payload",
+    "_worker_rows_from_projection",
+    "_workspace_from_request",
+    "active_workspace_value",
+    "build_cache_root",
+    "build_llm_status",
+    "build_workflow_status_payload",
+    "build_workflow_task_rows",
+    "cancel_task",
+    "clear_cache",
+    "create_task",
+    "director_cancel_orchestration",
+    "director_get_orchestration",
+    "director_run_integration_qa",
+    "director_run_orchestration",
+    "ensure_required_roles_ready",
+    "filter_llm_events_by_workspace",
+    "get_cache_stats",
+    "get_director_capabilities",
+    "get_director_diagnostics",
+    "get_director_service_dep",
+    "get_global_emitter",
+    "get_global_token_budget",
+    "get_llm_events",
+    "get_orchestration_service",
+    "get_status",
+    "get_task",
+    "get_task_llm_events",
+    "get_task_market_service",
+    "get_token_budget_stats",
+    "get_worker",
+    "get_workflow_runtime_status",
+    "list_tasks",
+    "list_workers",
+    "logger",
+    "merge_director_status",
+    "requested_or_active_workspace",
+    "resolve_artifact_path",
+    "resolve_env_str",
+    "router",
+    "select_task_rows_from_projection",
+    "settings_with_workspace_override",
+    "start_director",
+    "stop_director",
+    "workspace_values_match",
+]
+
 
 # Deprecation removal target: 2026-06-30.
 # Backward-compat re-export for tests.
 # Tests should import merge_director_status directly from
 # polaris.cells.runtime.projection.public.service.
 # This alias will be removed in v2.0.
-def _merge_director_status(*args, **kwargs):
+def _merge_director_status(*args: Any, **kwargs: Any) -> Any:
     warnings.warn(
         "_merge_director_status re-export is deprecated. "
         "Import merge_director_status from "

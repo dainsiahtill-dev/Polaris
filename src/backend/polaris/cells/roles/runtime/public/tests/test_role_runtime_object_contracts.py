@@ -6,6 +6,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
 import pytest
 import yaml
@@ -122,6 +123,126 @@ from polaris.cells.runtime.task_market.public import (
     TaskWorkItemResultV1,
 )
 
+if TYPE_CHECKING:
+    from polaris.domain.cognitive_runtime import (
+        ChangeSetValidationResult,
+        ContextHandoffPack,
+        HandoffRehydration,
+        RuntimeReceipt,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Typed keyword-argument payloads
+#
+# Several parametrized rejection tests build a base kwargs mapping, ``.update()``
+# it with a parametrized subset of overrides, then unpack it (``**payload``) into
+# a frozen contract constructor to assert the constructor's validation. Typing the
+# payload mappings as ``total=False`` TypedDicts (instead of ``dict[str, object]``)
+# lets mypy verify each key against the matching constructor parameter at the
+# unpack boundary while keeping every override field optional.
+# ---------------------------------------------------------------------------
+
+
+class _CapabilityInvocationKwargs(TypedDict, total=False):
+    invocation_id: str
+    capability_id: str
+    role_id: str
+    command_contract: str
+    payload_ref: str
+    fingerprint_ref: str
+
+
+class _TurnContextKwargs(TypedDict, total=False):
+    typed_input_ref: str
+    context_snapshot_ref: str
+    handoff_refs: tuple[str, ...]
+    task_refs: tuple[str, ...]
+
+
+class _CapabilityInvocationResultKwargs(TypedDict, total=False):
+    ok: bool
+    invocation_id: str
+    role_id: str
+    capability_id: str
+    command_contract: str
+    allowed: bool
+    payload_ref: str
+    owner_cell: str
+    result_ref: str | None
+    error_code: str | None
+    error_message: str | None
+
+
+class _StateCommitReceiptKwargs(TypedDict, total=False):
+    request_id: str
+    ok: bool
+    commit_receipt_ref: str | None
+    change_set_validation_ref: str | None
+    runtime_receipt_refs: tuple[str, ...]
+    handoff_pack_refs: tuple[str, ...]
+    turn_outcome_ref: str | None
+
+
+class _LedgerBindingKwargs(TypedDict, total=False):
+    turn_ledger_ref: str
+    commit_receipt_ref: str | None
+    receipt_refs: tuple[str, ...]
+
+
+class _TaskMarketBindingKwargs(TypedDict, total=False):
+    work_item_ref: str | None
+    lease_token_ref: str | None
+
+
+class _ChainStepRefKwargs(TypedDict, total=False):
+    role_id: str
+    stage: str
+    capability_id: str
+    capability_fingerprint_ref: str
+    owner_cell: str
+    command_contract: str
+    result_ref: str
+    task_ref: str | None
+    work_item_ref: str | None
+    evidence_refs: tuple[str, ...]
+    receipt_refs: tuple[str, ...]
+    handoff_refs: tuple[str, ...]
+
+
+class _ChainEnvelopeKwargs(TypedDict, total=False):
+    chain_id: str
+    workspace: str
+    run_id: str
+    task_id: str
+    steps: tuple[RoleRuntimeChainStepRef, ...]
+    turn_ledger_ref: str
+    task_market_refs: tuple[str, ...]
+    audit_evidence_refs: tuple[str, ...]
+    runtime_projection_refs: tuple[str, ...]
+    capability_fingerprint_refs: tuple[str, ...]
+    handoff_refs: tuple[str, ...]
+    runtime_receipt_refs: tuple[str, ...]
+
+
+# Aggregate step-derived ref kwargs unpacked alongside the explicit envelope
+# arguments; the parametrized ``missing_field`` selects which one to blank out.
+_ChainEnvelopeAggregateField = Literal[
+    "task_market_refs",
+    "audit_evidence_refs",
+    "capability_fingerprint_refs",
+    "handoff_refs",
+    "runtime_receipt_refs",
+]
+
+
+class _ChainEnvelopeAggregateRefs(TypedDict, total=False):
+    task_market_refs: tuple[str, ...]
+    audit_evidence_refs: tuple[str, ...]
+    capability_fingerprint_refs: tuple[str, ...]
+    handoff_refs: tuple[str, ...]
+    runtime_receipt_refs: tuple[str, ...]
+
 
 class FakeTaskMarketService:
     def __init__(self) -> None:
@@ -134,7 +255,8 @@ class FakeTaskMarketService:
         self.requeued: list[RequeueTaskCommandV1] = []
         self.dead_lettered: list[MoveTaskToDeadLetterCommandV1] = []
 
-    def publish_work_item(self, command: PublishTaskWorkItemCommandV1) -> TaskWorkItemResultV1:
+    def publish_work_item(self, command: object) -> TaskWorkItemResultV1:
+        assert isinstance(command, PublishTaskWorkItemCommandV1)
         self.published.append(command)
         return TaskWorkItemResultV1(
             ok=True,
@@ -147,7 +269,8 @@ class FakeTaskMarketService:
             payload=command.payload,
         )
 
-    def query_status(self, query: QueryTaskMarketStatusV1) -> TaskMarketStatusResultV1:
+    def query_status(self, query: object) -> TaskMarketStatusResultV1:
+        assert isinstance(query, QueryTaskMarketStatusV1)
         self.queried.append(query)
         return TaskMarketStatusResultV1(
             workspace=query.workspace,
@@ -248,7 +371,8 @@ class FakeRuntimeProjectionService:
     def __init__(self) -> None:
         self.queries: list[RuntimeProjectionQueryV1] = []
 
-    def query_runtime_projection(self, query: RuntimeProjectionQueryV1) -> RuntimeProjectionResultV1:
+    def query_runtime_projection(self, query: object) -> RuntimeProjectionResultV1:
+        assert isinstance(query, RuntimeProjectionQueryV1)
         self.queries.append(query)
         return RuntimeProjectionResultV1(
             payload={
@@ -295,18 +419,27 @@ class FakeCognitiveRuntimeCommitService:
         self.validations.append(command)
         return ValidateChangeSetResultV1(
             ok=self.validation_ok,
-            validation=SimpleNamespace(validation_id="validation-1", ok=self.validation_ok),
+            validation=cast(
+                "ChangeSetValidationResult",
+                SimpleNamespace(validation_id="validation-1", ok=self.validation_ok),
+            ),
             error_code=None if self.validation_ok else "validate_change_set_failed",
             error_message=None if self.validation_ok else "change set is outside role scope",
         )
 
     def record_runtime_receipt(self, command: RecordRuntimeReceiptCommandV1) -> RuntimeReceiptResultV1:
         self.receipts.append(command)
-        return RuntimeReceiptResultV1(ok=True, receipt=SimpleNamespace(receipt_id="receipt-1"))
+        return RuntimeReceiptResultV1(
+            ok=True,
+            receipt=cast("RuntimeReceipt", SimpleNamespace(receipt_id="receipt-1")),
+        )
 
     def export_handoff_pack(self, command: ExportHandoffPackCommandV1) -> HandoffPackResultV1:
         self.handoffs.append(command)
-        return HandoffPackResultV1(ok=True, handoff=SimpleNamespace(handoff_id="handoff-1"))
+        return HandoffPackResultV1(
+            ok=True,
+            handoff=cast("ContextHandoffPack", SimpleNamespace(handoff_id="handoff-1")),
+        )
 
     def rehydrate_handoff_pack(self, command: RehydrateHandoffPackCommandV1) -> HandoffRehydrationResultV1:
         self.rehydrations.append(command)
@@ -317,17 +450,20 @@ class FakeCognitiveRuntimeCommitService:
         episode_ref = "episode-handoff-1" if self.rehydrate_refs_are_raw else "roles.session:episode:handoff-1"
         return HandoffRehydrationResultV1(
             ok=True,
-            rehydration=SimpleNamespace(
-                rehydration_id="rehydration-1",
-                handoff_id=command.handoff_id,
-                target_role=command.target_role,
-                target_session_id=command.target_session_id,
-                context_override={"state_first_context_os": {"mode": "state_first_context_os.handoff_rehydrate"}},
-                metadata_patch={"handoff_rehydrated": True},
-                receipt_refs=(receipt_ref,),
-                artifact_refs=(artifact_ref,),
-                episode_refs=(episode_ref,),
-                source_spans=("ep-1:t1:t4",),
+            rehydration=cast(
+                "HandoffRehydration",
+                SimpleNamespace(
+                    rehydration_id="rehydration-1",
+                    handoff_id=command.handoff_id,
+                    target_role=command.target_role,
+                    target_session_id=command.target_session_id,
+                    context_override={"state_first_context_os": {"mode": "state_first_context_os.handoff_rehydrate"}},
+                    metadata_patch={"handoff_rehydrated": True},
+                    receipt_refs=(receipt_ref,),
+                    artifact_refs=(artifact_ref,),
+                    episode_refs=(episode_ref,),
+                    source_spans=("ep-1:t1:t4",),
+                ),
             ),
         )
 
@@ -336,7 +472,8 @@ class FakeBlueprintService:
     def __init__(self) -> None:
         self.generated: list[GenerateTaskBlueprintCommandV1] = []
 
-    def generate_task_blueprint(self, command: GenerateTaskBlueprintCommandV1) -> TaskBlueprintResultV1:
+    def generate_task_blueprint(self, command: object) -> TaskBlueprintResultV1:
+        assert isinstance(command, GenerateTaskBlueprintCommandV1)
         self.generated.append(command)
         return TaskBlueprintResultV1(
             ok=True,
@@ -355,7 +492,8 @@ class FakeCodeIntelligenceService:
     def __init__(self) -> None:
         self.verified: list[VerifyAstDependencyQueryV1] = []
 
-    def verify_ast_dependency(self, query: VerifyAstDependencyQueryV1) -> AstDependencyVerificationResultV1:
+    def verify_ast_dependency(self, query: object) -> AstDependencyVerificationResultV1:
+        assert isinstance(query, VerifyAstDependencyQueryV1)
         self.verified.append(query)
         return AstDependencyVerificationResultV1(
             ok=True,
@@ -373,7 +511,8 @@ class FakeDirectorExecutionService:
         self.ok = ok
         self.executed: list[ExecuteDirectorTaskCommandV1] = []
 
-    def execute_director_task(self, command: ExecuteDirectorTaskCommandV1) -> DirectorExecutionResultV1:
+    def execute_director_task(self, command: object) -> DirectorExecutionResultV1:
+        assert isinstance(command, ExecuteDirectorTaskCommandV1)
         self.executed.append(command)
         return DirectorExecutionResultV1(
             ok=self.ok,
@@ -392,7 +531,8 @@ class FakeVerificationGuardService:
     def __init__(self) -> None:
         self.verified: list[VerifyCompletionCommandV1] = []
 
-    def verify_completion(self, command: VerifyCompletionCommandV1) -> VerifyCompletionResultV1:
+    def verify_completion(self, command: object) -> VerifyCompletionResultV1:
+        assert isinstance(command, VerifyCompletionCommandV1)
         self.verified.append(command)
         return VerifyCompletionResultV1(
             ok=True,
@@ -409,7 +549,8 @@ class FakeLlmControlPlaneService:
         self.supported = supported
         self.queried: list[CheckLlmModelCapabilityQueryV1] = []
 
-    def check_model_capability(self, query: CheckLlmModelCapabilityQueryV1) -> LlmModelCapabilityResultV1:
+    def check_model_capability(self, query: object) -> LlmModelCapabilityResultV1:
+        assert isinstance(query, CheckLlmModelCapabilityQueryV1)
         self.queried.append(query)
         return LlmModelCapabilityResultV1(
             ok=True,
@@ -430,7 +571,8 @@ class FakeBudgetGuardService:
         self.reason = reason
         self.reserved: list[ReserveBudgetCommandV1] = []
 
-    def reserve_budget(self, command: ReserveBudgetCommandV1) -> BudgetDecisionResultV1:
+    def reserve_budget(self, command: object) -> BudgetDecisionResultV1:
+        assert isinstance(command, ReserveBudgetCommandV1)
         self.reserved.append(command)
         return BudgetDecisionResultV1(
             allowed=self.allowed,
@@ -449,7 +591,8 @@ class FakeWorkspaceGuardService:
         self.checked: list[WorkspaceWriteGuardQueryV1] = []
         self.batch_checked: list[WorkspaceWriteGuardBatchQueryV1] = []
 
-    def check_workspace_write_guard(self, query: WorkspaceWriteGuardQueryV1) -> WorkspaceGuardDecisionV1:
+    def check_workspace_write_guard(self, query: object) -> WorkspaceGuardDecisionV1:
+        assert isinstance(query, WorkspaceWriteGuardQueryV1)
         if not self.single_checks_allowed:
             raise AssertionError("single-path workspace guard calls are not allowed for this test")
         self.checked.append(query)
@@ -460,8 +603,9 @@ class FakeWorkspaceGuardService:
 
     def check_workspace_write_guard_batch(
         self,
-        query: WorkspaceWriteGuardBatchQueryV1,
+        query: object,
     ) -> WorkspaceGuardBatchDecisionV1:
+        assert isinstance(query, WorkspaceWriteGuardBatchQueryV1)
         self.batch_checked.append(query)
         checked_paths = tuple(dict.fromkeys(query.paths))
         denied_path = "" if self.allowed or not checked_paths else checked_paths[0]
@@ -488,7 +632,8 @@ class FakePermissionService:
         self.allowed = allowed
         self.evaluated: list[EvaluatePermissionCommandV1] = []
 
-    def evaluate_permission(self, command: EvaluatePermissionCommandV1) -> PermissionDecisionResultV1:
+    def evaluate_permission(self, command: object) -> PermissionDecisionResultV1:
+        assert isinstance(command, EvaluatePermissionCommandV1)
         self.evaluated.append(command)
         return PermissionDecisionResultV1(
             allowed=self.allowed,
@@ -579,7 +724,8 @@ class FakeQaAuditVerdictService:
         self.visual_audit_commands: list[RunVisualQaAuditCommandV1] = []
         self.traceback_commands: list[ParseTracebackFramesCommandV1] = []
 
-    def run_qa_audit(self, command: RunQaAuditCommandV1) -> QaAuditResultV1:
+    def run_qa_audit(self, command: object) -> QaAuditResultV1:
+        assert isinstance(command, RunQaAuditCommandV1)
         self.audit_commands.append(command)
         return QaAuditResultV1(
             ok=self.ok,
@@ -591,7 +737,8 @@ class FakeQaAuditVerdictService:
             suggestions=("rerun failing test",) if not self.ok else (),
         )
 
-    def run_visual_qa_audit(self, command: RunVisualQaAuditCommandV1) -> VisualQaAuditResultV1:
+    def run_visual_qa_audit(self, command: object) -> VisualQaAuditResultV1:
+        assert isinstance(command, RunVisualQaAuditCommandV1)
         self.visual_audit_commands.append(command)
         return VisualQaAuditResultV1(
             ok=self.ok,
@@ -604,7 +751,8 @@ class FakeQaAuditVerdictService:
             evidence_refs=command.evidence_paths,
         )
 
-    def parse_traceback_frames(self, command: ParseTracebackFramesCommandV1) -> ParseTracebackFramesResultV1:
+    def parse_traceback_frames(self, command: object) -> ParseTracebackFramesResultV1:
+        assert isinstance(command, ParseTracebackFramesCommandV1)
         self.traceback_commands.append(command)
         signal = FailureSignalV1(
             signal_id="signal-1",
@@ -1948,10 +2096,10 @@ def test_role_state_commit_request_rejects_changed_files_outside_allowed_scope(
     ),
 )
 def test_role_capability_invocation_rejects_unowned_payload_or_invalid_fingerprint(
-    payload: dict[str, object],
+    payload: _CapabilityInvocationKwargs,
     expected_error: str,
 ) -> None:
-    invocation_payload: dict[str, object] = {
+    invocation_payload: _CapabilityInvocationKwargs = {
         "invocation_id": "invoke-invalid-ref",
         "capability_id": "dispatch_task_to_market",
         "role_id": "pm",
@@ -1991,10 +2139,10 @@ def test_role_capability_invocation_rejects_unowned_payload_or_invalid_fingerpri
     ),
 )
 def test_role_turn_context_rejects_refs_outside_source_of_truth(
-    payload: dict[str, object],
+    payload: _TurnContextKwargs,
     expected_error: str,
 ) -> None:
-    context_payload: dict[str, object] = {
+    context_payload: _TurnContextKwargs = {
         "typed_input_ref": "roles.runtime:typed-input:pm-task-1",
         "context_snapshot_ref": "context.engine:snapshot-1",
         "handoff_refs": ("factory.cognitive_runtime:handoff:1",),
@@ -2100,10 +2248,10 @@ def test_capability_invocation_failure_helper_does_not_use_allowed_for_capabilit
     ),
 )
 def test_role_capability_invocation_result_rejects_unowned_result_refs(
-    payload: dict[str, object],
+    payload: _CapabilityInvocationResultKwargs,
     expected_error: str,
 ) -> None:
-    result_payload: dict[str, object] = {
+    result_payload: _CapabilityInvocationResultKwargs = {
         "ok": True,
         "invocation_id": "invoke-result-invalid",
         "role_id": "qa",
@@ -2134,10 +2282,10 @@ def test_role_capability_invocation_result_rejects_unowned_result_refs(
     ),
 )
 def test_successful_role_capability_invocation_result_requires_target_result_anchor(
-    payload: dict[str, object],
+    payload: _CapabilityInvocationResultKwargs,
     expected_error: str,
 ) -> None:
-    result_payload: dict[str, object] = {
+    result_payload: _CapabilityInvocationResultKwargs = {
         "ok": True,
         "invocation_id": "invoke-success-without-result-anchor",
         "role_id": "qa",
@@ -2249,7 +2397,7 @@ def test_successful_role_state_commit_receipt_requires_runtime_receipt_ref() -> 
     ),
 )
 def test_role_state_commit_receipt_rejects_refs_outside_source_of_truth(
-    payload: dict[str, object],
+    payload: _StateCommitReceiptKwargs,
     expected_error: str,
 ) -> None:
     with pytest.raises(ValueError, match=expected_error):
@@ -2280,10 +2428,10 @@ def test_role_state_commit_receipt_rejects_refs_outside_source_of_truth(
     ),
 )
 def test_role_state_commit_receipt_rejects_duplicate_cognitive_runtime_refs(
-    payload: dict[str, object],
+    payload: _StateCommitReceiptKwargs,
     expected_error: str,
 ) -> None:
-    receipt_payload: dict[str, object] = {
+    receipt_payload: _StateCommitReceiptKwargs = {
         "request_id": "duplicate-cognitive-runtime-ref",
         "ok": True,
         "commit_receipt_ref": "roles.kernel:commit:turn-1",
@@ -2319,7 +2467,7 @@ def test_role_state_commit_receipt_rejects_duplicate_cognitive_runtime_refs(
     ),
 )
 def test_role_ledger_binding_rejects_refs_outside_source_of_truth(
-    payload: dict[str, object],
+    payload: _LedgerBindingKwargs,
     expected_error: str,
 ) -> None:
     with pytest.raises(ValueError, match=expected_error):
@@ -2333,7 +2481,7 @@ def test_role_ledger_binding_rejects_refs_outside_source_of_truth(
         {"lease_token_ref": "roles.session:lease-1"},
     ),
 )
-def test_role_task_market_binding_rejects_refs_outside_task_market(payload: dict[str, object]) -> None:
+def test_role_task_market_binding_rejects_refs_outside_task_market(payload: _TaskMarketBindingKwargs) -> None:
     with pytest.raises(ValueError, match=r"task-market binding refs must point to runtime\.task_market"):
         RoleTaskMarketBinding(**payload)
 
@@ -3855,10 +4003,10 @@ def test_role_runtime_chain_step_rejects_role_runtime_or_kernelone_role_owners(o
     ),
 )
 def test_role_runtime_chain_step_rejects_refs_outside_source_of_truth(
-    payload: dict[str, object],
+    payload: _ChainStepRefKwargs,
     expected_error: str,
 ) -> None:
-    base_payload: dict[str, object] = {
+    base_payload: _ChainStepRefKwargs = {
         "role_id": "qa",
         "stage": "audit",
         "capability_id": "issue_audit_verdict",
@@ -3885,7 +4033,7 @@ def test_role_runtime_chain_step_rejects_refs_outside_source_of_truth(
     ),
 )
 def test_role_runtime_chain_envelope_rejects_missing_step_aggregate_refs(
-    missing_field: str,
+    missing_field: _ChainEnvelopeAggregateField,
     error_message: str,
 ) -> None:
     step = RoleRuntimeChainStepRef(
@@ -3901,7 +4049,7 @@ def test_role_runtime_chain_envelope_rejects_missing_step_aggregate_refs(
         receipt_refs=("factory.cognitive_runtime:receipt:qa-1",),
         handoff_refs=("factory.cognitive_runtime:handoff:qa-to-audit",),
     )
-    aggregate_refs: dict[str, tuple[str, ...]] = {
+    aggregate_refs: _ChainEnvelopeAggregateRefs = {
         "task_market_refs": ("runtime.task_market:task:task-1",),
         "audit_evidence_refs": ("audit.evidence:qa:task-1",),
         "capability_fingerprint_refs": ("roles.runtime:capability-fingerprint:qa-audit",),
@@ -3971,7 +4119,7 @@ def test_role_runtime_chain_envelope_rejects_missing_step_aggregate_refs(
     ),
 )
 def test_role_runtime_chain_envelope_rejects_aggregate_refs_outside_source_of_truth(
-    envelope_overrides: dict[str, object],
+    envelope_overrides: _ChainEnvelopeKwargs,
     expected_error: str,
 ) -> None:
     step = RoleRuntimeChainStepRef(
@@ -3987,7 +4135,7 @@ def test_role_runtime_chain_envelope_rejects_aggregate_refs_outside_source_of_tr
         receipt_refs=("factory.cognitive_runtime:receipt:qa-1",),
         handoff_refs=("factory.cognitive_runtime:handoff:qa-to-audit",),
     )
-    envelope_payload: dict[str, object] = {
+    envelope_payload: _ChainEnvelopeKwargs = {
         "chain_id": "phase5-chain-bad-owner",
         "workspace": "/repo",
         "run_id": "run-1",

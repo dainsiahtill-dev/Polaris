@@ -8,8 +8,6 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import os
 import time
@@ -18,10 +16,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence, cast
 
-from polaris.kernelone.context.cache_stability import (
-    extract_prefix as extract_prefix_slice,
-    get_prefix_drift_observer,
-)
 from polaris.kernelone.context.context_os import StateFirstContextOS
 from polaris.kernelone.context.context_os.domain_adapters import get_context_domain_adapter
 from polaris.kernelone.context.context_os.models_v2 import ContextOSSnapshotV2 as ContextOSSnapshot
@@ -34,17 +28,36 @@ from polaris.kernelone.context.projection_engine import ProjectionEngine
 from polaris.kernelone.context.receipt_store import ReceiptStore
 from polaris.kernelone.errors import BudgetExceededError
 from polaris.kernelone.events.context_events import ContextEvent, EventType, get_event_writer
-from polaris.kernelone.events.io_events import emit_event
-from polaris.kernelone.fs import format_workspace_tree
+
+# emit_event / resolve_run_dir are referenced by GatewayTelemetry through THIS module's
+# namespace (gateway_telemetry._gateway_module().emit_event / .resolve_run_dir) so the
+# in-package tests' patch("...gateway.emit_event" / ".resolve_run_dir") stays effective.
+from polaris.kernelone.events.io_events import emit_event  # noqa: F401  (re-exported for telemetry + test monkeypatch)
 from polaris.kernelone.llm.reasoning import ReasoningStripper
-from polaris.kernelone.storage.io_paths import resolve_run_dir
+from polaris.kernelone.storage.io_paths import (
+    resolve_run_dir,  # noqa: F401  (re-exported for telemetry + test monkeypatch)
+)
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 from polaris.kernelone.telemetry.metrics import METRIC_CONTEXT_LATENCY_P95, record_metric
 from polaris.kernelone.telemetry.trace import new_trace_id, set_trace_id
 
+from .blueprint_step_card import build_blueprint_step_card
 from .compression_engine import CompressionEngine
+from .context_override_processor import ContextOverrideProcessor
+from .gateway_helpers import (
+    _capability_profile_ref_from_request,
+    _coerce_float,
+    _deep_merge_strategy_payload,
+    # render_blueprint_overview / render_verdict_history are re-exported here so
+    # test_blueprint_overview_render.py can keep importing them from `gateway`.
+    render_blueprint_overview,  # noqa: F401  (re-exported for test import compatibility)
+    render_verdict_history,  # noqa: F401  (re-exported for test import compatibility)
+)
+from .gateway_telemetry import GatewayTelemetry
+from .projection_dict_builder import ProjectionDictBuilder
 from .projection_formatter import ProjectionFormatter
 from .security import SecuritySanitizer
+from .signal_sources import SignalSourceProvider
 from .token_estimator import TokenEstimator
 
 if TYPE_CHECKING:
@@ -52,206 +65,6 @@ if TYPE_CHECKING:
     from polaris.kernelone.context.strategy_contracts import StrategyReceipt
 
 logger = logging.getLogger(__name__)
-
-_CONTROL_PLANE_CONTEXT_KEYS = {
-    "allowed_provider_ids",
-    "allowed_provider_types",
-    "blocked_provider_ids",
-    "blocked_provider_types",
-    "cognitive_runtime_enabled",
-    "cognitive_runtime_mode",
-    "cognitive_runtime_required",
-    "context_os_expected",
-    "context_os_snapshot",
-    "cognitive_strategy_override",
-    # Runtime execution knobs (control plane) — ADR-0071: must NOT enter the data
-    # plane. Live (L2-11 2026-06-15) these leaked into the context_override system
-    # message and, alongside an uncapped value, were the dominant BudgetExceededError.
-    "disable_internal_tool_rounds",
-    "llm_call_timeout_seconds",
-    # Signal-rendered planes (2026-06-15): these are injected for the Director's
-    # BlueprintStepsSignal card (_get_blueprint_step renders them concisely) and must
-    # NOT be ALSO serialized verbatim into the context_override message — that was a
-    # 2143-token duplicate of construction_step (worsened by the P1 anchor contract)
-    # that blew the budget and crashed the Director turn (BudgetExceededError, Director
-    # barely ran). The signal reads them directly from context_override, not the message.
-    "construction_step",
-    "consumed_interfaces",
-    "pre_state_verify",
-    "last_failure",
-    "domain",
-    "factory_run_id",
-    "host_kind",
-    "llm_provider_policy",
-    "metadata",
-    "model_allowlist",
-    "model_blocklist",
-    "provider_allowlist",
-    "provider_blocklist",
-    "provider_policy",
-    "role_runtime_required",
-    "run_id",
-    "runtime_session_id",
-    "session_context_config",
-    "session_id",
-    "state_first_context_os",
-    "strategy_override",
-    "stream_options",
-    "task_id",
-    "workspace",
-    "workspace_root",
-}
-
-# Budget guard (order-4, 2026-06-15): a single oversized context_override value
-# (a serialized blueprint/payload/guidance) was rendered verbatim into one system
-# message — 5588 tokens live (L2-11), the dominant cause of BudgetExceededError
-# crashing the Director turn BEFORE any write. Cap each value so no one value can
-# blow the window; the weak model cannot use multi-thousand-token metadata anyway.
-_DEFAULT_CONTEXT_OVERRIDE_VALUE_CHAR_CAP = 1500
-
-
-def _context_override_value_char_cap() -> int:
-    raw = os.environ.get("KERNELONE_CONTEXT_OVERRIDE_VALUE_CHAR_CAP", "").strip()
-    if raw:
-        try:
-            value = int(raw)
-        except ValueError:
-            return _DEFAULT_CONTEXT_OVERRIDE_VALUE_CHAR_CAP
-        if value > 0:
-            return value
-    return _DEFAULT_CONTEXT_OVERRIDE_VALUE_CHAR_CAP
-
-
-def _copy_strategy_value(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {str(key): _copy_strategy_value(item) for key, item in value.items()}
-    if isinstance(value, list | tuple):
-        return [_copy_strategy_value(item) for item in value]
-    return value
-
-
-def _deep_merge_strategy_payload(target: dict[str, Any], source: Mapping[str, Any]) -> None:
-    for key, value in source.items():
-        key_text = str(key)
-        if not key_text:
-            continue
-        existing = target.get(key_text)
-        if isinstance(value, Mapping) and isinstance(existing, dict):
-            _deep_merge_strategy_payload(existing, value)
-            continue
-        target[key_text] = _copy_strategy_value(value)
-
-
-def _capability_profile_ref_from_request(request: ContextRequest) -> dict[str, Any] | None:
-    context_override = getattr(request, "context_override", None)
-    if not isinstance(context_override, Mapping):
-        return None
-
-    metadata = context_override.get("metadata")
-    metadata_payload = metadata if isinstance(metadata, Mapping) else {}
-    raw_profile = metadata_payload.get("capability_profile")
-    if raw_profile is None:
-        raw_profile = context_override.get("capability_profile")
-    if not isinstance(raw_profile, Mapping):
-        return None
-
-    profile = {str(key): _copy_strategy_value(value) for key, value in raw_profile.items() if str(key)}
-    digest = hashlib.sha256(
-        json.dumps(
-            profile,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        ).encode("utf-8")
-    ).hexdigest()
-    source = (
-        str(profile.get("source") or "").strip()
-        or str(metadata_payload.get("capability_profile_source") or "").strip()
-        or "unknown"
-    )
-    return {
-        "sha256": digest,
-        "source": source,
-        "schema_version": _coerce_int(profile.get("schema_version")),
-        "role_id": str(profile.get("role_id") or "").strip(),
-        "provider_id": str(profile.get("provider_id") or "").strip(),
-        "provider_type": str(profile.get("provider_type") or "").strip(),
-        "model": str(profile.get("model") or "").strip(),
-        "model_window_tokens": _coerce_int(profile.get("model_window_tokens")),
-        "model_output_limit_tokens": _coerce_int(profile.get("model_output_limit_tokens")),
-        "supports_native_tools": bool(profile.get("supports_native_tools")),
-        "supports_json_schema": bool(profile.get("supports_json_schema")),
-        "supports_stream_native_tools": bool(profile.get("supports_stream_native_tools")),
-        "tool_count": _coerce_int(profile.get("tool_count")),
-        "native_tool_mode": str(profile.get("native_tool_mode") or "").strip(),
-        "response_format_mode": str(profile.get("response_format_mode") or "").strip(),
-    }
-
-
-def _coerce_int(value: Any) -> int:
-    if isinstance(value, bool):
-        return 0
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def render_blueprint_overview(result: Any) -> str | None:
-    """把蓝图状态结果渲染成简洁概览字符串（纯函数，便于单测）。
-
-    result 期望具备 ok/summary/recommendations/risks 字段（duck-typed）。
-    not ok 或无实质内容 → None（→ 不注入信号）。
-    """
-    if not getattr(result, "ok", False):
-        return None
-    parts: list[str] = []
-    summary = str(getattr(result, "summary", "") or "").strip()
-    if summary:
-        parts.append(summary)
-    recs = tuple(getattr(result, "recommendations", ()) or ())
-    if recs:
-        parts.append("推荐:\n" + "\n".join(f"- {r}" for r in recs))
-    risks = tuple(getattr(result, "risks", ()) or ())
-    if risks:
-        parts.append("风险:\n" + "\n".join(f"- {k}" for k in risks))
-    text = "\n".join(parts).strip()
-    return text or None
-
-
-def render_verdict_history(result: Any) -> str | None:
-    """把 QA 判定结果渲染成简洁概览（纯函数，便于单测）。
-
-    result 期望具备 ok/verdict/score/findings/suggestions（duck-typed）。
-    not ok（无持久化判定）→ None（→ 不注入）。
-    """
-    if not getattr(result, "ok", False):
-        return None
-    verdict = str(getattr(result, "verdict", "") or "").strip()
-    if not verdict:
-        return None
-    parts: list[str] = [f"最新判定: {verdict} (score={float(getattr(result, 'score', 0.0)):.2f})"]
-    findings = tuple(getattr(result, "findings", ()) or ())
-    if findings:
-        parts.append("问题:\n" + "\n".join(f"- {f}" for f in findings))
-    suggestions = tuple(getattr(result, "suggestions", ()) or ())
-    if suggestions:
-        parts.append("建议:\n" + "\n".join(f"- {s}" for s in suggestions))
-    return "\n".join(parts).strip() or None
-
-
-def _coerce_float(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int | float):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value.strip())
-        except ValueError:
-            return None
-    return None
 
 
 @dataclass(frozen=True)
@@ -378,6 +191,31 @@ class RoleContextGateway:
 
         # PR-11: Event writer for context operations telemetry
         self._event_writer = get_event_writer()
+
+        # Per-run context observation emitters (context.build / prefix_drift).
+        self._telemetry = GatewayTelemetry(
+            workspace=self.workspace,
+            role_id=str(getattr(profile, "role_id", "") or ""),
+        )
+
+        # Role-signal data-source readers (project structure / task history /
+        # repo identity / scout anchors / blueprint overview / verdict history)
+        # plus the cheap pre-assembly budget-pressure estimate.
+        self._signal_sources = SignalSourceProvider(
+            workspace=self.workspace,
+            config=self._config,
+            policy=self.policy,
+            token_estimator=self._token_estimator,
+            trigger_pct_resolver=self._context_budget_trigger_pct,
+        )
+
+        # context_override filtering + history tool-message fallback materialization.
+        self._override_processor = ContextOverrideProcessor(
+            detect_prompt_injection=self._config.detect_prompt_injection,
+        )
+
+        # ProjectionEngine-payload assembly (role signals + snapshot/receipt folding).
+        self._projection_dict_builder = ProjectionDictBuilder(self)
 
     _MODEL_WINDOW_SAFETY_RATIO = 0.85
     _MIN_ENFORCEMENT_BUDGET_TOKENS = 1024
@@ -786,84 +624,18 @@ class RoleContextGateway:
         message_count: int,
         projection_id: str,
     ) -> None:
-        """Emit a ``context.build`` observation to the per-run events file.
-
-        Mirrors ``ContextEngine._emit_context_events`` so the realtime ContextOS
-        dashboard surfaces projection / in-window item counts for *every* role turn
-        (Director/CE/QA), not only PM planning's ``prompt_context``. The role turn
-        keeps its snapshot as in-memory state and persists no snapshot file, so no
-        ``context.snapshot`` receipt is emitted here (honest: no receipt fabricated).
-
-        Fail-safe: resolves the per-run events file from ``request.events_path`` or
-        from ``workspace + run_id`` via the canonical ``resolve_run_dir``; when self-
-        resolving it emits ONLY if the run directory already exists (created by the
-        orchestration that owns the run). A resolution mismatch therefore skips
-        silently rather than writing a stray/phantom file. Observability must never
-        break a turn, so all failures are swallowed.
-        """
-        run_id = str(getattr(request, "run_id", "") or "").strip()
-        if not run_id:
-            return
-        events_path = str(getattr(request, "events_path", "") or "").strip()
-        if not events_path:
-            try:
-                run_dir = resolve_run_dir(str(self.workspace), "", run_id)
-            except (OSError, ValueError) as exc:  # pragma: no cover - defensive
-                logger.debug("context.build resolve_run_dir failed: %s", exc)
-                return
-            if not run_dir or not os.path.isdir(run_dir):
-                # No live run directory for this run_id → resolution does not match a
-                # real orchestration run; skip rather than create a phantom file.
-                return
-            events_path = os.path.join(run_dir, "events", "runtime.events.jsonl")
-        role_id = str(getattr(self.profile, "role_id", "") or "")
-        try:
-            emit_event(
-                events_path,
-                kind="observation",
-                actor="System",
-                name="context.build",
-                refs={
-                    "run_id": run_id,
-                    "role": role_id,
-                    "task_id": getattr(request, "task_id", None),
-                },
-                summary=f"ContextPack built ({items_count} items)",
-                output={
-                    "items_count": int(items_count),
-                    "total_tokens": int(total_tokens),
-                    "message_count": int(message_count),
-                    "projection_id": projection_id,
-                    "role": role_id,
-                },
-            )
-        except (OSError, ValueError) as exc:  # pragma: no cover - never break a turn
-            logger.debug("context.build emit failed: %s", exc)
+        """Backward-compatible delegate to GatewayTelemetry.emit_context_build_observation."""
+        self._telemetry.emit_context_build_observation(
+            request,
+            items_count=items_count,
+            total_tokens=total_tokens,
+            message_count=message_count,
+            projection_id=projection_id,
+        )
 
     def _resolve_run_events_path(self, request: ContextRequest) -> str:
-        """Resolve the per-run events file for this request, or ``""`` to skip.
-
-        Shared fail-safe resolution used by the per-run observation emitters:
-        an explicit ``request.events_path`` is trusted; otherwise the per-run
-        file is self-resolved from ``workspace + run_id`` via the canonical
-        ``resolve_run_dir`` and emitted to ONLY if that run directory already
-        exists (created by the orchestration that owns the run). A resolution
-        mismatch therefore skips silently rather than writing a phantom file.
-        """
-        run_id = str(getattr(request, "run_id", "") or "").strip()
-        if not run_id:
-            return ""
-        events_path = str(getattr(request, "events_path", "") or "").strip()
-        if events_path:
-            return events_path
-        try:
-            run_dir = resolve_run_dir(str(self.workspace), "", run_id)
-        except (OSError, ValueError) as exc:  # pragma: no cover - defensive
-            logger.debug("run events path resolve_run_dir failed: %s", exc)
-            return ""
-        if not run_dir or not os.path.isdir(run_dir):
-            return ""
-        return os.path.join(run_dir, "events", "runtime.events.jsonl")
+        """Backward-compatible delegate to GatewayTelemetry.resolve_run_events_path."""
+        return self._telemetry.resolve_run_events_path(request)
 
     def _emit_prefix_drift_observation(
         self,
@@ -872,65 +644,12 @@ class RoleContextGateway:
         messages: Sequence[Mapping[str, Any]],
         system_prompt: str | None,
     ) -> None:
-        """Emit a ``context.prefix_drift`` observation (Headroom T1-B step 1).
-
-        NON-MUTATING. Fingerprints the cache-hot prefix (role ``system_prompt`` +
-        the leading frozen ``system`` segment) and reports whether it drifted
-        since this session's previous assembly, plus any volatile tokens that
-        would bust the local vLLM/llama.cpp prompt cache. The session is keyed by
-        ``run_id`` + role; ``ContextRequest`` has no standalone ``session_id``
-        field, so ``run_id`` + role is the stable per-session identity.
-
-        Fail-safe identically to ``_emit_context_build_observation``: emits only
-        when the per-run events file is resolvable, swallows all errors, and
-        never breaks a turn. Pure diagnostic — request bytes are untouched.
-        """
-        run_id = str(getattr(request, "run_id", "") or "").strip()
-        if not run_id:
-            return
-        events_path = self._resolve_run_events_path(request)
-        if not events_path:
-            return
-        role_id = str(getattr(self.profile, "role_id", "") or "")
-        try:
-            prefix = extract_prefix_slice(messages, system_prompt)
-            session_key = f"{run_id}:{role_id}"
-            report = get_prefix_drift_observer().observe(session_key, prefix)
-            emit_event(
-                events_path,
-                kind="observation",
-                actor="System",
-                name="context.prefix_drift",
-                refs={
-                    "run_id": run_id,
-                    "role": role_id,
-                    "task_id": getattr(request, "task_id", None),
-                },
-                summary=(
-                    "prefix drift detected"
-                    if report.drifted
-                    else ("prefix first seen" if report.first_seen else "prefix stable")
-                ),
-                output={
-                    "fingerprint": report.fingerprint,
-                    "drifted": bool(report.drifted),
-                    "first_seen": bool(report.first_seen),
-                    "previous_fingerprint": report.previous_fingerprint,
-                    "prefix_chars": int(report.prefix_chars),
-                    "prefix_message_count": int(report.prefix_message_count),
-                    "volatile_findings": [
-                        {
-                            "kind": finding.kind.value,
-                            "sample": finding.sample,
-                            "count": int(finding.count),
-                        }
-                        for finding in report.volatile_findings
-                    ],
-                    "role": role_id,
-                },
-            )
-        except (OSError, ValueError) as exc:  # pragma: no cover - never break a turn
-            logger.debug("context.prefix_drift emit failed: %s", exc)
+        """Backward-compatible delegate to GatewayTelemetry.emit_prefix_drift_observation."""
+        self._telemetry.emit_prefix_drift_observation(
+            request,
+            messages=messages,
+            system_prompt=system_prompt,
+        )
 
     def _extract_strategy_override(self, request: ContextRequest) -> tuple[dict[str, Any], tuple[str, ...]]:
         merged: dict[str, Any] = {}
@@ -1059,278 +778,30 @@ class RoleContextGateway:
         return "\n".join(parts)
 
     def _process_context_override(self, context_override: dict[str, Any]) -> dict[str, Any] | None:
-        """Process context_override dict with prompt injection detection.
-
-        Args:
-            context_override: Dict of context key-value pairs to inject.
-
-        Returns:
-            Message dict with filtered content, or None if empty.
-        """
-        if not context_override or not isinstance(context_override, dict):
-            return None
-
-        filtered_items: list[str] = []
-        has_injection = False
-        value_char_cap = _context_override_value_char_cap()
-
-        for key, value in context_override.items():
-            if not isinstance(key, str):
-                continue
-            normalized_key = key.strip().lower()
-            if normalized_key.startswith("_") or normalized_key in _CONTROL_PLANE_CONTEXT_KEYS:
-                continue
-
-            str_value = str(value) if value is not None else ""
-            # Bound each value so no single oversized payload can blow the window
-            # (order-4): the weak model cannot use multi-thousand-token metadata.
-            if len(str_value) > value_char_cap:
-                str_value = str_value[:value_char_cap] + " …[truncated]"
-
-            # Detect prompt injection patterns
-            if self._config.detect_prompt_injection:
-                if SecuritySanitizer.looks_like_prompt_injection(str_value):
-                    # Degrade, don't destroy: platform-internal payloads
-                    # (cognitive_guidance, session_turn_events) routinely
-                    # contain instruction-like text and were being replaced
-                    # wholesale with a [FILTERED] stub, deleting the model's
-                    # own strategy guidance every turn (factory-bench L2-10
-                    # live). Same neutralization contract as history content:
-                    # escape + mark untrusted, keep the information.
-                    has_injection = True
-                    neutralized = SecuritySanitizer.sanitize_history_content(str_value, detect_injection=True)
-                    filtered_items.append(f"{key}: {neutralized}")
-                    logger.warning("Prompt injection detected in context_override key: %s", key)
-                    continue
-
-                # Check for dangerous key names
-                if any(d in key.lower() for d in ("system", "role", "ignore", "override")):
-                    has_injection = True
-                    filtered_items.append(f"{key}: [FILTERED_SUSPICIOUS_KEY]")
-                    logger.warning("Suspicious context_override key: %s", key)
-                    continue
-
-            filtered_items.append(f"{key}: {str_value}")
-
-        if not filtered_items:
-            return None
-
-        content = "\n".join(filtered_items)
-        if has_injection:
-            content = "⚠️ CONTEXT_OVERRIDE_WITH_FILTERED_CONTENT:\n" + content
-
-        return {"role": "system", "name": "context_override", "content": content}
+        """Backward-compatible delegate to ContextOverrideProcessor.process_context_override."""
+        return self._override_processor.process_context_override(context_override)
 
     def _extract_tool_messages_from_history(
         self, history: Sequence[tuple[str, str] | dict[str, str]]
     ) -> list[dict[str, Any]]:
-        """Extract tool messages from history for fallback when state-first mode is inactive.
-
-        Args:
-            history: List of (role, content) tuples or dict messages.
-
-        Returns:
-            List of tool message dicts.
-        """
-        tool_messages: list[dict[str, Any]] = []
-        for item in history:
-            if isinstance(item, dict):
-                role = str(item.get("role", "")).lower()
-                content = item.get("content", "")
-            elif isinstance(item, (list, tuple)) and len(item) >= 2:
-                role = str(item[0]).lower()
-                content = str(item[1])
-            else:
-                continue
-
-            if role == "tool":
-                tool_messages.append({"role": "tool", "content": content})
-        return tool_messages
+        """Backward-compatible delegate to ContextOverrideProcessor.extract_tool_messages_from_history."""
+        return self._override_processor.extract_tool_messages_from_history(history)
 
     def _process_tool_messages_for_fallback(
         self,
         tool_messages: list[dict[str, Any]],
         max_chars: int = 2000,
     ) -> list[dict[str, Any]]:
-        """Process tool messages for fallback, truncating large content.
-
-        Args:
-            tool_messages: List of tool message dicts.
-            max_chars: Maximum characters before truncation.
-
-        Returns:
-            List of processed tool messages with CONTEXT_TRUNCATED markers if needed.
-        """
-        processed: list[dict[str, Any]] = []
-        for msg in tool_messages:
-            content = str(msg.get("content", ""))
-            if len(content) > max_chars:
-                truncated_content = content[:max_chars]
-                new_content = (
-                    f"{truncated_content}\n\n"
-                    f"[CONTEXT_TRUNCATED: Original {len(content)} chars, truncated to {max_chars} chars]"
-                )
-                processed.append({"role": "tool", "content": new_content})
-            else:
-                # Always return a copy to avoid mutation of the original object
-                processed.append({"role": msg.get("role", "tool"), "content": content})
-        return processed
+        """Backward-compatible delegate to ContextOverrideProcessor.process_tool_messages_for_fallback."""
+        return self._override_processor.process_tool_messages_for_fallback(tool_messages, max_chars)
 
     def _build_projection_dict(
         self,
         projection: Any,
         request: ContextRequest,
     ) -> tuple[dict[str, Any], ReceiptStore, list[str]]:
-        """Build a ProjectionEngine-compatible dict from a ContextOSProjection.
-
-        Large tool outputs are stored in a ReceiptStore and referenced via
-        receipt_refs instead of being inlined into message content.
-        All supplemental context (project structure, task history, snapshot,
-        strategy receipt, user message) is folded into the projection dict so
-        that message generation is fully owned by ProjectionEngine.
-        """
-        # CCR producer loop closure (T1-A): mirror every offloaded original into
-        # the process CCR cache so a later context_retrieve resolves the same
-        # [receipt_ref:ID] pointer the model sees. The hook is workspace-scoped
-        # (make_offload_capture) so concurrent workspaces sharing this process do
-        # NOT cross-resolve each other's payloads. Floor-safe: best-effort and
-        # changes no prompt text, so the L2 success path is intact.
-        from polaris.kernelone.llm.toolkit.original_payload_cache import make_offload_capture
-
-        receipt_store = ReceiptStore(
-            workspace=str(self.workspace),
-            on_offload=make_offload_capture(str(self.workspace)),
-        )
-        sources: list[str] = []
-        sorted_events = ProjectionFormatter.sort_events_by_routing_priority(projection.active_window)
-
-        supplemental_turns: list[dict[str, Any]] = []
-
-        # 2+3. Role-scoped signal plane（泛化自原硬编码的 project_structure / task_history）。
-        # 由 RoleSignalRegistry 按角色 + context_policy 解析适用信号，再分配进 supplemental_turns。
-        # 这里以"无上限/无压力"调用 → 与旧实现逐字节一致（seed 信号永不被卸载/丢弃）；
-        # 预算/熔断机制由后续 signal 与 CompressionEngine 协同时再启用。
-        from .role_signal_freshness import (
-            get_previous_freshness,
-            record_injected_freshness,
-        )
-        from .role_signals import (
-            DEFAULT_PER_SIGNAL_CHAR_CAP,
-            DEFAULT_TOTAL_CHAR_BUDGET,
-            RoleSignalRegistry,
-            SignalBuildContext,
-            allocate_role_signals,
-        )
-
-        signal_ctx = SignalBuildContext(
-            role=str(getattr(self.profile, "role_id", "") or ""),
-            phase="",
-            task_id=str(request.task_id or ""),
-            policy_flags={
-                "include_project_structure": bool(self.policy.include_project_structure),
-                "include_task_history": bool(self.policy.include_task_history),
-                # 角色专属信号开关（默认 False；按角色 profile opt-in）。
-                "include_blueprint_overview": bool(getattr(self.policy, "include_blueprint_overview", False)),
-                "include_verdict_history": bool(getattr(self.policy, "include_verdict_history", False)),
-                # 仓库身份卡（Phase-1 B1）：seed 级反幻觉 grounding,默认开启。
-                "include_repo_identity": bool(getattr(self.policy, "include_repo_identity", True)),
-                # 侦察锚点卡（Phase-2 A7）：scout 定位持久化,默认开启。
-                "include_scout_anchors": bool(getattr(self.policy, "include_scout_anchors", True)),
-                # 施工步骤蓝图（三层裂变 I2）：弱执行者局部上帝视角,默认开启。
-                "include_blueprint_step": bool(getattr(self.policy, "include_blueprint_step", True)),
-            },
-            get_project_structure=self._get_project_structure,
-            get_task_history=self._get_task_history,
-            get_repo_identity=self._get_repo_identity,
-            get_scout_anchors=self._get_scout_anchors,
-            # blueprint_overview 只通过配置注入的数据源读取；roles.kernel 不认识
-            # chief_engineer.blueprint 的业务模块。
-            get_blueprint_overview=lambda: self._get_blueprint_overview(str(request.task_id or "")),
-            # verdict_history 同样只走配置注入的数据源，避免 kernel 反向依赖 QA owner Cell。
-            get_verdict_history=lambda: self._get_verdict_history(str(request.task_id or "")),
-            get_blueprint_step=lambda: self._get_blueprint_step(request),
-        )
-        # 跨 turn freshness 记忆（按 task_id）：压力下断流"自上次注入未变化"的 nice-to-have，
-        # 把窗口让给即时工具结果。无压力时 budget_pressure=False → 不断流 → 与旧实现逐字节一致。
-        _cache_key = str(request.task_id or "")
-        _budget_pressure = self._estimate_signal_budget_pressure(projection, request)
-        # ADR-0090 W2.4: scale signal caps to the enforcement budget so seed
-        # signals (【项目结构】/【任务历史】) cannot eat a small model's window.
-        # ≈3 chars/token; per-signal ≈5% and total ≈15% of the enforcement
-        # budget, ceilinged at the registry defaults (large windows unchanged).
-        _signal_char_equiv = self._enforcement_budget_tokens * 3
-        _per_signal_cap = min(DEFAULT_PER_SIGNAL_CHAR_CAP, max(1000, int(_signal_char_equiv * 0.05)))
-        _total_signal_budget = min(DEFAULT_TOTAL_CHAR_BUDGET, max(3000, int(_signal_char_equiv * 0.15)))
-        _signal_alloc = allocate_role_signals(
-            registry=RoleSignalRegistry(),
-            ctx=signal_ctx,
-            receipt_store=receipt_store,
-            budget_pressure=_budget_pressure,
-            previous_freshness=get_previous_freshness(_cache_key),
-            per_signal_char_cap=_per_signal_cap,
-            total_char_budget=_total_signal_budget,
-        )
-        supplemental_turns.extend(_signal_alloc.turns)
-        sources.extend(_signal_alloc.sources)
-        # 记住本 turn 实际注入信号的 freshness，供下一 turn 的熔断判断。
-        _injected_fresh = _signal_alloc.telemetry.get("injected_freshness")
-        if isinstance(_injected_fresh, dict) and _injected_fresh:
-            record_injected_freshness(_cache_key, _injected_fresh)
-
-        # 4. Add Context OS state summary as supplemental system message (optional)
-        if projection is not None and projection.snapshot is not None:
-            proj_snapshot = projection.snapshot
-            _has_artifacts = bool(getattr(proj_snapshot, "artifact_store", ()))
-            _has_pending = bool(getattr(proj_snapshot, "pending_followup", None))
-            if _has_artifacts or _has_pending:
-                from polaris.kernelone.context.context_os.models import SnapshotSummaryView
-
-                summary_dict = SnapshotSummaryView.from_snapshot(proj_snapshot)
-                snapshot_summary = self._projection_formatter.format_context_os_snapshot(summary_dict)
-                supplemental_turns.append(
-                    {
-                        "role": "system",
-                        "content": snapshot_summary,
-                        "name": "context_os_snapshot_detail",
-                    }
-                )
-                sources.append("context_os_snapshot_detail")
-        else:
-            strategy_receipt = request.strategy_receipt
-            if strategy_receipt is not None:
-                receipt_content = self._projection_formatter.format_strategy_receipt_style(strategy_receipt)
-                supplemental_turns.append(
-                    {
-                        "role": "system",
-                        "content": receipt_content,
-                        "name": "strategy_receipt",
-                    }
-                )
-                sources.append("strategy_receipt")
-
-        # 5. Add user message
-        user_message = self._security.sanitize_user_message(
-            request.message, detect_injection=self._config.detect_prompt_injection
-        )
-
-        proj_dict = self._projection_engine.build_payload(
-            active_window=sorted_events,
-            receipt_store=receipt_store,
-            head_anchor=projection.head_anchor,
-            tail_anchor=projection.tail_anchor,
-            run_card=projection.run_card,
-            supplemental_turns=supplemental_turns,
-            user_message=user_message,
-        )
-        logger.debug(
-            "[DEBUG][ContextGateway] _build_projection_dict: active_window=%d supplemental=%d sources=%s head_len=%d tail_len=%d",
-            len(sorted_events),
-            len(supplemental_turns),
-            sources,
-            len(projection.head_anchor),
-            len(projection.tail_anchor),
-        )
-        return proj_dict, receipt_store, sources
+        """Backward-compatible delegate to ProjectionDictBuilder.build."""
+        return self._projection_dict_builder.build(projection, request)
 
     def _messages_from_projection(self, projection: Any) -> list[dict[str, Any]]:
         """Backward-compatible delegate to ProjectionFormatter.messages_from_projection."""
@@ -1436,280 +907,37 @@ class RoleContextGateway:
         return messages
 
     def _get_project_structure(self) -> str | None:
-        """获取项目结构信息
-
-        使用标准树状格式 (tree characters) 来明确表示层级关系，
-        避免 LLM 将平铺列表误读为层级结构导致路径幻觉。
-        """
-        try:
-            return format_workspace_tree(
-                self.workspace,
-                max_dirs=20,
-                max_files=10,
-                max_sub_items=5,
-                exclude_hidden=True,
-                exclude_dirs=(".github", ".vscode", "__pycache__", ".git"),
-            )
-        except (RuntimeError, ValueError) as e:
-            logger.warning(f"获取项目结构失败: {e}")
-            return None
+        """Backward-compatible delegate to SignalSourceProvider.get_project_structure."""
+        return self._signal_sources.get_project_structure()
 
     def _get_repo_identity(self) -> str | None:
-        """仓库身份卡（确定性反幻觉 grounding,Phase-1 B1）。"""
-        try:
-            from .repo_identity import build_repo_identity_card
-
-            return build_repo_identity_card(str(self.workspace))
-        except (RuntimeError, ValueError, OSError) as e:
-            logger.debug(f"仓库身份卡构建失败: {e}")
-            return None
+        """Backward-compatible delegate to SignalSourceProvider.get_repo_identity."""
+        return self._signal_sources.get_repo_identity()
 
     @staticmethod
     def _get_blueprint_step(request: Any) -> str | None:
-        """施工步骤卡（三层裂变 I2）：从请求上下文读取 construction_step。
-
-        有界注入：签名骨架 + 接口定名 + verify 判据 + 行数预算。严禁全文
-        （16k 窗口实证 W1.5c 后可用提示仅 ~5-6k tokens）。数据由 director
-        消费路径放入 context_override（市场 leaf 步任务的 payload 字段）。
-        """
-        context_override = getattr(request, "context_override", None)
-        if not isinstance(context_override, dict):
-            return None
-        step = context_override.get("construction_step")
-        if not isinstance(step, dict):
-            return None
-        lines: list[str] = []
-        step_id = str(step.get("step_id") or "").strip()
-        target_file = str(step.get("target_file") or "").strip()
-        if step_id or target_file:
-            est = step.get("est_lines")
-            lines.append(f"step {step_id}: {target_file}" + (f" (≤{est}行)" if est else ""))
-        signatures = [str(s).strip() for s in (step.get("signatures") or []) if str(s).strip()]
-        if signatures:
-            lines.append("signatures: " + "; ".join(signatures[:12]))
-        # Skeleton step (I3-r30): without this the weak model tries to fully implement
-        # every signature in one write and truncates (finish_reason=length). Force
-        # minimal empty stubs only — the fill steps implement the bodies later.
-        if step.get("skeleton_stub_only"):
-            lines.append(
-                "[骨架步·只写空桩] 本步只为上述每个签名写一个最小空函数体"
-                "（JS: `function 名(){}`；Python: `def 名(): pass`），"
-                "严禁实现任何逻辑、严禁填写函数体内容——逻辑由后续填充步逐个补。"
-                "一次 write_file 写完全部空桩即可，务必极简以一轮落盘"
-                "（试图实现整套逻辑会超出输出预算被截断、导致本步零落盘失败）。"
-            )
-            # P2 (deterministic file-assembly protocol): the skeleton is the interface
-            # LAW. It must emit the COMPLETE file shell + one anchor marker per body so
-            # the fill steps are scoped patches a merger applies (P3) — not whole-file
-            # rewrites the weak model re-derives from memory every turn.
-            if step.get("file_shell_required"):
-                anchor_ids = [str(a).strip() for a in (step.get("anchor_ids") or []) if str(a).strip()]
-                lines.append(
-                    "[骨架=接口法律] 你的输出就是这个文件的接口契约，后续填充步只能在你定的锚点里填实现。必须包含："
-                    "①全部 import/require 与 export；②全局状态/常量/配置对象；③（前端）DOM 容器与事件绑定接口、元素 id；"
-                    "④上面每个签名的最小空桩。并在每个函数体处放一个锚点标记："
-                    "JS/TS: `// @anchor:函数名` 单独成行写在空函数体内；Python: `# @anchor:函数名`。"
-                    + (f"必须为这些锚点各放一个标记：{', '.join(anchor_ids)}。" if anchor_ids else "")
-                    + "只写外壳+空桩+锚点,不实现任何逻辑。"
-                )
-        # Fill step (I3-r31): without this the weak model tries to implement the WHOLE
-        # file at once (truncates) or stuffs prose into edit_blocks. Force a bounded,
-        # code-only, anchored edit of ONLY this fill's assigned functions.
-        if step.get("fill_scope_only"):
-            lines.append(
-                "[填充步·只实现被分配的函数] 本步只实现上面 signatures 列出的这几个函数/方法的函数体，"
-                "其它桩一律别动、也别实现。做法：先 read_file 看到这几个函数当前的空桩原文，"
-                "再用 edit_blocks 对每个函数各做一次 SEARCH/REPLACE。"
-                # P2.1 (codex 2026-06-15): the new assembly protocol is anchor-scoped, so
-                # the REPLACE must NOT be a free whole-function swap that drops the @anchor
-                # or alters the signature — that is exactly what the P3 merger rejects.
-                "优先只替换锚点函数体内部的实现；"
-                "若替换整个函数，函数签名必须逐字不变、`@anchor:` 标记必须原样保留。"
-                "edit_blocks 的 blocks/replace 参数里只放纯代码——严禁任何说明/计划/意图文字"
-                "（例如 'replace lines 1-46 with full implementation' 是错的，会被工具拒收）。"
-                "严禁 write_file 整文件重写、严禁改动 import/export/公共常量/DOM id/事件绑定、"
-                "严禁实现未分配的函数（一次实现整个文件会超预算截断、零落盘）。"
-            )
-            # P2 (deterministic file-assembly protocol): name the exact anchors this fill
-            # owns and make the skeleton's interface inviolable. A fill that changes any
-            # import/export/signature/public-const/DOM-id is rejected by the merger (P3)
-            # and re-asked — never a silent dead-letter.
-            anchor_ids = [str(a).strip() for a in (step.get("anchor_ids") or []) if str(a).strip()]
-            if anchor_ids:
-                lines.append(
-                    f"[填充锚点] 你只负责这些锚点的函数体：{', '.join(anchor_ids)}。"
-                    "骨架定下的接口是法律：严禁新增/删除/改名任何 import/export/函数签名/公共常量/DOM id/事件绑定，"
-                    "严禁移动或删除任何 `@anchor:` 标记。只在你负责的锚点对应空桩处替换函数体，其余原样保留。"
-                )
-        interfaces = [str(s).strip() for s in (step.get("interface_names") or []) if str(s).strip()]
-        if interfaces:
-            lines.append("interfaces: " + ", ".join(interfaces[:16]))
-        # Interface coherence (I3-r28): the frozen identifiers OTHER files already
-        # exposed. The weak Director must reuse these exact names so cross-file refs
-        # resolve at runtime (live: main.js must call the id index.html froze, not
-        # invent its own). Bounded to a few files/names to respect the 16k window.
-        consumed = context_override.get("consumed_interfaces")
-        if isinstance(consumed, dict) and consumed:
-            consumed_lines: list[str] = []
-            for other_target in sorted(consumed)[:6]:
-                entry = consumed.get(other_target)
-                if not isinstance(entry, dict):
-                    continue
-                names = [str(n).strip() for n in (entry.get("identifiers") or []) if str(n).strip()][:10]
-                if names:
-                    consumed_lines.append(f"  {other_target} 已公开: {', '.join(names)}")
-            if consumed_lines:
-                lines.append("跨文件接口(必须复用完全相同的名字，勿自创):")
-                lines.extend(consumed_lines)
-        verify = str(step.get("verify") or "").strip()
-        if verify:
-            lines.append(f"verify: {verify}")
-        depends = [str(s).strip() for s in (step.get("depends_on") or []) if str(s).strip()]
-        if depends:
-            lines.append("depends_on(已完成): " + ", ".join(depends[:8]))
-        # Fix-13 缺陷清单（punch list）：改建式步骤的现状勘察。没有它，
-        # 弱执行者读到看似完整的目标文件会判定"已完成"拒绝动笔
-        # （live I3-r13: 编辑模式 0/5，三次重试全零 diff）。
-        pre_state = context_override.get("pre_state_verify")
-        if isinstance(pre_state, dict):
-            failing = [str(c).strip() for c in (pre_state.get("failing_clauses") or []) if str(c).strip()]
-            total = pre_state.get("total_clauses")
-            if pre_state.get("exit_code") == 0:
-                lines.append(
-                    "现状勘察: 验收判据当前已通过（可能由前置步骤满足）。仍须按本步合同产生实际改进；不产生任何文件变更将被拒收。"
-                )
-            elif failing:
-                lines.append(
-                    f"现状勘察(缺陷清单): 目标文件当前未通过验收，缺 {len(failing)}/{total} 项。你的任务就是补齐下列各项:"
-                )
-                for index, clause in enumerate(failing[:8], 1):
-                    lines.append(f"  缺{index}: {clause[:160]}")
-                lines.append("文件已存在不等于任务完成；必须实际修改文件使上述各项全部通过。")
-            else:
-                lines.append("现状勘察: 验收判据当前未通过。必须实际修改目标文件使 verify 通过；不产生变更将被拒收。")
-        failure = context_override.get("last_failure")
-        if isinstance(failure, dict):
-            failure_message = str(failure.get("error_message") or "").strip()
-            failure_code = str(failure.get("error_code") or "").strip()
-            if failure_message or failure_code:
-                lines.append(f"上次尝试失败({failure_code}): {failure_message[:240]}")
-                # R7-B (I3-r28, Self-Refine): the prose "don't rewrite" hint empirically
-                # fails — the weak model rewrites the file smaller anyway. Replace it with
-                # an imperative, format-specific directive that names the anchored edit verb
-                # and warns about the deterministic shrink gate (R7-C) that will reject a
-                # degraded rewrite.
-                lines.append(
-                    "[修复轮·只做定点编辑] 目标文件已存在且是可用代码，只因上述原因失败。"
-                    "只修这一处：用 edit_blocks 发 SEARCH/REPLACE 块（或 file+start+end+replace 行区间编辑），"
-                    "严禁用 write_file 整文件重写。保留所有既有函数/类/逻辑，不得缩短或删除既有内容——"
-                    "任何使文件明显变小或丢失既有功能的回应都会被自动拒收并退回重做。"
-                )
-        return "\n".join(lines) or None
+        """Backward-compatible delegate to blueprint_step_card.build_blueprint_step_card."""
+        return build_blueprint_step_card(request)
 
     def _get_scout_anchors(self) -> str | None:
-        """侦察锚点卡（Phase-2 A7 定位持久化）。"""
-        try:
-            from polaris.kernelone.context.scout_anchor_store import (
-                format_anchor_card,
-                load_scout_anchors,
-            )
-
-            return format_anchor_card(load_scout_anchors(str(self.workspace)))
-        except (RuntimeError, ValueError, OSError) as e:
-            logger.debug(f"侦察锚点卡构建失败: {e}")
-            return None
+        """Backward-compatible delegate to SignalSourceProvider.get_scout_anchors."""
+        return self._signal_sources.get_scout_anchors()
 
     def _get_task_history(self, task_id: str) -> str | None:
-        """获取任务历史"""
-        try:
-            from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
-
-            task = TaskRuntimeService(str(self.workspace)).get_task(task_id)
-
-            if not task:
-                return None
-
-            # 格式化任务信息
-            history = [
-                f"任务ID: {task_id}",
-                f"状态: {task.get('status', 'unknown')}",
-                f"标题: {task.get('subject', 'N/A')}",
-            ]
-
-            if task.get("description"):
-                desc = task.get("description")
-                if isinstance(desc, str):
-                    history.append(f"描述: {desc[:200]}...")
-                else:
-                    history.append(f"描述: {desc}...")
-
-            return "\n".join(history)
-
-        except (RuntimeError, ValueError) as e:
-            logger.debug(f"获取任务历史失败: {e}")
-            return None
+        """Backward-compatible delegate to SignalSourceProvider.get_task_history."""
+        return self._signal_sources.get_task_history(task_id)
 
     def _get_blueprint_overview(self, task_id: str) -> str | None:
-        """读取本任务最新蓝图概览（ChiefEngineer 角色专属信号的数据源）。
-
-        数据源由运行时/适配层通过 ContextGatewayConfig 注入。roles.kernel 只负责编排
-        signal 与渲染，不直接 import chief_engineer.blueprint。任何失败/缺失 → None。
-        """
-        if not task_id:
-            return None
-        provider = self._config.blueprint_overview_provider
-        if provider is None:
-            return None
-        try:
-            result = provider(task_id, str(self.workspace))
-            if isinstance(result, str):
-                return result.strip() or None
-            return render_blueprint_overview(result)
-        except Exception as exc:  # noqa: BLE001 - 数据源失败必须优雅降级为不注入
-            logger.debug(f"获取蓝图概览失败: {exc}")
-            return None
+        """Backward-compatible delegate to SignalSourceProvider.get_blueprint_overview."""
+        return self._signal_sources.get_blueprint_overview(task_id)
 
     def _estimate_signal_budget_pressure(self, projection: Any, request: ContextRequest) -> bool:
-        """保守预估"角色信号分配阶段是否已处于预算压力"。
-
-        在真正组装/压缩前给一个便宜的早期信号：若历史窗口的估算 token 已超过
-        ``max_context_tokens * trigger_pct``，视为压力 → 允许熔断断流未变化的 nice-to-have。
-        任何失败 → False（不熔断 → 保持逐字节一致，安全优先）。
-        """
-        try:
-            strategy_override = request.strategy_override or {}
-            trigger_pct = self._context_budget_trigger_pct(strategy_override)
-            threshold = max(1, int(self.policy.max_context_tokens * trigger_pct))
-            history_messages = [
-                {"role": str(role), "content": str(content)} for role, content in (request.history or ()) if content
-            ]
-            if not history_messages:
-                return False
-            estimate = self._token_estimator.estimate(history_messages)
-            return int(estimate) > threshold
-        except Exception:  # noqa: BLE001 - 预估失败必须安全降级为"无压力"
-            logger.debug("signal budget pressure estimate failed", exc_info=True)
-            return False
+        """Backward-compatible delegate to SignalSourceProvider.estimate_signal_budget_pressure."""
+        return self._signal_sources.estimate_signal_budget_pressure(projection, request)
 
     def _get_verdict_history(self, task_id: str) -> str | None:
-        """读取本任务最新 QA 判定历史（QA 角色专属信号的数据源）。
-
-        数据源由运行时/适配层通过 ContextGatewayConfig 注入。roles.kernel 只负责编排
-        signal 与渲染，不直接 import qa.audit_verdict。任何失败/缺失 → None。
-        """
-        if not task_id:
-            return None
-        provider = self._config.verdict_history_provider
-        if provider is None:
-            return None
-        try:
-            result = provider(task_id, str(self.workspace))
-            if isinstance(result, str):
-                return result.strip() or None
-            return render_verdict_history(result)
-        except Exception as exc:  # noqa: BLE001 - 数据源失败必须优雅降级为不注入
-            logger.debug(f"获取判定历史失败: {exc}")
-            return None
+        """Backward-compatible delegate to SignalSourceProvider.get_verdict_history."""
+        return self._signal_sources.get_verdict_history(task_id)
 
     def _is_state_first_mode_active_from_receipt(self, receipt: StrategyReceipt | None) -> bool:
         """Determine if State-First Context OS mode is active based on strategy receipt."""

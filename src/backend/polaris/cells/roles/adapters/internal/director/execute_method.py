@@ -81,6 +81,20 @@ def _empty_write_content_retry_needed(tool_results: list[dict[str, Any]]) -> boo
     return bool(write_summary) and all(content_len <= 0 for _, content_len in write_summary)
 
 
+def _artifact_quality_error_signature(errors: list[str]) -> tuple[str, ...]:
+    """Return a stable semantic-ish signature for repair-loop progress checks."""
+
+    normalized: list[str] = []
+    for error in errors:
+        text = re.sub(r"\s+", " ", str(error or "")).strip()
+        if not text:
+            continue
+        text = re.sub(r"\(\d+,\d+\)", "(line,col)", text)
+        text = re.sub(r":\d+:\d+", ":line:col", text)
+        normalized.append(text[:400])
+    return tuple(sorted(set(normalized)))
+
+
 def _build_empty_write_content_retry_message(
     task: dict[str, Any],
     *,
@@ -2184,18 +2198,23 @@ async def _phase_quality_repair_loop(
     # missing-only metric (1→1) still cut the loop before diff.test.html.
     prev_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
     prev_error_count = len(artifact_quality_errors)
+    prev_error_signature = _artifact_quality_error_signature(artifact_quality_errors)
     for repair_attempt in range(1, _QUALITY_REPAIR_ATTEMPT_HARD_CAP + 1):
         if not artifact_quality_errors:
             break
         current_missing_count = len(_missing_declared_target_files(task, _adapter_workspace))
         current_error_count = len(artifact_quality_errors)
+        current_error_signature = _artifact_quality_error_signature(artifact_quality_errors)
         if repair_attempt > _QUALITY_REPAIR_BASE_ATTEMPTS:
             missing_progress = 0 < current_missing_count < prev_missing_count
             error_progress = 0 < current_error_count < prev_error_count
-            if not (missing_progress or error_progress):
+            signature_progress = bool(current_error_signature) and current_error_signature != prev_error_signature
+            if not (missing_progress or error_progress or signature_progress):
                 break
         prev_missing_count = current_missing_count
         prev_error_count = current_error_count
+        prev_error_signature = current_error_signature
+        deterministic_quality_made_progress = False
         deterministic_quality_tool_results, deterministic_quality_summary = (
             _apply_deterministic_materialization_quality_repairs(
                 adapter,
@@ -2205,6 +2224,7 @@ async def _phase_quality_repair_loop(
             )
         )
         if deterministic_quality_tool_results:
+            deterministic_quality_made_progress = True
             tool_results.extend(deterministic_quality_tool_results)
             quality_repair_summary = deterministic_quality_summary
             quality_repair_attempts.append(deterministic_quality_summary)
@@ -2255,6 +2275,8 @@ async def _phase_quality_repair_loop(
         )
         quality_repair_attempts.append(quality_repair_summary)
         if not repair_tool_results:
+            if deterministic_quality_made_progress and artifact_quality_errors:
+                continue
             break
         if repair_tool_results:
             tool_results.extend(repair_tool_results)

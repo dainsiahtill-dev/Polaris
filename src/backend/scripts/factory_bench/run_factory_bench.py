@@ -19,13 +19,19 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
+import logging
 import os
+import re
 import subprocess
 import sys
 import time
+import uuid as _uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
@@ -49,9 +55,57 @@ from scripts.factory_bench.factory_http_client import (
     wait_run_until_terminal,
 )
 
+_logger = logging.getLogger(__name__)
+
 _FIXTURE = Path(__file__).resolve().parent / "projects_v2.json"
 _BACKEND_ROOT = Path("/home/dains/Documents/polaris/src/backend")
 FACTORY_BENCH_REQUIRED_LLM_ROLES = ("pm", "director")
+
+
+def _sanitize_run_id(raw: str | None) -> str:
+    """Return a filesystem-safe run_id.
+
+    If *raw* is non-empty after stripping, replace any character outside
+    ``[A-Za-z0-9._-]`` with ``-`` and collapse consecutive dashes.
+    If *raw* is empty/None, generate a stable uuid4 hex.
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", str(raw or "").strip()).strip("-")
+    return cleaned if cleaned else _uuid.uuid4().hex[:12]
+
+
+def _next_immutable_json_path(path: Path) -> Path:
+    """Return the first available immutable JSON path for *path*.
+
+    If *path* does not exist, return *path*; otherwise try ``<stem>.2.json``,
+    ``<stem>.3.json``, … until an unused slot is found.
+    """
+    if not path.exists():
+        return path
+
+    stem = path.stem
+    suffix = path.suffix
+    parent = path.parent
+    counter = 2
+    while True:
+        candidate = parent / f"{stem}.{counter}{suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def _write_immutable_json(path: Path, payload: dict[str, Any]) -> Path:
+    """Write *payload* as UTF-8 JSON to *path*, never overwriting an existing file.
+
+    If *path* already exists, write to ``<stem>.2.json``, ``<stem>.3.json``, …
+    using the first available slot.  Returns the path actually written.
+    """
+    target = _next_immutable_json_path(path)
+    target.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=1) + "\n",
+        encoding="utf-8",
+    )
+    return target
+
 
 # Artifact layout (2026-06-11 recon): most chain artifacts live OUTSIDE the
 # workspace, under <runtime_base>/.polaris/projects/<workspace_key>/runtime/.
@@ -521,39 +575,138 @@ def _emit_bench_event(
 
 
 _DEFAULT_BACKEND_URL = "http://127.0.0.1:49977"
+_DEFAULT_LOCAL_BACKEND_TOKEN = "polaris-local-dev"
 _BENCH_HTTP_TIMEOUT_S = 10.0  # bumped from 2.0: cold-start 49977 can exceed 2s
 
 
+def _resolve_polaris_home(env: Mapping[str, str] | None = None) -> Path:
+    """Resolve the Polaris home directory (``~/.polaris``).
+
+    Resolution order mirrors the Electron ``resolvepolarisHome`` helper in
+    ``config-paths.cjs``:
+
+    1. ``KERNELONE_HOME`` env var — if set and already named ``.polaris``,
+       use it directly; otherwise append ``.polaris``.
+    2. ``~/.polaris`` (platform home).
+    """
+    active_env = env or os.environ
+    home_override = str(active_env.get("KERNELONE_HOME") or "").strip()
+    if home_override:
+        expanded = Path(home_override).expanduser().resolve()
+        if expanded.name.lower() == ".polaris":
+            return expanded
+        return expanded / ".polaris"
+    return Path.home() / ".polaris"
+
+
+def _desktop_backend_info_path(env: Mapping[str, str] | None = None) -> Path:
+    """Return the path to ``desktop-backend.json`` written by Electron."""
+    return _resolve_polaris_home(env) / "runtime" / "desktop-backend.json"
+
+
+def _read_desktop_backend_info(env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Read and parse ``desktop-backend.json``.
+
+    Returns an empty dict on any failure (missing file, malformed JSON,
+    permission errors).  This is a *read-only* helper — it never creates
+    or modifies the file.
+    """
+    path = _desktop_backend_info_path(env)
+    try:
+        if not path.exists():
+            _logger.debug("desktop-backend.json not found at %s", path)
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            _logger.debug("desktop-backend.json found at %s (token source found)", path)
+            return data
+        return {}
+    except (ValueError, OSError):
+        _logger.debug("desktop-backend.json unreadable at %s (token source missing)", path)
+        return {}
+
+
 def _resolve_backend_url(explicit: str | None = None) -> str:
-    """Pick a backend URL from arg > env > default; return "" to disable."""
+    """Pick a backend URL from arg > env > desktop-backend info > default.
+
+    Priority:
+    1. *explicit* argument
+    2. ``KERNELONE_BACKEND_URL`` env
+    3. ``FACTORY_BENCH_BACKEND_URL`` env
+    4. ``desktop-backend.json`` → ``backend.baseUrl``
+    5. ``_DEFAULT_BACKEND_URL`` (127.0.0.1:49977)
+    """
     candidate = (
         (explicit or "").strip()
         or os.environ.get("KERNELONE_BACKEND_URL", "").strip()
         or os.environ.get("FACTORY_BENCH_BACKEND_URL", "").strip()
-        or _DEFAULT_BACKEND_URL
+        or _desktop_backend_url_from_info()
     )
-    return candidate.rstrip("/")
+    return candidate.rstrip("/") or _DEFAULT_BACKEND_URL
+
+
+def _desktop_backend_url_from_info() -> str:
+    """Extract baseUrl from desktop-backend.json, or "" if absent."""
+    info = _read_desktop_backend_info()
+    backend = info.get("backend")
+    if isinstance(backend, dict):
+        return str(backend.get("baseUrl") or "").strip()
+    return ""
+
+
+def _is_local_backend_url(url: str) -> bool:
+    """Return True when *url* targets a loopback backend."""
+    try:
+        parsed = urlparse(str(url or ""))
+    except (TypeError, ValueError):
+        return False
+    hostname = str(parsed.hostname or "").lower()
+    return hostname in {"127.0.0.1", "localhost", "::1"}
 
 
 def _resolve_backend_token(explicit: str | None = None) -> str:
-    """Pick a backend bearer token from arg > env.
+    """Pick a backend bearer token from arg > env > desktop-backend info.
 
     The Polaris factory router requires a Bearer token in the Authorization
     header (query tokens are intentionally rejected — see
     ``polaris.delivery.http.dependencies.require_auth``). The bench subprocess
-    runs in a terminal and has no way to ask the Electron app for a token,
-    so the user must set ``KERNELONE_TOKEN`` / ``KERNELONE_BACKEND_TOKEN`` (or
-    ``FACTORY_BENCH_BACKEND_TOKEN``) in the same env as the bench, matching the
-    value the backend was started with. Returns "" when no token is configured
-    (the bench then makes unauthenticated requests, which is fine for dev mode
-    with auth disabled).
+    runs in a terminal and has no way to ask the Electron app for a token
+    directly, so it reads the token Electron already persisted to
+    ``desktop-backend.json`` as a fallback.
+
+    Priority:
+    1. *explicit* argument
+    2. ``FACTORY_BENCH_BACKEND_TOKEN`` env
+    3. ``KERNELONE_TOKEN`` env
+    4. ``KERNELONE_BACKEND_TOKEN`` env
+    5. ``desktop-backend.json`` → ``backend.token``
+
+    Returns "" when no token is configured (the bench then makes
+    unauthenticated requests, which is fine for dev mode with auth disabled).
     """
-    return (
+    token = (
         (explicit or "").strip()
         or os.environ.get("FACTORY_BENCH_BACKEND_TOKEN", "").strip()
         or os.environ.get("KERNELONE_TOKEN", "").strip()
         or os.environ.get("KERNELONE_BACKEND_TOKEN", "").strip()
+        or _desktop_backend_token_from_info()
     )
+    if not token and _is_local_backend_url(_resolve_backend_url()):
+        token = _DEFAULT_LOCAL_BACKEND_TOKEN
+    if token:
+        _logger.debug("backend token source found")
+    else:
+        _logger.debug("backend token source missing — using unauthenticated requests")
+    return token
+
+
+def _desktop_backend_token_from_info() -> str:
+    """Extract token from desktop-backend.json, or "" if absent."""
+    info = _read_desktop_backend_info()
+    backend = info.get("backend")
+    if isinstance(backend, dict):
+        return str(backend.get("token") or "").strip()
+    return ""
 
 
 def _http_post_json(
@@ -1242,12 +1395,16 @@ def main() -> int:
         )
 
     # Compute catalog hash for immutable audit trail
-    import hashlib as _hashlib
-
-    catalog_hash = _hashlib.sha256(
-        json.dumps(projects, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()[:16]
+    catalog_hash = hashlib.sha256(json.dumps(projects, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[
+        :16
+    ]
     catalog_schema_version = "factory-bench/2"
+
+    # Resolve a single run_id for the entire bench run.
+    # FACTORY_BENCH_RUN_ID env takes precedence; otherwise generate once.
+    run_id = _sanitize_run_id(os.environ.get("FACTORY_BENCH_RUN_ID"))
+    audit_dir = base / "audits" / run_id
+    audit_dir.mkdir(parents=True, exist_ok=True)
 
     for project in selected:
         pid = project["id"]
@@ -1260,11 +1417,6 @@ def main() -> int:
         workspace.mkdir(parents=True, exist_ok=True)
         log_path = base / f"{pid}.chain.log"
         # Write catalog metadata for audit traceability
-        run_id = os.environ.get("FACTORY_BENCH_RUN_ID") or ""
-        if not run_id:
-            import uuid as _uuid
-
-            run_id = _uuid.uuid4().hex[:12]
         catalog_meta = {
             "catalog_schema_version": catalog_schema_version,
             "catalog_hash": catalog_hash,
@@ -1488,8 +1640,7 @@ def main() -> int:
             encoding="utf-8",
         )
         # Write immutable per-run audit package
-        audit_dir = base / "audits" / run_id
-        audit_dir.mkdir(parents=True, exist_ok=True)
+        audit_file = _next_immutable_json_path(audit_dir / f"{pid}.audit.json")
         project_audit = {
             "catalog_schema_version": catalog_schema_version,
             "catalog_hash": catalog_hash,
@@ -1497,11 +1648,9 @@ def main() -> int:
             "project_id": pid,
             "record": record,
             "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "audit_path": str(audit_file.relative_to(base)),
         }
-        (audit_dir / f"{pid}.audit.json").write_text(
-            json.dumps(project_audit, ensure_ascii=False, indent=1) + "\n",
-            encoding="utf-8",
-        )
+        _write_immutable_json(audit_file, project_audit)
         if not record["all_checks_passed"]:
             failed += 1
             if args.max_failed > 0 and failed >= args.max_failed:

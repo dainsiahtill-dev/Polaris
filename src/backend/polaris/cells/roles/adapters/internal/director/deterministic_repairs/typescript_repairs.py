@@ -43,6 +43,16 @@ _TS_MISSING_PROPERTY_ERROR_RE = re.compile(
     r"Property\s+'(?P<member>[^']+)'\s+does\s+not\s+exist\s+on\s+type\s+'(?P<type>[^']+)'",
     re.IGNORECASE,
 )
+_TS_NUMBER_TO_STRING_ARGUMENT_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2345:\s*"
+    r"Argument\s+of\s+type\s+'number'\s+is\s+not\s+assignable\s+to\s+parameter\s+of\s+type\s+'string'",
+    re.IGNORECASE,
+)
+_TS_TOO_FEW_ARGUMENTS_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2554:\s*"
+    r"Expected\s+(?P<expected>\d+)\s+arguments?,\s+but\s+got\s+(?P<got>\d+)",
+    re.IGNORECASE,
+)
 _TS_EXPORTED_CLASS_RE_TEMPLATE = r"export\s+(?:abstract\s+)?class\s+{type_name}\b[^{{]*{{"
 
 
@@ -287,6 +297,116 @@ def _typescript_errors_require_dom_lib(errors: list[str]) -> bool:
     return "cannot find name 'console'" in joined and "include 'dom'" in joined
 
 
+def _apply_deterministic_typescript_number_to_string_argument_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    argument_errors = _parse_typescript_number_to_string_argument_errors(artifact_quality_errors)
+    if not argument_errors:
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired: list[dict[str, str]] = []
+    for item in argument_errors:
+        path = (workspace_path / item["file"]).resolve()
+        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
+            continue
+        try:
+            text = updated_by_path.get(path) or path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = text.splitlines()
+        line_index = int(item["line"]) - 1
+        if line_index < 0 or line_index >= len(lines):
+            continue
+        repaired_line = _wrap_typescript_argument_at_column_as_string(lines[line_index], int(item["col"]))
+        if repaired_line == lines[line_index]:
+            continue
+        lines[line_index] = repaired_line
+        updated_by_path[path] = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+        repaired.append({"file": item["file"], "line": item["line"], "column": item["col"]})
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_number_to_string_argument_repair",
+        metadata_key="arguments",
+        metadata_value=repaired,
+    )
+
+
+def _apply_deterministic_typescript_too_few_arguments_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    arity_errors = _parse_typescript_too_few_arguments_errors(artifact_quality_errors)
+    if not arity_errors:
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired: list[dict[str, str]] = []
+    for item in arity_errors:
+        usage_line = _typescript_error_usage_line(workspace_path, item)
+        method_name = _typescript_call_name_from_usage_line(usage_line, int(item["col"]))
+        if not method_name:
+            continue
+        declaration = _find_unique_typescript_method_declaration(
+            workspace_path=workspace_path,
+            method_name=method_name,
+            expected_count=int(item["expected"]),
+            updated_by_path=updated_by_path,
+        )
+        if declaration is None:
+            continue
+        declaration_path, line_index, line_text = declaration
+        repaired_line = _add_defaults_to_typescript_method_params(
+            line_text,
+            got_count=int(item["got"]),
+            expected_count=int(item["expected"]),
+        )
+        if repaired_line == line_text:
+            continue
+        try:
+            text = updated_by_path.get(declaration_path) or declaration_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = text.splitlines()
+        if line_index < 0 or line_index >= len(lines):
+            continue
+        lines[line_index] = repaired_line
+        updated_by_path[declaration_path] = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+        repaired.append(
+            {
+                "file": declaration_path.relative_to(workspace_path).as_posix(),
+                "method": method_name,
+                "expected": item["expected"],
+                "got": item["got"],
+            }
+        )
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_too_few_arguments_repair",
+        metadata_key="methods",
+        metadata_value=repaired,
+    )
+
+
 def _parse_typescript_missing_member_errors(errors: list[str]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str, str, str]] = set()
@@ -304,6 +424,97 @@ def _parse_typescript_missing_member_errors(errors: list[str]) -> list[dict[str,
             seen.add(key)
             parsed.append(item)
     return parsed
+
+
+def _parse_typescript_number_to_string_argument_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for error in errors:
+        for match in _TS_NUMBER_TO_STRING_ARGUMENT_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": str(match.group("file") or "").strip(),
+                "line": str(match.group("line") or "").strip(),
+                "col": str(match.group("col") or "").strip(),
+            }
+            key = (item["file"], item["line"], item["col"])
+            if not item["file"] or not item["line"] or not item["col"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _parse_typescript_too_few_arguments_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for error in errors:
+        for match in _TS_TOO_FEW_ARGUMENTS_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": str(match.group("file") or "").strip(),
+                "line": str(match.group("line") or "").strip(),
+                "col": str(match.group("col") or "").strip(),
+                "expected": str(match.group("expected") or "").strip(),
+                "got": str(match.group("got") or "").strip(),
+            }
+            key = (item["file"], item["line"], item["col"], item["expected"], item["got"])
+            if (
+                not item["file"]
+                or not item["line"]
+                or not item["col"]
+                or not item["expected"]
+                or not item["got"]
+                or key in seen
+            ):
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _write_typescript_repair_results(
+    adapter: Any,
+    *,
+    workspace_path: Path,
+    task_id: str,
+    updated_by_path: dict[Path, str],
+    source_tool: str,
+    metadata_key: str,
+    metadata_value: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    if not updated_by_path:
+        return []
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    executor = DirectorToolExecutor(str(workspace_path), message_bus=message_bus, worker_id="director")
+    writes: list[dict[str, Any]] = []
+    for path, content in updated_by_path.items():
+        rel_path = path.relative_to(workspace_path).as_posix()
+        write_result = executor.execute_tool(
+            "write_file",
+            {"file": rel_path, "content": content},
+            task_id=task_id,
+        )
+        if not bool(write_result.get("ok")):
+            continue
+        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+            adapter._update_task_progress(task_id, "executing", current_file=rel_path)
+        writes.append(
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": source_tool,
+                    "file": rel_path,
+                    metadata_key: [item for item in metadata_value if item.get("file") == rel_path],
+                    "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
+                    "operation": str(write_result.get("operation") or "modify"),
+                    "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                    "director_policy": write_result.get("director_policy"),
+                },
+            }
+        )
+    return writes
 
 
 def _find_typescript_class_declaration(
@@ -367,16 +578,210 @@ def _typescript_error_usage_line(workspace_path: Path, item: dict[str, str]) -> 
     return lines[line_no - 1]
 
 
+def _wrap_typescript_argument_at_column_as_string(line: str, column: int) -> str:
+    span = _find_typescript_argument_span_at_column(line, column)
+    if span is None:
+        return line
+    start, end = span
+    argument = line[start:end]
+    stripped = argument.strip()
+    if not stripped or stripped.startswith(("String(", '"', "'", "`")):
+        return line
+    leading = argument[: len(argument) - len(argument.lstrip())]
+    trailing = argument[len(argument.rstrip()) :]
+    replacement = f"{leading}String({stripped}){trailing}"
+    return line[:start] + replacement + line[end:]
+
+
+def _find_typescript_argument_span_at_column(line: str, column: int) -> tuple[int, int] | None:
+    index = max(0, min(len(line), int(column) - 1))
+    open_index = line.rfind("(", 0, index + 1)
+    close_index = line.find(")", index)
+    if open_index < 0 or close_index < 0 or close_index <= open_index:
+        return None
+    spans = _split_typescript_argument_spans(line, open_index + 1, close_index)
+    for start, end in spans:
+        if start <= index <= end:
+            arrow_index = line.find("=>", start, end)
+            if arrow_index >= 0:
+                next_open = line.find("(", arrow_index + 2, end)
+                next_close = line.find(")", next_open + 1, end + 1)
+                if next_open > arrow_index and next_close > next_open:
+                    next_spans = _split_typescript_argument_spans(line, next_open + 1, next_close)
+                    return next_spans[0] if next_spans else None
+            if line[close_index + 1 :].lstrip().startswith("=>"):
+                next_open = line.find("(", close_index + 1)
+                next_close = line.find(")", next_open + 1)
+                if next_open > close_index and next_close > next_open:
+                    next_spans = _split_typescript_argument_spans(line, next_open + 1, next_close)
+                    return next_spans[0] if next_spans else None
+            return start, end
+    return spans[0] if spans else None
+
+
+def _split_typescript_argument_spans(text: str, start: int, end: int) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    arg_start = start
+    quote = ""
+    index = start
+    while index < end:
+        char = text[index]
+        if quote:
+            if char == "\\":
+                index += 2
+                continue
+            if char == quote:
+                quote = ""
+        elif char in {"'", '"', "`"}:
+            quote = char
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth = max(0, depth - 1)
+        elif char == "," and depth == 0:
+            spans.append((arg_start, index))
+            arg_start = index + 1
+        index += 1
+    if arg_start <= end:
+        spans.append((arg_start, end))
+    return spans
+
+
+def _typescript_call_name_from_usage_line(usage_line: str, column: int) -> str:
+    prefix = usage_line[: max(0, min(len(usage_line), int(column)))]
+    matches = list(re.finditer(r"(?:\.|\b)(?P<name>[A-Za-z_$][\w$]*)\s*\(", prefix))
+    if not matches:
+        matches = list(re.finditer(r"\b(?P<name>[A-Za-z_$][\w$]*)\s*\(", usage_line))
+    if not matches:
+        return ""
+    return str(matches[-1].group("name") or "").strip()
+
+
+def _find_unique_typescript_method_declaration(
+    *,
+    workspace_path: Path,
+    method_name: str,
+    expected_count: int,
+    updated_by_path: dict[Path, str],
+) -> tuple[Path, int, str] | None:
+    method_re = re.compile(
+        rf"^\s*(?:public\s+|private\s+|protected\s+)?(?:async\s+)?{re.escape(method_name)}\s*\((?P<params>[^)]*)\)",
+    )
+    matches: list[tuple[Path, int, str]] = []
+    for path in _iter_typescript_files(workspace_path):
+        try:
+            text = updated_by_path.get(path) or path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line_index, line in enumerate(text.splitlines()):
+            match = method_re.search(line)
+            if not match:
+                continue
+            params = _split_typescript_params(match.group("params"))
+            if len(params) >= expected_count:
+                matches.append((path, line_index, line))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _add_defaults_to_typescript_method_params(line: str, *, got_count: int, expected_count: int) -> str:
+    open_index = line.find("(")
+    close_index = line.find(")", open_index + 1)
+    if open_index < 0 or close_index < 0:
+        return line
+    params_text = line[open_index + 1 : close_index]
+    params = _split_typescript_params(params_text)
+    if len(params) < expected_count or got_count >= expected_count:
+        return line
+    changed = False
+    for index in range(got_count, min(expected_count, len(params))):
+        repaired = _typescript_param_with_default(params[index])
+        if repaired != params[index]:
+            params[index] = repaired
+            changed = True
+    if not changed:
+        return line
+    return line[: open_index + 1] + ", ".join(params) + line[close_index:]
+
+
+def _split_typescript_params(params_text: str) -> list[str]:
+    spans = _split_typescript_argument_spans(params_text, 0, len(params_text))
+    return [params_text[start:end].strip() for start, end in spans if params_text[start:end].strip()]
+
+
+def _typescript_param_with_default(param: str) -> str:
+    if "=" in param:
+        return param
+    if ":" not in param:
+        return f"{param} = undefined"
+    name, annotation = param.split(":", 1)
+    ts_type = annotation.strip()
+    return f"{name.strip()}: {ts_type} = {_typescript_default_value_for_type(ts_type)}"
+
+
+def _typescript_default_value_for_type(ts_type: str) -> str:
+    lowered = ts_type.strip().lower()
+    if lowered == "number":
+        return "0"
+    if lowered == "string":
+        return '""'
+    if lowered == "boolean":
+        return "false"
+    if lowered.endswith("[]") or lowered.startswith("array<"):
+        return "[]"
+    return f"undefined as unknown as {ts_type.strip()}"
+
+
 def _build_typescript_missing_member_declaration(*, member: str, usage_line: str, class_text: str) -> str:
     safe_member = re.sub(r"[^A-Za-z0-9_$]", "", member)
     if not safe_member:
         return ""
     if re.search(rf"\.{re.escape(safe_member)}\s*\(", usage_line):
-        return f"  public {safe_member}(): number {{\n    return 0;\n  }}"
+        params = _typescript_method_params_from_usage_line(safe_member, usage_line)
+        return f"  public {safe_member}({params}): number {{\n    return 0;\n  }}"
     if re.search(rf"\.{re.escape(safe_member)}\s*\.length\b", usage_line):
         fallback = "this.id" if re.search(r"\bid\s*:", class_text) else '""'
         return f"  public get {safe_member}(): string {{\n    return {fallback};\n  }}"
+    if _typescript_usage_line_treats_member_as_string(safe_member, usage_line):
+        return f'  public get {safe_member}(): string {{\n    return "";\n  }}'
+    if _typescript_usage_line_treats_member_as_number(safe_member, usage_line):
+        return f"  public get {safe_member}(): number {{\n    return 0;\n  }}"
     return f"  public get {safe_member}(): unknown {{\n    return undefined;\n  }}"
+
+
+def _typescript_usage_line_treats_member_as_string(member: str, usage_line: str) -> bool:
+    member_access = rf"\.{re.escape(member)}\b"
+    comparison = r"(?:={2,3}|!==?)"
+    string_literal = r"['\"]"
+    stringish_identifier = r"[A-Za-z_$][A-Za-z0-9_$]*(?:Id|ID|Name|Key)\b"
+    member_name_is_stringish = bool(re.search(r"(?:id|name|key)$", member, re.IGNORECASE))
+    return bool(
+        re.search(rf"{member_access}\s*{comparison}\s*{string_literal}", usage_line)
+        or re.search(rf"{string_literal}[^'\"]*{comparison}\s*[^;\n]*{member_access}", usage_line)
+        or (
+            member_name_is_stringish
+            and (
+                re.search(rf"{member_access}\s*{comparison}\s*{stringish_identifier}", usage_line)
+                or re.search(rf"{stringish_identifier}\s*{comparison}\s*[^;\n]*{member_access}", usage_line)
+            )
+        )
+    )
+
+
+def _typescript_usage_line_treats_member_as_number(member: str, usage_line: str) -> bool:
+    member_access = rf"\.{re.escape(member)}\b"
+    return bool(
+        re.search(rf"{member_access}\s*(?:[*/%+\-]|[<>]=?)", usage_line)
+        or re.search(rf"(?:[*/%+\-]|[<>]=?)\s*[^;\n]*{member_access}", usage_line)
+    )
+
+
+def _typescript_method_params_from_usage_line(member: str, usage_line: str) -> str:
+    match = re.search(rf"\.{re.escape(member)}\s*\((?P<args>[^)]*)\)", usage_line)
+    if not match:
+        return ""
+    args = _split_typescript_params(str(match.group("args") or ""))
+    return ", ".join(f"_arg{index}: unknown" for index, _arg in enumerate(args))
 
 
 def _resolve_case_variant_relative_path(root: Path, relative_path: str) -> str:

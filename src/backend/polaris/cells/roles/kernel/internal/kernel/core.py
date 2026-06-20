@@ -27,11 +27,9 @@ import uuid
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass  # noqa: F401 - backward-compat re-export (moved to commit_protocol)
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 from polaris.cells.roles.kernel.internal.context_gateway import ContextGatewayConfig, ContextRequest
-from polaris.cells.roles.kernel.internal.exploration_workflow import ExplorationWorkflowRuntime
 from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
     ValidationReport,
     _build_turn_history_and_events,
@@ -43,10 +41,7 @@ from polaris.cells.roles.kernel.internal.kernel.commit_protocol import (
 from polaris.cells.roles.kernel.internal.kernel.delivery_mode import (
     _MATERIALIZE_DELIVERY_MODE_MARKERS,
     _MATERIALIZE_DELIVERY_MODE_VALUES,
-    _context_requests_materialize_delivery,
-    _ensure_context_delivery_mode_marker,
-    _latest_user_content_preview,
-    _text_requests_materialize_delivery,
+    _ensure_context_delivery_mode_marker,  # noqa: F401 - re-exported for backward-compat namespace access
 )
 from polaris.cells.roles.kernel.internal.kernel.error_handler import (
     KernelEventEmitter,
@@ -59,7 +54,6 @@ from polaris.cells.roles.kernel.internal.kernel.suggestions import get_suggestio
 from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _CONTEXT_EXPENSIVE_TOOL_NAMES,
     _CONTEXT_SAFE_MUTATING_TOOL_EXCEPTIONS,
-    _apply_forced_transaction_tool_definitions,
     _apply_runtime_tool_policy,
     _cognitive_runtime_blocked_tools,
     _filter_cognitive_blocked_tool_definitions,
@@ -67,15 +61,22 @@ from polaris.cells.roles.kernel.internal.kernel.tool_policy import (
     _normalize_tool_policy_name,
     _runtime_tool_policy_from_context,
 )
+from polaris.cells.roles.kernel.internal.kernel.transaction_factory import create_transaction_kernel
+from polaris.cells.roles.kernel.internal.kernel.transaction_turn_id import (
+    _resolve_transaction_turn_id,  # noqa: F401 - re-exported for backward-compat namespace access
+    _turn_id_component,  # noqa: F401 - re-exported for backward-compat namespace access
+)
+from polaris.cells.roles.kernel.internal.kernel.turn_execution import (
+    execute_transaction_kernel_stream,
+    execute_transaction_kernel_turn,
+)
 from polaris.cells.roles.kernel.internal.llm_caller import LLMCaller
 from polaris.cells.roles.kernel.internal.metrics import get_metrics_collector
 from polaris.cells.roles.kernel.internal.output_parser import OutputParser, ToolCallResult
 from polaris.cells.roles.kernel.internal.prompt_builder import PromptBuilder
 from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker, QualityResult
-from polaris.cells.roles.kernel.internal.tool_loop_controller import ToolLoopController
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction_kernel import TransactionKernel
-from polaris.cells.roles.kernel.internal.turn_transaction_controller import TransactionConfig
 from polaris.cells.roles.kernel.public.config import KernelConfig, get_default_config
 from polaris.cells.roles.kernel.public.turn_contracts import CommitReceipt, SealedTurn
 from polaris.cells.roles.profile.public.service import (
@@ -86,7 +87,6 @@ from polaris.cells.roles.profile.public.service import (
 )
 from polaris.domain.cognitive_runtime.models import ContextHandoffPack, TurnEnvelope
 from polaris.infrastructure.log_pipeline.writer import LogEventWriter, get_writer
-from polaris.kernelone.audit.context_os_prompt import summarize_context_os_audit_from_ledger
 from polaris.kernelone.context.context_os.models_v2 import (  # noqa: F401 - backward-compat re-export (moved to commit_protocol)
     TranscriptEventV2 as TranscriptEvent,
 )
@@ -95,7 +95,7 @@ from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.trace import get_tracer
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
+    from collections.abc import AsyncGenerator
 
     from polaris.cells.roles.kernel.internal._tool_gateway_di import _DelegatingToolGateway
     from polaris.cells.roles.kernel.internal.tool_gateway import RoleToolGateway
@@ -114,25 +114,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 ContextGatewayConfigFactory = Callable[[str, RoleProfile, RoleTurnRequest], ContextGatewayConfig | None]
-
-
-def _turn_id_component(value: Any) -> str:
-    raw = str(value or "").strip()
-    return "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "-" for ch in raw)[:120]
-
-
-def _resolve_transaction_turn_id(request: RoleTurnRequest, observer_run_id: str) -> str:
-    base = _turn_id_component(getattr(request, "run_id", None) or observer_run_id)
-    if not base:
-        base = uuid.uuid4().hex[:12]
-    task_id = _turn_id_component(getattr(request, "task_id", None))
-    if not task_id:
-        metadata = getattr(request, "metadata", None)
-        if isinstance(metadata, dict):
-            task_id = _turn_id_component(metadata.get("task_id") or metadata.get("pm_task_id"))
-    if task_id and task_id not in base:
-        return f"{base}--{task_id}"
-    return base
 
 
 class RoleExecutionKernel:
@@ -438,334 +419,10 @@ class RoleExecutionKernel:
 
         Uses explicit parameter passing instead of closures to avoid circular
         reference issues between nested classes and the kernel instance.
+        Delegates to
+        :mod:`polaris.cells.roles.kernel.internal.kernel.transaction_factory`.
         """
-        import copy
-        import dataclasses
-        import inspect
-        import weakref
-
-        caller = self._get_llm_caller()
-        # Keep the higher-level caller wrapper as the default entrypoint so
-        # TransactionKernel context overrides (forced tool definitions/tool_choice)
-        # are preserved end-to-end.
-        llm_invoker: Any = caller
-        if not inspect.iscoroutinefunction(getattr(llm_invoker, "call", None)):
-            llm_invoker = caller._get_invoker() if hasattr(caller, "_get_invoker") else caller
-
-        def _normalize_user_text(value: Any) -> str:
-            return str(value or "").replace("\ufeff", "").strip()
-
-        def _build_history_without_current_user(
-            messages: list[dict[str, Any]],
-            current_message: str,
-        ) -> list[tuple[str, str]]:
-            history: list[tuple[str, str]] = []
-            for msg in messages:
-                role_label = str(msg.get("role", ""))
-                content = str(msg.get("content", ""))
-                if role_label in ("user", "assistant", "tool"):
-                    history.append((role_label, content))
-
-            normalized_current = _normalize_user_text(current_message)
-            if normalized_current:
-                history = [
-                    (role_label, content)
-                    for role_label, content in history
-                    if not (role_label == "user" and _normalize_user_text(content) == normalized_current)
-                ]
-
-            return history
-
-        def _build_context_override_with_prebuilt_messages(
-            prebuilt_messages: list[dict[str, Any]],
-            tool_definitions: list[dict[str, Any]] | None = None,
-            tool_choice: Any | None = None,
-            temperature_override: Any | None = None,
-            max_tokens_floor: Any | None = None,
-        ) -> dict[str, Any]:
-            override: dict[str, Any]
-            if isinstance(getattr(provider_request, "context_override", None), dict):
-                override = dict(provider_request.context_override or {})
-            else:
-                override = {}
-            explicit_tool_disable = (
-                isinstance(override.get("_transaction_kernel_forced_tool_definitions"), list)
-                and not override.get("_transaction_kernel_forced_tool_definitions")
-                and str(override.get("_transaction_kernel_forced_tool_choice") or "").strip().lower() == "none"
-            )
-            existing_forced_defs = override.get("_transaction_kernel_forced_tool_definitions")
-            existing_forced_choice = override.get("_transaction_kernel_forced_tool_choice")
-            existing_forced_scope = (
-                (isinstance(existing_forced_defs, list) and bool(existing_forced_defs))
-                or (
-                    existing_forced_choice is not None
-                    and not (
-                        isinstance(existing_forced_choice, str)
-                        and existing_forced_choice.strip().lower() in {"", "auto"}
-                    )
-                )
-            )
-            incoming_choice_is_default = tool_choice is None or (
-                isinstance(tool_choice, str) and tool_choice.strip().lower() == "auto"
-            )
-            preserve_existing_forced_scope = existing_forced_scope and incoming_choice_is_default
-            override["_transaction_kernel_prebuilt_messages"] = [
-                dict(item) for item in prebuilt_messages if isinstance(item, dict)
-            ]
-            if (
-                isinstance(tool_definitions, list)
-                and not explicit_tool_disable
-                and not preserve_existing_forced_scope
-            ):
-                override["_transaction_kernel_forced_tool_definitions"] = [
-                    dict(item) for item in tool_definitions if isinstance(item, dict)
-                ]
-            if tool_choice is not None and not explicit_tool_disable and not preserve_existing_forced_scope:
-                override["_transaction_kernel_forced_tool_choice"] = tool_choice
-            # ADR-0090 W2.6: phase-aware low temperature rides the same channel.
-            if temperature_override is not None:
-                override["_transaction_kernel_temperature_override"] = temperature_override
-            # I3-r22 (F10): the reserved output floor rides the same channel —
-            # resolve_max_tokens reads override["llm_max_tokens"] as the requested
-            # output budget, which TokenBudgetManager.enforce then reserves while
-            # compressing the (bulky retry) prompt to fit the fixed window.
-            if max_tokens_floor is not None:
-                try:
-                    floor_value = int(max_tokens_floor)
-                except (TypeError, ValueError):
-                    floor_value = 0
-                if floor_value > 0:
-                    override["llm_max_tokens"] = floor_value
-            return override
-
-        def _extract_model_override_from_request_payload(request_payload: dict[str, Any]) -> str | None:
-            token = str(request_payload.get("model_override") or "").strip()
-            if not token:
-                return None
-            return token
-
-        def _build_effective_profile(request_payload: dict[str, Any]) -> Any:
-            model_override = _extract_model_override_from_request_payload(request_payload)
-            if not model_override:
-                return provider_profile
-            base_model = str(getattr(provider_profile, "model", "") or "").strip()
-            if not model_override or model_override == base_model:
-                return provider_profile
-            if hasattr(provider_profile, "model_copy"):
-                try:
-                    return provider_profile.model_copy(update={"model": model_override})  # type: ignore[union-attr]
-                except (AttributeError, TypeError, ValueError):
-                    pass
-            if dataclasses.is_dataclass(provider_profile) and not isinstance(provider_profile, type):
-                try:
-                    return dataclasses.replace(provider_profile, model=model_override)  # type: ignore[type-var]
-                except (TypeError, ValueError):
-                    pass
-            try:
-                cloned_profile = copy.copy(provider_profile)
-                object.__setattr__(cloned_profile, "model", model_override)
-                return cloned_profile
-            except (AttributeError, TypeError):
-                fallback_payload = {}
-                if hasattr(provider_profile, "__dict__"):
-                    fallback_payload = dict(getattr(provider_profile, "__dict__", {}) or {})
-                fallback_payload["model"] = model_override
-                return SimpleNamespace(**fallback_payload)
-
-        kernel_weakref = weakref.ref(self)
-        provider_profile = profile
-        provider_request = request
-
-        class _LLMProvider:
-            """Encapsulated LLM provider for TransactionKernel."""
-
-            __slots__ = ()
-
-            async def __call__(self, request_payload: dict[str, Any]) -> dict[str, Any]:
-
-                effective_profile = _build_effective_profile(request_payload)
-                raw_messages = list(request_payload.get("messages", []))
-                messages = list(raw_messages)
-                system_prompt = ""
-                if messages and messages[0].get("role") == "system":
-                    system_prompt = str(messages[0].get("content", ""))
-                    messages = messages[1:]
-
-                current_message = str(getattr(provider_request, "message", "") or "")
-                history = _build_history_without_current_user(messages, current_message)
-
-                context = ContextRequest(
-                    message=current_message,
-                    history=tuple(history),
-                    task_id=provider_request.task_id,
-                    context_override=_build_context_override_with_prebuilt_messages(
-                        raw_messages,
-                        cast("list[dict[str, Any]] | None", request_payload.get("tools")),
-                        request_payload.get("tool_choice"),
-                        request_payload.get("temperature_override"),
-                        request_payload.get("max_tokens_floor"),
-                    ),
-                )
-
-                tool_choice = request_payload.get("tool_choice")
-                tool_definitions = request_payload.get("tools")
-                run_id = str(provider_request.run_id or "").strip() or None
-                task_id_str = str(provider_request.task_id or "").strip() or None
-
-                if tool_choice == "none":
-                    if hasattr(llm_invoker, "call_finalization") and inspect.iscoroutinefunction(
-                        getattr(llm_invoker, "call_finalization", None)
-                    ):
-                        return await llm_invoker.call_finalization(
-                            profile=effective_profile,
-                            system_prompt=system_prompt,
-                            context=context,
-                            run_id=run_id,
-                            task_id=task_id_str,
-                            attempt=0,
-                            turn_round=0,
-                        )
-                    response = await llm_invoker.call(
-                        profile=effective_profile,
-                        system_prompt=system_prompt,
-                        context=context,
-                        run_id=run_id,
-                        task_id=task_id_str,
-                        attempt=0,
-                        turn_round=0,
-                    )
-                    if getattr(response, "error", None):
-                        raise RuntimeError(str(response.error))
-                    return {
-                        "content": response.content,
-                        "thinking": getattr(response, "thinking", None),
-                        "tool_calls": getattr(response, "tool_calls", []) or [],
-                        "model": str(getattr(response, "model", "unknown") or "unknown"),
-                        "usage": dict(getattr(response, "metadata", {}) or {}),
-                    }
-                if hasattr(llm_invoker, "call_decision") and inspect.iscoroutinefunction(
-                    getattr(llm_invoker, "call_decision", None)
-                ):
-                    return await llm_invoker.call_decision(
-                        profile=effective_profile,
-                        system_prompt=system_prompt,
-                        context=context,
-                        tool_definitions=tool_definitions if tool_definitions else None,
-                        run_id=run_id,
-                        task_id=task_id_str,
-                        attempt=0,
-                        turn_round=0,
-                    )
-                response = await llm_invoker.call(
-                    profile=effective_profile,
-                    system_prompt=system_prompt,
-                    context=context,
-                    run_id=run_id,
-                    task_id=task_id_str,
-                    attempt=0,
-                    turn_round=0,
-                )
-                if getattr(response, "error", None):
-                    raise RuntimeError(str(response.error))
-                return {
-                    "content": response.content,
-                    "thinking": getattr(response, "thinking", None),
-                    "tool_calls": getattr(response, "tool_calls", []) or [],
-                    "model": str(getattr(response, "model", "unknown") or "unknown"),
-                    "usage": dict(getattr(response, "metadata", {}) or {}),
-                }
-
-        class _ToolRuntime:
-            """Encapsulated tool runtime for TransactionKernel."""
-
-            __slots__ = ()
-
-            def reset_turn_boundary(self, turn_id: str) -> None:
-                kernel = kernel_weakref()
-                if kernel is None:
-                    return
-                normalized_turn_id = str(turn_id or "").strip()
-                if not normalized_turn_id:
-                    return
-                cast(Any, provider_request).turn_id = normalized_turn_id
-                kernel.reset_tool_gateway_turn_boundary(normalized_turn_id)
-
-            async def __call__(self, tool_name: str, arguments: dict[str, Any]) -> Any:
-                kernel = kernel_weakref()
-                if kernel is None:
-                    raise RuntimeError("Kernel instance no longer exists")
-                return await kernel._execute_single_tool(
-                    tool_name=tool_name,
-                    args=arguments,
-                    context={"profile": provider_profile, "request": provider_request},
-                )
-
-        class _LLMProviderStream:
-            """Encapsulated streaming LLM provider for TransactionKernel."""
-
-            __slots__ = ()
-
-            async def __call__(self, request_payload: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-                if not hasattr(llm_invoker, "call_stream"):
-                    return
-
-                effective_profile = _build_effective_profile(request_payload)
-                raw_messages = list(request_payload.get("messages", []))
-                messages = list(raw_messages)
-                system_prompt = ""
-                if messages and messages[0].get("role") == "system":
-                    system_prompt = str(messages[0].get("content", ""))
-                    messages = messages[1:]
-
-                current_message = str(getattr(provider_request, "message", "") or "")
-                history = _build_history_without_current_user(messages, current_message)
-
-                context = ContextRequest(
-                    message=current_message,
-                    history=tuple(history),
-                    task_id=provider_request.task_id,
-                    context_override=_build_context_override_with_prebuilt_messages(
-                        raw_messages,
-                        cast("list[dict[str, Any]] | None", request_payload.get("tools")),
-                        request_payload.get("tool_choice"),
-                        request_payload.get("temperature_override"),
-                        request_payload.get("max_tokens_floor"),
-                    ),
-                )
-
-                run_id = str(provider_request.run_id or "").strip() or None
-                task_id_str = str(provider_request.task_id or "").strip() or None
-
-                async for chunk in llm_invoker.call_stream(
-                    profile=effective_profile,
-                    system_prompt=system_prompt,
-                    context=context,
-                    run_id=run_id,
-                    task_id=task_id_str,
-                    attempt=0,
-                ):
-                    yield chunk
-
-        llm_provider = _LLMProvider()
-        tool_runtime = _ToolRuntime()
-        llm_provider_stream = _LLMProviderStream() if hasattr(llm_invoker, "call_stream") else None
-
-        workflow_runtime = ExplorationWorkflowRuntime(
-            tool_executor=tool_runtime,
-            synthesis_llm=None,
-        )
-
-        return TransactionKernel(
-            llm_provider=llm_provider,
-            tool_runtime=tool_runtime,
-            config=TransactionConfig(
-                domain="code" if role in {"director", "chief_engineer"} else "document",
-                workspace=str(request.workspace or "").strip(),
-                mutation_guard_mode="strict" if role == "director" else "warn",
-            ),
-            workflow_runtime=workflow_runtime,
-            llm_provider_stream=llm_provider_stream,
-        )
+        return create_transaction_kernel(self, role, profile, request)
 
     def _build_context_handoff_pack(
         self,
@@ -917,269 +574,23 @@ class RoleExecutionKernel:
         observer_run_id: str,
         response_schema: type | None,
     ) -> RoleTurnResult:
-        """Execute a single turn via TransactionKernel and map to RoleTurnResult."""
-        from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-            build_native_tool_schemas,
-            extract_declared_step_target_files,
-            pin_write_tool_file_param_to_targets,
-            resolve_from_scratch_write_target,
-            resolve_repair_edit_target,
-            restrict_tool_definitions_to_edit,
-            restrict_tool_definitions_to_write,
-        )
-        from polaris.cells.roles.kernel.public.service import RoleContextGateway
+        """Execute a single turn via TransactionKernel and map to RoleTurnResult.
 
-        tk = self._create_transaction_kernel(role, profile, request)
-        turn_id = _resolve_transaction_turn_id(request, observer_run_id)
-
-        controller = ToolLoopController.from_request(request=request, profile=profile)
-        context_request = controller.build_context_request()
-        context_gateway = RoleContextGateway(
+        Delegates to
+        :mod:`polaris.cells.roles.kernel.internal.kernel.turn_execution`.
+        """
+        return await execute_transaction_kernel_turn(
+            self,
+            role,
             profile,
-            self.workspace,
-            config=self._build_context_gateway_config(role, profile, request),
-        )
-        # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt — no
-        # second projection pass.
-        context_result = await context_gateway.build_context(context_request, system_prompt=system_prompt)
-        messages: list[dict[str, Any]] = list(context_result.messages)
-        messages = _ensure_context_delivery_mode_marker(
-            messages,
-            getattr(request, "context_override", None),
-            getattr(request, "message", None),
-        )
-        if os.getenv("KERNELONE_DELIVERY_MODE_TRACE") == "1":
-            context_override = getattr(request, "context_override", None)
-            logger.warning(
-                "delivery-mode-kernel-trace: role=%s request_marker=%s context_materialize=%s latest_marker=%s "
-                "latest_user_preview=%r",
-                role,
-                _text_requests_materialize_delivery(getattr(request, "message", None)),
-                _context_requests_materialize_delivery(context_override),
-                _text_requests_materialize_delivery(_latest_user_content_preview(messages)),
-                _latest_user_content_preview(messages),
-            )
-
-        tool_definitions = (
-            []
-            if self._benchmark_requires_no_tools(request) or self._request_forces_no_transaction_tools(request)
-            else build_native_tool_schemas(profile)
-        )
-        tool_definitions, runtime_tool_policy_audit = self._apply_runtime_tool_policy(
-            request=request,
-            context_result=context_result,
-            tool_definitions=tool_definitions,
-        )
-        # Fix-11 (live I3-r9/r12): a fission step is single-file by contract —
-        # pin write tools' file-param enum to the declared target. Strict guided
-        # decoding (named tool forcing) makes a wrong-file write ungenerable;
-        # schema-advisory providers still see the strongest possible signal.
-        declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
-        if declared_step_targets:
-            tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
-        # Prong A (I3-r23): a from-scratch leaf step writes on turn 1 — restrict to
-        # write tools so the weak Director cannot detour into a read, which triggers
-        # an output-starving bootstrap retry (live r23 main.js dead-letter).
-        _co_dbg = getattr(request, "context_override", None)
-        logger.info(
-            "PRONG_A_TRACE: ctx_override_dict=%s has_construction_step=%s keys=%s",
-            isinstance(_co_dbg, dict),
-            isinstance(_co_dbg, dict) and isinstance(_co_dbg.get("construction_step"), dict),
-            list(_co_dbg.keys())[:14] if isinstance(_co_dbg, dict) else None,
-        )
-        _from_scratch_target = resolve_from_scratch_write_target(
-            getattr(request, "context_override", None), str(request.workspace or self.workspace or ".")
-        )
-        if _from_scratch_target:
-            tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
-            logger.info(
-                "first-turn write-only for from-scratch leaf step: target=%s",
-                _from_scratch_target,
-            )
-        else:
-            # R7 (I3-r28): repair/bounce turn on an EXISTING target edits in place —
-            # drop the whole-file rewrite verb so the weak model fixes the named
-            # failure instead of rewriting the file smaller (live r28 main.js
-            # 5762B->3095B). Mutually exclusive with the from-scratch branch above.
-            _repair_target = resolve_repair_edit_target(
-                getattr(request, "context_override", None), str(request.workspace or self.workspace or ".")
-            )
-            if _repair_target:
-                tool_definitions = restrict_tool_definitions_to_edit(tool_definitions)
-                logger.info(
-                    "repair-turn edit-only for existing target: target=%s",
-                    _repair_target,
-                )
-        tool_definitions = _apply_forced_transaction_tool_definitions(
-            tool_definitions,
-            getattr(request, "context_override", None),
+            request,
+            system_prompt,
+            fingerprint,
+            observer_run_id,
+            response_schema,
         )
 
-        try:
-            tk_result = await tk.execute(turn_id, messages, tool_definitions)
-        except Exception as exc:
-            logger.exception("TransactionKernel execute failed: turn_id=%s", turn_id)
-            try:
-                context_gateway.record_projection_outcome(
-                    success=False,
-                    tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-                )
-            except (AttributeError, RuntimeError, TypeError, ValueError):
-                logger.debug("Projection outcome feedback failed after TransactionKernel error", exc_info=True)
-            return RoleTurnResult(
-                content="",
-                error=f"TransactionKernel execution failed: {exc}",
-                is_complete=False,
-                profile_version=profile.version,
-                prompt_fingerprint=fingerprint,
-                tool_policy_id=profile.tool_policy.policy_id,
-            )
-
-        kind = tk_result.get("kind", "final_answer")
-        visible_content = tk_result.get("visible_content", "")
-        thinking_text: str | None = None
-        if visible_content:
-            parsed = self._get_output_parser().parse_thinking(visible_content)
-            visible_content = str(parsed.clean_content or "")
-            thinking_text = parsed.thinking
-        batch_receipt = tk_result.get("batch_receipt")
-        normalized_batch_receipt = dict(batch_receipt) if isinstance(batch_receipt, dict) else None
-        finalization = tk_result.get("finalization")
-        workflow_context = tk_result.get("workflow_context")
-        metrics = tk_result.get("metrics", {})
-
-        # Pull the ledger from the TransactionKernel result so it can be committed
-        # into the ContextOS snapshot, eliminating the parallel TurnLedger state.
-        ledger = tk_result.get("ledger")
-
-        # Map tool calls/results from batch receipt
-        tool_calls: list[dict[str, Any]] = []
-        tool_results: list[dict[str, Any]] = []
-        if batch_receipt:
-            for result in batch_receipt.get("results", []):
-                tool_calls.append(
-                    {
-                        "tool": result.get("tool_name", ""),
-                        "args": {},
-                        "call_id": result.get("call_id", ""),
-                    }
-                )
-                tool_results.append(
-                    {
-                        "tool": result.get("tool_name", ""),
-                        "tool_name": result.get("tool_name", ""),
-                        "result": result.get("result"),
-                        "success": result.get("status") == "success",
-                        "status": result.get("status"),
-                        "call_id": result.get("call_id", ""),
-                        "arguments": result.get("arguments"),
-                        "effect_receipt": result.get("effect_receipt"),
-                        "raw_result": dict(result),
-                    }
-                )
-
-        # Handle structured output if response_schema was requested
-        structured_output: dict[str, Any] | None = None
-        if response_schema is not None and visible_content:
-            try:
-                candidate = self._get_output_parser().extract_json(visible_content)
-                if candidate is not None:
-                    validated = response_schema(**candidate)
-                    structured_output = validated.model_dump()
-            except (RuntimeError, ValueError):
-                structured_output = None
-
-        execution_stats = {
-            "duration_ms": metrics.get("duration_ms", 0),
-            "llm_calls": metrics.get("llm_calls", 0),
-            "tool_calls": metrics.get("tool_calls", 0),
-            "transaction_kernel": True,
-            **runtime_tool_policy_audit,
-        }
-
-        metadata: dict[str, Any] = {}
-        context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
-        if context_os_audit_summary:
-            metadata["context_os_audit"] = context_os_audit_summary
-        if kind == "handoff_workflow" and workflow_context is not None:
-            handoff_pack = self._build_context_handoff_pack(tk_result, role, request)
-            metadata["handoff_pack"] = handoff_pack.to_dict()
-            metadata["transaction_kind"] = "handoff_workflow"
-
-        error_msg: str | None = None
-        is_complete = True
-        if kind == "ask_user" and isinstance(finalization, dict):
-            # SUSPENDED state: model needs user clarification. Map to error for backward
-            # compat in the legacy kernel core facade (callers check error to retry).
-            error_msg = finalization.get("error") or finalization.get("suspended_reason")
-            is_complete = False
-        if isinstance(finalization, dict) and bool(finalization.get("needs_followup_workflow")):
-            workflow_reason = str(finalization.get("workflow_reason") or kind or "").strip()
-            metadata["transaction_kind"] = str(kind or workflow_reason)
-            metadata["needs_followup_workflow"] = True
-            metadata["workflow_reason"] = workflow_reason
-            metadata["blocked_reason"] = finalization.get("blocked_reason")
-            metadata["blocked_detail"] = finalization.get("blocked_detail")
-            error_msg = (
-                str(
-                    finalization.get("error")
-                    or finalization.get("blocked_reason")
-                    or workflow_reason
-                    or "needs_followup_workflow"
-                ).strip()
-                or None
-            )
-            is_complete = False
-
-        final_thinking = thinking_text
-        if final_thinking is None and isinstance(finalization, dict):
-            final_thinking = finalization.get("final_visible_message")
-
-        try:
-            metadata["projection_adaptive_weights_after_turn"] = context_gateway.record_projection_outcome(
-                success=bool(is_complete and not error_msg),
-                tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-            )
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            logger.debug("Projection outcome feedback failed", exc_info=True)
-
-        # Build turn history and events metadata for ContextOS persistence
-        turn_history, turn_events_metadata = self._build_turn_history_and_events(
-            turn_id=turn_id,
-            request=request,
-            visible_content=visible_content,
-            thinking=final_thinking,
-            tool_results=tool_results,
-        )
-
-        self._commit_turn_to_snapshot(
-            request=request,
-            turn_id=turn_id,
-            turn_history=turn_history,
-            turn_events_metadata=turn_events_metadata,
-            tool_results=tool_results,
-            ledger=ledger,
-        )
-
-        return RoleTurnResult(
-            content=visible_content,
-            thinking=final_thinking,
-            structured_output=structured_output,
-            tool_calls=tool_calls,
-            tool_results=tool_results,
-            batch_receipt=normalized_batch_receipt,
-            profile_version=profile.version,
-            prompt_fingerprint=fingerprint,
-            tool_policy_id=profile.tool_policy.policy_id,
-            error=error_msg,
-            is_complete=is_complete,
-            execution_stats=execution_stats,
-            turn_history=turn_history,
-            turn_events_metadata=turn_events_metadata,
-            metadata=metadata,
-        )
-
-    async def _execute_transaction_kernel_stream(
+    def _execute_transaction_kernel_stream(
         self,
         role: str,
         profile: RoleProfile,
@@ -1189,262 +600,21 @@ class RoleExecutionKernel:
         stream_run_id: str,
         uep_publisher: UEPEventPublisher,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream execution via TransactionKernel (compatibility shim)."""
-        from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
-            build_native_tool_schemas,
-            extract_declared_step_target_files,
-            pin_write_tool_file_param_to_targets,
-            resolve_from_scratch_write_target,
-            resolve_repair_edit_target,
-            restrict_tool_definitions_to_edit,
-            restrict_tool_definitions_to_write,
-        )
-        from polaris.cells.roles.kernel.public.service import RoleContextGateway
-        from polaris.cells.roles.kernel.public.turn_events import (
-            CompletionEvent,
-            ContentChunkEvent,
-            ErrorEvent,
-            FinalizationEvent,
-            ToolBatchEvent,
-            TurnPhaseEvent,
-        )
+        """Stream execution via TransactionKernel (compatibility shim).
 
-        tk = self._create_transaction_kernel(role, profile, request)
-        turn_id = str(request.run_id or stream_run_id or uuid.uuid4().hex[:12])
-
-        controller = ToolLoopController.from_request(request=request, profile=profile)
-        context_request = controller.build_context_request()
-        context_gateway = RoleContextGateway(
+        Delegates to
+        :mod:`polaris.cells.roles.kernel.internal.kernel.turn_execution`.
+        """
+        return execute_transaction_kernel_stream(
+            self,
+            role,
             profile,
-            self.workspace,
-            config=self._build_context_gateway_config(role, profile, request),
+            request,
+            system_prompt,
+            fingerprint,
+            stream_run_id,
+            uep_publisher,
         )
-        # ADR-0090 I4.3: gateway budgets AND prepends the role system prompt — no
-        # second projection pass.
-        context_result = await context_gateway.build_context(context_request, system_prompt=system_prompt)
-        messages: list[dict[str, Any]] = list(context_result.messages)
-
-        tool_definitions = (
-            []
-            if self._benchmark_requires_no_tools(request) or self._request_forces_no_transaction_tools(request)
-            else build_native_tool_schemas(profile)
-        )
-        tool_definitions, runtime_tool_policy_audit = self._apply_runtime_tool_policy(
-            request=request,
-            context_result=context_result,
-            tool_definitions=tool_definitions,
-        )
-        # Fix-11 (live I3-r9/r12): a fission step is single-file by contract —
-        # pin write tools' file-param enum to the declared target. Strict guided
-        # decoding (named tool forcing) makes a wrong-file write ungenerable;
-        # schema-advisory providers still see the strongest possible signal.
-        declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
-        if declared_step_targets:
-            tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
-        # Prong A (I3-r23): from-scratch leaf -> restrict to write tools on turn 1.
-        _from_scratch_target = resolve_from_scratch_write_target(
-            getattr(request, "context_override", None), str(request.workspace or self.workspace or ".")
-        )
-        if _from_scratch_target:
-            tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
-            logger.info(
-                "first-turn write-only for from-scratch leaf step: target=%s",
-                _from_scratch_target,
-            )
-        else:
-            # R7 (I3-r28): repair/bounce turn on an EXISTING target edits in place —
-            # drop the whole-file rewrite verb so the weak model fixes the named
-            # failure instead of rewriting the file smaller (live r28 main.js
-            # 5762B->3095B). Mutually exclusive with the from-scratch branch above.
-            _repair_target = resolve_repair_edit_target(
-                getattr(request, "context_override", None), str(request.workspace or self.workspace or ".")
-            )
-            if _repair_target:
-                tool_definitions = restrict_tool_definitions_to_edit(tool_definitions)
-                logger.info(
-                    "repair-turn edit-only for existing target: target=%s",
-                    _repair_target,
-                )
-        tool_definitions = _apply_forced_transaction_tool_definitions(
-            tool_definitions,
-            getattr(request, "context_override", None),
-        )
-
-        accumulated_content: list[str] = []
-        accumulated_thinking: list[str] = []
-        stream_tool_calls: list[dict[str, Any]] = []
-        stream_tool_results: list[dict[str, Any]] = []
-        async for event in tk.execute_stream(turn_id, messages, tool_definitions):
-            event_dict: dict[str, Any]
-            if isinstance(event, TurnPhaseEvent):
-                event_dict = {
-                    "type": event.phase,
-                    "turn_id": event.turn_id,
-                    "metadata": dict(event.metadata),
-                }
-            elif isinstance(event, ContentChunkEvent):
-                if event.is_thinking:
-                    accumulated_thinking.append(event.chunk)
-                    event_dict = {
-                        "type": "thinking_chunk",
-                        "content": event.chunk,
-                        "turn_id": event.turn_id,
-                    }
-                else:
-                    if getattr(event, "is_finalization", False):
-                        accumulated_content = [event.chunk]
-                    else:
-                        accumulated_content.append(event.chunk)
-                    event_dict = {
-                        "type": "content_chunk",
-                        "content": event.chunk,
-                        "turn_id": event.turn_id,
-                    }
-            elif isinstance(event, ToolBatchEvent):
-                arguments = dict(event.arguments) if isinstance(event.arguments, dict) else {}
-                if event.status == "started":
-                    stream_tool_calls.append(
-                        {
-                            "tool": event.tool_name,
-                            "args": arguments,
-                            "call_id": event.call_id,
-                        }
-                    )
-                else:
-                    stream_tool_results.append(
-                        {
-                            "tool": event.tool_name,
-                            "result": event.result,
-                            "success": event.status == "success",
-                            "call_id": event.call_id,
-                        }
-                    )
-                event_dict = {
-                    "type": "tool_result" if event.status in ("success", "error") else "tool_call",
-                    "tool": event.tool_name,
-                    "call_id": event.call_id,
-                    "status": event.status,
-                    "progress": event.progress,
-                    "turn_id": event.turn_id,
-                    "args": arguments,
-                    "result": event.result,
-                    "error": event.error,
-                }
-            elif isinstance(event, FinalizationEvent):
-                continue
-            elif isinstance(event, CompletionEvent):
-                final_content = "".join(accumulated_content)
-                final_thinking = "".join(accumulated_thinking) or None
-                # Backward compat: failed / suspended completions map to error events
-                if event.status in ("failed", "suspended"):
-                    try:
-                        context_gateway.record_projection_outcome(
-                            success=False,
-                            tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-                        )
-                    except (AttributeError, RuntimeError, TypeError, ValueError):
-                        logger.debug("Projection outcome feedback failed after stream failure", exc_info=True)
-                    event_dict = {
-                        "type": "error",
-                        "error": event.error or "execution_failed",
-                        "error_type": "stream_execution_failed",
-                        "turn_id": event.turn_id,
-                    }
-                    await uep_publisher.publish_stream_event(
-                        workspace=self.workspace or os.getcwd(),
-                        run_id=stream_run_id,
-                        role=role,
-                        event_type="error",
-                        payload=event_dict,
-                    )
-                    yield event_dict
-                    return
-                event_dict = {
-                    "type": "complete",
-                    "status": event.status,
-                    "content": final_content,
-                    "thinking": final_thinking,
-                    "duration_ms": event.duration_ms,
-                    "llm_calls": event.llm_calls,
-                    "tool_calls": event.tool_calls,
-                    "turn_id": event.turn_id,
-                }
-                if event.monitoring:
-                    event_dict["monitoring"] = dict(event.monitoring)
-                result_metadata: dict[str, Any] = {}
-                monitoring_payload = event.monitoring if isinstance(event.monitoring, dict) else {}
-                context_os_audit = monitoring_payload.get("context_os_audit")
-                if isinstance(context_os_audit, dict):
-                    result_metadata["context_os_audit"] = dict(context_os_audit)
-                    event_dict["metadata"] = dict(result_metadata)
-                try:
-                    result_metadata["projection_adaptive_weights_after_turn"] = (
-                        context_gateway.record_projection_outcome(
-                            success=event.status == "success",
-                            tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-                        )
-                    )
-                    event_dict["metadata"] = dict(result_metadata)
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    logger.debug("Projection outcome feedback failed after stream completion", exc_info=True)
-                # Include RoleTurnResult so that stream consumers can persist turn state
-                turn_history, turn_events_metadata = self._build_turn_history_and_events(
-                    turn_id=turn_id,
-                    request=request,
-                    visible_content=final_content,
-                    thinking=final_thinking,
-                    tool_results=stream_tool_results,
-                )
-                from polaris.cells.roles.profile.public.service import RoleTurnResult
-
-                event_dict["result"] = RoleTurnResult(
-                    content=final_content,
-                    thinking=final_thinking,
-                    tool_calls=stream_tool_calls,
-                    tool_results=stream_tool_results,
-                    batch_receipt=dict(event.batch_receipt)
-                    if isinstance(getattr(event, "batch_receipt", None), dict)
-                    else None,
-                    profile_version=profile.version,
-                    prompt_fingerprint=fingerprint,
-                    tool_policy_id=profile.tool_policy.policy_id,
-                    is_complete=True,
-                    execution_stats={
-                        "duration_ms": event.duration_ms,
-                        "llm_calls": event.llm_calls,
-                        "tool_calls": event.tool_calls,
-                        "transaction_kernel": True,
-                        **runtime_tool_policy_audit,
-                    },
-                    turn_history=turn_history,
-                    turn_events_metadata=turn_events_metadata,
-                    metadata=result_metadata,
-                )
-            elif isinstance(event, ErrorEvent):
-                try:
-                    context_gateway.record_projection_outcome(
-                        success=False,
-                        tokens_used=int(getattr(context_result, "token_estimate", 0) or 0),
-                    )
-                except (AttributeError, RuntimeError, TypeError, ValueError):
-                    logger.debug("Projection outcome feedback failed after stream error", exc_info=True)
-                event_dict = {
-                    "type": "error",
-                    "error": event.message,
-                    "error_type": event.error_type,
-                    "turn_id": event.turn_id,
-                }
-            else:
-                continue
-
-            await uep_publisher.publish_stream_event(
-                workspace=self.workspace or os.getcwd(),
-                run_id=stream_run_id,
-                role=role,
-                event_type=event_dict.get("type", "unknown"),
-                payload=event_dict,
-            )
-            yield event_dict
 
     def _build_context_request_for_stream(self, messages: list[dict[str, Any]], request: RoleTurnRequest) -> Any:
         """Build a minimal ContextRequest for compatibility call_stream providers."""

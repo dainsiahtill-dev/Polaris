@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from dataclasses import fields
 from unittest.mock import patch
 
@@ -282,3 +283,26 @@ async def test_workflow_engine_persists_unexpected_handler_exception(tmp_path) -
         assert finished[-1].payload["error"] == "broken workflow payload"
     finally:
         await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_runtime_store_recovers_missing_schema_tables(tmp_path) -> None:
+    """Runtime DB table loss must be healed before workflow methods query it."""
+    from polaris.infrastructure.db.repositories.workflow_runtime_store import SqliteRuntimeStore
+
+    db_path = tmp_path / "workflow.runtime.db"
+    store = SqliteRuntimeStore(str(db_path))
+    await store.create_execution("wf-before-drop", "demo", {})
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("DROP TABLE workflow_execution")
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert await store.get_execution("wf-before-drop") is None
+    await store.create_execution("wf-after-drop", "demo", {})
+    recovered = await store.get_execution("wf-after-drop")
+    assert recovered is not None
+    assert recovered.workflow_id == "wf-after-drop"

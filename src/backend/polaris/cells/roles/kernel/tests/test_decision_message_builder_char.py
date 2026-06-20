@@ -1,0 +1,124 @@
+# -*- coding: utf-8 -*-
+"""Characterization tests for ``_build_decision_messages`` branches.
+
+These pin the CURRENT behavior of the decision-message synthesis before the
+``transaction/decision_message_builder.py`` extraction (REMAINING_06 blueprint
+step 1). They cover the branch-matrix coverage gaps not exercised by
+``test_transaction_kernel_facade.py``:
+
+* implementing-phase HARD GATE injection (+ allowed/forbidden tool wording)
+* MATERIALIZE positive-only task-contract filtering (NEGATIVE lines stripped)
+* control-plane message exclusion from the data plane
+* empty tool_definitions short-circuit
+
+UTF-8 编码验证: 本文所有文本使用 UTF-8。
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
+
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
+    DeliveryContract,
+    DeliveryMode,
+)
+from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
+from polaris.cells.roles.kernel.internal.turn_transaction_controller import (
+    TransactionConfig,
+    TurnTransactionController,
+)
+
+
+def _make_controller() -> TurnTransactionController:
+    return TurnTransactionController(
+        llm_provider=AsyncMock(return_value={}),
+        tool_runtime=AsyncMock(return_value={}),
+        config=TransactionConfig(domain="code"),
+    )
+
+
+def test_build_decision_messages_no_tool_definitions_returns_data_plane_only() -> None:
+    controller = _make_controller()
+    context = [
+        {"role": "user", "content": "请实现 app.py"},
+        {"role": "system", "content": "control hint", "metadata": {"plane": "control"}},
+    ]
+
+    messages = controller._build_decision_messages(context, [])
+
+    # No tools => early return; only the non-control data-plane messages survive.
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+    assert all(m.get("metadata", {}).get("plane") != "control" for m in messages)
+
+
+def test_build_decision_messages_injects_implementing_hard_gate() -> None:
+    controller = _make_controller()
+    context = [
+        {"role": "user", "content": "当前阶段: implementing\n请实现 src/app.ts"},
+    ]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+    ]
+
+    messages = controller._build_decision_messages(context, tool_definitions)
+
+    system_messages = [str(m.get("content") or "") for m in messages if m.get("role") == "system"]
+    assert any("HARD GATE (Implementing Phase)" in text for text in system_messages)
+    # Forbidden broad-exploration wording present
+    assert any("Broad exploration tools (glob, repo_rg, repo_tree) are FORBIDDEN" in text for text in system_messages)
+    # Allowed targeted-read wording present
+    assert any("ALLOWED: You may call read_file or repo_read_head" in text for text in system_messages)
+    # The constraint carries the dedicated control-plane kind marker.
+    assert any(
+        m.get("metadata", {}).get("kind") == "execution_constraint" for m in messages if m.get("role") == "system"
+    )
+
+
+def test_build_decision_messages_materialize_strips_negative_task_contract_lines() -> None:
+    controller = _make_controller()
+    # A benchmark contract drives task_contract_hint synthesis with NEGATIVE lines.
+    user_content = "[Benchmark Tool Contract]\nRequired tools: write_file\n请实现 src/main.ts 并写入文件。"
+    context = [{"role": "user", "content": user_content}]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+    ]
+    ledger = TurnLedger(turn_id="turn_materialize_positive_filter")
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+
+    messages = controller._build_decision_messages(context, tool_definitions, ledger)
+
+    # In MATERIALIZE (non-SUPER) mode any positive task-contract block emitted must
+    # not contain NEGATIVE markers (INVALID / HARD GATE / rejected / read-only ...).
+    positive_blocks = [
+        str(m.get("content") or "")
+        for m in messages
+        if m.get("role") == "system" and m.get("metadata", {}).get("kind") == "task_contract_positive"
+    ]
+    for block in positive_blocks:
+        lowered = block.lower()
+        assert "invalid" not in lowered
+        assert "hard gate" not in lowered
+        assert "rejected" not in lowered
+        assert "read-only" not in lowered
+
+
+def test_build_decision_messages_excludes_control_plane_from_data_plane() -> None:
+    controller = _make_controller()
+    context = [
+        {"role": "user", "content": "总结 README"},
+        {
+            "role": "assistant",
+            "content": "control-only",
+            "metadata": {"plane": "control"},
+        },
+    ]
+    tool_definitions = [{"type": "function", "function": {"name": "read_file"}}]
+
+    messages = controller._build_decision_messages(context, tool_definitions)
+
+    # The control-plane assistant message must not appear as a copied data-plane
+    # message; only NEW control messages this builder appends carry plane=control.
+    assert not any(m.get("content") == "control-only" for m in messages)

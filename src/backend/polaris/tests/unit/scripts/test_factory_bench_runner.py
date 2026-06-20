@@ -11,6 +11,15 @@ from typing import Any
 
 from scripts.factory_bench import run_factory_bench as bench
 from scripts.factory_bench.run_factory_bench import (
+    _desktop_backend_info_path,
+    _is_local_backend_url,
+    _next_immutable_json_path,
+    _read_desktop_backend_info,
+    _resolve_backend_token,
+    _resolve_backend_url,
+    _resolve_polaris_home,
+    _sanitize_run_id,
+    _write_immutable_json,
     apply_factory_bench_gates,
     discover_artifacts,
     map_factory_run_to_chain_results,
@@ -936,3 +945,492 @@ def test_run_factory_chain_on_stage_change_callback(monkeypatch: Any, tmp_path: 
 
     assert len(callbacks) == 1
     assert callbacks[0][0] == "completed"
+
+
+# --- _sanitize_run_id ---
+
+
+def test_sanitize_run_id_passthrough_clean_value() -> None:
+    assert _sanitize_run_id("bench-2026-06") == "bench-2026-06"
+
+
+def test_sanitize_run_id_replaces_unsafe_chars() -> None:
+    result = _sanitize_run_id("hello world/colons:and*stars")
+    assert "/" not in result
+    assert ":" not in result
+    assert "*" not in result
+    assert " " not in result
+    assert result == "hello-world-colons-and-stars"
+
+
+def test_sanitize_run_id_empty_generates_nonempty() -> None:
+    result = _sanitize_run_id("")
+    assert result
+    assert len(result) >= 8
+
+
+def test_sanitize_run_id_none_generates_nonempty() -> None:
+    result = _sanitize_run_id(None)
+    assert result
+    assert len(result) >= 8
+
+
+def test_sanitize_run_id_whitespace_only_generates_nonempty() -> None:
+    result = _sanitize_run_id("   ")
+    assert result
+    assert len(result) >= 8
+
+
+def test_sanitize_run_id_collapses_consecutive_dashes() -> None:
+    result = _sanitize_run_id("a///b")
+    assert "--" not in result
+    assert result == "a-b"
+
+
+# --- _write_immutable_json ---
+
+
+def test_write_immutable_json_first_write_creates_file(tmp_path: Path) -> None:
+    target = tmp_path / "L1-01.audit.json"
+    payload = {"project_id": "L1-01", "status": "PASS"}
+
+    written = _write_immutable_json(target, payload)
+
+    assert written == target
+    assert json.loads(target.read_text(encoding="utf-8")) == payload
+
+
+def test_write_immutable_json_second_write_does_not_overwrite(tmp_path: Path) -> None:
+    target = tmp_path / "L1-01.audit.json"
+    first_payload = {"project_id": "L1-01", "round": 1}
+    second_payload = {"project_id": "L1-01", "round": 2}
+
+    first_written = _write_immutable_json(target, first_payload)
+    second_written = _write_immutable_json(target, second_payload)
+
+    assert first_written == target
+    assert second_written == tmp_path / "L1-01.audit.2.json"
+    assert json.loads(target.read_text(encoding="utf-8")) == first_payload
+    assert json.loads(second_written.read_text(encoding="utf-8")) == second_payload
+
+
+def test_write_immutable_json_increments_slot(tmp_path: Path) -> None:
+    target = tmp_path / "L1-01.audit.json"
+
+    _write_immutable_json(target, {"v": 1})
+    _write_immutable_json(target, {"v": 2})
+    third = _write_immutable_json(target, {"v": 3})
+
+    assert third == tmp_path / "L1-01.audit.3.json"
+    assert json.loads(third.read_text(encoding="utf-8")) == {"v": 3}
+
+
+def test_write_immutable_json_skips_existing_slots(tmp_path: Path) -> None:
+    target = tmp_path / "L1-01.audit.json"
+    # Pre-create .2.json to force skip
+    (tmp_path / "L1-01.audit.2.json").write_text("{}", encoding="utf-8")
+
+    written = _write_immutable_json(target, {"v": 1})
+
+    assert written == target
+    written2 = _write_immutable_json(target, {"v": 2})
+    assert written2 == tmp_path / "L1-01.audit.3.json"
+
+
+def test_next_immutable_json_path_returns_initial_path_when_free(tmp_path: Path) -> None:
+    target = tmp_path / "L1-01.audit.json"
+
+    resolved = _next_immutable_json_path(target)
+
+    assert resolved == target
+
+
+def test_next_immutable_json_path_returns_first_free_slot(tmp_path: Path) -> None:
+    target = tmp_path / "L1-01.audit.json"
+    target.write_text("{}", encoding="utf-8")
+    (tmp_path / "L1-01.audit.2.json").write_text("{}", encoding="utf-8")
+
+    resolved = _next_immutable_json_path(target)
+
+    assert resolved == tmp_path / "L1-01.audit.3.json"
+
+
+def test_write_immutable_json_payload_contains_audit_path(tmp_path: Path) -> None:
+    target = tmp_path / "L1-01.audit.json"
+    relative_base = tmp_path
+
+    written = _write_immutable_json(target, {"audit_path": str(target.relative_to(relative_base))})
+
+    data = json.loads(written.read_text(encoding="utf-8"))
+    assert data["audit_path"] == str(target.relative_to(relative_base))
+
+
+# --- run_id singleton across multiple project metas ---
+
+
+def test_main_run_id_shared_across_projects(monkeypatch: Any, tmp_path: Path) -> None:
+    """Verify that all projects in a bench run share the same run_id."""
+    projects = [
+        {"id": "L1-01", "level": 1, "title": "One", "brief": "Build one"},
+        {"id": "L2-02", "level": 2, "title": "Two", "brief": "Build two"},
+    ]
+
+    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
+    monkeypatch.setattr(bench, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-shared")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(
+        bench,
+        "build_factory_audit_record",
+        lambda **_kwargs: {
+            "all_checks_passed": True,
+            "static_checks_passed": True,
+            "has_plan_doc": True,
+            "has_blueprint_doc": True,
+            "has_qa_verdict": True,
+            "code_file_count": 1,
+            "checks": [],
+        },
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_real_run_gate",
+        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_llm_route_audit",
+        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
+    )
+
+    def _chain(project: dict[str, Any], *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "exit_code": 0,
+            "duration_s": 0.01,
+            "chain_results": {
+                "contract_goal": str(project["brief"]),
+                "qa_ran": True,
+                "qa_passed": True,
+                "director": {"total": 1, "successes": 1, "failures": 0},
+            },
+        }
+
+    monkeypatch.setattr(bench, "run_factory_chain", _chain)
+
+    result = bench.main()
+
+    assert result == 0
+    audit_dir = tmp_path / "audits"
+    run_dirs = list(audit_dir.iterdir())
+    assert len(run_dirs) == 1, f"Expected single audit run_dir, got {run_dirs}"
+    run_dir = run_dirs[0]
+    audit_files = sorted(run_dir.glob("*.audit.json"))
+    assert len(audit_files) == 2
+    ids = set()
+    for af in audit_files:
+        data = json.loads(af.read_text(encoding="utf-8"))
+        ids.add(data["run_id"])
+        assert "audit_path" in data, "Per-project audit JSON must include audit_path"
+        assert (tmp_path / data["audit_path"]).resolve() == af.resolve(), (
+            "audit_path must resolve to the actual written audit file"
+        )
+    assert len(ids) == 1, "All projects should share the same run_id"
+
+
+def test_main_audit_path_points_to_conflict_when_same_id_reused(monkeypatch: Any, tmp_path: Path) -> None:
+    """If the same project id appears twice, the second audit must reference the conflict file."""
+    projects = [
+        {"id": "L1-01", "level": 1, "title": "One", "brief": "Build one"},
+        {"id": "L1-01", "level": 2, "title": "One Again", "brief": "Build one again"},
+    ]
+
+    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
+    monkeypatch.setattr(bench, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-conflict")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(
+        bench,
+        "build_factory_audit_record",
+        lambda **_kwargs: {
+            "all_checks_passed": True,
+            "static_checks_passed": True,
+            "has_plan_doc": True,
+            "has_blueprint_doc": True,
+            "has_qa_verdict": True,
+            "code_file_count": 1,
+            "checks": [],
+        },
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_real_run_gate",
+        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_llm_route_audit",
+        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
+    )
+
+    def _chain(project: dict[str, Any], *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "exit_code": 0,
+            "duration_s": 0.01,
+            "chain_results": {
+                "contract_goal": str(project["brief"]),
+                "qa_ran": True,
+                "qa_passed": True,
+                "director": {"total": 1, "successes": 1, "failures": 0},
+            },
+        }
+
+    monkeypatch.setattr(bench, "run_factory_chain", _chain)
+
+    result = bench.main()
+
+    assert result == 0
+    audit_dir = tmp_path / "audits"
+    run_dir = next(iter(audit_dir.iterdir()))
+    audit_files = sorted(run_dir.glob("*.json"))
+    assert len(audit_files) == 2, f"Expected 2 audit files (including conflict), got {audit_files}"
+    primary_file = run_dir / "L1-01.audit.json"
+    conflict_file = run_dir / "L1-01.audit.2.json"
+    assert primary_file.exists(), "Expected primary audit file"
+    assert conflict_file.exists(), "Expected conflict file for repeated project id"
+    for af in audit_files:
+        data = json.loads(af.read_text(encoding="utf-8"))
+        assert "audit_path" in data, f"audit_path missing from {af.name}"
+        assert (tmp_path / data["audit_path"]).resolve() == af.resolve(), (
+            f"audit_path {data['audit_path']} does not resolve to {af}"
+        )
+
+
+# --- _resolve_polaris_home ---
+
+
+def test_resolve_polaris_home_default_uses_dot_polaris() -> None:
+    result = _resolve_polaris_home(env={})
+    assert result.name == ".polaris"
+    assert result == Path.home() / ".polaris"
+
+
+def test_resolve_polaris_home_kernelone_home_already_dot_polaris(tmp_path: Path) -> None:
+    home = tmp_path / ".polaris"
+    result = _resolve_polaris_home(env={"KERNELONE_HOME": str(home)})
+    assert result == home.expanduser().resolve()
+
+
+def test_resolve_polaris_home_kernelone_home_parent_dir(tmp_path: Path) -> None:
+    parent = tmp_path / "config-root"
+    result = _resolve_polaris_home(env={"KERNELONE_HOME": str(parent)})
+    expected = parent.expanduser().resolve() / ".polaris"
+    assert result == expected
+
+
+# --- _desktop_backend_info_path ---
+
+
+def test_desktop_backend_info_path_inside_polaris_home(tmp_path: Path) -> None:
+    polaris_home = tmp_path / ".polaris"
+    result = _desktop_backend_info_path(env={"KERNELONE_HOME": str(polaris_home)})
+    assert result == polaris_home.expanduser().resolve() / "runtime" / "desktop-backend.json"
+
+
+# --- _read_desktop_backend_info ---
+
+
+def test_read_desktop_backend_info_valid_json(tmp_path: Path) -> None:
+    polaris_home = tmp_path / ".polaris"
+    runtime = polaris_home / "runtime"
+    runtime.mkdir(parents=True)
+    info_file = runtime / "desktop-backend.json"
+    info_file.write_text(
+        json.dumps({"schema_version": 1, "backend": {"baseUrl": "http://127.0.0.1:49977", "token": "tok-123"}}),
+        encoding="utf-8",
+    )
+    result = _read_desktop_backend_info(env={"KERNELONE_HOME": str(polaris_home)})
+    assert result["backend"]["baseUrl"] == "http://127.0.0.1:49977"
+    assert result["backend"]["token"] == "tok-123"
+
+
+def test_read_desktop_backend_info_missing_file(tmp_path: Path) -> None:
+    polaris_home = tmp_path / ".polaris"
+    result = _read_desktop_backend_info(env={"KERNELONE_HOME": str(polaris_home)})
+    assert result == {}
+
+
+def test_read_desktop_backend_info_malformed_json(tmp_path: Path) -> None:
+    polaris_home = tmp_path / ".polaris"
+    runtime = polaris_home / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "desktop-backend.json").write_text("NOT JSON {{{", encoding="utf-8")
+    result = _read_desktop_backend_info(env={"KERNELONE_HOME": str(polaris_home)})
+    assert result == {}
+
+
+def test_read_desktop_backend_info_non_dict_json(tmp_path: Path) -> None:
+    polaris_home = tmp_path / ".polaris"
+    runtime = polaris_home / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "desktop-backend.json").write_text('"just a string"', encoding="utf-8")
+    result = _read_desktop_backend_info(env={"KERNELONE_HOME": str(polaris_home)})
+    assert result == {}
+
+
+# --- _resolve_backend_url desktop fallback ---
+
+
+def test_resolve_backend_url_falls_back_to_desktop_info(monkeypatch: Any, tmp_path: Path) -> None:
+    polaris_home = tmp_path / ".polaris"
+    runtime = polaris_home / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "desktop-backend.json").write_text(
+        json.dumps({"backend": {"baseUrl": "http://10.0.0.1:5555", "token": "t"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("KERNELONE_BACKEND_URL", raising=False)
+    monkeypatch.delenv("FACTORY_BENCH_BACKEND_URL", raising=False)
+    monkeypatch.setattr(
+        bench,
+        "_read_desktop_backend_info",
+        lambda env=None: {"backend": {"baseUrl": "http://10.0.0.1:5555", "token": "t"}},
+    )
+    result = _resolve_backend_url()
+    assert result == "http://10.0.0.1:5555"
+
+
+def test_resolve_backend_url_explicit_overrides_desktop(monkeypatch: Any, tmp_path: Path) -> None:
+    polaris_home = tmp_path / ".polaris"
+    runtime = polaris_home / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "desktop-backend.json").write_text(
+        json.dumps({"backend": {"baseUrl": "http://10.0.0.1:5555", "token": "t"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        bench,
+        "_read_desktop_backend_info",
+        lambda env=None: {"backend": {"baseUrl": "http://10.0.0.1:5555", "token": "t"}},
+    )
+    result = _resolve_backend_url(explicit="http://192.168.1.1:8080")
+    assert result == "http://192.168.1.1:8080"
+
+
+def test_resolve_backend_url_env_overrides_desktop(monkeypatch: Any, tmp_path: Path) -> None:
+    monkeypatch.setenv("KERNELONE_BACKEND_URL", "http://env-host:1111")
+    monkeypatch.setattr(
+        bench,
+        "_read_desktop_backend_info",
+        lambda env=None: {"backend": {"baseUrl": "http://10.0.0.1:5555", "token": "t"}},
+    )
+    result = _resolve_backend_url()
+    assert result == "http://env-host:1111"
+
+
+def test_resolve_backend_url_missing_desktop_json_returns_default(monkeypatch: Any) -> None:
+    monkeypatch.delenv("KERNELONE_BACKEND_URL", raising=False)
+    monkeypatch.delenv("FACTORY_BENCH_BACKEND_URL", raising=False)
+    monkeypatch.setattr(bench, "_read_desktop_backend_info", lambda env=None: {})
+    result = _resolve_backend_url()
+    assert result == "http://127.0.0.1:49977"
+
+
+def test_resolve_backend_url_malformed_desktop_json_returns_default(monkeypatch: Any) -> None:
+    monkeypatch.delenv("KERNELONE_BACKEND_URL", raising=False)
+    monkeypatch.delenv("FACTORY_BENCH_BACKEND_URL", raising=False)
+    monkeypatch.setattr(bench, "_read_desktop_backend_info", lambda env=None: {})
+    result = _resolve_backend_url()
+    assert result == "http://127.0.0.1:49977"
+
+
+# --- _resolve_backend_token desktop fallback ---
+
+
+def test_is_local_backend_url_recognizes_loopback_only() -> None:
+    assert _is_local_backend_url("http://127.0.0.1:49977") is True
+    assert _is_local_backend_url("http://localhost:49977") is True
+    assert _is_local_backend_url("http://[::1]:49977") is True
+    assert _is_local_backend_url("http://10.0.0.1:49977") is False
+    assert _is_local_backend_url("not a url") is False
+
+
+def test_resolve_backend_token_falls_back_to_desktop_info(monkeypatch: Any) -> None:
+    monkeypatch.delenv("FACTORY_BENCH_BACKEND_TOKEN", raising=False)
+    monkeypatch.delenv("KERNELONE_TOKEN", raising=False)
+    monkeypatch.delenv("KERNELONE_BACKEND_TOKEN", raising=False)
+    monkeypatch.setattr(
+        bench,
+        "_read_desktop_backend_info",
+        lambda env=None: {"backend": {"baseUrl": "http://x", "token": "desktop-tok-abc"}},
+    )
+    result = _resolve_backend_token()
+    assert result == "desktop-tok-abc"
+
+
+def test_resolve_backend_token_explicit_overrides_desktop(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        bench,
+        "_read_desktop_backend_info",
+        lambda env=None: {"backend": {"baseUrl": "http://x", "token": "desktop-tok-abc"}},
+    )
+    result = _resolve_backend_token(explicit="explicit-tok")
+    assert result == "explicit-tok"
+
+
+def test_resolve_backend_token_env_overrides_desktop(monkeypatch: Any) -> None:
+    monkeypatch.setenv("FACTORY_BENCH_BACKEND_TOKEN", "env-tok")
+    monkeypatch.setattr(
+        bench,
+        "_read_desktop_backend_info",
+        lambda env=None: {"backend": {"baseUrl": "http://x", "token": "desktop-tok-abc"}},
+    )
+    result = _resolve_backend_token()
+    assert result == "env-tok"
+
+
+def test_resolve_backend_token_missing_desktop_json_returns_local_dev_token(monkeypatch: Any) -> None:
+    monkeypatch.delenv("FACTORY_BENCH_BACKEND_TOKEN", raising=False)
+    monkeypatch.delenv("KERNELONE_TOKEN", raising=False)
+    monkeypatch.delenv("KERNELONE_BACKEND_TOKEN", raising=False)
+    monkeypatch.delenv("KERNELONE_BACKEND_URL", raising=False)
+    monkeypatch.delenv("FACTORY_BENCH_BACKEND_URL", raising=False)
+    monkeypatch.setattr(bench, "_read_desktop_backend_info", lambda env=None: {})
+    result = _resolve_backend_token()
+    assert result == "polaris-local-dev"
+
+
+def test_resolve_backend_token_malformed_desktop_json_returns_local_dev_token(monkeypatch: Any) -> None:
+    monkeypatch.delenv("FACTORY_BENCH_BACKEND_TOKEN", raising=False)
+    monkeypatch.delenv("KERNELONE_TOKEN", raising=False)
+    monkeypatch.delenv("KERNELONE_BACKEND_TOKEN", raising=False)
+    monkeypatch.delenv("KERNELONE_BACKEND_URL", raising=False)
+    monkeypatch.delenv("FACTORY_BENCH_BACKEND_URL", raising=False)
+    monkeypatch.setattr(bench, "_read_desktop_backend_info", lambda env=None: {})
+    result = _resolve_backend_token()
+    assert result == "polaris-local-dev"
+
+
+def test_resolve_backend_token_missing_remote_token_returns_empty(monkeypatch: Any) -> None:
+    monkeypatch.delenv("FACTORY_BENCH_BACKEND_TOKEN", raising=False)
+    monkeypatch.delenv("KERNELONE_TOKEN", raising=False)
+    monkeypatch.delenv("KERNELONE_BACKEND_TOKEN", raising=False)
+    monkeypatch.setenv("KERNELONE_BACKEND_URL", "http://10.0.0.1:49977")
+    monkeypatch.setattr(bench, "_read_desktop_backend_info", lambda env=None: {})
+    result = _resolve_backend_token()
+    assert result == ""

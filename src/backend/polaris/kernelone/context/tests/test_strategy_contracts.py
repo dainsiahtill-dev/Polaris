@@ -7,6 +7,7 @@ BudgetDecision, Scorecard, and related types. Also tests built-in profiles.
 from __future__ import annotations
 
 import dataclasses
+from typing import Any, TypedDict
 
 import pytest
 from polaris.kernelone.context.strategy_contracts import (
@@ -35,6 +36,25 @@ from polaris.kernelone.context.strategy_profiles import (
     deep_research,
     speed_first,
 )
+
+
+class _MetadataDict(TypedDict):
+    """Serialized shape of ProfileMetadata used by the roundtrip test."""
+
+    description: str
+    target_domain: str
+    risk_level: str
+
+
+class _ProfileDict(TypedDict):
+    """Serialized shape of StrategyProfile used by the roundtrip test."""
+
+    profile_id: str
+    profile_version: str
+    bundle_id: str
+    overrides: dict[str, Any]
+    metadata: _MetadataDict
+
 
 # ---------------------------------------------------------------------------
 # ProfileMetadata Tests
@@ -66,7 +86,7 @@ class TestProfileMetadata:
         """ProfileMetadata should be frozen."""
         metadata = ProfileMetadata(description="test")
         with pytest.raises((TypeError, dataclasses.FrozenInstanceError)):  # frozen dataclass
-            metadata.description = "modified"
+            setattr(metadata, "description", "modified")  # noqa: B010
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +126,7 @@ class TestStrategyProfile:
         """StrategyProfile should be frozen."""
         profile = StrategyProfile(profile_id="test")
         with pytest.raises((TypeError, dataclasses.FrozenInstanceError)):  # frozen dataclass
-            profile.profile_id = "modified"
+            setattr(profile, "profile_id", "modified")  # noqa: B010
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +195,7 @@ class TestExpansionDecisionResult:
         """ExpansionDecisionResult should be frozen."""
         result = ExpansionDecisionResult(decision="approved")
         with pytest.raises((TypeError, dataclasses.FrozenInstanceError)):
-            result.decision = "denied"
+            setattr(result, "decision", "denied")  # noqa: B010
 
 
 class TestReadEscalationDecisionResult:
@@ -589,7 +609,7 @@ class TestBuiltinProfiles:
     def test_profiles_frozen(self) -> None:
         """Built-in profiles should be frozen (immutable)."""
         with pytest.raises((TypeError, dataclasses.FrozenInstanceError)):
-            canonical_balanced.profile_id = "modified"
+            setattr(canonical_balanced, "profile_id", "modified")  # noqa: B010
 
     def test_all_profiles_valid_overrides_structure(self) -> None:
         """All profiles should have valid override structure."""
@@ -630,7 +650,7 @@ class TestStrategyIntegration:
         """Profile should survive serialization roundtrip."""
         original = canonical_balanced
         # Convert to dict (simulating serialization)
-        d = {
+        d: _ProfileDict = {
             "profile_id": original.profile_id,
             "profile_version": original.profile_version,
             "bundle_id": original.bundle_id,

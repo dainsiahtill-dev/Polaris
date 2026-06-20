@@ -76,6 +76,40 @@ def _safe_int(value: Any) -> int:
         return 0
 
 
+def _format_unresolved_relative_import_error_for_repair_prompt(error: Any) -> str | None:
+    """Return a path-safe repair prompt line for unresolved relative imports."""
+
+    match = _em._UNRESOLVED_RELATIVE_IMPORT_ERROR_RE.search(str(error or ""))
+    if not match:
+        return None
+    importer_rel = _normalize_declared_task_path(match.group("path"))
+    specifier = str(match.group("specifier") or "").strip()
+    if not importer_rel or not specifier.startswith("."):
+        return None
+    candidates = _em._relative_import_repair_target_candidates(
+        root=Path("/__polaris_workspace__"),
+        importer_rel=importer_rel,
+        specifier=specifier,
+    )
+    target = candidates[0] if candidates else ""
+    if not target:
+        return (
+            "Artifact quality scan failed: unresolved relative import "
+            f"in {importer_rel}; raw relative specifier omitted for path safety."
+        )
+    return (
+        "Artifact quality scan failed: unresolved relative import "
+        f"in {importer_rel}; create missing module target {target} and export the imported symbols. "
+        "Raw relative specifier omitted for path safety."
+    )
+
+
+def _format_quality_error_for_repair_prompt(error: Any) -> str:
+    """Format quality errors for repair prompts without unsafe path tokens."""
+
+    return _format_unresolved_relative_import_error_for_repair_prompt(error) or str(error)
+
+
 def _stage_summary_has_recoverable_no_write_mutation_contract_exception(
     summary: dict[str, Any] | None,
 ) -> bool:
@@ -1119,7 +1153,9 @@ def _build_materialization_quality_repair_message(
     missing_target_files: list[str] | None = None,
     repair_target_files: list[str] | None = None,
 ) -> str:
-    error_lines = "\n".join(f"- {item}" for item in artifact_quality_errors[:12])
+    error_lines = "\n".join(
+        f"- {_format_quality_error_for_repair_prompt(item)}" for item in artifact_quality_errors[:12]
+    )
     # Already-written files are reported as a COUNT, not paths: every
     # path-shaped token in this message seeds the retry target extractor
     # (extract_target_files_from_message), and naming the files that already
@@ -1178,7 +1214,9 @@ def _build_materialization_quality_repair_message(
     # unchanged. Generic import reasoning only, no project specifics (§8).
     coherence_block = ""
     unresolved_import_errors = [
-        str(item) for item in artifact_quality_errors if "unresolved relative import" in str(item).lower()
+        _format_quality_error_for_repair_prompt(item)
+        for item in artifact_quality_errors
+        if "unresolved relative import" in str(item).lower()
     ]
     if unresolved_import_errors:
         coherence_lines = "\n".join(f"- {item}" for item in unresolved_import_errors[:12])

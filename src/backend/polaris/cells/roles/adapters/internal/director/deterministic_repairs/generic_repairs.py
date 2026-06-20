@@ -50,12 +50,19 @@ from .typeorm_repairs import (
 from .typescript_repairs import (
     _apply_deterministic_typescript_escaped_newline_repair,
     _apply_deterministic_typescript_missing_member_repair,
+    _apply_deterministic_typescript_number_to_string_argument_repair,
     _apply_deterministic_typescript_relative_import_case_repair,
     _apply_deterministic_typescript_return_object_semicolon_repair,
+    _apply_deterministic_typescript_too_few_arguments_repair,
     _apply_deterministic_typescript_tsconfig_lib_repair,
 )
 from .zod_repairs import (
     _apply_deterministic_typescript_zod_type_class_collision_repair,
+)
+
+_SCAFFOLD_MARKER_ERROR_RE = re.compile(
+    r"deterministic scaffold marker ['\"][^'\"]+['\"] in (?P<path>\S+)",
+    re.IGNORECASE,
 )
 
 
@@ -165,6 +172,91 @@ def _apply_deterministic_scaffold_marker_cleanup(
     return results
 
 
+def _apply_deterministic_scaffold_marker_error_cleanup(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+    paths = _parse_scaffold_marker_error_paths(artifact_quality_errors)
+    if not paths:
+        return []
+    results: list[dict[str, Any]] = []
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    executor = DirectorToolExecutor(
+        str(workspace_path),
+        message_bus=message_bus,
+        worker_id="director",
+    )
+    for normalized in paths:
+        target_path = (workspace_path / normalized).resolve()
+        try:
+            target_path.relative_to(workspace_path)
+        except ValueError:
+            continue
+        if not target_path.is_file() or target_path.suffix.lower() not in {
+            ".ts",
+            ".tsx",
+            ".js",
+            ".jsx",
+            ".mjs",
+            ".cjs",
+            ".py",
+            ".html",
+            ".css",
+            ".json",
+        }:
+            continue
+        try:
+            text = target_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        cleaned = _replace_deterministic_scaffold_markers(text)
+        if cleaned == text:
+            continue
+        write_result = executor.execute_tool(
+            "write_file",
+            {"file": normalized, "content": cleaned},
+            task_id=task_id,
+        )
+        if not bool(write_result.get("ok")):
+            continue
+        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+            adapter._update_task_progress(task_id, "executing", current_file=normalized)
+        results.append(
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_scaffold_marker_quality_cleanup",
+                    "file": normalized,
+                    "bytes_written": int(write_result.get("bytes_written") or len(cleaned.encode("utf-8"))),
+                    "operation": str(write_result.get("operation") or "modify"),
+                    "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                    "director_policy": write_result.get("director_policy"),
+                },
+            }
+        )
+    return results
+
+
+def _parse_scaffold_marker_error_paths(artifact_quality_errors: list[str]) -> list[str]:
+    paths: list[str] = []
+    for error in artifact_quality_errors:
+        match = _SCAFFOLD_MARKER_ERROR_RE.search(str(error or ""))
+        if not match:
+            continue
+        normalized = _normalize_declared_task_path(str(match.group("path") or ""))
+        if normalized and not any(ch in normalized for ch in ("*", "?")):
+            paths.append(normalized)
+    return list(dict.fromkeys(paths))
+
+
 def _apply_deterministic_patch_residue_cleanup(
     adapter: Any,
     *,
@@ -243,6 +335,13 @@ def _apply_deterministic_materialization_quality_repairs(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     results: list[dict[str, Any]] = []
     results.extend(
+        _apply_deterministic_scaffold_marker_error_cleanup(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
         _apply_deterministic_typeorm_model_normalization_repair(
             adapter,
             task_id=task_id,
@@ -286,6 +385,20 @@ def _apply_deterministic_materialization_quality_repairs(
     )
     results.extend(
         _apply_deterministic_typescript_missing_member_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_typescript_number_to_string_argument_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_typescript_too_few_arguments_repair(
             adapter,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,

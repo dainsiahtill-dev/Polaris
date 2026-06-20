@@ -19,6 +19,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from polaris.cells.roles.adapters.internal.director import execute_method as execute_method_module
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _apply_deterministic_javascript_test_missing_target_repair,
@@ -138,6 +139,82 @@ def test_deterministic_npm_script_repair_builds_before_missing_dist_entrypoint(t
     assert not any("references missing local entrypoint" in error for error in repaired_errors)
 
 
+def test_deterministic_npm_script_repair_cleans_package_scaffold_metadata(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_npm_test_script_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("console.log('hello');\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"target": "ES2020"}, "include": ["src/**/*.ts"]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "polaris-typescript-project",
+                "version": "1.0.0",
+                "description": "Polaris TypeScript project scaffold",
+                "scripts": {
+                    "build": "tsc",
+                    "start": "npm run build && node dist/main.js",
+                    "test": "npm run build",
+                },
+                "devDependencies": {"typescript": "^5.4.0"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: deterministic scaffold marker 'TypeScript project scaffold' in package.json"
+    ]
+
+    results = _apply_deterministic_npm_test_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["name"] == "typescript-application"
+    assert repaired["description"] == "TypeScript application"
+
+
+def test_deterministic_materialization_repair_cleans_scaffold_marker_from_reported_source(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text(
+        'console.log("Hello from Polaris TypeScript scaffold.");\n',
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: deterministic scaffold marker 'Polaris TypeScript scaffold' in src/main.ts"
+    ]
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        _make_adapter(tmp_path),
+        task={"metadata": {"target_files": ["src/main.ts"]}},
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    assert summary["source_tools"] == ["deterministic_scaffold_marker_quality_cleanup"]
+    repaired = (tmp_path / "src" / "main.ts").read_text(encoding="utf-8")
+    assert "Polaris TypeScript scaffold" not in repaired
+    assert "TypeScript application" in repaired
+
+
 def test_deterministic_typescript_missing_member_repair_adds_class_members(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
         _apply_deterministic_typescript_missing_member_repair,
@@ -174,6 +251,172 @@ def test_deterministic_typescript_missing_member_repair_adds_class_members(tmp_p
     assert "public getAttraction(): number" in repaired
     assert "public get name(): string" in repaired
     assert "return this.id;" in repaired
+
+
+def test_deterministic_typescript_missing_member_repair_infers_numeric_getter_for_arithmetic(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "moon.ts").write_text(
+        "export class Moon {\n  public getIllumination(): number {\n    return 1;\n  }\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "firefly.ts").write_text(
+        "import { Moon } from './moon.js';\n"
+        "const moon = new Moon();\n"
+        "const moonFactor = 0.4 + moon.brightness * 0.6;\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/firefly.ts(3,31): error TS2339: Property 'brightness' does not exist on type 'Moon'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "moon.ts").read_text(encoding="utf-8")
+    assert "public get brightness(): number" in repaired
+    assert "return 0;" in repaired
+
+
+def test_deterministic_typescript_missing_member_repair_infers_string_getter_for_id_comparison(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "models" / "flower.ts").write_text(
+        "export class Flower {\n  public get name(): string {\n    return '';\n  }\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "gardenengine.ts").write_text(
+        "import { Flower } from '../models/flower.js';\n"
+        "const flowers: Flower[] = [];\n"
+        "const flowerId = 'flower-1';\n"
+        "flowers.find(f => f.id === flowerId);\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/engine/gardenengine.ts(4,21): error TS2339: Property 'id' does not exist on type 'Flower'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "models" / "flower.ts").read_text(encoding="utf-8")
+    assert "public get id(): string" in repaired
+    assert 'return "";' in repaired
+
+
+def test_deterministic_typescript_missing_member_repair_adds_method_parameters_from_usage(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "firefly.ts").write_text("export class Firefly {}\n", encoding="utf-8")
+    (tmp_path / "src" / "garden.ts").write_text(
+        "import { Firefly } from './firefly.js';\n"
+        "const firefly = new Firefly();\n"
+        "firefly.update(0.5, 0.8);\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/garden.ts(3,9): error TS2339: Property 'update' does not exist on type 'Firefly'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "firefly.ts").read_text(encoding="utf-8")
+    assert "public update(_arg0: unknown, _arg1: unknown): number" in repaired
+
+
+def test_deterministic_typescript_number_to_string_argument_repair_wraps_argument(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_number_to_string_argument_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "garden.ts").write_text(
+        "const fireflies = Array.from({ length: 3 }, (_, i) => new Firefly(i, width, height));\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/garden.ts(1,65): error TS2345: Argument of type 'number' is not assignable "
+        "to parameter of type 'string'."
+    ]
+
+    results = _apply_deterministic_typescript_number_to_string_argument_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "garden.ts").read_text(encoding="utf-8")
+    assert "new Firefly(String(i), width, height)" in repaired
+
+
+def test_deterministic_typescript_too_few_arguments_repair_adds_trailing_defaults(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_too_few_arguments_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "firefly.ts").write_text(
+        "export class Firefly {\n"
+        "  update(deltaTime: number, moonPhase: number, temperature: number): void {}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "garden.ts").write_text(
+        "import { Firefly } from './firefly.js';\n"
+        "const firefly = new Firefly();\n"
+        "firefly.update(0.5, 0.8);\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/garden.ts(3,9): error TS2554: Expected 3 arguments, but got 2."
+    ]
+
+    results = _apply_deterministic_typescript_too_few_arguments_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "firefly.ts").read_text(encoding="utf-8")
+    assert "temperature: number = 0" in repaired
 
 
 def test_deterministic_typescript_tsconfig_lib_repair_adds_dom(tmp_path: Any) -> None:
@@ -214,6 +457,100 @@ def test_deterministic_typescript_tsconfig_lib_repair_adds_dom(tmp_path: Any) ->
     assert results
     repaired = json.loads((tmp_path / "tsconfig.json").read_text(encoding="utf-8"))
     assert repaired["compilerOptions"]["lib"] == ["ES2020", "DOM"]
+
+
+@pytest.mark.asyncio
+async def test_phase_quality_repair_loop_continues_after_deterministic_progress_when_llm_empty(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _make_adapter(tmp_path)
+    error_rounds = [
+        [
+            "Artifact quality scan failed: TypeScript project typecheck failed: "
+            "src/firefly.ts(1,1): error TS2339: Property 'illumination' does not exist on type 'Moon'."
+        ],
+        [
+            "Artifact quality scan failed: TypeScript project typecheck failed: "
+            "src/firefly.ts(1,1): error TS2339: Property 'brightness' does not exist on type 'Moon'."
+        ],
+        [],
+    ]
+    deterministic_inputs: list[list[str]] = []
+
+    def fake_collect_materialization_quality_errors(*args: Any, **kwargs: Any) -> list[str]:
+        return error_rounds.pop(0) if error_rounds else []
+
+    def fake_deterministic_quality_repair(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        artifact_quality_errors = list(kwargs.get("artifact_quality_errors") or [])
+        deterministic_inputs.append(artifact_quality_errors)
+        if not artifact_quality_errors:
+            return [], {"stage": "deterministic_quality_repair", "success": False}
+        return [
+            {
+                "tool_name": "write_file",
+                "tool": "write_file",
+                "success": True,
+                "result": {"ok": True, "source_tool": "fake_deterministic_repair", "file": "src/moon.ts"},
+            }
+        ], {"stage": "deterministic_quality_repair", "success": True}
+
+    async def fake_llm_quality_repair(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return [], {"stage": "llm_quality_repair", "success": False}
+
+    monkeypatch.setattr(
+        execute_method_module, "_collect_materialization_quality_errors", fake_collect_materialization_quality_errors
+    )
+    monkeypatch.setattr(execute_method_module, "_collect_step_verify_errors", lambda *args, **kwargs: [])
+    monkeypatch.setattr(execute_method_module, "_apply_deterministic_python_static_smoke", lambda *args, **kwargs: [])
+    monkeypatch.setattr(execute_method_module, "_apply_deterministic_python_runtime_smoke", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        execute_method_module, "_filter_satisfied_declared_target_missing_errors", lambda errors, workspace: errors
+    )
+    monkeypatch.setattr(execute_method_module, "_missing_declared_target_files", lambda task, workspace: [])
+    monkeypatch.setattr(
+        execute_method_module,
+        "_apply_deterministic_declared_target_contract_repairs",
+        lambda *args, **kwargs: ([], {"stage": "deterministic_contract_repair", "success": False}),
+    )
+    monkeypatch.setattr(
+        execute_method_module, "_apply_deterministic_materialization_quality_repairs", fake_deterministic_quality_repair
+    )
+    monkeypatch.setattr(execute_method_module, "_run_materialization_quality_repair_retry", fake_llm_quality_repair)
+    monkeypatch.setattr(
+        execute_method_module,
+        "_collect_workspace_code_diff",
+        lambda *args, **kwargs: ({}, [], ["src/moon.ts"], ["src/firefly.ts", "src/moon.ts"]),
+    )
+
+    state, residual_errors, _summary, _write_evidence = await execute_method_module._phase_quality_repair_loop(
+        adapter,
+        adapter_workspace=str(tmp_path),
+        baseline_files={},
+        context={},
+        llm_call_timeout=1.0,
+        message="repair TypeScript project",
+        quality_repair_attempts=[],
+        quality_repair_summary=None,
+        run_id="run-1",
+        target_task_id="task-1",
+        task={"metadata": {"target_files": ["src/firefly.ts", "src/moon.ts"]}},
+        workspace_name=tmp_path.name,
+        write_tool_evidence=False,
+        state=execute_method_module.MaterializationState(
+            current_files={},
+            new_files=[],
+            modified_files=[],
+            all_affected_files=["src/firefly.ts"],
+            tool_results=[],
+        ),
+    )
+
+    assert residual_errors == []
+    assert len(deterministic_inputs) == 2
+    assert "illumination" in deterministic_inputs[0][0]
+    assert "brightness" in deterministic_inputs[1][0]
+    assert len(state.tool_results) == 2
 
 
 def test_empty_write_content_retry_needed_only_for_blank_write() -> None:
@@ -4632,6 +4969,58 @@ def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_pa
     assert "public type: FlowerType = FlowerType.Moonflower;" in repaired
 
 
+def test_typescript_comma_expected_repair_accepts_plain_tsc_error_format(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    model_dir = tmp_path / "src" / "models"
+    model_dir.mkdir(parents=True)
+    flower = model_dir / "Flower.ts"
+    flower.write_text(
+        "\n".join(
+            [
+                "export interface FlowerState {",
+                "  color: string;",
+                "}",
+                "",
+                "export class Flower {",
+                "  public state: FlowerState;",
+                "  constructor(color: string) {",
+                "    this.state = {",
+                "      color;",
+                "    };",
+                "  }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task={"target_files": ["src/models/Flower.ts"]},
+        task_id="task-1",
+        artifact_quality_errors=["src/models/Flower.ts(9,12): error TS1005: ',' expected."],
+    )
+
+    repaired = flower.read_text(encoding="utf-8")
+    assert summary["attempted"] is True
+    assert any(
+        (item.get("result") or {}).get("source_tool") == "deterministic_typescript_return_object_semicolon_repair"
+        for item in results
+        if isinstance(item, dict)
+    )
+    assert "      color,\n" in repaired
+    assert "      color;\n" not in repaired
+
+
 def test_materialization_quality_errors_scan_declared_target_files(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.quality_gate import (
         _collect_materialization_quality_errors,
@@ -6089,6 +6478,26 @@ class TestQualityRepairMissingTargetContract:
         assert "Do not read files first" in message
         assert "Do not list directories" in message
         assert "Emit exactly one write_file or edit_file" in message
+
+    def test_unresolved_relative_import_repair_prompt_omits_parent_traversal_specifier(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="Create TypeScript simulation modules.",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: unresolved relative import '../data/seeddata' "
+                "in src/engine/gardenengine.ts"
+            ],
+            changed_files=["src/engine/gardenengine.ts"],
+            missing_target_files=["src/data/seeddata.ts"],
+        )
+
+        assert "../data/seeddata" not in message
+        assert "src/data/seeddata.ts" in message
+        assert "src/engine/gardenengine.ts" in message
+        assert "Raw relative specifier omitted for path safety" in message
 
     def test_repair_message_without_missing_block_when_none(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
