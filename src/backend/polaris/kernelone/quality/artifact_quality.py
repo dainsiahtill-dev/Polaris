@@ -169,6 +169,11 @@ _NPM_PLACEHOLDER_TEST_SCRIPT_RE = re.compile(
     re.IGNORECASE,
 )
 _NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(r"(?:npm\s+run\s+build|pnpm\s+build|yarn\s+build|\btsc\b)")
+_NPM_SCRIPT_ENTRYPOINT_COMMANDS = {"node", "tsx", "ts-node"}
+_NPM_NODE_INLINE_CODE_FLAGS = {"-e", "--eval", "-p", "--print", "-c", "--check"}
+_NPM_NODE_OPTION_VALUE_FLAGS = {"--loader", "--require", "-r", "--import"}
+_NPM_SCRIPT_SEPARATORS = {"&&", "||", ";", "|"}
+_TSC_PROJECT_CHECK_FLAG = "KERNELONE_TSC_PROJECT_CHECK"
 _PYTHON_COMMAND_IN_NPM_SCRIPT_RE = re.compile(r"(?:^|[\s;&|])(python3?|pytest|pip3?)(?:$|[\s;&|])", re.IGNORECASE)
 _PYTHON_PACKAGE_MANIFEST_DEPENDENCIES = {
     "django",
@@ -302,11 +307,15 @@ def scan_workspace_artifact_quality(
             if relative_paths is not None
             else _iter_workspace_source_files(root_full)
         )
+        scanned_relative_paths: list[str] = []
         for full_path in paths:
             if len(errors) >= 50:
                 return errors
             relative_path = full_path.relative_to(root_full).as_posix()
+            scanned_relative_paths.append(relative_path)
             errors.extend(_scan_file(root_full, full_path, relative_path))
+        if len(errors) < 50:
+            errors.extend(_scan_typescript_project_typecheck(root_full, scanned_relative_paths))
     except (OSError, RuntimeError, ValueError) as exc:
         return [f"Artifact quality scan failed: {exc}"]
     return errors
@@ -491,8 +500,9 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
                     f"Python command in script {str(script_name)!r} in {relative_path}"
                 )
                 break
-            if str(script_name) in {"start", "serve"}:
-                errors.extend(_scan_npm_script_missing_local_entrypoints(root_full, script_text, str(script_name)))
+            errors.extend(
+                _scan_npm_script_missing_local_entrypoints(root_full, script_text, str(script_name), relative_path)
+            )
     main_entry = str(payload.get("main") or "").strip().replace("\\", "/").lower()
     if main_entry.endswith(".py"):
         errors.append(
@@ -528,7 +538,9 @@ def _workspace_has_node_test_files(root_full: Path) -> bool:
     )
 
 
-def _scan_npm_script_missing_local_entrypoints(root_full: Path, script_text: str, script_name: str) -> list[str]:
+def _scan_npm_script_missing_local_entrypoints(
+    root_full: Path, script_text: str, script_name: str, relative_path: str
+) -> list[str]:
     if _NPM_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE.search(script_text):
         return []
     try:
@@ -538,10 +550,10 @@ def _scan_npm_script_missing_local_entrypoints(root_full: Path, script_text: str
     errors: list[str] = []
     for index, token in enumerate(tokens[:-1]):
         command = token.strip().lower()
-        if command not in {"node", "tsx", "ts-node"}:
+        if command not in _NPM_SCRIPT_ENTRYPOINT_COMMANDS:
             continue
-        entrypoint = tokens[index + 1].strip()
-        if not entrypoint or entrypoint.startswith("-"):
+        entrypoint = _npm_script_entrypoint_after_command(tokens, index)
+        if not entrypoint:
             continue
         normalized = entrypoint.replace("\\", "/")
         if normalized.startswith(("/", "http://", "https://")) or ".." in normalized.split("/"):
@@ -551,9 +563,78 @@ def _scan_npm_script_missing_local_entrypoints(root_full: Path, script_text: str
         if not (root_full / normalized).is_file():
             errors.append(
                 "Artifact quality scan failed: npm package manifest script "
-                f"{script_name!r} references missing local entrypoint {normalized!r}"
+                f"{script_name!r} references missing local entrypoint {normalized!r} in {relative_path}"
             )
     return errors
+
+
+def _npm_script_entrypoint_after_command(tokens: list[str], command_index: int) -> str:
+    index = command_index + 1
+    while index < len(tokens):
+        token = str(tokens[index] or "").strip()
+        if not token or token in _NPM_SCRIPT_SEPARATORS:
+            return ""
+        lowered = token.lower()
+        if lowered in _NPM_NODE_INLINE_CODE_FLAGS:
+            return ""
+        if lowered in _NPM_NODE_OPTION_VALUE_FLAGS:
+            index += 2
+            continue
+        if lowered.startswith("--loader=") or lowered.startswith("--require=") or lowered.startswith("--import="):
+            index += 1
+            continue
+        if lowered.startswith("-"):
+            index += 1
+            continue
+        return token
+    return ""
+
+
+def _scan_typescript_project_typecheck(root_full: Path, relative_paths: list[str]) -> list[str]:
+    if os.environ.get(_TSC_PROJECT_CHECK_FLAG, "1").strip().lower() in {"0", "false", "no", "off"}:
+        return []
+    if not (root_full / "tsconfig.json").is_file():
+        return []
+    if not any(
+        Path(path).suffix.lower() in {".ts", ".tsx"} or Path(path).name == "tsconfig.json" for path in relative_paths
+    ):
+        return []
+    tsc = _typescript_project_typecheck_command(root_full)
+    if not tsc:
+        return []
+    try:
+        proc = subprocess.run(
+            [tsc, "--noEmit", "--pretty", "false"],
+            cwd=str(root_full),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return []
+    if proc.returncode == 0:
+        return []
+    detail = _first_nonempty_line(f"{proc.stdout}\n{proc.stderr}")
+    if not detail:
+        detail = f"tsc --noEmit exited with code {proc.returncode}"
+    return [f"Artifact quality scan failed: TypeScript project typecheck failed: {detail[:400]}"]
+
+
+def _typescript_project_typecheck_command(root_full: Path) -> str:
+    local_name = "tsc.cmd" if os.name == "nt" else "tsc"
+    local_tsc = root_full / "node_modules" / ".bin" / local_name
+    if local_tsc.is_file():
+        return str(local_tsc)
+    return shutil.which("tsc") or ""
+
+
+def _first_nonempty_line(text: str) -> str:
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
 
 
 def _iter_workspace_relative_files(root_full: Path) -> Iterable[str]:

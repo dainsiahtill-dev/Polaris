@@ -906,7 +906,7 @@ export function ContextOSWorkspace({
   const budgetWindowOccupancyDetail = selectedRole
     ? `${selectedRole.internalContext.windowOccupancyDetail} · ${budgetWindowDetail}`
     : globalWindowOccupancyTokens !== null ? budgetWindowDetail : `尚无全局 usage 观测 · ${budgetWindowDetail}`;
-  const budgetWindowOccupancy = budgetWindowOccupancyTokens !== null
+  const budgetWindowOccupancy = budgetWindowOccupancyTokens !== null && budgetWindowTokens !== null && budgetWindowTokens > 0
     ? Math.max(0, Math.min(1, budgetWindowOccupancyTokens / budgetWindowTokens))
     : 0;
   const hasBudgetWindowUsage = budgetWindowOccupancyTokens !== null;

@@ -234,6 +234,30 @@ def test_scan_detects_start_script_missing_local_entrypoint(tmp_path: Path) -> N
     assert any("references missing local entrypoint 'dist/main.js'" in error for error in errors)
 
 
+def test_scan_detects_test_script_missing_local_entrypoint_after_node_loader(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "moon-garden",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node --loader ts-node/esm src/verify.ts || exit 1"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("references missing local entrypoint 'src/verify.ts'" in error for error in errors)
+
+
 def test_scan_allows_start_script_that_builds_before_dist_entrypoint(tmp_path: Path) -> None:
     target = tmp_path / "package.json"
     target.write_text(
@@ -250,6 +274,9 @@ def test_scan_allows_start_script_that_builds_before_dist_entrypoint(tmp_path: P
         + "\n",
         encoding="utf-8",
     )
+    test_script = tmp_path / "scripts" / "test.mjs"
+    test_script.parent.mkdir(parents=True, exist_ok=True)
+    test_script.write_text("console.log('ok');\n", encoding="utf-8")
 
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
 
@@ -277,6 +304,9 @@ def test_scan_detects_node_test_runner_without_test_files_when_sources_exist(tmp
     source = tmp_path / "src" / "services" / "taskgraph.ts"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("export class TaskGraph {}\n", encoding="utf-8")
+    test_script = tmp_path / "scripts" / "test.mjs"
+    test_script.parent.mkdir(parents=True, exist_ok=True)
+    test_script.write_text("console.log('ok');\n", encoding="utf-8")
 
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
 
@@ -322,6 +352,9 @@ def test_scan_allows_self_contained_node_test_script_without_test_files(tmp_path
     source = tmp_path / "src" / "services" / "taskgraph.ts"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("export class TaskGraph {}\n", encoding="utf-8")
+    test_script = tmp_path / "scripts" / "test.mjs"
+    test_script.parent.mkdir(parents=True, exist_ok=True)
+    test_script.write_text("console.log('ok');\n", encoding="utf-8")
 
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
 
@@ -458,6 +491,36 @@ def test_scan_requires_node_types_for_typescript_builtin_import(tmp_path: Path) 
     )
 
     assert any("requires '@types/node'" in error for error in errors)
+
+
+def test_scan_detects_typescript_project_typecheck_failure(tmp_path: Path, monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from polaris.kernelone.quality import artifact_quality as aq
+
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"strict":true},"include":["src/**/*.ts"]}\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "src" / "config.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("export const flowers: Map<string, string> = [];\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        assert args[0] == ["tsc", "--noEmit", "--pretty", "false"]
+        assert kwargs["cwd"] == str(tmp_path)
+        return SimpleNamespace(
+            returncode=2,
+            stdout="src/config.ts(1,45): error TS2740: Type 'undefined[]' is missing Map methods.\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(aq, "_typescript_project_typecheck_command", lambda root: "tsc")
+    monkeypatch.setattr(aq.subprocess, "run", fake_run)
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/config.ts"])
+
+    assert any("TypeScript project typecheck failed" in error and "src/config.ts" in error for error in errors)
 
 
 def test_scan_allows_node_builtin_import_when_node_types_declared(tmp_path: Path) -> None:

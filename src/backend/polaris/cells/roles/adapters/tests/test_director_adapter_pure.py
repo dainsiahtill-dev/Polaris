@@ -5126,6 +5126,74 @@ class TestQualityRepairMissingTargetContract:
         assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
         assert "MISSING TARGET FILE REPAIR" not in adapter.repair_message
 
+    @pytest.mark.asyncio
+    async def test_package_manifest_quality_error_targets_existing_path_when_changed_files_empty(
+        self, tmp_path
+    ) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                return {"content": ""}
+
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {"build": "tsc", "start": "node dist/index.js"},
+                    "devDependencies": {"typescript": "^5.3.0"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["package.json", "src/config.ts"]},
+            target_task_id="task-1",
+            run_id="run-1",
+            context={},
+            original_message="Create TypeScript project scaffold.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: npm package manifest script "
+                "'start' references missing local entrypoint 'dist/index.js' in package.json"
+            ],
+            changed_files=[],
+        )
+
+        assert summary["semantic_quality_target_files"] == ["package.json"]
+        assert summary["repair_target_files"] == ["package.json"]
+
     def test_repair_targets_existing_import_case_variant_is_not_missing(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _missing_materialization_quality_repair_target_files,

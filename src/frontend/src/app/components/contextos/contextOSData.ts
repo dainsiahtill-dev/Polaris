@@ -192,11 +192,11 @@ export interface ContextOSModel {
   /** 估算的单次上下文窗口占用比例 0..1 */
   windowOccupancy: number;
   windowOccupancyTokens: number;
-  /** 用于全部视角的窗口分母：优先取已绑定角色窗口的最小值，无数据才使用 NOMINAL_CONTEXT_WINDOW。 */
-  contextWindowTokens: number;
+  /** 用于全部视角的窗口分母：优先取已绑定角色窗口的最小值，无数据为 null（不冒充 128k）。 */
+  contextWindowTokens: number | null;
   contextWindowLabel: string;
   contextWindowDetail: string;
-  contextWindowSource: 'binding' | 'fallback';
+  contextWindowSource: 'binding' | 'unknown';
   /** 是否绑定了真实实时遥测（WebSocket 运行时流有事件）。 */
   telemetryActive: boolean;
   /** 真实 ProjectionEngine 投影次数（telemetry 优先，无则回退 calls 估算）。 */
@@ -668,7 +668,7 @@ export function buildContextOSModel(input: {
       id: 'budget', name: '平均消耗', component: '单次平均用量',
       state: observed ? 'active' : 'idle',
       metric: `${formatTokens(avgPerCall)} tok / 次`,
-      intensity: avgPerCall > 0 ? Math.min(1, avgPerCall / contextWindowTokens * 4) : null,
+      intensity: avgPerCall > 0 && contextWindowTokens !== null && contextWindowTokens > 0 ? Math.min(1, avgPerCall / contextWindowTokens * 4) : null,
     },
     {
       id: 'prompt', name: 'Projection.project', component: '消息装配',

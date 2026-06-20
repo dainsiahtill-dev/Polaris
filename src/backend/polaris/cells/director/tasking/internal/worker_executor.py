@@ -16,8 +16,6 @@ Phase 4 note:
 from __future__ import annotations
 
 import contextlib
-import hashlib
-import json
 import logging
 import os
 import re
@@ -35,6 +33,7 @@ from polaris.cells.director.tasking.internal.bootstrap_template_catalog import (
 from polaris.cells.director.tasking.internal.response_parser import (
     extract_files_from_response as _extract_files_from_response_impl,
 )
+from polaris.cells.director.tasking.internal.target_file_resolver import TargetFileResolver
 from polaris.cells.director.tasking.internal.task_classifier import (
     classify_task as _classify_task_impl,
     extract_tech_stack as _extract_tech_stack_impl,
@@ -42,8 +41,6 @@ from polaris.cells.director.tasking.internal.task_classifier import (
 from polaris.cells.director.tasking.internal.workspace_probe import WorkspaceProbe
 from polaris.domain.entities import Task, TaskResult
 from polaris.domain.services import get_token_service
-from polaris.kernelone.exceptions import PathSecurityError
-from polaris.kernelone.quality.artifact_quality import scan_workspace_artifact_quality
 
 logger = logging.getLogger(__name__)
 
@@ -59,41 +56,6 @@ _DIRECTOR_LLM_CALL_TIMEOUT_ENV_KEYS = (
     "KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS",
     "KERNELONE_WORKER_LLM_TIMEOUT",
 )
-_SCOPE_INFERENCE_MAX_FILES = 12
-_SCOPE_INFERENCE_MAX_FILES_PER_SCOPE = 3
-_SCOPE_INFERENCE_SOURCE_EXTENSIONS = (
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".mjs",
-    ".cjs",
-    ".py",
-    ".sql",
-    ".json",
-    ".toml",
-    ".yaml",
-    ".yml",
-)
-_SCOPE_INFERENCE_IGNORED_DIRS = {
-    ".git",
-    ".hg",
-    ".mypy_cache",
-    ".polaris",
-    ".pytest_cache",
-    "__pycache__",
-    "build",
-    "coverage",
-    "dist",
-    "node_modules",
-    "runtime",
-}
-
-
-def _workspace_fs(workspace: str) -> Any:
-    from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
-
-    return KernelFileSystem(str(workspace), get_default_adapter())
 
 
 def _parse_positive_timeout_seconds(raw: Any) -> int | None:
@@ -206,6 +168,7 @@ class WorkerExecutor:
         self._bus = message_bus
         self._worker_id = worker_id
         self._workspace_probe = WorkspaceProbe(workspace)
+        self._target_resolver = TargetFileResolver(workspace, self._workspace_probe)
 
         # Initialize specialized services (Phase 4 deps deferred)
         if _FileApplyService is not None:
@@ -545,121 +508,32 @@ class WorkerExecutor:
         return _DEFAULT_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS
 
     def _normalize_target_files(self, task: Task) -> list[str]:
-        """Get normalized list of target files from task."""
-        files: list[str] = []
-        seen: set[str] = set()
+        """Get normalized list of target files from task.
 
-        # Get from metadata
-        metadata = task.metadata if isinstance(task.metadata, dict) else {}
-
-        # From target_files
-        target_files = metadata.get("target_files", [])
-        if isinstance(target_files, list):
-            for f in target_files:
-                path = str(f or "").strip()
-                if path and self._is_concrete_target_file_path(path) and path not in seen:
-                    seen.add(path)
-                    files.append(path)
-
-        # From file_plan
-        file_plan = metadata.get("file_plan", [])
-        if isinstance(file_plan, list):
-            for item in file_plan:
-                if isinstance(item, dict):
-                    path = str(item.get("path") or "").strip()
-                    if path and self._is_concrete_target_file_path(path) and path not in seen:
-                        seen.add(path)
-                        files.append(path)
-
-        # Fallback: extract from description
-        if not files and task.description:
-            for line in task.description.split("\n"):
-                description_path = self._extract_description_target_path(line)
-                if description_path and description_path not in seen:
-                    seen.add(description_path)
-                    files.append(description_path)
-
-        if not files:
-            for inferred_path in self._infer_target_files_from_scope_paths(task):
-                if inferred_path not in seen:
-                    seen.add(inferred_path)
-                    files.append(inferred_path)
-
-        return files
+        Delegates to ``TargetFileResolver.normalize_target_files``.
+        """
+        return self._target_resolver.normalize_target_files(task)
 
     def _infer_target_files_from_scope_paths(self, task: Task) -> list[str]:
         """Infer concrete target files from PM directory scopes.
 
-        PM contracts sometimes describe module scopes without concrete files.
-        Passing that ambiguity through to the LLM creates broad prompts that can
-        consume the whole task budget. This inference keeps the Director prompt
-        bounded by existing files in the declared scopes and one conservative
-        new file candidate for empty scopes.
+        Delegates to ``TargetFileResolver.infer_target_files_from_scope_paths``.
         """
-        inferred: list[str] = []
-        seen: set[str] = set()
-        for scope in self._normalize_scope_paths(task):
-            if len(inferred) >= _SCOPE_INFERENCE_MAX_FILES:
-                break
-            scope_files = self._existing_files_for_scope(scope, task)
-            if not scope_files:
-                synthesized = self._synthesize_scope_target_file(scope, task)
-                scope_files = [synthesized] if synthesized else []
-            for path in scope_files:
-                if len(inferred) >= _SCOPE_INFERENCE_MAX_FILES:
-                    break
-                if path and path not in seen:
-                    seen.add(path)
-                    inferred.append(path)
-        source_targets = [path for path in inferred if not self._is_test_like_target_file(path)]
-        if source_targets:
-            return source_targets
-        return inferred
+        return self._target_resolver.infer_target_files_from_scope_paths(task)
 
     def _existing_files_for_scope(self, scope: str, task: Task) -> list[str]:
-        """Return existing workspace files under a declared scope."""
-        normalized_scope = str(scope or "").strip().replace("\\", "/").rstrip("/")
-        if not normalized_scope or os.path.isabs(normalized_scope) or ".." in normalized_scope.split("/"):
-            return []
-        if self._is_concrete_target_file_path(normalized_scope):
-            full_file = self._resolve_workspace_file_path(normalized_scope)
-            if full_file and os.path.isfile(full_file):
-                return [normalized_scope]
-            return []
+        """Return existing workspace files under a declared scope.
 
-        full_scope = self._resolve_workspace_file_path(normalized_scope)
-        if not full_scope or not os.path.isdir(full_scope):
-            return []
-
-        candidates: list[str] = []
-        for root, dirnames, filenames in os.walk(full_scope):
-            dirnames[:] = [
-                name
-                for name in sorted(dirnames)
-                if name not in _SCOPE_INFERENCE_IGNORED_DIRS and not name.startswith(".")
-            ]
-            for filename in sorted(filenames):
-                full_path = os.path.join(root, filename)
-                rel_path = os.path.relpath(full_path, self.workspace).replace("\\", "/")
-                if self._is_scope_inference_candidate(rel_path):
-                    candidates.append(rel_path)
-            if len(candidates) >= _SCOPE_INFERENCE_MAX_FILES_PER_SCOPE * 4:
-                break
-
-        tokens = self._task_ascii_tokens(task)
-        candidates.sort(key=lambda path: self._scope_candidate_sort_key(path, tokens))
-        return candidates[:_SCOPE_INFERENCE_MAX_FILES_PER_SCOPE]
+        Delegates to ``TargetFileResolver.existing_files_for_scope``.
+        """
+        return self._target_resolver.existing_files_for_scope(scope, task)
 
     def _is_scope_inference_candidate(self, path: str) -> bool:
-        """Return whether an existing file is useful as an inferred target."""
-        normalized = str(path or "").strip().replace("\\", "/")
-        if not self._is_concrete_target_file_path(normalized):
-            return False
-        leaf = os.path.basename(normalized)
-        if leaf.startswith(".") and leaf not in {".env", ".env.example", ".gitignore"}:
-            return False
-        lowered = normalized.lower()
-        return lowered.endswith(_SCOPE_INFERENCE_SOURCE_EXTENSIONS)
+        """Return whether an existing file is useful as an inferred target.
+
+        Delegates to ``TargetFileResolver.is_scope_inference_candidate``.
+        """
+        return self._target_resolver.is_scope_inference_candidate(path)
 
     def _scope_candidate_sort_key(self, path: str, tokens: list[str]) -> tuple[int, int, str]:
         """Prefer paths whose names match task tokens, then shorter paths.
@@ -669,18 +543,11 @@ class WorkerExecutor:
         return _path_predicates.scope_candidate_sort_key(path, tokens)
 
     def _synthesize_scope_target_file(self, scope: str, task: Task) -> str | None:
-        """Create a conservative target filename inside an empty declared scope."""
-        normalized_scope = str(scope or "").strip().replace("\\", "/").rstrip("/")
-        if not normalized_scope or os.path.isabs(normalized_scope) or ".." in normalized_scope.split("/"):
-            return None
-        if self._is_concrete_target_file_path(normalized_scope):
-            return normalized_scope
-        slug = self._task_slug(task)
-        if self._looks_like_test_scope(normalized_scope):
-            filename = self._test_filename(slug)
-        else:
-            filename = f"{slug}{self._preferred_source_extension()}"
-        return f"{normalized_scope}/{filename}"
+        """Create a conservative target filename inside an empty declared scope.
+
+        Delegates to ``TargetFileResolver.synthesize_scope_target_file``.
+        """
+        return self._target_resolver.synthesize_scope_target_file(scope, task)
 
     def _task_slug(self, task: Task) -> str:
         """Build an ASCII slug from task text for synthesized file names.
@@ -697,14 +564,11 @@ class WorkerExecutor:
         return _path_predicates.task_ascii_tokens(task)
 
     def _preferred_source_extension(self) -> str:
-        """Infer the most suitable source extension for new scope targets."""
-        if os.path.isfile(os.path.join(self.workspace, "tsconfig.json")):
-            return ".ts"
-        if os.path.isfile(os.path.join(self.workspace, "pyproject.toml")):
-            return ".py"
-        if os.path.isfile(os.path.join(self.workspace, "package.json")):
-            return ".js"
-        return ".ts"
+        """Infer the most suitable source extension for new scope targets.
+
+        Delegates to ``TargetFileResolver.preferred_source_extension``.
+        """
+        return self._target_resolver.preferred_source_extension()
 
     def _looks_like_test_scope(self, scope: str) -> bool:
         """Return whether a scope is intended for tests.
@@ -743,21 +607,11 @@ class WorkerExecutor:
         return _path_predicates.is_concrete_target_file_path(path)
 
     def _normalize_scope_paths(self, task: Task) -> list[str]:
-        """Return directory/module scopes declared by PM without treating them as files."""
-        metadata = task.metadata if isinstance(task.metadata, dict) else {}
-        scopes: list[str] = []
-        seen: set[str] = set()
-        for key in ("scope_paths", "write_scope"):
-            value = metadata.get(key)
-            if not isinstance(value, list):
-                continue
-            for raw in value:
-                path = str(raw or "").strip().replace("\\", "/").rstrip("/")
-                if not path or path in seen:
-                    continue
-                seen.add(path)
-                scopes.append(path)
-        return scopes
+        """Return directory/module scopes declared by PM without treating them as files.
+
+        Delegates to ``TargetFileResolver.normalize_scope_paths``.
+        """
+        return self._target_resolver.normalize_scope_paths(task)
 
     def _verification_feedback(self, task: Task) -> dict[str, Any]:
         """Return previous verification diagnostics carried by the workflow retry."""
@@ -1032,143 +886,65 @@ class WorkerExecutor:
         return _path_predicates.is_test_like_target_file(path)
 
     def _generated_artifact_quality_error(self, files_created: list[dict], *, phase: str) -> str | None:
-        """Return a fail-closed quality error for generated artifact receipts."""
-        relative_paths = self._generated_artifact_paths(files_created)
-        if not relative_paths:
-            return f"{phase} quality gate failed: no changed files to evaluate"
+        """Return a fail-closed quality error for generated artifact receipts.
 
-        missing_paths: list[str] = []
-        for path in relative_paths:
-            full_path = self._resolve_workspace_file_path(path)
-            if full_path is None or not os.path.isfile(full_path):
-                missing_paths.append(path)
-        if missing_paths:
-            return f"{phase} quality gate failed: changed file receipts missing on disk: {', '.join(missing_paths[:6])}"
-
-        errors = scan_workspace_artifact_quality(self.workspace, relative_paths=relative_paths)
-        if errors:
-            return f"{phase} quality gate failed: {'; '.join(errors[:6])}"
-        return None
+        Delegates to ``WorkspaceProbe.generated_artifact_quality_error``.
+        """
+        return self._workspace_probe.generated_artifact_quality_error(files_created, phase=phase)
 
     @staticmethod
     def _generated_artifact_paths(files_created: list[dict]) -> list[str]:
-        """Extract stable workspace-relative paths from generated file receipts."""
-        paths: list[str] = []
-        seen: set[str] = set()
-        for item in files_created:
-            if not isinstance(item, dict) or bool(item.get("deleted")):
-                continue
-            raw_path = item.get("path") or item.get("file")
-            path = str(raw_path or "").strip().replace("\\", "/").lstrip("/")
-            if not path or path in seen:
-                continue
-            seen.add(path)
-            paths.append(path)
-        return paths
+        """Extract stable workspace-relative paths from generated file receipts.
+
+        Delegates to ``WorkspaceProbe.generated_artifact_paths``.
+        """
+        return WorkspaceProbe.generated_artifact_paths(files_created)
 
     def _resolve_workspace_file_path(self, relative_path: str) -> str | None:
-        """Resolve a workspace-relative file path without allowing traversal."""
-        path = str(relative_path or "").strip()
-        if not path or os.path.isabs(path):
-            return None
-        workspace_abs = os.path.abspath(self.workspace)
-        full_path = os.path.abspath(os.path.join(workspace_abs, path))
-        try:
-            if os.path.commonpath([workspace_abs, full_path]) != workspace_abs:
-                return None
-        except ValueError:
-            return None
-        return full_path
+        """Resolve a workspace-relative file path without allowing traversal.
+
+        Delegates to ``WorkspaceProbe.resolve_workspace_file_path``.
+        """
+        return self._workspace_probe.resolve_workspace_file_path(relative_path)
 
     def _snapshot_workspace_files(self, paths: list[str]) -> dict[str, tuple[bool, int, int]]:
-        """Capture initial target-file signatures for over-completion detection."""
-        snapshot: dict[str, tuple[bool, int, int]] = {}
-        for raw_path in paths:
-            path = str(raw_path or "").strip()
-            if not path or path in snapshot:
-                continue
-            full_path = self._resolve_workspace_file_path(path)
-            if full_path is None:
-                continue
-            try:
-                stat = os.stat(full_path)
-            except OSError:
-                snapshot[path] = (False, -1, -1)
-            else:
-                snapshot[path] = (True, int(stat.st_size), int(stat.st_mtime_ns))
-        return snapshot
+        """Capture initial target-file signatures for over-completion detection.
+
+        Delegates to ``WorkspaceProbe.snapshot_workspace_files``.
+        """
+        return self._workspace_probe.snapshot_workspace_files(paths)
 
     def _round_files_changed_since(
         self,
         paths: list[str],
         initial_signatures: dict[str, tuple[bool, int, int]],
     ) -> bool:
-        """Return true when every path in a round was created or changed."""
-        normalized = [str(path or "").strip() for path in paths if str(path or "").strip()]
-        if not normalized:
-            return False
-        for path in normalized:
-            full_path = self._resolve_workspace_file_path(path)
-            if full_path is None or not os.path.isfile(full_path):
-                return False
-            try:
-                stat = os.stat(full_path)
-            except OSError:
-                return False
-            current = (True, int(stat.st_size), int(stat.st_mtime_ns))
-            if current == initial_signatures.get(path, (False, -1, -1)):
-                return False
-        return True
+        """Return true when every path in a round was created or changed.
+
+        Delegates to ``WorkspaceProbe.round_files_changed_since``.
+        """
+        return self._workspace_probe.round_files_changed_since(paths, initial_signatures)
 
     def _collect_existing_file_records(self, paths: list[str]) -> list[dict[str, str]]:
-        """Return lightweight records for existing workspace files."""
-        records: list[dict[str, str]] = []
-        seen: set[str] = set()
-        for raw_path in paths:
-            path = str(raw_path or "").strip()
-            if not path or path in seen:
-                continue
-            full_path = self._resolve_workspace_file_path(path)
-            if full_path is None or not os.path.isfile(full_path):
-                continue
-            seen.add(path)
-            records.append({"path": path, "content": ""})
-        return records
+        """Return lightweight records for existing workspace files.
+
+        Delegates to ``WorkspaceProbe.collect_existing_file_records``.
+        """
+        return self._workspace_probe.collect_existing_file_records(paths)
 
     def _code_generation_round_marker_path(self, task: Task, round_index: int) -> str:
-        """Return the persisted progress marker path for one task round."""
-        raw_task_id = str(getattr(task, "id", "") or getattr(task, "subject", "") or "task")
-        safe_task_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw_task_id).strip("._") or "task"
-        return os.path.join(
-            self.workspace,
-            ".polaris",
-            "runtime",
-            "director",
-            "codegen_progress",
-            safe_task_id,
-            f"round-{round_index:03d}.json",
-        )
+        """Return the persisted progress marker path for one task round.
+
+        Delegates to ``WorkspaceProbe.code_generation_round_marker_path``.
+        """
+        return self._workspace_probe.code_generation_round_marker_path(task, round_index)
 
     def _workspace_file_signature(self, relative_path: str) -> dict[str, int | str] | None:
-        """Return a stable file signature for a workspace-relative file."""
-        fs = _workspace_fs(self.workspace)
-        try:
-            full_path = fs.resolve_workspace_path(relative_path)
-        except (OSError, PathSecurityError, ValueError):
-            return None
-        if not os.path.isfile(full_path):
-            return None
-        try:
-            stat = os.stat(full_path)
-            content = fs.workspace_read_text(relative_path, encoding="utf-8")
-        except OSError:
-            return None
-        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        return {
-            "size": int(stat.st_size),
-            "mtime_ns": int(stat.st_mtime_ns),
-            "sha256": digest,
-        }
+        """Return a stable file signature for a workspace-relative file.
+
+        Delegates to ``WorkspaceProbe.workspace_file_signature``.
+        """
+        return self._workspace_probe.workspace_file_signature(relative_path)
 
     def _write_code_generation_round_marker(
         self,
@@ -1176,31 +952,11 @@ class WorkerExecutor:
         round_index: int,
         round_paths: list[str],
     ) -> None:
-        """Persist successful round progress so process-level retries can resume."""
-        normalized_paths = [str(path or "").strip() for path in round_paths if str(path or "").strip()]
-        if not normalized_paths:
-            return
-        signatures: dict[str, dict[str, int | str]] = {}
-        for path in normalized_paths:
-            signature = self._workspace_file_signature(path)
-            if signature is None:
-                return
-            signatures[path] = signature
-        marker_path = self._code_generation_round_marker_path(task, round_index)
-        payload = {
-            "schema_version": 1,
-            "task_id": str(getattr(task, "id", "") or ""),
-            "round_index": round_index,
-            "target_files": normalized_paths,
-            "signatures": signatures,
-            "timestamp_epoch": time.time(),
-        }
-        fs = _workspace_fs(self.workspace)
-        fs.workspace_write_text(
-            marker_path,
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        """Persist successful round progress so process-level retries can resume.
+
+        Delegates to ``WorkspaceProbe.write_code_generation_round_marker``.
+        """
+        self._workspace_probe.write_code_generation_round_marker(task, round_index, round_paths)
 
     def _code_generation_round_marker_satisfied(
         self,
@@ -1208,28 +964,11 @@ class WorkerExecutor:
         round_index: int,
         round_paths: list[str],
     ) -> bool:
-        """Return whether a previous process already completed this round."""
-        normalized_paths = [str(path or "").strip() for path in round_paths if str(path or "").strip()]
-        if not normalized_paths:
-            return False
-        marker_path = self._code_generation_round_marker_path(task, round_index)
-        try:
-            fs = _workspace_fs(self.workspace)
-            payload = json.loads(fs.workspace_read_text(marker_path, encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            return False
-        if not isinstance(payload, dict) or int(payload.get("schema_version") or 0) != 1:
-            return False
-        target_files = payload.get("target_files")
-        signatures = payload.get("signatures")
-        if target_files != normalized_paths or not isinstance(signatures, dict):
-            return False
-        for path in normalized_paths:
-            expected = signatures.get(path)
-            current = self._workspace_file_signature(path)
-            if not isinstance(expected, dict) or current != expected:
-                return False
-        return True
+        """Return whether a previous process already completed this round.
+
+        Delegates to ``WorkspaceProbe.code_generation_round_marker_satisfied``.
+        """
+        return self._workspace_probe.code_generation_round_marker_satisfied(task, round_index, round_paths)
 
     def _write_files(self, files: list[dict], task_id: str = "") -> list[dict]:
         """Delegate to FileApplyService."""

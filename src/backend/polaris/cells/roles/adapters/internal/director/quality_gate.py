@@ -829,7 +829,7 @@ _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 _PYTHON_TRACEBACK_FILE_RE = re.compile(r'File "(?P<path>[^"]+)", line \d+', re.IGNORECASE)
 _SEMANTIC_QUALITY_EXPLICIT_PATH_RE = re.compile(
-    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:c|cc|cpp|cxx|go|h|hpp|html|java|js|jsx|json|md|py|rs|ts|tsx|css))(?=[:\s])",
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:c|cc|cpp|cxx|go|h|hpp|html|java|js|jsx|json|md|py|rs|ts|tsx|css))(?=[:\s(]|$)",
     re.IGNORECASE,
 )
 
@@ -966,6 +966,7 @@ _SEMANTIC_QUALITY_SINGLE_TARGET_HINTS: tuple[str, ...] = (
     "npm package manifest script",
     "npm package manifest contains",
     "npm package manifest declares",
+    "typescript project typecheck failed",
     "step verify target mismatch",
 )
 
@@ -1028,11 +1029,14 @@ def _semantic_quality_repair_target_files(
 
     unique_candidates = _dedupe_preserve_order(candidates)
     explicit_candidates: list[str] = []
-    candidate_set = set(unique_candidates)
     for item in artifact_quality_errors:
         for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(str(item or "")):
             rel = _normalize_declared_task_path(match.group("path"))
-            if rel in candidate_set and _workspace_path_exists_case_insensitive(workspace_root, rel):
+            if (
+                rel
+                and Path(rel).suffix.lower() in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES
+                and _workspace_path_exists_case_insensitive(workspace_root, rel)
+            ):
                 explicit_candidates.append(rel)
     explicit_unique = _dedupe_preserve_order(explicit_candidates)
     if explicit_unique:

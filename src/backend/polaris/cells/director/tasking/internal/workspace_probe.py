@@ -43,7 +43,7 @@ class WorkspaceProbe:
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
 
-    def generated_artifact_quality_error(self, files_created: list[dict], *, phase: str) -> str | None:
+    def generated_artifact_quality_error(self, files_created: list[dict[str, Any]], *, phase: str) -> str | None:
         """Return a fail-closed quality error for generated artifact receipts."""
         relative_paths = self.generated_artifact_paths(files_created)
         if not relative_paths:
@@ -63,7 +63,7 @@ class WorkspaceProbe:
         return None
 
     @staticmethod
-    def generated_artifact_paths(files_created: list[dict]) -> list[str]:
+    def generated_artifact_paths(files_created: list[dict[str, Any]]) -> list[str]:
         """Extract stable workspace-relative paths from generated file receipts."""
         paths: list[str] = []
         seen: set[str] = set()
