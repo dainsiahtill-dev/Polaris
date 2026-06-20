@@ -360,15 +360,6 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
     return () => window.removeEventListener('resize', onResize);
   }, [isOpen]);
 
-  // 当弹窗关闭时，刷新一次 LLM 状态并上报给上层，避免旧阻断残留
-  useEffect(() => {
-    if (!isOpen) {
-      loadLLMStatus().catch((err) => {
-        devLogger.error('[Settings] LLM status load failed:', err);
-      });
-    }
-  }, [isOpen]);
-
   useEffect(() => {
     if (!isOpen) return;
     if (settingsModalResizing) return;
@@ -575,14 +566,14 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
   };
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || activeTab !== 'llm') return;
     loadLLMConfig().catch((err) => {
       devLogger.error('[Settings] LLM config load failed:', err);
     });
     loadLLMStatus().catch((err) => {
       devLogger.error('[Settings] LLM status load failed:', err);
     });
-  }, [isOpen]);
+  }, [activeTab, isOpen]);
 
   const updateRole = (role: string, updates: Partial<RoleConfig>) => {
     setLLMConfig((prev) => {
@@ -2623,4 +2614,3 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
     </div>
   );
 }
-

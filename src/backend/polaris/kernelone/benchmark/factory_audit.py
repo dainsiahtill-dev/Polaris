@@ -396,7 +396,7 @@ def _check_package_scripts(workspace: str) -> tuple[bool, str]:
         return False, f"package.json unreadable or invalid: {exc}"
     scripts = package.get("scripts")
     if not isinstance(scripts, dict) or not scripts:
-        return True, "package.json has no scripts to validate"
+        return False, "package.json has no scripts to validate"
     failures: list[str] = []
     for script_name, command in scripts.items():
         if not isinstance(command, str):

@@ -707,6 +707,49 @@ def test_leaf_existing_bootstrap_target_uses_current_content_write_fence(tmp_pat
     assert invocation["arguments"] == {"file": "main.py", "content": current_content}
 
 
+def test_leaf_existing_bootstrap_target_suppresses_write_fence_on_failed_repair(tmp_path: Path) -> None:
+    """A QA repair turn must not satisfy the write fence by replaying the broken
+    file unchanged. That creates fake progress and starves the real fix.
+    """
+    current_content = "export const values = { broken: true; };\n"
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "flower.ts").write_text(current_content, encoding="utf-8")
+    context = _leaf_step_context(
+        "src/flower.ts",
+        verify="npx tsc --noEmit src/flower.ts",
+        named_files="src/flower.ts package.json",
+    )
+    context.append(
+        {
+            "role": "user",
+            "content": (
+                "RETRY: previous attempt failed with QA_syntax_failed. "
+                "语法检查失败(node --check / py_compile),逐字修正后重试:\n"
+                "src/flower.ts(1,37): error TS1005: ',' expected."
+            ),
+        }
+    )
+
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001--PM-0001-2-S1",
+        original_context=context,
+        bootstrap_receipt={
+            "results": [
+                {
+                    "tool_name": "read_file",
+                    "status": "success",
+                    "result": {"file": "src/flower.ts", "content": current_content},
+                    "arguments": {"file": "src/flower.ts"},
+                }
+            ]
+        },
+        allowed_tool_names={"edit_blocks", "write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is None
+
+
 def test_leaf_existing_large_bootstrap_target_keeps_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KERNELONE_LEAF_BOOTSTRAP_WRITE_FILE_MAX_CHARS", "20")
     decision = build_deterministic_bootstrap_followup_write_decision(

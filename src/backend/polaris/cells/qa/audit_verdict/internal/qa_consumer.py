@@ -85,10 +85,31 @@ _BOOL_FALSE = {"0", "false", "no", "off", "disabled"}
 _VERIFY_SCRIPT_NAMES = frozenset({"verify.js", "scripts/verify.js"})
 _PACKAGE_SCRIPT_CHECKS = ("package_scripts",)
 _VERIFY_SCRIPT_CHECK_LABELS = {
+    "py_compile": "py_compile Python syntax check",
+    "html": "html entrypoint check",
+    "js_syntax": "js_syntax JavaScript syntax check",
     "ts_syntax": "ts_syntax / tsc TypeScript syntax check",
+    "go_compile": "go_compile Go compile/test check",
+    "rust_compile": "rust_compile Rust compile check",
+    "cpp_compile": "cpp_compile C++ compile check",
+    "java_compile": "java_compile Java compile check",
     "package_scripts": "package_scripts npm script validation",
+    "runnable_any": "runnable_any shape-neutral runnability check",
+    "real_run": "real_run runtime smoke check",
     "min_files": "min_files code inventory validation",
     "content_any": "content_any feature keyword probe",
+}
+_VERIFY_SCRIPT_SIMPLE_REQUIREMENT_MARKERS = {
+    "py_compile": ("py_compile", "verifypycompile", "python compile", "python syntax"),
+    "html": ("html", "verifyhtml", "html entry", "index.html"),
+    "js_syntax": ("js_syntax", "verifyjssyntax", "javascript syntax", "js syntax"),
+    "ts_syntax": ("ts_syntax", "verifytssyntax", "ts syntax", "typescript syntax"),
+    "go_compile": ("go_compile", "verifygocompile", "go compile", "go test"),
+    "rust_compile": ("rust_compile", "verifyrustcompile", "rust compile", "cargo check", "cargo test"),
+    "cpp_compile": ("cpp_compile", "verifycppcompile", "c++ compile", "cpp compile", "g++", "clang++"),
+    "java_compile": ("java_compile", "verifyjavacompile", "java compile", "javac"),
+    "runnable_any": ("runnable_any", "verifyrunnable", "runnable shape", "runnability"),
+    "real_run": ("real_run", "verifyrealrun", "real run", "runtime smoke", "smoke run"),
 }
 
 
@@ -190,8 +211,9 @@ def _extract_verify_script_requirements(payload: dict[str, Any]) -> dict[str, st
     """Extract explicit deterministic-check requirements a verify script must encode."""
     text = _payload_text(payload)
     required: dict[str, str] = {}
-    if "ts_syntax" in text or "verifytssyntax" in text or "ts syntax" in text or "typescript syntax" in text:
-        required["ts_syntax"] = "ts_syntax"
+    for kind, markers in _VERIFY_SCRIPT_SIMPLE_REQUIREMENT_MARKERS.items():
+        if any(marker in text for marker in markers):
+            required[kind] = kind
     if _contract_mentions_package_scripts(text) or "verifypackagescripts" in text or "package scripts" in text:
         required["package_scripts"] = "package_scripts"
     min_files_match = re.search(r"\bmin_files\s*:\s*(\d+)", text)
@@ -213,8 +235,26 @@ def _extract_verify_script_requirements(payload: dict[str, Any]) -> dict[str, st
 
 def _verify_script_covers_requirement(script_text: str, kind: str, requirement: str) -> bool:
     content = script_text.lower()
+    if kind == "py_compile":
+        return (
+            "py_compile" in content
+            or "compileall" in content
+            or ("python" in content and ("-m py_compile" in content or "py_compile" in content))
+        )
+    if kind == "html":
+        return "verifyhtml" in content or ("index.html" in content and "<html" in content)
+    if kind == "js_syntax":
+        return "js_syntax" in content or re.search(r"\bnode\s+--check\b", content) is not None
     if kind == "ts_syntax":
         return "ts_syntax" in content or re.search(r"\btsc\b", content) is not None
+    if kind == "go_compile":
+        return "go_compile" in content or re.search(r"\bgo\s+(test|build)\b", content) is not None
+    if kind == "rust_compile":
+        return "rust_compile" in content or re.search(r"\b(cargo\s+(check|test|build)|rustc)\b", content) is not None
+    if kind == "cpp_compile":
+        return "cpp_compile" in content or any(tool in content for tool in ("g++", "clang++", "c++"))
+    if kind == "java_compile":
+        return "java_compile" in content or any(tool in content for tool in ("javac", "mvn test", "gradle test"))
     if kind == "package_scripts":
         return "package_scripts" in content or (
             "package.json" in content
@@ -232,7 +272,17 @@ def _verify_script_covers_requirement(script_text: str, kind: str, requirement: 
         pattern = requirement.split(":", 1)[1] if ":" in requirement else ""
         terms = [term.strip().lower() for term in pattern.split("|") if term.strip()]
         return bool(terms) and all(term in content for term in terms)
-    return True
+    if kind == "runnable_any":
+        return "runnable_any" in content or (
+            any(token in content for token in ("index.html", "main.py", "main.go", "main.rs", "main.cpp", "main.java"))
+            and any(token in content for token in ("exists", "existssync", "spawnsync", "execsync", "readfilesync"))
+        )
+    if kind == "real_run":
+        return "real_run" in content or (
+            any(token in content for token in ("spawnsync", "execsync", "subprocess", "npm run", "go run", "cargo run"))
+            and any(token in content for token in ("start", "run", "smoke", "timeout"))
+        )
+    return False
 
 
 def _verify_script_gate_failure(workspace: str, payload: dict[str, Any]) -> str:

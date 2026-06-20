@@ -59,7 +59,8 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
   const [logLevelFilter, setLogLevelFilter] = useState<string>('all');
   const [showTimestamp, setShowTimestamp] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
-      const { connected: transportConnected, subscribeChannels, registerMessageHandler } = useRuntimeTransport();
+  const { connected: transportConnected, subscribeChannels, registerMessageHandler } = useRuntimeTransport();
+  const [subscriptionEpoch, setSubscriptionEpoch] = useState(0);
 
   const [isClearing, setIsClearing] = useState(false);
 
@@ -74,43 +75,23 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
   }, [sourceId]);
 
   const refresh = async () => {
-    setLoading(true);
     setError(null);
-    try {
-      const res = await apiFetch(`/files/read?path=${encodeURIComponent(source.path)}&tail_lines=400`);
-      if (!res.ok) throw new Error('读取案牍失败');
-      const payload = (await res.json()) as { content?: string; mtime?: string };
-      setRawLines(payload.content ? payload.content.split('\n') : []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '读取案牍失败');
-      setRawLines([]);
-    } finally {
-      setLoading(false);
+    if (!transportConnected) {
+      setLive(false);
+      setError('实时通道未连接');
+      return;
     }
+    setLoading(false);
+    setLive(true);
+    setSubscriptionEpoch((value) => value + 1);
   };
 
   useEffect(() => {
-    const controller = new AbortController();
-    void (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await apiFetch(`/files/read?path=${encodeURIComponent(source.path)}&tail_lines=400`, {
-          signal: controller.signal,
-        });
-        if (!res.ok) throw new Error('读取案牍失败');
-        const payload = (await res.json()) as { content?: string; mtime?: string };
-        setRawLines(payload.content ? payload.content.split('\n') : []);
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return;
-        setError(err instanceof Error ? err.message : '读取案牍失败');
-        setRawLines([]);
-      } finally {
-        setLoading(false);
-      }
-    })();
-    return () => controller.abort();
-  }, [source.path]);
+    setRawLines([]);
+    setLlmEvents([]);
+    seenIds.current.clear();
+    setError(null);
+  }, [source.channel, source.llmChannel, sourceId]);
 
   const clearLogs = async () => {
     if (!clearScope || isClearing) return;
@@ -135,7 +116,7 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
       setRawLines([]);
       setLlmEvents([]);
       seenIds.current.clear();
-      await refresh();
+      setSubscriptionEpoch((value) => value + 1);
       toast.success('日志已清空');
     } catch (err) {
       const message = err instanceof Error ? err.message : '清空日志失败';
@@ -155,8 +136,9 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
         return;
       }
       setLive(true);
+      setLoading(false);
       const unsubscribe = subscribeChannels(
-        channels.map((channel) => ({ channel, tailLines: 0 })),
+        channels.map((channel) => ({ channel, tailLines: 400 })),
       );
 
       const unregister = registerMessageHandler((raw) => {
@@ -215,7 +197,14 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
         try { unsubscribe(); } catch { /* noop */ }
         try { unregister(); } catch { /* noop */ }
       };
-    }, [source.channel, source.llmChannel, transportConnected, subscribeChannels, registerMessageHandler]);
+    }, [
+      source.channel,
+      source.llmChannel,
+      transportConnected,
+      subscribeChannels,
+      registerMessageHandler,
+      subscriptionEpoch,
+    ]);
 
   const filteredLlmEvents = useMemo(() => {
     if (!query.trim()) return llmEvents;

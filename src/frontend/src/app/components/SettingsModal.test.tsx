@@ -107,7 +107,7 @@ describe('SettingsModal', () => {
 
   describe('Basic Rendering', () => {
     it('renders modal when isOpen is true', () => {
-      render(<SettingsModal {...defaultProps} />);
+      render(<SettingsModal {...defaultProps} initialTab="llm" />);
       expect(screen.getByText('系统配置')).toBeInTheDocument();
     });
 
@@ -117,13 +117,13 @@ describe('SettingsModal', () => {
     });
 
     it('shows settings tab triggers', () => {
-      render(<SettingsModal {...defaultProps} />);
+      render(<SettingsModal {...defaultProps} initialTab="llm" />);
       expect(screen.getByTestId('settings-tab-general')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-llm')).toBeInTheDocument();
     });
 
     it('closes the modal when Escape is pressed', () => {
-      render(<SettingsModal {...defaultProps} />);
+      render(<SettingsModal {...defaultProps} initialTab="llm" />);
 
       fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
 
@@ -207,7 +207,7 @@ describe('SettingsModal', () => {
           )
         );
 
-      render(<SettingsModal {...defaultProps} />);
+      render(<SettingsModal {...defaultProps} initialTab="llm" />);
 
       await waitFor(() => {
         expect(mockApiFetch).toHaveBeenCalledTimes(2);
@@ -498,7 +498,7 @@ describe('SettingsModal', () => {
           json: () => Promise.resolve({ status: 'ready' }),
         });
 
-      render(<SettingsModal {...defaultProps} onLlmStatusChange={onLlmStatusChange} />);
+      render(<SettingsModal {...defaultProps} initialTab="llm" onLlmStatusChange={onLlmStatusChange} />);
 
       await waitFor(
         () => {

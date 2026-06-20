@@ -634,6 +634,23 @@ class TestContractGate:
         assert "placeholder" in msg
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_rejects_empty_package_scripts_when_required(self, mock_get_svc: MagicMock, tmp_path: Path) -> None:
+        mock_get_svc.return_value = MagicMock()
+        (tmp_path / "package.json").write_text('{"scripts":{}}\n', encoding="utf-8")
+
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-contract")
+        msg = consumer._run_contract_gate(
+            {
+                "construction_step": {"target_file": "package.json"},
+                "acceptance_criteria": ["package_scripts"],
+            }
+        )
+
+        assert msg
+        assert "package script gate failed" in msg
+        assert "no scripts" in msg
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_rejects_manifest_only_verify_script_for_declared_checks(
         self, mock_get_svc: MagicMock, tmp_path: Path
     ) -> None:
@@ -676,6 +693,48 @@ class TestContractGate:
         assert "ts_syntax" in msg
         assert "min_files:3" in msg
         assert "content_any:firefly|flower|moon|humidity" in msg
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_rejects_manifest_only_verify_script_for_multilanguage_declared_checks(
+        self, mock_get_svc: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir()
+        (scripts_dir / "verify.js").write_text(
+            "const fs = require('fs');\n"
+            "const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));\n"
+            "if (!pkg.name) process.exit(1);\n"
+            "console.log('PASS');\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "package.json").write_text(
+            '{"name":"demo","scripts":{"test":"node scripts/verify.js"}}\n', encoding="utf-8"
+        )
+
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-contract")
+        msg = consumer._run_contract_gate(
+            {
+                "title": "创建 scripts/verify.js 多语言验收脚本",
+                "construction_step": {"target_file": "scripts/verify.js"},
+                "acceptance_criteria": [
+                    (
+                        "scripts/verify.js 必须校验 js_syntax、go_compile、rust_compile、"
+                        "cpp_compile、java_compile、runnable_any、real_run"
+                    )
+                ],
+                "changed_files": ["scripts/verify.js"],
+            }
+        )
+
+        assert msg
+        assert "js_syntax" in msg
+        assert "go_compile" in msg
+        assert "rust_compile" in msg
+        assert "cpp_compile" in msg
+        assert "java_compile" in msg
+        assert "runnable_any" in msg
+        assert "real_run" in msg
 
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_rejects_manifest_only_verify_script_when_contract_was_split_into_signatures(

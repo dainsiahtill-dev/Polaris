@@ -159,6 +159,15 @@ class TestAuditRecord:
         assert results[0]["ok"] is False
         assert "script 'build' is a placeholder command" in results[0]["detail"]
 
+    def test_package_script_validation_rejects_empty_scripts(self, tmp_path: Path) -> None:
+        ws = _project_workspace(tmp_path)
+        (ws / "package.json").write_text(json.dumps({"scripts": {}}), encoding="utf-8")
+
+        results = run_checks(str(ws), ["package_scripts"])
+
+        assert results[0]["ok"] is False
+        assert "no scripts" in results[0]["detail"]
+
     def test_package_script_validation_allows_echo_before_real_command(self, tmp_path: Path) -> None:
         ws = _project_workspace(tmp_path)
         (ws / "package.json").write_text(

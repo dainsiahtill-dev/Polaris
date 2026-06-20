@@ -579,6 +579,25 @@ def _context_text_for_bootstrap(original_context: list[dict], declared_step: Map
     return "\n".join(parts)
 
 
+def _is_failed_repair_context(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "qa_syntax_failed",
+            "qa_contract_gate_failed",
+            "qa_step_verify_failed",
+            "ce_step_gate_failed",
+            "verification script gate failed",
+            "package script gate failed",
+            "previous write tool call had blank content",
+            "director_no_materialized_changes",
+            "语法检查失败",
+            "逐字修正后重试",
+        )
+    )
+
+
 def _synthesize_calculator_source_content() -> str:
     return (
         "#!/usr/bin/env python3\n"
@@ -955,6 +974,8 @@ def build_deterministic_bootstrap_followup_write_decision(
         suffix = Path(target).suffix.lower() if target else ""
         contents = _bootstrap_successful_file_contents(bootstrap_receipt)
         current_content = contents.get(target, "") if target else ""
+        context_text = _context_text_for_bootstrap(original_context, declared_step)
+        failed_repair_context = _is_failed_repair_context(context_text)
         if (
             target
             and "write_file" in allowed_tool_names
@@ -962,6 +983,7 @@ def build_deterministic_bootstrap_followup_write_decision(
             and isinstance(current_content, str)
             and current_content
             and len(current_content) <= _read_leaf_write_file_max_chars()
+            and not failed_repair_context
         ):
             invocation = ToolInvocation(
                 call_id=ToolCallId(f"{turn_id}:deterministic-existing-write:1"),
@@ -991,7 +1013,7 @@ def build_deterministic_bootstrap_followup_write_decision(
         if target and _is_safe_leaf_support_bootstrap_target(target):
             content = _synthesize_deterministic_bootstrap_write_content(
                 target,
-                _context_text_for_bootstrap(original_context, declared_step),
+                context_text,
             )
             if not content.strip():
                 logger.warning(

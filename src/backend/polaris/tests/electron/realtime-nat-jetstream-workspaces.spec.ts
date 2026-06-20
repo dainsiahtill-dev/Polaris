@@ -1,4 +1,4 @@
-import type { Page, TestInfo } from "@playwright/test";
+import type { Page, Request, Response, TestInfo, WebSocket } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
 type BackendInfo = {
@@ -17,6 +17,143 @@ type WebSocketFrameCapture = {
   payload: string;
   timestamp: string;
 };
+
+type RealtimeNetworkRequest = {
+  method: string;
+  url: string;
+  resourceType: string;
+  accept: string;
+  timestamp: string;
+};
+
+type RealtimeNetworkResponse = {
+  status: number;
+  url: string;
+  contentType: string;
+  timestamp: string;
+};
+
+type RealtimeNetworkAudit = {
+  requests: RealtimeNetworkRequest[];
+  responses: RealtimeNetworkResponse[];
+  webSockets: string[];
+  detach: () => void;
+};
+
+function startRealtimeNetworkAudit(window: Page): RealtimeNetworkAudit {
+  const requests: RealtimeNetworkRequest[] = [];
+  const responses: RealtimeNetworkResponse[] = [];
+  const webSockets: string[] = [];
+
+  const onRequest = (req: Request) => {
+    requests.push({
+      method: req.method(),
+      url: req.url(),
+      resourceType: req.resourceType(),
+      accept: req.headers().accept || "",
+      timestamp: new Date().toISOString(),
+    });
+  };
+  const onResponse = (res: Response) => {
+    responses.push({
+      status: res.status(),
+      url: res.url(),
+      contentType: res.headers()["content-type"] || "",
+      timestamp: new Date().toISOString(),
+    });
+  };
+  const onWebSocket = (webSocket: WebSocket) => {
+    webSockets.push(webSocket.url());
+  };
+
+  window.on("request", onRequest);
+  window.on("response", onResponse);
+  window.on("websocket", onWebSocket);
+
+  return {
+    requests,
+    responses,
+    webSockets,
+    detach: () => {
+      window.off("request", onRequest);
+      window.off("response", onResponse);
+      window.off("websocket", onWebSocket);
+    },
+  };
+}
+
+function isForbiddenRealtimeRequest(request: RealtimeNetworkRequest): boolean {
+  const url = new URL(request.url);
+  const path = url.pathname;
+  const accept = request.accept.toLowerCase();
+  return (
+    request.resourceType === "eventsource" ||
+    accept.includes("text/event-stream") ||
+    path.includes("/stream") ||
+    path === "/files/read"
+  );
+}
+
+function monitoredPollingKey(request: RealtimeNetworkRequest): string | null {
+  if (request.method !== "GET") return null;
+  const url = new URL(request.url);
+  const path = url.pathname;
+  if (path === "/state/snapshot") return path;
+  if (path === "/v2/pm/status") return path;
+  if (path === "/v2/director/status") return path;
+  if (path === "/v2/llm/status") return path;
+  return null;
+}
+
+async function attachRealtimeNetworkAudit(
+  testInfo: TestInfo,
+  audit: RealtimeNetworkAudit,
+): Promise<void> {
+  await testInfo.attach("realtime-network-audit.json", {
+    body: JSON.stringify(
+      {
+        requests: audit.requests,
+        responses: audit.responses,
+        webSockets: audit.webSockets,
+      },
+      null,
+      2,
+    ),
+    contentType: "application/json",
+  });
+}
+
+function assertRealtimeNetworkAudit(
+  audit: RealtimeNetworkAudit,
+  frames: WebSocketFrameCapture[],
+): void {
+  const forbiddenRequests = audit.requests.filter(isForbiddenRealtimeRequest);
+  const sseResponses = audit.responses.filter((response) =>
+    response.contentType.toLowerCase().includes("text/event-stream"),
+  );
+  const monitoredCounts = new Map<string, RealtimeNetworkRequest[]>();
+  for (const request of audit.requests) {
+    const key = monitoredPollingKey(request);
+    if (!key) continue;
+    monitoredCounts.set(key, [...(monitoredCounts.get(key) || []), request]);
+  }
+  const repeatedPolling = Array.from(monitoredCounts.entries())
+    .filter(([, entries]) => entries.length > 1)
+    .map(([key, entries]) => ({
+      key,
+      count: entries.length,
+      urls: entries.map((entry) => entry.url),
+      timestamps: entries.map((entry) => entry.timestamp),
+    }));
+
+  const hasRuntimeV2WebSocket =
+    audit.webSockets.some((url) => url.includes("/v2/ws/runtime")) ||
+    frames.some((frame) => frame.payload.includes("runtime.v2") && frame.payload.includes("event.bench"));
+  expect(hasRuntimeV2WebSocket, "runtime.v2 WebSocket should be used").toBe(true);
+  expect(forbiddenRequests, "SSE, legacy stream, and file-read realtime requests must not occur").toEqual([]);
+  expect(sseResponses, "HTTP responses must not use text/event-stream").toEqual([]);
+  expect(repeatedPolling, "status/snapshot endpoints must not be repeatedly fetched as polling").toEqual([]);
+}
 
 async function startWebSocketFrameCapture(window: Page): Promise<{
   frames: WebSocketFrameCapture[];
@@ -276,6 +413,7 @@ test("main, Factory, PM, Chief Engineer, Director, and ContextOS receive live be
       consoleErrors.push(message.text());
     }
   });
+  const networkAudit = startRealtimeNetworkAudit(window);
   const wsCapture = await startWebSocketFrameCapture(window);
   await testInfo.attach("renderer-websocket-capture-ready", {
     body: JSON.stringify({ ready: true }),
@@ -389,7 +527,10 @@ test("main, Factory, PM, Chief Engineer, Director, and ContextOS receive live be
   });
   await attachWebSocketFrames(testInfo, "complete", wsCapture.frames);
   await wsCapture.detach();
+  await attachRealtimeNetworkAudit(testInfo, networkAudit);
+  networkAudit.detach();
 
+  assertRealtimeNetworkAudit(networkAudit, wsCapture.frames);
   expect(pageErrors, "pageerror should remain empty during Nat-JetStream workspace audit").toEqual([]);
   expect(consoleErrors.filter((entry) => !/Unable to preload CSS/i.test(entry)), "console errors should remain empty").toEqual([]);
 });
