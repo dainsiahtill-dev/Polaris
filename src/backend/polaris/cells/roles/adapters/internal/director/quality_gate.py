@@ -854,6 +854,11 @@ _SEMANTIC_QUALITY_SINGLE_TARGET_HINTS: tuple[str, ...] = (
     "structural-only",
     "repeated trivial arithmetic placeholder tests",
     "generic payload/index store scaffold",
+    "npm default failing test script",
+    "npm package manifest has test runner script",
+    "npm package manifest script",
+    "npm package manifest contains",
+    "npm package manifest declares",
 )
 
 _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES: frozenset[str] = frozenset(
@@ -949,7 +954,13 @@ def _missing_materialization_quality_repair_target_files(
     workspace_full: str,
     artifact_quality_errors: list[str],
 ) -> list[str]:
-    missing = _missing_declared_target_files(task, workspace_full)
+    explicit_missing_declared = _em._parse_missing_declared_target_files(artifact_quality_errors)
+    declared_missing_now = set(_missing_declared_target_files(task, workspace_full))
+    missing = [
+        rel
+        for item in explicit_missing_declared
+        if (rel := _normalize_declared_task_path(item)) and rel in declared_missing_now
+    ]
     missing.extend(_em._missing_unresolved_relative_import_target_files(artifact_quality_errors, workspace_full))
     return _dedupe_preserve_order(missing)
 
@@ -1088,6 +1099,17 @@ def _build_materialization_quality_repair_message(
             "positional argv for the default path; optional argv shortcuts are allowed only in addition to the "
             "safe no-argument behavior.\n"
         )
+    npm_manifest_block = ""
+    if "npm package manifest" in runtime_smoke_text or "npm default failing test script" in runtime_smoke_text:
+        npm_manifest_block = (
+            "NPM PACKAGE MANIFEST REPAIR: if package.json is the repair target, emit one complete "
+            "strict JSON file body. JSON keys and string values must use double quotes; do not output "
+            "JavaScript object syntax or comments. If there is no real test/spec file in the workspace, "
+            "do not use jest, vitest, mocha, or ava in the test script. Make `npm test` run a concrete "
+            "local check that exists now, such as a node-based package/runtime check or an existing "
+            "verification script. The test script must not be placeholder-only and must exit non-zero "
+            "when the checked rule fails.\n"
+        )
     if existing_repair_target_files and not missing_target_files and not symbol_repair_block:
         changed_line = (
             f"{len(changed_files)} file(s) were already written; rewrite only the existing failed target "
@@ -1116,6 +1138,7 @@ def _build_materialization_quality_repair_message(
         f"{symbol_repair_block}"
         f"{syntax_block}"
         f"{cli_entrypoint_block}"
+        f"{npm_manifest_block}"
         "Do not repeat the same package/script/test scaffold. Replace the bad artifact with concrete runnable code, "
         "source files, and executable tests required by the task contract.\n"
         "If package.json has an npm test script, it must run a real local test/check and must not contain "

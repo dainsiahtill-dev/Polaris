@@ -19,6 +19,7 @@ type WindowWithDevBackend = Window & {
 // ═══════════════════════════════════════════════════════════════════════════════
 const DEFAULT_BACKEND_PORT = 49977;
 const DEFAULT_BACKEND_HOST = "127.0.0.1";
+const DEFAULT_BACKEND_TOKEN = "polaris-local-dev";
 
 let cachedInfo: BackendInfo | null = null;
 
@@ -51,18 +52,13 @@ export async function getBackendInfo(): Promise<BackendInfo> {
   if (!window.polaris?.getBackendInfo) {
     const devBackend = (window as WindowWithDevBackend).__DEV_BACKEND__;
     const storedBase = localStorage.getItem("polaris.baseUrl");
-    const explicitBase =
-      devBackend?.baseUrl ||
-      getEnvBackendUrl() ||
-      (isViteWebDevMode ? null : storedBase);
-    const fallbackBase =
-      explicitBase ||
-      (isViteWebDevMode ? null : getDefaultBackendUrl());
+    const explicitBase = devBackend?.baseUrl || getEnvBackendUrl() || storedBase;
+    const fallbackBase = explicitBase || getDefaultBackendUrl();
     const fallbackToken =
       devBackend?.token ||
       getEnvBackendToken() ||
       localStorage.getItem("polaris.token") ||
-      null;
+      (isViteWebDevMode ? DEFAULT_BACKEND_TOKEN : null);
     const info: BackendInfo = {
       port: null,
       token: fallbackToken,

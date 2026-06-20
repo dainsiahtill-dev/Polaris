@@ -4637,6 +4637,106 @@ class TestQualityRepairMissingTargetContract:
 
         assert missing == ["src/styles/global.css"]
 
+    def test_repair_targets_unresolved_import_before_unrelated_declared_targets(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _missing_materialization_quality_repair_target_files,
+        )
+
+        (tmp_path / "src" / "data").mkdir(parents=True)
+        (tmp_path / "src" / "data" / "seed.ts").write_text(
+            "import { Flower } from './types';\nexport const flowers = [];\n",
+            encoding="utf-8",
+        )
+
+        missing = _missing_materialization_quality_repair_target_files(
+            {
+                "target_files": [
+                    "src/data/seed.ts",
+                    "scripts/verify-rules.ts",
+                ],
+            },
+            str(tmp_path),
+            ["Artifact quality scan failed: unresolved relative import './types' in src/data/seed.ts"],
+        )
+
+        assert missing == ["src/data/types.ts"]
+
+    @pytest.mark.asyncio
+    async def test_package_manifest_quality_error_targets_package_json(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self.repair_message = ""
+                self.repair_context: dict[str, Any] = {}
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                self.repair_message = message
+                self.repair_context = context
+                return {"content": ""}
+
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {"test": "jest"},
+                    "devDependencies": {"jest": "^29.0.0"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        adapter = _Adapter()
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["package.json"]},
+            target_task_id="task-1",
+            run_id="run-1",
+            context={},
+            original_message="Create package manifest.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: npm package manifest has test runner script "
+                "but no test/spec files exist in package.json",
+            ],
+            changed_files=["package.json"],
+        )
+
+        assert summary["semantic_quality_target_files"] == ["package.json"]
+        assert summary["repair_target_files"] == ["package.json"]
+        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
+            "tool": "write_file",
+            "target_file": "package.json",
+        }
+        assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
+
     def test_repair_targets_existing_import_case_variant_is_not_missing(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _missing_materialization_quality_repair_target_files,
