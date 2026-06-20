@@ -10,7 +10,6 @@ import asyncio
 import logging
 import time
 import uuid
-from collections import deque
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -21,28 +20,13 @@ from polaris.cells.runtime.projection.public.service import (
     DEFAULT_WORKSPACE,
     resolve_workspace_runtime_context,
 )
-from polaris.delivery.ws.endpoints.channel_stream import (
-    send_channel_incremental,
-    send_channel_snapshot,
-)
 from polaris.delivery.ws.endpoints.helpers import (
-    JOURNAL_CHANNELS,
     LEGACY_LLM_CHANNELS,
     normalize_roles,
-)
-from polaris.delivery.ws.endpoints.journal_stream import (
-    send_journal_incremental,
-    send_journal_snapshot,
 )
 from polaris.delivery.ws.endpoints.models import WebSocketSendError, is_websocket_disconnect_runtime_error
 from polaris.delivery.ws.endpoints.protocol import build_status_payload
 from polaris.delivery.ws.endpoints.stream import send_json_safe
-from polaris.infrastructure.realtime.process_local.log_fanout import (
-    LOG_REALTIME_FANOUT,
-    RealtimeLogSubscription,
-)
-from polaris.infrastructure.realtime.process_local.message_event_fanout import RUNTIME_EVENT_FANOUT
-from polaris.infrastructure.realtime.process_local.signal_hub import REALTIME_SIGNAL_HUB
 
 if TYPE_CHECKING:
     from polaris.cells.runtime.state_owner.public.service import AppState, Auth
@@ -62,7 +46,9 @@ async def runtime_websocket(
 ) -> None:
     """Main runtime WebSocket endpoint.
 
-    Provides real-time streaming for runtime events, logs, and status.
+    Provides runtime.v2 WebSocket access. Product realtime events are delivered
+    exclusively through Nat-JetStream consumers; file-watch/process-local
+    realtime adapters are not registered by this endpoint.
     """
     auth: Auth = websocket.app.state.auth
     state: AppState = websocket.app.state.app_state
@@ -133,19 +119,11 @@ async def runtime_websocket(
     # Initialize connection state
     roles_filter = normalize_roles(roles)
     tail_lines = 200
-    legacy_subscriptions: set[str] = set()
     v2_protocol: str | None = None
     v2_consumer_manager: JetStreamConsumerManager | None = None
     v2_client_id: str = ""
     v2_channels: list[str] = []
     v2_cursor: int = 0
-    canonical_journal_channels = {ch for ch in STREAM_CHANNELS if ch in JOURNAL_CHANNELS}
-    channel_states: dict[str, dict[str, Any]] = {ch: {"pos": 0} for ch in STREAM_CHANNELS if ch not in JOURNAL_CHANNELS}
-    journal_state: dict[str, Any] = {"pos": 0}
-    legacy_channel_states: dict[str, dict[str, Any]] = {}
-    stream_signatures: set[str] = set()
-    stream_signature_order: deque[str] = deque()
-    realtime_subscription: RealtimeLogSubscription | None = None
 
     # Log open event
     await _log_connection_event(
@@ -156,12 +134,6 @@ async def runtime_websocket(
         {"client": client, "roles_filter": sorted(roles_filter), **workspace_details},
     )
 
-    # Register with fanout services
-    await RUNTIME_EVENT_FANOUT.register_connection(connection_id, resolved_workspace, cache_root)
-    realtime_subscription = await LOG_REALTIME_FANOUT.register_connection(
-        connection_id=connection_id, runtime_root=cache_root
-    )
-    await REALTIME_SIGNAL_HUB.ensure_watch(cache_root)
     connection_state = getattr(websocket.app.state, "connection_state", None)
     if connection_state is not None:
         connection_state.active_connections = max(0, int(getattr(connection_state, "active_connections", 0))) + 1
@@ -183,51 +155,6 @@ async def runtime_websocket(
             raise WebSocketSendError("send_failed", "Failed to send status")
         return sig, payload
 
-    async def send_all_snapshots() -> bool:
-        sent = await send_journal_snapshot(
-            websocket,
-            resolved_workspace,
-            cache_root,
-            journal_state,
-            tail_lines,
-            canonical_journal_channels,
-            stream_signatures,
-            list(stream_signature_order),
-            connection_id,
-            client,
-        )
-        for ch in STREAM_CHANNELS:
-            if ch in JOURNAL_CHANNELS:
-                continue
-            st = channel_states.setdefault(ch, {"pos": 0})
-            channel_sent = await send_channel_snapshot(
-                websocket, ch, resolved_workspace, cache_root, st, tail_lines, connection_id, client
-            )
-            sent = sent or channel_sent
-        return sent
-
-    async def send_incrementals() -> bool:
-        sent = await send_journal_incremental(
-            websocket,
-            resolved_workspace,
-            cache_root,
-            journal_state,
-            canonical_journal_channels,
-            stream_signatures,
-            list(stream_signature_order),
-            connection_id,
-            client,
-        )
-        for ch in STREAM_CHANNELS:
-            if ch in JOURNAL_CHANNELS:
-                continue
-            st = channel_states.setdefault(ch, {"pos": 0})
-            channel_sent = await send_channel_incremental(
-                websocket, ch, resolved_workspace, cache_root, st, connection_id, client
-            )
-            sent = sent or channel_sent
-        return sent
-
     # Run main loop (imported from websocket_loop.py)
     from polaris.delivery.ws.endpoints.websocket_loop import run_main_loop
 
@@ -243,22 +170,12 @@ async def runtime_websocket(
             connection_id=connection_id,
             client=client,
             tail_lines=tail_lines,
-            legacy_subscriptions=legacy_subscriptions,
             v2_protocol=v2_protocol,
             v2_consumer_manager=v2_consumer_manager,
             v2_client_id=v2_client_id,
             v2_channels=v2_channels,
             v2_cursor=v2_cursor,
-            canonical_journal_channels=canonical_journal_channels,
-            channel_states=channel_states,
-            journal_state=journal_state,
-            legacy_channel_states=legacy_channel_states,
-            stream_signatures=stream_signatures,
-            stream_signature_order=stream_signature_order,
-            realtime_subscription=realtime_subscription,
             send_status_func=send_status,
-            send_all_snapshots_func=send_all_snapshots,
-            send_incrementals_func=send_incrementals,
         )
     except WebSocketDisconnect as exc:
         close_code = getattr(exc, "code", None)
@@ -344,12 +261,6 @@ async def runtime_websocket(
                 )
             )
 
-        await _safe_cleanup(RUNTIME_EVENT_FANOUT.unregister_connection(connection_id), "fanout_unregister")
-        await _safe_cleanup(LOG_REALTIME_FANOUT.unregister_connection(connection_id), "log_unregister")
-        try:
-            REALTIME_SIGNAL_HUB.release_watch(cache_root)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("WS cleanup signal_hub failed for %s: %s", connection_id, exc)
         if v2_consumer_manager:
             await _safe_cleanup(v2_consumer_manager.disconnect(), "v2_consumer_disconnect")
 

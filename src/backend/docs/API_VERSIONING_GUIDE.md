@@ -437,7 +437,7 @@ request.state.user_role = UserRole.ADMIN
 | Auth dependency | `polaris.delivery.http.dependencies.require_auth` |
 | Role dependency | `polaris.delivery.http.middleware.rbac.require_role` |
 | RBAC middleware | `polaris.delivery.http.middleware.rbac.RBACMiddleware` |
-| SSE utilities | `polaris.delivery.http.routers.sse_utils` |
+| Realtime transport | Nat-JetStream subjects + `/v2/ws/runtime` runtime.v2 WebSocket |
 | Error handlers | `polaris.delivery.http.error_handlers.setup_exception_handlers` |
 | User roles | `polaris.delivery.http.auth.roles.UserRole` |
 | Auth context | `polaris.kernelone.auth_context.SimpleAuthContext` |

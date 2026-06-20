@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "cell_id": "events.fact_stream",
+  "generated_at": "2026-06-20",
+  "scope": "runtime realtime single rail",
+  "guarantees": [
+    {
+      "id": "runtime-v2-jetstream-single-rail",
+      "statement": "Product realtime delivery uses Nat-JetStream consumed by /v2/ws/runtime runtime.v2 only.",
+      "evidence": [
+        "src/backend/docs/governance/decisions/adr-0095-runtime-realtime-single-rail-nat-jetstream.md",
+        "src/backend/polaris/tests/test_realtime_single_rail_static_guard.py"
+      ]
+    },
+    {
+      "id": "no-product-process-local-realtime",
+      "statement": "Product WebSocket delivery does not register process-local fanout or signal-hub watchers.",
+      "evidence": [
+        "src/backend/polaris/delivery/ws/endpoints/websocket_core.py",
+        "src/backend/polaris/delivery/ws/endpoints/websocket_loop.py",
+        "src/backend/polaris/tests/test_websocket_architecture_integration.py"
+      ]
+    },
+    {
+      "id": "status-and-file-edit-events-publish-runtime-v2",
+      "statement": "Workflow/process status changes and file edits publish runtime.v2 JetStream envelopes.",
+      "evidence": [
+        "src/backend/polaris/cells/runtime/projection/internal/workflow_status.py",
+        "src/backend/polaris/cells/roles/runtime/internal/process_service.py",
+        "src/backend/polaris/kernelone/events/file_event_broadcaster.py"
+      ]
+    }
+  ],
+  "regression_tests": [
+    "src/backend/polaris/tests/test_realtime_single_rail_static_guard.py",
+    "src/backend/polaris/delivery/tests/test_ws_stream_delivery.py",
+    "src/backend/polaris/tests/test_runtime_ws_migration.py",
+    "src/backend/polaris/tests/test_websocket_architecture_integration.py"
+  ],
+  "residual_risks": [
+    "Legacy process-local realtime modules remain for isolated internal tests until a follow-up deletion plan retires them.",
+    "Full Factory L1-L8 and Playwright page audit must still verify all user-facing realtime views."
+  ]
+}

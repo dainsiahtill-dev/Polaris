@@ -8,6 +8,8 @@
 import difflib
 import json
 import logging
+import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
@@ -16,12 +18,19 @@ from typing import Any
 from polaris.kernelone.constants import BROADCAST_MAX_SIZE_BYTES
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.fs.registry import get_default_adapter
+from polaris.kernelone.storage import resolve_storage_roots
 
 _MESSAGE_BUS_TYPES: tuple[Any, Any] | None = None
 _MESSAGE_BUS_TYPES_LOCK = Lock()
 _PENDING_BROADCAST_TASKS: set[Any] = set()
 _PENDING_BROADCAST_TASKS_LOCK = Lock()
 logger = logging.getLogger(__name__)
+_JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
+
+
+def _jetstream_publish_enabled() -> bool:
+    raw = str(os.environ.get("KERNELONE_JETSTREAM_PUBLISH") or "").strip().lower()
+    return bool(raw) and raw not in _JETSTREAM_PUBLISH_FALSE_VALUES
 
 
 def _get_fs_adapter() -> Any:
@@ -207,6 +216,43 @@ def _append_durable_file_edit_event(workspace: str | None, payload: dict[str, An
         return False
 
 
+def _publish_file_edit_to_jetstream(workspace: str, payload: dict[str, Any]) -> bool:
+    if not _jetstream_publish_enabled():
+        return False
+    workspace_token = str(workspace or "").strip()
+    if not workspace_token:
+        return False
+    try:
+        roots = resolve_storage_roots(workspace_token)
+        workspace_key = str(getattr(roots, "workspace_key", "") or "").strip()
+        if not workspace_key:
+            return False
+        from polaris.infrastructure.log_pipeline.jetstream_publisher import (
+            get_log_jetstream_publisher,
+        )
+
+        envelope = {
+            "schema_version": "runtime.v2",
+            "event_id": f"file-edit-{uuid.uuid4().hex[:12]}",
+            "workspace_key": workspace_key,
+            "run_id": "",
+            "channel": "event.file_edit",
+            "kind": "file_edit",
+            "ts": payload.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+            "cursor": 0,
+            "trace_id": None,
+            "payload": payload,
+            "meta": {"source": "file_event_broadcaster"},
+        }
+        return get_log_jetstream_publisher().publish(
+            subject=f"hp.runtime.{workspace_key}.event.file_edit",
+            payload=envelope,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("FILE_WRITTEN JetStream publish failed: %s", exc)
+        return False
+
+
 # File extension patterns to skip from broadcasting
 _BROADCAST_SKIP_PATTERNS: tuple[str, ...] = (".tmp", ".log", ".cache", ".pyc", "__pycache__")
 # Maximum file size (1MB) above which we skip broadcasting
@@ -248,9 +294,10 @@ def broadcast_file_written(
         return False
 
     _append_durable_file_edit_event(event_log_workspace, payload)
+    jetstream_scheduled = _publish_file_edit_to_jetstream(str(event_log_workspace or ""), payload)
 
     if not message_bus:
-        return False
+        return jetstream_scheduled
 
     try:
         _message_bus_cls, _msg_type = _get_message_bus_imports()
@@ -273,11 +320,11 @@ def broadcast_file_written(
                 file_path,
                 worker_id,
             )
-            return False
+            return jetstream_scheduled
 
     except (RuntimeError, ValueError) as e:
         logger.warning("FileEventBroadcaster broadcast failed: %s", e)
-        return False
+        return jetstream_scheduled
 
 
 def _build_workspace_fs(workspace: str) -> KernelFileSystem:

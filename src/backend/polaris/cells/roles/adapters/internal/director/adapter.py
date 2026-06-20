@@ -915,6 +915,8 @@ class DirectorAdapter(BaseRoleAdapter):
             "",
             "禁止输出 TODO/FIXME/NotImplemented 等占位实现。",
             "不得把示例路径当成目标文件；必须使用任务范围中的真实相对路径。",
+            "生成 Python 测试时必须使用标准库 unittest，且 `python -m unittest discover -s tests -p 'test_*.py' -v` 必须至少发现并运行 1 个测试。",
+            "测试只能覆盖目标、执行步骤、验收标准明确要求的能力；不得新增合同外功能断言或引入未声明第三方测试依赖。",
             "",
         ]
         if text_patch_mode:

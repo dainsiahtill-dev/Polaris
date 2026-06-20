@@ -233,6 +233,26 @@ describe('buildTelemetryFromStream', () => {
     expect(t.receiptCount).toBe(1); // snapshot_hash signature
     expect(t.contextItemsCount).toBe(5);
     expect(t.contextTokensLatest).toBe(3200);
+
+    const nestedBuild = logEntry({
+      id: 'b2',
+      timestamp: '2026-06-15T10:00:03Z',
+      source: 'System',
+      message: 'ContextPack built',
+      meta: {
+        channel: 'runtime_events',
+        output: {
+          request_hash: 'rh2',
+          items_count: 7,
+          total_tokens: 4100,
+          snapshot_path: 'runtime/snap/rh2.json',
+        },
+      },
+    });
+    const nested = buildTelemetryFromStream([], [nestedBuild], []);
+    expect(nested.projectionCount).toBe(1);
+    expect(nested.contextItemsCount).toBe(7);
+    expect(nested.contextTokensLatest).toBe(4100);
   });
 
   it('surfaces contextSnapshotRef, promptHash, and turnId from meta fields', () => {

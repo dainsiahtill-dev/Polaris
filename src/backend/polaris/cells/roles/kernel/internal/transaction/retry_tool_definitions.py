@@ -296,6 +296,7 @@ def build_forced_write_only_retry_tool_definitions(
     *,
     include_verification_tools: bool = False,
     forbidden_tool_names: set[str] | None = None,
+    allow_write_file_companion_for_edit_blocks: bool = True,
 ) -> list[dict]:
     """Builds the strict forced-write tool definitions.
 
@@ -308,7 +309,7 @@ def build_forced_write_only_retry_tool_definitions(
     companion_tool_names: set[str] = {forced_write_tool_name}
     if forced_write_tool_name in {"repo_apply_diff"}:
         companion_tool_names.update({"read_file", "repo_read_head"})
-    if forced_write_tool_name == "edit_blocks":
+    if forced_write_tool_name == "edit_blocks" and allow_write_file_companion_for_edit_blocks:
         # New-file deadlock fix (factory-bench L1-03/L1-02 live, 2026-06-12):
         # edit_blocks cannot create files and its teaching error tells the
         # model to use write_file — but the narrowed set used to exclude it,

@@ -5,7 +5,7 @@ This module provides a unified pipeline for all log events:
 - Normalize: Convert to CanonicalLogEventV2 schema
 - Deduplicate: Remove duplicate events via fingerprint
 - Persist: Write to三层 files (raw, norm, enriched)
-- Publish: Emit to realtime subscribers
+- Publish: Emit runtime.v2 events through Nat-JetStream
 - Enrich: Async LLM enhancement of events
 
 Usage:
@@ -16,14 +16,6 @@ Usage:
 """
 
 from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-from polaris.infrastructure.realtime.process_local.log_fanout import (
-    LOG_REALTIME_FANOUT,
-    RealtimeLogFanout,
-    RealtimeLogSubscription,
-)
 
 # Re-export adapters
 from .adapters import (
@@ -72,7 +64,6 @@ from .writer import LogEventWriter, get_writer
 __all__ = [
     # Legacy mapping
     "LEGACY_CHANNEL_MAPPING",
-    "LOG_REALTIME_FANOUT",
     # Run context
     "ActiveRunContext",
     # Core model
@@ -92,9 +83,6 @@ __all__ = [
     # Query
     "LogQueryService",
     "LogSeverity",
-    # Realtime fanout
-    "RealtimeLogFanout",
-    "RealtimeLogSubscription",
     "RunContextManager",
     # Legacy adapters
     "adapt_emit_dialogue",

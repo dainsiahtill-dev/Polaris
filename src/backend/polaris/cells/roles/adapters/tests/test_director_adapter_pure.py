@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -21,6 +22,8 @@ import pytest
 from polaris.cells.roles.adapters.internal.director.adapter import DirectorAdapter, _normalize_director_role_response
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _apply_deterministic_patch_residue_cleanup,
+    _apply_deterministic_python_unittest_missing_target_repair,
+    _apply_deterministic_python_unittest_runtime_failure_repair,
     _apply_deterministic_scaffold_marker_cleanup,
     _apply_deterministic_typescript_reexport_repair,
     _build_empty_write_content_retry_message,
@@ -37,6 +40,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _looks_like_typescript_reexport_failure,
     _remove_patch_residue_lines,
     _resolve_claim_external_task_id,
+    _run_empty_write_content_materialization_retry,
     _task_requires_fresh_materialization,
     _task_runtime_finalization_failed_result,
 )
@@ -191,6 +195,83 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
         "target_file": "src/app.py",
     }
     assert result.get("error_code") != "director_no_materialized_changes"
+
+
+@pytest.mark.asyncio
+async def test_empty_write_retry_existing_target_forces_edit_blocks(tmp_path: Any) -> None:
+    (tmp_path / "calculator.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+
+    class _Execution:
+        def __init__(self) -> None:
+            self.allowed_tool_names: set[str] | None = None
+            self.allow_patch_fallback: bool | None = None
+
+        @staticmethod
+        def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+            del result
+            return []
+
+        async def execute_tools(
+            self,
+            content: str,
+            target_task_id: str,
+            update_task_progress: Any,
+            **kwargs: Any,
+        ) -> list[dict[str, Any]]:
+            del content, target_task_id, update_task_progress
+            self.allowed_tool_names = kwargs.get("allowed_tool_names")
+            self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+            return []
+
+    class _Adapter:
+        workspace = str(tmp_path)
+        _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+        def __init__(self) -> None:
+            self._execution = _Execution()
+            self.retry_message = ""
+            self.retry_context: dict[str, Any] = {}
+
+        async def _invoke_role_dialogue_with_timeout(
+            self,
+            message: str,
+            *,
+            context: dict[str, Any],
+            timeout_seconds: float,
+            stage_label: str,
+        ) -> dict[str, Any]:
+            del timeout_seconds, stage_label
+            self.retry_message = message
+            self.retry_context = context
+            return {"content": "calculator.py\n```python\npass\n```", "success": True}
+
+    adapter = _Adapter()
+
+    _, summary = await _run_empty_write_content_materialization_retry(
+        adapter,
+        task={"target_files": ["calculator.py"]},
+        target_task_id="PM-0001-1-S1-fill2",
+        context={"run_id": "run-existing-empty-write"},
+        original_message="[mode:materialize]\n范围: calculator.py",
+        tool_results=[{"tool_name": "write_file", "arguments": {"file": "calculator.py", "content": ""}}],
+        llm_call_timeout=10,
+    )
+
+    assert adapter.retry_context["_transaction_kernel_forced_tool_choice"] == {
+        "type": "function",
+        "function": {"name": "edit_blocks"},
+    }
+    forced_defs = adapter.retry_context["_transaction_kernel_forced_tool_definitions"]
+    assert forced_defs and forced_defs[0]["function"]["name"] == "edit_blocks"
+    assert adapter.retry_context["director_empty_write_retry"]["write_only_single_target"] == {
+        "tool": "edit_blocks",
+        "target_file": "calculator.py",
+    }
+    assert "valid edit_blocks tool call" in adapter.retry_message
+    assert "valid write_file tool call" not in adapter.retry_message
+    assert adapter._execution.allowed_tool_names == {"edit_blocks"}
+    assert adapter._execution.allow_patch_fallback is False
+    assert summary["attempted"] is True
 
 
 def _source_tools_from_tool_results(tool_results: Any) -> list[str]:
@@ -600,6 +681,26 @@ class TestBuildDirectorMessage:
         assert "目标文件: src/client/three-scene.ts" in msg
         assert "- Modify the existing Three.js scene file" in msg
         assert "- Run `npm run build` passes" in msg
+
+    def test_message_requires_unittest_and_contract_scoped_python_tests(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        msg = adapter._build_director_message(
+            {
+                "subject": "Implement calculator tests",
+                "metadata": {
+                    "scope_paths": ["calculator.py", "tests/test_calculator.py"],
+                    "target_files": ["calculator.py", "tests/test_calculator.py"],
+                    "execution_checklist": ["Add calculator regression tests"],
+                    "acceptance_criteria": ["2+3*4 returns 14", "10/0 is rejected"],
+                },
+            }
+        )
+
+        assert "标准库 unittest" in msg
+        assert "python -m unittest discover -s tests -p 'test_*.py' -v" in msg
+        assert "至少发现并运行 1 个测试" in msg
+        assert "不得新增合同外功能断言" in msg
+        assert "未声明第三方测试依赖" in msg
 
     def test_includes_qa_rework_evidence(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -3282,6 +3383,140 @@ class TestDeterministicPythonRuntimeSmoke:
 
         assert errors == [], errors
 
+    def test_python_runtime_smoke_sets_workspace_pythonpath_for_test_scripts(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _apply_deterministic_python_runtime_smoke,
+        )
+
+        adapter = _make_adapter(tmp_path)
+        (tmp_path / "guess_number.py").write_text(
+            "def generate_target() -> int:\n    return 42\n",
+            encoding="utf-8",
+        )
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_guess_number.py").write_text(
+            "import guess_number\n\n"
+            "def test_target() -> None:\n"
+            "    assert guess_number.generate_target() == 42\n\n"
+            "if __name__ == '__main__':\n"
+            "    test_target()\n",
+            encoding="utf-8",
+        )
+
+        errors = _apply_deterministic_python_runtime_smoke(
+            adapter,
+            task_id="task-py-runtime-test-import",
+            all_affected_files=["tests/test_guess_number.py"],
+            timeout_seconds=10.0,
+        )
+
+        assert errors == [], errors
+
+    def test_python_unittest_missing_target_repair_creates_discoverable_test(self, tmp_path: Any) -> None:
+        class _Adapter:
+            workspace = str(tmp_path)
+
+            def __init__(self) -> None:
+                self.progress_files: list[str] = []
+                self._execution = SimpleNamespace(_message_bus=None)
+
+            def _update_task_progress(self, task_id: str, status: str, **kwargs: Any) -> None:
+                del task_id, status
+                current_file = str(kwargs.get("current_file") or "")
+                if current_file:
+                    self.progress_files.append(current_file)
+
+        (tmp_path / "guess_number_game.py").write_text(
+            "def generate_target() -> int:\n    return 42\n",
+            encoding="utf-8",
+        )
+        adapter = _Adapter()
+
+        results = _apply_deterministic_python_unittest_missing_target_repair(
+            adapter,
+            task={"target_files": ["guess_number_game.py", "tests/test_guess_number_game.py"]},
+            task_id="TASK-3",
+        )
+
+        test_file = tmp_path / "tests" / "test_guess_number_game.py"
+        assert [item["result"]["file"] for item in results] == ["tests/test_guess_number_game.py"]
+        assert test_file.exists()
+        content = test_file.read_text(encoding="utf-8")
+        assert "unittest" in content
+        assert "guess_number_game" in content
+        assert adapter.progress_files == ["tests/test_guess_number_game.py"]
+
+        completed = subprocess.run(
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert "Ran 2 tests" in completed.stderr
+
+    def test_python_unittest_runtime_failure_repair_replaces_overstrict_test(self, tmp_path: Any) -> None:
+        class _Adapter:
+            workspace = str(tmp_path)
+
+            def __init__(self) -> None:
+                self.progress_files: list[str] = []
+                self._execution = SimpleNamespace(_message_bus=None)
+
+            def _update_task_progress(self, task_id: str, status: str, **kwargs: Any) -> None:
+                del task_id, status
+                current_file = str(kwargs.get("current_file") or "")
+                if current_file:
+                    self.progress_files.append(current_file)
+
+        (tmp_path / "guess_number.py").write_text(
+            "def play() -> None:\n    print('ready')\n",
+            encoding="utf-8",
+        )
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        failing_test = tests_dir / "test_guess_number.py"
+        failing_test.write_text(
+            "import unittest\n\n"
+            "class TestGuessNumber(unittest.TestCase):\n"
+            "    def test_correct_guess_ends_game(self):\n"
+            "        self.assertTrue(False, 'Game should show congratulations/stats on correct guess')\n",
+            encoding="utf-8",
+        )
+        adapter = _Adapter()
+
+        results = _apply_deterministic_python_unittest_runtime_failure_repair(
+            adapter,
+            task={"target_files": ["guess_number.py", "tests/test_guess_number.py"]},
+            task_id="TASK-3",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: python runtime smoke timed out for 'tests/test_guess_number.py' "
+                "after 5.0s; tail:\nwaiting for interactive input"
+            ],
+        )
+
+        assert [item["result"]["file"] for item in results] == ["tests/test_guess_number.py"]
+        content = failing_test.read_text(encoding="utf-8")
+        assert "DeclaredPythonModuleSmokeTests" in content
+        assert "Game should show congratulations" not in content
+        assert adapter.progress_files == ["tests/test_guess_number.py"]
+
+        completed = subprocess.run(
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+            cwd=tmp_path,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout + completed.stderr
+        assert "Ran 2 tests" in completed.stderr
+
     def test_python_runtime_smoke_skips_module_without_main(self, tmp_path: Any) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _apply_deterministic_python_runtime_smoke,
@@ -4510,6 +4745,253 @@ class TestQualityRepairMissingTargetContract:
         assert "rewrite only the existing failed target" in adapter.repair_message
 
     @pytest.mark.asyncio
+    async def test_python_runtime_smoke_repair_targets_existing_workspace_file_across_tasks(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_context: dict[str, Any] = {}
+                self.repair_message = ""
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_context = context
+                self.repair_message = message
+                return {"content": ""}
+
+        adapter = _Adapter()
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "cli.py").write_text(
+            "from src.parser import ExpressionParser\nprint(ExpressionParser)\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "README.md").write_text("placeholder\n", encoding="utf-8")
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["README.md"]},
+            target_task_id="PM-0001-3",
+            run_id="run-runtime-smoke-cross-task",
+            context={},
+            original_message="Complete the README for the CLI project.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: python runtime smoke crashed for 'src/cli.py' "
+                "(returncode=1); tail:\n"
+                "Traceback (most recent call last):\n"
+                '  File "/tmp/work/src/cli.py", line 1, in <module>\n'
+                "ModuleNotFoundError: No module named 'src'"
+            ],
+            changed_files=["README.md"],
+        )
+
+        assert summary["missing_target_files"] == []
+        assert summary["runtime_smoke_target_files"] == ["src/cli.py"]
+        assert summary["repair_target_files"] == ["src/cli.py"]
+        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
+            "tool": "write_file",
+            "target_file": "src/cli.py",
+        }
+        assert adapter._execution.allowed_tool_names == {"write_file"}
+        assert adapter._execution.allow_patch_fallback is False
+        assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
+        assert "src/cli.py" in adapter.repair_message
+
+    def test_python_runtime_smoke_test_failure_prefers_traceback_source_file(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "calculator.py").write_text("def tokenize(value):\n    return []\n", encoding="utf-8")
+        (tmp_path / "test_calculator.py").write_text(
+            "from calculator import tokenize\n\ndef test_empty():\n    assert tokenize('') == []\n",
+            encoding="utf-8",
+        )
+
+        targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: python runtime smoke crashed for 'test_calculator.py' "
+                "(returncode=1); tail:\n"
+                '  File "/tmp/work/test_calculator.py", line 230, in test_tokenize_empty_raises\n'
+                "    with self.assertRaises(SyntaxError):\n"
+                '  File "calculator.py", line 34, in tokenize\n'
+                "    raise SyntaxError('bad')\n"
+                "AssertionError: SyntaxError not raised"
+            ],
+            changed_files=["test_calculator.py"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["calculator.py", "test_calculator.py"]
+
+    def test_python_runtime_smoke_test_failure_infers_imported_workspace_module(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _python_runtime_smoke_repair_target_files,
+        )
+
+        (tmp_path / "calculator.py").write_text("def evaluate_expression(value):\n    return value\n", encoding="utf-8")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_calculator.py").write_text(
+            "import calculator\n\n"
+            "def call_calculator(expression):\n"
+            "    raise AssertionError('calculator module must expose parse_and_evaluate(), evaluate(), or calculate()')\n",
+            encoding="utf-8",
+        )
+
+        targets = _python_runtime_smoke_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: python runtime smoke crashed for 'tests/test_calculator.py' "
+                "(returncode=1); tail:\n"
+                f'  File "{tmp_path / "tests" / "test_calculator.py"}", line 4, in call_calculator\n'
+                "    raise AssertionError('calculator module must expose parse_and_evaluate(), evaluate(), or calculate()')\n"
+                "AssertionError: calculator module must expose parse_and_evaluate(), evaluate(), or calculate()"
+            ],
+            changed_files=["README.md", "tests/test_calculator.py"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["calculator.py", "tests/test_calculator.py"]
+
+    @pytest.mark.asyncio
+    async def test_semantic_quality_single_changed_file_repair_forces_write_context(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_context: dict[str, Any] = {}
+                self.repair_message = ""
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_context = context
+                self.repair_message = message
+                return {"content": ""}
+
+        adapter = _Adapter()
+        (tmp_path / "test_calculator.py").write_text(
+            "from __future__ import annotations\n\n\ndef workspace_artifact_ready() -> bool:\n    return True\n",
+            encoding="utf-8",
+        )
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["test_calculator.py"]},
+            target_task_id="PM-0001-3",
+            run_id="run-semantic-quality-write-only",
+            context={},
+            original_message="Create meaningful calculator tests.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "Director output quality gate failed: no project-domain signal found in changed files; "
+                "expected one of calculator, arithmetic, expression"
+            ],
+            changed_files=["test_calculator.py"],
+        )
+
+        assert summary["missing_target_files"] == []
+        assert summary["semantic_quality_target_files"] == ["test_calculator.py"]
+        assert summary["repair_target_files"] == ["test_calculator.py"]
+        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
+            "tool": "write_file",
+            "target_file": "test_calculator.py",
+        }
+        assert adapter._execution.allowed_tool_names == {"write_file"}
+        assert adapter._execution.allow_patch_fallback is False
+        assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
+        assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
+        assert "test_calculator.py" in adapter.repair_message
+
+    def test_semantic_quality_repair_uses_explicit_error_path_when_multiple_files_changed(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _semantic_quality_repair_target_files,
+        )
+
+        (tmp_path / "README.md").write_text("# Todo App\n", encoding="utf-8")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_product.py").write_text("raise NotImplementedError\n", encoding="utf-8")
+
+        targets = _semantic_quality_repair_target_files(
+            artifact_quality_errors=[
+                "Director output quality gate failed: generic/placeholder content detected: "
+                "tests/test_product.py:\\bNotImplemented(?:Error|Exception)?\\b"
+            ],
+            changed_files=["README.md", "tests/test_product.py"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["tests/test_product.py"]
+
+    @pytest.mark.asyncio
     async def test_multi_missing_target_repair_forces_write_tool_choice(
         self, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -4690,6 +5172,28 @@ class TestQualityRepairMissingTargetContract:
         )
         assert "MISSING TARGET FILES" not in message
         assert "0 file(s) were already written" in message
+
+    def test_python_runtime_smoke_no_args_gets_cli_entrypoint_directive(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="实现一个命令行交互式计算器，支持循环读取用户输入。",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: python runtime smoke crashed for 'calculator.py' "
+                "(returncode=1); tail:\nError: No expression provided"
+            ],
+            changed_files=["calculator.py"],
+            missing_target_files=[],
+            repair_target_files=["calculator.py"],
+        )
+
+        assert "PYTHON CLI ENTRYPOINT REPAIR" in message
+        assert "python <script>" in message
+        assert "no-argument path must not crash or exit non-zero" in message
+        assert "interactive CLI/input loop" in message
+        assert "Do not require positional argv" in message
 
     def test_semantic_quality_repair_allows_rewriting_failed_changed_artifact(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

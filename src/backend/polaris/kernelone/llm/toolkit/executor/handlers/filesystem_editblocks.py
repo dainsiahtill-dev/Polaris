@@ -178,6 +178,81 @@ def _has_search_replace_markers(text: str) -> bool:
     return any(re.match(r"^\s*<{3,}\s*(SEARCH|ORIGINAL|SOURCE)\b", line) for line in text.splitlines())
 
 
+def _synthesize_blocks_from_update_markers(blocks_text: str, default_file: str | None) -> str | None:
+    """Convert weak-model ``<<<<<<< UPDATE`` blocks into canonical SEARCH/REPLACE.
+
+    Live factory-bench capture: qwen emitted a conflict-marker-like edit:
+    ``<<<<<<< UPDATE file.py`` / ``=======`` / ``>>>>>>> UPDATE``. The search and
+    replacement bodies are usable; only the marker names are wrong.
+    """
+    lines = str(blocks_text or "").splitlines(keepends=True)
+    synthesized: list[str] = []
+    index = 0
+    saw_update = False
+    while index < len(lines):
+        header = lines[index].strip()
+        match = re.match(r"^<{3,}\s*UPDATE(?:\s+(.+?))?\s*$", header)
+        if not match:
+            index += 1
+            continue
+        saw_update = True
+        target_file = (match.group(1) or str(default_file or "")).strip()
+        if not target_file:
+            return None
+        index += 1
+
+        search_lines: list[str] = []
+        while index < len(lines) and not re.match(r"^={4,}\s*$", lines[index].strip()):
+            search_lines.append(lines[index])
+            index += 1
+        if index >= len(lines):
+            return None
+        index += 1
+
+        replace_lines: list[str] = []
+        while index < len(lines) and not re.match(r"^>{3,}\s*UPDATE\s*$", lines[index].strip()):
+            replace_lines.append(lines[index])
+            index += 1
+        if index >= len(lines):
+            return None
+        index += 1
+
+        synthesized.append(
+            f"<<<< SEARCH:{target_file}\n{''.join(search_lines)}====\n{''.join(replace_lines)}>>>> REPLACE\n"
+        )
+    if not saw_update or not synthesized:
+        return None
+    return "".join(synthesized)
+
+
+def _unwrap_weak_replace_marker(blocks_text: str, default_file: str | None) -> tuple[str | None, str | None]:
+    """Extract whole-file replacement content from weak ``<<<<<<< REPLACE[:file]`` wrappers."""
+
+    lines = str(blocks_text or "").splitlines(keepends=True)
+    if not lines:
+        return None, None
+    header = lines[0].rstrip("\r\n")
+    match = re.match(
+        r"^<{3,}\s*REPLACE(?:\[\s*:?\s*([^\]]+)\]|\s+(\S+))?\s*(.*)$",
+        header,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None, None
+    target_file = (match.group(1) or match.group(2) or str(default_file or "")).strip()
+    inline_body = str(match.group(3) or "")
+    body_lines: list[str] = []
+    if inline_body:
+        body_lines.append(inline_body + "\n")
+    body_lines.extend(lines[1:])
+    while body_lines and re.match(r"^>{3,}\s*REPLACE\s*$", body_lines[-1].strip(), flags=re.IGNORECASE):
+        body_lines.pop()
+    replacement = "".join(body_lines)
+    if not target_file or not replacement.strip():
+        return None, None
+    return target_file, replacement
+
+
 def _coerce_line_no(value: Any) -> int | None:
     try:
         return int(str(value).strip())
@@ -316,11 +391,56 @@ _JSON_EDIT_FILE_KEYS = (
     "path",
     "file_path",
     "filepath",
+    "filePath",
     "filename",
     "target_file",
     "target_path",
+    "targetFile",
+    "targetPath",
 )
-_JSON_EDIT_REPLACE_KEYS = ("replace", "new_text", "new_content", "replacement", "code", "content")
+_JSON_EDIT_REPLACE_KEYS = (
+    "replace",
+    "new_text",
+    "newText",
+    "new_content",
+    "newContent",
+    "new_code",
+    "newCode",
+    "replacement",
+    "replacement_text",
+    "replacementText",
+    "code",
+    "content",
+)
+
+
+def _synthesize_whole_file_replacement_block(
+    self: AgentAccelToolExecutor,
+    file: str | None,
+    replacement: Any,
+    *,
+    force: bool = False,
+) -> tuple[str | None, dict[str, Any] | None]:
+    if not file:
+        return None, None
+    rel, resolve_error = _resolve_workspace_rel(self, str(file))
+    if rel is None:
+        return None, resolve_error or {"ok": False, "error": f"Invalid path: {file}"}
+    if not self._kernel_fs.workspace_exists(rel):
+        return None, None
+    if not self._kernel_fs.workspace_is_file(rel):
+        return None, {"ok": False, "error": f"Path is not a file: {file}"}
+    repl = "" if replacement is None else str(replacement)
+    if not force and not _looks_like_complete_file_replacement(repl, rel):
+        return None, None
+    try:
+        content = self._kernel_fs.workspace_read_text(rel, encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, {"ok": False, "error": f"Failed to read {file}: {exc}"}
+    total = len(content.splitlines(keepends=True))
+    if total < 1:
+        return None, None
+    return _synthesize_line_range_block(self, file, 1, total, repl)
 
 
 def _synthesize_blocks_from_json_payload(
@@ -371,6 +491,20 @@ def _synthesize_blocks_from_json_payload(
             inner = item.get("blocks")
             if len(items) == 1 and isinstance(inner, str) and inner.strip():
                 return None, {"__unwrap_blocks__": inner, "__unwrap_file__": item.get("file") or default_file}
+            item_file = next(
+                (str(item[key]) for key in _JSON_EDIT_FILE_KEYS if item.get(key)),
+                None,
+            ) or (str(default_file) if default_file else None)
+            replacement = next(
+                (item[key] for key in _JSON_EDIT_REPLACE_KEYS if item.get(key) is not None),
+                None,
+            )
+            block, err = _synthesize_whole_file_replacement_block(self, item_file, replacement)
+            if err is not None:
+                return None, err
+            if block is not None:
+                synthesized.append(block)
+                continue
             return None, None
         item_file = next(
             (str(item[key]) for key in _JSON_EDIT_FILE_KEYS if item.get(key)),

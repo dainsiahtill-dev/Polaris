@@ -848,6 +848,21 @@ class _WorkspaceValidationStageExecutor(_TestStageExecutor):
 
 
 class TestOrchestrationStageExecutor:
+    def test_declared_delivery_targets_filter_directory_scope_paths(self, temp_workspace):
+        executor = _TestStageExecutor(temp_workspace, _ImmediateFailureCommandService())
+
+        targets = executor._collect_declared_delivery_targets(
+            [
+                {
+                    "target_files": ["calculator.py", "tests/test_calculator.py"],
+                    "scope_paths": ["calculator.py", "tests/test_calculator.py", "tests"],
+                    "scope": "calculator.py, tests/",
+                }
+            ]
+        )
+
+        assert targets == ["calculator.py", "tests/test_calculator.py"]
+
     @pytest.mark.asyncio
     async def test_wait_run_completion_short_circuits_immediate_failure(self, temp_workspace):
         command_service = _ImmediateFailureCommandService()
@@ -1390,7 +1405,7 @@ class TestOrchestrationStageExecutor:
         assert "dispatch/log.json" in result.artifacts
 
     @pytest.mark.asyncio
-    async def test_director_stage_no_materialized_changes_after_progress_allows_qa_verdict(
+    async def test_director_stage_no_materialized_changes_after_progress_requires_declared_targets(
         self,
         temp_workspace,
     ):
@@ -1413,8 +1428,92 @@ class TestOrchestrationStageExecutor:
       "title": "实现账户实体",
       "goal": "完成账单核心实体与校验",
       "scope": "src/account",
+      "scope_paths": ["src/account.py", "tests/test_account.py"],
+      "target_files": ["src/account.py", "tests/test_account.py"],
       "steps": ["实现实体", "补充测试"],
       "acceptance": ["`pytest` 通过", "接口返回字段正确"]
+    }
+  ]
+}
+""",
+            encoding="utf-8",
+        )
+        task_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/task_1.json"))
+        task_path.parent.mkdir(parents=True, exist_ok=True)
+        task_path.write_text(
+            """{
+  "id": 1,
+  "subject": "实现账户实体",
+  "description": "实现与测试",
+  "status": "pending",
+  "created_at": 1735689600.0,
+  "updated_at": 1735689600.0,
+  "blocked_by": [],
+  "blocks": [],
+  "owner": "",
+  "assignee": "",
+  "tags": [],
+  "priority": 1,
+  "estimated_hours": 2.0,
+  "result_summary": "",
+  "metadata": {}
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            context={"director_max_rounds": 2},
+        )
+
+        assert result.status == "failed"
+        assert "error_code=director.no_materialized_changes_missing_targets" in str(result.output)
+        signal_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/signals/director_dispatch.signals.json"))
+        payload = json.loads(signal_path.read_text(encoding="utf-8"))
+        rows = payload.get("signals") if isinstance(payload, dict) else []
+        missing_signal = next(
+            (
+                item
+                for item in rows
+                if isinstance(item, dict) and item.get("code") == "director.no_materialized_changes_missing_targets"
+            ),
+            {},
+        )
+        assert missing_signal.get("missing_targets") == ["src/account.py", "tests/test_account.py"]
+
+    @pytest.mark.asyncio
+    async def test_director_stage_no_materialized_changes_after_covered_targets_allows_qa_verdict(
+        self,
+        temp_workspace,
+    ):
+        command_service = _DirectorNoMaterializedChangesAfterProgressService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        run = FactoryRun(
+            id="factory_test_director_idempotent_covered_targets",
+            config=FactoryConfig(name="test-run", stages=["director_dispatch"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        delivered = temp_workspace / "src" / "account.py"
+        delivered.parent.mkdir(parents=True, exist_ok=True)
+        delivered.write_text("class Account:\n    pass\n", encoding="utf-8")
+
+        plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        plan_path.write_text(
+            """{
+  "tasks": [
+    {
+      "id": "TASK-1",
+      "title": "实现账户实体",
+      "goal": "完成账单核心实体与校验",
+      "scope": "src/account.py",
+      "scope_paths": ["src/account.py"],
+      "target_files": ["src/account.py"],
+      "steps": ["实现实体"],
+      "acceptance": ["`src/account.py` 存在"]
     }
   ]
 }

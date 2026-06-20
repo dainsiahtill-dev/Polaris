@@ -164,9 +164,12 @@ class TestFrontendTestRepairContracts:
 
         contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
         _normalized, quality = adapter._evaluate_contract_quality(contracts)
+        serialized = json.dumps(contracts, ensure_ascii=False)
 
         assert contracts[0]["target_files"] == ["index.html", "styles.css"]
         assert "README.md" in contracts[2]["target_files"]
+        assert "unittest discover" in serialized
+        assert "pytest -q" not in serialized
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
 
@@ -781,9 +784,12 @@ class TestNormalizeTaskContract:
 
         contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
         normalized, quality = adapter._evaluate_contract_quality(contracts)
+        serialized = json.dumps(contracts, ensure_ascii=False)
 
         assert quality["ok"] is True
         assert int(quality["score"]) >= 80
+        assert "unittest discover" in serialized
+        assert "pytest -q" not in serialized
         assert [item["target_files"] for item in normalized] == [
             ["calculator.py"],
             ["calculator.py", "tests/test_calculator.py"],
@@ -1067,6 +1073,44 @@ class TestApplyProjectionContractHint:
         contracts = [{"title": "T1", "execution_backend": "projection_generate"}]
         result = adapter._apply_projection_contract_hint(contracts, projection_hint=hint)
         assert result[0]["execution_backend"] == "projection_generate"
+
+    def test_later_task_projection_generate_is_demoted_to_code_edit(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        hint = {
+            "execution_backend": "projection_generate",
+            "projection": {"scenario_id": "s1"},
+        }
+        contracts = [
+            {"title": "T1", "execution_backend": "projection_generate"},
+            {
+                "title": "T2",
+                "phase": "verification",
+                "target_files": ["tests/test_guess_number.py"],
+                "metadata": {"execution_backend": "projection_generate"},
+            },
+        ]
+        result = adapter._apply_projection_contract_hint(contracts, projection_hint=hint)
+        assert result[0]["execution_backend"] == "projection_generate"
+        assert result[1]["execution_backend"] == "code_edit"
+        assert result[1]["metadata"]["execution_backend"] == "code_edit"
+
+
+class TestNormalizeTaskContractProjectionBackend:
+    def test_later_raw_task_projection_generate_is_demoted_to_code_edit(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        result = adapter._normalize_task_contract(
+            {
+                "id": "TASK-3",
+                "title": "实现功能验证与 QA 闭环",
+                "goal": "创建测试并验证交付结果",
+                "phase": "verification",
+                "target_files": ["guess_number.py", "tests/test_guess_number.py"],
+                "metadata": {"execution_backend": "projection_generate"},
+            },
+            index=3,
+            directive="实现命令行猜数字游戏",
+        )
+        assert result["metadata"]["execution_backend"] == "code_edit"
 
 
 class TestBuildProjectionHintContracts:

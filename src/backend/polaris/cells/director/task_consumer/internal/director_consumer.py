@@ -88,6 +88,7 @@ _NO_CHANGE_MODES = frozenset(
         "analysis_only",
     }
 )
+_VERIFIED_EXISTING_SCOPE_MODES = frozenset({"verified_existing_workspace_scope"})
 
 
 class UnrecoverableExecutionError(RuntimeError):
@@ -170,6 +171,44 @@ def _allows_no_execution_evidence(payload: dict[str, Any]) -> bool:
     for key in ("execution_mode", "task_mode", "mode", "change_mode"):
         mode = str(payload.get(key) or "").strip().lower()
         if mode in _NO_CHANGE_MODES:
+            return True
+    return False
+
+
+def _has_verified_existing_scope_evidence(exec_result: dict[str, Any]) -> bool:
+    adapter_summary = exec_result.get("director_adapter_result")
+    if not isinstance(adapter_summary, dict):
+        return False
+    if adapter_summary.get("success") is not True:
+        return False
+    materialization_mode = str(adapter_summary.get("materialization_mode") or "").strip()
+    if materialization_mode not in _VERIFIED_EXISTING_SCOPE_MODES:
+        return False
+    existing_contract_evidence = adapter_summary.get("existing_contract_evidence")
+    return isinstance(existing_contract_evidence, dict) and existing_contract_evidence.get("ok") is True
+
+
+def _director_evidence_status(changed_files: list[str], exec_result: dict[str, Any]) -> str:
+    if changed_files:
+        return "changed_files_reported"
+    if _has_verified_existing_scope_evidence(exec_result):
+        return "verified_existing_workspace_scope"
+    return "explicit_no_changes"
+
+
+def _verified_existing_scope_covers_target(exec_result: dict[str, Any], target_file: str) -> bool:
+    target = target_file.strip().replace("\\", "/").lstrip("./")
+    if not target or not _has_verified_existing_scope_evidence(exec_result):
+        return False
+    adapter_summary = exec_result.get("director_adapter_result")
+    if not isinstance(adapter_summary, dict):
+        return False
+    existing_contract_evidence = adapter_summary.get("existing_contract_evidence")
+    if not isinstance(existing_contract_evidence, dict):
+        return False
+    for raw_path in _normalize_string_list(existing_contract_evidence.get("existing_paths")):
+        candidate = raw_path.strip().replace("\\", "/").lstrip("./")
+        if candidate == target or candidate.endswith(f"/{target}"):
             return True
     return False
 
@@ -400,6 +439,15 @@ def _compact_director_adapter_summary(adapter_result: dict[str, Any]) -> dict[st
         "tools_executed": adapter_result.get("tools_executed", 0),
         "materialization_mode": str(adapter_result.get("materialization_mode") or "").strip(),
     }
+    existing_contract_evidence = adapter_result.get("existing_contract_evidence")
+    if isinstance(existing_contract_evidence, dict):
+        summary["existing_contract_evidence"] = {
+            "ok": existing_contract_evidence.get("ok") is True,
+            "reason": str(existing_contract_evidence.get("reason") or "").strip(),
+            "candidate_paths": _normalize_string_list(existing_contract_evidence.get("candidate_paths")),
+            "existing_paths": _normalize_string_list(existing_contract_evidence.get("existing_paths")),
+            "missing_paths": _normalize_string_list(existing_contract_evidence.get("missing_paths")),
+        }
     for key in ("error", "error_code", "failure_stage", "root_cause_hint"):
         value = adapter_result.get(key)
         if value:
@@ -740,7 +788,8 @@ class DirectorExecutionConsumer:
             # Execute (placeholder — actual execution delegated to DirectorAgent)
             exec_result = self._execute_task(task_id, payload, lease_token)
             changed_files = _normalize_string_list(exec_result.get("changed_files"))
-            if not changed_files and not _allows_no_execution_evidence(payload):
+            has_verified_existing_scope = _has_verified_existing_scope_evidence(exec_result)
+            if not changed_files and not has_verified_existing_scope and not _allows_no_execution_evidence(payload):
                 return self._missing_execution_evidence_result(
                     task_id=task_id,
                     lease_token=lease_token,
@@ -754,7 +803,10 @@ class DirectorExecutionConsumer:
             # QA passed it). Requeue with a teaching error so the retry
             # ladder can correct course.
             step_target = _step_target_file(payload)
-            if step_target and not _changed_files_cover_target(step_target, changed_files):
+            if step_target and not (
+                _changed_files_cover_target(step_target, changed_files)
+                or _verified_existing_scope_covers_target(exec_result, step_target)
+            ):
                 self._svc.fail_task_stage(
                     FailTaskStageCommandV1(
                         workspace=self._workspace,
@@ -830,9 +882,7 @@ class DirectorExecutionConsumer:
                             "pm_task_contract" if route == _ROUTE_DIRECT_TO_DIRECTOR else "chief_engineer_blueprint"
                         ),
                         "changed_files": changed_files,
-                        "director_evidence_status": (
-                            "changed_files_reported" if changed_files else "explicit_no_changes"
-                        ),
+                        "director_evidence_status": _director_evidence_status(changed_files, exec_result),
                         "director_files_changed_count": len(changed_files),
                         "exec_duration_seconds": exec_result.get("duration", 0),
                         "director_adapter": adapter_summary,

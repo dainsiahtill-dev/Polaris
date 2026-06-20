@@ -45,6 +45,11 @@ def _progress_noop(*args: Any, **kwargs: Any) -> None:
     return None
 
 
+@pytest.fixture(autouse=True)
+def _disable_jetstream_publish(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_JETSTREAM_PUBLISH", "0")
+
+
 @pytest.mark.asyncio
 async def test_write_file_tool_broadcasts_file_written_event(tmp_path: Path) -> None:
     bus = RecordingMessageBus()

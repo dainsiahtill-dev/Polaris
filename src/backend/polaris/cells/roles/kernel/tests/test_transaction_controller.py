@@ -187,6 +187,38 @@ class TestFinalAnswerPath:
         assert any(flag.get("type") == "DELIVERY_CONTRACT_DOWNGRADED_NO_WRITE_TOOLS" for flag in ledger.anomaly_flags)
 
     @pytest.mark.asyncio
+    async def test_no_tool_definitions_suppresses_decoded_tool_batch(
+        self, mock_llm_provider, mock_tool_runtime
+    ) -> None:
+        mock_llm_provider.return_value = {
+            "content": "# AGENTS.md\n\nProject guidance draft.",
+            "tool_calls": [_native_tool_call("repo_tree", {"path": "."})],
+            "model": "claude",
+            "usage": {"prompt_tokens": 100, "completion_tokens": 30},
+        }
+        controller = TurnTransactionController(
+            llm_provider=mock_llm_provider,
+            tool_runtime=mock_tool_runtime,
+            config=TransactionConfig(domain="document"),
+        )
+        state_machine = TurnStateMachine(turn_id="turn_text_only")
+        ledger = TurnLedger(turn_id="turn_text_only")
+
+        result = await controller._execute_turn(
+            turn_id="turn_text_only",
+            context=[{"role": "user", "content": "Generate AGENTS.md content; do not call tools"}],
+            tool_definitions=[],
+            state_machine=state_machine,
+            ledger=ledger,
+            stream=False,
+        )
+
+        assert result["kind"] == "final_answer"
+        assert "Project guidance draft" in result["visible_content"]
+        assert mock_tool_runtime.call_count == 0
+        assert any(flag.get("type") == "TEXT_ONLY_TOOL_BATCH_SUPPRESSED" for flag in ledger.anomaly_flags)
+
+    @pytest.mark.asyncio
     async def test_final_answer_no_llm_continuation(
         self, controller, mock_llm_provider, mock_tool_runtime, basic_context, basic_tool_definitions
     ) -> None:

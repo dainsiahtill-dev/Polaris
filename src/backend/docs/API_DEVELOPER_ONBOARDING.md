@@ -33,7 +33,7 @@ polaris/delivery/http/
     ...
   routers/                # Legacy + shared utilities
     _shared.py            # StructuredHTTPException, require_auth, require_role
-    sse_utils.py          # SSE helpers
+    stream_router.py     # legacy stream routes fail closed; use /v2/ws/runtime
     conversations.py      # CRUD example (v2 + deprecated v1)
   schemas/
     common.py             # Shared Pydantic response models

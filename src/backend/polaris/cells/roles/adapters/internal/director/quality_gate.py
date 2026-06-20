@@ -15,6 +15,7 @@ symbol here).
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import shlex
@@ -584,8 +585,14 @@ async def _run_materialization_quality_repair_retry(
     runtime_smoke_target_files = _python_runtime_smoke_repair_target_files(
         artifact_quality_errors=artifact_quality_errors,
         changed_files=changed_files,
+        workspace_full=workspace_full,
     )
-    repair_target_candidates = missing_target_files or runtime_smoke_target_files
+    semantic_quality_target_files = _semantic_quality_repair_target_files(
+        artifact_quality_errors=artifact_quality_errors,
+        changed_files=changed_files,
+        workspace_full=workspace_full,
+    )
+    repair_target_candidates = missing_target_files or runtime_smoke_target_files or semantic_quality_target_files
     repair_target_files = _select_materialization_quality_repair_target_batch(repair_target_candidates)
     missing_repair_target_files = repair_target_files if missing_target_files else []
     existing_repair_target_files = repair_target_files if not missing_target_files else []
@@ -604,6 +611,7 @@ async def _run_materialization_quality_repair_retry(
             "changed_files": changed_files[:40],
             "missing_target_files": missing_target_files[:20],
             "runtime_smoke_target_files": runtime_smoke_target_files[:20],
+            "semantic_quality_target_files": semantic_quality_target_files[:20],
             "repair_target_files": repair_target_files[:12],
         },
     }
@@ -680,6 +688,7 @@ async def _run_materialization_quality_repair_retry(
             "write_tool_evidence": has_successful_write_tool(repair_tool_results),
             "missing_target_files": missing_target_files[:12],
             "runtime_smoke_target_files": runtime_smoke_target_files[:12],
+            "semantic_quality_target_files": semantic_quality_target_files[:12],
             "repair_target_files": repair_target_files[:12],
         }
     )
@@ -711,25 +720,33 @@ _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
 )
 
+_PYTHON_TRACEBACK_FILE_RE = re.compile(r'File "(?P<path>[^"]+)", line \d+', re.IGNORECASE)
+_SEMANTIC_QUALITY_EXPLICIT_PATH_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:css|html|js|jsx|json|md|py|ts|tsx))(?=[:\s])",
+    re.IGNORECASE,
+)
+
 
 def _python_runtime_smoke_repair_target_files(
     *,
     artifact_quality_errors: list[str],
     changed_files: list[str],
+    workspace_full: str = "",
 ) -> list[str]:
     """Extract existing Python files that failed Polaris' own runtime smoke.
 
     This intentionally trusts only quality-gate error strings emitted by
-    ``_apply_deterministic_python_runtime_smoke`` and only when the target is
-    one of the already-written changed files. That keeps arbitrary traceback
-    paths from seeding repair scope.
+    ``_apply_deterministic_python_runtime_smoke``. The target may come from a
+    prior task in the same Director run, so accept it when it is either one of
+    the files written in the current repair turn or an existing Python file
+    inside the workspace. That keeps arbitrary traceback paths from seeding
+    repair scope while still repairing cross-task runtime smoke failures.
     """
 
     changed_python_files = {
         rel for item in changed_files if (rel := _normalize_declared_task_path(str(item or ""))) and rel.endswith(".py")
     }
-    if not changed_python_files:
-        return []
+    workspace_root = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
 
     targets: list[str] = []
     for item in artifact_quality_errors:
@@ -741,10 +758,167 @@ def _python_runtime_smoke_repair_target_files(
             if not match:
                 continue
             rel = _normalize_declared_task_path(match.group("target"))
-            if rel.endswith(".py") and rel in changed_python_files:
+            workspace_target_exists = (
+                workspace_root is not None
+                and workspace_root.is_dir()
+                and _workspace_path_exists_case_insensitive(workspace_root, rel)
+            )
+            if rel.endswith(".py") and (rel in changed_python_files or workspace_target_exists):
+                if _is_test_like_python_path(rel) and workspace_root is not None and workspace_root.is_dir():
+                    targets.extend(
+                        item
+                        for item in _python_runtime_smoke_traceback_repair_target_files(text, workspace_root)
+                        if item != rel and not _is_test_like_python_path(item)
+                    )
+                    targets.extend(_python_runtime_smoke_imported_source_target_files(rel, workspace_root))
                 targets.append(rel)
             break
     return _dedupe_preserve_order(targets)
+
+
+def _is_test_like_python_path(rel_path: str) -> bool:
+    normalized = str(rel_path or "").replace("\\", "/").lower()
+    name = Path(normalized).name
+    return normalized.endswith(".py") and (
+        name.startswith("test_") or name.endswith("_test.py") or "/tests/" in normalized
+    )
+
+
+def _python_runtime_smoke_traceback_repair_target_files(text: str, workspace_root: Path) -> list[str]:
+    targets: list[str] = []
+    try:
+        root = workspace_root.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return []
+
+    for match in _PYTHON_TRACEBACK_FILE_RE.finditer(str(text or "")):
+        raw_path = str(match.group("path") or "").strip()
+        if not raw_path:
+            continue
+        candidate = Path(raw_path)
+        if candidate.is_absolute():
+            try:
+                rel = candidate.resolve().relative_to(root).as_posix()
+            except (OSError, RuntimeError, ValueError):
+                continue
+        else:
+            rel = _normalize_declared_task_path(raw_path)
+        if not rel.endswith(".py"):
+            continue
+        if _workspace_path_exists_case_insensitive(root, rel):
+            targets.append(rel)
+    return _dedupe_preserve_order(targets)
+
+
+def _python_runtime_smoke_imported_source_target_files(rel_path: str, workspace_root: Path) -> list[str]:
+    """Infer local source modules imported by a failing Python test script."""
+
+    rel = _normalize_declared_task_path(rel_path)
+    if not rel.endswith(".py"):
+        return []
+    try:
+        root = workspace_root.resolve()
+        source_path = (root / rel).resolve()
+        source_path.relative_to(root)
+        text = source_path.read_text(encoding="utf-8")
+        tree = ast.parse(text)
+    except (OSError, RuntimeError, SyntaxError, UnicodeDecodeError, ValueError):
+        return []
+
+    candidates: list[str] = []
+    for node in ast.walk(tree):
+        module_names: list[str] = []
+        if isinstance(node, ast.Import):
+            module_names.extend(str(alias.name or "").strip() for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            module_names.append(str(node.module or "").strip())
+        for module_name in module_names:
+            if not module_name:
+                continue
+            module_path = module_name.replace(".", "/")
+            for candidate in (f"{module_path}.py", f"{module_path}/__init__.py"):
+                normalized = _normalize_declared_task_path(candidate)
+                if _is_test_like_python_path(normalized):
+                    continue
+                if _workspace_path_exists_case_insensitive(root, normalized):
+                    candidates.append(normalized)
+                    break
+    return _dedupe_preserve_order(candidates)
+
+
+_SEMANTIC_QUALITY_SINGLE_TARGET_HINTS: tuple[str, ...] = (
+    "no project-domain signal found in changed files",
+    "deterministic scaffold marker",
+    "generic/placeholder content detected",
+    "placeholder-only",
+    "structural-only",
+    "repeated trivial arithmetic placeholder tests",
+    "generic payload/index store scaffold",
+)
+
+_SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".css",
+        ".html",
+        ".js",
+        ".jsx",
+        ".json",
+        ".md",
+        ".py",
+        ".ts",
+        ".tsx",
+    }
+)
+
+
+def _semantic_quality_repair_target_files(
+    *,
+    artifact_quality_errors: list[str],
+    changed_files: list[str],
+    workspace_full: str,
+) -> list[str]:
+    """Return a single changed source artifact for semantic quality repair.
+
+    Generic semantic failures such as "no project-domain signal" are produced
+    after Director already wrote a low-value artifact. If exactly one changed
+    source file exists in the workspace, it is the failing artifact and should
+    be rewritten with ``write_file`` instead of asking a weak model to format
+    an ``edit_blocks`` patch.
+    """
+
+    joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
+    if not any(hint in joined_errors for hint in _SEMANTIC_QUALITY_SINGLE_TARGET_HINTS):
+        return []
+
+    workspace_root = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
+    if workspace_root is None or not workspace_root.is_dir():
+        return []
+
+    candidates: list[str] = []
+    for item in changed_files:
+        rel = _normalize_declared_task_path(str(item or ""))
+        if not rel:
+            continue
+        if Path(rel).suffix.lower() not in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES:
+            continue
+        if _workspace_path_exists_case_insensitive(workspace_root, rel):
+            candidates.append(rel)
+
+    unique_candidates = _dedupe_preserve_order(candidates)
+    explicit_candidates: list[str] = []
+    candidate_set = set(unique_candidates)
+    for item in artifact_quality_errors:
+        for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(str(item or "")):
+            rel = _normalize_declared_task_path(match.group("path"))
+            if rel in candidate_set and _workspace_path_exists_case_insensitive(workspace_root, rel):
+                explicit_candidates.append(rel)
+    explicit_unique = _dedupe_preserve_order(explicit_candidates)
+    if explicit_unique:
+        return explicit_unique
+
+    if len(unique_candidates) != 1:
+        return []
+    return unique_candidates
 
 
 def _missing_declared_target_files(task: dict[str, Any], workspace_full: str) -> list[str]:
@@ -898,6 +1072,22 @@ def _build_materialization_quality_repair_message(
             "line copied VERBATIM and REPLACE is the corrected line.\n"
             "Do not change any other line; do not regenerate unrelated code.\n"
         )
+    cli_entrypoint_block = ""
+    runtime_smoke_text = "\n".join(str(item or "") for item in artifact_quality_errors).lower()
+    if "python runtime smoke" in runtime_smoke_text and (
+        "no expression provided" in runtime_smoke_text
+        or "usage:" in runtime_smoke_text
+        or "required argument" in runtime_smoke_text
+        or "the following arguments are required" in runtime_smoke_text
+    ):
+        cli_entrypoint_block = (
+            "PYTHON CLI ENTRYPOINT REPAIR: Polaris runs the target script as `python <script>` with no "
+            "positional arguments during runtime smoke. That no-argument path must not crash or exit non-zero. "
+            "If the task asks for an interactive CLI/input loop, no-argument mode must start that loop, read "
+            "user input with input(), and exit cleanly on EOF, KeyboardInterrupt, `quit`, or `exit`. Do not require "
+            "positional argv for the default path; optional argv shortcuts are allowed only in addition to the "
+            "safe no-argument behavior.\n"
+        )
     if existing_repair_target_files and not missing_target_files and not symbol_repair_block:
         changed_line = (
             f"{len(changed_files)} file(s) were already written; rewrite only the existing failed target "
@@ -925,6 +1115,7 @@ def _build_materialization_quality_repair_message(
         f"{coherence_block}"
         f"{symbol_repair_block}"
         f"{syntax_block}"
+        f"{cli_entrypoint_block}"
         "Do not repeat the same package/script/test scaffold. Replace the bad artifact with concrete runnable code, "
         "source files, and executable tests required by the task contract.\n"
         "If package.json has an npm test script, it must run a real local test/check and must not contain "

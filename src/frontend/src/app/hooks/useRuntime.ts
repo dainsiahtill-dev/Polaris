@@ -146,6 +146,11 @@ const DEFAULT_RUNTIME_ROLES: Array<'pm' | 'chief_engineer' | 'director' | 'qa'> 
   'director',
   'qa',
 ];
+const FACTORY_EVENT_CHANNEL = 'event.factory';
+
+function isFactoryEventChannel(channel: string): boolean {
+  return channel === FACTORY_EVENT_CHANNEL || channel.startsWith(`${FACTORY_EVENT_CHANNEL}:`);
+}
 
 // ============================================================================
 // Pure Parsing Functions (moved from useRuntime.ts)
@@ -286,17 +291,33 @@ function runtimeTaskLifecyclePayload(raw: Record<string, unknown>): RuntimeTaskL
     data?.event_type,
   ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean).join(' ');
   const domainText = [
+    raw.stream,
+    raw.source,
     raw.channel,
     raw.domain,
     raw.actor,
     raw.role,
+    payload?.stream,
+    payload?.source,
     payload?.channel,
     payload?.domain,
     payload?.actor,
     payload?.role,
+    data?.stream,
+    data?.source,
     data?.actor,
     data?.role,
   ].map((value) => String(value || '').trim().toLowerCase()).filter(Boolean).join(' ');
+  const hasLifecycleStateToken =
+    eventText.includes('started') ||
+    eventText.includes('running') ||
+    eventText.includes('claimed') ||
+    eventText.includes('in_progress') ||
+    eventText.includes('completed') ||
+    eventText.includes('success') ||
+    eventText.includes('failed') ||
+    eventText.includes('error') ||
+    eventText.includes('blocked');
 
   const isTaskLifecycle =
     eventText.includes('director_task') ||
@@ -304,7 +325,8 @@ function runtimeTaskLifecyclePayload(raw: Record<string, unknown>): RuntimeTaskL
     eventText.includes('task_completed') ||
     eventText.includes('task_failed') ||
     eventText.includes('task_blocked') ||
-    (domainText.includes('director') && eventText.includes('task'));
+    (domainText.includes('director') && eventText.includes('task')) ||
+    ((domainText.includes('task_runtime') || domainText.includes('runtime.task')) && hasLifecycleStateToken);
   if (!isTaskLifecycle) return null;
 
   const taskId =
@@ -919,9 +941,11 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
                 ? 'QA'
                 : channel === 'runlog'
                   ? 'RunLog'
-                  : channel === 'engine_status'
+                    : channel === 'engine_status'
                     ? 'Engine'
-                    : 'Planner'
+                    : isFactoryEventChannel(channel)
+                      ? 'Factory'
+                      : 'Planner'
   );
 
   let timestamp = new Date().toISOString();
@@ -1442,7 +1466,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               const current = useRuntimeStore.getState().llmStreamEvents;
               setLlmStreamEvents([...current, ...uniqueLogs].slice(-180));
             }
-          } else if (isProcessStreamChannel(channel)) {
+          } else if (isProcessStreamChannel(channel) || isFactoryEventChannel(channel)) {
             const processLogs = payload.lines
               .map((line) => parseProcessStreamLine(channel, line))
               .filter((entry): entry is LogEntry => Boolean(entry));
@@ -1531,7 +1555,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
                 appendLlmStreamEvent(withLlmRunScope(llmLog, llmRunScopeRef.current));
               }
             }
-          } else if (isProcessStreamChannel(channel)) {
+          } else if (isProcessStreamChannel(channel) || isFactoryEventChannel(channel)) {
             const processLog = parseProcessStreamLine(channel, payload.text);
             if (processLog) {
               appendProcessStreamEvent(processLog);

@@ -297,6 +297,77 @@ class TestRoleRuntimeServiceStrategy:
         assert request.metadata["cognitive_strategy_override"]["compaction"]["trigger_at_budget_pct"] == 0.9
 
     @pytest.mark.asyncio
+    async def test_forced_transaction_tool_choice_overrides_cognitive_bypass(self, monkeypatch) -> None:
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+        from polaris.kernelone.cognitive import middleware as cognitive_middleware
+
+        class FakeCognitiveMiddleware:
+            def __init__(self, *, workspace: str | None = None, enabled: bool | None = None) -> None:
+                self.workspace = workspace
+                self.enabled = enabled
+
+            async def process(self, *, message: str, role_id: str, session_id: str | None = None):
+                return {
+                    "enabled": True,
+                    "intent_type": "read_file",
+                    "confidence": 0.88,
+                    "uncertainty_score": 0.1,
+                    "execution_path": "bypass",
+                    "blocked": False,
+                    "cognitive_analysis": {
+                        "clarity_level": "high",
+                        "verification_needed": False,
+                        "actions_taken": ["classify_read_only"],
+                    },
+                }
+
+        monkeypatch.setattr(cognitive_middleware, "CognitiveMiddleware", FakeCognitiveMiddleware)
+
+        request = await RoleRuntimeService()._prepare_session_request(
+            ExecuteRoleSessionCommandV1(
+                role="director",
+                session_id="sess-forced-write",
+                workspace="/repo",
+                user_message="[mode:materialize] create tests/test_guess_number.py",
+                context={
+                    "_transaction_kernel_forced_tool_choice": {
+                        "type": "function",
+                        "function": {"name": "write_file"},
+                    },
+                    "_transaction_kernel_forced_tool_definitions": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "write_file",
+                                "parameters": {"type": "object"},
+                            },
+                        }
+                    ],
+                },
+                metadata={"cognitive_runtime_mode": "mainline"},
+                stream=False,
+            )
+        )
+
+        assert request.context_override is not None
+        guidance = request.context_override["cognitive_guidance"]
+        assert guidance["intent_type"] == "code_generation"
+        assert guidance["execution_path"] == "forced_transaction_tool_write"
+        assert guidance["verification_needed"] is True
+        assert guidance["forced_transaction_tool_choice_override"] is True
+        assert guidance["original_intent_type"] == "read_file"
+        assert guidance["original_execution_path"] == "bypass"
+        preflight = request.metadata["cognitive_runtime_preflight"]
+        assert preflight["forced_transaction_tool_choice_override"] is True
+        assert preflight["original_intent_type"] == "read_file"
+        assert preflight["original_execution_path"] == "bypass"
+        assert preflight["strategy_override_applied"] is True
+        assert request.metadata["cognitive_strategy_override"]["cognitive_runtime"]["execution_path"] == (
+            "forced_transaction_tool_write"
+        )
+
+    @pytest.mark.asyncio
     async def test_prepare_session_request_fails_closed_when_cognitive_mainline_blocks(
         self,
         monkeypatch,

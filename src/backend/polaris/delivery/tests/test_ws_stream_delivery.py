@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections import deque
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -10,7 +9,7 @@ import pytest
 from fastapi import WebSocketDisconnect
 from polaris.delivery.ws.endpoints.client_message import handle_client_message
 from polaris.delivery.ws.endpoints.stream import emit_stream_line
-from polaris.delivery.ws.endpoints.websocket_loop import _drain_realtime_log_events, run_main_loop
+from polaris.delivery.ws.endpoints.websocket_loop import run_main_loop
 from polaris.infrastructure.messaging.nats.nats_types import RuntimeEventEnvelope
 
 
@@ -20,14 +19,6 @@ class FakeWebSocket:
 
     async def send_text(self, data: str) -> None:
         self.messages.append(json.loads(data))
-
-
-class FakeRealtimeSubscription:
-    def __init__(self) -> None:
-        self.queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-
-    def consume_dropped(self) -> int:
-        return 0
 
 
 class FakeRuntimeWebSocket(FakeWebSocket):
@@ -48,6 +39,29 @@ class FakeRuntimeWebSocket(FakeWebSocket):
 
     async def close(self, code: int = 1000) -> None:
         self.messages.append({"type": "closed", "code": code})
+
+
+async def _send_status(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
+    return "status-sig", {"type": "status"}
+
+
+def _run_loop_kwargs(manager: Any, websocket: Any) -> dict[str, Any]:
+    return {
+        "websocket": cast(Any, websocket),
+        "state": SimpleNamespace(),
+        "resolved_workspace": "C:/workspace",
+        "cache_root": "C:/runtime",
+        "roles_filter": set(),
+        "connection_id": "conn-1",
+        "client": "test-client",
+        "tail_lines": 200,
+        "v2_protocol": "runtime.v2",
+        "v2_consumer_manager": cast(Any, manager),
+        "v2_client_id": "client-1",
+        "v2_channels": ["*"],
+        "v2_cursor": 0,
+        "send_status_func": _send_status,
+    }
 
 
 def test_emit_stream_line_routes_canonical_dialogue_source_to_dialogue_event() -> None:
@@ -83,72 +97,19 @@ def test_emit_stream_line_routes_canonical_dialogue_source_to_dialogue_event() -
     assert payload["event"]["text"] == "hello from dialogue"
 
 
-def test_realtime_fanout_still_pushes_llm_when_v2_protocol_is_active() -> None:
+def test_runtime_websocket_entrypoint_exposes_only_runtime_v2_loop_kwargs(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _run() -> dict[str, Any]:
-        websocket = FakeWebSocket()
-        realtime_subscription = FakeRealtimeSubscription()
-        sent, needs_resync = await _drain_realtime_log_events(
-            websocket=cast(Any, websocket),
-            connection_id="conn-1",
-            client="test-client",
-            resolved_workspace="C:/workspace",
-            v2_protocol="runtime.v2",
-            realtime_subscription=cast(Any, realtime_subscription),
-            canonical_journal_channels={"llm"},
-            stream_signatures=set(),
-            stream_signature_order=deque(),
-            first_event={
-                "event_id": "llm-1",
-                "channel": "llm",
-                "domain": "llm",
-                "message": "live llm",
-                "raw": {"stream_event": "content_chunk", "content": "live llm"},
-            },
-        )
-        assert sent is True
-        assert needs_resync is False
-        return websocket.messages[-1]
-
-    payload = asyncio.run(_run())
-
-    assert payload["type"] == "llm_stream"
-    assert payload["channel"] == "llm"
-    assert payload["event"]["message"] == "live llm"
-
-
-def test_runtime_websocket_snapshot_sends_channel_after_journal_content(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def _run() -> list[str]:
         from polaris.delivery.ws.endpoints import websocket_core, websocket_loop
 
-        calls: list[str] = []
+        seen_kwargs: dict[str, Any] = {}
 
         async def _noop_async(*_args: Any, **_kwargs: Any) -> None:
             return None
 
-        async def _register_log(*_args: Any, **_kwargs: Any) -> None:
-            return None
-
-        async def _fake_journal_snapshot(*_args: Any, **_kwargs: Any) -> bool:
-            calls.append("journal")
-            return True
-
-        async def _fake_channel_snapshot(
-            _websocket: Any,
-            channel: str,
-            *_args: Any,
-            **_kwargs: Any,
-        ) -> bool:
-            calls.append(f"channel:{channel}")
-            return True
-
         async def _fake_run_main_loop(**kwargs: Any) -> tuple[int | None, str]:
-            await kwargs["send_all_snapshots_func"]()
-            await kwargs["send_incrementals_func"]()
+            seen_kwargs.update(kwargs)
             return None, "test"
 
-        monkeypatch.setattr(websocket_core, "STREAM_CHANNELS", ("system", "dialogue"))
         monkeypatch.setattr(
             websocket_core,
             "resolve_workspace_runtime_context",
@@ -161,24 +122,28 @@ def test_runtime_websocket_snapshot_sends_channel_after_journal_content(
             ),
         )
         monkeypatch.setattr(websocket_core, "_log_connection_event", _noop_async)
-        monkeypatch.setattr(websocket_core, "send_journal_snapshot", _fake_journal_snapshot)
-        monkeypatch.setattr(websocket_core, "send_channel_snapshot", _fake_channel_snapshot)
-        monkeypatch.setattr(websocket_core, "send_journal_incremental", _fake_journal_snapshot)
-        monkeypatch.setattr(websocket_core, "send_channel_incremental", _fake_channel_snapshot)
         monkeypatch.setattr(websocket_loop, "run_main_loop", _fake_run_main_loop)
-        monkeypatch.setattr(websocket_core.RUNTIME_EVENT_FANOUT, "register_connection", _noop_async)
-        monkeypatch.setattr(websocket_core.RUNTIME_EVENT_FANOUT, "unregister_connection", _noop_async)
-        monkeypatch.setattr(websocket_core.LOG_REALTIME_FANOUT, "register_connection", _register_log)
-        monkeypatch.setattr(websocket_core.LOG_REALTIME_FANOUT, "unregister_connection", _noop_async)
-        monkeypatch.setattr(websocket_core.REALTIME_SIGNAL_HUB, "ensure_watch", _noop_async)
-        monkeypatch.setattr(websocket_core.REALTIME_SIGNAL_HUB, "release_watch", lambda *_args: None)
 
-        await websocket_core.runtime_websocket(cast(Any, FakeRuntimeWebSocket()))
-        return calls
+        ws = FakeRuntimeWebSocket()
+        await websocket_core.runtime_websocket(cast(Any, ws))
+        assert ws.accepted is True
+        return seen_kwargs
 
-    calls = asyncio.run(_run())
+    kwargs = asyncio.run(_run())
 
-    assert calls == ["journal", "channel:dialogue", "journal", "channel:dialogue"]
+    forbidden_kwargs = {
+        "legacy_subscriptions",
+        "legacy_channel_states",
+        "canonical_journal_channels",
+        "channel_states",
+        "journal_state",
+        "stream_signatures",
+        "stream_signature_order",
+        "realtime_subscription",
+        "send_all_snapshots_func",
+        "send_incrementals_func",
+    }
+    assert forbidden_kwargs.isdisjoint(kwargs)
 
 
 def test_handle_client_message_rejects_non_object_json_without_closing() -> None:
@@ -200,10 +165,6 @@ def test_handle_client_message_rejects_non_object_json_without_closing() -> None
             v2_client_id="",
             v2_channels=[],
             v2_cursor=0,
-            legacy_subscriptions=set(),
-            legacy_channel_states={},
-            send_status_func=None,
-            send_all_snapshots_func=None,
         )
         assert result == ("sig", 200, None, None, "", [], 0)
         return websocket.messages[-1]
@@ -233,10 +194,6 @@ def test_handle_client_message_rejects_legacy_subscribe_protocol() -> None:
             v2_client_id="",
             v2_channels=[],
             v2_cursor=0,
-            legacy_subscriptions=set(),
-            legacy_channel_states={},
-            send_status_func=None,
-            send_all_snapshots_func=None,
         )
         return websocket.messages[-1], result
 
@@ -247,9 +204,7 @@ def test_handle_client_message_rejects_legacy_subscribe_protocol() -> None:
     assert payload["payload"]["code"] == "RUNTIME_V2_REQUIRED"
 
 
-def test_run_main_loop_disconnects_v2_consumer_on_receive_disconnect(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_run_main_loop_disconnects_v2_consumer_on_receive_disconnect() -> None:
     class DisconnectingWebSocket:
         async def receive_text(self) -> str:
             raise WebSocketDisconnect(code=1001)
@@ -260,7 +215,7 @@ def test_run_main_loop_disconnects_v2_consumer_on_receive_disconnect(
         def __init__(self) -> None:
             self.disconnected = False
 
-        async def next_message(self, timeout: float) -> None:
+        async def next_message(self, timeout: float | None = None) -> None:
             del timeout
             await asyncio.sleep(60)
 
@@ -269,52 +224,9 @@ def test_run_main_loop_disconnects_v2_consumer_on_receive_disconnect(
             self.is_connected = False
 
     async def _run() -> FakeV2ConsumerManager:
-        from polaris.delivery.ws.endpoints import websocket_loop
-
         manager = FakeV2ConsumerManager()
-
-        async def _send_status(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
-            return "status-sig", {}
-
-        async def _send_snapshot() -> bool:
-            return False
-
-        async def _send_incremental() -> bool:
-            return False
-
-        async def _wait_for_update(*_args: Any, **_kwargs: Any) -> int:
-            await asyncio.sleep(60)
-            return 0
-
-        monkeypatch.setattr(websocket_loop.REALTIME_SIGNAL_HUB, "wait_for_update", _wait_for_update)
-
         with pytest.raises(WebSocketDisconnect):
-            await run_main_loop(
-                websocket=cast(Any, DisconnectingWebSocket()),
-                state=SimpleNamespace(),
-                resolved_workspace="C:/workspace",
-                cache_root="C:/runtime",
-                roles_filter=set(),
-                connection_id="conn-1",
-                client="test-client",
-                tail_lines=200,
-                legacy_subscriptions=set(),
-                v2_protocol="runtime.v2",
-                v2_consumer_manager=cast(Any, manager),
-                v2_client_id="client-1",
-                v2_channels=["*"],
-                v2_cursor=0,
-                canonical_journal_channels={"llm"},
-                channel_states={},
-                journal_state={},
-                legacy_channel_states={},
-                stream_signatures=set(),
-                stream_signature_order=deque(),
-                realtime_subscription=None,
-                send_status_func=_send_status,
-                send_all_snapshots_func=_send_snapshot,
-                send_incrementals_func=_send_incremental,
-            )
+            await run_main_loop(**_run_loop_kwargs(manager, DisconnectingWebSocket()))
         return manager
 
     manager = asyncio.run(_run())
@@ -322,15 +234,10 @@ def test_run_main_loop_disconnects_v2_consumer_on_receive_disconnect(
     assert manager.disconnected is True
 
 
-def test_run_main_loop_sends_resync_required_when_v2_events_dropped(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_run_main_loop_sends_resync_required_when_v2_events_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
     class IdleWebSocket:
-        def __init__(self) -> None:
-            self._blocker = asyncio.Event()
-
         async def receive_text(self) -> str:
-            await self._blocker.wait()
+            await asyncio.sleep(60)
             return ""
 
     class DroppedEventsConsumerManager:
@@ -341,7 +248,7 @@ def test_run_main_loop_sends_resync_required_when_v2_events_dropped(
             self._next_calls = 0
             self._consume_calls = 0
 
-        async def next_message(self, timeout: float) -> RuntimeEventEnvelope | None:
+        async def next_message(self, timeout: float | None = None) -> RuntimeEventEnvelope | None:
             del timeout
             self._next_calls += 1
             if self._next_calls == 1:
@@ -354,7 +261,7 @@ def test_run_main_loop_sends_resync_required_when_v2_events_dropped(
                     cursor=7,
                     payload={"task_id": "task-1"},
                 )
-            await asyncio.Event().wait()
+            await asyncio.sleep(60)
             return None
 
         def consume_dropped(self) -> int:
@@ -373,51 +280,13 @@ def test_run_main_loop_sends_resync_required_when_v2_events_dropped(
         manager = DroppedEventsConsumerManager()
         sent_payloads: list[dict[str, Any]] = []
 
-        async def _send_status(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
-            return "status-sig", {}
-
-        async def _send_snapshot() -> bool:
-            return False
-
-        async def _send_incremental() -> bool:
-            return False
-
-        async def _wait_for_update(seq: int, **_kwargs: Any) -> int:
-            return seq
-
         async def _record_send_json(_websocket: Any, payload: dict[str, Any], **_kwargs: Any) -> bool:
             sent_payloads.append(payload)
             return payload.get("type") != "EVENT"
 
-        monkeypatch.setattr(websocket_loop.REALTIME_SIGNAL_HUB, "wait_for_update", _wait_for_update)
         monkeypatch.setattr(websocket_loop, "send_json_safe", _record_send_json)
 
-        close_code, close_reason = await run_main_loop(
-            websocket=cast(Any, IdleWebSocket()),
-            state=SimpleNamespace(),
-            resolved_workspace="C:/workspace",
-            cache_root="C:/runtime",
-            roles_filter=set(),
-            connection_id="conn-1",
-            client="test-client",
-            tail_lines=200,
-            legacy_subscriptions=set(),
-            v2_protocol="runtime.v2",
-            v2_consumer_manager=cast(Any, manager),
-            v2_client_id="client-1",
-            v2_channels=["*"],
-            v2_cursor=0,
-            canonical_journal_channels={"llm"},
-            channel_states={},
-            journal_state={},
-            legacy_channel_states={},
-            stream_signatures=set(),
-            stream_signature_order=deque(),
-            realtime_subscription=None,
-            send_status_func=_send_status,
-            send_all_snapshots_func=_send_snapshot,
-            send_incrementals_func=_send_incremental,
-        )
+        close_code, close_reason = await run_main_loop(**_run_loop_kwargs(manager, IdleWebSocket()))
         return close_code, close_reason, sent_payloads, manager
 
     close_code, close_reason, sent_payloads, manager = asyncio.run(_run())
@@ -433,9 +302,7 @@ def test_run_main_loop_sends_resync_required_when_v2_events_dropped(
     } in sent_payloads
 
 
-def test_run_main_loop_sends_resync_before_failed_event_and_keeps_cursor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_run_main_loop_sends_resync_before_failed_event_and_keeps_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
     class IdleWebSocket:
         async def receive_text(self) -> str:
             await asyncio.sleep(60)
@@ -449,7 +316,7 @@ def test_run_main_loop_sends_resync_before_failed_event_and_keeps_cursor(
             self._next_calls = 0
             self._consume_calls = 0
 
-        async def next_message(self, timeout: float) -> RuntimeEventEnvelope | None:
+        async def next_message(self, timeout: float | None = None) -> RuntimeEventEnvelope | None:
             del timeout
             self._next_calls += 1
             if self._next_calls == 1:
@@ -481,51 +348,13 @@ def test_run_main_loop_sends_resync_before_failed_event_and_keeps_cursor(
         manager = DroppedThenEventConsumerManager()
         sent_payloads: list[dict[str, Any]] = []
 
-        async def _send_status(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
-            return "status-sig", {}
-
-        async def _send_snapshot() -> bool:
-            return False
-
-        async def _send_incremental() -> bool:
-            return False
-
-        async def _wait_for_update(seq: int, **_kwargs: Any) -> int:
-            return seq
-
         async def _record_send_json(_websocket: Any, payload: dict[str, Any], **_kwargs: Any) -> bool:
             sent_payloads.append(payload)
             return payload.get("type") != "EVENT"
 
-        monkeypatch.setattr(websocket_loop.REALTIME_SIGNAL_HUB, "wait_for_update", _wait_for_update)
         monkeypatch.setattr(websocket_loop, "send_json_safe", _record_send_json)
 
-        close_code, close_reason = await run_main_loop(
-            websocket=cast(Any, IdleWebSocket()),
-            state=SimpleNamespace(),
-            resolved_workspace="C:/workspace",
-            cache_root="C:/runtime",
-            roles_filter=set(),
-            connection_id="conn-1",
-            client="test-client",
-            tail_lines=200,
-            legacy_subscriptions=set(),
-            v2_protocol="runtime.v2",
-            v2_consumer_manager=cast(Any, manager),
-            v2_client_id="client-1",
-            v2_channels=["*"],
-            v2_cursor=0,
-            canonical_journal_channels={"llm"},
-            channel_states={},
-            journal_state={},
-            legacy_channel_states={},
-            stream_signatures=set(),
-            stream_signature_order=deque(),
-            realtime_subscription=None,
-            send_status_func=_send_status,
-            send_all_snapshots_func=_send_snapshot,
-            send_incrementals_func=_send_incremental,
-        )
+        close_code, close_reason = await run_main_loop(**_run_loop_kwargs(manager, IdleWebSocket()))
         return close_code, close_reason, sent_payloads, manager
 
     close_code, close_reason, sent_payloads, manager = asyncio.run(_run())
@@ -543,9 +372,7 @@ def test_run_main_loop_sends_resync_before_failed_event_and_keeps_cursor(
     assert sent_payloads.index(resync_messages[0]) < sent_payloads.index(event_messages[0])
 
 
-def test_run_main_loop_preserves_pending_v2_poll_when_signal_wins(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_run_main_loop_uses_single_blocking_v2_consumer_task(monkeypatch: pytest.MonkeyPatch) -> None:
     class IdleWebSocket:
         async def receive_text(self) -> str:
             await asyncio.sleep(60)
@@ -559,8 +386,8 @@ def test_run_main_loop_preserves_pending_v2_poll_when_signal_wins(
             self.next_calls = 0
             self.queue: asyncio.Queue[RuntimeEventEnvelope] = asyncio.Queue()
 
-        async def next_message(self, timeout: float) -> RuntimeEventEnvelope | None:
-            del timeout
+        async def next_message(self, timeout: float | None = None) -> RuntimeEventEnvelope | None:
+            assert timeout is None
             self.next_calls += 1
             return await self.queue.get()
 
@@ -576,75 +403,32 @@ def test_run_main_loop_preserves_pending_v2_poll_when_signal_wins(
 
         manager = QueuedEventConsumerManager()
         sent_payloads: list[dict[str, Any]] = []
-        signal_calls = 0
-        event_published = False
-
-        async def _send_status(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
-            return "status-sig", {}
-
-        async def _send_snapshot() -> bool:
-            return False
-
-        async def _send_incremental() -> bool:
-            nonlocal event_published
-            if not event_published:
-                event_published = True
-                await manager.queue.put(
-                    RuntimeEventEnvelope(
-                        workspace_key="workspace",
-                        channel="process",
-                        kind="probe.event",
-                        cursor=99,
-                        payload={"marker": "v2-poll-preserved"},
-                    )
-                )
-            return False
-
-        async def _wait_for_update(seq: int, **_kwargs: Any) -> int:
-            nonlocal signal_calls
-            signal_calls += 1
-            if signal_calls == 1:
-                await asyncio.sleep(0)
-                return seq + 1
-            await asyncio.sleep(60)
-            return seq
 
         async def _record_send_json(_websocket: Any, payload: dict[str, Any], **_kwargs: Any) -> bool:
             sent_payloads.append(payload)
             return payload.get("type") != "EVENT"
 
-        monkeypatch.setattr(websocket_loop.REALTIME_SIGNAL_HUB, "wait_for_update", _wait_for_update)
-        monkeypatch.setattr(websocket_loop, "send_json_safe", _record_send_json)
+        async def _publish_event() -> None:
+            await asyncio.sleep(0)
+            await manager.queue.put(
+                RuntimeEventEnvelope(
+                    workspace_key="workspace",
+                    channel="process",
+                    kind="probe.event",
+                    cursor=99,
+                    payload={"marker": "v2-blocking-consumer"},
+                )
+            )
 
-        close_code, close_reason = await asyncio.wait_for(
-            run_main_loop(
-                websocket=cast(Any, IdleWebSocket()),
-                state=SimpleNamespace(),
-                resolved_workspace="C:/workspace",
-                cache_root="C:/runtime",
-                roles_filter=set(),
-                connection_id="conn-1",
-                client="test-client",
-                tail_lines=200,
-                legacy_subscriptions=set(),
-                v2_protocol="runtime.v2",
-                v2_consumer_manager=cast(Any, manager),
-                v2_client_id="client-1",
-                v2_channels=["process"],
-                v2_cursor=0,
-                canonical_journal_channels={"llm"},
-                channel_states={},
-                journal_state={},
-                legacy_channel_states={},
-                stream_signatures=set(),
-                stream_signature_order=deque(),
-                realtime_subscription=None,
-                send_status_func=_send_status,
-                send_all_snapshots_func=_send_snapshot,
-                send_incrementals_func=_send_incremental,
-            ),
-            timeout=2,
-        )
+        monkeypatch.setattr(websocket_loop, "send_json_safe", _record_send_json)
+        publisher_task = asyncio.create_task(_publish_event())
+        try:
+            close_code, close_reason = await asyncio.wait_for(
+                run_main_loop(**_run_loop_kwargs(manager, IdleWebSocket())),
+                timeout=2,
+            )
+        finally:
+            await publisher_task
         return close_code, close_reason, sent_payloads, manager
 
     close_code, close_reason, sent_payloads, manager = asyncio.run(_run())
@@ -657,12 +441,10 @@ def test_run_main_loop_preserves_pending_v2_poll_when_signal_wins(
         payload.get("event", {}).get("payload", {}).get("marker")
         for payload in sent_payloads
         if payload.get("type") == "EVENT"
-    ] == ["v2-poll-preserved"]
+    ] == ["v2-blocking-consumer"]
 
 
-def test_run_main_loop_does_not_advance_v2_cursor_when_send_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_run_main_loop_does_not_advance_v2_cursor_when_send_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     class IdleWebSocket:
         async def receive_text(self) -> str:
             await asyncio.sleep(60)
@@ -675,7 +457,7 @@ def test_run_main_loop_does_not_advance_v2_cursor_when_send_fails(
             self.disconnected = False
             self.sent_event = False
 
-        async def next_message(self, timeout: float) -> RuntimeEventEnvelope | None:
+        async def next_message(self, timeout: float | None = None) -> RuntimeEventEnvelope | None:
             del timeout
             if self.sent_event:
                 await asyncio.sleep(60)
@@ -698,51 +480,12 @@ def test_run_main_loop_does_not_advance_v2_cursor_when_send_fails(
 
         manager = OneEventConsumerManager()
 
-        async def _send_status(**_kwargs: Any) -> tuple[str, dict[str, Any]]:
-            return "status-sig", {}
-
-        async def _send_snapshot() -> bool:
-            return False
-
-        async def _send_incremental() -> bool:
-            return False
-
-        async def _wait_for_update(*_args: Any, **_kwargs: Any) -> int:
-            await asyncio.sleep(60)
-            return 0
-
         async def _send_json_fails(*_args: Any, **_kwargs: Any) -> bool:
             return False
 
-        monkeypatch.setattr(websocket_loop.REALTIME_SIGNAL_HUB, "wait_for_update", _wait_for_update)
         monkeypatch.setattr(websocket_loop, "send_json_safe", _send_json_fails)
 
-        close_code, close_reason = await run_main_loop(
-            websocket=cast(Any, IdleWebSocket()),
-            state=SimpleNamespace(),
-            resolved_workspace="C:/workspace",
-            cache_root="C:/runtime",
-            roles_filter=set(),
-            connection_id="conn-1",
-            client="test-client",
-            tail_lines=200,
-            legacy_subscriptions=set(),
-            v2_protocol="runtime.v2",
-            v2_consumer_manager=cast(Any, manager),
-            v2_client_id="client-1",
-            v2_channels=["*"],
-            v2_cursor=0,
-            canonical_journal_channels={"llm"},
-            channel_states={},
-            journal_state={},
-            legacy_channel_states={},
-            stream_signatures=set(),
-            stream_signature_order=deque(),
-            realtime_subscription=None,
-            send_status_func=_send_status,
-            send_all_snapshots_func=_send_snapshot,
-            send_incrementals_func=_send_incremental,
-        )
+        close_code, close_reason = await run_main_loop(**_run_loop_kwargs(manager, IdleWebSocket()))
         return close_code, close_reason, manager
 
     close_code, close_reason, manager = asyncio.run(_run())

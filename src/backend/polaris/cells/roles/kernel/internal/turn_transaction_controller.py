@@ -1103,6 +1103,33 @@ class TurnTransactionController:
 
         # PROPOSE_PATCH / ANALYZE_ONLY 边界保护：过滤 write tools
         decision = self._apply_delivery_mode_filter(decision, ledger)
+        allowed_tool_names_for_turn = extract_allowed_tool_names_from_definitions(tool_definitions)
+        if decision.get("kind") == TurnDecisionKind.TOOL_BATCH and not allowed_tool_names_for_turn:
+            logger.warning(
+                "text-only-tool-batch-suppressed: turn_id=%s no tool definitions were exposed; "
+                "treating decoded tool call text as final answer",
+                turn_id,
+            )
+            ledger.anomaly_flags.append(
+                {
+                    "type": "TEXT_ONLY_TOOL_BATCH_SUPPRESSED",
+                    "turn_id": turn_id,
+                    "reason": "no_tool_definitions_exposed",
+                }
+            )
+            decision = TurnDecision(
+                turn_id=decision["turn_id"],
+                kind=TurnDecisionKind.FINAL_ANSWER,
+                visible_message=str(decision.get("visible_message") or llm_response.content or ""),
+                reasoning_summary=decision.get("reasoning_summary"),
+                tool_batch=None,
+                finalize_mode=decision["finalize_mode"],
+                domain=decision["domain"],
+                metadata={
+                    **dict(decision.get("metadata") or {}),
+                    "suppressed_tool_batch_due_to_no_tools": True,
+                },
+            )
 
         ledger.record_decision(decision)
         self._guard_assert_single_decision(

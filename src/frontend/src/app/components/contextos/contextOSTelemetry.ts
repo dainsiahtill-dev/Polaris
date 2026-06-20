@@ -345,7 +345,10 @@ function collectRoleHints(params: {
  * @param channelFallback 当 LogEntry.meta 未携带 channel 时的回退（llm / runtime_events / process）。
  */
 function logEntryToEvent(log: LogEntry, index: number, channelFallback: string): ContextOSEvent | null {
-  const meta = isRecord(log.meta) ? log.meta : {};
+  const rawMeta = isRecord(log.meta) ? log.meta : {};
+  const nestedOutput = isRecord(rawMeta['output']) ? rawMeta['output'] : {};
+  const nestedData = isRecord(rawMeta['data']) ? rawMeta['data'] : {};
+  const meta = { ...nestedOutput, ...nestedData, ...rawMeta };
   const streamEvent = (nonEmptyString(meta['streamEvent']) || (log.tags && log.tags[0]) || '').toLowerCase();
   const channel = nonEmptyString(meta['channel']) || channelFallback;
   const actor = nonEmptyString(log.source) || 'System';

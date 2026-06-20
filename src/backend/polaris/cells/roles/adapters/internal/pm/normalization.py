@@ -159,6 +159,8 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         _raw_meta = raw.get("metadata")
         metadata: dict[str, Any] = dict(_raw_meta) if isinstance(_raw_meta, dict) else {}
         execution_backend = str(raw.get("execution_backend") or metadata.get("execution_backend") or "").strip().lower()
+        if execution_backend == "projection_generate" and index != 1:
+            execution_backend = "code_edit"
         if execution_backend:
             metadata["execution_backend"] = execution_backend
         _raw_proj = metadata.get("projection")
@@ -449,12 +451,14 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             )
             if index == 0 and not has_projection_generate:
                 execution_backend = "projection_generate"
+            if index > 0 and execution_backend == "projection_generate":
+                execution_backend = "code_edit"
             if execution_backend == "projection_generate":
                 projection_payload.update(projection)
                 metadata["projection"] = projection_payload
                 metadata["execution_backend"] = "projection_generate"
                 enriched["execution_backend"] = "projection_generate"
-            elif not execution_backend:
+            elif execution_backend == "code_edit" or not execution_backend:
                 metadata["execution_backend"] = "code_edit"
                 enriched["execution_backend"] = "code_edit"
 

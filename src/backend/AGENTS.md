@@ -118,6 +118,7 @@ Cell 是最小自治边界。
 
 1. Polaris 产品实时链路只能使用统一 Nat-JetStream + `/v2/ws/runtime` WebSocket runtime.v2 协议。
 2. 禁止新增或恢复 SSE、`StreamingResponse` 事件流、HTTP 长轮询、定时 HTTP 轮询、文件轮询伪实时、轮询兜底。
+   - Searchable forbidden terms: 禁止轮询, HTTP long polling, timer HTTP polling, file polling, polling fallback, SSE.
 3. 后端实时事件必须发布到 JetStream subject，并通过 `delivery/ws` runtime.v2 subject builder 暴露为 channel；前端必须通过 `RuntimeTransportProvider`/`runtimeSocketManager` 订阅。
 4. HTTP endpoint 只能承担初始快照、显式用户刷新、一次性 command/query；不得作为产品实时刷新循环。
 5. 测试 harness 可以轮询状态端点等待异步流程完成，但测试轮询不得被产品代码复用或包装成运行时机制。

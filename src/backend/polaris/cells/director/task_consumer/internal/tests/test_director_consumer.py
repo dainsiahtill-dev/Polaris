@@ -193,6 +193,66 @@ class TestDirectorExecutionConsumerPollOnce:
         assert fail_call.metadata["target_files"] == ["src/main.py"]
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_verified_existing_scope_advances_to_qa_without_changed_files(self, mock_get_svc: MagicMock) -> None:
+        """Existing-scope verification is execution evidence for already-satisfied fission steps."""
+        mock_svc = MagicMock()
+        mock_get_svc.return_value = mock_svc
+
+        claim_result = MagicMock()
+        claim_result.ok = True
+        claim_result.task_id = "PM-0001-1-S2"
+        claim_result.lease_token = "lease-existing"
+        claim_result.payload = {
+            "blueprint_id": "bp-PM-0001-1",
+            "construction_step": {
+                "step_id": "PM-0001-1-S2",
+                "target_file": "calculator.py",
+                "verify": "python -m py_compile calculator.py",
+            },
+            "target_files": ["calculator.py"],
+            "scope_paths": ["calculator.py"],
+        }
+
+        no_claim = MagicMock()
+        no_claim.ok = False
+        mock_svc.claim_work_item.side_effect = [claim_result, no_claim]
+        mock_svc.acknowledge_task_stage.return_value = MagicMock(ok=True, status="pending_qa")
+
+        consumer = DirectorExecutionConsumer(workspace="/test", worker_id="d1")
+        with patch.object(
+            consumer,
+            "_execute_task",
+            return_value={
+                "changed_files": [],
+                "duration": 1,
+                "side_effects": [],
+                "director_adapter_result": {
+                    "success": True,
+                    "task_id": "PM-0001-1-S2",
+                    "tools_executed": 3,
+                    "materialization_mode": "verified_existing_workspace_scope",
+                    "existing_contract_evidence": {
+                        "ok": True,
+                        "reason": "declared_scope_present",
+                        "existing_paths": ["calculator.py"],
+                    },
+                },
+            },
+        ):
+            results = consumer.poll_once()
+
+        assert len(results) == 1
+        assert results[0]["ok"] is True
+        mock_svc.fail_task_stage.assert_not_called()
+        ack_call = mock_svc.acknowledge_task_stage.call_args[0][0]
+        assert ack_call.next_stage == "pending_qa"
+        assert ack_call.metadata["changed_files"] == []
+        assert ack_call.metadata["director_evidence_status"] == "verified_existing_workspace_scope"
+        assert ack_call.metadata["director_adapter"]["existing_contract_evidence"]["existing_paths"] == [
+            "calculator.py"
+        ]
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_step_target_not_in_changed_files_requeues(self, mock_get_svc: MagicMock) -> None:
         """A fission step that changed OTHER files but not its declared
         target_file must not advance to QA (live I3-r9: the readme.md step
@@ -417,6 +477,60 @@ class TestDirectorExecutionConsumerPollOnce:
         assert result["side_effects"] == []
         assert result["director_adapter_result"]["success"] is True
         assert result["director_adapter_result"]["materialization_mode"] == "unit_test"
+
+    @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
+    def test_execute_task_preserves_verified_existing_scope_evidence(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Any,
+        monkeypatch: Any,
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+
+        class FakeDirectorAdapter:
+            async def execute(
+                self,
+                *,
+                task_id: str,
+                input_data: dict[str, Any],
+                context: dict[str, Any],
+            ) -> dict[str, Any]:
+                return {
+                    "success": True,
+                    "task_id": task_id,
+                    "tools_executed": 2,
+                    "materialization_mode": "verified_existing_workspace_scope",
+                    "existing_contract_evidence": {
+                        "ok": True,
+                        "reason": "declared_scope_present",
+                        "candidate_paths": ["./calculator.py"],
+                        "existing_paths": ["./calculator.py"],
+                        "missing_paths": [],
+                    },
+                }
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.public.service.create_role_adapter",
+            lambda role_id, workspace: FakeDirectorAdapter(),
+        )
+
+        consumer = DirectorExecutionConsumer(workspace=str(tmp_path), worker_id="d1")
+        result = consumer._execute_task(
+            "PM-0001-1-S2",
+            {
+                "source_pm_task_id": "PM-0001-1-S2",
+                "title": "Verify existing calculator",
+                "target_files": ["calculator.py"],
+            },
+            "lease-existing",
+        )
+
+        summary = result["director_adapter_result"]
+        assert result["changed_files"] == []
+        assert summary["success"] is True
+        assert summary["materialization_mode"] == "verified_existing_workspace_scope"
+        assert summary["existing_contract_evidence"]["ok"] is True
+        assert summary["existing_contract_evidence"]["existing_paths"] == ["./calculator.py"]
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_execute_task_requeues_failed_director_adapter(
@@ -986,8 +1100,8 @@ class TestPreStatePunchList:
         assert result["exit_code"] != 0
         assert result["total_clauses"] == 4
         assert result["failing_clauses"] == [
-            "grep -q 'const LEVELS' ./main.js",
-            "grep -q 'function loadLevel' ./main.js",
+            "grep -Fq 'const LEVELS' ./main.js",
+            "grep -Fq 'function loadLevel' ./main.js",
         ]
 
     def test_state_carrying_chain_reports_whole_failure_only(self, tmp_path: Any) -> None:
@@ -1197,7 +1311,7 @@ class TestPunchListWiring:
         )
         pre_state = seen_context["pre_state_verify"]
         assert pre_state["exit_code"] != 0
-        assert pre_state["failing_clauses"] == ["grep -q 'const LEVELS' ./main.js"]
+        assert pre_state["failing_clauses"] == ["grep -Fq 'const LEVELS' ./main.js"]
 
     @patch("polaris.cells.director.task_consumer.internal.director_consumer.get_task_market_service")
     def test_execute_task_injects_consumed_interfaces(

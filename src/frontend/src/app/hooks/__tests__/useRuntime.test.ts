@@ -135,6 +135,91 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(result.current.llmStreamEvents[0]?.message).toBe('LLM response accepted');
   });
 
+  it('merges task_runtime execution claimed events into in-progress tasks', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'snapshot',
+      channel: 'runtime_events',
+      lines: [
+        JSON.stringify({
+          schema_version: 1,
+          stream: 'task_runtime.execution',
+          event_type: 'claimed',
+          source: 'runtime.task_runtime',
+          aggregate_id: '1',
+          payload: {
+            event_type: 'claimed',
+            task_id: '1',
+            status: 'in_progress',
+            subject: '创建响应式简历网页核心实现',
+            claimed_by: 'director',
+            timestamp: '2026-06-19T21:42:22.858239+00:00',
+          },
+          metadata: {
+            task_id: '1',
+          },
+        }),
+      ],
+    });
+
+    expect(result.current.tasks).toHaveLength(1);
+    expect(result.current.tasks[0]?.id).toBe('1');
+    expect(result.current.tasks[0]?.status).toBe(TaskStatus.IN_PROGRESS);
+    expect(result.current.tasks[0]?.done).toBe(false);
+    expect(result.current.tasks[0]?.title).toBe('创建响应式简历网页核心实现');
+  });
+
+  it('loads event.factory snapshots into process stream events', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'snapshot',
+      channel: 'event.factory',
+      lines: [
+        JSON.stringify({
+          type: 'factory_bench.project.started',
+          actor: 'factory-bench',
+          message: 'Factory bench project L1-02 started',
+          project_id: 'L1-02',
+          level: 1,
+        }),
+      ],
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(1);
+    expect(result.current.processStreamEvents[0]?.message).toBe('Factory bench project L1-02 started');
+    expect(result.current.processStreamEvents[0]?.meta?.channel).toBe('event.factory');
+    expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('factory_bench.project.started');
+  });
+
+  it('appends live event.factory lines into process stream events', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'event.factory',
+      text: JSON.stringify({
+        type: 'factory_bench.gate.evaluated',
+        actor: 'factory-bench',
+        message: 'real_run_gate ok',
+        gate: 'real_run_gate',
+        ok: true,
+      }),
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(1);
+    expect(result.current.processStreamEvents[0]?.message).toBe('real_run_gate ok');
+    expect(result.current.processStreamEvents[0]?.meta?.channel).toBe('event.factory');
+    expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('factory_bench.gate.evaluated');
+  });
+
   it('parses the canonical journal llm_completed line: real tokens + latency into meta', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })

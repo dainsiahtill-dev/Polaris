@@ -262,23 +262,14 @@ class RuntimeSocketManager {
    * Unsubscribe from channels (ref-counted)
    */
   unsubscribeChannels(channels: string[]): void {
-    const removedChannels: string[] = [];
-
     for (const channel of channels) {
       const currentCount = this.channels.get(channel) || 0;
       if (currentCount <= 1) {
-        if (currentCount > 0) {
-          removedChannels.push(channel);
-        }
         this.channels.delete(channel);
         this.channelTailLines.delete(channel);
       } else {
         this.channels.set(channel, currentCount - 1);
       }
-    }
-
-    if (removedChannels.length > 0) {
-      this.sendUnsubscribe(removedChannels);
     }
   }
 
@@ -410,8 +401,10 @@ class RuntimeSocketManager {
       this.queueAck(eventData.cursor);
     }
 
-    // Route to listeners
-    this.routeMessage(JSON.stringify(eventData.event));
+    // Route the canonical runtime.v2 EVENT wrapper to listeners. Downstream
+    // hooks normalize the envelope from `event`, while preserving cursor/ACK
+    // handling here in the transport layer.
+    this.dispatchMessageToListeners(eventData);
   }
 
   private connect(): void {
@@ -526,6 +519,12 @@ class RuntimeSocketManager {
       return;
     }
 
+    this.dispatchMessageToListeners(message);
+  }
+
+  private dispatchMessageToListeners(message: unknown): void {
+    const msg = message as Record<string, unknown>;
+
     // Get channel from message
     const channel = typeof msg.channel === 'string' ? msg.channel : undefined;
 
@@ -567,18 +566,6 @@ class RuntimeSocketManager {
       payload.roles = this.subscribedRoles;
     }
     this.ws.send(JSON.stringify(payload));
-  }
-
-  private sendUnsubscribe(channels: string[]): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-
-    this.ws.send(
-      JSON.stringify({
-        type: 'UNSUBSCRIBE',
-        protocol: 'runtime.v2',
-        channels,
-      })
-    );
   }
 
   private areRolesEqual(left: RuntimeRole[], right: RuntimeRole[]): boolean {

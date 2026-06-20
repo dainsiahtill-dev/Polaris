@@ -45,7 +45,10 @@ from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_editblocks impor
     _should_use_whole_file_prefix_replacement,
     _strip_eof_delimiter_newline,
     _synthesize_blocks_from_json_payload,
+    _synthesize_blocks_from_update_markers,
     _synthesize_line_range_block,
+    _synthesize_whole_file_replacement_block,
+    _unwrap_weak_replace_marker,
 )
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_guards import (
     _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO,
@@ -747,7 +750,17 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
     Returns:
         Execution result dict
     """
-    file = kwargs.get("file") or kwargs.get("path") or kwargs.get("file_path") or kwargs.get("filepath")
+    file = (
+        kwargs.get("file")
+        or kwargs.get("path")
+        or kwargs.get("file_path")
+        or kwargs.get("filepath")
+        or kwargs.get("filePath")
+        or kwargs.get("target_file")
+        or kwargs.get("target_path")
+        or kwargs.get("targetFile")
+        or kwargs.get("targetPath")
+    )
     raw_blocks_value = kwargs.get("blocks") or kwargs.get("content") or kwargs.get("edits") or kwargs.get("diff")
     blocks_text = _normalize_block_input(raw_blocks_value)
 
@@ -765,8 +778,20 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
             if kwargs.get("new_text") is not None
             else kwargs.get("new_content")
             if kwargs.get("new_content") is not None
+            else kwargs.get("newText")
+            if kwargs.get("newText") is not None
+            else kwargs.get("newContent")
+            if kwargs.get("newContent") is not None
+            else kwargs.get("new_code")
+            if kwargs.get("new_code") is not None
+            else kwargs.get("newCode")
+            if kwargs.get("newCode") is not None
             else kwargs.get("replacement")
             if kwargs.get("replacement") is not None
+            else kwargs.get("replacement_text")
+            if kwargs.get("replacement_text") is not None
+            else kwargs.get("replacementText")
+            if kwargs.get("replacementText") is not None
             else kwargs.get("code")
             if kwargs.get("code") is not None
             else (blocks_text or None)
@@ -776,24 +801,55 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
             return err
         blocks_text = synth or ""
     elif blocks_text and not _has_search_replace_markers(blocks_text):
-        # JSON-in-blocks affordance: a structured line-range edit hiding inside
-        # the blocks argument is normalized, not rejected as prose. Parse the
-        # RAW value first — _normalize_block_input's escape repair corrupts
-        # valid JSON (the \n inside quoted strings must stay escaped).
-        json_blocks: str | None = None
-        json_err: dict[str, Any] | None = None
-        if isinstance(raw_blocks_value, str):
-            json_blocks, json_err = _synthesize_blocks_from_json_payload(self, raw_blocks_value, default_file=file)
-        if json_blocks is None and json_err is None:
-            json_blocks, json_err = _synthesize_blocks_from_json_payload(self, blocks_text, default_file=file)
-        if json_err is not None and "__unwrap_blocks__" in json_err:
-            blocks_text = _normalize_block_input(json_err["__unwrap_blocks__"])
-            file = json_err.get("__unwrap_file__") or file
-            json_err = None
-        if json_err is not None:
-            return json_err
-        if json_blocks is not None:
-            blocks_text = json_blocks
+        replace_file, replace_body = _unwrap_weak_replace_marker(blocks_text, default_file=file)
+        if replace_body is not None:
+            whole_file_blocks, whole_file_err = _synthesize_whole_file_replacement_block(
+                self,
+                replace_file or file,
+                replace_body,
+                force=True,
+            )
+            if whole_file_err is not None:
+                return whole_file_err
+            if whole_file_blocks is not None:
+                blocks_text = whole_file_blocks
+        update_blocks = (
+            None
+            if _has_search_replace_markers(blocks_text)
+            else _synthesize_blocks_from_update_markers(blocks_text, default_file=file)
+        )
+        if update_blocks is not None:
+            blocks_text = update_blocks
+        else:
+            whole_file_blocks, whole_file_err = _synthesize_whole_file_replacement_block(self, file, blocks_text)
+            if whole_file_err is not None:
+                return whole_file_err
+            if whole_file_blocks is not None:
+                blocks_text = whole_file_blocks
+            else:
+                # JSON-in-blocks affordance: a structured line-range edit hiding inside
+                # the blocks argument is normalized, not rejected as prose. Parse the
+                # RAW value first — _normalize_block_input's escape repair corrupts
+                # valid JSON (the \n inside quoted strings must stay escaped).
+                json_blocks: str | None = None
+                json_err: dict[str, Any] | None = None
+                if isinstance(raw_blocks_value, str):
+                    json_blocks, json_err = _synthesize_blocks_from_json_payload(
+                        self, raw_blocks_value, default_file=file
+                    )
+                if json_blocks is None and json_err is None:
+                    json_blocks, json_err = _synthesize_blocks_from_json_payload(self, blocks_text, default_file=file)
+                if json_err is not None and "__unwrap_blocks__" in json_err:
+                    blocks_text = _normalize_block_input(json_err["__unwrap_blocks__"])
+                    file = json_err.get("__unwrap_file__") or file
+                    update_blocks = _synthesize_blocks_from_update_markers(blocks_text, default_file=file)
+                    if update_blocks is not None:
+                        blocks_text = update_blocks
+                    json_err = None
+                if json_err is not None:
+                    return json_err
+                if json_blocks is not None:
+                    blocks_text = json_blocks
 
     if not blocks_text or not isinstance(blocks_text, str):
         return {

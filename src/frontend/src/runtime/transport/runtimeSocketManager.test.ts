@@ -84,7 +84,7 @@ describe('runtimeSocketManager unsubscribe behavior', () => {
     expect(socket.send).not.toHaveBeenCalled();
   });
 
-  it('sends runtime.v2 UNSUBSCRIBE when ref-count reaches zero', () => {
+  it('keeps shared runtime.v2 service subscriptions monotonic when ref-count reaches zero', () => {
     manager.subscribeChannels([{ channel: 'llm' }, { channel: 'llm' }, { channel: 'process' }]);
     socket.send.mockClear();
 
@@ -92,13 +92,7 @@ describe('runtimeSocketManager unsubscribe behavior', () => {
     manager.unsubscribeChannels(['llm', 'process']);
 
     const sentMessages = parseSentMessages(socket);
-    expect(sentMessages).toEqual([
-      {
-        type: 'UNSUBSCRIBE',
-        protocol: 'runtime.v2',
-        channels: ['llm', 'process'],
-      },
-    ]);
+    expect(sentMessages).toEqual([]);
   });
 
   it('does not send UNSUBSCRIBE when connection is closed', () => {

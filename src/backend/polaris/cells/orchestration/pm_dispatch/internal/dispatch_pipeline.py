@@ -317,6 +317,75 @@ def _is_transient_worker_requeue_result(result: dict[str, Any]) -> bool:
     return reason == "scope_conflict" or error_code == "SCOPE_CONFLICT"
 
 
+def _build_inline_qa_consumer(
+    qa_consumer_type: Any,
+    *,
+    workspace_full: str,
+    worker_id: str,
+    visibility_timeout_seconds: int,
+    poll_interval: float,
+) -> Any:
+    try:
+        return qa_consumer_type(
+            workspace=workspace_full,
+            worker_id=worker_id,
+            visibility_timeout_seconds=visibility_timeout_seconds,
+            poll_interval=poll_interval,
+            enable_llm_audit=True,
+        )
+    except TypeError:
+        return qa_consumer_type(
+            workspace=workspace_full,
+            worker_id=worker_id,
+            visibility_timeout_seconds=visibility_timeout_seconds,
+            poll_interval=poll_interval,
+        )
+
+
+def _write_mainline_full_integration_qa_result(
+    *,
+    workspace_full: str,
+    cache_root_full: str,
+    run_id: str,
+    iteration: int,
+    integration_qa_result: dict[str, Any],
+) -> str:
+    payload = {
+        "schema_version": 1,
+        "enabled": True,
+        "ran": True,
+        "passed": bool(integration_qa_result.get("passed", False)),
+        "reason": str(integration_qa_result.get("reason") or ""),
+        "summary": str(integration_qa_result.get("summary") or ""),
+        "errors": list(integration_qa_result.get("errors") or []),
+        "run_id": run_id,
+        "pm_iteration": int(iteration or 0),
+        "workspace": workspace_full,
+        "execution_mode": "task_market_mainline_full",
+        "qa_path": "task_market_inline",
+        "qa_results": list(integration_qa_result.get("qa_results") or []),
+        "unresolved_task_ids": list(integration_qa_result.get("unresolved_task_ids") or []),
+        "rejected_task_ids": list(integration_qa_result.get("rejected_task_ids") or []),
+        "publish_failed_task_ids": list(integration_qa_result.get("publish_failed_task_ids") or []),
+        "timestamp": datetime.now().replace(microsecond=0).isoformat(),
+    }
+    try:
+        from polaris.kernelone.fs.text_ops import write_json_atomic
+        from polaris.kernelone.storage.io_paths import resolve_artifact_path
+
+        target = resolve_artifact_path(workspace_full, cache_root_full, "runtime/results/integration_qa.result.json")
+        if not target:
+            return ""
+        parent = os.path.dirname(target)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        write_json_atomic(target, payload)
+        return target
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        logger.warning("mainline-full integration QA artifact write failed: %s", exc)
+        return ""
+
+
 def _run_inline_task_market_consumers(
     *,
     workspace_full: str,
@@ -391,8 +460,9 @@ def _run_inline_task_market_consumers(
             poll_interval=0.05,
             enable_safe_parallel=enable_safe_parallel,
         )
-        qa_consumer = qa_consumer_type(
-            workspace=workspace_full,
+        qa_consumer = _build_inline_qa_consumer(
+            qa_consumer_type,
+            workspace_full=workspace_full,
             worker_id=f"pm_inline_qa_{worker_suffix}",
             visibility_timeout_seconds=qa_timeout,
             poll_interval=0.05,
@@ -1337,6 +1407,15 @@ def run_dispatch_pipeline(
                 "rejected_task_ids": inline_result.get("rejected_task_ids", ()),
                 "publish_failed_task_ids": publish_failed_task_ids,
             }
+            qa_result_path = _write_mainline_full_integration_qa_result(
+                workspace_full=workspace_full,
+                cache_root_full=cache_root_full,
+                run_id=run_id,
+                iteration=iteration,
+                integration_qa_result=outcome["integration_qa_result"],
+            )
+            if qa_result_path:
+                outcome["integration_qa_result"]["result_path"] = qa_result_path
             success = bool(outcome["integration_qa_result"]["passed"])
             outcome["exit_code"] = 0 if success else 1
             outcome["error"] = "" if success else "task_market_mainline_full_failed"

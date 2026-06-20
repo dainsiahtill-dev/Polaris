@@ -33,10 +33,6 @@ async def handle_client_message(
     v2_client_id: str,
     v2_channels: list[str],
     v2_cursor: int,
-    legacy_subscriptions: set[str],
-    legacy_channel_states: dict[str, dict[str, Any]],
-    send_status_func: Any,
-    send_all_snapshots_func: Any,
 ) -> tuple[str, int, str | None, JetStreamConsumerManager | None, str, list[str], int]:
     """Handle client message and return updated state."""
     try:

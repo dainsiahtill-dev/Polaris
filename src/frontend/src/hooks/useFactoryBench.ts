@@ -145,6 +145,32 @@ function mergeSessionSummary(
   };
 }
 
+function benchEventKey(event: FactoryBenchEvent): string {
+  return [
+    event.seq ?? '',
+    event.ts ?? '',
+    event.session_id ?? '',
+    event.type ?? '',
+    event.summary ?? '',
+    event.name ?? '',
+  ].join('|');
+}
+
+function mergeBenchEvents(
+  hydratedEvents: FactoryBenchEvent[],
+  liveEvents: FactoryBenchEvent[],
+): FactoryBenchEvent[] {
+  const merged: FactoryBenchEvent[] = [];
+  const seen = new Set<string>();
+  for (const event of [...hydratedEvents, ...liveEvents]) {
+    const key = benchEventKey(event);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(event);
+  }
+  return merged.slice(-MAX_EVENTS);
+}
+
 export function useFactoryBench(
   options: UseFactoryBenchOptions = {},
 ): UseFactoryBenchResult {
@@ -158,14 +184,20 @@ export function useFactoryBench(
 
   const selectedSessionRef = useRef<string | null>(null);
   const currentSessionRef = useRef<FactoryBenchSessionDetail | null>(null);
+  const sessionsRef = useRef<FactoryBenchSessionSummary[]>([]);
   const autoSelectRef = useRef(autoSelect);
   const loadingSessionRef = useRef<string | null>(null);
+  const manualSelectionRef = useRef(false);
 
   const { subscribeChannels, registerMessageHandler } = useRuntimeTransport();
 
   useEffect(() => {
     currentSessionRef.current = currentSession;
   }, [currentSession]);
+
+  useEffect(() => {
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
   useEffect(() => {
     autoSelectRef.current = autoSelect;
@@ -194,6 +226,7 @@ export function useFactoryBench(
 
   const disconnect = useCallback(() => {
     selectedSessionRef.current = null;
+    manualSelectionRef.current = false;
     setIsStreaming(false);
   }, []);
 
@@ -204,11 +237,12 @@ export function useFactoryBench(
   }, [disconnect]);
 
   const loadSessionDetail = useCallback(
-    async (sessionId: string, resetBeforeLoad: boolean) => {
+    async (sessionId: string, resetBeforeLoad: boolean, manualSelection = false) => {
       if (loadingSessionRef.current === sessionId) return;
       if (!resetBeforeLoad && currentSessionRef.current?.session_id === sessionId) return;
       loadingSessionRef.current = sessionId;
       selectedSessionRef.current = sessionId;
+      manualSelectionRef.current = manualSelection;
       if (resetBeforeLoad) {
         setCurrentSession(null);
         setEvents([]);
@@ -223,7 +257,7 @@ export function useFactoryBench(
           setCurrentSession(detail);
           setEvents((prev) => {
             const detailEvents = (detail.events || []).slice(-MAX_EVENTS);
-            if (resetBeforeLoad || detailEvents.length > 0) return detailEvents;
+            if (resetBeforeLoad || detailEvents.length > 0) return mergeBenchEvents(detailEvents, prev);
             return prev;
           });
           setIsStreaming(!isTerminalStatus(detail.status));
@@ -243,7 +277,7 @@ export function useFactoryBench(
 
   const select = useCallback(
     async (sessionId: string) => {
-      await loadSessionDetail(sessionId, true);
+      await loadSessionDetail(sessionId, true, true);
     },
     [loadSessionDetail],
   );
@@ -270,16 +304,24 @@ export function useFactoryBench(
         const existing = prev.find((session) => session.session_id === event.session_id);
         const merged = mergeSessionSummary(existing, event);
         const withoutCurrent = prev.filter((session) => session.session_id !== event.session_id);
-        return [merged, ...withoutCurrent];
+        const next = [merged, ...withoutCurrent];
+        sessionsRef.current = next;
+        return next;
       });
 
       const selectedSessionId = selectedSessionRef.current;
+      const currentSessionId = currentSessionRef.current?.session_id;
+      const newestSessionId = sessionsRef.current[0]?.session_id;
+      const isActiveSession =
+        selectedSessionId === event.session_id ||
+        currentSessionId === event.session_id ||
+        newestSessionId === event.session_id;
       if (autoSelectRef.current === 'newest' && selectedSessionId !== event.session_id) {
         const currentStatus = currentSessionRef.current?.status;
-        shouldAutoSelect = !selectedSessionId || isTerminalStatus(currentStatus);
+        shouldAutoSelect = !selectedSessionId || !manualSelectionRef.current || isTerminalStatus(currentStatus);
       }
 
-      if (selectedSessionId === event.session_id) {
+      if (isActiveSession) {
         setEvents((prev) => {
           const next = prev.length >= MAX_EVENTS ? prev.slice(1) : prev.slice();
           next.push(event);
@@ -296,6 +338,7 @@ export function useFactoryBench(
           };
         });
         if (terminalStatus) {
+          manualSelectionRef.current = false;
           setIsStreaming(false);
         }
       }
@@ -308,6 +351,7 @@ export function useFactoryBench(
           events: [event],
         };
         selectedSessionRef.current = event.session_id;
+        manualSelectionRef.current = false;
         currentSessionRef.current = liveDetail;
         setCurrentSession(liveDetail);
         setEvents([event]);
@@ -333,10 +377,10 @@ export function useFactoryBench(
     )
       return;
     if (selectedSessionRef.current === newest.session_id) return;
-    if (currentSession && !isTerminalStatus(currentSession.status)) return;
+    if (currentSession && manualSelectionRef.current && !isTerminalStatus(currentSession.status)) return;
     if (currentSession && currentSession.session_id === newest.session_id) return;
-    void select(newest.session_id);
-  }, [sessions, autoSelect, currentSession]);
+    void loadSessionDetail(newest.session_id, true, false);
+  }, [sessions, autoSelect, currentSession, loadSessionDetail]);
 
   return useMemo(
     () => ({

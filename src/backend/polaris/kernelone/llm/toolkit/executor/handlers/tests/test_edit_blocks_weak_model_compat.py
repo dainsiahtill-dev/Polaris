@@ -6,6 +6,7 @@ local models (e.g. gemma-4-12B) land real edits without reproducing exact SEARCH
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from polaris.kernelone.llm.toolkit.executor import AgentAccelToolExecutor
@@ -179,6 +180,48 @@ def test_malformed_markers_keep_generic_error(tmp_path: Path) -> None:
     assert result.get("ok") is False
     error = result.get("error", "")
     assert "prose/narration" not in error
+
+
+def test_update_marker_blocks_are_normalized_and_applied(tmp_path: Path) -> None:
+    """Factory-bench capture: qwen used conflict-style UPDATE markers."""
+    ex = _executor(tmp_path)
+    blocks = (
+        "<<<<<<< UPDATE response.py\n"
+        "    def serialize(self):\n"
+        "        return self.content\n"
+        "=======\n"
+        "    def serialize(self):\n"
+        "        return bytes(self.content)\n"
+        ">>>>>>> UPDATE\n"
+    )
+
+    result = _handle_edit_blocks(ex, file="response.py", blocks=blocks)
+
+    assert result.get("ok") is True, result
+    assert "return bytes(self.content)" in (tmp_path / "response.py").read_text(encoding="utf-8")
+
+
+def test_replace_marker_whole_file_wrapper_is_normalized(tmp_path: Path) -> None:
+    """Factory-bench capture: qwen used REPLACE[:file] as a whole-file wrapper."""
+    readme = tmp_path / "README.md"
+    readme.write_text("# Old\n\nRun `python calculator.py`.\n", encoding="utf-8")
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    replacement = (
+        "# 表达式计算器 (calculator)\n\n"
+        "支持四则运算的数学表达式解析与求值工具。\n\n"
+        "## 快速开始\n\n"
+        "```bash\n"
+        "python calculator.py\n"
+        "```\n"
+    )
+    blocks = f"<<<<<<< REPLACE[:README.md]\n{replacement}>>>>>>> REPLACE\n"
+
+    result = _handle_edit_blocks(ex, file="README.md", blocks=blocks)
+
+    assert result.get("ok") is True, result
+    text = readme.read_text(encoding="utf-8")
+    assert "表达式计算器" in text
+    assert "python calculator.py" in text
 
 
 # ----- Phase 2: did-you-mean path candidates -----
@@ -408,6 +451,76 @@ def test_json_multi_edit_array_applies_all(tmp_path: Path) -> None:
     assert result.get("ok") is True, result
     content = (tmp_path / "pkg" / "big_module.py").read_text(encoding="utf-8")
     assert "first = 1" in content and "second = 2" in content
+
+
+def test_json_target_path_new_code_whole_file_applies(tmp_path: Path) -> None:
+    """Factory-bench capture: [{"targetPath": ..., "newCode": "..."}]."""
+    (tmp_path / "calculator.py").write_text(
+        '"""Old calculator."""\n\n'
+        "class CalculatorError(Exception):\n"
+        "    pass\n\n"
+        "def subtract(a: float, b: float) -> float:\n"
+        "    return a - b\n",
+        encoding="utf-8",
+    )
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    new_code = (
+        '"""Calculator core module."""\n\n'
+        "class CalculatorError(Exception):\n"
+        "    pass\n\n"
+        "def add(a: float, b: float) -> float:\n"
+        "    return a + b\n\n"
+        "def subtract(a: float, b: float) -> float:\n"
+        "    return a - b\n\n"
+        "def multiply(a: float, b: float) -> float:\n"
+        "    return a * b\n\n"
+        "def divide(a: float, b: float) -> float:\n"
+        "    if b == 0:\n"
+        "        raise CalculatorError('Division by zero')\n"
+        "    return a / b\n"
+    )
+    payload = json.dumps([{"targetPath": "calculator.py", "newCode": new_code}])
+
+    result = _handle_edit_blocks(ex, blocks=payload)
+
+    assert result.get("ok") is True, result
+    content = (tmp_path / "calculator.py").read_text(encoding="utf-8")
+    assert "def multiply" in content
+    assert "Old calculator" not in content
+
+
+def test_existing_file_full_source_in_blocks_applies(tmp_path: Path) -> None:
+    """Factory-bench capture: complete source was passed directly as blocks."""
+    (tmp_path / "calculator.py").write_text(
+        '"""Old calculator."""\n\nclass CalculatorError(Exception):\n    pass\n',
+        encoding="utf-8",
+    )
+    ex = AgentAccelToolExecutor(workspace=str(tmp_path))
+    full_source = (
+        '"""Core calculation engine with recursive descent parser."""\n\n'
+        "from __future__ import annotations\n"
+        "import re\n\n"
+        "class Token:\n"
+        "    def __init__(self, type_: str, value: str):\n"
+        "        self.type = type_\n"
+        "        self.value = value\n\n"
+        "class ASTNode:\n"
+        "    pass\n\n"
+        "class BinaryOp(ASTNode):\n"
+        "    def __init__(self, left: ASTNode, op: str, right: ASTNode):\n"
+        "        self.left = left\n"
+        "        self.op = op\n"
+        "        self.right = right\n\n"
+        "def tokenize(expression: str) -> list[Token]:\n"
+        "    return [Token('NUM', item) for item in re.findall(r'\\d+', expression)]\n"
+    )
+
+    result = _handle_edit_blocks(ex, file="calculator.py", blocks=full_source)
+
+    assert result.get("ok") is True, result
+    content = (tmp_path / "calculator.py").read_text(encoding="utf-8")
+    assert "class BinaryOp" in content
+    assert "Old calculator" not in content
 
 
 def test_json_edit_inherits_destructive_shrink_gate(tmp_path: Path) -> None:

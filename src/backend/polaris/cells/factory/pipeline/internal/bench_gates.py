@@ -221,6 +221,88 @@ def _find_python_entrypoint(workspace: Path, code_files: list[str]) -> str:
     return ""
 
 
+def _looks_like_python_test(rel_path: str) -> bool:
+    path = Path(rel_path)
+    name = path.name
+    return name.startswith("test_") and name.endswith(".py")
+
+
+def _discover_python_test_files(workspace: Path, code_files: list[str]) -> list[str]:
+    discovered: set[str] = set()
+
+    def add_path(path: Path) -> None:
+        try:
+            rel_path = path.relative_to(workspace)
+        except ValueError:
+            return
+        rel = rel_path.as_posix()
+        if path.is_file() and _looks_like_python_test(rel):
+            discovered.add(rel)
+
+    for rel in code_files:
+        add_path(workspace / rel)
+
+    for path in workspace.glob("test_*.py"):
+        add_path(path)
+
+    tests_dir = workspace / "tests"
+    if tests_dir.is_dir():
+        for path in tests_dir.rglob("test_*.py"):
+            add_path(path)
+
+    return sorted(discovered)
+
+
+def _python_test_command_has_zero_tests(result: dict[str, Any]) -> bool:
+    output = f"{result.get('stdout_tail') or ''}\n{result.get('stderr_tail') or ''}"
+    return bool(re.search(r"Ran\s+0\s+tests", output))
+
+
+def _python_pytest_command_has_zero_tests(result: dict[str, Any]) -> bool:
+    output = f"{result.get('stdout_tail') or ''}\n{result.get('stderr_tail') or ''}".lower()
+    return "no tests ran" in output or "collected 0 items" in output
+
+
+def _run_python_unittest_suite(workspace: Path, test_files: list[str], *, timeout_s: int) -> dict[str, Any]:
+    start_dir = "tests" if (workspace / "tests").is_dir() else "."
+    result = _run_command(
+        [sys.executable, "-m", "unittest", "discover", "-s", start_dir, "-p", "test_*.py", "-v"],
+        workspace,
+        timeout_s=max(10, int(timeout_s)),
+    )
+    result["kind"] = "python_tests"
+    result["runner"] = "unittest"
+    result["test_files"] = test_files
+    if _python_test_command_has_zero_tests(result):
+        result["ok"] = False
+        result["detail"] = "python unittest discovered zero tests from generated test files"
+    return result
+
+
+def _run_python_pytest_suite(workspace: Path, test_files: list[str], *, timeout_s: int) -> dict[str, Any]:
+    result = _run_command(
+        [sys.executable, "-m", "pytest", *test_files, "-q"],
+        workspace,
+        timeout_s=max(10, int(timeout_s)),
+    )
+    result["kind"] = "python_tests"
+    result["runner"] = "pytest"
+    result["test_files"] = test_files
+    if _python_pytest_command_has_zero_tests(result):
+        result["ok"] = False
+        result["detail"] = "python pytest discovered zero tests from generated test files"
+    return result
+
+
+def _run_python_test_suite(workspace: Path, test_files: list[str], *, timeout_s: int) -> list[dict[str, Any]]:
+    unittest_result = _run_python_unittest_suite(workspace, test_files, timeout_s=timeout_s)
+    if not _python_test_command_has_zero_tests(unittest_result):
+        return [unittest_result]
+    pytest_result = _run_python_pytest_suite(workspace, test_files, timeout_s=timeout_s)
+    pytest_result["fallback_from"] = "unittest_zero_tests"
+    return [unittest_result, pytest_result]
+
+
 def _smoke_python_cli(workspace: Path, entrypoint: str, *, timeout_s: int) -> dict[str, Any]:
     command = [sys.executable, entrypoint, "--help"]
     result = _run_command(command, workspace, timeout_s=min(max(2, int(timeout_s)), 10))
@@ -315,6 +397,7 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
                 build_command_ok = bool(cmd.get("ok"))
                 build_detail = f"npm run {script_name} {'passed' if build_command_ok else 'failed'}"
                 break
+    python_test_files = _discover_python_test_files(workspace, code_files)
     if not build_command_ok and any(rel.endswith(".py") for rel in code_files):
         cmd = _run_command(
             [sys.executable, "-m", "compileall", "-q", "."], workspace, timeout_s=max(10, int(timeout_s))
@@ -323,6 +406,19 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
         commands.append(cmd)
         build_command_ok = bool(cmd.get("ok"))
         build_detail = "python compileall passed" if build_command_ok else "python compileall failed"
+        if build_command_ok and python_test_files:
+            test_commands = _run_python_test_suite(workspace, python_test_files, timeout_s=timeout_s)
+            for test_cmd in test_commands:
+                test_cmd["phase"] = "build_test_lint"
+                commands.append(test_cmd)
+            test_cmd = test_commands[-1]
+            build_command_ok = bool(test_cmd.get("ok"))
+            if build_command_ok:
+                runner = str(test_cmd.get("runner") or "tests")
+                build_detail = f"python compileall and {runner} passed ({len(python_test_files)} test file(s))"
+            else:
+                runner = str(test_cmd.get("runner") or "python tests")
+                build_detail = str(test_cmd.get("detail") or f"python {runner} failed")
     if (
         not build_command_ok
         and any(rel.endswith((".js", ".mjs", ".cjs")) for rel in code_files)

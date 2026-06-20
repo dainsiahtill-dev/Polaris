@@ -1,0 +1,105 @@
+card_id: "vc-20260620-runtime-realtime-single-rail"
+bug_summary: >
+  Runtime UI realtime updates could still depend on process-local fanout,
+  signal-hub file watchers, startup journal snapshots, or removed SSE/polling
+  concepts instead of the unified Nat-JetStream runtime.v2 WebSocket rail.
+
+classification: structural
+
+bug_path:
+  file: "polaris/delivery/ws/endpoints/websocket_loop.py"
+  method: "run_main_loop"
+  symptom: "Factory/role workspaces can show pending/completed without reliable in-progress push"
+
+assumptions:
+  - id: "A1"
+    statement: "I assume runtime.v2 JetStream is the intended single product realtime rail."
+    status: verified_true
+    evidence: >
+      Read src/backend/AGENTS.md section 4.12 and
+      src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md section 8; both require
+      Nat-JetStream + /v2/ws/runtime and forbid SSE, HTTP long polling, timer
+      HTTP polling, file polling, and polling fallback.
+
+  - id: "A2"
+    statement: "I assume the WebSocket main loop still consumed legacy realtime sources before this fix."
+    status: verified_true
+    evidence: >
+      codegraph_node run_main_loop showed REALTIME_SIGNAL_HUB.wait_for_update,
+      LOG_REALTIME_FANOUT subscription draining, RUNTIME_EVENT_FANOUT draining,
+      send_all_snapshots_func, and send_incrementals_func in the same loop as
+      JetStreamConsumerManager.next_message.
+
+  - id: "A3"
+    statement: "I assume status changes must become JetStream events after watcher removal."
+    status: verified_true
+    evidence: >
+      workflow_status.write_workflow_state and roles.runtime.process_service
+      previously called REALTIME_SIGNAL_HUB notify paths. Without replacing
+      them with status.workflow/status.process runtime.v2 events, the UI would
+      lose push-driven status refreshes.
+
+  - id: "A4"
+    statement: "I assume provider SSE parsing is outside the product realtime transport contract."
+    status: verified_true
+    evidence: >
+      Provider modules parse upstream OpenAI/Anthropic/MiniMax/Kimi stream
+      formats. Product routes now fail closed for SSE and runtime delivery is
+      through /v2/ws/runtime.
+
+pre_mortem:
+  failure_point: >
+    The fix is most likely wrong if any product status or file-edit producer
+    still only writes durable files or process-local notifications without
+    publishing a runtime.v2 JetStream envelope.
+  risk_zone:
+    - "polaris/delivery/ws/endpoints/websocket_loop.py"
+    - "polaris/delivery/ws/endpoints/websocket_core.py"
+    - "polaris/infrastructure/log_pipeline/writer.py"
+    - "polaris/cells/runtime/projection/internal/workflow_status.py"
+    - "polaris/cells/roles/runtime/internal/process_service.py"
+    - "polaris/kernelone/events/file_event_broadcaster.py"
+    - "src/frontend/src/runtime/transport/runtimeSocketManager.ts"
+    - "src/frontend/src/app/hooks/useRuntimeConnection.ts"
+    - "src/frontend/src/hooks/useFactoryBench.ts"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/tests/test_realtime_single_rail_static_guard.py"
+      description: "Forbid legacy realtime sources in product runtime delivery files"
+      expected: "No process-local fanout, signal hub watch, SSE, or polling fallback in product realtime paths"
+      status: new
+    - file: "polaris/delivery/tests/test_ws_stream_delivery.py"
+      description: "Runtime loop forwards only JetStream runtime.v2 events and emits RESYNC_REQUIRED for dropped events"
+      expected: "No startup snapshot or signal-triggered incremental path is available"
+      status: existing_fix
+    - file: "polaris/tests/test_runtime_ws_migration.py"
+      description: "History uses explicit EVENT query and live delivery uses runtime.v2 SUBSCRIBE"
+      expected: "Query and JetStream push are separate; missing JetStream fails closed"
+      status: existing_fix
+    - file: "polaris/tests/test_log_pipeline_storage_layout.py"
+      description: "Log writer publishes canonical events through JetStream"
+      expected: "Log writer no longer depends on LOG_REALTIME_FANOUT"
+      status: existing_fix
+  integration_tests:
+    - description: "Focused backend realtime regression suite"
+      command: "python -m pytest -q src/backend/polaris/tests/test_realtime_single_rail_static_guard.py src/backend/polaris/delivery/tests/test_ws_stream_delivery.py src/backend/polaris/tests/test_runtime_ws_migration.py src/backend/polaris/tests/test_websocket_architecture_integration.py"
+      status: existing_fix
+    - description: "Factory bench L1-L8 real project verification"
+      command: "python scripts/run_factory_e2e_smoke.py --workspace . --levels L1-L8"
+      status: new
+    - description: "Playwright realtime audit for Home, Factory, PM, ChiefEngineer, Director, ContextOS"
+      command: "npm run test:e2e -- --grep realtime"
+      status: new
+  manual_check:
+    - "Scan product runtime files for EventSource, SSE, HTTP long polling, timer HTTP polling, file polling, process-local fanout, and signal hub watchers."
+    - "Verify runtime WebSocket connects to /v2/ws/runtime and forwards EVENT protocol=runtime.v2 messages after SUBSCRIBE."
+    - "Verify no frontend page relies on setInterval/fetch loops for product realtime state."
+
+related_adrs:
+  - "ADR-0094"
+  - "ADR-0095"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-06-20"

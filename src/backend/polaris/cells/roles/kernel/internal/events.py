@@ -225,9 +225,10 @@ class LLMEventEmitter:
         run_id = str(event.run_id or "").strip()
         if not run_id:
             return
+        lifecycle_key = self._lifecycle_key(event, run_id)
 
         now = time.time()
-        for open_run_id, state in list(self._open_lifecycle.items()):
+        for open_lifecycle_key, state in list(self._open_lifecycle.items()):
             started_at = float(state.get("started_at", 0.0) or 0.0)
             if not started_at:
                 continue
@@ -235,15 +236,16 @@ class LLMEventEmitter:
             if age_seconds > self._max_lifecycle_age_seconds and not bool(state.get("warned")):
                 state["warned"] = True
                 logger.warning(
-                    "LLM lifecycle appears unclosed (run_id=%s, age=%.2fs, role=%s, model=%s)",
-                    open_run_id,
+                    "LLM lifecycle appears unclosed (run_id=%s, call_id=%s, age=%.2fs, role=%s, model=%s)",
+                    state.get("run_id", open_lifecycle_key),
+                    state.get("call_id", ""),
                     age_seconds,
                     state.get("role", "unknown"),
                     state.get("model", "unknown"),
                 )
 
         if event.event_type == LLMEventType.CALL_START:
-            previous = self._open_lifecycle.get(run_id)
+            previous = self._open_lifecycle.get(lifecycle_key)
             if previous:
                 self._reopened_without_close_count += 1
                 metadata = event.metadata if isinstance(event.metadata, dict) else {}
@@ -258,9 +260,12 @@ class LLMEventEmitter:
                     previous.get("role", "unknown"),
                     previous.get("model", "unknown"),
                 )
-            self._open_lifecycle[run_id] = {
+            self._open_lifecycle[lifecycle_key] = {
                 "started_at": now,
                 "event_timestamp": event.timestamp,
+                "run_id": run_id,
+                "lifecycle_key": lifecycle_key,
+                "call_id": self._lifecycle_call_id(event),
                 "role": event.role,
                 "model": event.model,
                 "task_id": event.task_id,
@@ -270,7 +275,7 @@ class LLMEventEmitter:
             return
 
         if event.event_type in {LLMEventType.CALL_END, LLMEventType.CALL_ERROR}:
-            opened = self._open_lifecycle.pop(run_id, None)
+            opened = self._open_lifecycle.pop(lifecycle_key, None)
             if opened is None:
                 self._closed_without_start_count += 1
                 # Check if this is a cancellation error - these can happen before
@@ -295,12 +300,30 @@ class LLMEventEmitter:
                         error_category,
                     )
 
+    @staticmethod
+    def _lifecycle_call_id(event: LLMCallEvent) -> str:
+        metadata = event.metadata if isinstance(event.metadata, dict) else {}
+        call_id = str(metadata.get("call_id") or "").strip()
+        if call_id:
+            return call_id
+        extra_fields = metadata.get("extra_fields")
+        if isinstance(extra_fields, dict):
+            return str(extra_fields.get("call_id") or "").strip()
+        return ""
+
+    @classmethod
+    def _lifecycle_key(cls, event: LLMCallEvent, run_id: str) -> str:
+        call_id = cls._lifecycle_call_id(event)
+        if call_id:
+            return f"{run_id}:{call_id}"
+        return run_id
+
     def get_unclosed_runs(self) -> list[dict[str, Any]]:
         with self._lock:
             result: list[dict[str, Any]] = []
             now = time.time()
-            for run_id, state in self._open_lifecycle.items():
-                snapshot = {"run_id": run_id, **state}
+            for lifecycle_key, state in self._open_lifecycle.items():
+                snapshot = {"lifecycle_key": lifecycle_key, **state}
                 started_at = float(state.get("started_at", 0.0) or 0.0)
                 snapshot["age_seconds"] = max(0.0, now - started_at) if started_at else 0.0
                 result.append(snapshot)

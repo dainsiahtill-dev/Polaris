@@ -13,7 +13,7 @@ The Polaris API standardization effort consolidated fragmented endpoints from th
 - **Structured errors**: Replace bare `HTTPException` with `StructuredHTTPException` following the ADR-003 error contract (`{error: {code, message, details}}`).
 - **Pydantic response models**: Every v2 route declares explicit `response_model` classes.
 - **RBAC by default**: All v2 routes require authentication via `require_auth`; sensitive operations add `require_role`.
-- **SSE hardening**: Unified SSE utilities with security validations, replay protection, and exception-preserving cleanup.
+- **Realtime single rail**: legacy HTTP stream endpoints were superseded by Nat-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket. Product realtime must not use SSE, HTTP long-polling, timer fetch loops, file polling, or polling fallback.
 - **Cell-aware architecture**: v2 routes delegate to Cell public services rather than inlining business logic.
 
 ---
@@ -28,7 +28,7 @@ The Polaris API standardization effort consolidated fragmented endpoints from th
 | GET | `/v2/role/{role}/chat/status` | LLM readiness for role |
 | GET | `/v2/role/chat/roles` | List registered roles |
 | POST | `/v2/role/{role}/chat` | Non-streaming role chat |
-| POST | `/v2/role/{role}/chat/stream` | Streaming SSE role chat |
+| POST | `/v2/role/{role}/chat/stream` | Legacy stream endpoint is fail-closed; use `/v2/ws/runtime` role/session channels |
 | GET | `/v2/role/{role}/llm-events` | LLM events per role |
 | GET | `/v2/role/llm-events` | Global LLM events |
 | GET | `/v2/role/cache-stats` | Cache statistics |
@@ -191,7 +191,7 @@ Compatibility facade mounting the migrated `audit_router` under `/v2/audit`.
    ```
    instead of the previous bare `{"detail": "..."}`.
 
-3. **Role chat streaming normalized**: The SSE event types from `/v2/role/{role}/chat/stream` are normalized to: `thinking_chunk`, `content_chunk`, `tool_call`, `tool_result`, `fingerprint`, `complete`, `error`, `ping`.
+3. **Role realtime events normalized**: Role chat and runtime activity now publish normalized realtime events through Nat-JetStream and `/v2/ws/runtime`. Legacy HTTP stream routes are fail-closed migration surfaces, not product realtime transports.
 
 4. **Director status endpoint simplified**: `/v2/director/status` returns only local Director state. For unified runtime projection, use the WebSocket status endpoint.
 
@@ -283,17 +283,19 @@ class StructuredHTTPException(HTTPException):
 
 ---
 
-## 7. SSE Event Type Unification
+## 7. Realtime Event Channel Unification
 
 ### 7.1 Canonical Event Schema
 
-All SSE endpoints use the unified schema from `sse_event_generator` in `polaris/delivery/http/routers/sse_utils.py`:
+Product realtime uses one transport rail: Nat-JetStream subjects consumed by
+the `runtime.v2` WebSocket endpoint at `/v2/ws/runtime`. Browser code must use
+the shared runtime transport and subscribe to logical channels such as
+`runtime_events`, `llm`, `dialogue`, `event.factory`, or
+`event.factory:<run_id>`.
 
-```
-event: <type>
-data: <json-payload>
-
-```
+Legacy HTTP stream routes must not emit event streams. They remain only as
+compatibility/fail-closed surfaces while callers migrate to the WebSocket
+runtime channel model.
 
 ### 7.2 Event Types
 
@@ -306,7 +308,7 @@ data: <json-payload>
 | `fingerprint` | Response fingerprint |
 | `complete` | Stream finished successfully |
 | `error` | Terminal error |
-| `ping` | Keep-alive (timeout-based) |
+| `ping` | Runtime socket keep-alive |
 
 ### 7.3 Security Hardening (v2)
 
@@ -317,9 +319,12 @@ data: <json-payload>
 - **S5**: Subject pattern validation (`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$`)
 - **S6**: Event timestamp freshness validation
 
-### 7.4 JetStream SSE Consumer
+### 7.4 JetStream Runtime Consumer
 
-`SSEJetStreamConsumer` provides cursor-based resume, ephemeral consumers, and graceful cleanup. The `sse_jetstream_generator` preserves original stream exceptions over secondary disconnect errors (B4 fix).
+The runtime WebSocket consumer resolves logical channels to workspace-scoped
+JetStream subjects, uses ephemeral consumers, and performs graceful cleanup.
+Product realtime must not add HTTP long-polling, timer fetch loops, file
+polling, or polling fallback.
 
 ---
 

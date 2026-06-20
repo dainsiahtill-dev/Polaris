@@ -23,7 +23,6 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from polaris.infrastructure.realtime.process_local.log_fanout import LOG_REALTIME_FANOUT
 from polaris.kernelone.fs.fsync_mode import is_fsync_enabled
 from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.utils.time_utils import utc_now_str
@@ -285,18 +284,7 @@ class LogEventWriter:
                 logger.warning("Failed to write event to %s: %s", path, e)
 
     def _publish_realtime_event(self, event: CanonicalLogEventV2) -> None:
-        """Publish canonical event to in-process realtime fanout and JetStream."""
-        try:
-            # Step 1: In-process realtime fanout (best-effort)
-            LOG_REALTIME_FANOUT.publish(
-                runtime_root=self.runtime_root,
-                event=event.model_dump(),
-            )
-        except (RuntimeError, ValueError) as exc:
-            # Realtime push is best-effort and must not break writer durability.
-            logger.debug("realtime fanout failed (best-effort): %s", exc)
-
-        # Step 2: JetStream publishing (async, best-effort after disk write succeeds)
+        """Publish canonical realtime events only through Nat-JetStream."""
         if _jetstream_publish_enabled() and (_jetstream_available or _ensure_jetstream_support()):
             self._publish_to_jetstream(event)
 

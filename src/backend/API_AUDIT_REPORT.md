@@ -5,15 +5,15 @@
 | 命名空间 | 方法 | 路径 | 状态 | 备注 |
 |---------|------|------|------|------|
 | v2 | POST | /v2/pm/chat | 可用 | 仅 PM 角色，非统一接口 |
-| v2 | POST | /v2/pm/chat/stream | 可用 | SSE 流式 |
+| v2 | POST | /v2/pm/chat/stream | 移除/封闭 | 旧 HTTP SSE 入口；实时输出必须走 Nat-JetStream + `/v2/ws/runtime` |
 | v2 | GET | /v2/role/{role}/chat/status | 可用 | 5 角色状态查询 |
 | v2 | GET | /v2/role/chat/roles | 可用 | 列出支持角色 |
 | v2 | CRUD | /v2/roles/sessions/* | 可用 | 会话完整生命周期 |
-| v2 | POST | /v2/roles/sessions/{id}/messages/stream | 可用 | 角色对话 SSE |
-| v2 | POST | /v2/stream/chat | 可用 | Neural Weave SSE |
+| v2 | POST | /v2/roles/sessions/{id}/messages/stream | 移除/封闭 | 旧 HTTP SSE 入口；改用 Nat-JetStream 角色会话事件 |
+| v2 | POST | /v2/stream/chat | 移除/封闭 | 旧 Neural Weave HTTP SSE 入口；改用统一 WebSocket 运行时 |
 | v2 | POST | /v2/stream/chat/backpressure | 可用 | 显式背压 |
 | v2 | CRUD | /v2/factory/runs/* | 可用 | 无人值守流水线 |
-| v2 | GET | /v2/factory/runs/{id}/stream | 可用 | JetStream SSE 降级轮询 |
+| v2 | GET | /v2/factory/runs/{id}/stream | 移除/封闭 | Factory 实时事件统一订阅 `event.factory` / `event.factory:<run_id>` WebSocket 频道 |
 | v2 | CRUD | /v2/conversations/* | 可用 | 对话管理 |
 | v2 | GET | /v2/roles/capabilities/{role} | 可用 | 角色能力 |
 | - | POST | /cognitive-runtime/* | 可用 | 无 v2 前缀，直接暴露 Cell 服务 |
@@ -39,18 +39,18 @@
 1. **返回类型不统一**：大量端点使用 `dict[str, Any]` 而非 Pydantic `response_model`（如 `role_chat.py`、`pm_chat.py`），导致 OpenAPI 无法生成准确 Schema。
 2. **错误格式不一致**：`_shared.py` 定义了 `StructuredHTTPException`（ADR-003 格式），但许多路由仍直接返回 `{"ok": False, "error": str}` 或抛出裸 `HTTPException`，客户端需兼容多种错误形状。
 3. **命名空间混乱**：`cognitive_runtime.py` 使用 `/cognitive-runtime`（无 v2），`agent.py` 使用 `/agent`（无 v2），`pm_management.py` 使用 `/pm`（无 v2），与 v2 目标态混杂。
-4. **SSE 事件类型不统一**：`sse_utils.py` 使用 `event: complete/error/ping`，`stream_router.py` 使用 `event: done/error`，`agent.py` 使用 `event: content_chunk/thinking_chunk/tool_call/complete/done`，前端需处理多套 SSE 方言。
+4. **旧 HTTP SSE 方言已废弃**：历史 `sse_utils.py`、`stream_router.py`、`agent.py` 方言不得再作为产品实时传输；旧 stream 路由必须 fail closed，前端只消费 Nat-JetStream + `/v2/ws/runtime` runtime.v2。
 5. **认证覆盖缺口**：`/health`、`/ready`、`/live`、`/v2/stream/health` 无 `require_auth`，在暴露环境中存在信息泄露风险。
 
-## 4. SSE 端点健壮性评估
+## 4. 旧 HTTP Stream 端点处置
 
 | 维度 | 状态 | 说明 |
 |------|------|------|
-| 重连 | 部分 | `SSEJetStreamConsumer` 支持 `last_event_id` 游标恢复；但无显式客户端重连策略或 `retry` 字段 |
-| 错误处理 | 良好 | `sse_jetstream_generator` 修复了 B4（异常遮蔽）和 B5（UnicodeDecodeError）；`finally` 块确保 `disconnect()` 总是被调用 |
-| 背压 | 良好 | `_SSE_QUEUE_MAX_SIZE = 50` 限制队列增长；`stream_router.py` 提供显式 `AsyncBackpressureBuffer` 端点 |
-| 安全 | 良好 | S1-S6 加固：payload 大小限制、subject 模式校验、workspace_key 校验、HMAC 签名、replay 窗口、随机 consumer 名 |
-| 测试覆盖 | 良好 | `test_sse_utils.py` + `test_sse_regression.py` 覆盖异常保留、断连清理、负游标拒绝、非法 subject 拒绝 |
+| 传输策略 | 封闭 | 产品实时单轨制：Nat-JetStream + `/v2/ws/runtime` WebSocket |
+| 旧入口 | 封闭 | HTTP stream 路由返回结构化错误，不返回事件流 |
+| Factory 实时 | 单轨 | 订阅 `event.factory` / `event.factory:<run_id>` 频道 |
+| 前端实时 | 单轨 | `runtimeSocketManager` 是 runtime domain 唯一 WebSocket owner |
+| 测试覆盖 | 必须 | 静态守卫禁止恢复 `StreamingResponse` / `text/event-stream`；路由测试断言旧入口不返回事件流 |
 
 ## 5. 认证/授权中间件覆盖
 
@@ -74,6 +74,6 @@
 2. **P0 — 错误响应标准化**：为所有 v2 路由强制使用 `StructuredHTTPException` 或统一 `{"ok": false, "code": "...", "message": "...", "details": {}}` 格式，清理裸 `HTTPException` 和直接返回 `dict` 的端点。
 3. **P1 — v2 命名空间归一化**：将 `/pm/*` 迁移至 `/v2/pm/*`，`/cognitive-runtime/*` 迁移至 `/v2/cognitive-runtime/*`，`/agent/*` 迁移至 `/v2/agent/*`；旧路由保留 shim 兼容层。
 4. **P1 — OpenAPI 契约补全**：为所有 v2 端点补充 Pydantic `response_model`，使 Swagger UI 和前端类型生成可用。
-5. **P2 — SSE 事件类型统一**：制定 canonical SSE event schema（`content_chunk/thinking_chunk/tool_call/tool_result/complete/error/ping`），统一 `sse_utils.py`、`stream_router.py`、`agent.py` 的输出。
+5. **P2 — 删除旧 stream 叙述与兼容负担**：所有新文档、路由和前端入口不得再宣传 HTTP SSE；旧入口只保留 fail-closed 兼容响应。
 6. **P2 — 认证覆盖补全**：为 `/v2/stream/health` 等生产环境端点添加 `require_auth`，或至少添加 IP 白名单/内部网络校验。
 7. **P3 — RBAC 基础框架**：在 `require_auth` 中引入角色声明解析（JWT claims 或 token metadata），为后续细粒度授权预留扩展点。

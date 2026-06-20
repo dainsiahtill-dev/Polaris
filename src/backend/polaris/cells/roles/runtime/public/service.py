@@ -574,6 +574,38 @@ def _copy_cognitive_guidance(cognitive_context: Mapping[str, Any]) -> dict[str, 
     }
 
 
+def _has_forced_transaction_tool_choice(context: Mapping[str, Any]) -> bool:
+    forced_choice = context.get("_transaction_kernel_forced_tool_choice")
+    if isinstance(forced_choice, Mapping):
+        return bool(forced_choice)
+    if isinstance(forced_choice, str):
+        normalized_choice = forced_choice.strip().lower()
+        if normalized_choice and normalized_choice not in {"auto", "none"}:
+            return True
+    elif forced_choice is not None:
+        return True
+
+    forced_definitions = context.get("_transaction_kernel_forced_tool_definitions")
+    return isinstance(forced_definitions, (list, tuple)) and bool(forced_definitions)
+
+
+def _apply_forced_transaction_tool_guidance(
+    guidance: dict[str, Any],
+    context: Mapping[str, Any],
+) -> bool:
+    if not _has_forced_transaction_tool_choice(context):
+        return False
+
+    guidance["forced_transaction_tool_choice_override"] = True
+    guidance["original_intent_type"] = str(guidance.get("intent_type") or "unknown")
+    guidance["original_execution_path"] = str(guidance.get("execution_path") or "unknown")
+    guidance["original_verification_needed"] = bool(guidance.get("verification_needed"))
+    guidance["intent_type"] = "code_generation"
+    guidance["execution_path"] = "forced_transaction_tool_write"
+    guidance["verification_needed"] = True
+    return True
+
+
 def _resolve_cognitive_runtime_blocker_approval(
     *,
     context: Mapping[str, Any],
@@ -1483,6 +1515,10 @@ class RoleRuntimeService(IRoleRuntime):
             block_reason = reason
 
         guidance = _copy_cognitive_guidance(cognitive_context)
+        forced_transaction_tool_choice_override = _apply_forced_transaction_tool_guidance(
+            guidance,
+            context_override,
+        )
         if approved_blocker is not None:
             guidance["approved_blocker"] = True
             guidance["block_reason"] = block_reason
@@ -1506,7 +1542,16 @@ class RoleRuntimeService(IRoleRuntime):
             "blocked_tools": blocked_tools,
             "tool_policy_applied": bool(blocked_tools),
             "strategy_override_applied": bool(strategy_override),
+            "forced_transaction_tool_choice_override": forced_transaction_tool_choice_override,
         }
+        if forced_transaction_tool_choice_override:
+            metadata["cognitive_runtime_preflight"].update(
+                {
+                    "original_intent_type": guidance["original_intent_type"],
+                    "original_execution_path": guidance["original_execution_path"],
+                    "original_verification_needed": guidance["original_verification_needed"],
+                }
+            )
         if approved_blocker is not None:
             metadata["cognitive_runtime_preflight"].update(
                 {

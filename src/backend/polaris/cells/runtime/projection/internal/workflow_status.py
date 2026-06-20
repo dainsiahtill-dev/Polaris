@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import threading
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 from polaris.cells.runtime.projection.internal.io_helpers import read_json, resolve_artifact_path
-from polaris.infrastructure.realtime.process_local.signal_hub import REALTIME_SIGNAL_HUB
 from polaris.kernelone.fs.text_ops import write_json_atomic
+from polaris.kernelone.storage import resolve_storage_roots
 
 logger = logging.getLogger(__name__)
+_JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
 
 # Note: State file uses legacy name for backward compatibility
 WORKFLOW_STATE_FILE = "runtime/state/workflow.workflow.state.json"
@@ -72,6 +73,11 @@ _RUNTIME_ENV_KEYS = (
 _RUNTIME_ENV_LOCK = threading.Lock()
 
 
+def _jetstream_publish_enabled() -> bool:
+    raw = str(os.environ.get("KERNELONE_JETSTREAM_PUBLISH") or "").strip().lower()
+    return bool(raw) and raw not in _JETSTREAM_PUBLISH_FALSE_VALUES
+
+
 def describe_workflow_sync(workflow_id: str, config: Any) -> dict[str, Any]:
     """Module-level wrapper kept patchable for tests and adapters."""
     from polaris.cells.orchestration.workflow_runtime.public.service import (
@@ -108,42 +114,56 @@ def write_workflow_state(
     cache_root: str,
     payload: dict[str, Any],
 ) -> str:
-    """Persist the latest workflow submission metadata and trigger realtime update."""
+    """Persist latest workflow submission metadata and publish status event."""
     path = workflow_state_path(workspace, cache_root)
     if path:
         write_json_atomic(path, payload)
-        _trigger_realtime_update(cache_root)
+        _trigger_realtime_update(workspace, cache_root, payload)
     return path
 
 
-async def _trigger_realtime_update_async(cache_root: str) -> None:
-    """Trigger a realtime signal to notify listeners of state changes (async version)."""
-    if not cache_root or not os.path.isdir(cache_root):
-        return
+def _publish_workflow_status_to_jetstream(workspace: str, payload: dict[str, Any]) -> bool:
+    if not _jetstream_publish_enabled():
+        return False
+    workspace_token = str(workspace or "").strip()
+    if not workspace_token:
+        return False
     try:
-        state_file = os.path.join(cache_root, "state", "workflow.workflow.state.json")
-        if os.path.exists(state_file):
-            os.utime(state_file, None)
-    except OSError as e:
-        logger.debug(f"Failed to update workflow state file: {e}")
-    await REALTIME_SIGNAL_HUB.notify(source="workflow_state_update", root=cache_root)
+        roots = resolve_storage_roots(workspace_token)
+        workspace_key = str(getattr(roots, "workspace_key", "") or "").strip()
+        if not workspace_key:
+            return False
+        from polaris.infrastructure.log_pipeline.jetstream_publisher import (
+            get_log_jetstream_publisher,
+        )
+
+        now = datetime.now(timezone.utc).isoformat()
+        envelope = {
+            "schema_version": "runtime.v2",
+            "event_id": f"workflow-status-{int(datetime.now(timezone.utc).timestamp() * 1000)}",
+            "workspace_key": workspace_key,
+            "run_id": str(payload.get("workflow_id") or payload.get("run_id") or ""),
+            "channel": "status.workflow",
+            "kind": "workflow_state_update",
+            "ts": str(payload.get("updated_at") or now),
+            "cursor": 0,
+            "trace_id": None,
+            "payload": payload,
+            "meta": {"source": "runtime_projection.workflow_status"},
+        }
+        return get_log_jetstream_publisher().publish(
+            subject=f"hp.runtime.{workspace_key}.status.workflow",
+            payload=envelope,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("workflow status JetStream publish failed: %s", exc)
+        return False
 
 
-def _trigger_realtime_update(cache_root: str) -> None:
-    """Trigger a realtime signal to notify listeners of state changes."""
-    if not cache_root or not os.path.isdir(cache_root):
-        return
-    try:
-        state_file = os.path.join(cache_root, "state", "workflow.workflow.state.json")
-        if os.path.exists(state_file):
-            os.utime(state_file, None)
-    except OSError as e:
-        logger.debug(f"Failed to trigger realtime update: {e}")
-    try:
-        loop = asyncio.get_running_loop()
-        _ = loop.create_task(REALTIME_SIGNAL_HUB.notify(source="workflow_state_update", root=cache_root))  # noqa: RUF006
-    except RuntimeError:
-        pass
+def _trigger_realtime_update(workspace: str, cache_root: str, payload: dict[str, Any]) -> None:
+    """Queue runtime.v2 workflow status publication."""
+    del cache_root
+    _publish_workflow_status_to_jetstream(workspace, payload)
 
 
 def load_workflow_state(

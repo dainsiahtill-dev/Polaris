@@ -27,9 +27,14 @@ const RUNTIME_STREAM_CHANNELS = [
   'llm',
   'dialogue',
   'runtime_events',
+  'status.workflow',
+  'status.process',
+  'status.snapshot',
+  'event.factory',
+  'event.bench',
   'event.file_edit',
 ] as const;
-const RUNTIME_LIVE_TAIL_LINES = 200;
+const RUNTIME_LIVE_TAIL_LINES = 0;
 
 function normalizeRoles(
   input: RuntimeRole[]

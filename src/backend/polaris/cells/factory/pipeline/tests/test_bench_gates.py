@@ -32,6 +32,96 @@ def test_real_run_gate_executes_python_build_and_cli_entrypoint(tmp_path: Path) 
     assert gate["entrypoint"]["kind"] == "python_cli"
 
 
+def test_real_run_gate_executes_python_unittest_suite(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tmp_path / "calculator.py").write_text(
+        "from __future__ import annotations\n"
+        "def add(left: int, right: int) -> int:\n"
+        "    return left + right\n"
+        "if __name__ == '__main__':\n"
+        "    print('usage' if '--help' in __import__('sys').argv else add(1, 2))\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_calculator.py").write_text(
+        "from __future__ import annotations\n"
+        "import unittest\n"
+        "from calculator import add\n\n"
+        "class CalculatorTests(unittest.TestCase):\n"
+        "    def test_adds_numbers(self) -> None:\n"
+        "        self.assertEqual(add(1, 2), 3)\n\n"
+        "if __name__ == '__main__':\n"
+        "    unittest.main()\n",
+        encoding="utf-8",
+    )
+    record = {"code_files": ["calculator.py", "tests/test_calculator.py"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is True
+    assert "unittest passed" in gate["requirements"]["build_test_lint_ran"]["detail"]
+    assert any(command.get("runner") == "unittest" for command in gate["commands"])
+
+
+def test_real_run_gate_falls_back_to_pytest_when_unittest_finds_zero_cases(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tmp_path / "calculator.py").write_text(
+        "from __future__ import annotations\n"
+        "def add(left: int, right: int) -> int:\n"
+        "    return left + right\n"
+        "if __name__ == '__main__':\n"
+        "    print('usage' if '--help' in __import__('sys').argv else add(1, 2))\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_calculator.py").write_text(
+        "from __future__ import annotations\n"
+        "from calculator import add\n\n"
+        "def test_adds_numbers() -> None:\n"
+        "    assert add(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+    record = {"code_files": ["calculator.py", "tests/test_calculator.py"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is True
+    assert "pytest passed" in gate["requirements"]["build_test_lint_ran"]["detail"]
+    assert [command.get("runner") for command in gate["commands"] if command.get("runner")] == [
+        "unittest",
+        "pytest",
+    ]
+
+
+def test_real_run_gate_rejects_python_tests_that_run_zero_cases(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tmp_path / "calculator.py").write_text(
+        "from __future__ import annotations\n"
+        "def add(left: int, right: int) -> int:\n"
+        "    return left + right\n"
+        "if __name__ == '__main__':\n"
+        "    print('usage' if '--help' in __import__('sys').argv else add(1, 2))\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_calculator.py").write_text(
+        "from __future__ import annotations\nHELPER_VALUE = 3\n",
+        encoding="utf-8",
+    )
+    record = {"code_files": ["calculator.py", "tests/test_calculator.py"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    assert gate["requirements"]["build_test_lint_ran"]["ok"] is False
+    assert gate["requirements"]["build_test_lint_ran"]["detail"] in {
+        "python pytest discovered zero tests from generated test files",
+        "python pytest failed",
+    }
+
+
 def test_real_run_gate_rejects_python_cli_failure_marker(tmp_path: Path) -> None:
     (tmp_path / "calculator.py").write_text(
         "from __future__ import annotations\n"

@@ -51,8 +51,8 @@ class _FakeConsumerManager:
 
 
 @pytest.mark.asyncio
-async def test_repeated_subscribe_disconnects_previous_consumer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A connection can own only one runtime.v2 JetStream consumer at a time."""
+async def test_repeated_subscribe_reuses_consumer_without_delivery_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Repeated subscriptions update filters without restarting delivery."""
     _FakeConsumerManager.instances = []
     sent_payloads: list[dict[str, Any]] = []
 
@@ -97,10 +97,11 @@ async def test_repeated_subscribe_disconnects_previous_consumer(monkeypatch: pyt
     )
     second = consumer_ref[0]
 
-    assert first is not second
-    assert first.disconnected is True
+    assert first is second
+    assert first.disconnected is False
     assert second.is_connected is True
-    assert second.durable_token == "abc123-same"
+    assert second.channels == ["llm", "director"]
+    assert len(_FakeConsumerManager.instances) == 1
     assert sent_payloads[-1]["payload"]["jetstream"] is True
 
 

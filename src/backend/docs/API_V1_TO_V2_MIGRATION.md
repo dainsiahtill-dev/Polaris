@@ -12,7 +12,7 @@
 3. [Endpoint Mapping Table](#3-endpoint-mapping-table)
 4. [Error Format Changes](#4-error-format-changes)
 5. [Authentication & RBAC Changes](#5-authentication--rbac-changes)
-6. [SSE Event Changes](#6-sse-event-changes)
+6. [Realtime Transport Changes](#6-realtime-transport-changes)
 7. [Code Examples](#7-code-examples)
 8. [Deprecation Timeline](#8-deprecation-timeline)
 9. [FAQ](#9-faq)
@@ -26,7 +26,7 @@ Polaris v2 API consolidates fragmented legacy endpoints (`/pm/chat`, `/director/
 - **Unified routing**: All new endpoints live under `/v2/` with consistent tagging and OpenAPI documentation.
 - **Structured errors**: Every error response follows the ADR-003 contract (`{error: {code, message, details}}`).
 - **RBAC by default**: All v2 routes require authentication; sensitive operations require explicit roles.
-- **SSE standardization**: All streaming endpoints use canonical event types with security hardening.
+- **Realtime single rail**: product realtime streaming uses Nat-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket only. Legacy HTTP stream routes fail closed and must not be used for UI realtime.
 - **Cell-aware architecture**: v2 routes delegate to Cell public services rather than inlining business logic.
 
 If you are building a new integration, start directly with v2. If you have an existing v1 client, use this guide to migrate.
@@ -38,7 +38,7 @@ If you are building a new integration, start directly with v2. If you have an ex
 | Change | v1 Behavior | v2 Behavior | Impact |
 |--------|-------------|-------------|--------|
 | **Error format** | `{"detail": "string"}` | `{"error": {"code": "...", "message": "...", "details": {}}}` | All error parsing logic must be updated. |
-| **SSE event types** | Ad-hoc per endpoint | Canonical 8 types (see Section 6) | Event parsers must normalize to canonical types. |
+| **Realtime transport** | Ad-hoc HTTP stream endpoints | Nat-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket | Clients must subscribe to WebSocket channels; do not use HTTP stream routes. |
 | **Authentication** | Optional on some routes | Required on **all** `/v2/*` routes | Clients must send `Authorization: Bearer <token>` on every request. |
 | **Role chat** | `POST /v2/pm/chat` only | `POST /v2/role/{role}/chat` for all 5 roles | PM chat moved to unified role entry. |
 | **Director status** | Single monolithic payload | `source=auto\|local\|workflow` parameter | Clients must choose projection source. |
@@ -62,7 +62,7 @@ The following legacy routes are removed without replacement:
 | v1 Endpoint | v2 Endpoint | Notes |
 |-------------|-------------|-------|
 | `POST /v2/pm/chat` | `POST /v2/role/pm/chat` | Unified role chat entry. All 5 roles supported. |
-| `POST /v2/pm/chat/stream` | `POST /v2/role/pm/chat/stream` | SSE streaming via unified generator. |
+| `POST /v2/pm/chat/stream` | `/v2/ws/runtime` role/session channels | Legacy HTTP stream route is fail-closed; use runtime.v2 WebSocket events. |
 | `GET /v2/pm/chat/status` | `GET /v2/role/pm/chat/status` | LLM readiness check per role. |
 | — | `GET /v2/role/chat/roles` | **New**: list all registered roles. |
 | — | `GET /v2/role/chat/ping` | **New**: health check for role chat router. |
@@ -121,7 +121,7 @@ The following legacy routes are removed without replacement:
 | `GET /factory/runs/{run_id}` | `GET /v2/factory/runs/{run_id}` | Response enriched with `phase`, `roles`, `gates`. |
 | `GET /factory/runs/{run_id}/events` | `GET /v2/factory/runs/{run_id}/events` | No change in behavior. |
 | `GET /factory/runs/{run_id}/audit-bundle` | `GET /v2/factory/runs/{run_id}/audit-bundle` | No change in behavior. |
-| `GET /factory/runs/{run_id}/stream` | `GET /v2/factory/runs/{run_id}/stream` | SSE stream with JetStream fallback. |
+| `GET /factory/runs/{run_id}/stream` | `/v2/ws/runtime` with `event.factory:<run_id>` | Legacy HTTP stream route is fail-closed; Factory realtime is WebSocket-only. |
 | `POST /factory/runs/{run_id}/control` | `POST /v2/factory/runs/{run_id}/control` | Only `cancel` action supported. |
 | `GET /factory/runs/{run_id}/artifacts` | `GET /v2/factory/runs/{run_id}/artifacts` | No change in behavior. |
 
@@ -136,7 +136,7 @@ The following legacy routes are removed without replacement:
 | `GET /agent/sessions/{session_id}/memory/episodes/{episode_id}` | `GET /v2/agent/sessions/{session_id}/memory/episodes/{episode_id}` | Response uses `AgentEpisodeResponse`. |
 | `GET /agent/sessions/{session_id}/memory/state` | `GET /v2/agent/sessions/{session_id}/memory/state` | Response uses `AgentMemoryStateResponse`. |
 | `POST /agent/sessions/{session_id}/messages` | `POST /v2/agent/sessions/{session_id}/messages` | Response uses `AgentMessageResponse`. |
-| `POST /agent/sessions/{session_id}/messages/stream` | `POST /v2/agent/sessions/{session_id}/messages/stream` | SSE stream with canonical event types. |
+| `POST /agent/sessions/{session_id}/messages/stream` | `/v2/ws/runtime` role-session/dialogue channels | Legacy HTTP stream route is fail-closed; role-session realtime is WebSocket-only. |
 | `DELETE /agent/sessions/{session_id}` | `DELETE /v2/agent/sessions/{session_id}` | Response uses `SessionDeleteResponse`. |
 | `POST /agent/turn` | `POST /v2/agent/turn` | Response uses `AgentTurnResponse`. |
 
@@ -313,51 +313,56 @@ from polaris.delivery.http.dependencies import require_permission
 
 ---
 
-## 6. SSE Event Changes
+## 6. Realtime Transport Changes
 
-### 6.1 Canonical Event Types
+### 6.1 Canonical Runtime Channels
 
-All v2 SSE endpoints emit events using the same 8 canonical types:
+All product realtime events are published to Nat-JetStream and delivered to
+clients through `/v2/ws/runtime` using the `runtime.v2` WebSocket protocol.
+Legacy HTTP stream routes are retained only as fail-closed compatibility
+surfaces.
 
-| Event Type | Payload Schema | Description |
-|------------|---------------|-------------|
-| `thinking_chunk` | `{"content": "..."}` | Reasoning/thinking token |
-| `content_chunk` | `{"content": "..."}` | Response content token |
-| `tool_call` | `{"tool": "name", "args": {...}}` | Tool invocation |
-| `tool_result` | `{...}` | Tool execution result |
-| `fingerprint` | `{"fingerprint": "..."}` | Response fingerprint |
-| `complete` | `{"content": "...", "thinking": "...", "tool_calls": [...]}` | Stream complete |
-| `error` | `{"error": "..."}` | Terminal error |
-| `ping` | `{}` | Keep-alive |
+| Channel | Purpose |
+|---------|---------|
+| `runtime_events` | task lifecycle, role state, workflow events |
+| `llm` | LLM call state, content previews, token/cost metadata |
+| `process` | process/runtime diagnostics |
+| `dialogue` | role-session dialogue events |
+| `event.factory` | all Factory events in the active workspace |
+| `event.factory:<run_id>` | one pinned Factory run |
+| `event.file_edit` | file edit evidence |
 
-### 6.2 Event Type Mapping (v1 to v2)
+### 6.2 Legacy Stream Route Mapping
 
-| v1 Event Type | v2 Event Type | Notes |
-|---------------|---------------|-------|
-| `text` | `content_chunk` | Normalized by agent router SSE mapper. |
-| `thinking` | `thinking_chunk` | Normalized by agent router SSE mapper. |
-| `tool` | `tool_call` | Normalized by agent router SSE mapper. |
-| `done` | `complete` | Normalized by agent router SSE mapper. |
-| `status` | `status` | Factory stream only (not canonical). |
-| `event` | `event` | Factory stream only (not canonical). |
+| Legacy route | Required replacement |
+|--------------|----------------------|
+| `/v2/pm/chat/stream` | `/v2/ws/runtime` role/dialogue channels |
+| `/v2/role/{role}/chat/stream` | `/v2/ws/runtime` role/dialogue channels |
+| `/v2/roles/sessions/{id}/messages/stream` | `/v2/ws/runtime` dialogue channel |
+| `/v2/factory/runs/{run_id}/stream` | `/v2/ws/runtime` with `event.factory:<run_id>` |
+| `/v2/stream/chat` | `/v2/ws/runtime` `llm` / `runtime_events` channels |
 
-### 6.3 SSE Frame Format
+### 6.3 WebSocket Subscription Format
 
-```
-event: content_chunk
-data: {"content": "Hello"}
-
-event: complete
-data: {"content": "Hello world"}
-
+```json
+{
+  "type": "SUBSCRIBE",
+  "protocol": "runtime.v2",
+  "channels": ["runtime_events", "llm", "process", "dialogue", "event.factory"],
+  "roles": ["pm", "chief_engineer", "director", "qa"],
+  "tail": 200
+}
 ```
 
 ### 6.4 Security Hardening
 
-- Payload size limit: **256KB**
-- Replay window: **1 hour** (events older than 1 hour are rejected)
-- Consumer names use cryptographically random suffixes
-- Subjects validated against `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$`
+- WebSocket subscriptions resolve logical channels to workspace-scoped
+  JetStream subjects.
+- The server rejects missing or non-`runtime.v2` protocol messages.
+- Product code must not add HTTP long-polling, timer fetch loops, file
+  polling, or polling fallback.
+- Browser runtime code must use the shared `runtimeSocketManager`; feature-local
+  realtime transports are not allowed.
 
 ---
 
@@ -390,30 +395,28 @@ result = response.json()
 print(result["ok"], result.get("response"))
 ```
 
-### 7.2 Python: Role Chat (Streaming SSE)
+### 7.2 Python: Role Chat Realtime
 
 ```python
 import json
-import requests
+import websocket
 
 BASE = "http://localhost:49977"
+WS_BASE = "ws://localhost:49977"
 TOKEN = "<your-token>"
 
-response = requests.post(
-    f"{BASE}/v2/role/architect/chat/stream",
-    headers={"Authorization": f"Bearer {TOKEN}"},
-    json={"message": "Design the auth module"},
-    stream=True,
-)
+ws = websocket.create_connection(f"{WS_BASE}/v2/ws/runtime?token={TOKEN}")
+ws.send(json.dumps({
+    "type": "SUBSCRIBE",
+    "protocol": "runtime.v2",
+    "channels": ["runtime_events", "llm", "dialogue"],
+    "roles": ["architect", "pm", "director", "qa"],
+    "tail": 200,
+}))
 
-for line in response.iter_lines():
-    if not line:
-        continue
-    if line.startswith(b"event: "):
-        event_type = line.decode("utf-8").replace("event: ", "")
-    elif line.startswith(b"data: "):
-        payload = json.loads(line.decode("utf-8").replace("data: ", ""))
-        print(f"[{event_type}] {payload}")
+while True:
+    message = json.loads(ws.recv())
+    print(message)
 ```
 
 ### 7.3 JavaScript: Role Chat (Non-Streaming)
@@ -447,47 +450,30 @@ chatWithRole('pm', 'Plan a login feature')
   .catch(console.error);
 ```
 
-### 7.4 JavaScript: Role Chat (Streaming SSE)
+### 7.4 JavaScript: Role Chat Realtime
 
 ```javascript
-const BASE = 'http://localhost:49977';
+const WS_BASE = 'ws://localhost:49977';
 const TOKEN = '<your-token>';
 
-async function streamChat(role, message) {
-  const response = await fetch(`${BASE}/v2/role/${role}/chat/stream`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${TOKEN}`
-    },
-    body: JSON.stringify({ message })
+function connectRuntime() {
+  const ws = new WebSocket(`${WS_BASE}/v2/ws/runtime?token=${TOKEN}`);
+  ws.addEventListener('open', () => {
+    ws.send(JSON.stringify({
+      type: 'SUBSCRIBE',
+      protocol: 'runtime.v2',
+      channels: ['runtime_events', 'llm', 'dialogue'],
+      roles: ['pm', 'chief_engineer', 'director', 'qa'],
+      tail: 200
+    }));
   });
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop(); // keep incomplete line
-
-    let eventType = '';
-    for (const line of lines) {
-      if (line.startsWith('event: ')) {
-        eventType = line.replace('event: ', '');
-      } else if (line.startsWith('data: ')) {
-        const payload = JSON.parse(line.replace('data: ', ''));
-        console.log(`[${eventType}]`, payload);
-      }
-    }
-  }
+  ws.addEventListener('message', (event) => {
+    console.log(JSON.parse(event.data));
+  });
+  return ws;
 }
 
-streamChat('architect', 'Design the auth module');
+connectRuntime();
 ```
 
 ### 7.5 Python: Error Handling Adapter
@@ -555,7 +541,7 @@ These routes still function but will be removed:
 - `GET /factory/runs/{run_id}` — use `/v2/factory/runs/{run_id}`
 - `GET /factory/runs/{run_id}/events` — use `/v2/factory/runs/{run_id}/events`
 - `GET /factory/runs/{run_id}/audit-bundle` — use `/v2/factory/runs/{run_id}/audit-bundle`
-- `GET /factory/runs/{run_id}/stream` — use `/v2/factory/runs/{run_id}/stream`
+- `GET /factory/runs/{run_id}/stream` — removed for realtime; use `/v2/ws/runtime` with `event.factory:<run_id>`
 - `POST /factory/runs/{run_id}/control` — use `/v2/factory/runs/{run_id}/control`
 - `GET /factory/runs/{run_id}/artifacts` — use `/v2/factory/runs/{run_id}/artifacts`
 - `GET /health` — use `/v2/observability/health`
@@ -585,11 +571,12 @@ curl -H "Authorization: Bearer $TOKEN" \
      http://localhost:49977/v2/role/chat/roles
 ```
 
-### Q5: The SSE stream closed unexpectedly. What should I check?
+### Q5: The old HTTP stream route returns an error. What should I check?
 
-1. Ensure your client handles the `ping` event (sent every 180s by default).
-2. Check that you are parsing all 8 canonical event types.
-3. Verify the `Authorization` header is included in the initial request.
+1. Confirm the client has migrated to `/v2/ws/runtime`.
+2. Send `protocol: "runtime.v2"` in subscription messages.
+3. Subscribe to the appropriate logical channel, for example `event.factory:<run_id>`.
+4. Verify the bearer token is included in the WebSocket URL or authorization handshake.
 
 ### Q6: How do I migrate my factory run client?
 
@@ -613,7 +600,7 @@ Yes. Frontend SDK hooks are available:
 
 - `useV2Api.ts` — generic v2 API hooks
 - `useV2ApiError.ts` — structured error parsing
-- `runtimeSocketManager.ts` — SSE/WebSocket runtime manager
+- `runtimeSocketManager.ts` — unified runtime WebSocket manager
 
 ---
 
@@ -623,7 +610,7 @@ Yes. Frontend SDK hooks are available:
 Base URL:     http://localhost:49977
 Auth:         Authorization: Bearer <token>
 Error shape:  {error: {code, message, details}}
-SSE types:    thinking_chunk, content_chunk, tool_call,
-              tool_result, fingerprint, complete, error, ping
+WS channels:  runtime_events, llm, process, dialogue,
+              event.factory, event.factory:<run_id>, event.file_edit
 Roles:        viewer < developer < admin
 ```

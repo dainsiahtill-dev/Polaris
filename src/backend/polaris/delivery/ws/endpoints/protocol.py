@@ -12,6 +12,7 @@ This module contains handlers for:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -134,7 +135,37 @@ async def handle_v2_message(
         )
 
         previous_consumer_manager = consumer_manager_ref[0]
-        if previous_consumer_manager is not None:
+        can_reuse_consumer = (
+            previous_consumer_manager is not None
+            and bool(getattr(previous_consumer_manager, "is_connected", False))
+            and str(getattr(previous_consumer_manager, "workspace_key", "")) == workspace_key
+        )
+        if can_reuse_consumer and previous_consumer_manager is not None:
+            # Keep the active JetStream pull consumer alive across repeated
+            # SUBSCRIBE messages from the shared frontend transport. The
+            # subject is already hp.runtime.>; only the in-process envelope
+            # channel filter changes, so reconnecting would create a real
+            # event-loss window during view switches.
+            active_consumer_manager = previous_consumer_manager
+            normalized_channels = [ch[4:] if ch.startswith("log.") else ch for ch in channels_ref[0]]
+            merged_channels: list[str] = []
+            for channel in [*active_consumer_manager.channels, *normalized_channels]:
+                if channel and channel not in merged_channels:
+                    merged_channels.append(channel)
+            channels_ref[0] = merged_channels
+            active_consumer_manager.channels = merged_channels
+            active_consumer_manager.tail = tail_lines_ref[0]
+            with contextlib.suppress(RuntimeError, ValueError, AttributeError):
+                cursor_ref[0] = max(cursor_ref[0], active_consumer_manager.get_current_cursor())
+            protocol_activated = True
+            logger.info(
+                "v2 protocol subscription updated without consumer restart: "
+                "client_id=%s, channels=%s, cursor=%s",
+                client_id_ref[0],
+                channels_ref[0],
+                cursor_ref[0],
+            )
+        elif previous_consumer_manager is not None:
             try:
                 await previous_consumer_manager.disconnect()
             except Exception as exc:  # noqa: BLE001 - best-effort cleanup for stale consumers
@@ -148,30 +179,31 @@ async def handle_v2_message(
                 consumer_manager_ref[0] = None
 
         # Create JetStream consumer manager
-        try:
-            consumer_manager = JetStreamConsumerManager(
-                workspace_key=workspace_key,
-                client_id=client_id_ref[0],
-                channels=channels_ref[0],
-                initial_cursor=cursor_ref[0],
-                tail=tail_lines_ref[0],
-                durable_token=f"{connection_id}-{client_id_ref[0]}",
-            )
-            connected = await consumer_manager.connect()
-
-            if connected:
-                consumer_manager_ref[0] = consumer_manager
-                protocol_activated = True
-                logger.info(
-                    f"v2 protocol activated: client_id={client_id_ref[0]}, "
-                    f"channels={channels_ref[0]}, cursor={cursor_ref[0]}"
+        if consumer_manager_ref[0] is None:
+            try:
+                consumer_manager = JetStreamConsumerManager(
+                    workspace_key=workspace_key,
+                    client_id=client_id_ref[0],
+                    channels=channels_ref[0],
+                    initial_cursor=cursor_ref[0],
+                    tail=tail_lines_ref[0],
+                    durable_token=f"{connection_id}-{client_id_ref[0]}",
                 )
-            else:
+                connected = await consumer_manager.connect()
+
+                if connected:
+                    consumer_manager_ref[0] = consumer_manager
+                    protocol_activated = True
+                    logger.info(
+                        f"v2 protocol activated: client_id={client_id_ref[0]}, "
+                        f"channels={channels_ref[0]}, cursor={cursor_ref[0]}"
+                    )
+                else:
+                    consumer_manager_ref[0] = None
+                    logger.error("runtime.v2 JetStream consumer is required but unavailable")
+            except (TimeoutError, RuntimeError, ValueError) as e:
+                logger.error(f"Failed to create v2 consumer manager: {e}")
                 consumer_manager_ref[0] = None
-                logger.error("runtime.v2 JetStream consumer is required but unavailable")
-        except (TimeoutError, RuntimeError, ValueError) as e:
-            logger.error(f"Failed to create v2 consumer manager: {e}")
-            consumer_manager_ref[0] = None
 
         if consumer_manager_ref[0] is None or not consumer_manager_ref[0].is_connected:
             client_id_ref[0] = ""

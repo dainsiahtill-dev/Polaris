@@ -947,12 +947,6 @@ function AppContent() {
       <ErrorBoundaryClass onError={(error) => {
         notifyError(error.message || '发生未知错误');
       }}>
-        <BenchStatusStrip
-          bench={factoryBench}
-          websocketLive={live}
-          websocketReconnecting={reconnecting}
-          websocketAttemptCount={attemptCount}
-        />
         <FactoryWorkspace
           workspace={workspace}
           onBackToMain={handleBackToMain}
@@ -977,6 +971,9 @@ function AppContent() {
           onRetryCheckpoint={() => factoryCurrentRun && retryFactoryRunFromCheckpoint(factoryCurrentRun.run_id, 'operator retry')}
           isLoading={factoryIsLoading}
           bench={factoryBench}
+          websocketLive={live}
+          websocketReconnecting={reconnecting}
+          websocketAttemptCount={attemptCount}
         />
         <LlmRuntimeOverlay
           activeView={activeRoleView}
@@ -1042,24 +1039,34 @@ function AppContent() {
       <ErrorBoundaryClass onError={(error) => {
         notifyError(error.message || '发生未知错误');
       }}>
-        <ContextOSWorkspace
-          workspace={workspace}
-          onBackToMain={handleBackToMain}
-          onRefresh={handleRefresh}
-          live={live}
-          reconnecting={reconnecting}
-          usageStats={usageStats}
-          currentPhase={effectiveCurrentPhase}
-          pmRunning={effectivePmRunning}
-          directorRunning={directorRunning}
-          llmRuntimeState={llmRuntimeState}
-          dialogueEvents={dialogueEvents}
-          executionLogs={executionLogs}
-          llmStreamEvents={llmStreamEvents}
-          processStreamEvents={combinedProcessStreamEvents}
-          snapshot={displaySnapshot ?? snapshot}
-          qualityGate={qualityGate}
-        />
+        <div className="size-full flex flex-col bg-bg text-text-main overflow-hidden">
+          <BenchStatusStrip
+            bench={factoryBench}
+            websocketLive={live}
+            websocketReconnecting={reconnecting}
+            websocketAttemptCount={attemptCount}
+          />
+          <div className="min-h-0 flex-1">
+            <ContextOSWorkspace
+              workspace={workspace}
+              onBackToMain={handleBackToMain}
+              onRefresh={handleRefresh}
+              live={live}
+              reconnecting={reconnecting}
+              usageStats={usageStats}
+              currentPhase={effectiveCurrentPhase}
+              pmRunning={effectivePmRunning}
+              directorRunning={directorRunning}
+              llmRuntimeState={llmRuntimeState}
+              dialogueEvents={dialogueEvents}
+              executionLogs={executionLogs}
+              llmStreamEvents={llmStreamEvents}
+              processStreamEvents={combinedProcessStreamEvents}
+              snapshot={displaySnapshot ?? snapshot}
+              qualityGate={qualityGate}
+            />
+          </div>
+        </div>
         <Toaster position="bottom-right" />
       </ErrorBoundaryClass>
     );

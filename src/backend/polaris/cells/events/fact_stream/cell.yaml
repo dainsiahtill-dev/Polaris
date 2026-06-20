@@ -4,8 +4,8 @@ kind: capability
 visibility: public
 stateful: true
 owner: observability
-purpose: 'Provide append-only runtime fact stream ingestion, fanout, and query infrastructure
-  for PM, Director, QA and realtime projection consumers.
+purpose: 'Provide append-only runtime fact stream ingestion, Nat-JetStream publication,
+  and query infrastructure for PM, Director, QA and realtime projection consumers.
 
   '
 current_modules:
@@ -14,8 +14,7 @@ tags: []
 owned_paths:
 - polaris/kernelone/events/**
 - polaris/infrastructure/log_pipeline/**
-- polaris/infrastructure/realtime/process_local/message_event_fanout.py
-- polaris/infrastructure/realtime/process_local/log_fanout.py
+- polaris/infrastructure/messaging/nats/**
 public_contracts:
   modules:
   - polaris.cells.events.fact_stream.public.contracts
@@ -42,13 +41,16 @@ effects_allowed:
 - fs.read:runtime/events/*
 - fs.write:runtime/events/*
 - ws.outbound:runtime/*
-- network.http_outbound:*
+- nats.publish:hp.runtime.>
+- nats.consume:hp.runtime.>
 verification:
   tests:
-  - tests/test_runtime_event_fanout.py
-  - tests/test_realtime_hub_v2.py
-  - tests/test_websocket_signal_hub.py
+  - tests/test_realtime_single_rail_static_guard.py
+  - delivery/tests/test_ws_stream_delivery.py
+  - tests/test_runtime_ws_migration.py
   gaps:
-  - Initial business-cell declaration; implementation convergence is in progress.
+  - Legacy process-local realtime infrastructure still exists in isolated modules
+    until a follow-up deletion plan retires remaining internal tests.
   smoke_commands: []
-generated_artifacts: []
+generated_artifacts:
+- generated/verify.pack.json

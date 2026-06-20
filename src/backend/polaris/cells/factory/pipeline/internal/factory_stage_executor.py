@@ -156,6 +156,86 @@ class OrchestrationStageExecutor:
             artifacts.append(normalized)
             seen.add(normalized)
 
+    @staticmethod
+    def _normalize_declared_delivery_target(value: Any) -> str:
+        token = str(value or "").replace("\\", "/").strip().strip("`'\"")
+        while token.startswith("./"):
+            token = token[2:]
+        token = token.lstrip("/")
+        if token.startswith("workspace/"):
+            token = token.removeprefix("workspace/")
+        if not token or token.endswith("/"):
+            return ""
+        lowered = token.lower()
+        if lowered.startswith(("http://", "https://", "#")):
+            return ""
+        parts = tuple(part for part in token.split("/") if part)
+        if not parts or any(part in {"", ".."} for part in parts):
+            return ""
+        if parts[0] in {".git", ".polaris", "runtime"}:
+            return ""
+        return token
+
+    @classmethod
+    def _collect_declared_delivery_targets(cls, tasks: list[dict[str, Any]]) -> list[str]:
+        seen: set[str] = set()
+        targets: list[str] = []
+
+        def add(value: Any, *, require_file_like: bool = False) -> None:
+            normalized = cls._normalize_declared_delivery_target(value)
+            if not normalized:
+                return
+            if require_file_like and not (
+                Path(normalized).suffix or normalized.upper().startswith("README") or normalized.startswith("tests/")
+            ):
+                return
+            if normalized in seen:
+                return
+            targets.append(normalized)
+            seen.add(normalized)
+
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            for field in ("target_files", "output_files", "expected_files"):
+                raw_values = task.get(field)
+                if isinstance(raw_values, str):
+                    add(raw_values)
+                elif isinstance(raw_values, (list, tuple, set)):
+                    for item in raw_values:
+                        add(item)
+            raw_scope_paths = task.get("scope_paths")
+            if isinstance(raw_scope_paths, str):
+                add(raw_scope_paths, require_file_like=True)
+            elif isinstance(raw_scope_paths, (list, tuple, set)):
+                for item in raw_scope_paths:
+                    add(item, require_file_like=True)
+            scope = str(task.get("scope") or "")
+            for item in scope.replace("\n", ",").split(","):
+                add(item, require_file_like=True)
+        return targets
+
+    def _missing_declared_delivery_targets(self, tasks: list[dict[str, Any]]) -> list[str]:
+        workspace_root = self.workspace.resolve()
+        missing: list[str] = []
+        for target in self._collect_declared_delivery_targets(tasks):
+            path = (workspace_root / target).resolve()
+            try:
+                path.relative_to(workspace_root)
+            except ValueError:
+                missing.append(target)
+                continue
+            if not path.exists():
+                missing.append(target)
+                continue
+            if path.is_file():
+                try:
+                    if path.stat().st_size <= 0:
+                        missing.append(target)
+                except OSError:
+                    missing.append(target)
+        return missing
+
     def _mirror_docs_artifacts(self, run_id: str, artifacts: list[str]) -> None:
         role_root = f"workspace/roles/architect/{run_id}"
         for source_rel, filename in (
@@ -1100,6 +1180,23 @@ class OrchestrationStageExecutor:
                         if isinstance(item, dict)
                     )
                     if self._is_director_no_materialized_changes(director_result) and (prior_successful_progress):
+                        missing_delivery_targets = self._missing_declared_delivery_targets(pm_tasks)
+                        if missing_delivery_targets:
+                            stage_signals.append(
+                                {
+                                    "code": "director.no_materialized_changes_missing_targets",
+                                    "severity": "error",
+                                    "detail": (
+                                        "Director reported no materialized changes while declared delivery targets "
+                                        f"are still missing: {', '.join(missing_delivery_targets[:8])}"
+                                    ),
+                                    "missing_targets": missing_delivery_targets,
+                                    "declared_target_count": len(self._collect_declared_delivery_targets(pm_tasks)),
+                                    "upstream_status": str(director_result.status or "").strip(),
+                                    "round": round_index,
+                                }
+                            )
+                            break
                         requires_taskboard_convergence = False
                         stage_signals.append(
                             {

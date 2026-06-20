@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.events.file_event_broadcaster import (
     append_file_with_broadcast,
@@ -14,6 +15,11 @@ from polaris.kernelone.fs import set_default_adapter
 
 def _configure_default_fs_adapter() -> None:
     set_default_adapter(LocalFileSystemAdapter())
+
+
+@pytest.fixture(autouse=True)
+def _disable_jetstream_publish(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_JETSTREAM_PUBLISH", "0")
 
 
 def test_write_and_append_file_with_broadcast_use_kfs(tmp_path: Path) -> None:

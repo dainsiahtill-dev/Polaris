@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import polaris.cells.qa.audit_verdict.internal.qa_consumer as qa_consumer_module
@@ -171,6 +172,55 @@ class TestQAFindingsRequeue:
 
 
 class TestQAConsumerPollOnce:
+    @pytest.mark.asyncio
+    async def test_llm_review_invokes_qa_with_text_only_runtime(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        calls: list[object] = []
+
+        class FakeDialogueService:
+            def __init__(self, settings: object) -> None:
+                self.settings = settings
+
+            async def invoke_role_dialogue(self, command: object) -> object:
+                calls.append(command)
+                return SimpleNamespace(
+                    ok=True,
+                    status="ok",
+                    content='{"verdict":"PASS","findings":[],"summary":"ok"}',
+                    metadata={"provider": "MiniMax-M3"},
+                    error_code=None,
+                    error_message=None,
+                )
+
+        monkeypatch.setattr(
+            "polaris.cells.llm.dialogue.public.service.LlmDialogueService",
+            FakeDialogueService,
+        )
+        (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-llm", enable_llm_audit=True)
+
+        result = await consumer._run_qa_llm_review_async(
+            task_id="task-llm",
+            task_subject="Review target",
+            changed_files=["main.py"],
+            audit_result={"verdict": "PASS", "findings": [], "metrics": {"files_audited": 1}},
+            payload={"run_id": "run-llm"},
+        )
+
+        assert result["ok"] is True
+        assert calls
+        command = calls[0]
+        context = command.context
+        metadata = command.metadata
+        assert context["disable_internal_tool_rounds"] is True
+        assert context["_transaction_kernel_forced_tool_definitions"] == []
+        assert context["_transaction_kernel_forced_tool_choice"] == "none"
+        assert metadata["validate_output"] is False
+        assert metadata["max_retries"] == 0
+
     @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
     def test_pass_verdict_acks_resolved(self, mock_get_svc: MagicMock) -> None:
         mock_svc = MagicMock()
@@ -383,6 +433,41 @@ class TestQAConsumerPollOnce:
                 "blueprint_id": "bp-evidence",
                 "target_files": ["src/bad.py"],
                 "changed_files": ["src/good.py"],
+            },
+        )
+
+        assert result["verdict"] == "PASS"
+        assert result["metrics"]["files_audited"] == 1
+
+    @patch("polaris.cells.qa.audit_verdict.internal.qa_consumer.get_task_market_service")
+    def test_verified_existing_scope_uses_existing_paths_without_changed_files(
+        self,
+        mock_get_svc: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_get_svc.return_value = MagicMock()
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "good.py").write_text("x = 1\n", encoding="utf-8")
+        (src_dir / "bad.py").write_text("def broken(\n", encoding="utf-8")
+
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-existing")
+        result = consumer._run_qa_audit(
+            "task-qa-existing",
+            {
+                "title": "Implement code",
+                "blueprint_id": "bp-existing",
+                "target_files": ["src/bad.py"],
+                "changed_files": [],
+                "director_evidence_status": "verified_existing_workspace_scope",
+                "director_adapter": {
+                    "success": True,
+                    "materialization_mode": "verified_existing_workspace_scope",
+                    "existing_contract_evidence": {
+                        "ok": True,
+                        "existing_paths": ["src/good.py"],
+                    },
+                },
             },
         )
 

@@ -72,6 +72,53 @@ def test_lifecycle_reopen_without_close_records_warning_counter() -> None:
     assert snapshot["stats"]["open_runs_count"] == 1
 
 
+def test_lifecycle_tracks_parallel_calls_by_call_id() -> None:
+    _reset_emitter()
+
+    emit_llm_event(
+        event_type=LLMEventType.CALL_START,
+        role="director",
+        run_id="run-parallel",
+        task_id="task-a",
+        model="qwen",
+        metadata={"call_id": "call-a"},
+    )
+    emit_llm_event(
+        event_type=LLMEventType.CALL_START,
+        role="director",
+        run_id="run-parallel",
+        task_id="task-b",
+        model="qwen",
+        metadata={"call_id": "call-b"},
+    )
+
+    snapshot = get_lifecycle_snapshot()
+    assert snapshot["stats"]["open_runs_count"] == 2
+    assert snapshot["stats"]["reopened_without_close_count"] == 0
+
+    emit_llm_event(
+        event_type=LLMEventType.CALL_END,
+        role="director",
+        run_id="run-parallel",
+        task_id="task-a",
+        model="qwen",
+        metadata={"call_id": "call-a"},
+    )
+    emit_llm_event(
+        event_type=LLMEventType.CALL_END,
+        role="director",
+        run_id="run-parallel",
+        task_id="task-b",
+        model="qwen",
+        metadata={"call_id": "call-b"},
+    )
+
+    snapshot = get_lifecycle_snapshot()
+    assert snapshot["stats"]["open_runs_count"] == 0
+    assert snapshot["stats"]["closed_without_start_count"] == 0
+    assert snapshot["stats"]["reopened_without_close_count"] == 0
+
+
 def test_lifecycle_snapshot_includes_unclosed_run_details() -> None:
     _reset_emitter()
 

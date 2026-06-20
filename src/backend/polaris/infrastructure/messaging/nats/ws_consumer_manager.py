@@ -10,6 +10,7 @@ import re
 import time
 from typing import Any
 
+from nats.errors import TimeoutError as NatsTimeoutError
 from nats.js.errors import APIError as JSAPIError, NotFoundError as JSConsumerNotFoundError
 from polaris.infrastructure.messaging.nats.client import get_default_client
 from polaris.infrastructure.messaging.nats.nats_types import (
@@ -328,11 +329,7 @@ class JetStreamConsumerManager:
 
         while not self._closed:
             try:
-                # Use a bounded pull wait so the task can observe cancellation.
-                msg = await asyncio.wait_for(
-                    self._subscription.next_msg(),
-                    timeout=1.0,  # Bounded wait so cancellation is observed promptly.
-                )
+                msg = await self._subscription.next_msg()
                 if msg:
                     try:
                         data = json.loads(msg.data.decode("utf-8"))
@@ -387,11 +384,10 @@ class JetStreamConsumerManager:
                     except (RuntimeError, ValueError) as e:
                         logger.warning(f"Failed to process JetStream message: {e}")
                         await msg.ack()
-            except asyncio.TimeoutError:
-                # Normal timeout - continue loop
-                continue
             except asyncio.CancelledError:
                 break
+            except NatsTimeoutError:
+                continue
             except (RuntimeError, ValueError) as e:
                 if not self._closed:
                     _log_throttled(
@@ -403,20 +399,24 @@ class JetStreamConsumerManager:
                     )
                 break
 
-    async def next_message(self, timeout: float = 0.5) -> RuntimeEventEnvelope | None:
-        """Get next message from consumer queue with timeout.
+    async def next_message(self, timeout: float | None = None) -> RuntimeEventEnvelope | None:
+        """Get the next message from the internal consumer queue.
 
-        Uses internal queue populated by background consumer task for near-zero latency.
+        Uses the internal queue populated by the JetStream consumer task. The
+        default blocks until a message arrives, so the WebSocket loop has no
+        timer-driven fetch path.
         """
         if not self._subscription:
             return None
 
         try:
-            # Get from internal queue (populated by background consumer)
-            envelope = await asyncio.wait_for(
-                self._message_queue.get(),
-                timeout=timeout,
-            )
+            if timeout is None:
+                envelope = await self._message_queue.get()
+            else:
+                envelope = await asyncio.wait_for(
+                    self._message_queue.get(),
+                    timeout=timeout,
+                )
             return envelope
         except asyncio.TimeoutError:
             pass

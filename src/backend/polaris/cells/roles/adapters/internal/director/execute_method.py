@@ -83,6 +83,7 @@ def _build_empty_write_content_retry_message(
     *,
     original_message: str,
     tool_results: list[dict[str, Any]],
+    forced_tool_name: str = "write_file",
 ) -> str:
     target_files = _extract_task_target_path_candidates(task)
     target_line = ""
@@ -91,17 +92,107 @@ def _build_empty_write_content_retry_message(
     write_summary = ", ".join(
         f"{name}:content_len={content_len}" for name, content_len in _diag_write_results_summary(tool_results)
     )
+    if forced_tool_name == "edit_blocks":
+        tool_instruction = (
+            "Do not explain or plan. Emit exactly one valid edit_blocks tool call now.\n"
+            "Use the line-range form with file/start/end/replace. The replace argument must be non-empty "
+            "and limited to the repaired range; do not use write_file or whole-file text blocks.\n"
+        )
+    else:
+        forced_tool_name = "write_file"
+        tool_instruction = (
+            "Do not explain or plan. Emit exactly one valid write_file tool call now.\n"
+            "The write_file `content` argument must be the complete non-empty file body, never an empty string.\n"
+        )
     return (
         "[mode:materialize]\n"
         "RETRY: previous write tool call had blank content and produced no files.\n"
         f"Observed write arguments: {write_summary or '(none)'}.\n"
-        "Do not explain or plan. Emit exactly one valid write_file tool call now.\n"
-        "The write_file `content` argument must be the complete non-empty file body, never an empty string.\n"
+        f"{tool_instruction}"
         "Use only task-scoped relative paths. Do not write TODO/FIXME/placeholder content.\n"
         f"{target_line}"
         "Original task follows:\n"
         f"{original_message[:6000]}"
     )
+
+
+def _task_targets_missing_in_workspace(task: dict[str, Any], workspace: str) -> bool:
+    workspace_path = Path(str(workspace or "")).resolve()
+    if not workspace_path.is_dir():
+        return False
+    for candidate in _extract_task_target_path_candidates(task):
+        normalized = _normalize_declared_task_path(candidate)
+        if not normalized or any(ch in normalized for ch in ("*", "?")):
+            continue
+        if not _workspace_path_exists_case_insensitive(workspace_path, normalized):
+            return True
+    return False
+
+
+def _select_empty_write_content_retry_tool_name(
+    task: dict[str, Any],
+    *,
+    context: dict[str, Any],
+    workspace: str,
+) -> str:
+    """Choose the forced retry write tool after an empty write attempt.
+
+    Missing/create targets still need whole-file creation. Existing targets are
+    repair work, so forcing write_file turns a blank write retry into an
+    unscoped full-file rewrite; use edit_blocks instead.
+    """
+
+    quality_repair = context.get("director_quality_repair")
+    if isinstance(quality_repair, dict):
+        if quality_repair.get("missing_target_files"):
+            return "write_file"
+        if quality_repair.get("runtime_smoke_target_files"):
+            return "write_file"
+    target_files = _extract_task_target_path_candidates(task)
+    if not target_files:
+        return "write_file"
+    if _task_targets_missing_in_workspace(task, workspace):
+        return "write_file"
+    return "edit_blocks"
+
+
+def _empty_write_retry_tool_definition(tool_name: str, target_files: list[str]) -> dict[str, Any]:
+    file_schema: dict[str, Any] = {"type": "string"}
+    if len(target_files) == 1:
+        file_schema["enum"] = [target_files[0]]
+    if tool_name == "edit_blocks":
+        return {
+            "type": "function",
+            "function": {
+                "name": "edit_blocks",
+                "description": "Edit a precise line range in an existing UTF-8 text file.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "file": file_schema,
+                        "start": {"type": "integer", "minimum": 1},
+                        "end": {"type": "integer", "minimum": 1},
+                        "replace": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["file", "start", "end", "replace"],
+                },
+            },
+        }
+    return {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Write a complete UTF-8 text file at the requested target path.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": file_schema,
+                    "content": {"type": "string", "minLength": 1},
+                },
+                "required": ["file", "content"],
+            },
+        },
+    }
 
 
 async def _run_empty_write_content_materialization_retry(
@@ -114,38 +205,30 @@ async def _run_empty_write_content_materialization_retry(
     tool_results: list[dict[str, Any]],
     llm_call_timeout: float,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    target_files = _extract_task_target_path_candidates(task)
+    forced_tool_name = _select_empty_write_content_retry_tool_name(
+        task,
+        context=context,
+        workspace=str(getattr(adapter, "workspace", "") or ""),
+    )
     retry_message = _build_empty_write_content_retry_message(
         task,
         original_message=original_message,
         tool_results=tool_results,
+        forced_tool_name=forced_tool_name,
     )
     retry_context = _pin_materialize_context_delivery_mode(dict(context), True)
-    target_files = _extract_task_target_path_candidates(task)
     retry_context["_transaction_kernel_forced_tool_choice"] = {
         "type": "function",
-        "function": {"name": "write_file"},
+        "function": {"name": forced_tool_name},
     }
     retry_context["_transaction_kernel_forced_tool_definitions"] = [
-        {
-            "type": "function",
-            "function": {
-                "name": "write_file",
-                "description": "Write a complete UTF-8 text file at the requested target path.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "file": {"type": "string"},
-                        "content": {"type": "string", "minLength": 1},
-                    },
-                    "required": ["file", "content"],
-                },
-            },
-        }
+        _empty_write_retry_tool_definition(forced_tool_name, target_files)
     ]
     if len(target_files) == 1:
         retry_context["director_empty_write_retry"] = {
             "write_only_single_target": {
-                "tool": "write_file",
+                "tool": forced_tool_name,
                 "target_file": target_files[0],
             }
         }
@@ -178,6 +261,8 @@ async def _run_empty_write_content_materialization_retry(
             retry_content,
             target_task_id,
             adapter._update_task_progress,
+            allowed_tool_names={forced_tool_name},
+            allow_patch_fallback=forced_tool_name == "write_file",
         )
         if fallback_tool_results:
             retry_tool_results.extend(fallback_tool_results)
@@ -1126,6 +1211,25 @@ async def _execute_standard_llm_flow(
                 workspace_name=workspace_name,
             )
 
+    if not all_affected_files:
+        deterministic_tool_results = _apply_deterministic_python_unittest_missing_target_repair(
+            adapter,
+            task=task,
+            task_id=target_task_id,
+        )
+        if deterministic_tool_results:
+            tool_results.extend(deterministic_tool_results)
+            current_files, new_files, modified_files, all_affected_files = _collect_workspace_code_diff(
+                adapter,
+                baseline_files,
+                task=task,
+                workspace_name=workspace_name,
+            )
+            all_affected_files = _merge_successful_write_paths(
+                all_affected_files,
+                _extract_successful_write_paths(deterministic_tool_results),
+            )
+
     if not all_affected_files or (
         not has_successful_write_tool(tool_results)
         and _stage_summary_has_recoverable_no_write_mutation_contract_exception(primary_llm_summary)
@@ -1608,6 +1712,19 @@ async def _execute_standard_llm_flow(
                 context=context,
             )
             artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+            artifact_quality_errors += _apply_deterministic_python_static_smoke(
+                adapter,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            )
+            artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+                adapter,
+                task_id=target_task_id,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            )
+            artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
+                artifact_quality_errors,
+                _adapter_workspace,
+            )
             if not artifact_quality_errors:
                 break
         repair_tool_results, quality_repair_summary = await _run_materialization_quality_repair_retry(
@@ -1645,6 +1762,19 @@ async def _execute_standard_llm_flow(
                 context=context,
             )
             artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+            artifact_quality_errors += _apply_deterministic_python_static_smoke(
+                adapter,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            )
+            artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+                adapter,
+                task_id=target_task_id,
+                all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+            )
+            artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
+                artifact_quality_errors,
+                _adapter_workspace,
+            )
             if artifact_quality_errors:
                 deterministic_quality_tool_results, deterministic_quality_summary = (
                     _apply_deterministic_materialization_quality_repairs(
@@ -1676,6 +1806,19 @@ async def _execute_standard_llm_flow(
                         context=context,
                     )
                     artifact_quality_errors += _collect_step_verify_errors(adapter, context)
+                    artifact_quality_errors += _apply_deterministic_python_static_smoke(
+                        adapter,
+                        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                    )
+                    artifact_quality_errors += _apply_deterministic_python_runtime_smoke(
+                        adapter,
+                        task_id=target_task_id,
+                        all_affected_files=_materialization_quality_scan_paths(all_affected_files, tool_results),
+                    )
+                    artifact_quality_errors = _filter_satisfied_declared_target_missing_errors(
+                        artifact_quality_errors,
+                        _adapter_workspace,
+                    )
                     if not artifact_quality_errors:
                         break
     if artifact_quality_errors:
@@ -2065,6 +2208,8 @@ from .deterministic_repairs import (  # noqa: E402  (deferred for circular-impor
     _apply_deterministic_pre_materialization_declared_target_repairs as _apply_deterministic_pre_materialization_declared_target_repairs,
     _apply_deterministic_python_runtime_smoke as _apply_deterministic_python_runtime_smoke,
     _apply_deterministic_python_static_smoke as _apply_deterministic_python_static_smoke,
+    _apply_deterministic_python_unittest_missing_target_repair as _apply_deterministic_python_unittest_missing_target_repair,
+    _apply_deterministic_python_unittest_runtime_failure_repair as _apply_deterministic_python_unittest_runtime_failure_repair,
     _apply_deterministic_runtime_dependency_repair as _apply_deterministic_runtime_dependency_repair,
     _apply_deterministic_scaffold_marker_cleanup as _apply_deterministic_scaffold_marker_cleanup,
     _apply_deterministic_typeorm_model_normalization_repair as _apply_deterministic_typeorm_model_normalization_repair,

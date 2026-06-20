@@ -11,6 +11,8 @@ Covers the django-11630 live findings (2026-06-10):
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -336,6 +338,217 @@ def test_leaf_construction_step_suppresses_write_fallback(tmp_path: Path) -> Non
     assert decision is None
 
 
+def test_leaf_test_target_uses_safe_calculator_test_fallback(tmp_path: Path) -> None:
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001",
+        original_context=_leaf_step_context(
+            "tests/test_calculator.py",
+            verify="python tests/test_calculator.py && python calculator.py",
+            named_files="calculator.py README.md tests/test_calculator.py expression calculator",
+        ),
+        bootstrap_receipt=_failed_read_receipt("tests/test_calculator.py"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is not None
+    assert decision.metadata.get("deterministic_recovery") == "bootstrap_followup_leaf_test_write_file"
+    assert decision.tool_batch is not None
+    invocation = decision.tool_batch.invocations[0]
+    assert invocation["tool_name"] == "write_file"
+    assert invocation["arguments"]["file"] == "tests/test_calculator.py"
+    content = invocation["arguments"]["content"]
+    assert "class CalculatorBehaviorTests" in content
+    assert "parse_and_evaluate" in content
+    assert "evaluate_expression('2+3*4')" in content
+    assert "unittest.main()" in content
+    assert "index.html" not in content
+    assert "styles.css" not in content
+
+
+def test_failed_existing_calculator_test_repair_rewrites_safe_test_target(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# CLI Calculator\n", encoding="utf-8")
+    (tmp_path / "calculator.py").write_text("def evaluate(expression: str) -> int:\n    return 1\n", encoding="utf-8")
+    test_path = tmp_path / "tests" / "test_calculator.py"
+    test_path.parent.mkdir()
+    test_path.write_text("def test_bad_generated_assertion():\n    assert False\n", encoding="utf-8")
+
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001",
+        original_context=[
+            {
+                "role": "user",
+                "content": (
+                    "[mode:materialize]\n"
+                    "任务: 实现README 文档与运行验证\n"
+                    "范围: README.md, calculator.py, tests/test_calculator.py\n"
+                    "MATERIALIZATION QUALITY REPAIR MODE:\n"
+                    "EXISTING FAILED TARGET FILES — rewrite these exact paths NOW:\n"
+                    "- tests/test_calculator.py\n"
+                    "SINGLE FAILED TARGET REPAIR:\n"
+                    "[director_quality_repair:write_only_single_target]\n"
+                    "- Target path: tests/test_calculator.py\n"
+                    "Quality errors:\n"
+                    "- Artifact quality scan failed: python runtime smoke crashed for 'tests/test_calculator.py'\n"
+                    "The calculator expression tests cover 计算器 表达式 四则 运算.\n"
+                ),
+            }
+        ],
+        bootstrap_receipt={"results": []},
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is not None
+    assert decision.metadata.get("deterministic_recovery") == "bootstrap_followup_write_file"
+    assert decision.tool_batch is not None
+    invocation = decision.tool_batch.invocations[0]
+    assert invocation["arguments"]["file"] == "tests/test_calculator.py"
+    content = invocation["arguments"]["content"]
+    assert "class CalculatorBehaviorTests" in content
+    assert "unittest.main()" in content
+    assert "assert False" not in content
+
+
+def test_calculator_unittest_fallback_accepts_string_returning_calculator(tmp_path: Path) -> None:
+    (tmp_path / "calculator.py").write_text(
+        "def evaluate(expression: str) -> str:\n"
+        "    compact = expression.replace(' ', '')\n"
+        "    if compact == '2+3*4':\n"
+        "        return '14'\n"
+        "    if compact == '(2+3)*4':\n"
+        "        return '20'\n"
+        "    if compact == '7/2':\n"
+        "        return '3.5'\n"
+        "    return '错误: invalid expression'\n",
+        encoding="utf-8",
+    )
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001",
+        original_context=_leaf_step_context(
+            "tests/test_calculator.py",
+            verify="python -m unittest discover -s tests -p 'test_*.py' -v",
+            named_files="calculator.py tests/test_calculator.py expression calculator",
+        ),
+        bootstrap_receipt=_failed_read_receipt("tests/test_calculator.py"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is not None
+    assert decision.tool_batch is not None
+    invocation = decision.tool_batch.invocations[0]
+    test_path = tmp_path / invocation["arguments"]["file"]
+    test_path.parent.mkdir(parents=True, exist_ok=True)
+    test_path.write_text(invocation["arguments"]["content"], encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_leaf_calculator_source_target_uses_runnable_cli_fallback(tmp_path: Path) -> None:
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001",
+        original_context=_leaf_step_context(
+            "calculator.py",
+            verify="python -m py_compile calculator.py && python calculator.py '2+3*4'",
+            named_files="calculator.py README.md tests/test_calculator.py expression calculator",
+        ),
+        bootstrap_receipt=_failed_read_receipt("calculator.py"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is not None
+    assert decision.metadata.get("deterministic_recovery") == "bootstrap_followup_calculator_source_write_file"
+    assert decision.tool_batch is not None
+    invocation = decision.tool_batch.invocations[0]
+    assert invocation["tool_name"] == "write_file"
+    assert invocation["arguments"]["file"] == "calculator.py"
+    content = invocation["arguments"]["content"]
+    assert "def parse_and_evaluate" in content
+    assert "class CalculatorError" in content
+    assert "workspace_artifact_ready" not in content
+
+
+def test_non_leaf_calculator_source_target_uses_runnable_cli_fallback(tmp_path: Path) -> None:
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001",
+        original_context=[
+            {
+                "role": "user",
+                "content": (
+                    "任务: 核心计算器实现与 README\n"
+                    "范围: calculator.py, README.md\n"
+                    "MATERIALIZATION QUALITY REPAIR MODE:\n"
+                    "MISSING TARGET FILES — create these exact paths NOW:\n"
+                    "- calculator.py\n"
+                    "Target path: calculator.py\n"
+                    "需求: CLI calculator expression arithmetic 计算器 表达式 四则 运算\n"
+                ),
+            }
+        ],
+        bootstrap_receipt={"results": []},
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is not None
+    assert decision.tool_batch is not None
+    by_file = {
+        invocation["arguments"]["file"]: invocation["arguments"]["content"]
+        for invocation in decision.tool_batch.invocations
+    }
+    assert set(by_file) == {"calculator.py", "README.md"}
+    assert "def parse_and_evaluate" in by_file["calculator.py"]
+    assert "class CalculatorError" in by_file["calculator.py"]
+    assert "workspace_artifact_ready" not in by_file["calculator.py"]
+    assert "python calculator.py" in by_file["README.md"]
+
+
+def test_non_leaf_calculator_verification_targets_use_safe_fallbacks(tmp_path: Path) -> None:
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="pm-00001",
+        original_context=[
+            {
+                "role": "user",
+                "content": (
+                    "任务: 实现功能验证与 QA 闭环\n"
+                    "范围: tests/test_calculator.py, tests/qa_report.md\n"
+                    "MATERIALIZATION QUALITY REPAIR MODE:\n"
+                    "MISSING TARGET FILES — create these exact paths NOW:\n"
+                    "- tests/test_calculator.py\n"
+                    "- tests/qa_report.md\n"
+                    "需求: CLI calculator expression arithmetic 计算器 表达式 四则 运算\n"
+                ),
+            }
+        ],
+        bootstrap_receipt={"results": []},
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is not None
+    assert decision.tool_batch is not None
+    by_file = {
+        invocation["arguments"]["file"]: invocation["arguments"]["content"]
+        for invocation in decision.tool_batch.invocations
+    }
+    assert set(by_file) == {"tests/test_calculator.py", "tests/qa_report.md"}
+    assert "class CalculatorBehaviorTests" in by_file["tests/test_calculator.py"]
+    assert "python -m unittest discover" in by_file["tests/qa_report.md"]
+
+
 def test_leaf_small_bootstrap_target_forces_write_file_followup() -> None:
     receipt = {
         "results": [
@@ -358,6 +571,49 @@ def test_leaf_small_bootstrap_target_forces_write_file_followup() -> None:
                 verify="python calculator.py",
                 named_files="calculator.py README.md",
             ),
+            bootstrap_receipt=receipt,
+            allowed_tool_names={"edit_blocks", "write_file"},
+        )
+        is True
+    )
+
+
+def test_declared_target_line_without_step_forces_small_leaf_write_file_followup() -> None:
+    """Director prompts may carry only text fields such as ``范围``/``目标文件``.
+
+    The weak-model bootstrap follow-up still needs the small-leaf write_file
+    path in that shape; otherwise it remains locked onto edit_blocks and can
+    circuit-break on repeated no-op edit blocks.
+    """
+    receipt = {
+        "results": [
+            {
+                "tool_name": "read_file",
+                "status": "success",
+                "result": {
+                    "file": "README.md",
+                    "content": "# 项目运行说明\n\n运行 `python main.py`。\n",
+                },
+                "arguments": {"file": "README.md"},
+            }
+        ]
+    }
+
+    assert (
+        _should_force_leaf_bootstrap_followup_write_file(
+            original_context=[
+                {
+                    "role": "user",
+                    "content": (
+                        "[mode:materialize]\n"
+                        "任务: 编写运行说明文档\n"
+                        "范围: README.md\n"
+                        "目标文件: README.md\n"
+                        "验收标准:\n"
+                        "- grep -Fq 'python main.py' README.md\n"
+                    ),
+                }
+            ],
             bootstrap_receipt=receipt,
             allowed_tool_names={"edit_blocks", "write_file"},
         )
@@ -526,6 +782,69 @@ def test_non_leaf_support_files_multitarget_fallback_writes_readme_and_tests(tmp
     assert [item["arguments"]["file"] for item in invocations] == ["README.md", "tests/test_product.py"]
     assert "python -m pytest tests/test_product.py" in invocations[0]["arguments"]["content"]
     assert 'read_text(encoding="utf-8")' in invocations[1]["arguments"]["content"]
+
+
+def test_non_leaf_static_web_multitarget_fallback_writes_resume_files(tmp_path: Path) -> None:
+    (tmp_path / "requirements.md").write_text(
+        "# Product Requirements\n\n用纯 HTML5/CSS3 制作个人简历静态页面。\n",
+        encoding="utf-8",
+    )
+
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="t-static-web",
+        original_context=[
+            {
+                "role": "user",
+                "content": (
+                    "范围: requirements.md, index.html, styles.css, README.md\n"
+                    "完整可运行的实现落盘到工作区根，并附 README.md 说明如何运行。"
+                ),
+            }
+        ],
+        bootstrap_receipt=_failed_read_receipt("index.html"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is not None
+    assert decision.metadata.get("deterministic_recovery") == "bootstrap_followup_support_files_write_file"
+    assert decision.metadata.get("target_files") == ["index.html", "styles.css", "README.md"]
+    assert decision.tool_batch is not None
+    invocations = decision.tool_batch.invocations
+    assert [item["arguments"]["file"] for item in invocations] == ["index.html", "styles.css", "README.md"]
+    html = invocations[0]["arguments"]["content"]
+    css = invocations[1]["arguments"]["content"]
+    readme = invocations[2]["arguments"]["content"]
+    assert "<main" in html
+    assert '<link rel="stylesheet" href="styles.css">' in html
+    assert "display: flex" in css
+    assert "display: grid" in css
+    assert css.count("@media") >= 2
+    assert "python -m http.server 8000" in readme
+
+
+def test_static_web_fallback_does_not_rewrite_requirements_input_doc(tmp_path: Path) -> None:
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="t-static-web-input-doc",
+        original_context=[
+            {
+                "role": "user",
+                "content": (
+                    "Mutation target files detected from user request: requirements.md, index.html, styles.css. "
+                    "Ensure the write step touches at least one target file."
+                ),
+            }
+        ],
+        bootstrap_receipt=_failed_read_receipt("index.html"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is not None
+    assert decision.tool_batch is not None
+    invocations = decision.tool_batch.invocations
+    assert [item["arguments"]["file"] for item in invocations] == ["index.html", "styles.css"]
+    assert all(item["arguments"]["file"] != "requirements.md" for item in invocations)
 
 
 def test_non_leaf_single_target_still_fires(tmp_path: Path) -> None:

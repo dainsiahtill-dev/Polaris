@@ -759,6 +759,26 @@ class RetryOrchestrator:
             retry_decision = self.decoder.decode(retry_response, TurnId(turn_id))
             ledger.replace_decision(retry_decision)
             if retry_decision.get("kind") != TurnDecisionKind.TOOL_BATCH:
+                if not raw_native_names and escalated_definitions is not None:
+                    logger.warning(
+                        "mutation-contract retry attempt=%s produced no native tools under escalation; "
+                        "trying deterministic write fallback",
+                        attempt_index + 1,
+                    )
+                    deterministic_result = await self._execute_deterministic_bootstrap_followup_write_fallback(
+                        turn_id=turn_id,
+                        original_context=context,
+                        bootstrap_receipt={"results": []},
+                        allowed_tool_names=set(attempt_allowed_tool_names),
+                        state_machine=state_machine,
+                        ledger=ledger,
+                        write_context=attempt_context,
+                        stream=stream,
+                        shadow_engine=shadow_engine,
+                        workspace=".",
+                    )
+                    if deterministic_result is not None:
+                        return deterministic_result
                 if attempt_index < max_retry_attempts - 1:
                     retry_context = append_retry_enforcement_hint(
                         retry_context,
@@ -849,6 +869,27 @@ class RetryOrchestrator:
                     )
                     candidate_bootstrap_decision = retry_decision
                     break
+                if escalated_definitions is not None and not any(name in WRITE_TOOLS for name in retry_tool_names):
+                    logger.warning(
+                        "mutation-contract retry attempt=%s emitted no write tools under escalation; "
+                        "trying deterministic write fallback (decision_tools=%s)",
+                        attempt_index + 1,
+                        retry_tool_names,
+                    )
+                    deterministic_result = await self._execute_deterministic_bootstrap_followup_write_fallback(
+                        turn_id=turn_id,
+                        original_context=context,
+                        bootstrap_receipt={"results": []},
+                        allowed_tool_names=set(attempt_allowed_tool_names),
+                        state_machine=state_machine,
+                        ledger=ledger,
+                        write_context=attempt_context,
+                        stream=stream,
+                        shadow_engine=shadow_engine,
+                        workspace=".",
+                    )
+                    if deterministic_result is not None:
+                        return deterministic_result
                 if attempt_index >= max_retry_attempts - 1:
                     raise
                 retry_context = append_retry_enforcement_hint(
@@ -921,6 +962,7 @@ class RetryOrchestrator:
                     retry_tool_definitions,
                     followup_forced_write_tool_name,
                     include_verification_tools=requires_verification,
+                    allow_write_file_companion_for_edit_blocks=from_scratch_create,
                 )
                 followup_allowed_tool_names = extract_allowed_tool_names_from_definitions(followup_tool_definitions)
             else:

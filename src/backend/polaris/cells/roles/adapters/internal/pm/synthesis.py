@@ -207,12 +207,13 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "target_files": [*static_targets, test_file],
                         "steps": [
                             f"创建或更新 `{test_file}`，检查 HTML/CSS/README 交付文件",
+                            "测试必须使用 Python 标准库 `unittest.TestCase`，禁止依赖未声明的 pytest 风格裸函数",
                             "验证页面包含语义化结构、简历内容区域、CSS Grid/Flexbox 与媒体查询",
-                            "执行 `pytest -q` 并确保测试通过",
+                            "执行 `python -m unittest discover -s tests -p 'test_*.py' -v` 并确保测试通过",
                         ],
                         "acceptance": [
                             f"`{test_file}` 存在且包含静态页面验收用例",
-                            "`pytest -q` 返回 PASS，并覆盖产品验收样例",
+                            "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS，并覆盖产品验收样例",
                         ],
                         "phase": "implementation",
                         "depends_on": ["TASK-1"],
@@ -233,7 +234,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         ],
                         "acceptance": [
                             "`README.md` 说明如何运行并包含验收步骤",
-                            "`pytest -q` 返回 PASS，交付物包含 HTML、CSS、测试与文档",
+                            "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS，交付物包含 HTML、CSS、测试与文档",
                         ],
                         "phase": "verification",
                         "depends_on": ["TASK-2"],
@@ -277,12 +278,13 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     "target_files": [source_file, test_file],
                     "steps": [
                         f"创建或更新 `{test_file}`，覆盖核心成功路径",
+                        "测试必须使用 Python 标准库 `unittest.TestCase`，禁止依赖未声明的 pytest 风格裸函数",
                         "补充除零、非法字符、括号不匹配、退出命令等失败路径测试",
-                        "执行 `pytest -q` 并确保测试通过",
+                        "执行 `python -m unittest discover -s tests -p 'test_*.py' -v` 并确保测试通过",
                     ],
                     "acceptance": [
                         f"`{test_file}` 存在且包含可执行测试用例",
-                        "`pytest -q` 返回 PASS，并覆盖产品验收样例",
+                        "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS，并覆盖产品验收样例",
                     ],
                     "phase": "implementation",
                     "depends_on": ["TASK-1"],
@@ -303,7 +305,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     ],
                     "acceptance": [
                         "`README.md` 说明如何运行并包含示例输入输出",
-                        "`pytest -q` 返回 PASS，交付物包含源码、测试与文档",
+                        "`python -m unittest discover -s tests -p 'test_*.py' -v` 返回 PASS，交付物包含源码、测试与文档",
                     ],
                     "phase": "verification",
                     "depends_on": ["TASK-2"],

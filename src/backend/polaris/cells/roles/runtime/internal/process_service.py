@@ -5,6 +5,8 @@ import sys
 import threading
 import time
 import typing
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from polaris.bootstrap.config import Settings, get_settings
@@ -15,7 +17,6 @@ from polaris.cells.runtime.execution_broker.public.service import (
     get_execution_broker_service,
 )
 from polaris.cells.runtime.state_owner.public.service import ProcessHandle
-from polaris.infrastructure.realtime.process_local.signal_hub import REALTIME_SIGNAL_HUB
 from polaris.kernelone.fs.encoding import build_utf8_env
 from polaris.kernelone.process import (
     clear_director_stop_flag as _kernel_clear_director_stop_flag,
@@ -27,9 +28,16 @@ from polaris.kernelone.process import (
 )
 from polaris.kernelone.runtime.defaults import DEFAULT_MODEL, DEFAULT_PM_LOG, DEFAULT_WORKSPACE
 from polaris.kernelone.runtime.shared_types import normalize_timeout_seconds
+from polaris.kernelone.storage import resolve_storage_roots
 from polaris.kernelone.storage.io_paths import normalize_artifact_rel_path
 
 logger = logging.getLogger(__name__)
+_JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
+
+
+def _jetstream_publish_enabled() -> bool:
+    raw = str(os.environ.get("KERNELONE_JETSTREAM_PUBLISH") or "").strip().lower()
+    return bool(raw) and raw not in _JETSTREAM_PUBLISH_FALSE_VALUES
 
 
 def pm_command(settings: Settings, loop_mode: bool, resume: bool = False) -> list[str]:
@@ -254,9 +262,9 @@ def spawn_process(
         raise
 
     if process is not None:
-        _register_process_exit_notification(process, log_path)
+        _register_process_exit_notification(process, log_path, workspace=str(cwd))
     else:
-        _register_execution_exit_notification(execution_id, log_path)
+        _register_execution_exit_notification(execution_id, log_path, workspace=str(cwd))
     handle = ProcessHandle(
         process=process,
         log_handle=None,
@@ -267,8 +275,73 @@ def spawn_process(
     return handle
 
 
-def _register_process_exit_notification(process: Any, log_path: str) -> None:
-    """Emit a realtime signal when a spawned subprocess exits."""
+def _publish_process_exit_status(
+    *,
+    workspace: str,
+    log_path: str,
+    execution_id: str = "",
+    pid: str = "",
+) -> bool:
+    if not _jetstream_publish_enabled():
+        return False
+    workspace_token = str(workspace or "").strip()
+    if not workspace_token:
+        return False
+    try:
+        roots = resolve_storage_roots(workspace_token)
+        workspace_key = str(getattr(roots, "workspace_key", "") or "").strip()
+        if not workspace_key:
+            return False
+        from polaris.infrastructure.log_pipeline.jetstream_publisher import (
+            get_log_jetstream_publisher,
+        )
+
+        now = datetime.now(timezone.utc).isoformat()
+        envelope = {
+            "schema_version": "runtime.v2",
+            "event_id": f"process-exit-{uuid.uuid4().hex[:12]}",
+            "workspace_key": workspace_key,
+            "run_id": "",
+            "channel": "status.process",
+            "kind": "process_exit",
+            "ts": now,
+            "cursor": 0,
+            "trace_id": None,
+            "payload": {
+                "status": "completed",
+                "transition": "process_exit",
+                "log_path": str(log_path or ""),
+                "execution_id": str(execution_id or ""),
+                "pid": str(pid or ""),
+            },
+            "meta": {"source": "roles.runtime.process_service"},
+        }
+        return get_log_jetstream_publisher().publish(
+            subject=f"hp.runtime.{workspace_key}.status.process",
+            payload=envelope,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("process exit JetStream publish failed: %s", exc)
+        return False
+
+
+def _publish_process_exit_status_from_thread(
+    *,
+    workspace: str,
+    log_path: str,
+    execution_id: str = "",
+    pid: str = "",
+) -> None:
+    _publish_process_exit_status(
+        workspace=workspace,
+        log_path=log_path,
+        execution_id=execution_id,
+        pid=pid,
+    )
+
+
+def _register_process_exit_notification(process: Any, log_path: str, *, workspace: str) -> None:
+    """Publish a runtime.v2 status event when a spawned subprocess exits."""
 
     def _watch() -> None:
         try:
@@ -276,9 +349,10 @@ def _register_process_exit_notification(process: Any, log_path: str) -> None:
         except (RuntimeError, ValueError) as exc:
             logger.warning("Process wait watcher failed for %s: %s", log_path, exc)
             return
-        REALTIME_SIGNAL_HUB.notify_from_thread(
-            source="process_exit",
-            path=str(log_path or ""),
+        _publish_process_exit_status_from_thread(
+            workspace=workspace,
+            log_path=log_path,
+            pid=str(getattr(process, "pid", "") or ""),
         )
 
     watcher = threading.Thread(
@@ -289,7 +363,7 @@ def _register_process_exit_notification(process: Any, log_path: str) -> None:
     watcher.start()
 
 
-def _register_execution_exit_notification(execution_id: str, log_path: str) -> None:
+def _register_execution_exit_notification(execution_id: str, log_path: str, *, workspace: str) -> None:
     """Fallback notifier when raw subprocess handle is unavailable."""
 
     def _watch() -> None:
@@ -308,9 +382,10 @@ def _register_execution_exit_notification(execution_id: str, log_path: str) -> N
                 exc,
             )
             return
-        REALTIME_SIGNAL_HUB.notify_from_thread(
-            source="process_exit",
-            path=str(log_path or ""),
+        _publish_process_exit_status_from_thread(
+            workspace=workspace,
+            log_path=log_path,
+            execution_id=execution_id,
         )
 
     watcher = threading.Thread(

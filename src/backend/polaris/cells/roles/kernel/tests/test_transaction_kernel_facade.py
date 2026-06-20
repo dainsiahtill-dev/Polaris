@@ -215,6 +215,24 @@ def test_forced_edit_blocks_retry_adds_scoped_write_file_companion() -> None:
     assert file_schema["enum"] == ["calculator.py"]
 
 
+def test_forced_edit_blocks_retry_can_disable_write_file_companion_for_scoped_repair() -> None:
+    tool_definitions = [
+        {"type": "function", "function": {"name": "edit_blocks"}},
+        {"type": "function", "function": {"name": "write_file"}},
+        {"type": "function", "function": {"name": "execute_command"}},
+    ]
+
+    strict_definitions = build_forced_write_only_retry_tool_definitions(
+        tool_definitions,
+        "edit_blocks",
+        include_verification_tools=True,
+        allow_write_file_companion_for_edit_blocks=False,
+    )
+    strict_names = extract_allowed_tool_names_from_definitions(strict_definitions)
+
+    assert strict_names == {"edit_blocks", "execute_command"}
+
+
 def test_bootstrap_followup_prefers_write_file_for_deterministic_scaffold() -> None:
     receipt = {
         "results": [

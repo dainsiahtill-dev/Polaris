@@ -57,6 +57,9 @@ interface FactoryWorkspaceProps {
   onRetryCheckpoint?: () => void;
   isLoading?: boolean;
   bench?: UseFactoryBenchResult;
+  websocketLive?: boolean;
+  websocketReconnecting?: boolean;
+  websocketAttemptCount?: number;
 }
 
 type FactoryPhase = 'idle' | 'planning' | 'executing' | 'verifying' | 'completed' | 'failed' | 'cancelled';
@@ -1103,6 +1106,9 @@ export function FactoryWorkspace({
   onRetryCheckpoint,
   isLoading = false,
   bench,
+  websocketLive,
+  websocketReconnecting,
+  websocketAttemptCount,
 }: FactoryWorkspaceProps) {
   const factoryPhase = mapRunToFactoryPhase(currentRun);
   const workspacePhase = mapRunToWorkspacePhase(currentRun);
@@ -1291,7 +1297,12 @@ export function FactoryWorkspace({
         </div>
       </header>
 
-      <BenchStatusStrip bench={bench} />
+      <BenchStatusStrip
+        bench={bench}
+        websocketLive={websocketLive}
+        websocketReconnecting={websocketReconnecting}
+        websocketAttemptCount={websocketAttemptCount}
+      />
 
       <main
         data-testid="factory-layered-layout"

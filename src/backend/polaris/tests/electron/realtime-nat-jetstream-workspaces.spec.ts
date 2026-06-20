@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, TestInfo } from "@playwright/test";
 import { expect, test } from "./fixtures";
 
 type BackendInfo = {
@@ -11,6 +11,67 @@ type BenchPostResult = {
   appended?: boolean;
   published?: boolean;
 };
+
+type WebSocketFrameCapture = {
+  direction: "sent" | "received";
+  payload: string;
+  timestamp: string;
+};
+
+async function startWebSocketFrameCapture(window: Page): Promise<{
+  frames: WebSocketFrameCapture[];
+  detach: () => Promise<void>;
+}> {
+  const frames: WebSocketFrameCapture[] = [];
+  try {
+    const session = await window.context().newCDPSession(window);
+    await session.send("Network.enable");
+    session.on("Network.webSocketFrameSent", (event) => {
+      frames.push({
+        direction: "sent",
+        payload: String(event.response?.payloadData ?? ""),
+        timestamp: new Date().toISOString(),
+      });
+    });
+    session.on("Network.webSocketFrameReceived", (event) => {
+      frames.push({
+        direction: "received",
+        payload: String(event.response?.payloadData ?? ""),
+        timestamp: new Date().toISOString(),
+      });
+    });
+    return { frames, detach: () => session.detach() };
+  } catch {
+    return { frames, detach: async () => undefined };
+  }
+}
+
+async function attachWebSocketFrames(
+  testInfo: TestInfo,
+  label: string,
+  frames: WebSocketFrameCapture[],
+): Promise<void> {
+  await testInfo.attach(`renderer-websocket-frames-${label}`, {
+    body: frames.map((frame) => JSON.stringify(frame)).join("\n"),
+    contentType: "application/jsonlines",
+  });
+}
+
+async function waitForWebSocketPayload(
+  frames: WebSocketFrameCapture[],
+  predicate: (payload: string) => boolean,
+  label: string,
+  timeoutMs = 10_000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (frames.some((frame) => predicate(frame.payload))) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for WebSocket frame: ${label}`);
+}
 
 async function getBackendInfo(window: Page): Promise<Required<BackendInfo>> {
   const backend = await window.evaluate(async () => {
@@ -90,6 +151,21 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
   await window.getByTestId("enter-director-workspace").click();
 }
 
+async function enterContextOS(window: Page): Promise<void> {
+  const directEntry = window.locator("[data-testid='control-panel-enter-contextos']");
+  if (await directEntry.isVisible().catch(() => false)) {
+    await directEntry.click();
+    return;
+  }
+  await window.getByRole("button", { name: /更多功能/ }).click();
+  const menuEntry = window.getByTestId("enter-contextos-menu-item");
+  if (await menuEntry.isVisible().catch(() => false)) {
+    await menuEntry.click();
+    return;
+  }
+  await window.getByRole("menuitem", { name: /ContextOS/i }).click();
+}
+
 async function backToMain(window: Page, backTestId: string): Promise<void> {
   await window.getByTestId(backTestId).click();
   await expect(window.getByTestId("project-progress-panel")).toBeVisible();
@@ -154,13 +230,42 @@ async function assertSurfaceReceivesBenchPush(
   sessionId: string,
   surface: string,
   index: number,
+  testInfo: TestInfo,
+  frames: WebSocketFrameCapture[],
 ): Promise<string> {
   const marker = await publishBenchMarker(window, sessionId, surface, index);
-  await expectBenchRealtimeMarker(window, sessionId, marker, surface);
+  try {
+    await expectBenchRealtimeMarker(window, sessionId, marker, surface);
+  } catch (error) {
+    await attachWebSocketFrames(testInfo, surface, frames);
+    const relevantFrames = frames
+      .filter(
+        (frame) =>
+          frame.payload.includes(sessionId) ||
+          frame.payload.includes(marker) ||
+          frame.payload.includes("SUBSCRIBE") ||
+          frame.payload.includes("UNSUBSCRIBE") ||
+          frame.payload.includes("ACK"),
+      )
+      .slice(-30);
+    console.log(
+      JSON.stringify(
+        {
+          surface,
+          marker,
+          relevant_frame_count: relevantFrames.length,
+          relevant_frames: relevantFrames,
+        },
+        null,
+        2,
+      ),
+    );
+    throw error;
+  }
   return marker;
 }
 
-test("main, Factory, PM, Chief Engineer, and Director receive live bench events over Nat-JetStream runtime.v2", async ({ window }, testInfo) => {
+test("main, Factory, PM, Chief Engineer, Director, and ContextOS receive live bench events over Nat-JetStream runtime.v2", async ({ window }, testInfo) => {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   window.on("pageerror", (error) => {
@@ -171,9 +276,19 @@ test("main, Factory, PM, Chief Engineer, and Director receive live bench events 
       consoleErrors.push(message.text());
     }
   });
+  const wsCapture = await startWebSocketFrameCapture(window);
+  await testInfo.attach("renderer-websocket-capture-ready", {
+    body: JSON.stringify({ ready: true }),
+    contentType: "application/json",
+  });
 
   await expect(window.locator("#root")).toHaveCount(1);
   await expect(window.getByTestId("project-progress-panel")).toBeVisible();
+  await waitForWebSocketPayload(
+    wsCapture.frames,
+    (payload) => payload.includes("\"type\": \"SUBSCRIBED\"") && payload.includes("\"event.bench\""),
+    "runtime.v2 event.bench subscription",
+  );
 
   const sessionId = `e2e-bench-${Date.now()}`;
   await backendJson(window, "/v2/factory/bench/sessions", {
@@ -193,7 +308,7 @@ test("main, Factory, PM, Chief Engineer, and Director receive live bench events 
 
   evidence.push({
     surface: "main",
-    marker: await assertSurfaceReceivesBenchPush(window, sessionId, "main", 1),
+    marker: await assertSurfaceReceivesBenchPush(window, sessionId, "main", 1, testInfo, wsCapture.frames),
   });
   await testInfo.attach("main-bench-realtime", {
     body: await window.screenshot({ fullPage: true }),
@@ -204,7 +319,7 @@ test("main, Factory, PM, Chief Engineer, and Director receive live bench events 
   await expect(window.getByTestId("factory-layered-layout")).toBeVisible();
   evidence.push({
     surface: "factory",
-    marker: await assertSurfaceReceivesBenchPush(window, sessionId, "factory", 2),
+    marker: await assertSurfaceReceivesBenchPush(window, sessionId, "factory", 2, testInfo, wsCapture.frames),
   });
   await testInfo.attach("factory-bench-realtime", {
     body: await window.screenshot({ fullPage: true }),
@@ -217,7 +332,7 @@ test("main, Factory, PM, Chief Engineer, and Director receive live bench events 
   await expect(window.getByTestId("pm-workspace")).toBeVisible();
   evidence.push({
     surface: "pm",
-    marker: await assertSurfaceReceivesBenchPush(window, sessionId, "pm", 3),
+    marker: await assertSurfaceReceivesBenchPush(window, sessionId, "pm", 3, testInfo, wsCapture.frames),
   });
   await testInfo.attach("pm-bench-realtime", {
     body: await window.screenshot({ fullPage: true }),
@@ -229,7 +344,7 @@ test("main, Factory, PM, Chief Engineer, and Director receive live bench events 
   await expect(window.getByTestId("chief-engineer-workspace")).toBeVisible();
   evidence.push({
     surface: "chief-engineer",
-    marker: await assertSurfaceReceivesBenchPush(window, sessionId, "chief-engineer", 4),
+    marker: await assertSurfaceReceivesBenchPush(window, sessionId, "chief-engineer", 4, testInfo, wsCapture.frames),
   });
   await testInfo.attach("chief-engineer-bench-realtime", {
     body: await window.screenshot({ fullPage: true }),
@@ -241,9 +356,21 @@ test("main, Factory, PM, Chief Engineer, and Director receive live bench events 
   await expect(window.getByTestId("director-workspace")).toBeVisible();
   evidence.push({
     surface: "director",
-    marker: await assertSurfaceReceivesBenchPush(window, sessionId, "director", 5),
+    marker: await assertSurfaceReceivesBenchPush(window, sessionId, "director", 5, testInfo, wsCapture.frames),
   });
   await testInfo.attach("director-bench-realtime", {
+    body: await window.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  });
+  await backToMain(window, "director-workspace-back");
+
+  await enterContextOS(window);
+  await expect(window.getByTestId("contextos-workspace")).toBeVisible();
+  evidence.push({
+    surface: "contextos",
+    marker: await assertSurfaceReceivesBenchPush(window, sessionId, "contextos", 6, testInfo, wsCapture.frames),
+  });
+  await testInfo.attach("contextos-bench-realtime", {
     body: await window.screenshot({ fullPage: true }),
     contentType: "image/png",
   });
@@ -260,6 +387,8 @@ test("main, Factory, PM, Chief Engineer, and Director receive live bench events 
     ),
     contentType: "application/json",
   });
+  await attachWebSocketFrames(testInfo, "complete", wsCapture.frames);
+  await wsCapture.detach();
 
   expect(pageErrors, "pageerror should remain empty during Nat-JetStream workspace audit").toEqual([]);
   expect(consoleErrors.filter((entry) => !/Unable to preload CSS/i.test(entry)), "console errors should remain empty").toEqual([]);

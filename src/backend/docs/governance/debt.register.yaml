@@ -84,3 +84,56 @@ debts:
     next_actions:
       - "Prefer canonical source imports for new consumers where re-export is not required"
       - "Extend parity coverage when additional shared contracts are added to the engine surface"
+
+  - id: "DEBT-20260620-runtime-realtime-single-rail"
+    title: "Runtime realtime transport must remain Nat-JetStream single rail"
+    classification: structural
+    status: monitoring
+    severity: high
+    scope_refs:
+      - "delivery.api_gateway"
+      - "runtime.projection"
+      - "events.fact_stream"
+      - "polaris/delivery/ws/endpoints/websocket_loop.py"
+      - "polaris/infrastructure/log_pipeline/writer.py"
+      - "polaris/kernelone/events/file_event_broadcaster.py"
+    summary: >
+      Product realtime previously had multiple implicit rails: runtime.v2
+      JetStream, process-local fanout, signal-hub file watchers, startup
+      journal snapshots, and historical SSE language. The runtime delivery
+      path is now guarded as Nat-JetStream -> /v2/ws/runtime only.
+    root_cause: >
+      Realtime semantics were spread across WebSocket delivery, log writing,
+      file-edit broadcasting, and workflow/process status writers. This allowed
+      polling/watch/fanout mechanisms to survive after runtime.v2 JetStream was
+      introduced.
+    trigger_conditions:
+      - "Editing polaris/delivery/ws/endpoints/websocket_loop.py or websocket_core.py"
+      - "Adding frontend realtime hooks or direct WebSocket/EventSource clients"
+      - "Changing log writer, workflow status, process status, or file edit event publication"
+      - "Adding an HTTP endpoint that refreshes UI state on a timer"
+    mitigations:
+      - "ADR-0095 records Nat-JetStream as the only product realtime rail"
+      - "test_realtime_single_rail_static_guard.py blocks legacy realtime tokens in product paths"
+      - "WebSocket tests verify runtime.v2 SUBSCRIBE, explicit EVENT query, and no process-local registration"
+      - "Status workflow/process and file-edit producers publish runtime.v2 JetStream envelopes"
+    residual_risks:
+      - "Full Factory L1-L8 and Playwright page-by-page realtime audit still need to be completed"
+      - "Legacy process-local modules remain in isolated infrastructure/tests until a follow-up deletion plan retires them"
+      - "Provider SSE parsing still exists for upstream LLM APIs and must not be confused with product SSE transport"
+    linked_assets:
+      adrs:
+        - "docs/governance/decisions/adr-0095-runtime-realtime-single-rail-nat-jetstream.md"
+      verification_cards:
+        - "docs/governance/templates/verification-cards/vc-20260620-runtime-realtime-single-rail.yaml"
+      verify_packs:
+        - "polaris/cells/events/fact_stream/generated/verify.pack.json"
+      tests:
+        - "polaris/tests/test_realtime_single_rail_static_guard.py"
+        - "polaris/delivery/tests/test_ws_stream_delivery.py"
+        - "polaris/tests/test_runtime_ws_migration.py"
+        - "polaris/tests/test_websocket_architecture_integration.py"
+    next_actions:
+      - "Run Factory L1-L8 after focused backend/frontend realtime tests are green"
+      - "Run Playwright audit for Home, Factory, PM, ChiefEngineer, Director, and ContextOS realtime updates"
+      - "Plan deletion or archival of process-local realtime infrastructure once no internal tests or adapters depend on it"
