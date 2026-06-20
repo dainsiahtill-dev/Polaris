@@ -156,9 +156,11 @@ class FactoryRunService:
         from .factory_store import FactoryStore
 
         self.workspace = Path(workspace)
-        from polaris.kernelone._runtime_config import get_workspace_metadata_dir_name
-
-        self.cache_root = cache_root or self.workspace / get_workspace_metadata_dir_name()
+        self.cache_root = (
+            Path(cache_root)
+            if cache_root is not None
+            else Path(resolve_storage_roots(str(self.workspace)).runtime_root)
+        )
         self.store = FactoryStore(self.cache_root / "factory")
         # 细粒度锁: 按 run_id 哈希分片，减少竞争
         self._run_locks: list[asyncio.Lock] = [asyncio.Lock() for _ in range(self._LOCK_BUCKETS)]

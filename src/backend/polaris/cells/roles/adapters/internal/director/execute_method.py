@@ -18,6 +18,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs.materialization import materialized_file_paths
+
 # ``scan_workspace_artifact_quality`` MUST stay a name on THIS module: the test
 # suite monkeypatches ``execute_method.scan_workspace_artifact_quality`` and the
 # moved quality/repair callers resolve it through this module namespace (``_em``)
@@ -128,6 +130,13 @@ def _task_targets_missing_in_workspace(task: dict[str, Any], workspace: str) -> 
         if not _workspace_path_exists_case_insensitive(workspace_path, normalized):
             return True
     return False
+
+
+def _adapter_materialized_file_paths(
+    adapter: Any,
+    reported_paths: list[str],
+) -> tuple[list[str], list[str]]:
+    return materialized_file_paths(str(getattr(adapter, "workspace", "") or ""), reported_paths)
 
 
 def _select_empty_write_content_retry_tool_name(
@@ -1628,6 +1637,63 @@ async def _execute_standard_llm_flow(
         return semantic_failed_result
 
     current_files, new_files, modified_files, all_affected_files, tool_results = state.as_locals()
+    reported_affected_files = list(all_affected_files)
+    all_affected_files, unmaterialized_affected_files = _adapter_materialized_file_paths(
+        adapter,
+        reported_affected_files,
+    )
+    new_files = [path for path in new_files if path in all_affected_files]
+    modified_files = [path for path in modified_files if path in all_affected_files]
+    if unmaterialized_affected_files:
+        decision_signals.append(
+            {
+                "code": "director.materialization.unmaterialized_reported_files",
+                "severity": "error",
+                "detail": "Director reported changed_files that did not materialize on disk",
+                "reported_changed_files": reported_affected_files,
+                "unmaterialized_reported_changed_files": unmaterialized_affected_files,
+            }
+        )
+    if not all_affected_files:
+        error = "Director reported no physically materialized changed files"
+        failure_metadata = {
+            "adapter_result": {
+                "tools_executed": len(tool_results),
+                "write_tool_evidence": write_tool_evidence,
+                "reported_changed_files": reported_affected_files,
+                "unmaterialized_reported_changed_files": unmaterialized_affected_files,
+                "materialization_mode": materialization_mode,
+            }
+        }
+        if board_claim_applied and task_claim_session_id:
+            _finalize_claimed_execution(
+                adapter,
+                target_task_id=target_task_id,
+                outcome="failed",
+                session_id=task_claim_session_id,
+                error=error,
+                metadata=failure_metadata,
+            )
+        adapter._update_task_progress(target_task_id, "failed")
+        return {
+            "success": False,
+            "task_id": target_task_id,
+            "error": error,
+            "error_code": "director.materialization.no_physical_files",
+            "failure_stage": "director_materialization",
+            "root_cause_hint": error,
+            "tools_executed": len(tool_results),
+            "tool_results": tool_results,
+            "changed_files": [],
+            "new_files": [],
+            "modified_files": [],
+            "reported_changed_files": reported_affected_files,
+            "unmaterialized_reported_changed_files": unmaterialized_affected_files,
+            "decision_signals": decision_signals,
+            "qa_required_for_final_verdict": True,
+            "artifacts": [],
+            "materialization_mode": materialization_mode,
+        }
 
     # 返回结果
     completion_metadata: dict[str, Any] = {
@@ -1640,6 +1706,8 @@ async def _execute_standard_llm_flow(
             "new_file_count": len(new_files),
             "modified_files": modified_files[:20],
             "modified_file_count": len(modified_files),
+            "reported_changed_files": reported_affected_files[:40],
+            "unmaterialized_reported_changed_files": unmaterialized_affected_files[:40],
             "materialization_mode": materialization_mode,
         }
     }

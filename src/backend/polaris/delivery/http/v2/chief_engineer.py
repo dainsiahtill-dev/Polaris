@@ -954,8 +954,7 @@ async def get_chief_engineer_llm_events(
         limit=limit,
     )
     resolved_workspace = _workspace_value(_settings_for_request(request, workspace))
-    if workspace.strip():
-        events = filter_llm_events_by_workspace(events, resolved_workspace)
+    events = filter_llm_events_by_workspace(events, resolved_workspace)
     return {
         "run_id": run_id,
         "task_id": task_id,

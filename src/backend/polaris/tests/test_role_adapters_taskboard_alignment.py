@@ -254,8 +254,10 @@ def test_pm_adapter_preserves_execution_backend_metadata_on_board_tasks(tmp_path
     )
 
     assert len(created) == 1
-    metadata = created[0].get("metadata") if isinstance(created[0].get("metadata"), dict) else {}
-    projection = metadata.get("projection") if isinstance(metadata.get("projection"), dict) else {}
+    raw_metadata = created[0].get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_projection = metadata.get("projection")
+    projection: dict[str, Any] = raw_projection if isinstance(raw_projection, dict) else {}
     assert metadata.get("execution_backend") == "projection_generate"
     assert projection.get("scenario_id") == "scenario_alpha"
     assert projection.get("project_slug") == "projection_lab"
@@ -327,8 +329,10 @@ async def test_pm_adapter_projection_hint_synthesizes_generic_projection_contrac
     assert result["success"] is True
     board_tasks = adapter.task_board.list_all()
     assert len(board_tasks) >= 3
-    first_metadata = board_tasks[0].metadata or {}
-    projection = first_metadata.get("projection") if isinstance(first_metadata.get("projection"), dict) else {}
+    raw_first_metadata = board_tasks[0].metadata
+    first_metadata: dict[str, Any] = raw_first_metadata if isinstance(raw_first_metadata, dict) else {}
+    raw_projection = first_metadata.get("projection")
+    projection: dict[str, Any] = raw_projection if isinstance(raw_projection, dict) else {}
     assert first_metadata.get("execution_backend") == "projection_generate"
     assert projection.get("scenario_id") == "scenario_alpha"
     assert projection.get("project_slug") == "projection_lab"
@@ -376,7 +380,8 @@ async def test_pm_adapter_deterministic_contracts_bypass_llm(monkeypatch: pytest
     assert int(result.get("tasks_created") or 0) >= 3
     signal_path = resolve_signal_path(str(tmp_path), "pm", "pm_planning")
     payload = json.loads(signal_path.read_text(encoding="utf-8"))
-    rows = payload.get("signals") if isinstance(payload, dict) else []
+    raw_rows = payload.get("signals") if isinstance(payload, dict) else []
+    rows: list[Any] = raw_rows if isinstance(raw_rows, list) else []
     assert any(
         isinstance(item, dict) and str(item.get("code") or "") == "pm.contracts.deterministic_fallback" for item in rows
     )
@@ -586,6 +591,57 @@ def test_pm_adapter_create_board_tasks_deduplicates_existing_semantic_tasks(tmp_
     assert int(existing.id) in [int(item) for item in resolved_dep]
 
 
+def test_pm_adapter_create_board_tasks_preserves_execution_contract_paths(tmp_path: Path) -> None:
+    adapter = PMAdapter(workspace=str(tmp_path))
+
+    target_files = [
+        "package.json",
+        "tsconfig.json",
+        "src/models/flower.ts",
+        "src/models/firefly.ts",
+        "src/models/moonphase.ts",
+        "src/models/garden.ts",
+        "src/index.ts",
+    ]
+    scope_paths = [
+        "package.json",
+        "tsconfig.json",
+        "src/models/flower.ts",
+        "src/models/firefly.ts",
+        "src/models/moonphase.ts",
+        "src/models/garden.ts",
+    ]
+    context_files = ["requirements.md"]
+
+    created = adapter._create_board_tasks(
+        [
+            {
+                "id": "TASK-1",
+                "title": "实现 TypeScript 项目骨架与核心模型",
+                "goal": "交付 TypeScript/npm 项目骨架和核心模型",
+                "description": "创建 package.json、tsconfig.json、src/index.ts 与核心模型文件",
+                "scope": "package.json, tsconfig.json, src/models/Flower.ts, src/models/Firefly.ts",
+                "scope_paths": scope_paths,
+                "target_files": target_files,
+                "context_files": context_files,
+                "steps": ["创建项目配置", "实现模型", "实现入口"],
+                "acceptance": ["所有 target files 存在且非空"],
+                "depends_on": [],
+                "phase": "implementation",
+                "assigned_to": "Director",
+            }
+        ]
+    )
+
+    assert len(created) == 1
+    task = adapter.task_board.get(created[0]["id"])
+    assert task is not None
+    metadata = task.metadata or {}
+    assert metadata.get("target_files") == target_files
+    assert metadata.get("scope_paths") == scope_paths
+    assert metadata.get("context_files") == context_files
+
+
 def test_pm_adapter_cleans_existing_duplicate_tasks_before_new_plan(tmp_path: Path) -> None:
     adapter = PMAdapter(workspace=str(tmp_path))
     keep = adapter.task_board.create(
@@ -779,8 +835,10 @@ async def test_director_adapter_projection_backend_is_explicit_and_optional(
     assert result["execution_backend"] == "projection_generate"
     board_row = adapter.task_board.get_task(result["task_id"])
     assert isinstance(board_row, dict)
-    metadata = board_row.get("metadata") if isinstance(board_row.get("metadata"), dict) else {}
-    projection = metadata.get("projection") if isinstance(metadata.get("projection"), dict) else {}
+    raw_metadata = board_row.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_projection = metadata.get("projection")
+    projection: dict[str, Any] = raw_projection if isinstance(raw_projection, dict) else {}
     assert metadata.get("execution_backend") == "projection_generate"
     assert projection.get("scenario_id") == "scenario_alpha"
     assert projection.get("project_slug") == "projection_lab"
@@ -1448,7 +1506,8 @@ async def test_qa_adapter_reopens_completed_director_task_on_fail(tmp_path: Path
     metadata = board_row.metadata if isinstance(board_row.metadata, dict) else {}
     assert bool(metadata.get("qa_rework_requested")) is True
     assert int(metadata.get("qa_rework_retry_count") or 0) == 1
-    adapter_result = metadata.get("adapter_result") if isinstance(metadata.get("adapter_result"), dict) else {}
+    raw_adapter_result = metadata.get("adapter_result")
+    adapter_result: dict[str, Any] = raw_adapter_result if isinstance(raw_adapter_result, dict) else {}
     assert adapter_result.get("qa_passed") is False
 
 

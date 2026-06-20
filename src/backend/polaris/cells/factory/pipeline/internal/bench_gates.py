@@ -835,6 +835,21 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
     binding_id = _first_string(
         raw.get("binding_id"), data.get("binding_id"), data_metadata.get("binding_id"), extra_fields.get("binding_id")
     )
+    source = _first_string(
+        raw.get("source"),
+        data.get("source"),
+        metadata.get("source"),
+        data_metadata.get("source"),
+        extra_fields.get("source"),
+    )
+    cache_hit = bool(
+        raw.get("cache_hit")
+        or data.get("cache_hit")
+        or metadata.get("cache_hit")
+        or data_metadata.get("cache_hit")
+        or extra_fields.get("cache_hit")
+        or source.lower() == "cache"
+    )
     prompt_tokens = data.get("prompt_tokens", tokens.get("prompt"))
     completion_tokens = data.get("completion_tokens", tokens.get("completion"))
     total_tokens = tokens.get("total")
@@ -858,6 +873,8 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
         "provider_id": provider,
         "model": model,
         "binding_id": binding_id,
+        "source": source,
+        "cache_hit": cache_hit,
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
@@ -1003,16 +1020,19 @@ def _loose_binding_key(row: dict[str, Any]) -> str:
     return f"{_norm_text(row.get('provider_id') or row.get('provider'))}|{_norm_text(row.get('model'))}"
 
 
-def _model_key(row: dict[str, Any]) -> str:
-    return _norm_text(row.get("model"))
-
-
 def _matches_family(role: str, row: dict[str, Any]) -> bool:
     alternatives = _ROLE_FAMILIES.get(role)
     if not alternatives:
         return True
     haystack = f"{row.get('provider_id') or row.get('provider') or ''} {row.get('model') or ''}".lower()
     return any(all(token in haystack for token in alternative) for alternative in alternatives)
+
+
+def _is_real_llm_route_event(event: dict[str, Any]) -> bool:
+    source = _norm_text(event.get("source"))
+    provider = _norm_text(event.get("provider_id") or event.get("provider"))
+    model = _norm_text(event.get("model"))
+    return bool(event.get("invocation") and source == "llm" and not event.get("cache_hit") and provider and model)
 
 
 def build_llm_route_audit(
@@ -1025,9 +1045,10 @@ def build_llm_route_audit(
     expected = (
         expected_bindings if isinstance(expected_bindings, dict) else resolve_expected_llm_bindings(required_roles)
     )
-    evidence = [
+    candidate_events = [
         event for event in events if event.get("invocation") and _norm_role(event.get("role")) in required_roles
     ]
+    evidence = [event for event in candidate_events if _is_real_llm_route_event(event)]
     terminal = [event for event in evidence if event.get("terminal")]
     by_role: dict[str, list[dict[str, Any]]] = {}
     for event in terminal or evidence:
@@ -1041,38 +1062,24 @@ def build_llm_route_audit(
         observed = list(by_role.get(normalized) or [])
         configured_keys = {_binding_key(row) for row in configured if _loose_binding_key(row) != "|"}
         configured_loose = {_loose_binding_key(row) for row in configured if _loose_binding_key(row) != "|"}
-        configured_models = {_model_key(row) for row in configured if _model_key(row)}
         observed_keys = {_binding_key(row) for row in observed if _loose_binding_key(row) != "|"}
         observed_loose = {_loose_binding_key(row) for row in observed if _loose_binding_key(row) != "|"}
-        observed_providerless_models = {
-            _model_key(row)
-            for row in observed
-            if _model_key(row) and not _norm_text(row.get("provider_id") or row.get("provider"))
-        }
         missing = sorted(
-            key
-            for key in configured_keys
-            if key not in observed_keys
-            and key.rsplit("|", 1)[0] not in observed_loose
-            and key.split("|", 2)[1] not in observed_providerless_models
+            key for key in configured_keys if key not in observed_keys and key.rsplit("|", 1)[0] not in observed_loose
         )
         family_ok = any(_matches_family(normalized, row) for row in observed)
         binding_ok = bool(configured) and bool(observed) and not missing
         if normalized != "director" and configured_loose:
-            binding_ok = bool(observed_loose.intersection(configured_loose)) or bool(
-                observed_providerless_models.intersection(configured_models)
-            )
+            binding_ok = bool(observed_loose.intersection(configured_loose))
         multi_route_ok = True
         if normalized == "director":
-            configured_routes = configured_loose or configured_models
+            configured_routes = configured_loose
             multi_route_ok = bool(configured_routes) and not missing
             if require_all_director_routes:
                 binding_ok = binding_ok and multi_route_ok
             else:
                 binding_ok = bool(observed) and (
-                    not configured_routes
-                    or bool(observed_loose.intersection(configured_loose))
-                    or bool(observed_providerless_models.intersection(configured_models))
+                    not configured_routes or bool(observed_loose.intersection(configured_loose))
                 )
         role_ok = binding_ok and family_ok
         role_results[normalized] = {
@@ -1092,6 +1099,8 @@ def build_llm_route_audit(
         "ok": ok,
         "roles": role_results,
         "events_observed": len(evidence),
+        "candidate_events_observed": len(candidate_events),
+        "events_rejected": len(candidate_events) - len(evidence),
         "terminal_events_observed": len(terminal),
         "summary": "LLM route audit passed" if ok else "LLM route audit failed: " + ", ".join(failing_roles),
     }

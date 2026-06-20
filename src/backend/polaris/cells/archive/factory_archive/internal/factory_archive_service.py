@@ -17,12 +17,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from polaris.cells.archive.run_archive.public.service import (
+from polaris.infrastructure.storage import LocalFileSystemAdapter
+from polaris.kernelone.fs import KernelFileSystem
+from polaris.kernelone.storage.history_manifest_repository import (
     FactoryIndexEntry,
     HistoryManifestRepository,
 )
-from polaris.infrastructure.storage import LocalFileSystemAdapter
-from polaris.kernelone.fs import KernelFileSystem
 
 logger = logging.getLogger(__name__)
 

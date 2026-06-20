@@ -11,7 +11,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from polaris.cells.llm import control_plane as llm_control_plane
 from polaris.cells.llm.provider_config.public.contracts import (
     ProviderConfigValidationError,
     RoleNotConfiguredError,
@@ -28,13 +27,17 @@ _DEFAULT_CONNECTIVITY_SUITES = ["connectivity"]
 
 
 def load_llm_config_port(workspace: str, cache_root: str) -> dict[str, Any]:
-    """Delegate config loading through the control-plane module at call time.
+    """Load LLM config via the KernelOne config-store primitive.
 
     Keeping this wrapper at module scope preserves a stable monkeypatch seam for
-    tests while still honoring patches applied to
-    ``polaris.cells.llm.control_plane.load_llm_config_port``.
+    tests (``...test_context.load_llm_config_port``) while sourcing config
+    directly from the shared KernelOne primitive instead of routing through the
+    ``llm.control_plane`` cell. This removes the cross-cell back-edge from
+    ``llm.provider_config`` to ``llm.control_plane``.
     """
-    return llm_control_plane.load_llm_config_port(workspace, cache_root)
+    from polaris.kernelone.llm import config_store
+
+    return config_store.load_llm_config(workspace, cache_root)
 
 
 @dataclass(frozen=True)

@@ -498,6 +498,7 @@ async def test_role_llm_events_returns_role_scoped_kernel_events(client: AsyncCl
     """Role LLM events should return filtered events from the shared emitter."""
     mock_event = MagicMock()
     mock_event.event_type = "llm_call_start"
+    mock_event.metadata = {"workspace": "."}
     mock_event.to_dict.return_value = {
         "event_type": "llm_call_start",
         "role": "pm",
@@ -576,6 +577,7 @@ async def test_role_all_llm_events_returns_filtered_kernel_events(client: AsyncC
     """All-role LLM events should expose shared emitter events and counts."""
     mock_event = MagicMock()
     mock_event.event_type = "llm_call_end"
+    mock_event.metadata = {"workspace": "."}
     mock_event.to_dict.return_value = {
         "event_type": "llm_call_end",
         "role": "director",

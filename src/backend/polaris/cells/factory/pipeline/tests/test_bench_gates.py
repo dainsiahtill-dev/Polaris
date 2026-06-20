@@ -14,6 +14,26 @@ from polaris.cells.factory.pipeline.internal.bench_gates import (
 )
 
 
+def _real_llm_event(
+    role: str,
+    provider_id: str,
+    model: str,
+    binding_id: str = "",
+) -> dict[str, Any]:
+    event: dict[str, Any] = {
+        "event": "llm_call_end",
+        "role": role,
+        "provider_id": provider_id,
+        "model": model,
+        "source": "llm",
+        "terminal": True,
+        "invocation": True,
+    }
+    if binding_id:
+        event["binding_id"] = binding_id
+    return event
+
+
 def test_real_run_gate_executes_python_build_and_cli_entrypoint(tmp_path: Path) -> None:
     (tmp_path / "main.py").write_text(
         "from __future__ import annotations\n"
@@ -366,48 +386,11 @@ def test_llm_route_audit_requires_actual_bound_families_and_all_director_routes(
         ],
     }
     events = [
-        {
-            "event": "llm_call_end",
-            "role": "pm",
-            "provider_id": "kimi-a",
-            "model": "kimi-k2",
-            "terminal": True,
-            "invocation": True,
-        },
-        {
-            "event": "llm_call_end",
-            "role": "chief_engineer",
-            "provider_id": "kimi-a",
-            "model": "kimi-k2",
-            "terminal": True,
-            "invocation": True,
-        },
-        {
-            "event": "llm_call_end",
-            "role": "qa",
-            "provider_id": "minimax-a",
-            "model": "MiniMax-M3",
-            "terminal": True,
-            "invocation": True,
-        },
-        {
-            "event": "llm_call_end",
-            "role": "director",
-            "provider_id": "qwen-gpu0",
-            "model": "qwen3.6-27b",
-            "binding_id": "d0",
-            "terminal": True,
-            "invocation": True,
-        },
-        {
-            "event": "llm_call_end",
-            "role": "director",
-            "provider_id": "qwen-gpu1",
-            "model": "qwen3.6-27b",
-            "binding_id": "d1",
-            "terminal": True,
-            "invocation": True,
-        },
+        _real_llm_event("pm", "kimi-a", "kimi-k2"),
+        _real_llm_event("chief_engineer", "kimi-a", "kimi-k2"),
+        _real_llm_event("qa", "minimax-a", "MiniMax-M3"),
+        _real_llm_event("director", "qwen-gpu0", "qwen3.6-27b", "d0"),
+        _real_llm_event("director", "qwen-gpu1", "qwen3.6-27b", "d1"),
     ]
 
     audit = build_llm_route_audit(events, expected_bindings=expected)
@@ -427,39 +410,10 @@ def test_llm_route_audit_fails_when_a_director_route_is_unobserved() -> None:
         ],
     }
     events = [
-        {
-            "event": "llm_call_end",
-            "role": "pm",
-            "provider_id": "kimi-a",
-            "model": "kimi-k2",
-            "terminal": True,
-            "invocation": True,
-        },
-        {
-            "event": "llm_call_end",
-            "role": "chief_engineer",
-            "provider_id": "kimi-a",
-            "model": "kimi-k2",
-            "terminal": True,
-            "invocation": True,
-        },
-        {
-            "event": "llm_call_end",
-            "role": "qa",
-            "provider_id": "minimax-a",
-            "model": "MiniMax-M3",
-            "terminal": True,
-            "invocation": True,
-        },
-        {
-            "event": "llm_call_end",
-            "role": "director",
-            "provider_id": "qwen-gpu0",
-            "model": "qwen3.6-27b",
-            "binding_id": "d0",
-            "terminal": True,
-            "invocation": True,
-        },
+        _real_llm_event("pm", "kimi-a", "kimi-k2"),
+        _real_llm_event("chief_engineer", "kimi-a", "kimi-k2"),
+        _real_llm_event("qa", "minimax-a", "MiniMax-M3"),
+        _real_llm_event("director", "qwen-gpu0", "qwen3.6-27b", "d0"),
     ]
 
     audit = build_llm_route_audit(events, expected_bindings=expected)
@@ -479,37 +433,10 @@ def test_llm_route_audit_accepts_single_live_director_route() -> None:
         ],
     }
     events = [
-        {
-            "event": "llm_call_end",
-            "role": "pm",
-            "provider_id": "kimi-a",
-            "model": "kimi-k2",
-            "terminal": True,
-            "invocation": True,
-        },
-        {
-            "event": "llm_call_end",
-            "role": "chief_engineer",
-            "provider_id": "kimi-a",
-            "model": "kimi-k2",
-            "terminal": True,
-            "invocation": True,
-        },
-        {
-            "event": "llm_call_end",
-            "role": "qa",
-            "provider_id": "minimax-a",
-            "model": "MiniMax-M3",
-            "terminal": True,
-            "invocation": True,
-        },
-        {
-            "event": "llm_call_end",
-            "role": "director",
-            "model": "qwen3.6-27b-gpu1",
-            "terminal": True,
-            "invocation": True,
-        },
+        _real_llm_event("pm", "kimi-a", "kimi-k2"),
+        _real_llm_event("chief_engineer", "kimi-a", "kimi-k2"),
+        _real_llm_event("qa", "minimax-a", "MiniMax-M3"),
+        _real_llm_event("director", "qwen-gpu1", "qwen3.6-27b-gpu1", "d1"),
     ]
 
     audit = build_llm_route_audit(events, expected_bindings=expected)
@@ -528,15 +455,9 @@ def test_llm_route_audit_can_relax_director_route_coverage_for_serial_bench() ->
         ],
     }
     events = [
-        {"event": "llm_call_end", "role": "pm", "model": "kimi-for-coding", "terminal": True, "invocation": True},
-        {"event": "llm_call_end", "role": "qa", "model": "MiniMax-M3", "terminal": True, "invocation": True},
-        {
-            "event": "llm_call_end",
-            "role": "director",
-            "model": "qwen3.6-27b-gpu1",
-            "terminal": True,
-            "invocation": True,
-        },
+        _real_llm_event("pm", "kimi-a", "kimi-for-coding", "pm0"),
+        _real_llm_event("qa", "minimax-a", "MiniMax-M3", "qa0"),
+        _real_llm_event("director", "qwen-b", "qwen3.6-27b-gpu1", "d1"),
     ]
 
     audit = build_llm_route_audit(
@@ -552,7 +473,7 @@ def test_llm_route_audit_can_relax_director_route_coverage_for_serial_bench() ->
     assert audit["roles"]["director"]["missing_bindings"]
 
 
-def test_llm_route_audit_matches_providerless_events_by_model() -> None:
+def test_llm_route_audit_rejects_providerless_and_cached_events() -> None:
     expected = {
         "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-for-coding", "binding_id": "pm0"}],
         "chief_engineer": [
@@ -573,18 +494,30 @@ def test_llm_route_audit_matches_providerless_events_by_model() -> None:
             "terminal": True,
             "invocation": True,
         },
-        {"event": "llm_call_end", "role": "qa", "model": "MiniMax-M3", "terminal": True, "invocation": True},
         {
             "event": "llm_call_end",
-            "role": "director",
-            "model": "qwen3.6-27b-gpu0",
+            "role": "qa",
+            "provider_id": "minimax-a",
+            "model": "MiniMax-M3",
+            "source": "cache",
             "terminal": True,
             "invocation": True,
         },
         {
             "event": "llm_call_end",
             "role": "director",
+            "model": "qwen3.6-27b-gpu0",
+            "source": "llm",
+            "terminal": True,
+            "invocation": True,
+        },
+        {
+            "event": "llm_call_end",
+            "role": "director",
+            "provider_id": "qwen-b",
             "model": "qwen3.6-27b-gpu1",
+            "source": "llm",
+            "cache_hit": True,
             "terminal": True,
             "invocation": True,
         },
@@ -592,8 +525,11 @@ def test_llm_route_audit_matches_providerless_events_by_model() -> None:
 
     audit = build_llm_route_audit(events, expected_bindings=expected)
 
-    assert audit["ok"] is True
-    assert audit["roles"]["director"]["missing_bindings"] == []
+    assert audit["ok"] is False
+    assert audit["events_rejected"] == len(events)
+    assert audit["roles"]["pm"]["observed_count"] == 0
+    assert audit["roles"]["qa"]["observed_count"] == 0
+    assert audit["roles"]["director"]["missing_bindings"]
 
 
 def test_failure_taxonomy_prefers_llm_route_before_generic_chain_failure() -> None:

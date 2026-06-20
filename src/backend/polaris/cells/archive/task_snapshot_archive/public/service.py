@@ -15,10 +15,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from polaris.cells.archive.run_archive.public.service import (
-    HistoryManifestRepository,
-    TaskIndexEntry,
-)
 from polaris.cells.archive.task_snapshot_archive.public.contracts import (
     ArchiveManifestV1,
     ArchiveTaskSnapshotCommandV1,
@@ -29,6 +25,10 @@ from polaris.cells.archive.task_snapshot_archive.public.contracts import (
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.storage import resolve_storage_roots
+from polaris.kernelone.storage.history_manifest_repository import (
+    HistoryManifestRepository,
+    TaskIndexEntry,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine

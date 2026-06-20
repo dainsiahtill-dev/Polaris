@@ -11,8 +11,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from polaris.cells.llm.control_plane import load_llm_config_port
 from polaris.cells.llm.provider_config.public.contracts import ProviderNotFoundError
+
+
+def load_llm_config_port(workspace: str, cache_root: str) -> dict[str, Any]:
+    """Load LLM config via the KernelOne config-store primitive.
+
+    Keeping this wrapper at module scope preserves a stable monkeypatch seam for
+    tests (``...provider_context.load_llm_config_port``) while sourcing config
+    directly from the shared KernelOne primitive instead of routing through the
+    ``llm.control_plane`` cell. This removes the cross-cell back-edge from
+    ``llm.provider_config`` to ``llm.control_plane``.
+    """
+    from polaris.kernelone.llm import config_store
+
+    return config_store.load_llm_config(workspace, cache_root)
 
 
 @dataclass(frozen=True)

@@ -309,40 +309,38 @@ class BoundaryValidationHandler:
                 "workspace_guard_ref": "policy.workspace_guard:decision",
             }
         )
-        try:
-            from polaris.cells.architect.design.public.contracts import GenerateArchitectureDesignCommandV1
-            from polaris.cells.architect.design.public.service import generate_architecture_design
-
-            design_command = GenerateArchitectureDesignCommandV1(
-                workspace=_payload_string(command.payload, "workspace", runtime_object.identity.workspace),
-                objective=_payload_string(command.payload, "objective"),
-                constraints=boundary_constraints,
-                context=boundary_context,
-            )
-        except (TypeError, ValueError) as exc:
-            raise CapabilityInvocationError(
-                str(exc),
-                code="invalid_architect_design_command",
-                owner_cell=capability.owner_cell,
-                capability_available=True,
-            ) from exc
-
-        timeout_seconds = float(command.payload.get("timeout_seconds", 30.0))
+        # The ``architect.design`` boundary invoker is supplied through the typed
+        # ``CapabilityDeps`` seam by the composition root. The handler owns NO
+        # runtime-scope ``architect.design`` import: command construction +
+        # invocation are both encapsulated behind ``run_boundary_design`` so the
+        # ``roles.runtime`` → ``architect.design`` cell edge stays absent. When the
+        # invoker is unwired the capability cannot run, so we fail closed.
         architect_design_service = deps.architect_design_service
+        if architect_design_service is None:
+            raise CapabilityInvocationError(
+                "architect.design boundary invoker is not wired",
+                code="architect_design_failed",
+                owner_cell=capability.owner_cell,
+                capability_available=False,
+                metadata=_capability_available_metadata(capability.capability_id, guard_metadata),
+            )
+
+        workspace = _payload_string(command.payload, "workspace", runtime_object.identity.workspace)
+        objective = _payload_string(command.payload, "objective")
+        timeout_seconds = float(command.payload.get("timeout_seconds", 30.0))
         try:
-            if architect_design_service is None:
-                design_result: ArchitectureDesignResultV1 = _run_with_timeout(
-                    lambda: generate_architecture_design(design_command),
-                    timeout_seconds,
-                )
-            else:
-                design_result = cast(
-                    "ArchitectureDesignResultV1",
-                    _run_with_timeout(
-                        lambda: architect_design_service.generate_architecture_design(design_command),
-                        timeout_seconds,
+            design_result = cast(
+                "ArchitectureDesignResultV1",
+                _run_with_timeout(
+                    lambda: architect_design_service.run_boundary_design(
+                        workspace=workspace,
+                        objective=objective,
+                        constraints=boundary_constraints,
+                        context=boundary_context,
                     ),
-                )
+                    timeout_seconds,
+                ),
+            )
         except FutureTimeoutError as exc:
             raise CapabilityInvocationError(
                 f"architect design timed out after {timeout_seconds:g}s",
@@ -350,6 +348,13 @@ class BoundaryValidationHandler:
                 owner_cell=capability.owner_cell,
                 capability_available=False,
                 metadata=_capability_available_metadata(capability.capability_id, guard_metadata),
+            ) from exc
+        except (TypeError, ValueError) as exc:
+            raise CapabilityInvocationError(
+                str(exc),
+                code="invalid_architect_design_command",
+                owner_cell=capability.owner_cell,
+                capability_available=True,
             ) from exc
         except Exception as exc:
             raise CapabilityInvocationError(

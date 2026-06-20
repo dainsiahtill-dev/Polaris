@@ -248,8 +248,7 @@ async def get_role_llm_events(
     events = emitter.get_events(run_id=run_id, task_id=task_id, role=role, limit=limit)
     state = get_state(request)
     resolved_workspace = requested_or_active_workspace(state.settings, workspace)
-    if workspace.strip():
-        events = filter_llm_events_by_workspace(events, resolved_workspace)
+    events = filter_llm_events_by_workspace(events, resolved_workspace)
 
     # 分类统计
     stats = {
@@ -286,8 +285,7 @@ async def get_all_llm_events(
     events = emitter.get_events(run_id=run_id, task_id=task_id, role=role, limit=limit)
     state = get_state(request)
     resolved_workspace = requested_or_active_workspace(state.settings, workspace)
-    if workspace.strip():
-        events = filter_llm_events_by_workspace(events, resolved_workspace)
+    events = filter_llm_events_by_workspace(events, resolved_workspace)
 
     return {
         "events": [e.to_dict() for e in events],

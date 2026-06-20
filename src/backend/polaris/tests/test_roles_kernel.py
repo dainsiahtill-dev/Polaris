@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from polaris.cells.roles.adapters.internal import runtime_dialogue
+from polaris.cells.roles.adapters.public.service import WorkflowRoleAdapter
 from polaris.cells.roles.kernel.internal.kernel.helpers import extract_structured_tool_calls
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 from polaris.cells.roles.runtime.public.service import (
@@ -24,7 +25,6 @@ from polaris.cells.roles.runtime.public.service import (
     RoleToolGateway,
     RoleTurnRequest,
     ToolAuthorizationError,
-    WorkflowRoleAdapter,
 )
 
 

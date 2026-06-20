@@ -105,6 +105,12 @@ _TS_RETURN_OBJECT_SEMICOLON_ERROR_RE = re.compile(
 )
 
 
+_TS_COMMA_EXPECTED_SYNTAX_ERROR_RE = re.compile(
+    r"syntax error in (?P<path>\S+): .*?(?:TS1005|',' expected)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
 _TS_ESCAPED_NEWLINE_IN_LINE_COMMENT_ERROR_RE = re.compile(
     r"TypeScript escaped newline in line comment before code in (?P<path>\S+)",
     re.IGNORECASE,
@@ -153,6 +159,14 @@ _TS_RETURN_OBJECT_END_RE = re.compile(r"^\s*\};\s*$")
 
 
 _TS_OBJECT_PROPERTY_SEMICOLON_LINE_RE = re.compile(r"^(?P<indent>\s*)(?P<name>[A-Za-z_$][\w$]*)\s*;\s*$")
+
+
+_TS_OBJECT_LITERAL_START_RE = re.compile(r"(?:\breturn\s*|=\s*)\{\s*$")
+
+
+_TS_OBJECT_PROPERTY_VALUE_SEMICOLON_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<property>(?:\[[^\]]+\]|[A-Za-z_$][\w$]*|['\"][^'\"]+['\"])\s*:\s*[^;{}]+);\s*$"
+)
 
 
 _TS_ZOD_INFERRED_TYPE_ALIAS_LINE_RE = re.compile(
@@ -1403,6 +1417,13 @@ def _apply_deterministic_materialization_quality_repairs(
         )
     )
     results.extend(
+        _apply_deterministic_typescript_relative_import_case_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
         _apply_deterministic_npm_test_script_repair(
             adapter,
             task_id=task_id,
@@ -1544,6 +1565,149 @@ def _apply_deterministic_declared_target_contract_repairs(
         "write_tool_evidence": has_successful_write_tool(results),
         "source_tools": source_tools,
     }
+
+
+def _resolve_case_variant_relative_path(root: Path, relative_path: str) -> str:
+    current = root
+    parts = [part for part in Path(relative_path).parts if part not in {"", "."}]
+    resolved_parts: list[str] = []
+    for part in parts:
+        candidate = current / part
+        if candidate.exists():
+            current = candidate
+            resolved_parts.append(part)
+            continue
+        if not current.is_dir():
+            return ""
+        try:
+            match = next((item for item in current.iterdir() if item.name.lower() == part.lower()), None)
+        except OSError:
+            return ""
+        if match is None:
+            return ""
+        current = match
+        resolved_parts.append(match.name)
+    try:
+        resolved = current.resolve()
+        resolved.relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return ""
+    return "/".join(resolved_parts)
+
+
+def _relative_import_specifier_for_actual_path(
+    *,
+    root: Path,
+    importer_rel: str,
+    original_specifier: str,
+    actual_target_rel: str,
+) -> str:
+    importer_path = (root / importer_rel).resolve()
+    actual_target_path = (root / actual_target_rel).resolve()
+    relative = os.path.relpath(actual_target_path, importer_path.parent).replace(os.sep, "/")
+    if not relative.startswith("."):
+        relative = f"./{relative}"
+    if not Path(original_specifier).suffix:
+        suffix_order = _relative_import_suffix_order(importer_rel)
+        for suffix in suffix_order:
+            if relative.endswith(suffix):
+                relative = relative[: -len(suffix)]
+                break
+    return relative
+
+
+def _apply_deterministic_typescript_relative_import_case_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    executor = DirectorToolExecutor(
+        str(workspace_path),
+        message_bus=message_bus,
+        worker_id="director",
+    )
+    results: list[dict[str, Any]] = []
+    rewritten_importers: set[str] = set()
+    for error in artifact_quality_errors:
+        match = _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE.search(str(error or ""))
+        if not match:
+            continue
+        specifier = str(match.group("specifier") or "").strip()
+        importer_rel = _normalize_declared_task_path(match.group("path"))
+        if not specifier.startswith(".") or not importer_rel or importer_rel in rewritten_importers:
+            continue
+        candidates = _relative_import_repair_target_candidates(
+            root=workspace_path,
+            importer_rel=importer_rel,
+            specifier=specifier,
+        )
+        actual_target_rel = ""
+        for candidate in candidates:
+            if (workspace_path / candidate).exists():
+                actual_target_rel = candidate
+                break
+            case_variant = _resolve_case_variant_relative_path(workspace_path, candidate)
+            if case_variant and case_variant != candidate:
+                actual_target_rel = case_variant
+                break
+        if not actual_target_rel:
+            continue
+        corrected_specifier = _relative_import_specifier_for_actual_path(
+            root=workspace_path,
+            importer_rel=importer_rel,
+            original_specifier=specifier,
+            actual_target_rel=actual_target_rel,
+        )
+        if corrected_specifier == specifier:
+            continue
+        importer_path = (workspace_path / importer_rel).resolve()
+        try:
+            importer_path.relative_to(workspace_path)
+            content = importer_path.read_text(encoding="utf-8")
+        except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+            continue
+        updated = content.replace(f"'{specifier}'", f"'{corrected_specifier}'").replace(
+            f'"{specifier}"',
+            f'"{corrected_specifier}"',
+        )
+        if updated == content:
+            continue
+        write_result = executor.execute_tool(
+            "write_file",
+            {"file": importer_rel, "content": updated},
+            task_id=task_id,
+        )
+        if not bool(write_result.get("ok")):
+            continue
+        rewritten_importers.add(importer_rel)
+        with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+            adapter._update_task_progress(task_id, "executing", current_file=importer_rel)
+        results.append(
+            {
+                "tool": "write_file",
+                "tool_name": "write_file",
+                "success": True,
+                "result": {
+                    "ok": True,
+                    "source_tool": "deterministic_typescript_relative_import_case_repair",
+                    "file": importer_rel,
+                    "specifier": specifier,
+                    "corrected_specifier": corrected_specifier,
+                    "target_file": actual_target_rel,
+                    "bytes_written": int(write_result.get("bytes_written") or len(updated.encode("utf-8"))),
+                    "operation": str(write_result.get("operation") or "overwrite"),
+                    "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                    "director_policy": write_result.get("director_policy"),
+                },
+            }
+        )
+    return results
 
 
 def _apply_deterministic_typeorm_model_normalization_repair(
@@ -1712,24 +1876,34 @@ def _apply_deterministic_typescript_return_object_semicolon_repair(
 def _repair_typescript_return_object_semicolon_lines(text: str) -> str:
     lines = str(text or "").splitlines(keepends=True)
     repaired: list[str] = []
-    in_return_object = False
+    object_literal_depths: list[int] = []
+    brace_depth = 0
     changed = False
     for line in lines:
         line_body = line.rstrip("\r\n")
         newline = line[len(line_body) :]
-        if _TS_RETURN_OBJECT_START_RE.search(line_body):
-            in_return_object = True
-            repaired.append(line)
-            continue
-        if in_return_object:
+        if object_literal_depths:
             match = _TS_OBJECT_PROPERTY_SEMICOLON_LINE_RE.match(line_body)
             if match:
                 repaired.append(f"{match.group('indent')}{match.group('name')},{newline}")
                 changed = True
-                continue
-            if _TS_RETURN_OBJECT_END_RE.match(line_body):
-                in_return_object = False
-        repaired.append(line)
+            else:
+                value_match = _TS_OBJECT_PROPERTY_VALUE_SEMICOLON_LINE_RE.match(line_body)
+                if value_match:
+                    repaired.append(f"{value_match.group('indent')}{value_match.group('property').rstrip()},{newline}")
+                    changed = True
+                else:
+                    repaired.append(line)
+        else:
+            repaired.append(line)
+
+        opens = line_body.count("{")
+        closes = line_body.count("}")
+        if _TS_RETURN_OBJECT_START_RE.search(line_body) or _TS_OBJECT_LITERAL_START_RE.search(line_body):
+            object_literal_depths.append(brace_depth + max(opens, 1))
+        brace_depth += opens - closes
+        while object_literal_depths and brace_depth < object_literal_depths[-1]:
+            object_literal_depths.pop()
     return "".join(repaired) if changed else str(text or "")
 
 
@@ -2223,12 +2397,15 @@ def _filter_satisfied_declared_target_missing_errors(
 def _parse_typescript_return_object_semicolon_paths(artifact_quality_errors: list[str]) -> list[str]:
     paths: list[str] = []
     for error in artifact_quality_errors:
-        match = _TS_RETURN_OBJECT_SEMICOLON_ERROR_RE.search(str(error or ""))
-        if not match:
-            continue
-        normalized = _normalize_declared_task_path(match.group("path"))
-        if normalized:
-            paths.append(normalized)
+        text = str(error or "")
+        for pattern in (_TS_RETURN_OBJECT_SEMICOLON_ERROR_RE, _TS_COMMA_EXPECTED_SYNTAX_ERROR_RE):
+            match = pattern.search(text)
+            if not match:
+                continue
+            normalized = _normalize_declared_task_path(match.group("path"))
+            if normalized:
+                paths.append(normalized)
+            break
     return _dedupe_preserve_order(paths)
 
 

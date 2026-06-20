@@ -4365,6 +4365,115 @@ def test_business_contract_synthesis_default_off(monkeypatch, tmp_path: Any) -> 
     assert not (tmp_path / "src" / "middleware" / "audit.middleware.ts").exists()
 
 
+def test_typescript_relative_import_case_repair_rewrites_importer_only(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    garden = src / "Garden.ts"
+    moon = src / "moon.ts"
+    garden.write_text(
+        "import { Moon } from './Moon';\nexport class Garden { moon = new Moon(); }\n",
+        encoding="utf-8",
+    )
+    moon.write_text("export class Moon {}\n", encoding="utf-8")
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task={"target_files": ["src/Garden.ts", "src/moon.ts"]},
+        task_id="task-2",
+        artifact_quality_errors=["Artifact quality scan failed: unresolved relative import './Moon' in src/Garden.ts"],
+    )
+
+    assert summary["attempted"] is True
+    assert any(
+        (item.get("result") or {}).get("source_tool") == "deterministic_typescript_relative_import_case_repair"
+        for item in results
+        if isinstance(item, dict)
+    )
+    assert "from './moon'" in garden.read_text(encoding="utf-8")
+    assert moon.read_text(encoding="utf-8") == "export class Moon {}\n"
+
+
+def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    model_dir = tmp_path / "src" / "models"
+    model_dir.mkdir(parents=True)
+    flower = model_dir / "flower.ts"
+    flower.write_text(
+        "\n".join(
+            [
+                "export enum FlowerType {",
+                "  Moonflower = 'moonflower'",
+                "}",
+                "",
+                "export interface FlowerState {",
+                "  type: FlowerType;",
+                "  wilted: boolean;",
+                "}",
+                "",
+                "export class Flower implements FlowerState {",
+                "  public type: FlowerType = FlowerType.Moonflower;",
+                "  public wilted: boolean = false;",
+                "",
+                "  private calculateAttractiveness(): number {",
+                "    const baseAttractiveness: Record<FlowerType, number> = {",
+                "      [FlowerType.Moonflower]: 0.9;",
+                "    };",
+                "    return baseAttractiveness[this.type];",
+                "  }",
+                "",
+                "  public getState(): FlowerState {",
+                "    return {",
+                "      type: this.type,",
+                "      wilted: this.wilted;",
+                "    };",
+                "  }",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task={"target_files": ["src/models/flower.ts"]},
+        task_id="task-1",
+        artifact_quality_errors=[
+            "Artifact quality scan failed: syntax error in src/models/flower.ts: "
+            "src/models/flower.ts(16,37): error TS1005: ',' expected."
+        ],
+    )
+
+    repaired = flower.read_text(encoding="utf-8")
+    assert summary["attempted"] is True
+    assert any(
+        (item.get("result") or {}).get("source_tool") == "deterministic_typescript_return_object_semicolon_repair"
+        for item in results
+        if isinstance(item, dict)
+    )
+    assert "[FlowerType.Moonflower]: 0.9," in repaired
+    assert "wilted: this.wilted," in repaired
+    assert "type: FlowerType;" in repaired
+    assert "public type: FlowerType = FlowerType.Moonflower;" in repaired
+
+
 def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any) -> None:
     """§8 regression: missing test files should not be masked by fabricated
     placeholder tests in production/director hot paths."""
@@ -4762,7 +4871,52 @@ class TestQualityRepairMissingTargetContract:
             ["Artifact quality scan failed: unresolved relative import './types' in src/data/seed.ts"],
         )
 
-        assert missing == ["src/data/types.ts"]
+        assert missing == ["src/data/types.ts", "scripts/verify-rules.ts"]
+
+    def test_unresolved_import_repair_batches_all_missing_declared_targets(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _missing_materialization_quality_repair_target_files,
+        )
+
+        (tmp_path / "src" / "models").mkdir(parents=True)
+        (tmp_path / "src" / "engine").mkdir(parents=True)
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"build":"tsc","start":"node dist/index.js"}}\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"outDir":"dist"}}\n', encoding="utf-8")
+        (tmp_path / "src" / "models" / "flower.ts").write_text(
+            "export class Flower {}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "models" / "firefly.ts").write_text(
+            "import { Moon } from './moon';\nexport class Firefly { moon?: Moon; }\n",
+            encoding="utf-8",
+        )
+
+        missing = _missing_materialization_quality_repair_target_files(
+            {
+                "target_files": [
+                    "package.json",
+                    "tsconfig.json",
+                    "src/models/flower.ts",
+                    "src/models/firefly.ts",
+                    "src/models/moon.ts",
+                    "src/models/humidity.ts",
+                    "src/engine/garden.ts",
+                    "src/index.ts",
+                ],
+            },
+            str(tmp_path),
+            ["Artifact quality scan failed: unresolved relative import './moon' in src/models/firefly.ts"],
+        )
+
+        assert missing == [
+            "src/models/moon.ts",
+            "src/models/humidity.ts",
+            "src/engine/garden.ts",
+            "src/index.ts",
+        ]
 
     @pytest.mark.asyncio
     async def test_package_manifest_quality_error_targets_package_json(self, tmp_path) -> None:
@@ -5327,7 +5481,7 @@ class TestQualityRepairMissingTargetContract:
             _update_task_progress = staticmethod(lambda *a, **k: None)
 
             def __init__(self) -> None:
-                self.repair_context = {}
+                self.repair_context: dict[str, Any] = {}
                 self.repair_message = ""
                 self.invocations = 0
 
@@ -5377,16 +5531,28 @@ class TestQualityRepairMissingTargetContract:
             "file",
             "content",
         ]
-        assert "SINGLE MISSING TARGET REPAIR" in adapter.repair_message
-        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
-            "tool": "write_file",
-            "target_file": missing_targets[0],
-        }
-        assert adapter.repair_context["director_quality_repair"]["repair_target_files"] == [missing_targets[0]]
-        assert missing_targets[0] in adapter.repair_message
+        assert "SINGLE MISSING TARGET REPAIR" not in adapter.repair_message
+        assert "write_only_single_target" not in adapter.repair_context["director_quality_repair"]
+        assert adapter.repair_context["director_quality_repair"]["repair_target_files"] == missing_targets
+        for missing_target in missing_targets:
+            assert missing_target in adapter.repair_message
         assert "MISSING TARGET FILES" in adapter.repair_message
         assert summary["missing_target_files"] == missing_targets
-        assert summary["repair_target_files"] == [missing_targets[0]]
+        assert summary["repair_target_files"] == missing_targets
+
+    def test_materialization_quality_repair_retry_after_first_attempt_is_single_target(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _select_materialization_quality_repair_target_batch,
+        )
+
+        missing_targets = [
+            "src/main.ts",
+            "README.md",
+            "tests/main.test.ts",
+        ]
+
+        assert _select_materialization_quality_repair_target_batch(missing_targets, repair_attempt=1) == missing_targets
+        assert _select_materialization_quality_repair_target_batch(missing_targets, repair_attempt=2) == ["src/main.ts"]
 
     def test_repair_message_names_missing_targets_and_hides_changed_paths(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

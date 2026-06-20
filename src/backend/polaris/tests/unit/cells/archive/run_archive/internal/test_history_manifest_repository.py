@@ -112,9 +112,7 @@ class TestHistoryManifestRepository:
 
     @pytest.fixture
     def repo(self, tmp_path: Path) -> HistoryManifestRepository:
-        with patch(
-            "polaris.cells.archive.run_archive.internal.history_manifest_repository.resolve_polaris_roots"
-        ) as mock_roots:
+        with patch("polaris.kernelone.storage.history_manifest_repository.resolve_storage_roots") as mock_roots:
             mock_roots.return_value = MagicMock(history_root=str(tmp_path / "history"))
             return HistoryManifestRepository(str(tmp_path))
 
@@ -313,9 +311,7 @@ class TestCreateHistoryManifestRepository:
     """Tests for create_history_manifest_repository factory."""
 
     def test_factory(self) -> None:
-        with patch(
-            "polaris.cells.archive.run_archive.internal.history_manifest_repository.resolve_polaris_roots"
-        ) as mock_roots:
+        with patch("polaris.kernelone.storage.history_manifest_repository.resolve_storage_roots") as mock_roots:
             mock_roots.return_value = MagicMock(history_root="/tmp/history")
             repo = create_history_manifest_repository("/tmp/ws")
             assert isinstance(repo, HistoryManifestRepository)

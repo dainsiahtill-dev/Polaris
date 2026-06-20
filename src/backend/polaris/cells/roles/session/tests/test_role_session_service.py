@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 import json
 import sqlite3
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,28 @@ from polaris.cells.roles.session.internal.role_session_service import RoleSessio
 from polaris.kernelone.storage import resolve_runtime_path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as DbSession, sessionmaker
+
+
+def test_workspace_scoped_runtime_helpers_do_not_reuse_first_workspace(tmp_path: Path) -> None:
+    import polaris.cells.roles.session.internal.role_session_service as service_module
+
+    service_module._persistence_services_by_workspace.clear()
+    service_module._ttl_cleanup_services_by_workspace.clear()
+    service_module._event_publishers_by_workspace.clear()
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+
+    persistence_a = service_module._get_persistence_service(str(workspace_a))
+    persistence_b = service_module._get_persistence_service(str(workspace_b))
+    publisher_a = service_module._get_event_publisher(str(workspace_a))
+    publisher_b = service_module._get_event_publisher(str(workspace_b))
+
+    assert persistence_a is service_module._get_persistence_service(str(workspace_a))
+    assert persistence_a is not persistence_b
+    assert publisher_a is service_module._get_event_publisher(str(workspace_a))
+    assert publisher_a is not publisher_b
 
 
 def _install_conversation_singleton():
@@ -395,7 +418,35 @@ class TestAddMessage:
         messages = service.get_messages(cast("str", session.id))
         assert len(messages) == 1
         assert messages[0].content == "hello"
-        assert messages[0].thinking == "thinking"
+        assert messages[0].thinking is None
+        meta = json.loads(str(messages[0].meta))
+        assert meta["src"] == "test"
+        assert meta["thinking_sha256"] == sha256(b"thinking").hexdigest()
+        assert meta["thinking_chars"] == len("thinking")
+
+    def test_add_message_redacts_sensitive_meta(self, service: RoleSessionService) -> None:
+        session = service.create_session(role="pm")
+        service.add_message(
+            cast("str", session.id),
+            role="assistant",
+            content="done",
+            meta={
+                "provider_id": "kimi",
+                "model": "kimi-for-coding",
+                "messages": [{"role": "user", "content": "raw prompt"}],
+                "tool_calls": [{"name": "read_file", "args": {"path": "secret"}}],
+                "_internal_payload": {"prompt": "hidden"},
+            },
+        )
+
+        messages = service.get_messages(cast("str", session.id))
+        meta = json.loads(str(messages[0].meta))
+        assert meta["provider_id"] == "kimi"
+        assert meta["model"] == "kimi-for-coding"
+        assert "messages" not in meta
+        assert "tool_calls" not in meta
+        assert "_internal_payload" not in meta
+        assert meta["redacted_keys"] == ["_internal_payload", "messages", "tool_calls"]
 
     def test_add_message_increments_sequence(self, service: RoleSessionService) -> None:
         session = service.create_session(role="pm")

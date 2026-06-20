@@ -363,6 +363,35 @@ def _active_workspace(request: Request) -> str:
     return _workspace_value(get_state(request).settings)
 
 
+def _canonical_workspace_path(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        return str(Path(raw).expanduser().resolve())
+    except OSError:
+        return str(Path(raw).expanduser().absolute())
+
+
+def _validated_requested_workspace(active_workspace: str, requested_workspace: str | None) -> str:
+    active = str(active_workspace or "").strip()
+    requested = str(requested_workspace or "").strip()
+    if not requested:
+        return active
+    if not active:
+        return requested
+    if _canonical_workspace_path(requested) != _canonical_workspace_path(active):
+        raise StructuredHTTPException(
+            status_code=400,
+            code="WORKSPACE_MISMATCH",
+            message=(
+                "Role session workspace must match the active workspace; "
+                "switch workspace first or omit payload.workspace."
+            ),
+        )
+    return active
+
+
 def _session_workspace(session: Any, request: Request) -> str:
     """Prefer persisted session workspace before active settings fallback."""
     workspace = str(getattr(session, "workspace", "") or "").strip()
@@ -411,11 +440,13 @@ async def create_session(
         }
     """
     try:
-        with _role_session_service(request) as service:
+        active_workspace = _active_workspace(request)
+        session_workspace = _validated_requested_workspace(active_workspace, payload.workspace)
+        with RoleSessionService(workspace=session_workspace or None) as service:
             session = service.create_session(
                 role=payload.role,
                 host_kind=payload.host_kind,
-                workspace=payload.workspace or _active_workspace(request),
+                workspace=session_workspace,
                 session_type=payload.session_type,
                 attachment_mode=payload.attachment_mode,
                 title=payload.title,

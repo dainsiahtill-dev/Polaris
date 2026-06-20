@@ -22,6 +22,7 @@ injected fake without importing the provider cell.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -51,9 +52,30 @@ class PermissionPort(Protocol):
 
 @runtime_checkable
 class ArchitectDesignPort(Protocol):
-    """``architect.design`` port (``validate_cell_boundary_change``)."""
+    """``architect.design`` boundary-validation invoker port.
 
-    def generate_architecture_design(self, command: object) -> object: ...
+    Consumer-owned seam for the ``validate_cell_boundary_change`` capability. The
+    port takes the *validated primitives* the boundary handler has already
+    extracted (workspace / objective / constraints / boundary context) and returns
+    the owner cell's design result. Encapsulating BOTH the
+    ``GenerateArchitectureDesignCommandV1`` construction AND the
+    ``generate_architecture_design`` call behind this callable keeps
+    ``roles.runtime/internal/capability/**`` free of any runtime-scope
+    ``architect.design`` import: the composition root supplies a provider that
+    owns those imports. ``constraints`` / ``context`` are opaque, type-safe
+    mappings (NOT ``Any``) and the return value is an opaque ``object`` read
+    structurally by the handler, so no owner-cell contract type leaks onto this
+    seam.
+    """
+
+    def run_boundary_design(
+        self,
+        *,
+        workspace: str,
+        objective: str,
+        constraints: Mapping[str, object],
+        context: Mapping[str, object],
+    ) -> object: ...
 
 
 @runtime_checkable

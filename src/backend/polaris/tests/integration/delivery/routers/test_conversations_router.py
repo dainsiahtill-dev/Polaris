@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -267,6 +268,62 @@ class TestConversationsRouter:
         assert response.status_code == 200
         payload: dict[str, Any] = response.json()
         assert payload["conversation_id"] == "conv-1"
+
+    def test_add_message_redacts_thinking_and_sensitive_meta(self) -> None:
+        """POST /v2/conversations/{id}/messages never persists raw thinking."""
+        db = _mock_db_session()
+        mock_conv = _MockConversation(id="conv-1")
+        added: list[Any] = []
+
+        def _query(model: Any) -> MagicMock:
+            q = MagicMock()
+            q.filter.return_value = q
+            q.first.return_value = mock_conv
+            q.count.return_value = 0
+            q.order_by.return_value = q
+            q.offset.return_value = q
+            q.limit.return_value = q
+            q.all.return_value = []
+            return q
+
+        def capture_add(instance: Any) -> None:
+            added.append(instance)
+            if hasattr(instance, "id") and instance.id is None:
+                instance.id = "msg-1"
+            if hasattr(instance, "created_at") and getattr(instance, "created_at", None) is None:
+                instance.created_at = _NOW
+
+        db.query.side_effect = _query
+        db.add.side_effect = capture_add
+        client = _build_client(db)
+
+        response = client.post(
+            "/v2/conversations/conv-1/messages",
+            json={
+                "role": "assistant",
+                "content": "done",
+                "thinking": "private chain",
+                "meta": {"provider": "kimi", "prompt": "raw prompt", "nested": {"tool_calls": ["secret"]}},
+            },
+        )
+
+        assert response.status_code == 200
+        payload: dict[str, Any] = response.json()
+        assert payload["thinking"] is None
+        assert payload["meta"]["thinking_chars"] == len("private chain")
+        assert "thinking_sha256" in payload["meta"]
+        assert "private chain" not in json.dumps(payload, ensure_ascii=False)
+        assert "raw prompt" not in json.dumps(payload, ensure_ascii=False)
+
+        message = added[-1]
+        assert message.thinking is None
+        assert message.meta is not None
+        persisted_meta = json.loads(message.meta)
+        assert persisted_meta["thinking_chars"] == len("private chain")
+        assert "prompt" in persisted_meta["redacted_keys"]
+        assert "nested.tool_calls" in persisted_meta["redacted_keys"]
+        assert "private chain" not in message.meta
+        assert "raw prompt" not in message.meta
 
     def test_add_message_not_found(self) -> None:
         """POST /v2/conversations/{id}/messages returns 404 for missing conversation."""

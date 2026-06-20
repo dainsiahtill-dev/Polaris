@@ -19,6 +19,7 @@ from polaris.cells.runtime.task_market.public.contracts import (
     RenewTaskLeaseCommandV1,
 )
 from polaris.cells.runtime.task_market.public.service import get_task_market_service
+from polaris.kernelone.fs.materialization import materialized_file_paths
 
 logger = logging.getLogger(__name__)
 
@@ -454,39 +455,6 @@ def _extract_director_changed_files(adapter_result: dict[str, Any]) -> list[str]
         _extract_changed_files_from_mapping(changed_files, adapter_nested)
 
     return changed_files
-
-
-def _materialized_changed_files(
-    workspace_path: Path,
-    reported_paths: list[str],
-) -> tuple[list[str], list[str]]:
-    workspace_root = workspace_path.resolve()
-    materialized: list[str] = []
-    unmaterialized: list[str] = []
-
-    for raw_path in reported_paths:
-        normalized = str(raw_path or "").replace("\\", "/").strip()
-        if not normalized or "\x00" in normalized:
-            continue
-
-        candidate = Path(normalized)
-        absolute_candidate = candidate if candidate.is_absolute() else workspace_root / candidate
-        try:
-            resolved_candidate = absolute_candidate.resolve(strict=False)
-            if os.path.commonpath([str(workspace_root), str(resolved_candidate)]) != str(workspace_root):
-                unmaterialized.append(normalized)
-                continue
-            relative_path = resolved_candidate.relative_to(workspace_root).as_posix()
-            if resolved_candidate.is_file() and resolved_candidate.stat().st_size > 0:
-                if relative_path not in materialized:
-                    materialized.append(relative_path)
-            elif normalized not in unmaterialized:
-                unmaterialized.append(normalized)
-        except (OSError, RuntimeError, ValueError):
-            if normalized not in unmaterialized:
-                unmaterialized.append(normalized)
-
-    return materialized, unmaterialized
 
 
 def _extract_director_side_effects(adapter_result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1188,7 +1156,7 @@ class DirectorExecutionConsumer:
             raise RuntimeError(_adapter_failure_message(adapter_result))
 
         reported_changed_files = _extract_director_changed_files(adapter_result)
-        changed_files, unmaterialized_changed_files = _materialized_changed_files(
+        changed_files, unmaterialized_changed_files = materialized_file_paths(
             workspace_path,
             reported_changed_files,
         )

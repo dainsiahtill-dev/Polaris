@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from pathlib import Path
 
 from polaris.cells.roles.runtime.internal.capability import CapabilityHandler
 from polaris.cells.roles.runtime.internal.capability._oracle import (
@@ -118,26 +119,85 @@ def test_dispatcher_owns_no_per_capability_cross_cell_import() -> None:
     funcdef = _dispatcher_funcdef()
 
     # Act
-    imported_modules = [
-        node.module or ""
-        for node in ast.walk(funcdef)
-        if isinstance(node, ast.ImportFrom)
-    ]
+    imported_modules = [node.module or "" for node in ast.walk(funcdef) if isinstance(node, ast.ImportFrom)]
 
     # Assert: no owner-cell import remains in the dispatcher (handlers own them).
     for module in imported_modules:
         for owner in _OWNER_CELLS:
-            assert owner not in module, (
-                f"dispatcher must not import owner cell {owner!r}; found {module!r}"
-            )
+            assert owner not in module, f"dispatcher must not import owner cell {owner!r}; found {module!r}"
 
 
 def test_dispatcher_is_no_longer_a_god_function() -> None:
     # Arrange
-    source_lines = inspect.getsource(
-        capability_commands.execute_role_capability_invocation
-    ).splitlines()
+    source_lines = inspect.getsource(capability_commands.execute_role_capability_invocation).splitlines()
 
     # Assert: the function shrank by an order of magnitude from its 1,839-line
     # origin (verbatim prelude + delegation + single fallback only).
     assert len(source_lines) < 400, f"dispatcher is {len(source_lines)} lines; expected < 400"
+
+
+# ── architect.design acyclicity (CYCLE-15) ───────────────────────────────────
+# The boundary-validation handler reaches ``architect.design`` ONLY through the
+# typed ``CapabilityDeps`` invoker port supplied by the composition root. No
+# module under ``roles.runtime/internal/capability/**`` may import
+# ``architect.design`` at RUNTIME scope (module-level OR function-local — a
+# deferred import is still a real cell edge). A ``TYPE_CHECKING``-guarded import
+# (erased at runtime) is allowed for typing only.
+_CAPABILITY_PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "internal" / "capability"
+_ARCHITECT_DESIGN_PREFIX = "polaris.cells.architect.design"
+
+
+def _is_type_checking_guard(node: ast.If) -> bool:
+    """Return True when ``node`` is an ``if TYPE_CHECKING:`` block."""
+    test = node.test
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    if isinstance(test, ast.Attribute):
+        return test.attr == "TYPE_CHECKING"
+    return False
+
+
+def _runtime_scope_import_modules(tree: ast.Module) -> set[str]:
+    """Collect import module names reachable at runtime (TYPE_CHECKING erased)."""
+    modules: set[str] = set()
+
+    def _visit(body: list[ast.stmt]) -> None:
+        for node in body:
+            if isinstance(node, ast.If) and _is_type_checking_guard(node):
+                # Skip the TYPE_CHECKING body (erased at runtime); still descend
+                # into the ``else`` branch, which DOES execute at runtime.
+                _visit(node.orelse)
+                continue
+            if isinstance(node, ast.ImportFrom) and node.module:
+                modules.add(node.module)
+            elif isinstance(node, ast.Import):
+                modules.update(alias.name for alias in node.names)
+            # Descend into nested scopes (functions/classes/try/if/with/loops).
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.stmt):
+                    _visit([child])
+
+    _visit(tree.body)
+    return modules
+
+
+def test_capability_package_never_imports_architect_design_at_runtime() -> None:
+    # Arrange
+    offenders: dict[str, set[str]] = {}
+
+    # Act
+    for module_path in sorted(_CAPABILITY_PACKAGE_ROOT.rglob("*.py")):
+        tree = ast.parse(module_path.read_text(encoding="utf-8"))
+        hits = {
+            module
+            for module in _runtime_scope_import_modules(tree)
+            if module == _ARCHITECT_DESIGN_PREFIX or module.startswith(f"{_ARCHITECT_DESIGN_PREFIX}.")
+        }
+        if hits:
+            offenders[str(module_path.relative_to(_CAPABILITY_PACKAGE_ROOT))] = hits
+
+    # Assert: the only architect.design reference may be TYPE_CHECKING-guarded.
+    assert offenders == {}, (
+        "roles.runtime/internal/capability/** must not import architect.design at "
+        f"runtime scope (deferred imports are real cell edges); offenders: {offenders}"
+    )

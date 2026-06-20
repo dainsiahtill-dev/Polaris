@@ -23,13 +23,13 @@ from polaris.cells.archive.factory_archive.public.contracts import (
     FactoryArchiveError,
     GetFactoryArchiveManifestQueryV1,
 )
-from polaris.cells.archive.run_archive.public.service import (
-    FactoryIndexEntry,
-    HistoryManifestRepository,
-)
 from polaris.infrastructure.storage import LocalFileSystemAdapter
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.storage import resolve_storage_roots
+from polaris.kernelone.storage.history_manifest_repository import (
+    FactoryIndexEntry,
+    HistoryManifestRepository,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine

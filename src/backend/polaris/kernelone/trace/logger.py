@@ -129,6 +129,8 @@ class JSONFormatter(logging.Formatter):
         if record.stack_info:
             log_obj["stack_info"] = record.stack_info
 
+        log_obj = SensitiveDataFilter.redact_dict(log_obj)
+
         # 序列化为JSON
         if self.indent:
             return json.dumps(log_obj, ensure_ascii=self.ensure_ascii, indent=self.indent)
@@ -204,6 +206,37 @@ class SensitiveDataFilter(logging.Filter):
         "set-cookie",
         "x-csrf-token",
     }
+    HIGH_SENSITIVITY_PAYLOAD_KEYS = {
+        "assistant_prompt",
+        "assistant_response",
+        "body_preview",
+        "completion",
+        "completion_text",
+        "content",
+        "developer_prompt",
+        "input",
+        "input_text",
+        "messages",
+        "output",
+        "output_text",
+        "prompt",
+        "prompt_messages",
+        "prompt_text",
+        "raw",
+        "raw_prompt",
+        "raw_response",
+        "response",
+        "response_content",
+        "response_text",
+        "system_prompt",
+        "thinking",
+        "tool_call",
+        "tool_calls",
+        "tool_result",
+        "tool_results",
+        "user_message",
+        "user_prompt",
+    }
 
     def filter(self, record: logging.LogRecord) -> bool:
         """过滤敏感信息"""
@@ -223,11 +256,22 @@ class SensitiveDataFilter(logging.Filter):
 
         return True
 
-    def _redact(self, message: str) -> str:
+    @classmethod
+    def _redact(cls, message: str) -> str:
         """脱敏消息中的敏感信息"""
-        for pattern, name in self.SENSITIVE_PATTERNS:
+        for pattern, name in cls.SENSITIVE_PATTERNS:
             message = pattern.sub(f"{name}=***REDACTED***", message)
         return message
+
+    @classmethod
+    def _redacted_payload_summary(cls, value: Any) -> dict[str, Any]:
+        if isinstance(value, list):
+            return {"redacted": True, "type": "list", "count": len(value)}
+        if isinstance(value, dict):
+            return {"redacted": True, "type": "dict", "keys": sorted(str(key) for key in value)[:20]}
+        if isinstance(value, str):
+            return {"redacted": True, "type": "str", "chars": len(value)}
+        return {"redacted": True, "type": type(value).__name__}
 
     @classmethod
     def redact_headers(cls, headers: dict[str, str]) -> dict[str, str]:
@@ -252,14 +296,24 @@ class SensitiveDataFilter(logging.Filter):
 
         result: dict[str, Any] = {}
         for key, value in data.items():
-            if any(sk in key.lower() for sk in sensitive_keys):
+            lowered_key = str(key).lower()
+            if lowered_key in cls.HIGH_SENSITIVITY_PAYLOAD_KEYS:
+                result[key] = cls._redacted_payload_summary(value)
+            elif any(sk in lowered_key for sk in sensitive_keys):
                 result[key] = "***REDACTED***"
             elif isinstance(value, dict):
                 result[key] = cls.redact_dict(value, sensitive_keys)
             elif isinstance(value, list):
                 result[key] = [
-                    cls.redact_dict(item, sensitive_keys) if isinstance(item, dict) else item for item in value
+                    cls.redact_dict(item, sensitive_keys)
+                    if isinstance(item, dict)
+                    else cls._redact(item)
+                    if isinstance(item, str)
+                    else item
+                    for item in value
                 ]
+            elif isinstance(value, str):
+                result[key] = cls._redact(value)
             else:
                 result[key] = value
         return result

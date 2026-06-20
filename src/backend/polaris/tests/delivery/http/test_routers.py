@@ -17,6 +17,7 @@ Uses pytest and pytest-asyncio with comprehensive coverage of:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -524,6 +525,25 @@ class TestRoleSessionRouter:
             data = response.json()
             assert data["ok"] is True
             assert "session" in data
+
+    def test_create_session_rejects_workspace_mismatch(self, tmp_path: Path) -> None:
+        """POST /v2/roles/sessions rejects payload workspace outside active workspace."""
+        app = self._build_session_app()
+        client = TestClient(app)
+
+        with patch("polaris.delivery.http.routers.role_session.RoleSessionService") as mock_service:
+            response = client.post(
+                "/v2/roles/sessions",
+                json={
+                    "role": "pm",
+                    "workspace": str(tmp_path),
+                },
+            )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["detail"]["code"] == "WORKSPACE_MISMATCH"
+        mock_service.assert_not_called()
 
     def test_create_session_with_error(self) -> None:
         """POST /v2/roles/sessions should handle errors gracefully."""

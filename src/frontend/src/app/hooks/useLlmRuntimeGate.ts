@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { apiFetch } from '@/api';
+import { useCallback, useEffect, useState } from 'react';
 import type { LlmStatus } from '@/app/types/appContracts';
 
 export interface LlmRuntimeGateState {
@@ -43,7 +42,6 @@ interface UseLlmRuntimeGateOptions {
   workspace: string;
   live: boolean;
   llmStatus: LlmStatus | null;
-  fetchStatus?: (workspace: string) => Promise<unknown>;
 }
 
 const EMPTY_LLM_RUNTIME_STATE: LlmRuntimeGateState = {
@@ -70,15 +68,6 @@ const READINESS_ISSUE_LABELS: Record<string, string> = {
   tested_model_missing: '测试记录缺少模型身份',
   unassigned_provider: '该角色未绑定 Provider',
 };
-
-async function fetchLlmStatusPayload(workspace = ''): Promise<unknown> {
-  const suffix = workspace ? `?workspace=${encodeURIComponent(workspace)}` : '';
-  const response = await apiFetch(`/v2/llm/status${suffix}`);
-  if (!response.ok) {
-    throw new Error(`llm status fetch failed: ${response.status}`);
-  }
-  return response.json();
-}
 
 function normalizeRoleList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -184,35 +173,6 @@ function isStaleLlmRuntimePayload(current: LlmRuntimeGateState, next: LlmRuntime
   return true;
 }
 
-function roleBindingSignature(state: LlmRuntimeGateState, role: string): string {
-  const detail = state.roleDetails?.[role];
-  if (!detail) return '';
-  return `${detail.providerId}\u0000${detail.model}`;
-}
-
-function isCanonicalReadyForBlockedRoles(
-  canonical: LlmRuntimeGateState | null,
-  next: LlmRuntimeGateState,
-): boolean {
-  if (!canonical || canonical.state !== 'READY' || next.state !== 'BLOCKED') {
-    return false;
-  }
-
-  const blockedRoles = next.blockedRoles.filter((role) => next.requiredRoles.includes(role));
-  if (!blockedRoles.length) {
-    return false;
-  }
-
-  return blockedRoles.every((role) => {
-    const canonicalDetail = canonical.roleDetails?.[role];
-    if (!canonicalDetail || canonicalDetail.ready !== true) {
-      return false;
-    }
-    const nextSignature = roleBindingSignature(next, role);
-    return !nextSignature || nextSignature === roleBindingSignature(canonical, role);
-  });
-}
-
 export function normalizeLlmRuntimeGatePayload(payload: unknown): LlmRuntimeGateState {
   const record = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
   const stateToken = String(record.state || '').trim().toUpperCase();
@@ -279,73 +239,24 @@ export function getRoleLlmBlockedReason(
 
 export function useLlmRuntimeGate({
   workspace,
-  live,
   llmStatus,
-  fetchStatus = fetchLlmStatusPayload,
 }: UseLlmRuntimeGateOptions) {
   const [llmRuntimeState, setLlmRuntimeState] = useState<LlmRuntimeGateState>(EMPTY_LLM_RUNTIME_STATE);
-  const canonicalReadyStateRef = useRef<LlmRuntimeGateState | null>(null);
-  const completedRefreshKeyRef = useRef<string>('');
-  const inFlightRefreshKeyRef = useRef<string>('');
 
   const clearLlmRuntimeState = useCallback(() => {
     setLlmRuntimeState(EMPTY_LLM_RUNTIME_STATE);
   }, []);
 
-  const applyLlmStatusPayload = useCallback((payload: unknown, source: 'stream' | 'canonical' = 'stream') => {
+  const applyLlmStatusPayload = useCallback((payload: unknown) => {
     const nextState = normalizeLlmRuntimeGatePayload(payload);
-    if (source === 'canonical') {
-      canonicalReadyStateRef.current = nextState.state === 'READY' ? nextState : null;
-    }
     setLlmRuntimeState((current) => (
-      source === 'stream' && isCanonicalReadyForBlockedRoles(canonicalReadyStateRef.current, nextState)
-        ? current
-        : (
       isStaleLlmRuntimePayload(current, nextState) ? current : nextState
-        )
     ));
   }, []);
 
-  const refreshLlmGate = useCallback(async (options: {
-    clearOnFailure?: boolean;
-    requestKey?: string;
-    force?: boolean;
-  } = {}) => {
-    if (!workspace) {
-      clearLlmRuntimeState();
-      return null;
-    }
-
-    const requestKey = options.requestKey || `llm-gate:${workspace}`;
-    if (!options.force && (
-      completedRefreshKeyRef.current === requestKey
-      || inFlightRefreshKeyRef.current === requestKey
-    )) {
-      return null;
-    }
-
-    inFlightRefreshKeyRef.current = requestKey;
-    try {
-      const payload = await fetchStatus(workspace);
-      applyLlmStatusPayload(payload, 'canonical');
-      completedRefreshKeyRef.current = requestKey;
-      return payload;
-    } catch {
-      completedRefreshKeyRef.current = requestKey;
-      if (options.clearOnFailure) {
-        clearLlmRuntimeState();
-      }
-      return null;
-    } finally {
-      if (inFlightRefreshKeyRef.current === requestKey) {
-        inFlightRefreshKeyRef.current = '';
-      }
-    }
-  }, [applyLlmStatusPayload, clearLlmRuntimeState, fetchStatus, workspace]);
-
   const handleLlmStatusChange = useCallback((status: LlmStatus | null) => {
     if (status) {
-      applyLlmStatusPayload(status, 'stream');
+      applyLlmStatusPayload(status);
       return;
     }
     clearLlmRuntimeState();
@@ -363,36 +274,13 @@ export function useLlmRuntimeGate({
       return;
     }
     if (llmStatus) {
-      applyLlmStatusPayload(llmStatus, 'stream');
+      applyLlmStatusPayload(llmStatus);
     }
   }, [applyLlmStatusPayload, clearLlmRuntimeState, llmStatus, workspace]);
-
-  useEffect(() => {
-    if (!workspace) return;
-    if (!live || !llmStatus) {
-      void refreshLlmGate({
-        clearOnFailure: true,
-        requestKey: `missing:${workspace}`,
-      });
-    }
-  }, [live, llmStatus, refreshLlmGate, workspace]);
-
-  useEffect(() => {
-    if (!workspace || llmRuntimeState.state !== 'BLOCKED') return;
-    const blockedSignature = llmRuntimeState.blockedRoles
-      .map((role) => `${role}:${roleBindingSignature(llmRuntimeState, role)}`)
-      .sort()
-      .join('|');
-    void refreshLlmGate({
-      clearOnFailure: false,
-      requestKey: `blocked:${workspace}:${blockedSignature}`,
-    });
-  }, [llmRuntimeState, refreshLlmGate, workspace]);
 
   return {
     llmRuntimeState,
     getLlmRoleBlockedReason,
     handleLlmStatusChange,
-    refreshLlmGate,
   };
 }

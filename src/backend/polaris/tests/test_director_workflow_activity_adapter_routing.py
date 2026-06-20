@@ -8,7 +8,8 @@ import pytest
 
 
 class _FakeDirectorAdapter:
-    def __init__(self) -> None:
+    def __init__(self, *, materialize: bool = True) -> None:
+        self.materialize = materialize
         self.calls: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
 
     async def execute(
@@ -18,6 +19,11 @@ class _FakeDirectorAdapter:
         context: dict[str, Any],
     ) -> dict[str, Any]:
         self.calls.append((task_id, input_data, context))
+        if self.materialize:
+            workspace = Path(str(context.get("workspace") or ""))
+            target = workspace / "src/fish/arena.ts"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("export const arena = 'fish';\n", encoding="utf-8")
         return {
             "success": True,
             "task_id": task_id,
@@ -77,6 +83,15 @@ async def test_director_workflow_execution_phase_routes_to_canonical_adapter(
         "polaris.cells.roles.adapters.public.service.create_role_adapter",
         fake_create_role_adapter,
     )
+    # workflow_runtime resolves the adapter through the inverted factory port
+    # (get_orchestration_role_adapter_factory), which reads the module global
+    # captured at registration time — so patch that global too. workflow_activity
+    # still uses the direct create_role_adapter import patched above.
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.workflow_runtime.internal."
+        "unified_orchestration_service._role_adapter_factory",
+        fake_create_role_adapter,
+    )
 
     cache_root = tmp_path / ".polaris-test-cache"
     result = await module.execute_task_phase(_execution_payload(tmp_path, cache_root))
@@ -99,3 +114,53 @@ async def test_director_workflow_execution_phase_routes_to_canonical_adapter(
     persisted = json.loads(result_path.read_text(encoding="utf-8"))
     assert persisted["adapter_result"]["materialization_mode"] == "write_tool_and_workspace_diff"
     assert persisted["changed_files"] == ["src/fish/arena.ts"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "polaris.cells.orchestration.workflow_runtime.internal.runtime_engine.activities.director_activities",
+        "polaris.cells.orchestration.workflow_activity.internal.activities.director_activities",
+    ],
+)
+async def test_director_workflow_execution_rejects_unmaterialized_changed_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+) -> None:
+    module = pytest.importorskip(module_name)
+    fake_adapter = _FakeDirectorAdapter(materialize=False)
+
+    def fake_create_role_adapter(role_id: str, workspace: str) -> _FakeDirectorAdapter:
+        assert role_id == "director"
+        assert workspace == str(tmp_path)
+        return fake_adapter
+
+    monkeypatch.setattr(
+        "polaris.cells.roles.adapters.public.service.create_role_adapter",
+        fake_create_role_adapter,
+    )
+    # workflow_runtime resolves the adapter through the inverted factory port
+    # (get_orchestration_role_adapter_factory), which reads the module global
+    # captured at registration time — so patch that global too. workflow_activity
+    # still uses the direct create_role_adapter import patched above.
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.workflow_runtime.internal."
+        "unified_orchestration_service._role_adapter_factory",
+        fake_create_role_adapter,
+    )
+
+    cache_root = tmp_path / ".polaris-test-cache"
+    result = await module.execute_task_phase(_execution_payload(tmp_path, cache_root))
+
+    assert result["success"] is False
+    assert result.get("changed_files", []) == []
+    assert result["payload"].get("changed_files", []) == []
+    assert "did not materialize" in result["summary"]
+
+    result_path = cache_root / "workflow" / "run-fish" / "task-fish-arena" / "director.result.json"
+    persisted = json.loads(result_path.read_text(encoding="utf-8"))
+    assert persisted["changed_files"] == []
+    assert persisted["reported_changed_files"] == ["src/fish/arena.ts"]
+    assert persisted["unmaterialized_reported_changed_files"] == ["src/fish/arena.ts"]

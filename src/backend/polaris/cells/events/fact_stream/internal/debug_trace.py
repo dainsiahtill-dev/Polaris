@@ -59,6 +59,39 @@ _KEY_CONTEXT_HINTS = frozenset(
         "credential",
     }
 )
+_HIGH_SENSITIVITY_PAYLOAD_KEYS = frozenset(
+    {
+        "assistant_prompt",
+        "assistant_response",
+        "body_preview",
+        "completion",
+        "completion_text",
+        "content",
+        "developer_prompt",
+        "input",
+        "input_text",
+        "messages",
+        "output",
+        "output_text",
+        "prompt",
+        "prompt_messages",
+        "prompt_text",
+        "raw",
+        "raw_prompt",
+        "raw_response",
+        "response",
+        "response_content",
+        "response_text",
+        "system_prompt",
+        "thinking",
+        "tool_call",
+        "tool_calls",
+        "tool_result",
+        "tool_results",
+        "user_message",
+        "user_prompt",
+    }
+)
 
 
 # =============================================================================
@@ -144,6 +177,16 @@ def _mask_text(value: str) -> str:
     return f"{value[:3]}***{value[-3:]}"
 
 
+def _redacted_payload_summary(value: Any) -> dict[str, Any]:
+    if isinstance(value, list):
+        return {"redacted": True, "type": "list", "count": len(value)}
+    if isinstance(value, dict):
+        return {"redacted": True, "type": "dict", "keys": sorted(str(key) for key in value)[:20]}
+    if isinstance(value, str):
+        return {"redacted": True, "type": "str", "chars": len(value)}
+    return {"redacted": True, "type": type(value).__name__}
+
+
 def _to_preview(value: Any, *, limit: int = 2000, depth: int = 0, key_hint: str = "") -> Any:
     if depth > 3:
         return "<max-depth>"
@@ -153,6 +196,8 @@ def _to_preview(value: Any, *, limit: int = 2000, depth: int = 0, key_hint: str 
 
     if isinstance(value, (bytes, bytearray)):
         text = value.decode("utf-8", errors="replace")
+        if key_hint.strip().lower() in _HIGH_SENSITIVITY_PAYLOAD_KEYS:
+            return _redacted_payload_summary(text)
         if key_hint and _is_sensitive_key(key_hint):
             return _mask_text(text)
         parsed = _parse_json_text(text)
@@ -161,6 +206,8 @@ def _to_preview(value: Any, *, limit: int = 2000, depth: int = 0, key_hint: str 
         return _truncate_text(text, limit=limit)
 
     if isinstance(value, str):
+        if key_hint.strip().lower() in _HIGH_SENSITIVITY_PAYLOAD_KEYS:
+            return _redacted_payload_summary(value)
         if key_hint and _is_sensitive_key(key_hint):
             return _mask_text(value)
         parsed = _parse_json_text(value)
@@ -175,7 +222,10 @@ def _to_preview(value: Any, *, limit: int = 2000, depth: int = 0, key_hint: str 
                 out["__truncated__"] = f"{len(value) - idx} more keys"
                 break
             key = str(k)
-            out[key] = _to_preview(v, limit=limit, depth=depth + 1, key_hint=key)
+            if key.strip().lower() in _HIGH_SENSITIVITY_PAYLOAD_KEYS:
+                out[key] = _redacted_payload_summary(v)
+            else:
+                out[key] = _to_preview(v, limit=limit, depth=depth + 1, key_hint=key)
         return out
 
     if isinstance(value, (list, tuple, set)):

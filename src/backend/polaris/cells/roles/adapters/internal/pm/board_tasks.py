@@ -62,6 +62,9 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
             metadata = {
                 "goal": contract.get("goal"),
                 "scope": contract.get("scope"),
+                "scope_paths": contract.get("scope_paths"),
+                "target_files": contract.get("target_files"),
+                "context_files": contract.get("context_files"),
                 "steps": contract.get("steps"),
                 "acceptance": contract.get("acceptance"),
                 "phase": contract.get("phase"),

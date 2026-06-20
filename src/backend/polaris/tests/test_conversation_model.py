@@ -1,9 +1,31 @@
 from __future__ import annotations
 
+import json
 import threading
 
 from polaris.cells.roles.session.internal import conversation
+from polaris.cells.roles.session.internal.conversation import ConversationMessage
 from polaris.cells.roles.session.internal.role_session_service import RoleSessionService
+
+
+def test_conversation_message_to_dict_redacts_legacy_thinking() -> None:
+    message = ConversationMessage(
+        id="msg-legacy",
+        conversation_id="conv-legacy",
+        sequence=1,
+        role="assistant",
+        content="ok",
+        thinking="legacy private chain",
+        meta=json.dumps({"provider": "kimi"}, ensure_ascii=False),
+    )
+
+    payload = message.to_dict()
+
+    assert payload["thinking"] is None
+    assert payload["meta"]["provider"] == "kimi"
+    assert payload["meta"]["thinking_chars"] == len("legacy private chain")
+    assert "thinking_sha256" in payload["meta"]
+    assert "legacy private chain" not in json.dumps(payload, ensure_ascii=False)
 
 
 def test_role_session_service_first_session_init_does_not_deadlock(monkeypatch, tmp_path) -> None:

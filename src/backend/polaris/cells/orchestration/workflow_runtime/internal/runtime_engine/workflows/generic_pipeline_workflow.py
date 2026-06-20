@@ -282,9 +282,12 @@ class GenericPipelineWorkflowBase:
 
     async def _call_role_adapter(self, task: PipelineTask) -> dict[str, Any]:
         """调用角色适配器"""
-        from polaris.cells.roles.adapters.public.service import create_role_adapter
+        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+            get_orchestration_role_adapter_factory,
+        )
 
-        adapter = create_role_adapter(
+        factory = get_orchestration_role_adapter_factory()
+        adapter = factory(
             task.role_entry.role_id,
             self._input.workspace if self._input else ".",
         )

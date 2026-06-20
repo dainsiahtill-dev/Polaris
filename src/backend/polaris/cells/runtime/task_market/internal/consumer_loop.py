@@ -137,9 +137,12 @@ class ConsumerLoopManager:
         """Start CE, Director, QA consumer threads and the outbox relay.
 
         Args:
-            consumer_types: Mapping of role name to consumer class.  If
-                *None*, the default CE/Director/QA consumers are lazily
-                imported.
+            consumer_types: Mapping of role name to consumer class.  The
+                composition root (e.g. ``pm_dispatch``) injects the concrete
+                CE/Director/QA consumer classes; this manager never imports
+                them itself.  When *None* or empty, roles whose class is
+                missing are skipped (logged), so this Cell carries no
+                cross-Cell back-edge to chief_engineer/director/qa.
             service: Service used for outbox relay.  If *None*, the default
                 ``get_task_market_service()`` singleton is used.
 
@@ -149,9 +152,10 @@ class ConsumerLoopManager:
         if self._started:
             return False
 
-        # Resolve consumer types (lazy import to avoid circular deps).
+        # No cross-Cell default import: an absent mapping means "no role
+        # classes supplied", and the per-role loop below skips missing roles.
         if consumer_types is None:
-            consumer_types = self._default_consumer_types()
+            consumer_types = {}
 
         if service is None:
             from polaris.cells.runtime.task_market.internal.service import get_task_market_service
@@ -326,19 +330,6 @@ class ConsumerLoopManager:
             metrics.record_consumer_poll(role, duration_ms)
         except (ImportError, OSError, RuntimeError):
             pass
-
-    @staticmethod
-    def _default_consumer_types() -> dict[str, type]:
-        """Lazy-import default consumer classes."""
-        from polaris.cells.chief_engineer.blueprint.public.service import CEConsumer
-        from polaris.cells.director.task_consumer import DirectorExecutionConsumer
-        from polaris.cells.qa.audit_verdict.public.service import QAConsumer
-
-        return {
-            "chief_engineer": CEConsumer,
-            "director": DirectorExecutionConsumer,
-            "qa": QAConsumer,
-        }
 
 
 __all__ = ["ConsumerLoopManager"]

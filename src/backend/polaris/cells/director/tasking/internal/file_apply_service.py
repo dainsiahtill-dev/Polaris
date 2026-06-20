@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import tomllib
+from polaris.cells.director.tasking.internal.patch_apply_engine import validate_before_apply
 from polaris.kernelone.llm.toolkit.write_policy import validate_tool_write_policy
 
 logger = logging.getLogger(__name__)
@@ -578,9 +579,6 @@ class FileApplyService:
 
         # Phase 1: Pre-apply integrity validation
         if llm_metadata:
-            # Import from public contract (execution.public.service re-exports it)
-            from polaris.cells.director.execution.public.service import validate_before_apply
-
             validation_response = _fenced_file_blocks_to_protocol(response) if fenced_blocks else normalized_response
             integrity = validate_before_apply(validation_response, llm_metadata)
 

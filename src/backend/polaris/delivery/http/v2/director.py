@@ -2163,8 +2163,7 @@ async def get_llm_events(
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, role=role, limit=limit)
     resolved_workspace = _workspace_from_request(request, workspace)
-    if workspace.strip():
-        events = filter_llm_events_by_workspace(events, resolved_workspace)
+    events = filter_llm_events_by_workspace(events, resolved_workspace)
 
     return {
         "events": [e.to_dict() for e in events],

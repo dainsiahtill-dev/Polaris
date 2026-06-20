@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -505,13 +506,31 @@ class FakePermissionService:
 
 
 class FakeArchitectDesignService:
+    """Boundary-design invoker fake.
+
+    Mirrors the real ``architect.design`` provider supplied through the typed
+    ``ArchitectDesignPort`` seam: it owns the ``GenerateArchitectureDesignCommandV1``
+    construction (the boundary handler now passes only validated primitives) and
+    records each built command so callers can assert the handler's projection.
+    """
+
     def __init__(self) -> None:
         self.generated: list[GenerateArchitectureDesignCommandV1] = []
 
-    def generate_architecture_design(
+    def run_boundary_design(
         self,
-        command: GenerateArchitectureDesignCommandV1,
+        *,
+        workspace: str,
+        objective: str,
+        constraints: Mapping[str, object],
+        context: Mapping[str, object],
     ) -> ArchitectureDesignResultV1:
+        command = GenerateArchitectureDesignCommandV1(
+            workspace=workspace,
+            objective=objective,
+            constraints=dict(constraints),
+            context=dict(context),
+        )
         self.generated.append(command)
         return ArchitectureDesignResultV1(
             ok=True,
@@ -581,14 +600,19 @@ class FakeQaAuditVerdictService:
 
 
 class SlowArchitectDesignService:
-    def generate_architecture_design(
+    def run_boundary_design(
         self,
-        command: GenerateArchitectureDesignCommandV1,
+        *,
+        workspace: str,
+        objective: str,
+        constraints: Mapping[str, object],
+        context: Mapping[str, object],
     ) -> ArchitectureDesignResultV1:
+        del objective, constraints, context
         time.sleep(0.25)
         return ArchitectureDesignResultV1(
             ok=True,
-            workspace=command.workspace,
+            workspace=workspace,
             design_id="slow-design",
             status="completed",
         )

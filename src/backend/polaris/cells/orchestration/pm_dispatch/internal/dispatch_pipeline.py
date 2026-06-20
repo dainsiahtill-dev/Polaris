@@ -673,8 +673,28 @@ def _start_durable_consumer_loops(
             "error": str(exc),
         }
 
+    # Composition root supplies the concrete CE/Director/QA consumer classes.
+    # The task_market Cell no longer imports them itself (ACGA 2.0: the
+    # producer is the lower layer; runtime.task_market must not depend on
+    # chief_engineer.blueprint / director.task_consumer / qa.audit_verdict).
     try:
-        started = service.start_consumer_loops(workspace_full)
+        ce_consumer, director_consumer, qa_consumer = _get_task_market_consumers()
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        return {
+            "enabled": True,
+            "rollout_mode": "mainline-durable",
+            "ok": False,
+            "reason": "consumer_import_failed",
+            "error": str(exc),
+        }
+    consumer_types: dict[str, type] = {
+        "chief_engineer": ce_consumer,
+        "director": director_consumer,
+        "qa": qa_consumer,
+    }
+
+    try:
+        started = service.start_consumer_loops(workspace_full, consumer_types=consumer_types)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         return {
             "enabled": True,

@@ -255,6 +255,27 @@ class TestFactoryStore:
 class TestFactoryRunService:
     """Test FactoryRunService"""
 
+    def test_default_store_uses_workspace_runtime_root(self, temp_workspace):
+        service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
+
+        expected_store_root = Path(resolve_storage_roots(str(temp_workspace)).runtime_root) / "factory"
+
+        assert service.store.base_dir == expected_store_root
+        assert service.cache_root == expected_store_root.parent
+        assert service.store.base_dir != temp_workspace / ".polaris" / "factory"
+
+    def test_explicit_cache_root_overrides_runtime_store_root(self, temp_workspace, tmp_path):
+        cache_root = tmp_path / "explicit-cache"
+
+        service = FactoryRunService(
+            temp_workspace,
+            cache_root=cache_root,
+            executor=FakeStageExecutor(),
+        )
+
+        assert service.cache_root == cache_root
+        assert service.store.base_dir == cache_root / "factory"
+
     @pytest.mark.asyncio
     async def test_create_run(self, temp_workspace):
         service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())

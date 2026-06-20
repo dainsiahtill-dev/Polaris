@@ -586,7 +586,7 @@ def _publish_to_realtime_bridge(event: LLMCallEvent) -> None:
                 source="application.roles.events",
                 timestamp=str(event.timestamp or ""),
                 iteration=_resolve_iteration(event),
-                data=event.to_dict(),
+                data=_sanitize_llm_event_for_disk(event.to_dict()),
             )
         )
     except (RuntimeError, ValueError):

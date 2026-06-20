@@ -19,6 +19,7 @@ from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
     _resolve_workflow_submit_fn,
     _run_inline_task_market_consumers,
     _shadow_publish_dispatch_tasks_to_task_market,
+    _start_durable_consumer_loops,
     _tasks_touch_docs_only,
     record_dispatch_status_to_shangshuling,
     resolve_director_dispatch_tasks,
@@ -1117,3 +1118,140 @@ def test_classify_integration_qa_evidence_dependency_blocked() -> None:
         )
         == "blocked_missing_dependencies"
     )
+
+
+# ---------------------------------------------------------------------------
+# _start_durable_consumer_loops — REGRESSION GUARD
+#
+# After breaking the runtime.task_market -> {chief_engineer, director, qa}
+# back-edges, the task_market Cell no longer imports the concrete consumer
+# classes.  pm_dispatch (the composition root) MUST now inject them via
+# ``consumer_types`` so durable production consumers still launch.  These
+# tests fail closed if pm_dispatch ever stops supplying the mapping.
+# ---------------------------------------------------------------------------
+
+
+def test_start_durable_consumer_loops_injects_consumer_types(monkeypatch) -> None:
+    """pm_dispatch must pass concrete CE/Director/QA classes to start_consumer_loops."""
+
+    class _FakeCEConsumer:
+        pass
+
+    class _FakeDirectorConsumer:
+        pass
+
+    class _FakeQAConsumer:
+        pass
+
+    captured: dict[str, object] = {}
+
+    class _FakeService:
+        def start_consumer_loops(self, workspace: str, *, consumer_types=None) -> bool:
+            captured["workspace"] = workspace
+            captured["consumer_types"] = consumer_types
+            return True
+
+        def query_consumer_loop_status(self, workspace: str) -> dict[str, object]:
+            return {"started": True, "is_running": True}
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._get_task_market_services",
+        lambda: (object, lambda: _FakeService()),
+    )
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._get_task_market_consumers",
+        lambda: (_FakeCEConsumer, _FakeDirectorConsumer, _FakeQAConsumer),
+    )
+
+    result = _start_durable_consumer_loops(workspace_full="/workspace", run_id="run-durable-1")
+
+    assert result["ok"] is True
+    assert result["reason"] == "durable_consumers_started"
+    # The critical regression assertion: consumer_types were injected, mapping
+    # each role to the concrete class supplied by the composition root.
+    assert captured["consumer_types"] == {
+        "chief_engineer": _FakeCEConsumer,
+        "director": _FakeDirectorConsumer,
+        "qa": _FakeQAConsumer,
+    }
+
+
+def test_start_durable_consumer_loops_reports_consumer_import_failure(monkeypatch) -> None:
+    """A failure resolving consumer classes is reported fail-closed (no start)."""
+    start_calls: list[object] = []
+
+    class _FakeService:
+        def start_consumer_loops(self, workspace: str, *, consumer_types=None) -> bool:
+            start_calls.append(consumer_types)
+            return True
+
+        def query_consumer_loop_status(self, workspace: str) -> dict[str, object]:
+            return {}
+
+    def _boom() -> tuple[type, type, type]:
+        raise ImportError("consumer module unavailable")
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._get_task_market_services",
+        lambda: (object, lambda: _FakeService()),
+    )
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._get_task_market_consumers",
+        _boom,
+    )
+
+    result = _start_durable_consumer_loops(workspace_full="/workspace", run_id="run-durable-2")
+
+    assert result["ok"] is False
+    assert result["reason"] == "consumer_import_failed"
+    assert "consumer module unavailable" in result["error"]
+    # Fail-closed: we never attempted to start loops without consumer classes.
+    assert start_calls == []
+
+
+def test_start_durable_consumer_loops_launches_real_threads(monkeypatch, tmp_path) -> None:
+    """End-to-end: injected types reach the real service and spawn live threads.
+
+    Guards against a silent regression where durable consumers stop launching:
+    drives a real ``TaskMarketService.start_consumer_loops`` through the
+    pm_dispatch entry point and asserts a daemon thread is running for every
+    injected role.
+    """
+    import threading
+    from typing import Any as _Any
+
+    from polaris.cells.runtime.task_market.public.service import (
+        get_task_market_service,
+    )
+
+    class _DurableFakeConsumer:
+        def __init__(self, workspace: str = "", worker_id: str = "", **_kwargs: _Any) -> None:
+            self._stop = threading.Event()
+
+        def run(self) -> None:
+            while not self._stop.wait(0.02):
+                pass
+
+        def stop(self) -> None:
+            self._stop.set()
+
+    monkeypatch.setattr(
+        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._get_task_market_consumers",
+        lambda: (_DurableFakeConsumer, _DurableFakeConsumer, _DurableFakeConsumer),
+    )
+
+    workspace = str(tmp_path / "ws")
+    service = get_task_market_service()
+    try:
+        result = _start_durable_consumer_loops(workspace_full=workspace, run_id="run-durable-3")
+
+        assert result["ok"] is True
+        status = result["consumer_status"]
+        assert status["started"] is True
+        assert status["is_running"] is True
+        # Every injected role must have a live consumer thread.
+        for role in ("chief_engineer", "director", "qa"):
+            assert status["roles"][role]["running"] is True, f"role={role} did not launch"
+        assert status["outbox_relay_running"] is True
+    finally:
+        service.stop_all_consumer_loops()

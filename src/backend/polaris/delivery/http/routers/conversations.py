@@ -9,6 +9,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends
+from polaris.cells.roles.session.internal.conversation import sanitize_conversation_message_payload
 from polaris.cells.roles.session.public import Conversation, ConversationMessage, get_db
 from polaris.delivery.http.schemas.common import (
     ConversationDeleteResponse,
@@ -83,13 +84,17 @@ async def create_conversation_v2(
 
     # 如果有初始消息，添加
     if data.initial_message:
+        safe_thinking, safe_meta = sanitize_conversation_message_payload(
+            thinking=data.initial_message.thinking,
+            meta=data.initial_message.meta,
+        )
         msg = ConversationMessage(
             conversation_id=conversation.id,
             sequence=1,
             role=data.initial_message.role,
             content=data.initial_message.content,
-            thinking=data.initial_message.thinking,
-            meta=json.dumps(data.initial_message.meta) if data.initial_message.meta else None,
+            thinking=safe_thinking,
+            meta=safe_meta,
         )
         db.add(msg)
         conversation.message_count = 1  # type: ignore[assignment]
@@ -287,14 +292,18 @@ async def add_message_v2(
 
     # 获取当前最大序号
     max_seq = db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).count()
+    safe_thinking, safe_meta = sanitize_conversation_message_payload(
+        thinking=data.thinking,
+        meta=data.meta,
+    )
 
     msg = ConversationMessage(
         conversation_id=conversation_id,
         sequence=max_seq + 1,
         role=data.role,
         content=data.content,
-        thinking=data.thinking,
-        meta=json.dumps(data.meta) if data.meta else None,
+        thinking=safe_thinking,
+        meta=safe_meta,
     )
     db.add(msg)
 
@@ -382,13 +391,17 @@ async def add_messages_batch_v2(
     max_seq = db.query(ConversationMessage).filter(ConversationMessage.conversation_id == conversation_id).count()
 
     for i, data in enumerate(messages):
+        safe_thinking, safe_meta = sanitize_conversation_message_payload(
+            thinking=data.thinking,
+            meta=data.meta,
+        )
         msg = ConversationMessage(
             conversation_id=conversation_id,
             sequence=max_seq + i + 1,
             role=data.role,
             content=data.content,
-            thinking=data.thinking,
-            meta=json.dumps(data.meta) if data.meta else None,
+            thinking=safe_thinking,
+            meta=safe_meta,
         )
         db.add(msg)
 

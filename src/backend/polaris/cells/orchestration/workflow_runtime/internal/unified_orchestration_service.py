@@ -915,6 +915,34 @@ def configure_orchestration_role_adapter_factory(
         _service_instance.set_role_adapter_factory(factory)
 
 
+def get_orchestration_role_adapter_factory() -> RoleAdapterFactory:
+    """Return the registered role adapter factory.
+
+    The factory is registered by the owning cell (``roles.adapters``) at import
+    time via :func:`configure_orchestration_role_adapter_factory`.  Runtime call
+    sites obtain adapters through this getter instead of importing the concrete
+    ``create_role_adapter`` from ``roles.adapters`` directly, which would invert
+    the dependency direction (delivery/orchestration -> roles).
+
+    Returns:
+        The registered factory callable ``(role_id, workspace) -> adapter``.
+
+    Raises:
+        RuntimeError: If no factory has been registered yet.  This is
+            fail-closed by design: a missing registration is a wiring error
+            and must surface loudly rather than silently fall back to a
+            cross-cell import.
+    """
+    factory = _role_adapter_factory
+    if factory is None:
+        raise RuntimeError(
+            "Role adapter factory is not configured. Ensure the owning cell "
+            "(polaris.cells.roles.adapters) has been imported so it can register "
+            "its factory via configure_orchestration_role_adapter_factory()."
+        )
+    return factory
+
+
 async def get_orchestration_service() -> UnifiedOrchestrationService:
     """获取编排服务单例"""
     global _service_instance
@@ -943,6 +971,7 @@ __all__ = [
     "UnifiedOrchestrationService",
     "ValidationError",
     "configure_orchestration_role_adapter_factory",
+    "get_orchestration_role_adapter_factory",
     "get_orchestration_service",
     "reset_orchestration_service",
 ]

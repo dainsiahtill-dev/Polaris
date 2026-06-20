@@ -54,3 +54,33 @@ def test_emit_llm_event_to_disk_redacts_prompt_payloads(monkeypatch: Any, tmp_pa
     assert "secret system prompt" not in serialized
     assert "secret assistant answer" not in serialized
     assert "secret nested content" not in serialized
+
+
+def test_publish_to_realtime_bridge_redacts_prompt_payloads(monkeypatch: Any, tmp_path: Path) -> None:
+    captured: list[Any] = []
+    monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))
+    monkeypatch.setattr(events, "publish_llm_realtime_event", captured.append)
+
+    event = events.LLMCallEvent(
+        event_type=events.LLMEventType.CALL_END,
+        role="director",
+        run_id="run-rt",
+        model="qwen3.6-27b-gpu1",
+        metadata={
+            "workspace": str(tmp_path),
+            "call_id": "call-rt",
+            "messages": [{"role": "user", "content": "secret realtime prompt"}],
+            "response_content": "secret realtime answer",
+        },
+    )
+
+    events._publish_to_realtime_bridge(event)
+
+    assert len(captured) == 1
+    data = captured[0].data
+    serialized = json.dumps(data, ensure_ascii=False)
+    assert data["metadata"]["call_id"] == "call-rt"
+    assert data["metadata"]["messages"] == {"redacted": True, "type": "list", "count": 1}
+    assert data["metadata"]["response_content"] == {"redacted": True, "type": "str", "chars": 22}
+    assert "secret realtime prompt" not in serialized
+    assert "secret realtime answer" not in serialized

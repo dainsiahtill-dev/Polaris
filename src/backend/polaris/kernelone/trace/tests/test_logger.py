@@ -297,6 +297,48 @@ class TestSensitiveDataFilter:
         assert result["custom_secret"] == "***REDACTED***"
         assert result["normal"] == "visible"
 
+    def test_redact_dict_llm_payload_keys(self) -> None:
+        """LLM prompt/response payloads are summarized, not logged verbatim."""
+        body_preview = '{"choices":[{"message":{"content":"secret answer"}}]}'
+        data = {
+            "json": {
+                "model": "qwen3.6",
+                "messages": [{"role": "user", "content": "secret request"}],
+            },
+            "body_preview": body_preview,
+        }
+        result = SensitiveDataFilter.redact_dict(data)
+        serialized = json.dumps(result, ensure_ascii=False)
+
+        assert result["json"]["model"] == "qwen3.6"
+        assert result["json"]["messages"] == {"redacted": True, "type": "list", "count": 1}
+        assert result["body_preview"] == {"redacted": True, "type": "str", "chars": len(body_preview)}
+        assert "secret request" not in serialized
+        assert "secret answer" not in serialized
+
+    def test_json_formatter_redacts_extra_llm_payload(self) -> None:
+        """JSON log extra fields are sanitized before serialization."""
+        formatter = JSONFormatter()
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="http trace",
+            args=(),
+            exc_info=None,
+        )
+        record.json = {"messages": [{"role": "user", "content": "secret prompt"}]}
+        record.body_preview = '{"content":"secret response"}'
+
+        payload = json.loads(formatter.format(record))
+        serialized = json.dumps(payload, ensure_ascii=False)
+
+        assert payload["json"]["messages"] == {"redacted": True, "type": "list", "count": 1}
+        assert payload["body_preview"] == {"redacted": True, "type": "str", "chars": 29}
+        assert "secret prompt" not in serialized
+        assert "secret response" not in serialized
+
 
 class TestUnifiedLogger:
     """Tests for UnifiedLogger."""

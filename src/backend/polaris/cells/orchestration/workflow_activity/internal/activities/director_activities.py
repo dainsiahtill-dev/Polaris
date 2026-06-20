@@ -17,6 +17,7 @@ from polaris.cells.orchestration.workflow_activity.internal.models import (
 from polaris.cells.orchestration.workflow_activity.internal.workflow_client import get_activity_api
 from polaris.domain.entities.policy import Policy
 from polaris.domain.state_machine import PhaseContext, PhaseExecutor, PhaseResult, TaskPhase
+from polaris.kernelone.fs.materialization import materialized_file_paths
 from polaris.kernelone.fs.text_ops import write_json_atomic
 
 from .base import ActivityExecutionResult, register_activity
@@ -239,9 +240,16 @@ async def _run_director_execution(
     result = dict(
         await adapter.execute(contract.task_id, _build_director_adapter_input(contract, phase_context), context)
     )
-    changed_files = _extract_adapter_changed_files(result)
+    reported_changed_files = _extract_adapter_changed_files(result)
+    changed_files, unmaterialized_changed_files = materialized_file_paths(workspace, reported_changed_files)
     success = bool(result.get("success"))
     error_text = "" if success else _adapter_error(result)
+    if success and reported_changed_files and not changed_files:
+        success = False
+        error_text = "Director adapter reported changed_files that did not materialize on disk"
+    if unmaterialized_changed_files:
+        result["reported_changed_files"] = reported_changed_files
+        result["unmaterialized_reported_changed_files"] = unmaterialized_changed_files
     result_payload = {
         "schema_version": 1,
         "task_id": contract.task_id,
@@ -249,6 +257,8 @@ async def _run_director_execution(
         "success": success,
         "acceptance": success,
         "changed_files": changed_files,
+        "reported_changed_files": reported_changed_files,
+        "unmaterialized_reported_changed_files": unmaterialized_changed_files,
         "adapter_result": result,
         "error": error_text,
     }
@@ -259,6 +269,8 @@ async def _run_director_execution(
         "adapter": "roles.adapters.director",
         "materialization_mode": str(result.get("materialization_mode") or "").strip(),
         "qa_required_for_final_verdict": bool(result.get("qa_required_for_final_verdict", True)),
+        "reported_changed_files": reported_changed_files,
+        "unmaterialized_reported_changed_files": unmaterialized_changed_files,
     }
     return success, error_text, changed_files, metadata
 

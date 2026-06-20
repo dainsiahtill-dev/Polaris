@@ -10,6 +10,7 @@ import json
 import os
 import threading
 import uuid
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
@@ -195,6 +196,14 @@ class ConversationMessage(Base):
 
     def to_dict(self) -> dict[str, Any]:
         """转换为字典"""
+        meta = _safe_json_loads(cast("str | None", self.meta), {})
+        if not isinstance(meta, dict):
+            meta = {}
+        thinking = cast("str | None", self.thinking)
+        if thinking:
+            meta = dict(meta)
+            meta.setdefault("thinking_sha256", _hash_text(thinking))
+            meta.setdefault("thinking_chars", len(thinking))
 
         return {
             "id": self.id,
@@ -202,10 +211,85 @@ class ConversationMessage(Base):
             "sequence": self.sequence,
             "role": self.role,
             "content": self.content,
-            "thinking": self.thinking,
-            "meta": _safe_json_loads(cast("str | None", self.meta), {}),
+            "thinking": None,
+            "meta": meta,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+_SENSITIVE_META_TOKENS = (
+    "thinking",
+    "reasoning",
+    "chain_of_thought",
+    "cot",
+    "prompt",
+    "system",
+    "messages",
+    "tool_call",
+    "tool_calls",
+    "raw",
+    "_internal",
+)
+
+
+def _hash_text(value: str) -> str:
+    return sha256(value.encode("utf-8")).hexdigest()
+
+
+def _is_sensitive_meta_key(key: str) -> bool:
+    normalized = key.strip().lower()
+    return any(token in normalized for token in _SENSITIVE_META_TOKENS)
+
+
+def _sanitize_meta_value(value: Any, *, redacted_keys: set[str], parent_key: str) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for raw_key, raw_value in value.items():
+            key = str(raw_key or "").strip()
+            if not key:
+                continue
+            child_key = f"{parent_key}.{key}" if parent_key else key
+            if _is_sensitive_meta_key(key):
+                redacted_keys.add(child_key)
+                continue
+            sanitized[key] = _sanitize_meta_value(raw_value, redacted_keys=redacted_keys, parent_key=child_key)
+        return sanitized
+    if isinstance(value, list):
+        return [
+            _sanitize_meta_value(item, redacted_keys=redacted_keys, parent_key=f"{parent_key}[]")
+            for item in value[:50]
+        ]
+    if isinstance(value, str):
+        return value[:1000]
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    return str(value)[:1000]
+
+
+def sanitize_conversation_message_payload(
+    *,
+    thinking: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> tuple[None, str | None]:
+    """Return DB-safe ``thinking`` and JSON ``meta`` for persisted chat messages."""
+    sanitized: dict[str, Any] = {}
+    redacted_keys: set[str] = set()
+    if isinstance(meta, dict):
+        for raw_key, raw_value in meta.items():
+            key = str(raw_key or "").strip()
+            if not key:
+                continue
+            if _is_sensitive_meta_key(key):
+                redacted_keys.add(key)
+                continue
+            sanitized[key] = _sanitize_meta_value(raw_value, redacted_keys=redacted_keys, parent_key=key)
+    if thinking:
+        text = str(thinking)
+        sanitized["thinking_sha256"] = _hash_text(text)
+        sanitized["thinking_chars"] = len(text)
+    if redacted_keys:
+        sanitized["redacted_keys"] = sorted(redacted_keys)
+    return None, json.dumps(sanitized, ensure_ascii=False) if sanitized else None
 
 
 # 数据库连接管理

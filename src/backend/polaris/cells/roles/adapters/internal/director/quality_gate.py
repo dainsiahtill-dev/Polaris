@@ -676,7 +676,10 @@ async def _run_materialization_quality_repair_retry(
         workspace_full=workspace_full,
     )
     repair_target_candidates = missing_target_files or runtime_smoke_target_files or semantic_quality_target_files
-    repair_target_files = _select_materialization_quality_repair_target_batch(repair_target_candidates)
+    repair_target_files = _select_materialization_quality_repair_target_batch(
+        repair_target_candidates,
+        repair_attempt=repair_attempt,
+    )
     missing_repair_target_files = repair_target_files if missing_target_files else []
     existing_repair_target_files = repair_target_files if not missing_target_files else []
     repair_message = _build_materialization_quality_repair_message(
@@ -784,12 +787,19 @@ _QUALITY_REPAIR_BASE_ATTEMPTS = 2
 _QUALITY_REPAIR_ATTEMPT_HARD_CAP = 5
 
 
-def _select_materialization_quality_repair_target_batch(missing_target_files: list[str]) -> list[str]:
+_QUALITY_REPAIR_TARGET_BATCH_LIMIT = 12
+
+
+def _select_materialization_quality_repair_target_batch(
+    missing_target_files: list[str],
+    *,
+    repair_attempt: int = 1,
+) -> list[str]:
     """Select the missing targets to repair in a single LLM attempt."""
 
-    if len(missing_target_files) <= 1:
-        return list(missing_target_files)
-    return [missing_target_files[0]]
+    if repair_attempt > 1 and missing_target_files:
+        return [missing_target_files[0]]
+    return list(missing_target_files[:_QUALITY_REPAIR_TARGET_BATCH_LIMIT])
 
 
 _PYTHON_RUNTIME_SMOKE_TARGET_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -1048,13 +1058,15 @@ def _missing_materialization_quality_repair_target_files(
     artifact_quality_errors: list[str],
 ) -> list[str]:
     explicit_missing_declared = _em._parse_missing_declared_target_files(artifact_quality_errors)
-    declared_missing_now = set(_missing_declared_target_files(task, workspace_full))
+    declared_missing_now = _missing_declared_target_files(task, workspace_full)
+    declared_missing_set = set(declared_missing_now)
     missing = [
         rel
         for item in explicit_missing_declared
-        if (rel := _normalize_declared_task_path(item)) and rel in declared_missing_now
+        if (rel := _normalize_declared_task_path(item)) and rel in declared_missing_set
     ]
     missing.extend(_em._missing_unresolved_relative_import_target_files(artifact_quality_errors, workspace_full))
+    missing.extend(declared_missing_now)
     return _dedupe_preserve_order(missing)
 
 

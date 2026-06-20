@@ -74,8 +74,15 @@ def test_unified_orchestration_service_stores_factory(tmp_path) -> None:
     assert service._role_adapter_factory is create_role_adapter
 
 
-def test_generic_pipeline_source_uses_public_factory() -> None:
+def test_generic_pipeline_source_uses_registered_factory() -> None:
+    """workflow_runtime must obtain adapters via the registered factory (CYCLE-13).
 
+    The dependency direction is inverted: ``roles.adapters`` registers its
+    factory through the workflow_runtime port, and ``GenericPipelineWorkflow``
+    resolves adapters via ``get_orchestration_role_adapter_factory`` instead of
+    importing ``roles.adapters`` directly. The source must therefore contain NO
+    import of the ``roles.adapters`` cell at all (module-level or deferred).
+    """
     source_path = (
         Path(__file__).resolve().parent.parent.parent.parent  # polaris/cells/
         / "orchestration"
@@ -86,10 +93,11 @@ def test_generic_pipeline_source_uses_public_factory() -> None:
         / "generic_pipeline_workflow.py"
     )
     source = source_path.read_text(encoding="utf-8")
-    # The lazy import inside _call_role_adapter must use the public factory path
-    assert "from polaris.cells.roles.adapters.public.service import create_role_adapter" in source
-    # Must NOT use the internal-only factory path
-    assert "from polaris.cells.roles.adapters.internal" not in source
+    # Must resolve adapters through the registered factory getter (inversion port).
+    assert "get_orchestration_role_adapter_factory" in source
+    # Must NOT import the roles.adapters cell — neither public nor internal.
+    assert "from polaris.cells.roles.adapters" not in source
+    assert "import polaris.cells.roles.adapters" not in source
 
 
 def test_orchestration_service_reload_is_graceful(tmp_path, monkeypatch) -> None:

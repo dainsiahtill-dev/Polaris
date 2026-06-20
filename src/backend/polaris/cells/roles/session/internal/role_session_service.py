@@ -22,6 +22,8 @@ import json
 import logging
 import os
 import uuid
+from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.utils.time_utils import utc_now as _utc_now
@@ -59,32 +61,179 @@ logger = logging.getLogger(__name__)
 _persistence_service: SessionPersistenceService | None = None
 _ttl_cleanup_service: SessionTTLCleanupService | None = None
 _event_publisher: SessionEventPublisher | None = None
+_persistence_services_by_workspace: dict[str, SessionPersistenceService] = {}
+_ttl_cleanup_services_by_workspace: dict[str, SessionTTLCleanupService] = {}
+_event_publishers_by_workspace: dict[str, SessionEventPublisher] = {}
+
+_MESSAGE_META_ALLOWED_KEYS = {
+    "artifacts",
+    "call_id",
+    "completion_tokens",
+    "context_os_snapshot_loaded",
+    "duration_ms",
+    "event",
+    "event_type",
+    "finish_reason",
+    "latency_ms",
+    "model",
+    "prompt_tokens",
+    "provider",
+    "provider_id",
+    "provider_name",
+    "provider_type",
+    "request_id",
+    "role",
+    "run_id",
+    "source",
+    "src",
+    "status",
+    "task_id",
+    "tool_calls_count",
+    "total_tokens",
+    "trace_id",
+    "turn_id",
+    "usage",
+}
+_MESSAGE_META_HIGH_SENSITIVITY_KEYS = {
+    "body",
+    "body_preview",
+    "content",
+    "headers",
+    "message",
+    "messages",
+    "prompt",
+    "raw",
+    "request",
+    "response",
+    "response_content",
+    "system_prompt",
+    "thinking",
+    "tool_call",
+    "tool_calls",
+    "tool_result",
+    "tool_results",
+    "user_prompt",
+}
+
+
+def _normalize_meta_key(key: object) -> str:
+    return str(key or "").strip().lower().replace("-", "_")
+
+
+def _is_allowed_message_meta_key(key: object) -> bool:
+    normalized = _normalize_meta_key(key)
+    return (
+        normalized in _MESSAGE_META_ALLOWED_KEYS
+        or normalized.endswith("_count")
+        or normalized.endswith("_ms")
+        or normalized.endswith("_id")
+        or normalized.endswith("_tokens")
+    )
+
+
+def _is_high_sensitivity_message_meta_key(key: object) -> bool:
+    normalized = _normalize_meta_key(key)
+    return (
+        normalized in _MESSAGE_META_HIGH_SENSITIVITY_KEYS
+        or normalized.startswith("_internal")
+        or "prompt" in normalized
+        or "message" in normalized
+        or "tool_call" in normalized
+        or "tool_result" in normalized
+    )
+
+
+def _sanitize_message_meta_value(value: Any, *, redacted_keys: set[str], parent_key: str) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:1000]
+    if isinstance(value, (list, tuple)):
+        return [
+            _sanitize_message_meta_value(item, redacted_keys=redacted_keys, parent_key=parent_key)
+            for item in list(value)[:50]
+            if isinstance(item, (str, int, float, bool, dict, list, tuple)) or item is None
+        ]
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for raw_key, raw_value in value.items():
+            key = str(raw_key or "").strip()
+            if not key:
+                continue
+            if _is_high_sensitivity_message_meta_key(key) or not _is_allowed_message_meta_key(key):
+                redacted_keys.add(f"{parent_key}.{key}")
+                continue
+            sanitized[key] = _sanitize_message_meta_value(
+                raw_value,
+                redacted_keys=redacted_keys,
+                parent_key=f"{parent_key}.{key}",
+            )
+        return sanitized
+    return str(value)[:1000]
+
+
+def _sanitize_message_meta(meta: dict[str, Any] | None, thinking: str | None) -> dict[str, Any] | None:
+    sanitized: dict[str, Any] = {}
+    redacted_keys: set[str] = set()
+
+    if isinstance(meta, dict):
+        for raw_key, raw_value in meta.items():
+            key = str(raw_key or "").strip()
+            if not key:
+                continue
+            if _is_high_sensitivity_message_meta_key(key) or not _is_allowed_message_meta_key(key):
+                redacted_keys.add(key)
+                continue
+            sanitized[key] = _sanitize_message_meta_value(raw_value, redacted_keys=redacted_keys, parent_key=key)
+
+    if thinking:
+        text = str(thinking)
+        sanitized["thinking_sha256"] = sha256(text.encode("utf-8")).hexdigest()
+        sanitized["thinking_chars"] = len(text)
+
+    if redacted_keys:
+        sanitized["redacted_keys"] = sorted(redacted_keys)
+
+    return sanitized or None
+
+
+def _workspace_cache_key(workspace: str | None = None) -> str:
+    raw = str(workspace or os.environ.get("KERNELONE_CONTEXT_ROOT") or os.getcwd()).strip()
+    try:
+        return str(Path(raw).expanduser().resolve())
+    except OSError:
+        return str(Path(raw).expanduser().absolute())
 
 
 def _get_persistence_service(workspace: str | None = None) -> SessionPersistenceService:
     """获取或创建全局持久化服务实例"""
-    global _persistence_service
-    if _persistence_service is None:
-        workspace = workspace or os.environ.get("KERNELONE_CONTEXT_ROOT") or os.getcwd()
-        _persistence_service = SessionPersistenceService(workspace)
-    return _persistence_service
+    cache_key = _workspace_cache_key(workspace)
+    service = _persistence_services_by_workspace.get(cache_key)
+    if service is None:
+        service = SessionPersistenceService(cache_key)
+        _persistence_services_by_workspace[cache_key] = service
+    return service
 
 
 def _get_ttl_cleanup_service(workspace: str | None = None) -> SessionTTLCleanupService:
     """获取或创建全局 TTL 清理服务实例"""
-    global _ttl_cleanup_service
-    if _ttl_cleanup_service is None:
+    cache_key = _workspace_cache_key(workspace)
+    service = _ttl_cleanup_services_by_workspace.get(cache_key)
+    if service is None:
         persistence = _get_persistence_service(workspace)
-        _ttl_cleanup_service = SessionTTLCleanupService(persistence)
-    return _ttl_cleanup_service
+        service = SessionTTLCleanupService(persistence)
+        _ttl_cleanup_services_by_workspace[cache_key] = service
+    return service
 
 
 def _get_event_publisher(workspace: str | None = None) -> SessionEventPublisher:
     """获取或创建全局事件发布器实例"""
-    global _event_publisher
-    if _event_publisher is None:
-        _event_publisher = SessionEventPublisher(workspace=workspace)
-    return _event_publisher
+    cache_key = _workspace_cache_key(workspace)
+    publisher = _event_publishers_by_workspace.get(cache_key)
+    if publisher is None:
+        publisher = SessionEventPublisher(workspace=cache_key)
+        _event_publishers_by_workspace[cache_key] = publisher
+    return publisher
 
 
 class RoleSessionService:
@@ -779,6 +928,8 @@ class RoleSessionService:
 
         next_seq = (last_message.sequence + 1) if last_message else 0
 
+        sanitized_meta = _sanitize_message_meta(meta, thinking)
+
         # 创建消息
         message = ConversationMessage(
             id=str(uuid.uuid4()),
@@ -786,8 +937,8 @@ class RoleSessionService:
             sequence=next_seq,
             role=role,
             content=content,
-            thinking=thinking,
-            meta=json.dumps(meta) if meta else None,
+            thinking=None,
+            meta=json.dumps(sanitized_meta, ensure_ascii=False) if sanitized_meta else None,
         )
 
         # 更新会话计数和时间

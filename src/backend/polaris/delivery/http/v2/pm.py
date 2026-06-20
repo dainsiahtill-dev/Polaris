@@ -911,8 +911,7 @@ async def get_pm_llm_events(
     emitter = get_global_emitter()
     events = emitter.get_events(run_id=run_id, task_id=task_id, role="pm", limit=limit)
     resolved_workspace = _workspace_value(request.app.state.app_state.settings, workspace)
-    if workspace.strip():
-        events = filter_llm_events_by_workspace(events, resolved_workspace)
+    events = filter_llm_events_by_workspace(events, resolved_workspace)
 
     stats = {
         "total": len(events),

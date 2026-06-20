@@ -414,9 +414,6 @@ cells:
       - policy.workspace_guard
       - audit.evidence
       - factory.cognitive_runtime
-      - chief_engineer.blueprint
-      - director.task_consumer
-      - qa.audit_verdict
     subgraphs:
       - execution_governance_pipeline
       - pm_pipeline
@@ -805,7 +802,6 @@ cells:
       - runtime.state_owner
       - policy.workspace_guard
       - audit.evidence
-      - archive.run_archive
     subgraphs:
       - storage_archive_pipeline
     state_owners:
@@ -852,7 +848,6 @@ cells:
     depends_on:
       - policy.workspace_guard
       - audit.evidence
-      - archive.run_archive
     subgraphs:
       - storage_archive_pipeline
     state_owners:
@@ -1194,7 +1189,6 @@ cells:
       errors:
         - LlmProviderConfigErrorV1
     depends_on:
-      - llm.control_plane
       - storage.layout
       - policy.workspace_guard
       - audit.evidence
@@ -1387,7 +1381,6 @@ cells:
       - chief_engineer.blueprint
       - director.execution
       - qa.audit_verdict
-      - roles.adapters
       - roles.engine
       - roles.kernel
       - roles.profile
@@ -1395,7 +1388,6 @@ cells:
       - runtime.task_market
       - factory.verification_guard
       - factory.cognitive_runtime
-      - architect.design
       - finops.budget_guard
       - archive.run_archive
       - audit.diagnosis
@@ -2617,7 +2609,6 @@ cells:
       - llm.provider_runtime
       - policy.workspace_guard
       - audit.verdict
-      - director.execution
       - factory.cognitive_runtime
       - roles.runtime
     subgraphs: []
@@ -3060,7 +3051,6 @@ cells:
       - orchestration.pm_planning
       - orchestration.pm_dispatch
       - resident.autonomy
-      - roles.adapters
       - roles.profile
       - runtime.artifact_store
       - runtime.task_runtime

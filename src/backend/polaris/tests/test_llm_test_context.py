@@ -39,7 +39,7 @@ def test_resolve_context_uses_direct_config_when_base_url_present(tmp_path):
 
 def test_resolve_context_connectivity_requires_provider_and_model_without_base_url(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "polaris.cells.llm.control_plane.load_llm_config_port",
+        "polaris.cells.llm.provider_config.internal.test_context.load_llm_config_port",
         lambda *args, **kwargs: {},
     )
 
@@ -76,7 +76,7 @@ def test_resolve_context_connectivity_ignores_requested_suites(tmp_path):
 
 def test_resolve_context_uses_role_defaults_for_non_connectivity(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "polaris.cells.llm.control_plane.load_llm_config_port",
+        "polaris.cells.llm.provider_config.internal.test_context.load_llm_config_port",
         lambda *args, **kwargs: {
             "roles": {"pm": {"provider_id": "codex_cli", "model": "gpt-5"}},
         },
@@ -98,7 +98,7 @@ def test_resolve_context_uses_role_defaults_for_non_connectivity(tmp_path, monke
 
 def test_resolve_context_raises_when_role_not_configured(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "polaris.cells.llm.control_plane.load_llm_config_port",
+        "polaris.cells.llm.provider_config.internal.test_context.load_llm_config_port",
         lambda *args, **kwargs: {"roles": {}},
     )
 
