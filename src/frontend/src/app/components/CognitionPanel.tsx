@@ -86,26 +86,18 @@ export function CognitionPanel({ events, loading, anthroState }: CognitionPanelP
     }, [resolvedAnthroState]);
 
     return (
-        <div className="h-full flex flex-col glass border-l border-white/5 bg-gradient-to-b from-[#1e1e1e] to-[#0f0f0f] relative overflow-hidden">
-
-            {/* Background Pulse for Mood */}
-            <div className={`absolute top-0 right-0 w-full h-20 opacity-10 blur-3xl pointer-events-none transition-colors duration-1000
-          ${mood.key === 'confident' ? 'bg-green-500' : mood.key === 'cautious' ? 'bg-yellow-500' : 'bg-red-500'}`}
-            />
+        <div className="h-full flex flex-col border-l border-white/5 bg-[#18181b] relative overflow-hidden">
 
             {/* Header */}
-            <div className="px-5 py-4 border-b border-white/5 bg-white/5 backdrop-blur-md sticky top-0 z-20">
+            <div className="px-5 py-4 border-b border-white/5 bg-white/[0.03] sticky top-0 z-20">
 
                 {/* Thought Chain HUD */}
                 <ThoughtChainHUD phase={latestStats.phase} />
 
                 <div className="flex items-center justify-between mb-4 mt-4">
                     <div className="flex items-center gap-3">
-                        <div className="relative">
-                            <div className="absolute inset-0 bg-purple-500 blur-lg opacity-20 animate-pulse"></div>
-                            <div className="relative size-10 rounded-xl bg-gradient-to-br from-purple-500/10 to-blue-500/10 flex items-center justify-center text-purple-300 border border-white/10 shadow-[0_0_15px_rgba(168,85,247,0.15)]">
-                                <Brain className="size-5" />
-                            </div>
+                        <div className="size-10 rounded-lg bg-white/5 flex items-center justify-center text-slate-300 border border-white/10">
+                            <Brain className="size-5" />
                         </div>
                         <div>
                             <h2 className="text-sm font-heading font-bold text-gray-100 tracking-wide">心镜台</h2>
@@ -214,7 +206,7 @@ function ThoughtChainHUD({ phase }: { phase: string }) {
     }, [phase]);
 
     return (
-        <div className="flex items-center justify-between bg-black/40 rounded-full px-4 py-2 border border-white/5 mb-2 shadow-inner">
+        <div className="flex items-center justify-between bg-black/30 rounded-full px-4 py-2 border border-white/5 mb-2">
             {steps.map((step, i) => {
                 const isActive = i === currentIdx;
                 const isPast = i < currentIdx;
@@ -328,12 +320,10 @@ function ReflectionCard({ reflection }: { reflection: ReflectionItem }) {
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             whileHover={{ scale: 1.02 }}
-            className="relative p-4 rounded-xl border border-white/10 bg-gradient-to-br from-purple-500/5 to-transparent backdrop-blur-sm shadow-sm transition-all hover:bg-white/5"
+            className="relative p-4 rounded-lg border border-white/10 bg-white/[0.02] transition-all hover:bg-white/[0.04]"
         >
-            <div className="absolute -right-4 -top-4 size-20 bg-purple-500/10 blur-xl rounded-full pointer-events-none"></div>
-
-            <div className="flex items-start gap-3 relative z-10">
-                <div className="mt-0.5 p-1.5 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20">
+            <div className="flex items-start gap-3">
+                <div className="mt-0.5 p-1.5 rounded-md bg-white/5 text-slate-400 border border-white/10">
                     <Sparkles className="size-4" />
                 </div>
                 <div className="flex-1">
@@ -344,7 +334,7 @@ function ReflectionCard({ reflection }: { reflection: ReflectionItem }) {
 
                     <div className="mt-3 flex flex-wrap gap-2 text-[10px]">
                         {reflection.scope && reflection.scope.map((s: string) => (
-                            <span key={s} className="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-300/70 border border-purple-500/10">
+                            <span key={s} className="px-1.5 py-0.5 rounded bg-white/5 text-slate-400 border border-white/10">
                                 {s}
                             </span>
                         ))}

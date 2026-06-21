@@ -78,7 +78,7 @@ export function StrategyDiffViewer({
       {/* Header */}
       <div className="h-14 flex items-center justify-between px-4 border-b border-indigo-400/20">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-cyan-500/15 border border-cyan-400/25 flex items-center justify-center shadow-lg shadow-cyan-500/10">
+          <div className="w-8 h-8 rounded-lg bg-cyan-500/[0.15] border border-cyan-400/25 flex items-center justify-center shadow-lg shadow-cyan-500/10">
             <GitCompare className="w-4 h-4 text-cyan-100" />
           </div>
           <div>

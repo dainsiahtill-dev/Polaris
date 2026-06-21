@@ -32,8 +32,8 @@ const stageConfig: Record<
   },
   coding: {
     label: '编码',
-    color: 'text-cyan-400',
-    bgColor: 'bg-cyan-400',
+    color: 'text-slate-300',
+    bgColor: 'bg-slate-300',
     icon: <Code className="size-3" />,
   },
   testing: {

@@ -381,7 +381,7 @@ export function DirectorWorkbenchPanel({
           <button
             type="button"
             onClick={handleNewSession}
-            className="inline-flex h-7 items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/15 px-2 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25"
+            className="inline-flex h-7 items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/[0.15] px-2 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25"
           >
             <PlusCircle className="h-3.5 w-3.5" />
             新建会话
@@ -390,7 +390,7 @@ export function DirectorWorkbenchPanel({
             <button
               type="button"
               onClick={handleExportPatch}
-              className="inline-flex h-7 items-center gap-1.5 rounded border border-blue-500/25 bg-blue-500/15 px-2 text-xs text-blue-100 transition-colors hover:bg-blue-500/25"
+              className="inline-flex h-7 items-center gap-1.5 rounded border border-blue-500/25 bg-blue-500/[0.15] px-2 text-xs text-blue-100 transition-colors hover:bg-blue-500/25"
             >
               <UploadCloud className="h-3.5 w-3.5" />
               导出补丁
@@ -401,7 +401,7 @@ export function DirectorWorkbenchPanel({
               type="button"
               onClick={handleExportToFactory}
               disabled={isExportingFactory}
-              className="inline-flex h-7 items-center gap-1.5 rounded border border-cyan-500/25 bg-cyan-500/15 px-2 text-xs text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-7 items-center gap-1.5 rounded border border-cyan-500/25 bg-cyan-500/[0.15] px-2 text-xs text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <UploadCloud className="h-3.5 w-3.5" />
               导出 Factory

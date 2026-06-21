@@ -27,10 +27,10 @@ const STATUS_TEXT: Record<PanelStatus, string> = {
 };
 
 const STATUS_BADGES: Record<PanelStatus, string> = {
-  idle: 'bg-gray-500/20 text-gray-300 border-gray-500/30',
-  running: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30',
-  success: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30',
-  failed: 'bg-red-500/20 text-red-200 border-red-500/30'
+  idle: 'bg-accent/10 text-text-muted border-border',
+  running: 'bg-accent/15 text-accent-text border-accent/35',
+  success: 'bg-status-success/15 text-status-success border-status-success/35',
+  failed: 'bg-status-error/15 text-status-error border-status-error/35'
 };
 
 export function TestPanelHeader({
@@ -52,7 +52,7 @@ export function TestPanelHeader({
   const resolvedStatusText = statusText?.[status] || STATUS_TEXT[status];
 
   return (
-    <div className="flex items-start justify-between gap-3 p-3 border-b border-cyan-500/20 bg-black/40">
+    <div className="flex items-start justify-between gap-3 border-b border-border bg-[rgba(6,15,28,0.88)] p-3 shadow-[inset_0_1px_0_rgba(0,216,255,0.16)]">
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-text-main">
           <span className="truncate">{resolvedTitle}</span>
@@ -70,7 +70,7 @@ export function TestPanelHeader({
           <button
             type="button"
             onClick={onCopyLogs}
-            className="p-1.5 rounded border border-white/10 hover:border-accent/40 text-text-dim"
+            className="rounded border border-border p-1.5 text-text-dim hover:border-accent/40 hover:text-text-main"
             title="复制日志"
           >
             <Copy className="size-3" />
@@ -80,7 +80,7 @@ export function TestPanelHeader({
           <button
             type="button"
             onClick={onExportLogs}
-            className="p-1.5 rounded border border-white/10 hover:border-accent/40 text-text-dim"
+            className="rounded border border-border p-1.5 text-text-dim hover:border-accent/40 hover:text-text-main"
             title="导出会话"
           >
             <Download className="size-3" />
@@ -90,7 +90,7 @@ export function TestPanelHeader({
           <button
             type="button"
             onClick={onToggleCollapse}
-            className="p-1.5 rounded border border-white/10 hover:border-accent/40 text-text-dim"
+            className="rounded border border-border p-1.5 text-text-dim hover:border-accent/40 hover:text-text-main"
             title={collapsed ? '展开' : '折叠'}
           >
             {collapsed ? <ChevronDown className="size-3" /> : <ChevronUp className="size-3" />}
@@ -101,7 +101,7 @@ export function TestPanelHeader({
           data-testid="llm-test-panel-close"
           onClick={onClose}
           disabled={running}
-          className="p-1.5 rounded border border-white/10 hover:border-accent/40 disabled:opacity-50"
+          className="rounded border border-border p-1.5 text-text-dim hover:border-accent/40 hover:text-text-main disabled:opacity-50"
         >
           {running ? <Loader2 className="size-3 animate-spin" /> : <X className="size-3" />}
         </button>

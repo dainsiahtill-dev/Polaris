@@ -6,9 +6,9 @@ interface DialoguePanelSkeletonProps {
 
 export function DialoguePanelSkeleton({ items = 3 }: DialoguePanelSkeletonProps) {
   return (
-    <div className="h-full bg-[var(--ink-indigo)] border-l border-gray-800 flex flex-col">
+    <div className="soft-panel-subtle h-full flex flex-col">
       {/* Header skeleton */}
-      <div className="px-4 py-3 border-b border-gray-800 bg-[#252526]">
+      <div className="soft-panel-subtle px-4 py-3 border-b">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <Skeleton className="w-5 h-5 rounded" />
@@ -45,7 +45,7 @@ export function DialoguePanelSkeleton({ items = 3 }: DialoguePanelSkeletonProps)
       </div>
 
       {/* Footer stats skeleton */}
-      <div className="border-t border-gray-800 p-3 bg-[#252526]">
+      <div className="soft-panel-subtle border-t p-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Skeleton className="h-3 w-16" />

@@ -465,7 +465,7 @@ export function DirectorTaskPanel({
         onClick={() => onTaskSelect(task.id)}
         className={cn(
           'w-full rounded-lg border p-3 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-400/60',
-          isSelected ? 'border-indigo-400/50 bg-indigo-500/12' : 'border-white/10 bg-white/[0.04] hover:border-white/20 hover:bg-white/[0.07]',
+          isSelected ? 'border-indigo-400/50 bg-indigo-500/[0.12]' : 'border-white/10 bg-white/[0.04] hover:border-white/20 hover:bg-white/[0.07]',
         )}
       >
         <div className="flex items-start gap-3">
@@ -507,7 +507,7 @@ export function DirectorTaskPanel({
         )}
 
         {hasFileActivity && (
-          <div className="mt-3 rounded-lg border border-cyan-400/15 bg-cyan-500/5 p-2 text-[10px] text-cyan-100">
+          <div className="mt-3 rounded-lg border border-cyan-400/[0.15] bg-cyan-500/5 p-2 text-[10px] text-cyan-100">
             {currentFile && <div className="truncate" title={currentFile}>文件: {currentFile}</div>}
             {task.lineStats && (
               <div className="mt-1 flex gap-2 font-mono">
@@ -767,7 +767,7 @@ export function DirectorTaskPanel({
               className={cn(
                 'rounded-md border px-2 py-1 text-[10px] transition-colors',
                 activeFilter === filter.id
-                  ? 'border-indigo-400/50 bg-indigo-500/15 text-indigo-200'
+                  ? 'border-indigo-400/50 bg-indigo-500/[0.15] text-indigo-200'
                   : 'border-white/10 bg-white/[0.03] text-slate-400 hover:text-slate-200',
               )}
             >

@@ -2,8 +2,8 @@ import { BaseEdge, getBezierPath, type EdgeProps, type Edge, type Node } from '@
 import type { VisualEdgeData } from '../types/visual';
 
 const EDGE_COLORS: Record<string, string> = {
-  'provider-to-model': '#22d3ee',
-  'model-to-role': '#f472b6',
+  'provider-to-model': '#94a3b8',
+  'model-to-role': '#64748b',
 };
 
 export function CustomEdge(props: EdgeProps<Edge<VisualEdgeData>>) {

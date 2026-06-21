@@ -5,8 +5,8 @@ const STATUS_STYLES: Record<string, string> = {
   ready: 'text-emerald-300',
   success: 'text-emerald-300',
   failed: 'text-rose-300',
-  testing: 'text-cyan-300',
-  running: 'text-cyan-300',
+  testing: 'text-slate-300',
+  running: 'text-slate-300',
   unknown: 'text-amber-300',
 };
 
@@ -24,11 +24,11 @@ export function VisualProviderNode({ data }: NodeProps<Node<VisualProviderNodeDa
   const statusLabel = data.status ? STATUS_LABELS[data.status] || data.status : '待命';
   return (
     <div
-      className="min-w-[200px] rounded-xl border border-fuchsia-400/40 bg-black/70 px-3 py-2 text-text-main shadow-[0_0_14px_rgba(217,70,239,0.2)]"
+      className="min-w-[200px] rounded-lg border border-slate-500/40 bg-black/70 px-3 py-2 text-text-main"
       data-provider-id={data.providerId}
       data-provider-status={data.status || 'unknown'}
     >
-      <Handle type="source" position={Position.Right} className="!bg-fuchsia-300 !border-fuchsia-200" />
+      <Handle type="source" position={Position.Right} className="!bg-slate-400 !border-slate-300" />
       <div className="flex items-center justify-between">
         <div className="text-xs font-semibold">{data.label}</div>
         <div className={`text-[9px] ${statusClass}`}>{statusLabel}</div>

@@ -19,7 +19,7 @@ export interface DialogueEvent {
   eventId?: string;
   speaker: 'PM' | 'Director' | 'QA' | 'Reviewer' | 'System';
   type?: string;
-  content: string;
+  content: unknown;
   timestamp?: string;
   refs?: {
     task_id?: string;
@@ -39,43 +39,43 @@ interface DialoguePanelProps {
 const speakerStyles = {
   PM: {
     icon: User,
-    iconBg: 'bg-gradient-to-br from-blue-500/20 to-cyan-500/20',
-    iconText: 'text-cyan-400',
-    nameText: 'text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400',
-    filterActive: 'bg-blue-500/20 text-blue-300 shadow-[0_0_15px_rgba(59,130,246,0.4)]',
+    iconBg: 'bg-blue-500/[0.15]',
+    iconText: 'text-blue-400',
+    nameText: 'text-blue-400',
+    filterActive: 'bg-blue-500/20 text-blue-300',
     border: 'border-blue-500/30'
   },
   Director: {
     icon: Bot,
-    iconBg: 'bg-gradient-to-br from-purple-500/20 to-pink-500/20',
-    iconText: 'text-purple-400',
-    nameText: 'text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400',
-    filterActive: 'bg-purple-500/20 text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.4)]',
-    border: 'border-purple-500/30'
+    iconBg: 'bg-slate-500/[0.15]',
+    iconText: 'text-slate-400',
+    nameText: 'text-slate-300',
+    filterActive: 'bg-slate-500/20 text-slate-300',
+    border: 'border-slate-500/30'
   },
   QA: {
     icon: CheckCircle,
-    iconBg: 'bg-gradient-to-br from-emerald-500/20 to-green-500/20',
+    iconBg: 'bg-emerald-500/[0.15]',
     iconText: 'text-emerald-400',
-    nameText: 'text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-green-400',
-    filterActive: 'bg-emerald-500/20 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.4)]',
+    nameText: 'text-emerald-400',
+    filterActive: 'bg-emerald-500/20 text-emerald-300',
     border: 'border-emerald-500/30'
   },
   Reviewer: {
     icon: ActivityIcon,
-    iconBg: 'bg-gradient-to-br from-orange-500/20 to-amber-500/20',
-    iconText: 'text-orange-400',
-    nameText: 'text-orange-400',
-    filterActive: 'bg-orange-500/20 text-orange-300 shadow-[0_0_15px_rgba(249,115,22,0.4)]',
-    border: 'border-orange-500/30'
+    iconBg: 'bg-amber-500/[0.15]',
+    iconText: 'text-amber-400',
+    nameText: 'text-amber-400',
+    filterActive: 'bg-amber-500/20 text-amber-300',
+    border: 'border-amber-500/30'
   },
   System: {
     icon: MessageSquare,
-    iconBg: 'bg-white/5',
-    iconText: 'text-gray-400',
-    nameText: 'text-gray-400',
-    filterActive: 'bg-white/10 text-gray-300 shadow-[0_0_10px_rgba(255,255,255,0.1)]',
-    border: 'border-white/10'
+    iconBg: 'bg-accent/10',
+    iconText: 'text-text-muted',
+    nameText: 'text-text-muted',
+    filterActive: 'bg-accent/15 text-accent-text',
+    border: 'border-border'
   },
 };
 
@@ -87,6 +87,17 @@ const STATUS_RANK: Record<string, number> = {
   SUCCESS: 2,
   PASS: 2,
 };
+
+function formatDialogueContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (content == null) return '';
+  try {
+    const serialized = JSON.stringify(content, null, 2);
+    return typeof serialized === 'string' ? serialized : String(content);
+  } catch {
+    return String(content);
+  }
+}
 
 function normalizeStatus(status: string): string {
   const raw = status.trim().toUpperCase();
@@ -190,20 +201,22 @@ export function DialoguePanel({
       group.startTs = group.startTs || event.timestamp;
       group.endTs = event.timestamp || group.endTs;
 
+      const contentText = formatDialogueContent(event.content);
+
       if (!group.title) {
-        const title = extractTitle(event.content);
+        const title = extractTitle(contentText);
         if (title) group.title = title;
       }
-      const status = extractStatus(event.content);
+      const status = extractStatus(contentText);
       if (status) group.status = mergeStatus(group.status, status);
 
-      const findings = extractReviewerFindings(event.content);
+      const findings = extractReviewerFindings(contentText);
       if (findings.length) group.reviewerFindings.push(...findings);
 
-      const modified = extractModifiedCount(event.content);
+      const modified = extractModifiedCount(contentText);
       if (typeof modified === 'number') group.modifiedCount = modified;
 
-      const attempt = extractAttempt(event.content);
+      const attempt = extractAttempt(contentText);
       if (attempt) {
         group.attemptCurrent = attempt.current;
         group.attemptTotal = attempt.total;
@@ -226,7 +239,7 @@ export function DialoguePanel({
         taskIds.add(taskId);
       }
       if (event.type === 'result' && taskId) {
-        const match = event.content.match(/Result:\s*([A-Za-z]+)/);
+        const match = formatDialogueContent(event.content).match(/Result:\s*([A-Za-z]+)/);
         if (match?.[1]) {
           resultByTaskId.set(taskId, mergeStatus(resultByTaskId.get(taskId), match[1]));
         }
@@ -242,22 +255,16 @@ export function DialoguePanel({
   }, [events]);
 
   return (
-    <div className="h-full flex flex-col glass-bubble border-l-0 relative overflow-hidden bg-cyber-deep">
-      {/* Cyberpunk Pro Max Background Elements */}
-      <div className="absolute inset-0 cyber-grid-mesh opacity-20 pointer-events-none" />
-      <div className="absolute inset-0 bg-cyber-scanlines opacity-10 pointer-events-none" />
-
-      <div className="bg-cyber-scanline-light" />
-
+    <div className="soft-panel-subtle h-full flex flex-col border-l-0 relative overflow-hidden">
       <div className="relative z-20 flex flex-col h-full">
-        <div className="px-4 py-4 border-b border-white/5 bg-black/60 cyber-corner-cut relative mx-2 mt-2">
+        <div className="soft-panel-subtle px-4 py-4 border-b relative mx-2 mt-2 rounded-lg">
 
           <div className="relative z-10 mb-3 flex flex-wrap items-start justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent/15 text-accent shadow-[0_0_20px_rgba(124,58,237,0.4)] neon-glow-purple scale-110">
+              <div className="soft-raised flex size-9 shrink-0 items-center justify-center rounded-lg text-text-muted">
                 <MessageSquare className="size-5" />
               </div>
-              <h2 className="whitespace-nowrap text-sm font-heading font-black text-text-main uppercase tracking-[0.18em] glitch-text leading-tight">对话流</h2>
+              <h2 className="whitespace-nowrap text-sm font-heading font-black text-text-main uppercase tracking-[0.18em] leading-tight">对话流</h2>
             </div>
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 text-[10px] text-text-muted font-mono">
               {onClearLogs ? (
@@ -266,7 +273,7 @@ export function DialoguePanel({
                     onClearLogs();
                   }}
                   disabled={clearingLogs}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-white/10 bg-black/60 text-text-dim transition-colors hover:border-accent/30 hover:text-text-main disabled:cursor-not-allowed disabled:opacity-50"
+                  className="soft-chip flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-dim transition-colors hover:border-border-glow hover:text-text-main disabled:cursor-not-allowed disabled:opacity-50"
                   title={clearingLogs ? '清空中...' : '清空对话日志'}
                   aria-label={clearingLogs ? '清空中' : '清空对话日志'}
                 >
@@ -274,15 +281,15 @@ export function DialoguePanel({
                   <span className="sr-only">{clearingLogs ? '清空中' : '清空日志'}</span>
                 </button>
               ) : null}
-              <div className="flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-sm border border-white/10 bg-black/60 px-2 shadow-[0_0_15px_rgba(6,182,212,0.15)] neon-glow-cyan">
-                <ActivityIcon className={`size-3 ${live ? 'text-status-success animate-pulse' : 'text-text-dim'}`} />
-                <span className={live ? 'text-status-success font-bold' : 'text-text-dim font-bold tracking-widest'}>{live ? '实时' : '离线'}</span>
+              <div className="soft-chip flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-sm px-2">
+                <ActivityIcon className={`size-3 ${live ? 'text-emerald-400 animate-pulse' : 'text-text-dim'}`} />
+                <span className={live ? 'text-emerald-400 font-bold' : 'text-text-dim font-bold tracking-widest'}>{live ? '实时' : '离线'}</span>
               </div>
-              <div className="flex shrink-0 items-center gap-1 rounded-sm bg-black/60 p-0.5 border border-white/10 no-drag shadow-inner">
+              <div className="soft-inset flex shrink-0 items-center gap-1 rounded-sm p-0.5 no-drag">
                 <button
                   onClick={() => setViewMode('tasks')}
                   className={`h-6 whitespace-nowrap rounded-sm px-2 transition-all font-black uppercase tracking-tighter text-[9px] ${viewMode === 'tasks'
-                    ? 'bg-accent/30 text-accent shadow-[0_0_10px_rgba(124,58,237,0.4)] border border-accent/20'
+                    ? 'bg-accent/15 text-accent-text border border-border-glow'
                     : 'text-text-dim hover:text-text-main'
                     }`}
                 >
@@ -291,7 +298,7 @@ export function DialoguePanel({
                 <button
                   onClick={() => setViewMode('stream')}
                   className={`h-6 whitespace-nowrap rounded-sm px-2 transition-all font-black uppercase tracking-tighter text-[9px] ${viewMode === 'stream'
-                    ? 'bg-accent/30 text-accent shadow-[0_0_10px_rgba(124,58,237,0.4)] border border-accent/20'
+                    ? 'bg-accent/15 text-accent-text border border-border-glow'
                     : 'text-text-dim hover:text-text-main'
                     }`}
                 >
@@ -306,8 +313,8 @@ export function DialoguePanel({
               <button
                 onClick={() => setFilterSpeaker(null)}
                 className={`px-2 py-1 text-[10px] rounded-md border transition-all ${!filterSpeaker
-                  ? 'bg-accent/20 text-accent border-accent/30 shadow-[0_0_8px_rgba(124,58,237,0.2)]'
-                  : 'bg-white/5 text-text-dim border-transparent hover:bg-white/10'
+                  ? 'bg-accent/15 text-accent-text border-border-glow'
+                  : 'bg-accent/10 text-text-dim border-transparent hover:bg-accent/15'
                   }`}
               >
                 全部
@@ -320,7 +327,7 @@ export function DialoguePanel({
                     onClick={() => setFilterSpeaker(speaker === filterSpeaker ? null : speaker)}
                     className={`px-2 py-1 text-[10px] rounded-md border border-transparent transition-all ${filterSpeaker === speaker
                       ? style.filterActive
-                      : 'bg-white/5 text-text-dim hover:bg-white/10'
+                      : 'bg-accent/10 text-text-dim hover:bg-accent/15'
                       }`}
                   >
                     {speaker}
@@ -357,16 +364,16 @@ export function DialoguePanel({
                 const timeRange = group.startTs && group.endTs ? `${group.startTs} - ${group.endTs}` : group.endTs || '';
 
                 return (
-                  <div key={group.taskId} className="rounded-xl border border-white/10 bg-black/40 cyber-corner-cut p-4 backdrop-blur-md transition-all hover:bg-black/60 hover:border-accent/30 hover:neon-glow-purple relative group/task">
+                  <div key={group.taskId} className="soft-panel rounded-lg p-4 transition-all hover:border-border-glow relative group/task">
 
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2 text-[10px] text-text-muted font-mono">
-                          <span className="rounded px-1.5 py-0.5 bg-white/5 border border-white/5">
+                          <span className="rounded px-1.5 py-0.5 bg-accent/10 border border-border">
                             {group.taskId}
                           </span>
                           {attemptLabel ? (
-                            <span className="rounded px-1.5 py-0.5 bg-white/5 opacity-70">{attemptLabel}</span>
+                            <span className="rounded px-1.5 py-0.5 bg-accent/10 opacity-70">{attemptLabel}</span>
                           ) : null}
                           {timeRange ? <span className="text-text-dim opacity-50">{timeRange}</span> : null}
                         </div>
@@ -394,7 +401,7 @@ export function DialoguePanel({
                             [group.taskId]: !isExpanded,
                           }))
                         }
-                        className="flex items-center gap-1 rounded px-2 py-1 text-[10px] text-text-dim hover:text-text-main hover:bg-white/10 transition-colors"
+                        className="flex items-center gap-1 rounded px-2 py-1 text-[10px] text-text-dim hover:text-text-main hover:bg-accent/10 transition-colors"
                       >
                         {isExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
                         <span>{isExpanded ? '收起' : '展开'}</span>
@@ -402,7 +409,7 @@ export function DialoguePanel({
                     </div>
 
                     {group.reviewerFindings.length > 0 ? (
-                      <div className="mt-3 rounded-lg border border-status-warning/30 bg-status-warning/5 px-3 py-2 text-xs text-status-warning shadow-[0_0_10px_rgba(249,115,22,0.1)]">
+                      <div className="mt-3 rounded-md border border-status-warning/30 bg-status-warning/5 px-3 py-2 text-xs text-status-warning">
                         <div className="mb-1 font-semibold flex items-center gap-2">
                           <AlertTriangle className="size-3" /> Reviewer 风险点
                         </div>
@@ -417,7 +424,7 @@ export function DialoguePanel({
 
                     {isExpanded ? (
                       <div className="mt-3 space-y-2 relative">
-                        <div className="absolute left-[11px] top-2 bottom-2 w-px bg-white/5"></div>
+                        <div className="absolute left-[11px] top-2 bottom-2 w-px bg-border"></div>
                         {group.events.map((event, idx) => {
                           const style = speakerStyles[event.speaker] ?? speakerStyles.System;
                           const Icon = style.icon;
@@ -427,17 +434,17 @@ export function DialoguePanel({
                               className="flex gap-3 relative z-10 pl-2 group/msg"
                             >
                               <div
-                                className={`flex-shrink-0 w-6 h-6 rounded-full ${style.iconBg} flex items-center justify-center ring-2 ring-bg-panel transition-transform group-hover/msg:scale-110`}
+                                className={`flex-shrink-0 w-6 h-6 rounded-full ${style.iconBg} flex items-center justify-center ring-2 ring-accent/20 transition-transform group-hover/msg:scale-105`}
                               >
                                 <Icon className={`size-3 ${style.iconText}`} />
                               </div>
-                              <div className="min-w-0 flex-1 bg-black/40 cyber-corner-cut p-3 border border-white/10 hover:border-accent/30 transition-all group-hover/msg:neon-glow-purple">
+                              <div className="soft-panel-subtle min-w-0 flex-1 p-3 transition-all rounded-md">
                                 <div className="flex items-center gap-2 text-[10px] text-text-dim font-mono mb-1">
                                   <span className={`${style.nameText} font-bold`}>{event.speaker}</span>
                                   <span className="opacity-50">{event.type || 'log'}</span>
                                   <span className="opacity-50 ml-auto">{event.timestamp}</span>
                                 </div>
-                                <div className="text-xs text-text-main whitespace-pre-wrap break-all leading-relaxed opacity-90">{event.content}</div>
+                                <div className="text-xs text-text-main whitespace-pre-wrap break-all leading-relaxed opacity-90">{formatDialogueContent(event.content)}</div>
                               </div>
                             </div>
                           );
@@ -463,7 +470,7 @@ export function DialoguePanel({
                   className="flex gap-3 group/msg"
                 >
                   <div
-                    className={`flex-shrink-0 w-8 h-8 rounded-full ${style.iconBg} flex items-center justify-center ring-2 ring-transparent group-hover/msg:ring-accent/20 transition-all shadow-lg`}
+                    className={`flex-shrink-0 w-8 h-8 rounded-full ${style.iconBg} flex items-center justify-center ring-2 ring-transparent group-hover/msg:ring-accent/20 transition-all`}
                   >
                     <Icon className={`size-4 ${style.iconText}`} />
                   </div>
@@ -475,19 +482,19 @@ export function DialoguePanel({
                       </span>
                       <span className="text-[10px] text-text-dim font-mono">{event.timestamp}</span>
                       {event.refs?.task_id && (
-                        <span className="text-[10px] px-1.5 py-0 rounded bg-white/10 text-text-dim border border-white/5">
+                        <span className="text-[10px] px-1.5 py-0 rounded bg-accent/10 text-text-dim border border-border">
                           {event.refs.task_id}
                         </span>
                       )}
                       {event.refs?.phase && (
-                        <span className="text-[10px] px-1.5 py-0 rounded bg-white/10 text-text-dim border border-white/5">
+                        <span className="text-[10px] px-1.5 py-0 rounded bg-accent/10 text-text-dim border border-border">
                           {event.refs.phase}
                         </span>
                       )}
                     </div>
 
-                    <div className="bg-black/40 cyber-corner-cut px-5 py-4 hover:bg-black/60 transition-all shadow-xl border border-white/10 hover:border-accent/30 group-hover/msg:neon-glow-cyan">
-                      <p className="text-sm text-text-main leading-relaxed break-all whitespace-pre-wrap">{event.content}</p>
+                    <div className="soft-panel-subtle px-5 py-4 transition-all rounded-md">
+                      <p className="text-sm text-text-main leading-relaxed break-all whitespace-pre-wrap">{formatDialogueContent(event.content)}</p>
                     </div>
                   </div>
                 </div>
@@ -496,17 +503,17 @@ export function DialoguePanel({
           )}
         </div>
 
-        <div className="border-t border-white/5 p-3 bg-black/60 backdrop-blur-xl cyber-corner-cut mx-2 mb-2 relative">
+        <div className="soft-panel-subtle border-t p-3 mx-2 mb-2 relative rounded-lg">
 
           <div className="flex items-center justify-between text-[9px] text-text-dim font-mono relative z-10">
             <div className="flex items-center gap-4">
-              <span className="flex items-center gap-1"><div className="size-1 bg-accent rounded-full animate-pulse" /> 总事件: {events.length}</span>
-              <span className="flex items-center gap-1"><div className="size-1 bg-accent/50 rounded-full" /> 任务数: {stats.totalTasks}</span>
-              <span className="flex items-center gap-1"><div className="size-1 bg-accent/50 rounded-full" /> 已完成: {stats.completedTasks}</span>
+              <span className="flex items-center gap-1"><div className="size-1 bg-slate-400 rounded-full animate-pulse" /> 总事件: {events.length}</span>
+              <span className="flex items-center gap-1"><div className="size-1 bg-slate-500 rounded-full" /> 任务数: {stats.totalTasks}</span>
+              <span className="flex items-center gap-1"><div className="size-1 bg-slate-500 rounded-full" /> 已完成: {stats.completedTasks}</span>
             </div>
-            <StatusBadge color="success" variant="dot" pulse className="neon-glow-cyan">
+            <StatusBadge color="success" variant="dot" pulse>
               <TrendingUp className="size-3" />
-              <span className="font-black glitch-text">成功率: {stats.successRate}%</span>
+              <span className="font-black">成功率: {stats.successRate}%</span>
             </StatusBadge>
           </div>
         </div>

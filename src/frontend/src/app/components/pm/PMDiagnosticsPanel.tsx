@@ -544,7 +544,7 @@ export function PMDiagnosticsPanel({ isOpen, onClose, workspace = '' }: PMDiagno
                 {status.planningInput?.ok ? (
                   <div className="space-y-2" data-testid="pm-planning-input-diagnostics">
                     <p className="text-sm text-slate-300">PM 已找到可规划输入</p>
-                    <div className="grid gap-2 rounded-md border border-emerald-500/15 bg-emerald-500/10 p-3 text-xs text-emerald-50">
+                    <div className="grid gap-2 rounded-md border border-emerald-500/[0.15] bg-emerald-500/10 p-3 text-xs text-emerald-50">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-emerald-200/80">来源</span>
                         <span className="font-mono">{formatPlanningInputSource(status.planningInput.source)}</span>

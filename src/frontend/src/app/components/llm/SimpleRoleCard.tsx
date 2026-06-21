@@ -31,44 +31,44 @@ interface SimpleRoleCardProps {
 const ROLE_META: Record<string, { label: string; color: string; badge: string; description: string }> = {
   pm: {
     label: 'PM',
-    color: 'text-cyan-300',
-    badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30',
+    color: 'text-text-main',
+    badge: 'bg-white/[0.08] text-text-main border-white/[0.12]',
     description: '总领全局，统筹任务与节奏。'
   },
   director: {
     label: 'Director',
     color: 'text-emerald-300',
-    badge: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30',
+    badge: 'bg-emerald-500/[0.15] text-emerald-200 border-emerald-500/25',
     description: '负责实现、调度与技术裁断（实际编码）。'
   },
   chief_engineer: {
     label: 'Chief Engineer',
     color: 'text-emerald-400',
-    badge: 'bg-emerald-600/20 text-emerald-300 border-emerald-600/30',
+    badge: 'bg-emerald-600/[0.15] text-emerald-300 border-emerald-600/25',
     description: '绘制技术蓝图，定体例与纲目（设计不编码）。'
   },
   qa: {
     label: 'QA',
     color: 'text-blue-200',
-    badge: 'bg-blue-500/20 text-blue-200 border-blue-500/30',
+    badge: 'bg-blue-500/[0.15] text-blue-200 border-blue-500/25',
     description: '掌审核复核，稽核质量与风险。'
   },
   architect: {
     label: 'Architect',
     color: 'text-amber-300',
-    badge: 'bg-amber-500/20 text-amber-200 border-amber-500/30',
+    badge: 'bg-amber-500/[0.15] text-amber-200 border-amber-500/25',
     description: '草拟项目规格与架构文档，定体例与纲目。'
   },
   cfo: {
     label: 'CFO',
-    color: 'text-purple-300',
-    badge: 'bg-purple-500/20 text-purple-200 border-purple-500/30',
+    color: 'text-text-main',
+    badge: 'bg-white/[0.08] text-text-main border-white/[0.12]',
     description: '核算预算，监控Token用量与成本。'
   },
   hr: {
     label: 'HR',
-    color: 'text-pink-300',
-    badge: 'bg-pink-500/20 text-pink-200 border-pink-500/30',
+    color: 'text-text-main',
+    badge: 'bg-white/[0.08] text-text-main border-white/[0.12]',
     description: '管理LLM配置与模型任免。'
   },
 };
@@ -81,10 +81,10 @@ const STATUS_COLORS = {
 };
 
 const STATUS_BADGES = {
-  unconfigured: 'bg-gray-500/20 text-gray-300 border-gray-500/30',
-  ready: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30',
-  failed: 'bg-red-500/20 text-red-200 border-red-500/30',
-  degraded: 'bg-amber-500/20 text-amber-200 border-amber-500/30'
+  unconfigured: 'bg-white/[0.06] text-text-dim border-white/10',
+  ready: 'bg-emerald-500/[0.12] text-emerald-200 border-emerald-500/25',
+  failed: 'bg-rose-500/[0.12] text-rose-200 border-rose-500/25',
+  degraded: 'bg-amber-500/[0.12] text-amber-200 border-amber-500/25'
 };
 
 const STATUS_LABELS = {
@@ -159,7 +159,7 @@ export function SimpleRoleCard({
           <button
             onClick={handleRunRoleTest}
             disabled={isTesting || !role.providerId || role.status === 'degraded'}
-            className="px-3 py-1.5 text-[10px] font-semibold bg-purple-500/80 hover:bg-purple-500 text-white rounded transition-colors disabled:opacity-60 flex items-center gap-1"
+            className="px-3 py-1.5 text-[10px] font-semibold bg-white/[0.12] hover:bg-white/[0.16] text-text-main rounded transition-colors disabled:opacity-60 flex items-center gap-1"
           >
             {isTesting ? (
               <Loader2 className="size-3 animate-spin" />
@@ -171,7 +171,7 @@ export function SimpleRoleCard({
 
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="p-1.5 rounded border border-white/10 hover:border-accent/40 transition-colors"
+            className="p-1.5 soft-chip rounded hover:border-white/20 transition-colors"
           >
             {isExpanded ? <ChevronDown className="size-3 rotate-180" /> : <ChevronDown className="size-3" />}
           </button>
@@ -185,7 +185,7 @@ export function SimpleRoleCard({
           value={role.providerId || ''}
           onChange={(e) => handleProviderChange(e.target.value)}
           disabled={readyProviders.length === 0}
-          className="flex-1 bg-black/30 text-text-main px-3 py-2 rounded border border-white/10 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/50 disabled:opacity-60"
+          className="flex-1 bg-white/5 text-text-main px-3 py-2 rounded border border-white/[0.08] text-sm focus:outline-none focus:border-white/20 focus:ring-1 focus:ring-white/10 disabled:opacity-60"
         >
           <option value="">请选择模型...</option>
           {readyProviders.map(provider => (
@@ -280,7 +280,7 @@ export function SimpleRoleCard({
         <button
           onClick={handleRunRoleTest}
           disabled={isTesting || !role.providerId || role.status === 'degraded'}
-          className="px-3 py-1.5 text-[10px] font-semibold bg-purple-500/80 hover:bg-purple-500 text-white rounded transition-colors disabled:opacity-60 flex items-center gap-1"
+          className="px-3 py-1.5 text-[10px] font-semibold bg-white/[0.12] hover:bg-white/[0.16] text-text-main rounded transition-colors disabled:opacity-60 flex items-center gap-1"
         >
           {isTesting ? (
             <Loader2 className="size-3 animate-spin" />

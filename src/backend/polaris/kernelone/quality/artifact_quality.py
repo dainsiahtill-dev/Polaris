@@ -202,6 +202,11 @@ _NPM_SCRIPT_ENTRYPOINT_SUBCOMMANDS = {
 _NPM_NODE_INLINE_CODE_FLAGS = {"-e", "--eval", "-p", "--print", "-c", "--check"}
 _NPM_NODE_OPTION_VALUE_FLAGS = {"--loader", "--require", "-r", "--import"}
 _NPM_SCRIPT_SEPARATORS = {"&&", "||", ";", "|"}
+_NPM_PLACEHOLDER_SCRIPT_COMMANDS = {"echo", "printf"}
+_NPM_SCRIPT_FAILURE_SWALLOW_RE = re.compile(
+    r"(?:^|[\s;&|])\|\|\s*(?:echo|printf|true|exit\s+0)(?:$|[\s;&|])",
+    re.IGNORECASE,
+)
 _TSC_PROJECT_CHECK_FLAG = "KERNELONE_TSC_PROJECT_CHECK"
 _PYTHON_COMMAND_IN_NPM_SCRIPT_RE = re.compile(r"(?:^|[\s;&|])(python3?|pytest|pip3?)(?:$|[\s;&|])", re.IGNORECASE)
 _PYTHON_PACKAGE_MANIFEST_DEPENDENCIES = {
@@ -566,11 +571,21 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
         for script_name, script_value in scripts.items():
             script_text = str(script_value or "")
             try:
-                shlex.split(script_text, posix=(os.name != "nt"))
+                tokens = shlex.split(script_text, posix=(os.name != "nt"))
             except ValueError as exc:
                 errors.append(
                     "Artifact quality scan failed: npm package manifest script "
                     f"{str(script_name)!r} has invalid shell syntax in {relative_path}: {exc}"
+                )
+                continue
+            placeholder_reason = _placeholder_package_script_reason(str(script_name), script_text, tokens)
+            if placeholder_reason:
+                errors.append(f"Artifact quality scan failed: {placeholder_reason} in {relative_path}")
+                continue
+            if _NPM_SCRIPT_FAILURE_SWALLOW_RE.search(script_text):
+                errors.append(
+                    "Artifact quality scan failed: npm package manifest script "
+                    f"{str(script_name)!r} swallows command failures in {relative_path}"
                 )
                 continue
             if _NPM_SCRIPT_SHELL_SUBSTITUTION_RE.search(script_text):
@@ -588,6 +603,7 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
             errors.extend(
                 _scan_npm_script_missing_local_entrypoints(root_full, script_text, str(script_name), relative_path)
             )
+            errors.extend(_scan_npm_script_missing_local_configs(root_full, tokens, str(script_name), relative_path))
         if _package_manifest_requires_typescript(root_full, payload) and not _package_declares_dependency(
             payload, "typescript"
         ):
@@ -613,6 +629,21 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
                 )
                 return errors
     return errors
+
+
+def _placeholder_package_script_reason(script_name: str, command: str, tokens: list[str]) -> str:
+    if not tokens:
+        return f"npm package manifest script {script_name!r} is empty"
+    first_command = os.path.basename(str(tokens[0] or ""))
+    if first_command not in _NPM_PLACEHOLDER_SCRIPT_COMMANDS:
+        return ""
+    for index, token in enumerate(tokens):
+        if token not in _NPM_SCRIPT_SEPARATORS or index + 1 >= len(tokens):
+            continue
+        next_command = os.path.basename(str(tokens[index + 1] or ""))
+        if next_command not in {*_NPM_PLACEHOLDER_SCRIPT_COMMANDS, "exit", "true"}:
+            return ""
+    return f"npm package manifest script {script_name!r} is a placeholder command: {command}"
 
 
 def _package_declares_dependency(payload: dict[str, Any], package_name: str) -> bool:
@@ -681,6 +712,35 @@ def _scan_npm_script_missing_local_entrypoints(
             errors.append(
                 "Artifact quality scan failed: npm package manifest script "
                 f"{script_name!r} references missing local entrypoint {normalized!r} in {relative_path}"
+            )
+    return errors
+
+
+def _scan_npm_script_missing_local_configs(
+    root_full: Path,
+    tokens: list[str],
+    script_name: str,
+    relative_path: str,
+) -> list[str]:
+    errors: list[str] = []
+    for index, token in enumerate(tokens):
+        config_path = ""
+        if token == "--config" and index + 1 < len(tokens):
+            config_path = str(tokens[index + 1] or "")
+        elif token.startswith("--config="):
+            config_path = token.split("=", 1)[1]
+        config_path = config_path.strip().strip("'\"")
+        if not config_path:
+            continue
+        normalized = config_path.replace("\\", "/")
+        if normalized.startswith(("/", "http://", "https://")) or ".." in normalized.split("/"):
+            continue
+        if Path(normalized).suffix.lower() not in {".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"}:
+            continue
+        if not (root_full / normalized).is_file():
+            errors.append(
+                "Artifact quality scan failed: npm package manifest script "
+                f"{script_name!r} references missing config file {normalized!r} in {relative_path}"
             )
     return errors
 

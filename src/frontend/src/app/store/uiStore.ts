@@ -85,7 +85,7 @@ export interface UIActions {
 // Constants
 // ============================================================================
 
-const UI_STORAGE_KEY = 'polaris:ui';
+const UI_STORAGE_KEY = 'polaris:ui:game-hud-v1';
 const DEFAULT_FONT_SIZE = 14;
 const MIN_FONT_SIZE = 10;
 const MAX_FONT_SIZE = 24;

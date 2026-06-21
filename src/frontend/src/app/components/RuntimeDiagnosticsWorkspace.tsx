@@ -379,7 +379,7 @@ export function RuntimeDiagnosticsWorkspace({
             返回
           </Button>
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-200 ring-1 ring-emerald-400/30">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/[0.15] text-emerald-200 ring-1 ring-emerald-400/30">
               <Gauge className="h-4 w-4" />
             </div>
             <div className="min-w-0">

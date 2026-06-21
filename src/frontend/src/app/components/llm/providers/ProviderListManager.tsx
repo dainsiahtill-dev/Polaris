@@ -163,7 +163,7 @@ export function ProviderListManager({
       <ConnectionMethodSelector availableMethods={availableMethods} />
 
       {/* Available Providers to Add */}
-      <div className="rounded-2xl border border-white/10 bg-[rgba(35,25,14,0.45)] p-4">
+      <div className="soft-panel-subtle rounded-xl p-4">
         <div className="mb-3 flex min-w-0 flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
             <div className="text-xs font-semibold text-text-main">支持的提供商</div>
@@ -188,14 +188,14 @@ export function ProviderListManager({
                       type="button"
                       onClick={() => handleAddProvider(provider.info.type)}
                       disabled={isSaving}
-                      className="min-w-0 rounded-xl border border-white/10 bg-[rgba(35,25,14,0.3)] p-3 text-left transition-all hover:border-white/30 disabled:opacity-60"
+                      className="soft-panel-subtle min-w-0 rounded-xl p-3 text-left transition-all hover:border-accent/35 hover:shadow-[0_16px_34px_rgba(31,43,51,0.11)] disabled:opacity-60"
                     >
                       <div className="flex min-w-0 items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="truncate text-xs font-semibold text-text-main">{provider.info.name}</div>
                           <div className="break-all text-[10px] text-text-dim">{provider.info.type}</div>
                         </div>
-                        <span className="shrink-0 rounded border border-white/10 bg-black/40 px-2 py-0.5 text-[9px]">
+                        <span className="soft-chip shrink-0 px-2 py-0.5 text-[9px] text-text-muted">
                           {provider.info.cost_class}
                         </span>
                       </div>
@@ -205,7 +205,7 @@ export function ProviderListManager({
                       {provider.info.supported_features?.length ? (
                         <div className="mt-2 flex flex-wrap gap-1">
                           {provider.info.supported_features.slice(0, 3).map((feature: string) => (
-                            <span key={feature} className="text-[9px] px-2 py-0.5 rounded bg-white/5 text-text-dim">
+                            <span key={feature} className="soft-chip px-2 py-0.5 text-[9px] text-text-dim">
                               {feature}
                             </span>
                           ))}
@@ -224,15 +224,15 @@ export function ProviderListManager({
         )}
 
         {recommendedProvider && (
-          <div className="mt-4 flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-[10px] text-emerald-100">
+          <div className="mt-4 flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-status-success/35 bg-status-success/10 p-3 text-[10px] text-status-success">
             <div className="min-w-0 break-words">
               推荐提供商：<span className="font-semibold">{recommendedProvider.info.name}</span>
-              <span className="text-emerald-200/70"> · {recommendedProvider.info.description}</span>
+              <span className="text-text-muted"> · {recommendedProvider.info.description}</span>
             </div>
             <button
               type="button"
               onClick={() => handleAddProvider(recommendedProvider.info.type)}
-              className="px-3 py-1.5 rounded bg-emerald-500/80 text-white text-[10px] font-semibold hover:bg-emerald-500 transition-colors"
+              className="soft-primary-action rounded px-3 py-1.5 text-[10px] font-semibold transition-colors"
             >
               一键添加
             </button>
@@ -299,7 +299,7 @@ export function ProviderListManager({
               <button
                 type="button"
                 onClick={onEnterDeepTest}
-                className="px-4 py-2 text-xs font-semibold bg-emerald-500/80 hover:bg-emerald-500 text-white rounded transition-colors flex items-center gap-2"
+                className="soft-primary-action flex items-center gap-2 rounded px-4 py-2 text-xs font-semibold transition-colors"
               >
                 进入深度测试
                 <PlayCircle className="size-3" />
@@ -313,7 +313,7 @@ export function ProviderListManager({
                     openTestPanel(firstProviderId);
                   }
                 }}
-                className="px-3 py-2 text-[10px] border border-amber-500/30 text-amber-400 rounded hover:border-amber-400/60 hover:bg-amber-500/10 transition-colors"
+                className="rounded border border-status-warning/35 px-3 py-2 text-[10px] text-status-warning transition-colors hover:border-status-warning/60 hover:bg-status-warning/10"
                 title="跳过连通性测试，直接打开测试面板"
               >
                 直接打开面板
@@ -322,7 +322,7 @@ export function ProviderListManager({
           </div>
         </div>
       ) : (
-        <div className="bg-white/5 rounded-xl p-8 border border-white/5 text-center space-y-4">
+        <div className="soft-panel-subtle space-y-4 rounded-xl p-8 text-center">
           <Settings className="size-8 text-text-dim mx-auto mb-3" />
           <h4 className="text-sm font-medium text-text-main mb-2">尚未配置LLM提供商</h4>
           <p className="text-xs text-text-dim mb-4">
@@ -332,7 +332,7 @@ export function ProviderListManager({
             <p>支持的提供商类型：</p>
             <div className="flex flex-wrap gap-2 justify-center mt-2">
               {providers.slice(0, 6).map((provider) => (
-                <span key={provider.info.type} className="bg-[rgba(35,25,14,0.45)] px-2 py-1 rounded text-[9px]">
+                <span key={provider.info.type} className="soft-chip rounded px-2 py-1 text-[9px]">
                   {provider.info.name}
                 </span>
               ))}
@@ -343,7 +343,7 @@ export function ProviderListManager({
             <button
               type="button"
               onClick={onEnterDeepTest}
-              className="px-4 py-2 text-xs font-semibold bg-emerald-500/80 hover:bg-emerald-500 text-white rounded transition-colors flex items-center gap-2 opacity-80 hover:opacity-100"
+              className="soft-primary-action flex items-center gap-2 rounded px-4 py-2 text-xs font-semibold opacity-80 transition-colors hover:opacity-100"
             >
               进入深度测试（无配置）
               <PlayCircle className="size-3" />

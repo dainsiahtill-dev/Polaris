@@ -132,8 +132,8 @@ function LogEventCard({
                 event.channel === 'system'
                   ? 'bg-blue-500/20 text-blue-300'
                   : event.channel === 'process'
-                    ? 'bg-green-500/20 text-green-300'
-                    : 'bg-purple-500/20 text-purple-300'
+                    ? 'bg-emerald-500/20 text-emerald-300'
+                    : 'bg-slate-500/20 text-slate-300'
               }`}
             >
               {event.channel}
@@ -165,7 +165,7 @@ function LogEventCard({
               <div className="flex items-center gap-1 ml-auto">
                 <div className="w-12 h-1.5 bg-gray-700 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-gradient-to-r from-yellow-400 to-green-400"
+                    className="h-full bg-emerald-500/60"
                     style={{ width: `${signalScore * 100}%` }}
                   />
                 </div>
@@ -394,7 +394,7 @@ export function UnifiedLogsView({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-      <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-4xl h-[80vh] flex flex-col">
+      <div className="bg-gray-900 border border-gray-700 rounded-lg w-full max-w-4xl h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           <div className="flex items-center gap-4">

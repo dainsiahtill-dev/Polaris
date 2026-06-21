@@ -181,7 +181,7 @@ function ThinkingBlock({ content }: { content: string }) {
       {/* 头部 */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center justify-between px-4 py-2.5 bg-violet-500/10 hover:bg-violet-500/15 transition-colors"
+        className="w-full flex items-center justify-between px-4 py-2.5 bg-violet-500/10 hover:bg-violet-500/[0.15] transition-colors"
       >
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -269,7 +269,7 @@ function ErrorBlock({ content }: { content: string }) {
       </div>
 
       {/* 头部 */}
-      <div className="relative flex items-center gap-2 px-4 py-3 bg-red-500/15 border-b border-red-500/20">
+      <div className="relative flex items-center gap-2 px-4 py-3 bg-red-500/[0.15] border-b border-red-500/20">
         <div className="relative">
           <AlertCircle className="w-5 h-5 text-red-400" />
           <span className="absolute inset-0 bg-red-400/30 rounded-full animate-ping" style={{ animationDuration: '1.5s' }} />

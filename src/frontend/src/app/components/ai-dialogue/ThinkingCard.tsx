@@ -79,8 +79,7 @@ export function ThinkingCard({
   return (
     <div className={cn(
       "mb-3 rounded-lg border border-white/10 bg-slate-900/50 overflow-hidden",
-      // 运行状态时添加微妙的呼吸光效
-      isRunning && "animate-pulse border-amber-500/30"
+      isRunning && "border-amber-500/30"
     )}>
       {/* Header */}
       <button
@@ -90,7 +89,7 @@ export function ThinkingCard({
         <div className="flex items-center gap-2">
           <Brain className={cn(
             "w-4 h-4",
-            isRunning ? "text-amber-400 animate-pulse" : "text-slate-400"
+            isRunning ? "text-amber-400" : "text-slate-400"
           )} />
           <span className="text-xs font-medium text-slate-300">
             {roleName} {isRunning ? '处理中' : '思考中'}

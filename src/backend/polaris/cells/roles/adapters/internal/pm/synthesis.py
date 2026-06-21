@@ -66,6 +66,52 @@ def _extract_content_any_keywords_from_directive(directive: str, *, limit: int =
     return _dedupe_limited_texts(values, limit=limit)
 
 
+def _pascal_identifier_token(value: str, *, fallback: str) -> str:
+    parts = re.findall(r"[A-Za-z0-9]+", str(value or ""))
+    token = "".join(part[:1].upper() + part[1:].lower() for part in parts if part)
+    return token or fallback
+
+
+def _typescript_model_target_from_keyword(keyword: str, *, fallback: str) -> str:
+    normalized = str(keyword or "").strip().lower()
+    explicit_names = {
+        "firefly": "Firefly",
+        "flower": "Flower",
+        "moon": "MoonPhase",
+        "moonphase": "MoonPhase",
+        "humidity": "Humidity",
+    }
+    name = explicit_names.get(normalized) or _pascal_identifier_token(normalized, fallback=fallback)
+    return f"src/models/{name}.ts"
+
+
+def _typescript_model_targets_from_keywords(keywords: list[str], *, domain_token: str) -> list[str]:
+    source_keywords = keywords[:4] if keywords else [domain_token]
+    targets = [
+        _typescript_model_target_from_keyword(
+            keyword,
+            fallback=_pascal_identifier_token(domain_token, fallback="DomainModel"),
+        )
+        for keyword in source_keywords
+    ]
+    return _dedupe_limited_texts(targets, limit=6)
+
+
+def _extract_typescript_semantic_keywords(directive: str) -> list[str]:
+    text = str(directive or "").lower()
+    checks = [
+        ("firefly", ("firefly", "fireflies", "萤火虫", "發光昆蟲", "发光昆虫")),
+        ("flower", ("flower", "flowers", "花朵", "花園", "花园")),
+        ("moon", ("moon", "moonphase", "月相", "月亮")),
+        ("humidity", ("humidity", "湿度", "濕度")),
+    ]
+    keywords: list[str] = []
+    for keyword, needles in checks:
+        if any(needle in text for needle in needles):
+            keywords.append(keyword)
+    return keywords
+
+
 class PMContractSynthesisMixin(_PMAdapterMixinBase):
     """PM 合同确定性合成 mixin：在 LLM 输出不可用时，无 LLM 地基于需求指令生成可执行任务合同。"""
 
@@ -227,6 +273,8 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 deterministic_checks = _extract_deterministic_checks_from_directive(directive)
                 content_keywords = _extract_content_any_keywords_from_directive(directive)
                 if not content_keywords:
+                    content_keywords = _extract_typescript_semantic_keywords(directive)
+                if not content_keywords:
                     content_keywords = self._extract_domain_keywords(directive, limit=6)
                 keyword_summary = ", ".join(content_keywords[:6]) if content_keywords else str(domain_label)
                 check_summary = (
@@ -234,16 +282,21 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                     if deterministic_checks
                     else ("html; ts_syntax; package_scripts")
                 )
+                model_file_targets = _typescript_model_targets_from_keywords(
+                    content_keywords,
+                    domain_token=domain_token,
+                )
                 model_targets = [
                     "package.json",
                     "tsconfig.json",
+                    "src/index.ts",
                     "src/main.ts",
-                    f"src/{domain_token}.ts",
+                    *model_file_targets,
                 ]
                 visual_targets = [
                     "index.html",
-                    "src/simulation.ts",
-                    "src/render.ts",
+                    "src/engine/simulation.ts",
+                    "src/engine/renderer.ts",
                 ]
                 validation_targets = [
                     "package.json",
@@ -260,7 +313,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                             "非占位 package 脚本和需求驱动的核心模块。"
                         ),
                         "description": (
-                            "创建 package.json、tsconfig.json、src/main.ts 与需求模块，"
+                            "创建 package.json、tsconfig.json、src/index.ts、src/main.ts 与 src/models 领域模型，"
                             f"覆盖需求关键词和确定性检查：{keyword_summary}。"
                         ),
                         "scope": model_targets,
@@ -268,11 +321,11 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "steps": [
                             "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
                             "创建 tsconfig.json，启用 strict、DOM/ES2020 lib、outDir=dist、rootDir=src",
-                            f"实现 src/main.ts 与 src/{domain_token}.ts，暴露可运行入口和核心需求状态",
+                            "实现 src/index.ts、src/main.ts 与 src/models 下的领域实体，暴露可运行入口和核心需求状态",
                             "`npm start` 必须先 build 或引用当前存在的源码入口，不能指向未生成的 dist 文件",
                         ],
                         "acceptance": [
-                            "`package.json`、`tsconfig.json`、`src/main.ts` 与需求模块存在且非空",
+                            "`package.json`、`tsconfig.json`、`src/index.ts`、`src/main.ts` 与 `src/models/` 领域模块存在且非空",
                             "`npm run build`、`npm run test` 与 `npm start` 对真实入口执行检查",
                             f"源码或测试覆盖需求关键词：{keyword_summary}",
                         ],
@@ -286,18 +339,19 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "title": f"实现 {domain_label} 模拟流程与 Web 入口",
                         "goal": f"实现 {domain_label} 的需求流程、状态更新和可打开的浏览器入口。",
                         "description": (
-                            f"补齐 simulation/render 和 index.html，让页面与源码共同体现需求关键词：{keyword_summary}。"
+                            f"补齐 src/engine/simulation、src/engine/renderer 和 index.html，让页面与源码共同体现需求关键词：{keyword_summary}。"
                         ),
                         "scope": visual_targets,
                         "target_files": visual_targets,
                         "steps": [
-                            "实现 src/simulation.ts 的状态更新或计算流程",
-                            "实现 src/render.ts，将核心状态渲染为浏览器可见内容",
+                            "实现 src/engine/simulation.ts 的状态更新或计算流程",
+                            "实现 src/engine/renderer.ts，将核心状态渲染为浏览器可见内容",
                             "创建 index.html，包含有效 <html> 与可视化容器",
                             f"在页面或源码中保留验收关键词：{keyword_summary}",
                         ],
                         "acceptance": [
                             "`index.html` 存在并包含有效 `<html>` 标签与模拟容器",
+                            "`src/engine/` 存在并包含可渲染场景或引擎核心文件",
                             f"源码或页面包含需求关键词：{keyword_summary}",
                             "`npm run build` 通过且浏览器入口引用真实构建产物",
                         ],

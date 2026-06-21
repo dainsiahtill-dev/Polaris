@@ -4,6 +4,7 @@ import {
   buildContextOSModel,
   decisionMatchesRole,
   contextOSFormat,
+  safeText,
   NOMINAL_CONTEXT_WINDOW,
 } from './contextOSData';
 import { buildTelemetryFromStream } from './contextOSTelemetry';
@@ -832,6 +833,43 @@ describe('contextOSFormat', () => {
     expect(contextOSFormat.windowTokens(32_768)).toBe('32.8k');
     expect(contextOSFormat.windowTokens(262_144)).toBe('262k');
     expect(contextOSFormat.windowTokens(1_000_000)).toBe('1M');
+  });
+});
+
+describe('safeText', () => {
+  it('returns fallback for null/undefined', () => {
+    expect(safeText(null)).toBe('');
+    expect(safeText(undefined)).toBe('');
+    expect(safeText(null, 'N/A')).toBe('N/A');
+  });
+  it('passes through strings unchanged', () => {
+    expect(safeText('hello')).toBe('hello');
+    expect(safeText('')).toBe('');
+  });
+  it('converts primitives to string', () => {
+    expect(safeText(42)).toBe('42');
+    expect(safeText(true)).toBe('true');
+    expect(safeText(0)).toBe('0');
+  });
+  it('JSON-stringifies objects to prevent [object Object]', () => {
+    expect(safeText({ a: 1 })).toBe('{"a":1}');
+    expect(safeText({ key: 'value' })).toBe('{"key":"value"}');
+    expect(safeText({ a: 1 })).not.toContain('[object Object]');
+  });
+  it('returns fallback for empty objects', () => {
+    expect(safeText({})).toBe('');
+    expect(safeText({}, 'empty')).toBe('empty');
+  });
+  it('truncates large objects', () => {
+    const big = { data: 'x'.repeat(300) };
+    const result = safeText(big);
+    expect(result.length).toBeLessThanOrEqual(200);
+    expect(result).toContain('...');
+  });
+  it('returns fallback for values that fail JSON.stringify', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(safeText(circular)).toBe('');
   });
 });
 

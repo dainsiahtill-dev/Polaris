@@ -366,7 +366,7 @@ function HistoryDrawerContent() {
                       {generatedIds.length > 0 && (
                         <div className="flex flex-wrap gap-2">
                           {generatedIds.map((taskId) => (
-                            <Badge key={`${round.round_id}-defect-${taskId}`} className="bg-purple-500/15 text-purple-200 border-purple-500/30">
+                            <Badge key={`${round.round_id}-defect-${taskId}`} className="bg-purple-500/[0.15] text-purple-200 border-purple-500/30">
                               {taskId}
                             </Badge>
                           ))}

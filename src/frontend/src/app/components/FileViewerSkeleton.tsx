@@ -6,9 +6,9 @@ interface FileViewerSkeletonProps {
 
 export function FileViewerSkeleton({ lines = 8 }: FileViewerSkeletonProps) {
   return (
-    <div className="h-full bg-[var(--ink-indigo)] flex flex-col">
+    <div className="soft-panel-subtle h-full flex flex-col">
       {/* Header skeleton */}
-      <div className="px-4 py-3 border-b border-gray-800 bg-[#252526]">
+      <div className="soft-panel-subtle px-4 py-3 border-b">
         <div className="flex items-center justify-between">
           <div className="space-y-2">
             <Skeleton className="h-4 w-32" />

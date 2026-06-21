@@ -155,6 +155,38 @@ describe('ContextOSWorkspace', () => {
     }
   });
 
+  it('surfaces context snapshot degradation in the role detail panel', () => {
+    const degradedCall: LogEntry = {
+      id: 'degraded-call',
+      timestamp: new Date().toISOString(),
+      level: 'success',
+      source: 'Director',
+      message: 'llm response completed',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        promptTokens: 100,
+        completionTokens: 50,
+        totalTokens: 150,
+        context_snapshot_degraded: {
+          code: 'CONTEXT_STORE_WRITE_FAILED',
+          reason: 'context_snapshot_store_failure',
+          message: 'disk full',
+          exception_type: 'OSError',
+        },
+      },
+      tags: ['llm_completed'],
+    };
+
+    render(<ContextOSWorkspace {...baseProps()} llmStreamEvents={[degradedCall]} />);
+    fireEvent.click(screen.getByTestId('contextos-role-director'));
+
+    expect(screen.getByTestId('contextos-role-panel-director')).toBeTruthy();
+    expect(screen.getAllByText('快照未落盘').length).toBeGreaterThan(0);
+    expect(screen.queryByText('[object Object]')).toBeNull();
+  });
+
   it('invokes onBackToMain when the back button is clicked', () => {
     const props = baseProps();
     render(<ContextOSWorkspace {...props} />);

@@ -245,6 +245,7 @@ function AppContent() {
   const { notifications, remove: removeNotification, error: notifyError } = useNotifications();
   const settingsWorkspace = settings?.workspace || '';
   const [benchObservedWorkspace, setBenchObservedWorkspace] = useState('');
+  const pendingBenchWorkspaceRef = useRef('');
   const workspace = benchObservedWorkspace || settingsWorkspace;
   const [progressSnapshot, setProgressSnapshot] = useState<SnapshotPayload | null>(null);
 
@@ -252,10 +253,24 @@ function AppContent() {
     (nextWorkspace: string) => {
       const normalized = resolveBenchObservedWorkspace(nextWorkspace, settingsWorkspace);
       if (!normalized || normalized === workspace) return;
-      setProgressSnapshot(null);
-      setBenchObservedWorkspace(normalized);
+      if (pendingBenchWorkspaceRef.current === normalized) return;
+      pendingBenchWorkspaceRef.current = normalized;
+      void (async () => {
+        try {
+          const updated = await updateSettings({ workspace: normalized });
+          const appliedWorkspace = String(updated?.workspace || normalized).trim();
+          setProgressSnapshot(null);
+          setBenchObservedWorkspace(appliedWorkspace || normalized);
+        } catch (error) {
+          notifyError(error instanceof Error ? error.message : 'Factory Bench 工作区切换失败');
+        } finally {
+          if (pendingBenchWorkspaceRef.current === normalized) {
+            pendingBenchWorkspaceRef.current = '';
+          }
+        }
+      })();
     },
-    [settingsWorkspace, workspace],
+    [notifyError, settingsWorkspace, updateSettings, workspace],
   );
 
   const {
@@ -1053,13 +1068,7 @@ function AppContent() {
       <ErrorBoundaryClass onError={(error) => {
         notifyError(error.message || '发生未知错误');
       }}>
-        <div className="size-full flex flex-col bg-bg text-text-main overflow-hidden">
-          <BenchStatusStrip
-            bench={factoryBench}
-            websocketLive={live}
-            websocketReconnecting={reconnecting}
-            websocketAttemptCount={attemptCount}
-          />
+        <div className="polaris-soft-scope size-full flex flex-col bg-bg text-text-main overflow-hidden relative">
           <div className="min-h-0 flex-1">
             <ContextOSWorkspace
               workspace={workspace}
@@ -1129,7 +1138,7 @@ function AppContent() {
     <ErrorBoundaryClass onError={(error) => {
       notifyError(error.message || '发生未知错误');
     }}>
-      <div className="size-full flex flex-col bg-bg text-text-main font-sans overflow-hidden relative">
+      <div className="polaris-soft-scope size-full flex flex-col bg-bg text-text-main font-sans overflow-hidden relative">
         <EnhancedNotificationManager
           notifications={notifications}
           onDismiss={removeNotification}
@@ -1232,7 +1241,7 @@ function AppContent() {
           {ui.isMonitorOpen && (
             <>
               <Panel defaultSize={20} minSize={15} maxSize={30} order={1}>
-                <div className="size-full border-r border-white/10 bg-bg-panel/30 backdrop-blur-md flex flex-col">
+                <div className="size-full border-r border-white/10 soft-panel-subtle backdrop-blur-md flex flex-col">
                   <Suspense fallback={<div className="flex items-center justify-center h-full text-text-dim">加载中...</div>}>
                     <ProcessMonitorSidebar
                       onFileSelect={fileManager.selectFile}
@@ -1256,7 +1265,7 @@ function AppContent() {
             <PanelGroup direction="vertical">
               <Panel ref={workspacePanelRef} minSize={30} collapsible>
                 <div className="flex flex-col h-full">
-                  <div className="flex items-center justify-between border-b border-white/10 bg-bg-panel/20 px-4">
+                  <div className="flex items-center justify-between border-b border-white/10 soft-panel-subtle px-4">
                     <div className="flex items-center gap-3 py-2">
                       <span className="text-sm font-heading font-bold text-text-main">当前批次主战场</span>
                     </div>

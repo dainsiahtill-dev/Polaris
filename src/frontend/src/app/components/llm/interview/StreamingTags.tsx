@@ -148,7 +148,7 @@ export function StreamingTags({
         <div className={`${dense ? 'text-[10px]' : 'text-xs'} whitespace-pre-wrap break-words leading-relaxed text-amber-100/80`}>
           {contentState.thinking}
           {contentState.isThinkingActive && (
-            <span className="ml-1 inline-block h-3 w-0.5 animate-pulse bg-amber-400 align-middle" />
+            <span className="ml-1 inline-block h-3 w-0.5 bg-amber-400/70 align-middle" />
           )}
         </div>
       </div>
@@ -172,7 +172,7 @@ export function StreamingTags({
         <div className={`${dense ? 'text-[10px]' : 'text-xs'} whitespace-pre-wrap break-words leading-relaxed text-emerald-100/80`}>
           {contentState.answer}
           {contentState.isAnswerActive && (
-            <span className="ml-1 inline-block h-3 w-0.5 animate-pulse bg-emerald-400 align-middle" />
+            <span className="ml-1 inline-block h-3 w-0.5 bg-emerald-400/70 align-middle" />
           )}
         </div>
       </div>

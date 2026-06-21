@@ -10,7 +10,7 @@ export function VisualRoleNode({ data }: NodeProps<Node<VisualRoleNodeData>>) {
   let statusLabel = '待命';
   
   if (runtimeStatus?.running) {
-    statusColor = 'bg-blue-400 animate-pulse';
+    statusColor = 'bg-amber-300';
     statusLabel = '运行中';
   } else if (readiness?.ready) {
     statusColor = 'bg-emerald-400';
@@ -40,15 +40,15 @@ export function VisualRoleNode({ data }: NodeProps<Node<VisualRoleNodeData>>) {
   };
 
   return (
-    <div className="min-w-[200px] rounded-xl border border-cyan-400/40 bg-black/80 px-3 py-2 text-text-main shadow-[0_0_12px_rgba(34,211,238,0.2)]">
-      <Handle type="target" position={Position.Left} className="!bg-cyan-300 !border-cyan-200" />
+    <div className="min-w-[200px] rounded-lg border border-slate-500/40 bg-black/80 px-3 py-2 text-text-main">
+      <Handle type="target" position={Position.Left} className="!bg-slate-300 !border-slate-200" />
       
       {/* Header */}
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold tracking-wide">{data.label}</span>
         <span className={`inline-flex items-center gap-1 rounded-full border border-white/10 px-2 py-0.5 text-[9px] uppercase ${statusColor} text-black font-bold`}>
           {runtimeStatus?.running && (
-            <span className="inline-block w-1.5 h-1.5 bg-white rounded-full animate-pulse" />
+            <span className="inline-block w-1.5 h-1.5 bg-white/[0.08]0 rounded-full" />
           )}
           {statusLabel}
         </span>
@@ -61,10 +61,10 @@ export function VisualRoleNode({ data }: NodeProps<Node<VisualRoleNodeData>>) {
       
       {/* Model Configuration */}
       {runtimeStatus?.config?.model && (
-        <div className="mt-2 text-[9px] text-cyan-200/80 border-t border-white/10 pt-1">
+        <div className="mt-2 text-[9px] text-slate-300/80 border-t border-white/10 pt-1">
           <div className="flex items-center gap-1">
             <span className="text-text-dim">模型:</span>
-            <span className="font-medium text-cyan-200">{runtimeStatus.config.model}</span>
+            <span className="font-medium text-slate-200">{runtimeStatus.config.model}</span>
           </div>
         </div>
       )}
@@ -79,7 +79,7 @@ export function VisualRoleNode({ data }: NodeProps<Node<VisualRoleNodeData>>) {
       {/* Capabilities */}
       <div className="mt-2 flex flex-wrap gap-1 text-[9px]">
         {data.requiresThinking ? (
-          <span className="rounded bg-purple-500/20 px-2 py-0.5 text-purple-200">思考要求</span>
+          <span className="rounded bg-slate-500/20 px-2 py-0.5 text-slate-200">思考要求</span>
         ) : (
           <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-emerald-200">基础能力</span>
         )}

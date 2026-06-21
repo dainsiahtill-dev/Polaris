@@ -33,17 +33,17 @@ interface RoleRunEvidenceStripProps {
 
 const TONE_CLASSES = {
   amber: {
-    border: 'border-amber-500/15',
+    border: 'border-amber-500/[0.15]',
     endpoint: 'text-amber-200/80',
     result: 'text-amber-200/80',
   },
   cyan: {
-    border: 'border-cyan-500/15',
+    border: 'border-cyan-500/[0.15]',
     endpoint: 'text-cyan-200/80',
     result: 'text-cyan-200/80',
   },
   emerald: {
-    border: 'border-emerald-500/15',
+    border: 'border-emerald-500/[0.15]',
     endpoint: 'text-emerald-200/80',
     result: 'text-emerald-200/80',
   },
@@ -126,7 +126,7 @@ export function RoleRunEvidenceStrip({
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         {realtimePushActive ? (
           <span
-            className="rounded border border-emerald-500/15 bg-emerald-500/10 px-2 py-1 font-mono text-[10px] text-emerald-200"
+            className="rounded border border-emerald-500/[0.15] bg-emerald-500/10 px-2 py-1 font-mono text-[10px] text-emerald-200"
             data-testid={`${testId}-realtime-push`}
           >
             实时推送

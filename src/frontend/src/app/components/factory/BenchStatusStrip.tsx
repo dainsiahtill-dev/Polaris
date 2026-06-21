@@ -36,7 +36,7 @@ function statusLabel(status: string | undefined | null): string {
   if (status === 'running') return '运行中';
   if (status === 'completed') return '已完成';
   if (status === 'failed') return '失败';
-  if (status === 'cancelled') return 'cancelled';
+  if (status === 'cancelled') return '已取消';
   return status;
 }
 
@@ -127,7 +127,7 @@ function BenchStatusStripView({
   return (
     <div
       className={cn(
-        'flex h-8 shrink-0 items-center gap-3 border-b border-white/10 bg-slate-950/80 px-4 text-[11px]',
+        'soft-panel-subtle flex h-8 shrink-0 items-center gap-3 border-b border-white/10 px-4 text-[11px]',
         className,
       )}
       data-testid="bench-status-strip"

@@ -795,6 +795,18 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       dataMetadata?.context_tokens_before,
     );
     const dataContextSnapshotRef = Parsing.firstDisplayString(eventData?.context_snapshot_ref, dataMetadata?.context_snapshot_ref);
+    const dataContextSnapshotDegraded = firstRecord(
+      eventData?.context_snapshot_degraded,
+      eventData?.contextSnapshotDegraded,
+      dataMetadata?.context_snapshot_degraded,
+      dataMetadata?.contextSnapshotDegraded,
+    );
+    const dataContextSnapshotDegradedReason = Parsing.firstDisplayString(
+      eventData?.context_snapshot_degraded_reason,
+      eventData?.contextSnapshotDegradedReason,
+      dataMetadata?.context_snapshot_degraded_reason,
+      dataMetadata?.contextSnapshotDegradedReason,
+    );
     const dataPromptHash = Parsing.firstDisplayString(eventData?.prompt_hash, dataMetadata?.prompt_hash);
     const dataTurnId = Parsing.firstDisplayString(eventData?.turn_id, dataMetadata?.turn_id);
     const dataCallId = Parsing.firstDisplayString(eventData?.call_id, eventData?.callId, dataMetadata?.call_id, dataMetadata?.callId);
@@ -952,6 +964,8 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       durationMs: dataDurationMs > 0 ? Math.round(dataDurationMs) : undefined,
       // NEW fields for context viewer
       contextSnapshotRef: dataContextSnapshotRef || undefined,
+      contextSnapshotDegraded: dataContextSnapshotDegraded || undefined,
+      contextSnapshotDegradedReason: dataContextSnapshotDegradedReason || undefined,
       promptHash: dataPromptHash || undefined,
       turnId: dataTurnId || undefined,
       callId: dataCallId || undefined,

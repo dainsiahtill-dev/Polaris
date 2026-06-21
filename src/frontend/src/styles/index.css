@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600&family=Outfit:wght@300;400;500;600;700&family=Work+Sans:wght@300;400;500;600&display=swap');
 @import './tailwind.css';
 @import './theme.css';
 
@@ -10,10 +9,8 @@ body,
 
 body {
   @apply bg-bg text-text-main font-sans overflow-hidden antialiased;
-  /* Cyberpunk radial background */
-  background-image:
-    radial-gradient(circle at 10% 20%, rgba(124, 58, 237, 0.05) 0%, transparent 40%),
-    radial-gradient(circle at 90% 80%, rgba(219, 39, 119, 0.05) 0%, transparent 40%);
+  background: var(--soft-app-background);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Custom Scrollbar */
@@ -32,7 +29,15 @@ body {
 
 /* Utilities */
 .glass {
-  @apply bg-bg-panel/40 backdrop-blur-md border border-white/5 shadow-panel;
+  border: 1px solid var(--soft-border);
+  background:
+    linear-gradient(90deg, var(--game-grid) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(0deg, var(--game-grid) 1px, transparent 1px) 0 0 / 32px 32px,
+    radial-gradient(circle at 18% 0%, rgba(0, 216, 255, 0.080), transparent 54%),
+    var(--platform-material-content),
+    rgba(7, 15, 28, 0.68);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.36), 0 0 22px rgba(255, 77, 255, 0.055), var(--soft-shadow-inner);
+  backdrop-filter: blur(24px) saturate(1.16);
 }
 
 .text-code {
@@ -40,17 +45,37 @@ body {
 }
 
 .panel-header {
-  @apply h-12 px-5 flex items-center justify-between border-b border-border bg-gradient-surface backdrop-blur-sm;
+  @apply h-[52px] px-5 flex items-center justify-between border-b border-border;
+  background:
+    radial-gradient(520px 120px at 28% -40%, rgba(0, 216, 255, 0.12), transparent 62%),
+    linear-gradient(90deg, rgba(255, 77, 255, 0.09), transparent 18%, transparent 82%, rgba(0, 216, 255, 0.10)),
+    var(--platform-material-nav),
+    rgba(7, 15, 28, 0.74);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.30), 0 0 18px rgba(0, 216, 255, 0.075), var(--soft-shadow-inner);
+  backdrop-filter: blur(26px) saturate(1.22);
   -webkit-app-region: drag;
 }
 
 .btn-icon {
   @apply p-1.5 rounded text-text-muted hover:text-text-main hover:bg-bg-highlight transition-colors;
+  border: 1px solid transparent;
+  min-width: var(--platform-control-min);
+  min-height: var(--platform-control-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   -webkit-app-region: no-drag;
 }
 
 .btn-icon-active {
   @apply p-1.5 rounded bg-accent-dim text-accent-text transition-colors;
+  border: 1px solid rgba(0, 216, 255, 0.34);
+  box-shadow: 0 0 18px rgba(0, 216, 255, 0.14), var(--soft-shadow-inner);
+  min-width: var(--platform-control-min);
+  min-height: var(--platform-control-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   -webkit-app-region: no-drag;
 }
 
@@ -63,18 +88,20 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* Cyberpunk Border Container */
+/* Subtle Border Container */
 .cyberpunk-border {
-  @apply absolute inset-0 z-50 pointer-events-none rounded-lg border border-white/10;
-  box-shadow: 0 0 20px rgba(124, 58, 237, 0.1);
+  @apply absolute inset-0 z-50 pointer-events-none rounded-lg;
+  border: 1px solid var(--soft-border-strong);
+  box-shadow: 0 0 22px rgba(0, 216, 255, 0.12), 0 0 22px rgba(255, 77, 255, 0.075), var(--soft-shadow-inner);
 }
 
 .cyberpunk-border::before {
   content: '';
-  @apply absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-accent/50 to-transparent;
+  @apply absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-accent/40 to-transparent;
 }
 
 .cyberpunk-border::after {
   content: '';
-  @apply absolute bottom-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-status-secondary/50 to-transparent;
+  @apply absolute bottom-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent;
+  background: linear-gradient(to right, transparent, var(--game-magenta), var(--game-cyan), transparent);
 }

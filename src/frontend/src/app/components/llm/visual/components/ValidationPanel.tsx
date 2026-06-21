@@ -15,7 +15,7 @@ export function ValidationPanel({ issues, onIssueClick, onClose }: ValidationPan
   const warnings = issues.filter(i => getValidationSeverity(i) === 'warning');
 
   return (
-    <div className="absolute top-4 right-4 z-50 w-80 rounded-lg border border-rose-500/30 bg-black/90 shadow-lg backdrop-blur-sm">
+    <div className="absolute top-4 right-4 z-50 w-80 soft-panel rounded-lg">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
         <div className="flex items-center gap-2">

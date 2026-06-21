@@ -58,10 +58,10 @@ const PHASE_CONFIG: Record<StatusPhase, {
   thinking: {
     icon: <Brain className="w-4 h-4" />,
     label: '思考中',
-    color: 'text-purple-400',
-    bgColor: 'bg-purple-500/10',
-    borderColor: 'border-purple-500/30',
-    animation: 'animate-pulse',
+    color: 'text-slate-400',
+    bgColor: 'bg-slate-500/10',
+    borderColor: 'border-slate-500/20',
+    animation: '',
   },
   executing: {
     icon: <Zap className="w-4 h-4" />,
@@ -74,10 +74,10 @@ const PHASE_CONFIG: Record<StatusPhase, {
   tool_running: {
     icon: <Terminal className="w-4 h-4" />,
     label: '工具运行',
-    color: 'text-cyan-400',
-    bgColor: 'bg-cyan-500/10',
-    borderColor: 'border-cyan-500/30',
-    animation: 'animate-pulse',
+    color: 'text-amber-400',
+    bgColor: 'bg-amber-500/10',
+    borderColor: 'border-amber-500/20',
+    animation: '',
   },
   completed: {
     icon: <CheckCircle2 className="w-4 h-4" />,
@@ -99,9 +99,9 @@ const PHASE_CONFIG: Record<StatusPhase, {
 
 const THEME_COLORS = {
   indigo: {
-    primary: 'indigo-400',
-    gradient: 'from-indigo-500/20 to-purple-500/20',
-    glow: 'shadow-indigo-500/20',
+    primary: 'slate-400',
+    gradient: 'from-slate-600/20 to-slate-500/20',
+    glow: 'shadow-slate-500/10',
   },
   amber: {
     primary: 'amber-400',
@@ -109,9 +109,9 @@ const THEME_COLORS = {
     glow: 'shadow-amber-500/20',
   },
   cyan: {
-    primary: 'cyan-400',
-    gradient: 'from-cyan-500/20 to-blue-500/20',
-    glow: 'shadow-cyan-500/20',
+    primary: 'slate-400',
+    gradient: 'from-slate-600/20 to-slate-500/20',
+    glow: 'shadow-slate-500/10',
   },
   emerald: {
     primary: 'emerald-400',
@@ -175,7 +175,7 @@ export function ManusStyleStatusIndicator({
       {/* Header - 状态行 */}
       <div className={cn(
         'flex items-center justify-between px-3 py-2',
-        'bg-gradient-to-r ' + themeConfig.gradient
+        'bg-slate-800/50'
       )}>
         <div className="flex items-center gap-2">
           <div className={cn('animate-spin-slow', phase === 'thinking' && 'animate-spin')}>
@@ -202,12 +202,13 @@ export function ManusStyleStatusIndicator({
                 className="h-full rounded-full transition-all duration-300"
                 style={{
                   width: `${progress}%`,
-                  backgroundColor: themeConfig.primary === 'indigo-400' ? '#818cf8' :
+                  backgroundColor:                   themeConfig.primary === 'indigo-400' ? '#818cf8' :
                                 themeConfig.primary === 'amber-400' ? '#fbbf24' :
                                 themeConfig.primary === 'cyan-400' ? '#22d3ee' :
                                 themeConfig.primary === 'emerald-400' ? '#34d399' :
                                 themeConfig.primary === 'purple-400' ? '#a78bfa' :
-                                themeConfig.primary === 'rose-400' ? '#fb7185' : '#94a3b8',
+                                themeConfig.primary === 'rose-400' ? '#fb7185' :
+                                themeConfig.primary === 'slate-400' ? '#94a3b8' : '#94a3b8',
                 }}
               />
             </div>

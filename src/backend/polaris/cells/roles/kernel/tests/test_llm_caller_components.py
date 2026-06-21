@@ -1079,6 +1079,15 @@ class TestStreamEngineRunStream:
         # No hash was injected because the store failed.
         start_metadata = emit_start.call_args.kwargs["metadata"]
         assert "context_snapshot_ref" not in start_metadata or not start_metadata["context_snapshot_ref"]
+        degraded = start_metadata["context_snapshot_degraded"]
+        assert degraded["code"] == "CONTEXT_STORE_WRITE_FAILED"
+        assert degraded["reason"] == "context_snapshot_store_failure"
+        assert degraded["exception_type"] == "RuntimeError"
+        assert start_metadata["context_snapshot_degraded_reason"] == "context_snapshot_store_failure"
+
+        end_metadata = engine._emit_call_end.call_args.kwargs["metadata"]
+        assert end_metadata["context_snapshot_degraded"]["exception_type"] == "RuntimeError"
+        assert end_metadata["context_snapshot_degraded_reason"] == "context_snapshot_store_failure"
 
     async def test_context_os_audit_is_emitted_with_stream_metadata(self) -> None:
         """ContextOS audit should travel with stream lifecycle metadata."""

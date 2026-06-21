@@ -99,7 +99,7 @@ export function InterviewSession({
               <div key={item.id || idx} className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs font-semibold text-text-main">
-                    <MessageSquare className="size-4 text-cyan-300" />
+                    <MessageSquare className="size-4 text-slate-300" />
                     <span>面试问题 {idx + 1}</span>
                   </div>
                   {typeof item.score === 'number' ? (

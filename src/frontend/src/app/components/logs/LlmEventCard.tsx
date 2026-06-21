@@ -19,18 +19,18 @@ function TagBadge({ tag }: { tag: string }) {
 
 function ProviderBadge({ provider }: { provider: string }) {
   const short = provider.replace(/-\d{10,}$/, '');
-  return <Badge className="border-cyan-400/30 bg-[rgba(20,50,60,0.35)] text-cyan-200">{short}</Badge>;
+  return <Badge className="soft-chip text-slate-200">{short}</Badge>;
 }
 
 function ModelBadge({ model }: { model: string }) {
-  return <Badge className="border-purple-400/30 bg-[rgba(35,20,55,0.35)] text-purple-200">{model}</Badge>;
+  return <Badge className="soft-chip text-slate-200">{model}</Badge>;
 }
 
 function StageBadge({ stage }: { stage: string }) {
   const styles: Record<string, string> = {
     started: 'border-blue-400/30 bg-[rgba(20,40,80,0.35)] text-blue-200',
     llm_calling: 'border-amber-400/30 bg-[rgba(80,60,10,0.30)] text-amber-200',
-    parsing: 'border-cyan-400/30 bg-[rgba(20,50,60,0.30)] text-cyan-200',
+    parsing: 'border-slate-400/30 bg-[rgba(30,30,30,0.30)] text-slate-300',
     completed: 'border-emerald-400/30 bg-[rgba(14,45,40,0.35)] text-emerald-200',
     failed: 'border-red-400/30 bg-[rgba(80,20,15,0.30)] text-red-200',
   };
@@ -48,9 +48,9 @@ function LevelBadge({ level }: { level?: string }) {
 
 function TokenBadge({ label, value }: { label: string; value: number }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-md border border-cyan-400/15 bg-[linear-gradient(135deg,rgba(20,50,60,0.25),rgba(35,20,55,0.20))] px-2 py-0.5 text-[10px]">
+    <span className="inline-flex items-center gap-1 rounded-md soft-chip px-2 py-0.5 text-[10px]">
       <span className="text-gray-400">{label}</span>
-      <span className="font-semibold text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-purple-300 to-pink-300">
+      <span className="font-semibold text-slate-200">
         {value.toLocaleString()}
       </span>
     </span>
@@ -64,9 +64,7 @@ function DurationBadge({ ms }: { ms: number }) {
 
 function StatusDot({ ok }: { ok: boolean }) {
   return (
-    <span
-      className={`size-2 rounded-full ${ok ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)]' : 'bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.5)]'}`}
-    />
+    <span className={`size-2 rounded-full ${ok ? 'bg-emerald-400' : 'bg-red-400'}`} />
   );
 }
 
@@ -151,8 +149,8 @@ function prettyJson(value: unknown): string {
 function JsonTextBlock({ title, text }: { title: string; text: string }) {
   if (!text) return null;
   return (
-    <div className="rounded border border-white/8 bg-[rgba(10,15,30,0.25)] px-2.5 py-2">
-      <div className="text-[10px] text-cyan-300/80 mb-1">{title}</div>
+    <div className="rounded border border-white/[0.08] bg-[rgba(10,15,30,0.25)] px-2.5 py-2">
+      <div className="text-[10px] text-slate-400 mb-1">{title}</div>
       <div className="text-[11px] text-gray-200 whitespace-pre-wrap break-words">{text}</div>
     </div>
   );
@@ -161,8 +159,8 @@ function JsonTextBlock({ title, text }: { title: string; text: string }) {
 function JsonListBlock({ title, items }: { title: string; items: string[] }) {
   if (!items.length) return null;
   return (
-    <div className="rounded border border-white/8 bg-[rgba(10,15,30,0.25)] px-2.5 py-2">
-      <div className="text-[10px] text-cyan-300/80 mb-1">{title}</div>
+    <div className="rounded border border-white/[0.08] bg-[rgba(10,15,30,0.25)] px-2.5 py-2">
+      <div className="text-[10px] text-slate-400 mb-1">{title}</div>
       <ul className="space-y-1">
         {items.map((item, idx) => (
           <li key={`${title}-${idx}`} className="text-[11px] text-gray-200 break-all">
@@ -195,7 +193,7 @@ function JsonTaskCard({ task, index }: { task: unknown; index: number }) {
   const backlogRef = asText(task.backlog_ref);
 
   return (
-    <div className="rounded border border-white/8 bg-[rgba(10,15,30,0.25)] px-2.5 py-2 space-y-1.5">
+    <div className="rounded border border-white/[0.08] bg-[rgba(10,15,30,0.25)] px-2.5 py-2 space-y-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-[11px] font-semibold text-gray-100">{title}</span>
         {id && <Badge className="border-gray-400/20 bg-[rgba(30,25,50,0.25)] text-gray-300">{id}</Badge>}
@@ -238,7 +236,7 @@ function StructuredJsonOutput({ value }: { value: unknown }) {
     return (
       <div className="space-y-2">
         {value.map((item, idx) => (
-          <Collapsible key={`json-array-item-${idx}`} title={<span className="text-[10px] text-cyan-300/80">Item {idx + 1}</span>}>
+          <Collapsible key={`json-array-item-${idx}`} title={<span className="text-[10px] text-slate-400">Item {idx + 1}</span>}>
             <pre className="text-[10px] text-gray-200 whitespace-pre-wrap break-all max-h-52 overflow-auto scrollbar-thin">
               {prettyJson(item)}
             </pre>
@@ -361,8 +359,8 @@ function StructuredJsonOutput({ value }: { value: unknown }) {
       {listBlocks.length > 0 && <div className="space-y-2">{listBlocks}</div>}
 
       {plan && (
-        <div className="rounded border border-white/8 bg-[rgba(10,15,30,0.25)] px-2.5 py-2 space-y-2">
-          <div className="text-[10px] text-cyan-300/80">Plan</div>
+        <div className="rounded border border-white/[0.08] bg-[rgba(10,15,30,0.25)] px-2.5 py-2 space-y-2">
+          <div className="text-[10px] text-slate-400">Plan</div>
           <JsonTextBlock title="Summary" text={asText(plan.summary)} />
           <JsonListBlock title="Acceptance" items={asStringList(plan.acceptance)} />
           {Array.isArray(plan.steps) && plan.steps.length > 0 && (
@@ -376,7 +374,7 @@ function StructuredJsonOutput({ value }: { value: unknown }) {
                   );
                 }
                 return (
-                  <div key={`plan-step-${idx}`} className="rounded border border-white/8 bg-[rgba(8,12,24,0.30)] px-2 py-1.5">
+                  <div key={`plan-step-${idx}`} className="rounded border border-white/[0.08] bg-[rgba(8,12,24,0.30)] px-2 py-1.5">
                     <div className="text-[10px] text-gray-400">Step {idx + 1}</div>
                     <JsonTextBlock title="Purpose" text={asText(step.purpose)} />
                     <JsonTextBlock title="Expected" text={asText(step.expected)} />
@@ -391,8 +389,8 @@ function StructuredJsonOutput({ value }: { value: unknown }) {
       )}
 
       {act && (
-        <div className="rounded border border-white/8 bg-[rgba(10,15,30,0.25)] px-2.5 py-2 space-y-2">
-          <div className="text-[10px] text-cyan-300/80">Act</div>
+        <div className="rounded border border-white/[0.08] bg-[rgba(10,15,30,0.25)] px-2.5 py-2 space-y-2">
+          <div className="text-[10px] text-slate-400">Act</div>
           <JsonTextBlock title="Brief" text={asText(act.brief)} />
           <JsonListBlock title="Files" items={asStringList(act.files)} />
           <JsonListBlock title="Commands" items={asStringList(act.commands)} />
@@ -402,7 +400,7 @@ function StructuredJsonOutput({ value }: { value: unknown }) {
 
       {tasks.length > 0 && (
         <div className="space-y-1.5">
-          <div className="text-[10px] text-cyan-300/80">Tasks ({tasks.length})</div>
+          <div className="text-[10px] text-slate-400">Tasks ({tasks.length})</div>
           {tasks.map((task, idx) => (
             <JsonTaskCard key={`task-${idx}`} task={task} index={idx} />
           ))}
@@ -411,7 +409,7 @@ function StructuredJsonOutput({ value }: { value: unknown }) {
 
       {toolPlan.length > 0 && (
         <div className="space-y-1.5">
-          <div className="text-[10px] text-cyan-300/80">Tool Plan ({toolPlan.length})</div>
+          <div className="text-[10px] text-slate-400">Tool Plan ({toolPlan.length})</div>
           {toolPlan.map((item, idx) => {
             if (!isJsonRecord(item)) {
               return (
@@ -422,7 +420,7 @@ function StructuredJsonOutput({ value }: { value: unknown }) {
             }
             const tool = asText(item.tool) || `step_${idx + 1}`;
             return (
-              <div key={`tool-plan-${idx}`} className="rounded border border-white/8 bg-[rgba(10,15,30,0.25)] px-2.5 py-2">
+              <div key={`tool-plan-${idx}`} className="rounded border border-white/[0.08] bg-[rgba(10,15,30,0.25)] px-2.5 py-2">
                 <div className="flex items-center gap-1.5 mb-1">
                   <Badge className="border-blue-400/30 bg-[rgba(20,40,80,0.30)] text-blue-200">{tool}</Badge>
                 </div>
@@ -478,7 +476,7 @@ function ConfigCard({ event }: { event: Extract<LlmEvent, { event: 'config' }> }
   );
 
   return (
-    <div className="rounded border border-amber-500/10 bg-[linear-gradient(165deg,rgba(50,35,18,0.20),rgba(28,18,48,0.25))] px-3 py-1.5">
+    <div className="rounded-lg soft-panel-subtle px-3 py-1.5">
       <div className="flex flex-wrap items-center gap-2">
         <TagBadge tag={event.data.tag} />
         {parsed.provider && <ProviderBadge provider={parsed.provider} />}
@@ -489,12 +487,12 @@ function ConfigCard({ event }: { event: Extract<LlmEvent, { event: 'config' }> }
         )}
         {parsed.model && <ModelBadge model={parsed.model} />}
         {parsed.providerType && parsed.providerType !== parsed.modelType && (
-          <Badge className="border-cyan-400/25 bg-[rgba(20,50,60,0.25)] text-cyan-200">
+          <Badge className="soft-chip text-slate-300">
             provider: {parsed.providerType}
           </Badge>
         )}
         {parsed.backend && (
-          <Badge className="border-gray-400/20 bg-[rgba(30,25,50,0.25)] text-gray-300">
+          <Badge className="soft-chip text-slate-300">
             backend: {parsed.backend}
           </Badge>
         )}
@@ -526,7 +524,7 @@ function ConfigCard({ event }: { event: Extract<LlmEvent, { event: 'config' }> }
 function IterationCard({ event }: { event: Extract<LlmEvent, { event: 'iteration' }> }) {
   const d = event.data;
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded border border-cyan-400/15 bg-[linear-gradient(165deg,rgba(20,26,58,0.30),rgba(16,12,45,0.35))] px-3 py-2">
+    <div className="flex flex-wrap items-center gap-2 rounded-lg soft-panel-subtle px-3 py-2">
       <Badge className="border-amber-300/40 bg-[rgba(120,90,20,0.30)] text-amber-100 font-bold">#{d.iteration}</Badge>
       <StageBadge stage={d.stage} />
       <span className="text-[10px] text-gray-400">{d.backend}</span>
@@ -541,21 +539,18 @@ function IterationCard({ event }: { event: Extract<LlmEvent, { event: 'iteration
 function LlmCallCard({ event }: { event: Extract<LlmEvent, { event: 'llm_call' }> }) {
   const d = event.data;
   return (
-    <div className="rounded border border-blue-400/10 bg-[linear-gradient(165deg,rgba(20,30,60,0.25),rgba(18,14,42,0.30))]">
+    <div className="rounded-lg soft-panel-subtle">
       <div className="flex flex-wrap items-center gap-2 px-3 py-1.5">
-        <span className="relative flex size-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
-          <span className="relative inline-flex size-2 rounded-full bg-blue-400" />
-        </span>
+        <span className="size-2 rounded-full bg-blue-400" />
         <span className="text-[10px] font-semibold tracking-wide text-blue-300/70">LLM CALL</span>
         <ProviderBadge provider={d.provider} />
         <ModelBadge model={d.model} />
-        <Badge className="border-gray-400/20 bg-[rgba(30,25,50,0.25)] text-gray-300">{d.prompt_chars.toLocaleString()} chars</Badge>
+        <Badge className="soft-chip text-slate-300">{d.prompt_chars.toLocaleString()} chars</Badge>
         <span className="text-[10px] text-gray-500 ml-auto">{event.role}</span>
       </div>
       <div className="px-3 pb-1.5">
-        <div className="h-1 w-full rounded-full bg-[rgba(20,40,80,0.30)] overflow-hidden">
-          <div className="h-full w-1/3 rounded-full bg-gradient-to-r from-blue-500/40 to-cyan-500/40 animate-pulse" />
+        <div className="h-1 w-full rounded-full overflow-hidden soft-inset">
+          <div className="h-full w-1/3 rounded-full soft-progress" />
         </div>
       </div>
     </div>
@@ -609,18 +604,18 @@ function LlmResultCard({ event }: { event: Extract<LlmEvent, { event: 'llm_resul
   }, [hasStructuredOutput]);
 
   return (
-    <div className="rounded border border-cyan-400/15 bg-[linear-gradient(165deg,rgba(20,26,58,0.25),rgba(16,12,45,0.30),rgba(14,20,40,0.35))]">
+    <div className="rounded-lg soft-panel-subtle">
       {/* Header */}
       <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-white/5">
         <StatusDot ok={d.ok} />
-        <span className="text-[10px] font-semibold tracking-wide text-cyan-300/70">LLM RESULT</span>
+        <span className="text-[10px] font-semibold tracking-wide text-slate-300/70">LLM RESULT</span>
         <ProviderBadge provider={d.provider} />
         <ModelBadge model={d.model} />
         <DurationBadge ms={d.duration_ms} />
-        <Badge className="border-gray-400/20 bg-[rgba(30,25,50,0.25)] text-gray-300">{d.output_chars.toLocaleString()} chars</Badge>
-        <Badge className="border-gray-400/20 bg-[rgba(30,25,50,0.20)] text-gray-400">{contentType}</Badge>
+        <Badge className="soft-chip text-slate-300">{d.output_chars.toLocaleString()} chars</Badge>
+        <Badge className="soft-chip text-slate-400">{contentType}</Badge>
         {structuredSource && (
-          <Badge className="border-cyan-400/20 bg-[rgba(20,50,60,0.20)] text-cyan-300">{structuredSource}</Badge>
+          <Badge className="soft-chip text-slate-300">{structuredSource}</Badge>
         )}
         <span className="text-[10px] text-gray-500 ml-auto">{event.role}</span>
       </div>
@@ -643,7 +638,7 @@ function LlmResultCard({ event }: { event: Extract<LlmEvent, { event: 'llm_resul
       {/* Thinking */}
       {hasThinking && (
         <Collapsible
-          title={<span className="text-purple-300/80">Thinking ({d.thinking.length.toLocaleString()} chars)</span>}
+          title={<span className="text-slate-300/80">Thinking ({d.thinking.length.toLocaleString()} chars)</span>}
           className="px-3 py-1.5 border-b border-white/5"
         >
           <pre className="text-[11px] text-gray-300 whitespace-pre-wrap break-all max-h-60 overflow-auto scrollbar-thin">{d.thinking}</pre>
@@ -654,7 +649,7 @@ function LlmResultCard({ event }: { event: Extract<LlmEvent, { event: 'llm_resul
       {hasOutput && (
         <Collapsible
           title={
-            <span className="text-cyan-300/80">
+            <span className="text-slate-300/80">
               Output ({d.output_chars.toLocaleString()} chars)
               {d.truncated && <span className="text-gray-500 ml-1">truncated</span>}
             </span>
@@ -668,8 +663,8 @@ function LlmResultCard({ event }: { event: Extract<LlmEvent, { event: 'llm_resul
                 onClick={() => setOutputView('structured')}
                 className={`rounded px-2 py-0.5 text-[10px] border ${
                   outputView === 'structured'
-                    ? 'border-cyan-400/30 bg-[rgba(20,50,60,0.35)] text-cyan-200'
-                    : 'border-gray-400/20 bg-[rgba(30,25,50,0.20)] text-gray-400'
+                    ? 'soft-raised text-slate-200'
+                    : 'soft-chip text-gray-400'
                 }`}
               >
                 Structured
@@ -678,8 +673,8 @@ function LlmResultCard({ event }: { event: Extract<LlmEvent, { event: 'llm_resul
                 onClick={() => setOutputView('raw')}
                 className={`rounded px-2 py-0.5 text-[10px] border ${
                   outputView === 'raw'
-                    ? 'border-cyan-400/30 bg-[rgba(20,50,60,0.35)] text-cyan-200'
-                    : 'border-gray-400/20 bg-[rgba(30,25,50,0.20)] text-gray-400'
+                    ? 'soft-raised text-slate-200'
+                    : 'soft-chip text-gray-400'
                 }`}
               >
                 Raw
@@ -701,7 +696,7 @@ function LlmResultCard({ event }: { event: Extract<LlmEvent, { event: 'llm_resul
 function InfoCard({ event }: { event: Extract<LlmEvent, { event: 'info' }> }) {
   const d = event.data;
   return (
-    <div className="flex items-center gap-2 rounded border border-white/5 bg-[rgba(18,14,42,0.20)] px-3 py-1.5">
+    <div className="flex items-center gap-2 rounded-lg soft-panel-subtle px-3 py-1.5">
       <LevelBadge level={d.level} />
       {d.tag && <TagBadge tag={d.tag} />}
       <span className="text-[11px] text-gray-300 truncate">{d.message}</span>
@@ -711,7 +706,7 @@ function InfoCard({ event }: { event: Extract<LlmEvent, { event: 'info' }> }) {
 
 function FallbackCard({ event }: { event: LlmEvent }) {
   return (
-    <div className="rounded border border-white/5 bg-[rgba(18,14,42,0.15)] px-3 py-1.5">
+    <div className="rounded-lg soft-panel-subtle px-3 py-1.5">
       <span className="text-[10px] text-gray-500 mr-2">{event.event}</span>
       <pre className="text-[10px] text-gray-400 whitespace-pre-wrap break-all inline">{JSON.stringify(event.data, null, 2)}</pre>
     </div>
@@ -746,9 +741,9 @@ function StreamEventCard({ event }: { event: LlmEvent }) {
       : eventName;
 
   return (
-    <div className="rounded border border-white/5 bg-[rgba(18,14,42,0.20)] px-3 py-2">
+    <div className="rounded-lg soft-panel-subtle px-3 py-2">
       <div className="mb-1 flex items-center gap-2">
-        <Badge className="border-cyan-400/30 bg-[rgba(20,50,60,0.35)] text-cyan-200">{label}</Badge>
+        <Badge className="soft-chip text-slate-200">{label}</Badge>
         {tool && <TagBadge tag={tool} />}
         {status && (
           <Badge className={status === 'ok' ? 'border-emerald-400/30 bg-[rgba(14,45,40,0.30)] text-emerald-200' : 'border-red-400/30 bg-[rgba(80,20,15,0.30)] text-red-200'}>

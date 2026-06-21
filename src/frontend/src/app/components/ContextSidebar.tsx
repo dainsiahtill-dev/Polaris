@@ -100,7 +100,7 @@ export function ContextSidebar({
     return (
         <div data-testid="context-sidebar" className="flex h-full glass-bubble border-l-0 overflow-hidden">
             {/* Tab Strip (Vertical Left) */}
-            <div className="w-14 flex flex-col items-center py-6 gap-6 border-r border-white/5 bg-black/40 backdrop-blur-xl z-20">
+            <div className="w-14 flex flex-col items-center py-6 gap-6 border-r border-white/5 bg-black/30 z-20">
                 <TabButton
                     active={activeTab === 'dialogue'}
                     onClick={() => setActiveTab('dialogue')}
@@ -211,7 +211,7 @@ export function ContextSidebar({
                                 <div className="flex bg-black/30 p-0.5 rounded-lg border border-white/5">
                                     <button
                                         onClick={() => setShowCognition(true)}
-                                        className={`px-2 py-1 text-[10px] rounded transition-all ${showCognition ? 'bg-purple-500/20 text-purple-300' : 'text-gray-500 hover:text-gray-300'}`}
+                                        className={`px-2 py-1 text-[10px] rounded transition-all ${showCognition ? 'bg-white/10 text-slate-200' : 'text-gray-500 hover:text-gray-300'}`}
                                     >
                                         认知
                                     </button>
@@ -280,7 +280,7 @@ export function ContextSidebar({
                                 </div>
                             </div>
                             <div className="flex-1 overflow-auto p-4 space-y-4">
-                                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                                <div className="rounded-xl border border-white/10 bg-black/20 p-4">
                                     <div className="text-[10px] uppercase tracking-[0.24em] text-text-dim">Identity</div>
                                     <div className="mt-2 text-sm font-semibold text-text-main">{resident?.identity?.name || 'Software Engineering AGI'}</div>
                                     <div className="mt-1 text-xs text-text-dim">{resident?.identity?.mission || '尚未设定任务宣言'}</div>
@@ -293,7 +293,7 @@ export function ContextSidebar({
                                     <AgiMetric label="Decisions" value={String(resident?.counts?.decisions ?? 0)} />
                                 </div>
 
-                                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                                <div className="rounded-xl border border-white/10 bg-black/20 p-4">
                                     <div className="text-[10px] uppercase tracking-[0.24em] text-text-dim">Focus</div>
                                     <div className="mt-2 flex flex-wrap gap-2">
                                         {(resident?.agenda?.current_focus || []).length ? (
@@ -308,7 +308,7 @@ export function ContextSidebar({
                                     </div>
                                 </div>
 
-                                <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+                                <div className="rounded-xl border border-white/10 bg-black/20 p-4">
                                     <div className="text-[10px] uppercase tracking-[0.24em] text-text-dim">Risk Register</div>
                                     <div className="mt-2 space-y-2">
                                         {(resident?.agenda?.risk_register || []).length ? (
@@ -422,7 +422,7 @@ function inferRuntimeResultStatus(entry: LogEntry): string {
 
 function AgiMetric({ label, value }: { label: string; value: string }) {
     return (
-        <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+        <div className="rounded-xl border border-white/10 bg-black/20 p-3">
             <div className="text-[10px] uppercase tracking-[0.24em] text-text-dim">{label}</div>
             <div className="mt-2 text-sm font-semibold text-text-main">{value}</div>
         </div>
@@ -434,16 +434,16 @@ function TabButton({ active, onClick, icon, label, testId }: { active: boolean; 
         <button
             onClick={onClick}
             data-testid={testId}
-            className={`group relative flex flex-col items-center justify-center p-3 rounded-2xl transition-all duration-500 ${active ? 'bg-white/10 text-accent shadow-[0_0_20px_rgba(139,92,246,0.3)] border border-white/10' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
+            className={`group relative flex flex-col items-center justify-center p-3 rounded-xl transition-all duration-200 ${active ? 'bg-white/10 text-accent border border-white/10' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
             title={label}
         >
             {active && (
                 <motion.div
                     layoutId="activeTabIndicator"
-                    className="absolute -left-1 w-1 h-8 bg-accent rounded-r shadow-glow"
+                    className="absolute -left-1 w-1 h-8 bg-accent rounded-r"
                 />
             )}
-            <div className={`transition-all duration-500 ${active ? 'scale-110' : 'group-hover:scale-110 group-hover:drop-shadow-[0_0_8px_rgba(255,255,255,0.3)]'}`}>
+            <div className={`transition-all duration-200 ${active ? 'scale-105' : ''}`}>
                 {icon}
             </div>
         </button>

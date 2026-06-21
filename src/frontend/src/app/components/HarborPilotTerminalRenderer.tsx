@@ -302,12 +302,12 @@ function Badge({
 }) {
   const cls =
     tone === 'ok'
-      ? 'bg-green-600/15 text-green-300 border-green-600/30'
+      ? 'bg-green-600/[0.15] text-green-300 border-green-600/30'
       : tone === 'warn'
-        ? 'bg-yellow-600/15 text-yellow-300 border-yellow-600/30'
+        ? 'bg-yellow-600/[0.15] text-yellow-300 border-yellow-600/30'
         : tone === 'fail'
-          ? 'bg-red-600/15 text-red-300 border-red-600/30'
-          : 'bg-slate-600/15 text-slate-200 border-slate-600/30';
+          ? 'bg-red-600/[0.15] text-red-300 border-red-600/30'
+          : 'bg-slate-600/[0.15] text-slate-200 border-slate-600/30';
   return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${cls}`}>{children}</span>;
 }
 
@@ -351,8 +351,8 @@ function JsonViewer({ token }: { token: Extract<HPToken, { kind: 'json' }> }) {
   }, [token.parsed, token.raw, hasError]);
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/60">
-      <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-3 py-2">
+    <div className="soft-inset rounded-lg">
+      <div className="flex items-center justify-between gap-2 border-b border-white/5 px-3 py-2">
         <div className="flex items-center gap-2">
           <Badge tone={hasError ? 'fail' : isOpenJson ? 'warn' : 'ok'}>JSON</Badge>
           {isOpenJson ? <span className="text-xs text-slate-400">解析中...</span> : null}
@@ -380,7 +380,7 @@ function TagLine({ t }: { t: Extract<HPToken, { kind: 'tag_line' }> }) {
 
   if (tag === 'cmd') {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+      <div className="soft-inset rounded-lg p-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <Badge tone="neutral">cmd</Badge>
           <CopyButton text={t.text} />
@@ -393,7 +393,7 @@ function TagLine({ t }: { t: Extract<HPToken, { kind: 'tag_line' }> }) {
   if (tag === 'exit') {
     const code = t.text.trim();
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2">
+      <div className="flex items-center gap-2 soft-inset rounded-lg px-3 py-2">
         <Badge tone={tone}>{`exit ${code}`}</Badge>
         {code !== '0' ? (
           <span className="text-xs text-red-300">进程失败</span>
@@ -405,7 +405,7 @@ function TagLine({ t }: { t: Extract<HPToken, { kind: 'tag_line' }> }) {
   }
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2">
+    <div className="soft-inset rounded-lg px-3 py-2">
       <div className="flex items-center gap-2">
         <Badge tone="neutral">{t.tag}</Badge>
         <span className="text-xs text-slate-200">{t.text}</span>
@@ -418,7 +418,7 @@ function RunCard({ run }: { run: HPRun }) {
   const exitTone = run.exitCode === undefined ? 'neutral' : run.exitCode === 0 ? 'ok' : 'fail';
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 shadow-sm">
+    <div className="soft-panel rounded-lg p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-slate-100">{run.header.raw.replace(/^##\s+/, '')}</h3>
@@ -441,7 +441,7 @@ function renderToken(t: HPToken, idx: number) {
   if (t.kind === 'json') return <JsonViewer key={idx} token={t} />;
   if (t.kind === 'text')
     return (
-      <pre key={idx} className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200">
+      <pre key={idx} className="soft-inset rounded-lg px-3 py-2 text-xs text-slate-200">
         {t.text}
       </pre>
     );
@@ -493,7 +493,7 @@ export function PolarisTerminalRenderer({ text, className }: PolarisTerminalRend
       </div>
 
       {tail.length > 0 ? (
-        <div className="mb-4 space-y-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2">
+        <div className="mb-4 space-y-2 soft-inset rounded-lg px-3 py-2">
           <div className="text-xs text-slate-400">启动前输出</div>
           {tail.map((t, i) => renderToken(t, i))}
         </div>

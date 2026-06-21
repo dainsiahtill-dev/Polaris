@@ -93,6 +93,16 @@ def _normalize_provider_usage(raw_usage: Any) -> dict[str, Any] | None:
     }
 
 
+def _context_snapshot_degraded_payload(exc: BaseException) -> dict[str, str]:
+    """Return stable, JSON-safe evidence for a non-fatal context snapshot failure."""
+    return {
+        "code": "CONTEXT_STORE_WRITE_FAILED",
+        "reason": "context_snapshot_store_failure",
+        "message": str(exc)[:200],
+        "exception_type": type(exc).__name__,
+    }
+
+
 class StreamEngine:
     """Executes LLM streaming calls with retry, dedupe, and SLO tracking."""
 
@@ -197,6 +207,23 @@ class StreamEngine:
                     return ref.strip()
             return None
 
+        def _extract_context_snapshot_degraded(request: Any) -> dict[str, Any] | None:
+            """Extract structured context snapshot degradation evidence, if present."""
+            ctx = getattr(request, "context", None)
+            if isinstance(ctx, dict):
+                degraded = ctx.get("context_snapshot_degraded")
+                if isinstance(degraded, dict):
+                    return dict(degraded)
+            return None
+
+        def _with_context_snapshot_diagnostics(payload: dict[str, Any], request: Any) -> dict[str, Any]:
+            result = dict(payload)
+            degraded = _extract_context_snapshot_degraded(request)
+            if degraded:
+                result["context_snapshot_degraded"] = degraded
+                result["context_snapshot_degraded_reason"] = degraded.get("reason") or degraded.get("code")
+            return result
+
         def _current_slo(elapsed_ms: float) -> dict[str, Any]:
             return build_stream_slo_metrics(
                 elapsed_ms=elapsed_ms,
@@ -217,6 +244,7 @@ class StreamEngine:
                 "native_tool_calling_fallback": False,
                 "context_snapshot_ref": _extract_context_snapshot_ref(active_request),
             }
+            payload = _with_context_snapshot_diagnostics(payload, active_request)
             payload.update(_current_slo(elapsed_ms))
             if error_type:
                 payload["error_type"] = error_type
@@ -254,6 +282,9 @@ class StreamEngine:
                         exc,
                     )
                     context_store_hash = None
+                    request_context = getattr(prepared.ai_request, "context", None)
+                    if isinstance(request_context, dict):
+                        request_context["context_snapshot_degraded"] = _context_snapshot_degraded_payload(exc)
                 if context_store_hash:
                     request_context = getattr(prepared.ai_request, "context", None)
                     if isinstance(request_context, dict):
@@ -272,19 +303,22 @@ class StreamEngine:
             compression_strategy=context_result.compression_strategy if context_result else None,
             messages=prepared.messages,
             metadata=_with_context_os_audit(
-                {
-                    "stream": True,
-                    "temperature": getattr(context, "temperature", 0.7),
-                    "max_tokens": getattr(context, "max_tokens", 4000),
-                    "stream_max_reconnects": max_reconnects,
-                    "stream_retry_backoff_seconds": retry_backoff_seconds,
-                    "stream_dedupe_reconnect_replay": dedupe_reconnect_replay,
-                    "native_tool_mode": prepared.native_tool_mode,
-                    "response_format_mode": prepared.response_format_mode,
-                    "compression_applied": context_result.compression_applied if context_result else False,
-                    "turn_round": turn_round,
-                    "context_snapshot_ref": _extract_context_snapshot_ref(prepared.ai_request),
-                }
+                _with_context_snapshot_diagnostics(
+                    {
+                        "stream": True,
+                        "temperature": getattr(context, "temperature", 0.7),
+                        "max_tokens": getattr(context, "max_tokens", 4000),
+                        "stream_max_reconnects": max_reconnects,
+                        "stream_retry_backoff_seconds": retry_backoff_seconds,
+                        "stream_dedupe_reconnect_replay": dedupe_reconnect_replay,
+                        "native_tool_mode": prepared.native_tool_mode,
+                        "response_format_mode": prepared.response_format_mode,
+                        "compression_applied": context_result.compression_applied if context_result else False,
+                        "turn_round": turn_round,
+                        "context_snapshot_ref": _extract_context_snapshot_ref(prepared.ai_request),
+                    },
+                    prepared.ai_request,
+                )
             ),
         )
 
@@ -627,6 +661,7 @@ class StreamEngine:
             "context_snapshot_ref": _extract_context_snapshot_ref(active_request),
             **_current_slo(elapsed_ms),
         }
+        call_end_metadata = _with_context_snapshot_diagnostics(call_end_metadata, active_request)
         if provider_usage is not None:
             call_end_metadata["usage"] = provider_usage
             call_end_metadata["usage_source"] = "provider"

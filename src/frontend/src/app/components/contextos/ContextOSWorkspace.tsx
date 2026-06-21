@@ -49,6 +49,7 @@ import {
   buildContextOSModel,
   contextOSFormat,
   decisionMatchesRole,
+  safeText,
   type ContextOSModel,
   type DecisionRow,
   type EventTypeSlice,
@@ -252,11 +253,11 @@ function RoleInternalStat({ label, value, unit, sub, highlight = false }: { labe
 
 function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
   const tone: PipelineState = event.category === 'error' ? 'blocked' : event.isProjection || event.hasReceipt ? 'active' : 'idle';
-  const summaryText = event.summary || event.kind || '事件';
+  const summaryText = safeText(event.summary) || safeText(event.kind) || '事件';
   return (
     <div
       className="grid grid-cols-[68px_1fr] items-start gap-2 rounded-md px-2 py-1.5 text-[11px] hover:bg-white/[0.03]"
-      aria-label={`${event.category === 'error' ? '错误事件' : '事件'} ${event.kind} ${summaryText}`}
+      aria-label={`${event.category === 'error' ? '错误事件' : '事件'} ${safeText(event.kind)} ${summaryText}`}
     >
       <div className="flex items-center gap-1.5">
         <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATE_STYLES[tone].dot)} />
@@ -264,8 +265,8 @@ function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
       </div>
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-dim">{event.kind}</span>
-          {(event.hasUsage || event.durationMs !== null || event.hasReceipt) && (
+          <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-dim">{safeText(event.kind)}</span>
+          {(event.hasUsage || event.durationMs !== null || event.hasReceipt || event.contextSnapshotDegraded) && (
             <div className="flex flex-wrap items-center gap-1">
               {event.hasUsage && event.totalTokens > 0 && (
                 <span className="rounded bg-accent-secondary/10 px-1 font-mono text-[9px] text-accent-secondary">
@@ -277,6 +278,14 @@ function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
               )}
               {event.hasReceipt && (
                 <span className="rounded bg-gold/10 px-1 font-mono text-[9px] text-gold">快照</span>
+              )}
+              {event.contextSnapshotDegraded && (
+                <span
+                  className="rounded bg-status-warning/10 px-1 font-mono text-[9px] text-status-warning"
+                  title={event.contextSnapshotDegraded.message || event.contextSnapshotDegraded.reason}
+                >
+                  快照未落盘
+                </span>
               )}
             </div>
           )}
@@ -410,14 +419,15 @@ function ContextStructurePanel({ model, telemetry }: { model: ContextOSModel; te
                 {newestEvents.map((event) => (
                   <div key={event.id} className="grid grid-cols-[54px_80px_1fr] gap-2 rounded-md px-2 py-1.5 text-[10px] hover:bg-white/[0.03]">
                     <span className="font-mono text-text-dim">{contextOSFormat.clock(event.ts)}</span>
-                    <span className="truncate text-text-muted" title={event.actor}>{event.actor}</span>
-                    <span className="truncate text-text-main" title={event.summary}>{event.summary}</span>
+                    <span className="truncate text-text-muted" title={event.actor}>{safeText(event.actor)}</span>
+                    <span className="truncate text-text-main" title={event.summary}>{safeText(event.summary)}</span>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="rounded-md border border-dashed border-white/10 px-3 py-5 text-center text-[11px] text-text-dim">
-                暂无结构事件
+              <div className="flex flex-col items-center gap-2 rounded-md border border-dashed border-white/10 px-3 py-5 text-center">
+                <Database className="h-4 w-4 text-text-dim/30" />
+                <div className="text-[11px] text-text-dim">暂无结构事件</div>
               </div>
             )}
           </div>
@@ -450,9 +460,9 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
   const displayedEvents = ctx.events.length;
   const hasTruncation = ctx.eventCount > displayedEvents;
 
-  // Collect LLM calls with context_snapshot_ref from events
+  // Collect LLM calls with context_snapshot_ref or explicit snapshot degradation evidence from events.
   const llmCalls = ctx.events
-    .filter((event) => event.contextSnapshotRef && (event.isCall || event.hasUsage))
+    .filter((event) => (event.contextSnapshotRef || event.contextSnapshotDegraded) && (event.isCall || event.hasUsage))
     .slice(0, 5);
 
   return (
@@ -570,14 +580,23 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
                   {event.durationMs !== null && event.durationMs > 0 && (
                     <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-muted">{event.durationMs}ms</span>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => event.contextSnapshotRef && onViewContext(event.contextSnapshotRef)}
-                    className="rounded bg-accent-secondary/15 px-1.5 py-0.5 text-[9px] text-accent-secondary hover:bg-accent-secondary/25 transition-colors"
-                    title="查看完整上下文"
-                  >
-                    查看完整上下文
-                  </button>
+                  {event.contextSnapshotRef ? (
+                    <button
+                      type="button"
+                      onClick={() => event.contextSnapshotRef && onViewContext(event.contextSnapshotRef)}
+                      className="rounded bg-accent-secondary/15 px-1.5 py-0.5 text-[9px] text-accent-secondary hover:bg-accent-secondary/25 transition-colors"
+                      title="查看完整上下文"
+                    >
+                      查看完整上下文
+                    </button>
+                  ) : event.contextSnapshotDegraded ? (
+                    <span
+                      className="rounded bg-status-warning/10 px-1.5 py-0.5 text-[9px] text-status-warning"
+                      title={event.contextSnapshotDegraded.message || event.contextSnapshotDegraded.reason}
+                    >
+                      快照未落盘
+                    </span>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -602,8 +621,12 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
             ))}
           </div>
         ) : (
-          <div className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-[11px] text-text-dim">
-            该角色暂无实时观测事件
+          <div
+            className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-white/10 px-3 py-4 text-center"
+            data-testid={`contextos-role-panel-empty-events-${role.id}`}
+          >
+            <Activity className="h-4 w-4 text-text-dim/30" />
+            <div className="text-[11px] text-text-dim">该角色暂无实时观测事件</div>
           </div>
         )}
       </div>
@@ -665,8 +688,17 @@ function DecisionTable({ rows }: { rows: DecisionRow[] }) {
   };
   if (rows.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed border-white/10 px-3 py-6 text-center text-[11px] text-text-dim">
-        暂无决策 / 回执记录 — 启动 PM 或 Director 后将实时流入
+      <div
+        className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-white/10 px-3 py-6 text-center"
+        data-testid="contextos-decision-empty"
+      >
+        <Activity className="h-5 w-5 text-text-dim/40" />
+        <div className="text-[11px] text-text-dim">
+          <span className="font-medium">暂无决策 / 回执记录</span>
+        </div>
+        <div className="text-[10px] text-text-dim/60">
+          启动 PM 或 Director 后将实时流入
+        </div>
       </div>
     );
   }
@@ -676,10 +708,10 @@ function DecisionTable({ rows }: { rows: DecisionRow[] }) {
         <div key={`${row.id}-${index}`} className="grid grid-cols-[64px_72px_1fr] items-start gap-2 rounded-md px-2 py-1.5 text-[11px] hover:bg-white/[0.03]">
           <span className="font-mono text-[10px] text-text-dim">{row.time}</span>
           <span className={cn('truncate font-medium', toneClass[row.tone])} title={`${row.actor} · ${row.kind}`}>
-            {row.actor}
+            {safeText(row.actor)}
           </span>
           <div className="min-w-0">
-            <span className="block truncate text-text-muted" title={row.summary}>{row.summary || row.kind}</span>
+            <span className="block truncate text-text-muted" title={row.summary}>{safeText(row.summary) || safeText(row.kind)}</span>
             {(row.source === 'telemetry') && (row.tokens || row.latencyMs || row.receipt) && (
               <div className="mt-0.5 flex flex-wrap items-center gap-1">
                 {row.kind && (
@@ -1131,9 +1163,17 @@ export function ContextOSWorkspace({
                 </div>
                 {idle && (
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                    <span className="rounded-full border border-white/10 bg-black/40 px-3 py-1 font-heading text-xs tracking-widest text-text-dim backdrop-blur-sm">
-                      空闲 · 等待运行
-                    </span>
+                    <div className="flex flex-col items-center gap-1.5 rounded-full border border-white/10 bg-black/50 px-4 py-2 backdrop-blur-sm">
+                      <div className="flex items-center gap-2">
+                        <Network className="h-3.5 w-3.5 text-text-dim/50" />
+                        <span className="font-heading text-xs tracking-widest text-text-dim">
+                          空闲 · 等待运行
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-text-dim/50">
+                        启动 PM 或 Director 后管线将激活
+                      </span>
+                    </div>
                   </div>
                 )}
                 {/* 窄屏下提示右侧仍有节点（Receipt 反馈闭环）可横向滚动查看 */}
@@ -1234,11 +1274,20 @@ export function ContextOSWorkspace({
                           </span>
                         )}
                       </>
-                    ) : (
-                      <span className="text-[12px] leading-relaxed text-text-dim" data-testid="contextos-tokens-unavailable">
-                        等待首次 LLM 调用 · 实时 token 随 journal 流到达
-                      </span>
-                    )}
+                ) : (
+                  <div
+                    className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-white/10 px-3 py-4 text-center"
+                    data-testid="contextos-tokens-unavailable"
+                  >
+                    <Coins className="h-5 w-5 text-text-dim/30" />
+                    <div className="text-[11px] text-text-dim">
+                      <span className="font-medium">等待首次 LLM 调用</span>
+                    </div>
+                    <div className="text-[10px] text-text-dim/60">
+                      实时 token 随 journal 流到达
+                    </div>
+                  </div>
+                )}
                   </div>
                 </div>
 
@@ -1249,8 +1298,9 @@ export function ContextOSWorkspace({
                     ))}
                   </div>
                 ) : (
-                  <div className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-[11px] text-text-dim">
-                    等待首次调用 · 暂无 token 用量
+                  <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-[11px] text-text-dim">
+                    <Coins className="h-4 w-4 text-text-dim/30" />
+                    <span>等待首次调用 · 暂无 token 用量</span>
                   </div>
                 )}
 

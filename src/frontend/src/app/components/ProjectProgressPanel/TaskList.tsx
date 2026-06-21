@@ -78,7 +78,7 @@ function TaskListComponent({
                             data-testid="project-task-item"
                             data-task-id={idText}
                             className={`rounded-xl border p-3 transition-all duration-300 ${isCurrent
-                                ? 'border-accent/50 bg-accent/5 shadow-[0_0_15px_rgba(124,58,237,0.1)]'
+                                ? 'soft-raised border-white/[0.15]'
                                 : isCompleted
                                     ? 'border-status-success/30 bg-status-success/5 opacity-80'
                                     : 'border-white/5 bg-white/5 hover:border-white/10 hover:bg-white/10'
@@ -105,11 +105,11 @@ function TaskListComponent({
                                     {isCompleted ? (
                                         <CheckCircle className="size-4 text-status-success" />
                                     ) : isCurrent ? (
-                                        <ArrowRight className="size-4 text-accent animate-pulse" />
+                                        <ArrowRight className="size-4 text-accent" />
                                     ) : (
                                         <Clock className="size-4 text-text-dim" />
                                     )}
-                                    <span className="rounded-full border border-white/10 px-2 py-0.5 backdrop-blur-sm">
+                                            <span className="soft-chip rounded-full px-2 py-0.5">
                                         {isCompleted ? '已完成' : isCurrent ? '进行中' : '待开始'}
                                     </span>
                                 </div>

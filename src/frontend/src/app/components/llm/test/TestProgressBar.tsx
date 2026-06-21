@@ -16,9 +16,9 @@ export function TestProgressBar({ progress, running }: TestProgressBarProps) {
           <span>{safe}%</span>
         </div>
       </div>
-      <div className="h-2 rounded-full bg-black/40 border border-white/10 overflow-hidden">
+      <div className="soft-inset h-2 overflow-hidden rounded-full">
         <div
-          className="h-full bg-gradient-to-r from-cyan-400/70 via-purple-400/60 to-pink-400/70 transition-all duration-300"
+          className="soft-progress h-full transition-all duration-300"
           style={{ width: `${safe}%` }}
         />
       </div>

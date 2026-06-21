@@ -9,19 +9,26 @@ run. These tests lock down both the happy path and the silent-failure path.
 from __future__ import annotations
 
 import json
+import os
 import sys
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any
+from unittest import mock
 from urllib.parse import urlparse
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
+from scripts.factory_bench import run_factory_bench as run_factory_bench_module
 from scripts.factory_bench.run_factory_bench import (
     _push_bench_complete_to_backend,
     _push_bench_event_to_backend,
     _push_bench_session_to_backend,
+    _push_bench_workspace_to_backend,
+    _resolve_bench_work_dir,
 )
 
 
@@ -90,6 +97,7 @@ class _BenchBackendClientTestBase(unittest.TestCase):
             "sessions": json.dumps({"session_id": "bench-abc", "status": "running"}).encode("utf-8"),
             "events": json.dumps({"appended": True}).encode("utf-8"),
             "complete": json.dumps({"updated": True}).encode("utf-8"),
+            "/settings": json.dumps({"workspace": "/tmp/project"}).encode("utf-8"),
         }
         self.addCleanup(self._server.shutdown)
         self.addCleanup(self._server.server_close)
@@ -150,6 +158,53 @@ class TestBenchBackendClient(_BenchBackendClientTestBase):
         self.assertEqual(kind, "sessions/bench-xyz/complete")
         self.assertEqual(body["success"], True)
         self.assertEqual(body["summary"]["passed"], 1)
+
+    def test_workspace_switch_posts_to_settings_before_project_observation(self) -> None:
+        ok = _push_bench_workspace_to_backend(
+            backend_url=self.backend_url,
+            workspace="/tmp/project",
+        )
+        self.assertTrue(ok)
+        self.assertEqual(len(_MockBackend.received), 1)
+        kind, path, body = _MockBackend.received[0]
+        self.assertEqual(kind, "settings")
+        self.assertEqual(path, "/settings")
+        self.assertEqual(body["workspace"], "/tmp/project")
+
+    def test_workspace_switch_retries_transient_settings_failure(self) -> None:
+        calls: list[dict[str, Any]] = []
+
+        def fake_post_json(url: str, payload: dict[str, Any], *, token: str = "") -> dict[str, Any] | None:
+            self.assertEqual(url, f"{self.backend_url}/settings")
+            self.assertEqual(token, "dev-token")
+            calls.append(payload)
+            if len(calls) == 1:
+                return None
+            return {"workspace": payload["workspace"]}
+
+        with mock.patch.object(run_factory_bench_module, "_http_post_json", side_effect=fake_post_json):
+            ok = run_factory_bench_module._push_bench_workspace_to_backend(
+                backend_url=self.backend_url,
+                workspace="/tmp/project",
+                token="dev-token",
+                attempts=2,
+                retry_delay_seconds=0,
+            )
+
+        self.assertTrue(ok)
+        self.assertEqual(calls, [{"workspace": "/tmp/project"}, {"workspace": "/tmp/project"}])
+
+    def test_relative_work_dir_resolves_from_repo_root_not_process_cwd(self) -> None:
+        previous_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            try:
+                os.chdir(tmp_dir)
+                resolved = _resolve_bench_work_dir("runtime/factory-bench/bench-x")
+            finally:
+                os.chdir(previous_cwd)
+
+        expected = Path("/home/dains/Documents/polaris/runtime/factory-bench/bench-x").resolve()
+        self.assertEqual(resolved, expected)
 
     def test_unreachable_backend_returns_none_silently(self) -> None:
         sid = _push_bench_session_to_backend(

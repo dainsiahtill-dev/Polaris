@@ -13,6 +13,7 @@ import { Toaster } from '@/app/components/ui/sonner';
 import type { PmTask } from '@/types/task';
 import type { LogEntry } from '@/types/log';
 import type { FactoryRunStatus, FactoryAuditEvent, FactoryRunArtifact } from '@/hooks/useFactory';
+import type { UseFactoryBenchResult } from '@/hooks/useFactoryBench';
 
 export interface FactoryPageProps {
   /** 工作区路径 */
@@ -59,6 +60,8 @@ export interface FactoryPageProps {
   onRetryCheckpoint?: () => void;
   /** 是否加载中 */
   isLoading: boolean;
+  /** Factory Bench 实时会话状态 */
+  bench?: UseFactoryBenchResult;
   /** WebSocket 连接状态 */
   websocketLive: boolean;
   /** WebSocket 重连状态 */
@@ -110,6 +113,7 @@ export function FactoryPage({
   onResume,
   onRetryCheckpoint,
   isLoading,
+  bench,
   websocketLive,
   websocketReconnecting,
   websocketAttemptCount,
@@ -123,6 +127,7 @@ export function FactoryPage({
   return (
     <ErrorBoundaryClass onError={(error) => notifyError(error.message || '发生未知错误')}>
       <BenchStatusStrip
+        bench={bench}
         websocketLive={websocketLive}
         websocketReconnecting={websocketReconnecting}
         websocketAttemptCount={websocketAttemptCount}
@@ -150,6 +155,7 @@ export function FactoryPage({
         onResume={onResume}
         onRetryCheckpoint={onRetryCheckpoint}
         isLoading={isLoading}
+        bench={bench}
       />
       <BenchPanel className="border-t border-white/10" />
       <LlmRuntimeOverlay

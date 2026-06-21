@@ -168,9 +168,8 @@ export function BenchPanel({ className }: BenchPanelProps): JSX.Element {
                 </StatusBadge>
                 <span className="text-slate-400">{summarizeSession(currentSession)}</span>
               </div>
-              <div className="text-[11px] text-slate-500">
-                创建 {formatTime(currentSession.created_at)} · 更新 {formatTime(currentSession.updated_at)}
-                {currentSession.completed_at ? ` · 完成 ${formatTime(currentSession.completed_at)}` : ''}
+              <div className="text-[11px] text-slate-500" title={`创建 ${formatTime(currentSession.created_at)} · 更新 ${formatTime(currentSession.updated_at)}${currentSession.completed_at ? ` · 完成 ${formatTime(currentSession.completed_at)}` : ''}`}>
+                更新 {formatTime(currentSession.updated_at)}
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded bg-slate-800">
                 <div

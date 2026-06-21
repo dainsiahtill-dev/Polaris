@@ -544,7 +544,7 @@ export function PMDocumentPanel({
                   'border-b px-4 py-3 text-xs',
                   deleteError
                     ? 'border-red-500/20 bg-red-500/10 text-red-100'
-                    : 'border-red-500/15 bg-slate-950/45 text-slate-300',
+                    : 'border-red-500/[0.15] bg-slate-950/45 text-slate-300',
                 )}
                 data-testid="pm-document-delete-panel"
               >
@@ -1010,7 +1010,7 @@ function DocumentVersionPanel({
                 className={cn(
                   'mt-2 w-full rounded border px-2 py-1 text-[10px] transition-colors',
                   selectedVersion === version.version
-                    ? 'border-amber-400/40 bg-amber-500/15 text-amber-100'
+                    ? 'border-amber-400/40 bg-amber-500/[0.15] text-amber-100'
                     : 'border-white/10 bg-slate-950/40 text-slate-400 hover:border-amber-400/30 hover:text-amber-100',
                 )}
               >

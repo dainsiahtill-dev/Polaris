@@ -1025,7 +1025,7 @@ export function PMTaskPanel({
         </div>
 
         {showCreatePanel && (
-          <div className="border-b border-amber-500/15 bg-slate-950/35 px-4 py-3" data-testid="pm-task-create-panel">
+          <div className="border-b border-amber-500/[0.15] bg-slate-950/35 px-4 py-3" data-testid="pm-task-create-panel">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-amber-200">
                 <Plus className="h-3.5 w-3.5" />
@@ -1087,7 +1087,7 @@ export function PMTaskPanel({
               'border-b px-4 py-2 text-xs',
               createEvidence.error
                 ? 'border-red-500/20 bg-red-500/10 text-red-100'
-                : 'border-amber-500/15 bg-slate-950/45 text-slate-300',
+                : 'border-amber-500/[0.15] bg-slate-950/45 text-slate-300',
             )}
             data-testid="pm-task-create-evidence"
             data-endpoint="/v2/pm/tasks"

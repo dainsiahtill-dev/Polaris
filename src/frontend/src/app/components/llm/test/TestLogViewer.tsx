@@ -3,11 +3,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TestLog } from './types';
 
 const LOG_STYLES: Record<TestLog['type'], { icon: JSX.Element; className: string; label: string }> = {
-  info: { icon: <Info className="size-3" />, className: 'text-blue-200', label: 'Info' },
-  error: { icon: <AlertTriangle className="size-3" />, className: 'text-red-200', label: 'Error' },
-  success: { icon: <CheckCircle2 className="size-3" />, className: 'text-emerald-200', label: 'Success' },
-  request: { icon: <ArrowUpRight className="size-3" />, className: 'text-amber-200', label: 'Request' },
-  response: { icon: <ArrowDownLeft className="size-3" />, className: 'text-cyan-200', label: 'Response' }
+  info: { icon: <Info className="size-3" />, className: 'text-accent-text', label: 'Info' },
+  error: { icon: <AlertTriangle className="size-3" />, className: 'text-status-error', label: 'Error' },
+  success: { icon: <CheckCircle2 className="size-3" />, className: 'text-status-success', label: 'Success' },
+  request: { icon: <ArrowUpRight className="size-3" />, className: 'text-status-warning', label: 'Request' },
+  response: { icon: <ArrowDownLeft className="size-3" />, className: 'text-accent-text', label: 'Response' }
 };
 
 interface TestLogViewerProps {
@@ -56,7 +56,7 @@ export function TestLogViewer({ logs, className }: TestLogViewerProps) {
       </div>
       <div
         ref={containerRef}
-        className="max-h-56 overflow-auto rounded-lg border border-white/10 bg-black/30 p-2 space-y-2"
+        className="soft-inset max-h-56 space-y-2 overflow-auto rounded-lg p-2"
       >
         {rendered.length === 0 ? (
           <div className="text-[11px] text-text-dim">暂无日志</div>

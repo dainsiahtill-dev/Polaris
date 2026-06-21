@@ -101,7 +101,7 @@ export function CourtActor({ node, actor, isSelected, onClick }: CourtActorProps
       {isSelected && (
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
           <ringGeometry args={[0.8, 1, 32]} />
-          <meshBasicMaterial color="#00ffff" transparent opacity={0.8} />
+          <meshBasicMaterial color="#a4c2b6" transparent opacity={0.8} />
         </mesh>
       )}
 
@@ -142,7 +142,7 @@ export function CourtActor({ node, actor, isSelected, onClick }: CourtActorProps
           <div
             className={`
               px-3 py-2 rounded-lg border backdrop-blur-md shadow-lg
-              ${isSelected ? 'bg-cyan-950/90 border-cyan-400' : 'bg-black/80 border-white/30'}
+              ${isSelected ? 'soft-raised' : 'soft-panel-subtle'}
               min-w-[120px]
             `}
           >

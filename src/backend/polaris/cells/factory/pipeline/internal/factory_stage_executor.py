@@ -2133,16 +2133,47 @@ class OrchestrationStageExecutor:
     def _qa_report_has_warning(payload: dict[str, Any], warning: str) -> bool:
         return helpers.qa_report_has_warning(payload, warning)
 
+    def _build_qa_input_with_workspace_quality_evidence(
+        self,
+        qa_input: object,
+        workspace_checks_artifact: str,
+    ) -> str:
+        base_input = str(qa_input or "").strip()
+        if not workspace_checks_artifact:
+            return base_input
+        evidence_text = self._read_text_artifact(workspace_checks_artifact, min_chars=2)
+        if not evidence_text:
+            return base_input
+        compact_evidence = self._compact_text_for_prompt(evidence_text, max_chars=6000)
+        sections = [base_input] if base_input else []
+        sections.append(
+            "\n".join(
+                [
+                    "Workspace quality evidence collected before QA judgement:",
+                    f"- artifact: {workspace_checks_artifact}",
+                    "- content:",
+                    compact_evidence,
+                ]
+            )
+        )
+        return "\n\n".join(sections)
+
     async def _execute_quality_gate(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing quality gate for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
+
+        workspace_checks_passed, workspace_checks_artifact = await self._run_workspace_quality_checks(run, context)
+        qa_input = self._build_qa_input_with_workspace_quality_evidence(
+            context.get("qa_input"),
+            workspace_checks_artifact,
+        )
 
         service = self._build_orchestration_service(context)
         command_result = await service.execute_qa_run(
             workspace=str(self.workspace),
             target=context.get("qa_target", "Quality gate"),
             options={
-                "input": context.get("qa_input"),
+                "input": qa_input,
             },
         )
         final_result = await self._wait_run_completion(
@@ -2192,7 +2223,6 @@ class OrchestrationStageExecutor:
             default=True,
         )
         qa_llm_judgement_ready = not self._qa_report_has_warning(qa_payload, _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING)
-        workspace_checks_passed, workspace_checks_artifact = await self._run_workspace_quality_checks(run, context)
         is_success = (
             final_result.status in {"completed", "success"}
             and qa_passed

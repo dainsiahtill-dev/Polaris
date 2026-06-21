@@ -344,11 +344,11 @@ export function ChiefEngineerWorkbenchPanel({
 
   return (
     <div data-testid="chief-engineer-workbench-panel" className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-3 border-b border-cyan-500/20 bg-cyan-500/5 px-4 py-2">
+      <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] bg-slate-950/80 px-4 py-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="text-sm font-medium text-cyan-100">Chief Engineer 工作台</span>
+          <span className="text-sm font-medium text-slate-200">Chief Engineer 工作台</span>
           {sessionId && (
-            <span className="rounded border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 font-mono text-xs text-cyan-200">
+            <span className="soft-chip rounded px-2 py-0.5 font-mono text-xs text-slate-300">
               {sessionId.slice(0, 8)}...
             </span>
           )}
@@ -358,7 +358,7 @@ export function ChiefEngineerWorkbenchPanel({
               data-testid="chief-engineer-role-session-select"
               value={sessionId ?? ''}
               onChange={(event) => handleSessionChange(event.target.value || null)}
-              className="h-7 max-w-48 rounded border border-cyan-500/20 bg-slate-950/80 px-2 text-xs text-cyan-100 outline-none transition-colors hover:border-cyan-500/40 focus:border-cyan-400"
+              className="h-7 max-w-48 rounded border border-white/[0.08] bg-slate-950/80 px-2 text-xs text-slate-200 outline-none transition-colors hover:border-white/[0.14] focus:border-white/[0.18]"
               title={selectedSessionLabel || '选择会话'}
             >
               <option value="">选择会话</option>
@@ -374,7 +374,7 @@ export function ChiefEngineerWorkbenchPanel({
           <button
             type="button"
             onClick={handleNewSession}
-            className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded border border-cyan-500/25 bg-cyan-500/15 px-2 text-xs text-cyan-100 transition-colors hover:bg-cyan-500/25"
+            className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded border border-white/[0.08] bg-white/[0.04] px-2 text-xs text-slate-200 transition-colors hover:bg-white/[0.08]"
           >
             <PlusCircle className="h-3.5 w-3.5" />
             新建会话
@@ -383,7 +383,7 @@ export function ChiefEngineerWorkbenchPanel({
             <button
               type="button"
               onClick={handleExportToDirector}
-              className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/15 px-2 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25"
+              className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/[0.15] px-2 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25"
             >
               <UploadCloud className="h-3.5 w-3.5" />
               导出 Director
@@ -394,7 +394,7 @@ export function ChiefEngineerWorkbenchPanel({
               type="button"
               onClick={handleExportToFactory}
               disabled={isExportingFactory}
-              className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded border border-cyan-500/25 bg-cyan-500/15 px-2 text-xs text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded border border-white/[0.08] bg-white/[0.04] px-2 text-xs text-slate-200 transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <UploadCloud className="h-3.5 w-3.5" />
               导出 Factory
@@ -405,10 +405,10 @@ export function ChiefEngineerWorkbenchPanel({
 
       <RoleSessionEvidencePanel sessionId={sessionId} tone="cyan" />
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-cyan-500/15 bg-slate-950/60 px-4 py-2 text-[11px]">
+      <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.06] bg-slate-950/60 px-4 py-2 text-[11px]">
         <MetricPill label="PM tasks" value={taskCount} />
         <MetricPill label="blueprints" value={blueprintCount} />
-        <MetricPill label="missing" value={missingBlueprintCount} tone={missingBlueprintCount > 0 ? 'amber' : 'cyan'} />
+        <MetricPill label="missing" value={missingBlueprintCount} tone={missingBlueprintCount > 0 ? 'amber' : 'slate'} />
         <MetricPill label="Director" value={directorRunning ? 'running' : 'idle'} tone={directorRunning ? 'emerald' : 'slate'} />
       </div>
 
@@ -467,11 +467,11 @@ export function ChiefEngineerWorkbenchPanel({
 function MetricPill({
   label,
   value,
-  tone = 'cyan',
+  tone = 'slate',
 }: {
   label: string;
   value: string | number;
-  tone?: 'cyan' | 'emerald' | 'amber' | 'slate';
+  tone?: 'slate' | 'emerald' | 'amber';
 }) {
   const toneClass = tone === 'emerald'
     ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200'
@@ -479,7 +479,7 @@ function MetricPill({
       ? 'border-amber-500/25 bg-amber-500/10 text-amber-200'
       : tone === 'slate'
         ? 'border-white/10 bg-white/5 text-slate-300'
-        : 'border-cyan-500/25 bg-cyan-500/10 text-cyan-200';
+        : 'border-white/[0.08] bg-white/[0.04] text-slate-300';
 
   return (
     <span className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 ${toneClass}`}>

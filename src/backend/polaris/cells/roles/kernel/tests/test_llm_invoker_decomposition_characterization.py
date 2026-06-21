@@ -353,6 +353,41 @@ async def test_call_end_event_prefers_provider_usage_over_text_estimate(monkeypa
     assert rec.end[0]["metadata"]["usage"]["total_tokens"] == 168
 
 
+@pytest.mark.asyncio
+async def test_call_end_event_surfaces_context_snapshot_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
+    rec = _EventRecorder()
+    rec.install(monkeypatch)
+    profile = _profile()
+    prepared = _prepared(profile)
+    if isinstance(prepared.ai_request.context, dict):
+        prepared.ai_request.context.pop("context_snapshot_ref", None)
+        prepared.ai_request.context["context_snapshot_degraded"] = {
+            "code": "CONTEXT_STORE_WRITE_FAILED",
+            "reason": "context_snapshot_store_failure",
+            "message": "disk full",
+            "exception_type": "OSError",
+        }
+    _patch_prepare(monkeypatch, prepared)
+    executor = _ScriptedExecutor([AIResponse.success(output="fresh-output", raw={"model": "m", "provider": "p"})])
+    invoker = LLMInvoker(workspace="ws", enable_cache=False, executor=executor)
+
+    resp = await invoker.call(
+        profile=profile,
+        system_prompt="sys",
+        context=_ctx(None),
+        run_id="run-context-degraded",
+    )
+
+    assert resp.error is None
+    assert resp.metadata["context_snapshot_degraded"]["code"] == "CONTEXT_STORE_WRITE_FAILED"
+    assert resp.metadata["context_snapshot_degraded_reason"] == "context_snapshot_store_failure"
+    assert len(rec.end) == 1
+    metadata = rec.end[0]["metadata"]
+    assert metadata["context_snapshot_degraded"]["exception_type"] == "OSError"
+    assert metadata["context_snapshot_degraded_reason"] == "context_snapshot_store_failure"
+    assert metadata.get("context_snapshot_ref") is None
+
+
 # ---------------------------------------------------------------------------
 # call: fallback ladder rungs
 # ---------------------------------------------------------------------------

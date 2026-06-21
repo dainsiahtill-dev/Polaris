@@ -133,8 +133,8 @@ export function MetricsDashboard() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <div className="h-4 w-0.5 rounded-full bg-gradient-to-b from-amber-400/60 to-cyan-400/60" />
-        <h2 className="text-xs font-bold tracking-[0.2em] text-amber-200/80">
+        <div className="h-4 w-0.5 rounded-full soft-divider" />
+        <h2 className="text-xs font-bold tracking-[0.2em] text-slate-300/80">
           北 极 星 指 标
         </h2>
       </div>

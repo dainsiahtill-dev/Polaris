@@ -16,21 +16,21 @@ export function TestResultDisplay({ result }: TestResultDisplayProps) {
   const grade = result.grade || (ready ? 'PASS' : 'FAIL');
 
   return (
-    <div className="rounded-xl border border-white/10 bg-black/30 p-3 space-y-3">
+    <div className="soft-panel-subtle space-y-3 rounded-xl p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-xs text-text-main">
           {ready ? (
-            <CheckCircle2 className="size-4 text-emerald-400" />
+            <CheckCircle2 className="size-4 text-status-success" />
           ) : (
-            <AlertTriangle className="size-4 text-red-400" />
+            <AlertTriangle className="size-4 text-status-error" />
           )}
           <span className="font-semibold">测试结果</span>
         </div>
         <span
           className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded border ${
             ready
-              ? 'bg-emerald-500/20 text-emerald-200 border-emerald-500/40'
-              : 'bg-red-500/20 text-red-200 border-red-500/40'
+              ? 'bg-status-success/15 text-status-success border-status-success/40'
+              : 'bg-status-error/15 text-status-error border-status-error/40'
           }`}
         >
           {grade}
@@ -38,7 +38,7 @@ export function TestResultDisplay({ result }: TestResultDisplayProps) {
       </div>
 
       <div className="grid grid-cols-3 gap-3 text-xs">
-        <div className="rounded-lg border border-white/10 bg-black/20 p-2">
+        <div className="soft-chip rounded-lg p-2">
           <div className="flex items-center gap-1 text-[10px] text-text-dim">
             <Clock className="size-3" />
             延迟
@@ -47,7 +47,7 @@ export function TestResultDisplay({ result }: TestResultDisplayProps) {
             {typeof result.latencyMs === 'number' ? `${Math.round(result.latencyMs)} ms` : '—'}
           </div>
         </div>
-        <div className="rounded-lg border border-white/10 bg-black/20 p-2">
+        <div className="soft-chip rounded-lg p-2">
           <div className="flex items-center gap-1 text-[10px] text-text-dim">
             <Activity className="size-3" />
             Tokens
@@ -57,7 +57,7 @@ export function TestResultDisplay({ result }: TestResultDisplayProps) {
             {result.usage?.estimated ? <span className="text-[9px] text-text-dim ml-1">(估算)</span> : null}
           </div>
         </div>
-        <div className="rounded-lg border border-white/10 bg-black/20 p-2">
+        <div className="soft-chip rounded-lg p-2">
           <div className="flex items-center gap-1 text-[10px] text-text-dim">
             <Brain className="size-3" />
             思考能力
@@ -84,8 +84,8 @@ export function TestResultDisplay({ result }: TestResultDisplayProps) {
                 key={suite.name}
                 className={`rounded border px-2 py-1 text-[10px] flex items-center justify-between ${
                   suite.ok
-                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-                    : 'border-red-500/30 bg-red-500/10 text-red-200'
+                    ? 'border-status-success/35 bg-status-success/10 text-status-success'
+                    : 'border-status-error/35 bg-status-error/10 text-status-error'
                 }`}
               >
                 <span className="capitalize">{suite.name}</span>

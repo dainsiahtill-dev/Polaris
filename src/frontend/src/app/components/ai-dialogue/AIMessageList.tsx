@@ -123,7 +123,7 @@ function MessageBubble({ message, theme, onCopy }: MessageBubbleProps) {
 
       {/* Content */}
       <div className={cn('flex-1 max-w-[85%]', isUser ? 'text-right' : 'text-left')}>
-        <div className={cn('inline-block text-left px-3 py-2 rounded-2xl text-sm relative', getBubbleBgClass())}>
+        <div className={cn('inline-block text-left px-3 py-2 rounded-lg text-sm relative', getBubbleBgClass())}>
           <SmartContentRenderer content={message.content} />
 
           {/* Copy button */}

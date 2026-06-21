@@ -57,8 +57,8 @@ interface WorkflowSettingsTabProps {
   onSave: (payload: Record<string, unknown>) => Promise<void>;
 }
 
-// Glass Card Component
-function GlassCard({
+// Section Card Component
+function SectionCard({
   children,
   className,
   title,
@@ -74,25 +74,20 @@ function GlassCard({
   return (
     <div
       className={cn(
-        'group relative overflow-hidden rounded-2xl border border-white/10',
-        'bg-gradient-to-br from-slate-800/80 via-slate-900/90 to-slate-950/95',
-        'backdrop-blur-xl shadow-2xl shadow-black/20',
-        'transition-all duration-300 ease-out',
-        'hover:border-purple-500/30 hover:shadow-purple-500/10',
+        'rounded-lg border border-slate-700/60 bg-slate-800/70 shadow-sm',
         className
       )}
     >
-      <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 via-transparent to-cyan-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-      <div className="relative flex items-center gap-3 px-6 py-4 border-b border-white/5">
-        <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500/20 to-cyan-500/20 border border-purple-500/20">
-          <Icon className="w-5 h-5 text-purple-400" />
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-700/50">
+        <div className="flex items-center justify-center w-8 h-8 rounded-md bg-slate-700/60">
+          <Icon className="w-4 h-4 text-slate-400" />
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-slate-100 tracking-wide">{title}</h3>
-          {description && <p className="text-xs text-slate-400 mt-0.5 truncate">{description}</p>}
+          <h3 className="text-sm font-medium text-slate-200">{title}</h3>
+          {description && <p className="text-xs text-slate-500 mt-0.5">{description}</p>}
         </div>
       </div>
-      <div className="relative p-6">{children}</div>
+      <div className="p-5">{children}</div>
     </div>
   );
 }
@@ -147,7 +142,7 @@ function NumberInput({
         max={max}
         className={cn(
           'h-10 bg-slate-950/50 border-slate-700/50 text-slate-100',
-          'focus:border-purple-500/50 focus:ring-purple-500/20',
+          'focus:border-slate-500/50 focus:ring-slate-500/20',
           'placeholder:text-slate-600',
           suffix && 'pr-12'
         )}
@@ -174,8 +169,8 @@ function ToggleField({
   icon: React.ElementType;
 }) {
   return (
-    <div className="flex items-start gap-4 p-4 rounded-xl bg-slate-950/30 border border-white/5 hover:border-white/10 transition-colors">
-      <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-slate-800/50 shrink-0">
+    <div className="flex items-start gap-4 p-4 rounded-lg bg-slate-900/50 border border-slate-700/40 transition-colors">
+      <div className="flex items-center justify-center w-9 h-9 rounded-md bg-slate-800/70 shrink-0">
         <Icon className="w-5 h-5 text-slate-400" />
       </div>
       <div className="flex-1 min-w-0">
@@ -184,7 +179,7 @@ function ToggleField({
           <Switch
             checked={checked}
             onCheckedChange={onChange}
-            className="data-[state=checked]:bg-purple-500"
+            className="data-[state=checked]:bg-emerald-500"
           />
         </div>
         {description && <p className="text-xs text-slate-500 mt-1">{description}</p>}
@@ -293,7 +288,7 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-            <Workflow className="w-6 h-6 text-purple-400" />
+            <Workflow className="w-6 h-6 text-slate-400" />
             工作流设置
           </h2>
           <p className="text-sm text-slate-400 mt-1">配置 Director 执行器、PM 调度器与工作流行为</p>
@@ -302,11 +297,11 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
           onClick={handleSave}
           disabled={saving}
           className={cn(
-            'flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium text-sm',
-            'transition-all duration-200',
+            'flex items-center gap-2 px-5 py-2 rounded-lg font-medium text-sm',
+            'transition-colors duration-150',
             saved
-              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-              : 'bg-gradient-to-r from-purple-500 to-cyan-500 text-white shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 hover:scale-[1.02]'
+              ? 'bg-emerald-500/[0.15] text-emerald-400 border border-emerald-500/30'
+              : 'bg-emerald-600 text-white hover:bg-emerald-700'
           )}
         >
           {saving ? (
@@ -329,7 +324,7 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400">
+        <div className="flex items-center gap-2 p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400">
           <AlertCircle className="w-5 h-5 shrink-0" />
           <span className="text-sm">{error}</span>
         </div>
@@ -338,12 +333,12 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
       {/* Director Settings Section */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 uppercase tracking-wider">
-          <Cpu className="w-4 h-4 text-purple-400" />
+          <Cpu className="w-4 h-4 text-slate-400" />
           Director 执行器配置
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <GlassCard title="执行模式" icon={Activity}>
+          <SectionCard title="执行模式" icon={Activity}>
             <div className="space-y-4">
               <FormField label="执行模式">
                 <Select
@@ -388,9 +383,9 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
                 icon={Terminal}
               />
             </div>
-          </GlassCard>
+          </SectionCard>
 
-          <GlassCard title="超时配置" icon={Clock}>
+          <SectionCard title="超时配置" icon={Clock}>
             <div className="space-y-4">
               <FormField label="就绪超时">
                 <NumberInput
@@ -419,9 +414,9 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
                 />
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
 
-          <GlassCard title="任务超时" icon={AlertCircle}>
+          <SectionCard title="任务超时" icon={AlertCircle}>
             <div className="space-y-4">
               <FormField label="完成超时">
                 <NumberInput
@@ -451,7 +446,7 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
                 />
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
         </div>
       </section>
 
@@ -463,7 +458,7 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <GlassCard title="全链路执行" icon={Layers}>
+          <SectionCard title="全链路执行" icon={Layers}>
             <div className="space-y-3">
               <ToggleField
                 label="启用执行阶段"
@@ -500,9 +495,9 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
                 />
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
 
-          <GlassCard title="故障恢复" icon={RotateCcw}>
+          <SectionCard title="故障恢复" icon={RotateCcw}>
             <div className="space-y-4">
               <FormField label="最大失败次数" hint="超过后暂停任务">
                 <NumberInput
@@ -534,14 +529,14 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
                 />
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
         </div>
       </section>
 
       {/* Features Section */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 uppercase tracking-wider">
-          <Sparkles className="w-4 h-4 text-pink-400" />
+          <Sparkles className="w-4 h-4 text-slate-400" />
           功能开关
         </div>
 

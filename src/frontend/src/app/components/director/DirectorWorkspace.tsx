@@ -1047,10 +1047,10 @@ function DirectorCapabilityStrip({
       data-testid="director-capability-strip"
       aria-label="Director capability matrix"
     >
-      <details className="group h-full rounded-lg border border-indigo-500/15 bg-slate-900/35 px-3 py-2">
-        <summary className="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-2 [&::-webkit-details-marker]:hidden">
-          <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
-            <Wrench className="h-3.5 w-3.5 text-indigo-300" />
+      <details className="group h-full rounded-lg border border-[var(--soft-border)] bg-[var(--soft-surface)] px-3 py-2">
+        <summary className="flex cursor-pointer items-center gap-3 text-[11px] select-none">
+          <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-slate-200">
+            <Wrench className="h-3.5 w-3.5 text-slate-400" />
             能力
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -1078,14 +1078,14 @@ function DirectorCapabilityStrip({
             ) : null}
           </div>
           <span className="ml-auto shrink-0 text-[10px] text-slate-500 group-open:hidden">详情</span>
-          <span className="ml-auto hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起</span>
+          <span className="ml-auto hidden shrink-0 text-[10px] text-slate-400 group-open:inline">收起</span>
         </summary>
-        <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-white/10 pt-2">
+        <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-[var(--soft-border)] pt-2">
           <EvidenceEndpointBadge endpoint="/v2/director/capabilities" testId="director-capability-endpoint" />
 
           {isLoading ? (
             <div className="flex items-center gap-2 text-[11px] text-slate-400">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-300" />
               正在读取 Director 能力
             </div>
           ) : error ? (
@@ -1106,7 +1106,7 @@ function DirectorCapabilityStrip({
                 >
                   <Brain className="h-3.5 w-3.5 text-cyan-300" />
                   <span className="text-[10px] font-medium text-slate-200">{host.hostKind}</span>
-                  <span className="rounded bg-indigo-500/15 px-1.5 py-0.5 text-[9px] text-indigo-200">
+                  <span className="soft-chip rounded px-1.5 py-0.5 text-[9px] text-slate-300">
                     {host.capabilities.length}
                   </span>
                   <div className="flex items-center gap-1">
@@ -1167,16 +1167,16 @@ function DirectorKernelDiagnosticsStrip({
       data-testid="director-kernel-diagnostics-strip"
       aria-label="Director Kernel diagnostics"
     >
-      <details className="group h-full rounded-lg border border-indigo-500/15 bg-slate-900/30 px-3 py-2">
-        <summary className="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-2 [&::-webkit-details-marker]:hidden">
-          <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
-            <BarChart3 className="h-3.5 w-3.5 text-indigo-300" />
+      <details className="group h-full rounded-lg border border-[var(--soft-border)] bg-[var(--soft-surface)] px-3 py-2">
+        <summary className="flex cursor-pointer items-center gap-3 text-[11px] select-none">
+          <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-slate-200">
+            <BarChart3 className="h-3.5 w-3.5 text-slate-400" />
             Kernel
           </div>
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             {isLoading ? (
               <span className="flex items-center gap-1 rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-slate-300">
-                <Loader2 className="h-3 w-3 animate-spin text-indigo-300" />
+                <Loader2 className="h-3 w-3 animate-spin text-slate-300" />
                 读取中
               </span>
             ) : error ? (
@@ -1198,12 +1198,12 @@ function DirectorKernelDiagnosticsStrip({
             )}
           </div>
           <span className="ml-auto shrink-0 text-[10px] text-slate-500 group-open:hidden">详情</span>
-          <span className="ml-auto hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起</span>
+          <span className="ml-auto hidden shrink-0 text-[10px] text-slate-400 group-open:inline">收起</span>
         </summary>
-        <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-white/10 pt-2">
+        <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-[var(--soft-border)] pt-2">
           {isLoading ? (
             <div className="flex items-center gap-2 text-[11px] text-slate-400">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-300" />
               正在读取缓存、预算与 LLM 事件
             </div>
           ) : error ? (
@@ -1237,7 +1237,7 @@ function DirectorKernelDiagnosticsStrip({
                 ]}
               />
               <KernelStripMetric
-                icon={<Brain className="h-3.5 w-3.5 text-indigo-300" />}
+                icon={<Brain className="h-3.5 w-3.5 text-slate-400" />}
                 label="LLM"
                 endpoint={evidenceEndpoint('/v2/director/llm-events?role=director&limit=5', workspace)}
                 values={[
@@ -1257,7 +1257,7 @@ function DirectorKernelDiagnosticsStrip({
               onClick={onRefresh}
               disabled={isLoading || isClearing}
               title="刷新 Kernel 统计"
-              className="h-7 w-7 text-slate-400 hover:bg-indigo-500/10 hover:text-indigo-300"
+              className="h-7 w-7 text-slate-400 hover:bg-white/5 hover:text-slate-200"
             >
               <RefreshCw className={cn('h-3.5 w-3.5', isLoading && 'animate-spin')} />
             </Button>
@@ -1503,7 +1503,7 @@ function DirectorReadinessDiagnosticsStrip({
       data-testid="director-readiness-diagnostics"
       aria-label="Director readiness diagnostics"
     >
-      <details className="group h-full rounded-lg border border-indigo-500/15 bg-slate-900/35 px-3 py-2">
+      <details className="group h-full rounded-lg border border-indigo-500/[0.15] bg-slate-900/35 px-3 py-2">
         <summary className="flex min-w-0 cursor-pointer list-none flex-wrap items-center gap-2 [&::-webkit-details-marker]:hidden">
           <div className="flex shrink-0 items-center gap-2 text-xs font-medium text-indigo-100">
             {blocked ? (
@@ -1554,17 +1554,17 @@ function DirectorReadinessDiagnosticsStrip({
             )}
           </div>
           <span className="ml-auto shrink-0 text-[10px] text-slate-500 group-open:hidden">详情</span>
-          <span className="ml-auto hidden shrink-0 text-[10px] text-indigo-300 group-open:inline">收起</span>
+          <span className="ml-auto hidden shrink-0 text-[10px] text-slate-400 group-open:inline">收起</span>
         </summary>
-        <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-white/10 pt-2">
+        <div className="mt-2 flex min-w-0 items-center gap-3 border-t border-[var(--soft-border)] pt-2">
           <EvidenceEndpointBadge
-            endpoint={evidenceEndpoint('/v2/director/diagnostics', workspace)}
-            testId="director-readiness-endpoint"
+            endpoint={evidenceEndpoint('/v2/director/capabilities', workspace)}
+            testId="director-capability-endpoint"
           />
 
           {isLoading ? (
             <div className="flex items-center gap-2 text-[11px] text-slate-400">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-300" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-300" />
               正在读取任务队列与 worker 状态
             </div>
           ) : error ? (
@@ -2866,10 +2866,10 @@ export function DirectorWorkspace({
   const shouldShowSideAIDialogue = showAIDialogue && activeView !== 'workbench' && activeView !== 'strategy';
 
   return (
-    <div data-testid="director-workspace" className="flex flex-col h-full bg-gradient-to-br from-[var(--ink-indigo)] via-[rgba(28,18,48,0.8)] to-[rgba(14,20,40,0.95)] text-slate-100 overflow-hidden">
+    <div data-testid="director-workspace" className="soft-app-bg soft-ambient relative flex flex-col h-full text-slate-100 overflow-hidden">
       {/* Director Header - Director 主题 */}
       {!factoryMode && (
-      <header className="h-14 flex items-center justify-between px-4 border-b border-indigo-500/20 bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/20">
+      <header className="soft-panel h-14 flex items-center justify-between px-4 border-b border-[var(--soft-border)]">
         <div className="flex items-center gap-4">
           <Button
             variant="ghost"
@@ -2884,16 +2884,16 @@ export function DirectorWorkspace({
 
           <div className="flex items-center gap-3">
             <div className="relative">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                <Hammer className="w-4 h-4 text-indigo-100" />
+              <div className="soft-raised w-8 h-8 rounded-lg flex items-center justify-center">
+                <Hammer className="w-4 h-4 text-slate-200" />
               </div>
               {sessionStatus === 'running' && (
-                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse" />
+                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500" />
               )}
             </div>
             <div>
-              <h1 className="text-sm font-semibold text-indigo-100">Director</h1>
-              <p className="text-[10px] text-indigo-500/70 uppercase tracking-wider">Director Console</p>
+              <h1 className="text-sm font-semibold text-slate-100">Director</h1>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">Director Console</p>
             </div>
           </div>
         </div>
@@ -2901,7 +2901,7 @@ export function DirectorWorkspace({
         {/* 中央执行状态 */}
         <div className="flex items-center gap-4">
           {/* 实时任务统计 */}
-          <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 border border-white/10">
+          <div className="soft-chip flex items-center gap-1 px-2 py-1 rounded-lg">
             <Clock className="w-3.5 h-3.5 text-slate-400" />
             <span className="text-xs text-slate-400">未领取:</span>
             <span className="text-xs font-mono text-slate-300 min-w-[20px] text-center">
@@ -2929,16 +2929,16 @@ export function DirectorWorkspace({
           </div>
 
           {/* 进度条 */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
-            <Activity className="w-4 h-4 text-indigo-500/70" />
+          <div className="soft-chip flex items-center gap-2 px-3 py-1.5 rounded-lg">
+            <Activity className="w-4 h-4 text-slate-400" />
             <span className="text-xs text-slate-400">进度</span>
-            <span className="text-xs font-mono text-indigo-400">
+            <span className="text-xs font-mono text-slate-300">
               {completedTasks}/{totalTasks}
             </span>
-            <div className="w-px h-3 bg-white/10 mx-1" />
+            <div className="soft-divider w-px h-3 mx-1" />
             <div className="w-20 h-1.5 rounded-full bg-slate-800 overflow-hidden">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-400 transition-all duration-500"
+                className="soft-progress h-full rounded-full transition-all duration-500"
                 style={{ width: `${progress}%` }}
               />
             </div>
@@ -2947,9 +2947,9 @@ export function DirectorWorkspace({
 
           {/* 当前执行任务 - 实时显示 */}
           {currentTaskTitle && directorRunning && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 max-w-[250px] animate-pulse">
-              <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin flex-shrink-0" />
-              <span className="text-xs text-indigo-300 truncate" title={currentTaskTitle || ''}>
+            <div className="soft-chip flex items-center gap-2 px-3 py-1.5 rounded-lg max-w-[250px]">
+              <Loader2 className="w-3.5 h-3.5 text-slate-300 animate-spin flex-shrink-0" />
+              <span className="text-xs text-slate-300 truncate" title={currentTaskTitle || ''}>
                 正在执行: {currentTaskTitle}
               </span>
             </div>
@@ -2972,7 +2972,7 @@ export function DirectorWorkspace({
             data-testid="director-workspace-execute"
             disabled={Boolean(executionDisabledReason) || directorToggleBusy}
             title={executionDisabledReason || undefined}
-            className="border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
+            className="soft-chip border-[var(--soft-border)] text-slate-300 hover:bg-white/5"
           >
             {directorStarting || directorStopping || directorToggleBusy ? (
               <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
@@ -2988,7 +2988,7 @@ export function DirectorWorkspace({
             onClick={() => { void handlePause(); }}
             data-testid="director-workspace-pause"
             disabled={!directorRunning || Boolean(directorControlBusyReason)}
-            className="text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/10"
+            className="text-slate-400 hover:text-slate-200 hover:bg-white/5"
           >
             <Pause className="w-4 h-4" />
           </Button>
@@ -3003,7 +3003,7 @@ export function DirectorWorkspace({
             <RotateCcw className="w-4 h-4" />
           </Button>
 
-          <div className="w-px h-6 bg-white/10 mx-2" />
+          <div className="soft-divider w-px h-6 mx-2" />
 
           <Button
             variant="ghost"
@@ -3011,7 +3011,7 @@ export function DirectorWorkspace({
             onClick={() => setShowAIDialogue(!showAIDialogue)}
             className={cn(
               'text-slate-400 hover:text-slate-100',
-              showAIDialogue && 'text-indigo-400 bg-indigo-500/10'
+              showAIDialogue && 'text-slate-200 bg-white/5'
             )}
           >
             <MessageSquare className="w-4 h-4" />
@@ -3034,7 +3034,7 @@ export function DirectorWorkspace({
 
       {!factoryMode ? (
         <section
-          className="grid gap-2 border-b border-white/10 bg-slate-950/45 px-4 py-2 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)_minmax(0,1.2fr)]"
+          className="grid gap-2 border-b border-[var(--soft-border)] bg-[var(--soft-surface-muted)] px-4 py-2 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)_minmax(0,1.2fr)]"
           data-testid="director-operational-evidence-grid"
           aria-label="Director operational evidence"
         >
@@ -3138,7 +3138,7 @@ export function DirectorWorkspace({
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Sidebar - Navigation */}
-        <nav className="w-14 flex flex-col items-center py-4 gap-2 border-r border-white/5 bg-slate-950/50">
+        <nav className="w-14 flex flex-col items-center py-4 gap-2 border-r border-[var(--soft-border)] bg-[var(--soft-surface-muted)]">
           <NavButton
             icon={<ListTodo className="w-4 h-4" />}
             label="任务"
@@ -3263,15 +3263,15 @@ export function DirectorWorkspace({
 
           {shouldShowSideAIDialogue && (
             <>
-              <PanelResizeHandle className="w-1 bg-white/5 hover:bg-indigo-500/30 transition-colors" />
+              <PanelResizeHandle className="w-1 bg-[var(--soft-border)] hover:bg-white/10 transition-colors" />
               <Panel defaultSize={40} minSize={25} maxSize={50}>
                 <AIDialoguePanel
                   dialogueRole="director"
                   roleDisplayName="Director"
                   roleTheme={{
-                    primary: 'indigo',
-                    secondary: 'indigo-400',
-                    gradient: 'from-indigo-500 to-indigo-700',
+                    primary: 'slate',
+                    secondary: 'slate-400',
+                    gradient: 'from-slate-500 to-slate-700',
                   }}
                   welcomeMessage="Director 执行系统已就绪。我可以帮您执行代码、调试问题、运行测试。"
                   context={{
@@ -3297,13 +3297,13 @@ export function DirectorWorkspace({
       </div>
 
       {/* Status Bar */}
-      <footer className="h-8 flex items-center justify-between px-4 border-t border-white/5 bg-slate-950/80 text-[11px] text-slate-500">
+      <footer className="soft-panel-subtle h-8 flex items-center justify-between px-4 border-t border-[var(--soft-border)] text-[11px] text-slate-500">
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5">
             <div className={cn(
               "w-1.5 h-1.5 rounded-full",
-              sessionStatus === 'running' ? 'bg-indigo-500 animate-pulse' :
-              sessionStatus === 'paused' ? 'bg-yellow-500' :
+              sessionStatus === 'running' ? 'bg-emerald-500' :
+              sessionStatus === 'paused' ? 'bg-amber-500' :
               sessionStatus === 'completed' ? 'bg-blue-500' : 'bg-slate-500'
             )} />
             {sessionStatus === 'idle' ? '就绪' :
@@ -3314,7 +3314,7 @@ export function DirectorWorkspace({
         </div>
         <div className="flex items-center gap-4">
           <span>工作区: {workspace}</span>
-          <span className="text-indigo-500/70">Director Console v1.0</span>
+          <span className="text-slate-500">Director Console v1.0</span>
         </div>
       </footer>
     </div>
@@ -3336,9 +3336,9 @@ function NavButton({ icon, label, active, onClick }: NavButtonProps) {
       aria-label={`切换到${label}`}
       data-testid={`director-nav-${label}`}
       className={cn(
-        'w-10 h-10 cursor-pointer rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200',
+        'w-10 h-10 cursor-pointer rounded-lg flex flex-col items-center justify-center gap-0.5 transition-all duration-200',
         active
-          ? 'bg-indigo-500/15 text-indigo-400 shadow-lg shadow-indigo-500/10'
+          ? 'soft-raised text-slate-200'
           : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
       )}
       title={label}
@@ -3427,7 +3427,7 @@ function DirectorTaskPanel({
   const getTypeIcon = (type: ExecutionTask['type']) => {
     switch (type) {
       case 'code': return <Code2 className="w-3.5 h-3.5 text-blue-400" />;
-      case 'test': return <CheckCircle2 className="w-3.5 h-3.5 text-purple-400" />;
+      case 'test': return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />;
       case 'debug': return <Bug className="w-3.5 h-3.5 text-red-400" />;
       case 'review': return <FileCode className="w-3.5 h-3.5 text-amber-400" />;
     }
@@ -3596,7 +3596,7 @@ function DirectorTaskPanel({
         className={cn(
           'w-full p-3 rounded-xl text-left transition-all border',
           isSelected
-            ? 'bg-indigo-500/10 border-indigo-500/30'
+            ? 'soft-raised border-[var(--soft-border)]'
             : 'bg-white/5 border-white/5 hover:border-white/10 hover:bg-white/[0.07]'
         )}
       >
@@ -3627,7 +3627,7 @@ function DirectorTaskPanel({
             </div>
             <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all"
+                className="soft-progress h-full rounded-full transition-all"
                 style={{ width: `${task.progress || 0}%` }}
               />
             </div>
@@ -3694,7 +3694,7 @@ function DirectorTaskPanel({
                 </span>
               )}
               {task.activityUpdatedAt && (
-                <span className="inline-flex items-center gap-1 rounded-md border border-indigo-400/20 bg-indigo-500/10 px-1.5 py-0.5 text-indigo-200">
+                <span className="inline-flex items-center gap-1 rounded-md border border-[var(--soft-border)] bg-white/5 px-1.5 py-0.5 text-slate-300">
                   <Clock className="h-2.5 w-2.5" />
                   {formatTelemetryTime(task.activityUpdatedAt)}
                 </span>
@@ -3840,11 +3840,11 @@ function DirectorTaskPanel({
               <BarChart3 className="w-3 h-3" />
               总体进度 {completedCount}/{totalTasks}
             </span>
-            <span className="text-indigo-400 font-medium">{progress}%</span>
+            <span className="text-slate-300 font-medium">{progress}%</span>
           </div>
           <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500 transition-all"
+              className="soft-progress h-full rounded-full transition-all"
               style={{ width: `${progress}%` }}
             />
           </div>
@@ -3878,7 +3878,7 @@ function DirectorTaskPanel({
         )}
 
         {/* Selected task detail */}
-        <div data-testid="director-task-detail" className="mx-4 mb-3 rounded-xl border border-white/10 bg-slate-950/45 p-3">
+        <div data-testid="director-task-detail" className="soft-panel-subtle mx-4 mb-3 rounded-xl p-3">
           {selectedTask ? (
             <div>
               <div className="flex items-start justify-between gap-3">
@@ -3902,11 +3902,11 @@ function DirectorTaskPanel({
                       </span>
                     ) : null}
                     {selectedTask.claimedBy || selectedTask.assignedWorker ? (
-                      <span className="rounded border border-indigo-400/25 bg-indigo-500/10 px-1.5 py-0.5 text-indigo-200">
+                      <span className="rounded border border-[var(--soft-border)] bg-white/5 px-1.5 py-0.5 text-slate-300">
                         owner: {selectedTask.claimedBy || selectedTask.assignedWorker}
                       </span>
                     ) : (
-                      <span className="rounded border border-slate-500/25 bg-slate-500/10 px-1.5 py-0.5 text-slate-400">
+                      <span className="rounded border border-[var(--soft-border)] bg-white/5 px-1.5 py-0.5 text-slate-400">
                         未领取
                       </span>
                     )}
@@ -3964,9 +3964,9 @@ function DirectorTaskPanel({
                         <span className="truncate text-slate-300">{event.filePath}</span>
                         <span className={cn(
                           'shrink-0 rounded px-1.5 py-0.5',
-                          event.operation === 'create' ? 'bg-emerald-500/15 text-emerald-200' :
-                            event.operation === 'delete' ? 'bg-red-500/15 text-red-200' :
-                              'bg-blue-500/15 text-blue-200',
+                          event.operation === 'create' ? 'bg-emerald-500/[0.15] text-emerald-200' :
+                            event.operation === 'delete' ? 'bg-red-500/[0.15] text-red-200' :
+                              'bg-blue-500/[0.15] text-blue-200',
                         )}>
                           {event.operation}
                         </span>
@@ -4055,18 +4055,18 @@ function DirectorTaskPanel({
 
 function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number; color: string }) {
   const colorClasses: Record<string, string> = {
-    blue: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
-    slate: 'text-slate-400 bg-slate-500/10 border-slate-500/20',
-    emerald: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-    red: 'text-red-400 bg-red-500/10 border-red-500/20',
-    yellow: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20',
+    blue: 'text-blue-400',
+    slate: 'text-slate-400',
+    emerald: 'text-emerald-400',
+    red: 'text-red-400',
+    yellow: 'text-amber-400',
   };
 
   return (
-    <div className={cn('flex flex-col items-center p-2 rounded-lg border', colorClasses[color])}>
+    <div className="soft-chip flex flex-col items-center p-2 rounded-lg">
       {icon}
-      <span className="text-lg font-bold mt-1">{value}</span>
-      <span className="text-[9px] opacity-70">{label}</span>
+      <span className={cn('text-lg font-bold mt-1', colorClasses[color])}>{value}</span>
+      <span className="text-[9px] text-slate-500">{label}</span>
     </div>
   );
 }
@@ -4249,11 +4249,11 @@ function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePan
 
   return (
     <div data-testid="director-code-panel" className="h-full flex flex-col">
-      <div className="h-12 flex items-center justify-between px-4 border-b border-white/5">
+      <div className="h-12 flex items-center justify-between px-4 border-b border-[var(--soft-border)]">
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-medium text-slate-200">实时代码变更</h2>
           {codePanelEvents.length > 0 && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400">
+            <span className="soft-chip text-[10px] px-2 py-0.5 rounded-full text-slate-300">
               {codePanelEvents.length} 个文件
             </span>
           )}
@@ -4319,9 +4319,9 @@ function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePan
                     className={cn(
                       'p-3 rounded-xl border transition-all cursor-pointer',
                       hasPatch && event.id === defaultCodePanelEventId
-                        ? 'bg-indigo-500/10 border-indigo-500/30'
+                        ? 'soft-raised border-[var(--soft-border)]'
                         : 'bg-white/5 border-white/5 hover:border-white/10',
-                      expandedEventId === event.id && 'ring-1 ring-indigo-500/30'
+                      expandedEventId === event.id && 'ring-1 ring-white/10'
                     )}
                     onClick={() => toggleExpand(event.id)}
                   >
@@ -4346,8 +4346,8 @@ function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePan
                               hasPatch
                                 ? 'bg-cyan-500/20 text-cyan-400'
                                 : noContentChange || emptyFile
-                                  ? 'bg-slate-500/15 text-slate-300'
-                                  : 'bg-amber-500/15 text-amber-300',
+                                  ? 'bg-slate-500/[0.15] text-slate-300'
+                                  : 'bg-amber-500/[0.15] text-amber-300',
                             )}
                           >
                             {hasPatch ? 'Diff' : fallbackBadge}
@@ -4420,7 +4420,7 @@ function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePan
         </div>
 
         {/* 右侧统计 */}
-        <div className="w-48 border-l border-white/5 p-4 bg-slate-950/30">
+        <div className="w-48 border-l border-[var(--soft-border)] p-4 bg-[var(--soft-surface-muted)]">
           <h3 className="text-[10px] uppercase tracking-wider text-slate-500 mb-3">变更统计</h3>
           <div className="space-y-2">
             <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
@@ -4468,7 +4468,7 @@ function DirectorCodePanel({ workspace, fileEditEvents, tasks }: DirectorCodePan
 function DirectorTerminalPanel({ output, onClear }: { output: string; onClear: () => void }) {
   return (
     <div data-testid="director-terminal-panel" className="h-full flex flex-col">
-      <div className="h-12 flex items-center justify-between px-4 border-b border-white/5">
+      <div className="h-12 flex items-center justify-between px-4 border-b border-[var(--soft-border)]">
         <h2 className="text-sm font-medium text-slate-200">执行终端</h2>
         <Button
           variant="ghost"
@@ -4483,7 +4483,7 @@ function DirectorTerminalPanel({ output, onClear }: { output: string; onClear: (
         </Button>
       </div>
       <div className="flex-1 p-4">
-        <div className="h-full rounded-xl border border-white/10 bg-slate-950 p-4 font-mono text-xs overflow-auto">
+        <div className="h-full rounded-xl soft-inset p-4 font-mono text-xs overflow-auto">
           {output ? (
             <pre data-testid="director-terminal-output" className="text-slate-300 whitespace-pre-wrap">{output}</pre>
           ) : (
@@ -4509,7 +4509,7 @@ function DirectorDebugPanel({
 }) {
   return (
     <div data-testid="director-debug-panel" className="h-full flex flex-col">
-      <div className="h-12 flex items-center px-4 border-b border-white/5">
+      <div className="h-12 flex items-center px-4 border-b border-[var(--soft-border)]">
         <h2 className="text-sm font-medium text-slate-200">调试中心</h2>
       </div>
       <div className="flex-1 overflow-auto p-4">
@@ -4524,7 +4524,7 @@ function DirectorDebugPanel({
               <div
                 key={task.id}
                 data-testid="director-debug-task"
-                className="p-4 rounded-xl border border-red-500/20 bg-red-500/5"
+                className="soft-panel-subtle p-4 rounded-xl"
               >
                 <div className="flex items-center gap-2 mb-2">
                   <Bug className="w-4 h-4 text-red-400" />

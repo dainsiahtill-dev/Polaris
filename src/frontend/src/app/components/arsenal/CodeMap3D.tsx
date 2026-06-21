@@ -17,13 +17,13 @@ interface CodeMapProps {
 }
 
 const CLUSTER_COLORS = [
-  '#00ffff', // Cyan (Cyberpunk main)
-  '#ff00ff', // Magenta
-  '#ffff00', // Yellow
-  '#00ff00', // Green
-  '#ff0000', // Red
-  '#0000ff', // Blue
-  '#ffffff', // White
+  '#8b9e96', // Sage (soft-accent family)
+  '#b0a094', // Warm sand
+  '#a4c2b6', // Jade mist
+  '#c9b99a', // Amber mist
+  '#9a8f85', // Stone
+  '#7a8f9e', // Slate blue
+  '#d4cec4', // Warm white
 ];
 
 function DataPoints({ points }: { points: Point[] }) {
@@ -45,11 +45,11 @@ function DataPoints({ points }: { points: Point[] }) {
           <meshStandardMaterial 
             color={CLUSTER_COLORS[p.cluster % CLUSTER_COLORS.length]} 
             emissive={CLUSTER_COLORS[p.cluster % CLUSTER_COLORS.length]}
-            emissiveIntensity={hovered === p.path ? 2 : 0.5}
+            emissiveIntensity={hovered === p.path ? 0.8 : 0.2}
           />
           {hovered === p.path && (
             <Html distanceFactor={10}>
-              <div className="bg-black/80 text-cyan-400 p-2 rounded border border-cyan-500/50 text-xs whitespace-nowrap backdrop-blur-md">
+              <div className="soft-raised p-2 rounded-lg text-xs whitespace-nowrap">
                 {p.path}
               </div>
             </Html>
@@ -63,7 +63,7 @@ function DataPoints({ points }: { points: Point[] }) {
 
 export function CodeMap3D({ points }: CodeMapProps) {
   return (
-    <div className="w-full h-[500px] rounded-lg overflow-hidden border border-white/10 bg-black/90 relative">
+    <div className="w-full h-[500px] rounded-lg overflow-hidden soft-inset relative">
       <Canvas camera={{ position: [0, 0, 20], fov: 60 }}>
         <ambientLight intensity={0.5} />
         <pointLight position={[10, 10, 10]} intensity={1} />

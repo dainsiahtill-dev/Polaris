@@ -24,10 +24,10 @@ const KIND_STYLES: Record<
   },
   command_execution: {
     label: 'Command',
-    badge: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30',
+    badge: 'bg-white/[0.08] text-slate-200 border-white/[0.12]',
     icon: Terminal,
-    border: 'border-cyan-500/20',
-    bg: 'bg-cyan-500/5',
+    border: 'border-white/10',
+    bg: 'bg-white/[0.04]',
   },
   agent_message: {
     label: 'Agent Message',
@@ -112,7 +112,7 @@ export function RealtimeThinkingDisplay({
     : '开启 Debug 模式 + 实时流式 后可查看思考过程。';
 
   return (
-    <div className={`flex min-h-0 flex-col rounded-lg border border-white/10 bg-black/40 ${dense ? 'p-2' : 'p-3'} ${className || ''}`}>
+    <div className={`flex min-h-0 flex-col soft-inset rounded-lg ${dense ? 'p-2' : 'p-3'} ${className || ''}`}>
       <div className={`${dense ? 'mb-1' : 'mb-2'} flex shrink-0 items-center justify-between text-[10px] text-text-dim`}>
         <div className="flex items-center gap-2">
           <span className="uppercase tracking-wide">实时思考过程</span>
@@ -188,7 +188,7 @@ export function RealtimeThinkingDisplay({
                 {event.kind === 'command_execution' ? (
                   <div className="space-y-2">
                     {event.command ? (
-                      <pre className="text-[10px] text-cyan-100 bg-black/40 rounded p-2 border border-white/10 whitespace-pre-wrap font-mono">
+                      <pre className="text-[10px] text-slate-100 soft-inset rounded p-2 whitespace-pre-wrap font-mono">
                         {event.command}
                       </pre>
                     ) : null}

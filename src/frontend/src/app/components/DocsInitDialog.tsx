@@ -417,21 +417,21 @@ export function DocsInitDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="docs-init-dialog" className="grid h-[min(96vh,920px)] w-[98vw] max-w-[98vw] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden border border-[#CA8A04]/25 bg-[#080812] text-[#F8FAFC] shadow-[0_0_60px_rgba(202,138,4,0.12),_0_0_1px_rgba(202,138,4,0.4)] [background-image:radial-gradient(rgba(202,138,4,0.04)_1px,transparent_1px)] [background-size:24px_24px]">
+      <DialogContent data-testid="docs-init-dialog" className="soft-panel grid h-[min(96vh,920px)] w-[98vw] max-w-[98vw] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-xl text-[#F8FAFC]">
 
         {/* ── Header ── */}
-        <DialogHeader className="relative pb-3 border-b border-[#CA8A04]/10">
-          <div className="absolute inset-x-0 bottom-0 h-px shadow-[0_0_8px_rgba(202,138,4,0.3)] bg-[#CA8A04]/15" />
+        <DialogHeader className="relative pb-3 border-b border-white/[0.08]">
+          <div className="absolute inset-x-0 bottom-0 h-px soft-divider opacity-60" />
           <div className="flex min-w-0 flex-col gap-3 pr-10 xl:flex-row xl:items-start xl:justify-between">
             <div className="min-w-0">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#CA8A04]/25 bg-[#CA8A04]/8 shadow-[0_0_20px_rgba(202,138,4,0.20),_inset_0_0_8px_rgba(202,138,4,0.08)]">
-                  <Landmark className="size-4.5 text-[#CA8A04] drop-shadow-[0_0_4px_rgba(202,138,4,0.5)]" />
+                <div className="soft-raised flex h-9 w-9 items-center justify-center rounded-lg">
+                  <Landmark className="size-4.5 text-[var(--soft-accent)]" />
                 </div>
                 <div className="min-w-0">
                   <DialogTitle className="break-words text-lg font-bold tracking-wide">
-                    <span className="text-[#CA8A04] [text-shadow:0_0_12px_rgba(202,138,4,0.4),_0_0_4px_rgba(202,138,4,0.2)]">政 事 堂</span>
-                    <span className="ml-2.5 text-xs font-normal tracking-widest text-[#CA8A04]/40">Architect Discussion Planning</span>
+                    <span className="text-[var(--soft-accent)]">政 事 堂</span>
+                    <span className="ml-2.5 text-xs font-normal tracking-widest text-white/30">Architect Discussion Planning</span>
                   </DialogTitle>
                   <DialogDescription className="mt-0.5 text-[11px] text-[#F8FAFC]/30">
                     {docsMissing
@@ -442,13 +442,13 @@ export function DocsInitDialog({
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-3 pt-1">
-              <div className="flex items-center gap-2 rounded-lg border border-[#F8FAFC]/8 bg-[#F8FAFC]/[0.03] px-3 py-1.5">
-                <div className={`h-1.5 w-1.5 rounded-full ${phaseReady ? 'bg-[#22C55E] shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-[#CA8A04] shadow-[0_0_8px_rgba(202,138,4,0.5)] animate-pulse'}`} />
-                <span className="text-[10px] tracking-widest text-[#F8FAFC]/60">
+              <div className="soft-chip flex items-center gap-2 rounded-lg px-3 py-1.5">
+                <div className={`h-1.5 w-1.5 rounded-full ${phaseReady ? 'bg-[#22C55E]' : 'bg-[var(--soft-accent)] animate-pulse'}`} />
+                <span className="text-[10px] tracking-widest text-white/60">
                   {phaseReady ? 'Discussion ready · Can draft plan' : 'Discussion in progress'}
                 </span>
               </div>
-              <span className="text-[10px] text-[#CA8A04]/25 font-mono">
+              <span className="text-[10px] text-white/25 font-mono">
                 {step === 3 ? 'II' : 'I'} / II
               </span>
             </div>
@@ -456,7 +456,7 @@ export function DocsInitDialog({
           {workspace ? (
             <div
               data-testid="docs-init-workspace-label"
-              className="mt-2 truncate pr-10 font-mono text-[10px] tracking-wider text-[#F8FAFC]/25"
+              className="mt-2 truncate pr-10 font-mono text-[10px] tracking-wider text-white/25"
               title={workspace}
             >
               Workspace ▸ {displayWorkspace}
@@ -466,7 +466,7 @@ export function DocsInitDialog({
 
         <div data-testid="docs-init-body" className="min-h-0 overflow-hidden">
           {error ? (
-            <div className="mb-3 break-words rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-xs text-red-200 shadow-[inset_0_0_20px_rgba(239,68,68,0.05)]">
+            <div className="soft-raised mb-3 break-words rounded-lg border-red-500/30 bg-red-500/10 px-4 py-2.5 text-xs text-red-200">
               <span className="mr-2 text-red-400">!</span>{error}
             </div>
           ) : null}
@@ -474,67 +474,67 @@ export function DocsInitDialog({
         {/* ── Draft Plan progress modal ── */}
         {previewProgress.open && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="w-full max-w-md rounded-xl border border-[#CA8A04]/20 bg-[#0C0C1E]/95 p-6 shadow-[0_0_60px_rgba(202,138,4,0.15)]">
+            <div className="soft-panel w-full max-w-md rounded-xl p-6">
               <div className="flex items-center gap-3 mb-4">
                 <div className="relative">
-                  <div className="h-10 w-10 rounded-full border-2 border-[#CA8A04]/30 border-t-[#CA8A04] animate-spin" />
-                  <ScrollText className="absolute inset-0 m-auto h-4 w-4 text-[#CA8A04]" />
+                  <div className="h-10 w-10 rounded-full border-2 border-white/10 border-t-[var(--soft-accent)] animate-spin" />
+                  <ScrollText className="absolute inset-0 m-auto h-4 w-4 text-[var(--soft-accent)]" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-[#CA8A04]">Drafting Plan...</h3>
-                  <p className="text-[11px] text-[#F8FAFC]/50">Architect is generating documents for you</p>
+                  <h3 className="text-sm font-bold text-[var(--soft-accent)]">Drafting Plan...</h3>
+                  <p className="text-[11px] text-white/50">Architect is generating documents for you</p>
                 </div>
               </div>
 
               {/* 进度条 */}
               <div className="mb-4">
-                <div className="h-1.5 w-full rounded-full bg-[#F8FAFC]/10 overflow-hidden">
+                <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-[#CA8A04] to-[#F59E0B] transition-all duration-500"
+                    className="soft-progress h-full rounded-full transition-all duration-500"
                     style={{ width: `${previewProgress.progress}%` }}
                   />
                 </div>
-                <div className="mt-1 flex justify-between text-[10px] text-[#F8FAFC]/40">
+                <div className="mt-1 flex justify-between text-[10px] text-white/40">
                   <span>{previewProgress.progress}%</span>
                   <span>{previewProgress.stage === 'llm_start' ? 'AI思考中' : '处理中'}</span>
                 </div>
               </div>
 
               {/* 当前步骤 */}
-              <div className="mb-4 rounded-lg border border-[#F8FAFC]/5 bg-[#F8FAFC]/[0.02] p-3">
-                <div className="flex min-w-0 items-center gap-2 text-xs text-[#F8FAFC]/70">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-[#CA8A04]" />
+              <div className="soft-inset mb-4 rounded-lg p-3">
+                <div className="flex min-w-0 items-center gap-2 text-xs text-white/70">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--soft-accent)]" />
                   <span className="min-w-0 break-words">{previewProgress.message}</span>
                 </div>              </div>
 
               {/* 实时思考内容 */}
               {previewProgress.thinking ? (
-                <div className="mb-4 max-h-48 overflow-y-auto rounded-lg border border-[#CA8A04]/10 bg-[#CA8A04]/5 p-3">
+                <div className="soft-inset mb-4 max-h-48 overflow-y-auto rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-2">
-                    <Brain className="h-3 w-3 text-[#CA8A04]" />
-                    <span className="text-[10px] font-bold text-[#CA8A04]/60">Architect thinking...</span>
+                    <Brain className="h-3 w-3 text-[var(--soft-accent)]" />
+                    <span className="text-[10px] font-bold text-[var(--soft-accent)]/60">Architect thinking...</span>
                   </div>
-                  <div className="break-words whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-[#F8FAFC]/50">
+                  <div className="break-words whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-white/50">
                     {previewProgress.thinking.slice(-800)}
                     {previewProgress.thinking.length > 800 && (
-                      <span className="text-[#F8FAFC]/20">... (前面内容已省略)</span>
+                      <span className="text-white/20">... (前面内容已省略)</span>
                     )}
-                    <span className="inline-block w-[2px] h-[1em] bg-[#CA8A04] align-middle animate-pulse ml-0.5" />
+                    <span className="inline-block w-[2px] h-[1em] bg-[var(--soft-accent)] align-middle animate-pulse ml-0.5" />
                   </div>
                 </div>
               ) : null}
 
               {/* 已生成的chars段预览 */}
               {previewProgress.fields && Object.keys(previewProgress.fields).length > 0 && (
-                <div className="mb-4 max-h-32 overflow-y-auto rounded-lg border border-[#22C55E]/10 bg-[#22C55E]/5 p-3">
+                <div className="soft-inset mb-4 max-h-32 overflow-y-auto rounded-lg p-3 border-[#22C55E]/20">
                   <div className="text-[10px] font-bold text-[#22C55E]/60 mb-2">已生成内容</div>
                   <div className="space-y-1">
                     {Object.entries(previewProgress.fields).map(([key, values]) => (
                       values && values.length > 0 ? (
                         <div key={key} className="flex items-start gap-2 text-[10px]">
                           <CheckCircle2 className="h-3 w-3 text-[#22C55E] mt-0.5 shrink-0" />
-                          <span className="min-w-0 break-words text-[#F8FAFC]/60">
-                            {SLOT_LABELS[key] || key}: <span className="text-[#F8FAFC]/80">{values.length} 项</span>
+                          <span className="min-w-0 break-words text-white/60">
+                            {SLOT_LABELS[key] || key}: <span className="text-white/80">{values.length} 项</span>
                           </span>
                         </div>
                       ) : null
@@ -551,7 +551,7 @@ export function DocsInitDialog({
                   setPreviewProgress({ open: false, stage: '', message: '', progress: 0 });
                   setLoadingPreview(false);
                 }}
-                className="w-full cursor-pointer border-[#F8FAFC]/10 bg-[#F8FAFC]/[0.05] text-[#F8FAFC]/70 hover:bg-[#F8FAFC]/[0.08] hover:text-[#F8FAFC]"
+                className="soft-chip w-full cursor-pointer text-white/70 hover:bg-white/[0.08] hover:text-white"
               >
                 <X className="mr-1.5 h-3.5 w-3.5" />
                 Cancel Draft
@@ -565,33 +565,33 @@ export function DocsInitDialog({
           <div data-testid="docs-init-dialogue-step" className="grid h-full min-h-0 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-[1.1fr_1.9fr]">
 
             {/* ─ Left: Project Goal Input ─ */}
-            <ScrollArea data-testid="docs-init-input-scroll" className="h-full min-h-0 rounded-xl border border-[#CA8A04]/12 bg-[#12112A]/80 backdrop-blur-sm shadow-[inset_0_1px_0_rgba(202,138,4,0.06)]">
+            <ScrollArea data-testid="docs-init-input-scroll" className="soft-panel-subtle h-full min-h-0 rounded-xl">
               <div className="grid gap-4 p-5 text-sm">
 
-                <div className="rounded-lg border border-[#CA8A04]/15 bg-[#CA8A04]/5 px-4 py-2.5 text-[11px] leading-relaxed text-[#F8FAFC]/60">
-                  <span className="text-[#CA8A04]/80 font-semibold">Tip</span>
-                  <span className="mx-1.5 text-[#CA8A04]/20">│</span>
+                <div className="soft-raised rounded-lg px-4 py-2.5 text-[11px] leading-relaxed text-white/60">
+                  <span className="text-[var(--soft-accent)] font-semibold">Tip</span>
+                  <span className="mx-1.5 text-white/20">│</span>
                   Enter goal and have 1-3 dialogue rounds, then click Draft Plan to generate doc draft.
                 </div>
 
                 <label className="grid gap-1.5">
-                  <span className="text-xs font-semibold tracking-wide text-[#CA8A04]/70">Project Goal</span>
+                  <span className="text-xs font-semibold tracking-wide text-[var(--soft-accent)]/70">Project Goal</span>
                   <input
                     data-testid="docs-init-goal-input"
                     value={goal}
                     onChange={(event) => setGoal(event.target.value)}
-                    className="rounded-lg border border-[#F8FAFC]/8 bg-[#F8FAFC]/[0.03] px-3.5 py-2.5 text-sm text-[#F8FAFC]/90 placeholder:text-[#F8FAFC]/20 focus:border-[#CA8A04]/30 focus:outline-none focus:ring-1 focus:ring-[#CA8A04]/15 transition-colors duration-200"
+                    className="soft-inset rounded-lg px-3.5 py-2.5 text-sm text-white/90 placeholder:text-white/20 focus:border-[var(--soft-accent)]/30 focus:outline-none focus:ring-1 focus:ring-[var(--soft-accent)]/15 transition-colors duration-200"
                     placeholder="例：做一个简单的文件服务器（Node.js + TypeScript）"
                   />
                 </label>
 
                 <label className="grid gap-1.5">
-                  <span className="text-xs font-semibold tracking-wide text-[#CA8A04]/70">补 充 说 明<span className="ml-1 text-[10px] font-normal text-[#CA8A04]/30">（可选）</span></span>
+                  <span className="text-xs font-semibold tracking-wide text-[var(--soft-accent)]/70">补 充 说 明<span className="ml-1 text-[10px] font-normal text-white/25">（可选）</span></span>
                   <textarea
                     data-testid="docs-init-message-input"
                     value={tingyiMessage}
                     onChange={(event) => setTingyiMessage(event.target.value)}
-                    className="min-h-[84px] rounded-lg border border-[#F8FAFC]/8 bg-[#F8FAFC]/[0.03] px-3.5 py-2.5 text-sm text-[#F8FAFC]/90 placeholder:text-[#F8FAFC]/20 focus:border-[#CA8A04]/30 focus:outline-none focus:ring-1 focus:ring-[#CA8A04]/15 resize-none transition-colors duration-200"
+                    className="soft-inset min-h-[84px] rounded-lg px-3.5 py-2.5 text-sm text-white/90 placeholder:text-white/20 focus:border-[var(--soft-accent)]/30 focus:outline-none focus:ring-1 focus:ring-[var(--soft-accent)]/15 resize-none transition-colors duration-200"
                     placeholder="Can directly answer Architect follow-up，例如：1 本机进程 2 无鉴权 3 不限大小 4 需要 5 不压测"
                   />
                 </label>
@@ -603,7 +603,7 @@ export function DocsInitDialog({
                     data-testid="docs-init-run-dialogue"
                     disabled={dialoguing}
                     onClick={runDialogue}
-                    className="cursor-pointer border-[#CA8A04]/30 bg-[#CA8A04]/10 text-[#F8FAFC]/90 hover:bg-[#CA8A04]/20 hover:border-[#CA8A04]/50 hover:shadow-[0_0_20px_rgba(202,138,4,0.20)] shadow-[0_0_12px_rgba(202,138,4,0.10)] transition-all duration-200"
+                    className="cursor-pointer soft-raised text-white/90 hover:bg-white/[0.08] transition-all duration-200"
                   >
                     <span className="flex items-center gap-1.5">
                       <RiAiGenerate2 className="size-4" />
@@ -613,32 +613,32 @@ export function DocsInitDialog({
                 </div>
 
                 {/* Discussion Status */}
-                <div className="rounded-lg border border-[#F8FAFC]/6 bg-[#F8FAFC]/[0.02] px-4 py-3">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-[#F8FAFC]/70">
-                    <div className={`h-2 w-2 rounded-full ${phaseReady ? 'bg-[#22C55E] shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-[#CA8A04] shadow-[0_0_8px_rgba(202,138,4,0.4)] animate-pulse'}`} />
+                <div className="soft-raised rounded-lg px-4 py-3">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-white/70">
+                    <div className={`h-2 w-2 rounded-full ${phaseReady ? 'bg-[#22C55E]' : 'bg-[var(--soft-accent)] animate-pulse'}`} />
                     廷 议 状 态
                   </div>
-                  <div className="mt-2 text-[11px] text-[#F8FAFC]/40">
+                  <div className="mt-2 text-[11px] text-white/40">
                     阶段：
                     <span
                       data-testid="docs-init-phase-status"
-                      className={phaseReady ? 'text-[#22C55E]' : 'text-[#CA8A04]'}
+                      className={phaseReady ? 'text-[#22C55E]' : 'text-[var(--soft-accent)]'}
                     >
                       {phaseReady ? 'Can draft plan' : 'Filling key info'}
                     </span>
                   </div>
                   <div data-testid="docs-init-unresolved-list" className="mt-2.5">
-                    <div className="text-[10px] tracking-wide text-[#F8FAFC]/30 mb-1.5">待补充事项</div>
+                    <div className="text-[10px] tracking-wide text-white/30 mb-1.5">待补充事项</div>
                     <div className="flex flex-wrap gap-1.5">
                       {dialogueMeta.unresolved_slots.length === 0 ? (
-                        <span className="rounded-md border border-[#22C55E]/25 bg-[#22C55E]/10 px-2.5 py-1 text-[10px] font-semibold text-[#22C55E] shadow-[0_0_8px_rgba(34,197,94,0.12)]">
+                        <span className="soft-chip rounded-md px-2.5 py-1 text-[10px] font-semibold text-[#22C55E]">
                           ✓ Ready
                         </span>
                       ) : (
                         dialogueMeta.unresolved_slots.map((slotId) => (
                           <span
                             key={slotId}
-                            className="rounded-md border border-[#CA8A04]/20 bg-[#CA8A04]/10 px-2.5 py-1 text-[10px] text-[#CA8A04]/70"
+                            className="soft-chip rounded-md px-2.5 py-1 text-[10px] text-[var(--soft-accent)]/70"
                           >
                             {SLOT_LABELS[slotId] || slotId}
                           </span>
@@ -649,9 +649,9 @@ export function DocsInitDialog({
                 </div>
 
                 {/* Advanced Options */}
-                <details className="group rounded-lg border border-[#F8FAFC]/6 bg-[#F8FAFC]/[0.02] px-4 py-3">
-                  <summary className="cursor-pointer text-xs font-semibold text-[#F8FAFC]/50 hover:text-[#F8FAFC]/80 transition-colors duration-200 select-none">
-                    高 级 条 令<span className="ml-1 text-[10px] font-normal text-[#F8FAFC]/20">（Optional）</span>
+                <details className="soft-inset group rounded-lg px-4 py-3">
+                  <summary className="cursor-pointer text-xs font-semibold text-white/50 hover:text-white/80 transition-colors duration-200 select-none">
+                    高 级 条 令<span className="ml-1 text-[10px] font-normal text-white/20">（Optional）</span>
                   </summary>
                   <div className="mt-4 grid gap-3">
                     {([
@@ -661,24 +661,24 @@ export function DocsInitDialog({
                       ['Definition of Done', definitionOfDone, setDefinitionOfDone, '勘验命令或验收条令'],
                     ] as const).map(([label, value, setter, ph]) => (
                       <label key={label} className="grid gap-1.5">
-                        <span className="text-[11px] text-[#F8FAFC]/40">{label}</span>
+                        <span className="text-[11px] text-white/40">{label}</span>
                         <textarea
                           value={value}
                           onChange={(event) => setter(event.target.value)}
-                          className="min-h-[64px] rounded-lg border border-[#F8FAFC]/6 bg-[#F8FAFC]/[0.02] px-3 py-2 text-xs text-[#F8FAFC]/80 placeholder:text-[#F8FAFC]/15 focus:border-[#CA8A04]/25 focus:outline-none resize-none transition-colors duration-200"
+                          className="soft-inset min-h-[64px] rounded-lg px-3 py-2 text-xs text-white/80 placeholder:text-white/[0.15] focus:border-[var(--soft-accent)]/25 focus:outline-none resize-none transition-colors duration-200"
                           placeholder={ph}
                         />
                       </label>
                     ))}
                     <label className="grid gap-1.5">
-                      <span className="text-[11px] text-[#F8FAFC]/40">Plan Draft (can override)</span>
+                      <span className="text-[11px] text-white/40">Plan Draft (can override)</span>
                       <textarea
                         value={backlog}
                         onChange={(event) => {
                           setBacklog(event.target.value);
                           setTiaochenDraft(splitLines(event.target.value));
                         }}
-                        className="min-h-[64px] rounded-lg border border-[#F8FAFC]/6 bg-[#F8FAFC]/[0.02] px-3 py-2 text-xs text-[#F8FAFC]/80 placeholder:text-[#F8FAFC]/15 focus:border-[#CA8A04]/25 focus:outline-none resize-none transition-colors duration-200"
+                        className="soft-inset min-h-[64px] rounded-lg px-3 py-2 text-xs text-white/80 placeholder:text-white/[0.15] focus:border-[var(--soft-accent)]/25 focus:outline-none resize-none transition-colors duration-200"
                         placeholder="One task per line"
                       />
                     </label>
@@ -691,21 +691,21 @@ export function DocsInitDialog({
             <div data-testid="docs-init-dialogue-right" className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-3 overflow-hidden">
 
               {/* Dialogue Record */}
-              <div data-testid="docs-init-dialogue-record" className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-[#00FFFF]/10 bg-[#0C0C1E]/80 p-4 shadow-[inset_0_1px_0_rgba(0,255,255,0.04)] backdrop-blur-sm">
+              <div data-testid="docs-init-dialogue-record" className="soft-panel-subtle flex min-h-0 flex-col overflow-hidden rounded-xl p-4">
                 <div className="flex items-center justify-between mb-3 flex-shrink-0">
                   <div className="flex items-center gap-2.5">
-                    <div className="h-5 w-0.5 rounded-full bg-[#00FFFF]/30 shadow-[0_0_6px_rgba(0,255,255,0.3)]" />
-                    <span className="text-xs font-bold tracking-widest text-[#00FFFF]/60">奏 对 记 录</span>
+                    <div className="h-5 w-0.5 rounded-full bg-[var(--soft-accent)]/30" />
+                    <span className="text-xs font-bold tracking-widest text-[var(--soft-accent)]/60">奏 对 记 录</span>
                   </div>
-                  <span className="text-[10px] text-[#00FFFF]/25 font-mono">{dialogueTurns.length} 轮</span>
+                  <span className="text-[10px] text-white/25 font-mono">{dialogueTurns.length} 轮</span>
                 </div>
                 <ScrollArea className="flex-1" style={{ minHeight: '150px' }}>
                   <div className="grid gap-3 pr-2">
                     {dialogueTurns.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-12 text-center">
-                        <Landmark className="size-8 mb-3 text-[#CA8A04]/20" />
-                        <div className="text-xs text-[#F8FAFC]/25">Discussion not started</div>
-                        <div className="text-[10px] text-[#F8FAFC]/12 mt-1">Enter project goal, click Start Dialogue to start discussion</div>
+                        <Landmark className="size-8 mb-3 text-white/[0.15]" />
+                        <div className="text-xs text-white/25">Discussion not started</div>
+                        <div className="text-[10px] text-white/[0.12] mt-1">Enter project goal, click Start Dialogue to start discussion</div>
                       </div>
                     ) : (
                       dialogueTurns.map((turn, index) => {
@@ -717,15 +717,15 @@ export function DocsInitDialog({
                             key={`${turn.role}-${index}`}
                             className={`rounded-xl border px-4 py-3 text-xs transition-all duration-200 ${
                               isUser
-                                ? 'border-[#CA8A04]/20 bg-[#CA8A04]/5 ml-8'
-                                : 'border-[#00FFFF]/12 bg-[#00FFFF]/5 mr-8'
+                                ? 'soft-raised ml-8'
+                                : 'soft-inset mr-8'
                             }`}
                           >
                             <div className={`mb-1.5 ${isUser ? 'text-right' : 'text-left'}`}>
-                              <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[9px] font-bold tracking-widest ${
+                              <span className={`inline-flex items-center gap-1 soft-chip rounded-md px-2 py-0.5 text-[9px] font-bold tracking-widest ${
                                 isUser
-                                  ? 'border-[#CA8A04]/30 bg-[#CA8A04]/12 text-[#CA8A04]'
-                                  : 'border-[#00FFFF]/25 bg-[#00FFFF]/10 text-[#00FFFF]/80'
+                                  ? 'text-[var(--soft-accent)]'
+                                  : 'text-white/60'
                               }`}>
                                 {isUser ? 'User' : 'Architect'}
                               </span>
@@ -735,30 +735,30 @@ export function DocsInitDialog({
                               {isStreamingTurn ? (
                                 <div className="space-y-2">
                                   {turn.reasoning || buildStreamingThoughtPreview(turn.rawContent || '') ? (
-                                    <div className="rounded-lg border border-[#CA8A04]/15 bg-[#CA8A04]/5 px-3 py-2">
+                                    <div className="soft-inset rounded-lg px-3 py-2">
                                       <div className="flex items-center gap-1.5 mb-1">
-                                        <Brain className="size-3 text-[#CA8A04]/60" />
-                                        <span className="text-[9px] font-bold tracking-widest text-[#CA8A04]/60">自 言 自 语</span>
+                                        <Brain className="size-3 text-[var(--soft-accent)]/60" />
+                                        <span className="text-[9px] font-bold tracking-widest text-[var(--soft-accent)]/60">自 言 自 语</span>
                                       </div>
-                                      <div className="max-h-[140px] overflow-y-auto break-words text-[11px] italic leading-relaxed text-[#F8FAFC]/50">
+                                      <div className="max-h-[140px] overflow-y-auto break-words text-[11px] italic leading-relaxed text-white/50">
                                         {turn.reasoning || buildStreamingThoughtPreview(turn.rawContent || '')}
-                                        <span className="inline-block w-[2px] h-[1em] bg-[#CA8A04] align-middle animate-pulse ml-0.5" />
+                                        <span className="inline-block w-[2px] h-[1em] bg-[var(--soft-accent)] align-middle animate-pulse ml-0.5" />
                                       </div>
                                     </div>
                                   ) : null}
                                   {turn.rawContent ? (
-                                    <div className="rounded-lg border border-[#00FFFF]/10 bg-[#00FFFF]/5 px-3 py-2">
-                                      <div className="text-[9px] font-bold tracking-widest text-[#00FFFF]/40 mb-0.5">Receiving response...</div>
-                                      <div className="break-words text-[10px] italic text-[#F8FAFC]/30">
+                                    <div className="soft-inset rounded-lg px-3 py-2">
+                                      <div className="text-[9px] font-bold tracking-widest text-white/40 mb-0.5">Receiving response...</div>
+                                      <div className="break-words text-[10px] italic text-white/30">
                                         Received {turn.rawContent.length} chars
                                       </div>
                                     </div>
                                   ) : null}
-                                    <span className="text-[#00FFFF]/50 text-[10px] flex items-center gap-2">
+                                    <span className="text-white/40 text-[10px] flex items-center gap-2">
                                     <span className="inline-flex gap-0.5">
-                                      <span className="inline-block w-1 h-1 rounded-full bg-[#00FFFF]/60 animate-bounce" style={{ animationDelay: '0ms' }} />
-                                      <span className="inline-block w-1 h-1 rounded-full bg-[#00FFFF]/60 animate-bounce" style={{ animationDelay: '150ms' }} />
-                                      <span className="inline-block w-1 h-1 rounded-full bg-[#00FFFF]/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+                                      <span className="inline-block w-1 h-1 rounded-full bg-[var(--soft-accent)]/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+                                      <span className="inline-block w-1 h-1 rounded-full bg-[var(--soft-accent)]/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+                                      <span className="inline-block w-1 h-1 rounded-full bg-[var(--soft-accent)]/60 animate-bounce" style={{ animationDelay: '300ms' }} />
                                     </span>
                                     {turn.reasoning
                                       ? 'Architect drafting response...'
@@ -773,15 +773,15 @@ export function DocsInitDialog({
                                 <>
                                   {turn.reasoning ? (
                                     <details className="mb-2">
-                                      <summary className="text-[9px] tracking-widest text-[#CA8A04]/35 cursor-pointer hover:text-[#CA8A04]/60 transition-colors duration-200 select-none">
+                                      <summary className="text-[9px] tracking-widest text-[var(--soft-accent)]/35 cursor-pointer hover:text-[var(--soft-accent)]/60 transition-colors duration-200 select-none">
                                         Expand reasoning chain
                                       </summary>
-                                      <div className="mt-1.5 max-h-[140px] overflow-y-auto break-words rounded-lg border border-[#CA8A04]/10 bg-[#CA8A04]/5 px-3 py-2 text-[11px] italic leading-relaxed text-[#F8FAFC]/45">
+                                      <div className="mt-1.5 max-h-[140px] overflow-y-auto break-words soft-inset rounded-lg px-3 py-2 text-[11px] italic leading-relaxed text-white/45">
                                         {turn.reasoning}
                                       </div>
                                     </details>
                                   ) : null}
-                                  <div className={isUser ? 'break-words text-[#F8FAFC]/85' : 'break-words text-[#F8FAFC]/80'}>
+                                  <div className={isUser ? 'break-words text-white/85' : 'break-words text-white/80'}>
                                     {turn.content || (() => {
                                       if (!turn.rawContent) return 'Plan updated based on discussion.';
                                       try {
@@ -796,10 +796,10 @@ export function DocsInitDialog({
                               )}
                             </div>
                             {turn.questions && turn.questions.length > 0 ? (
-                              <div className="mt-2.5 border-t border-[#312E81]/30 pt-2 text-[11px] text-[#F8FAFC]/60 space-y-0.5">
+                              <div className="mt-2.5 border-t border-white/[0.08] pt-2 text-[11px] text-white/60 space-y-0.5">
                                 {turn.questions.map((question, qIndex) => (
                                   <div key={`${index}-${qIndex}`} className="flex min-w-0 gap-1.5">
-                                    <span className="text-[#CA8A04]/35 font-mono">{qIndex + 1}.</span>
+                                    <span className="text-[var(--soft-accent)]/35 font-mono">{qIndex + 1}.</span>
                                     <span className="min-w-0 break-words">{question}</span>
                                   </div>
                                 ))}
@@ -814,18 +814,18 @@ export function DocsInitDialog({
               </div>
 
               {/* 条陈·奏章 */}
-              <div data-testid="docs-init-plan-draft" className="max-h-[22vh] overflow-hidden rounded-xl border border-[#22C55E]/10 bg-[#0C0C1E]/60 p-4 shadow-[inset_0_1px_0_rgba(34,197,94,0.04)] backdrop-blur-sm">
+              <div data-testid="docs-init-plan-draft" className="soft-raised max-h-[22vh] overflow-hidden rounded-xl p-4 border-[#22C55E]/20">
                 <div className="flex items-center gap-2.5 mb-2">
-                  <div className="h-4 w-0.5 rounded-full bg-[#22C55E]/30 shadow-[0_0_6px_rgba(34,197,94,0.3)]" />
+                  <div className="h-4 w-0.5 rounded-full bg-[#22C55E]/30" />
                   <span className="text-xs font-bold tracking-widest text-[#22C55E]/60">Plan · Draft</span>
                   <span className="text-[9px] text-[#22C55E]/25 tracking-wide">Draft</span>
                 </div>
-                <div className="grid gap-0.5 text-xs text-[#F8FAFC]/60 max-h-[18vh] overflow-y-auto pr-1">
+                <div className="grid gap-0.5 text-xs text-white/60 max-h-[18vh] overflow-y-auto pr-1">
                   {tiaochenDraft.length === 0 ? (
-                    <div className="text-[#F8FAFC]/20 text-[11px] py-2">Plan not yet generated, please start dialogue first.</div>
+                    <div className="text-white/20 text-[11px] py-2">Plan not yet generated, please start dialogue first.</div>
                   ) : (
                     tiaochenDraft.map((item, index) => (
-                      <div key={`${index}-${item}`} className="flex gap-2 py-0.5 rounded px-2 hover:bg-[#22C55E]/5 transition-colors duration-150">
+                      <div key={`${index}-${item}`} className="flex gap-2 py-0.5 rounded px-2 hover:bg-white/[0.04] transition-colors duration-150">
                         <span className="text-[#22C55E]/35 font-mono text-[10px] w-4 text-right flex-shrink-0">{index + 1}</span>
                         <span className="min-w-0 break-words">{item}</span>
                       </div>
@@ -840,15 +840,15 @@ export function DocsInitDialog({
         {/* ── Step 3: Approve ── */}
         {step === 3 ? (
           <div data-testid="docs-init-approve-step" className="grid h-full min-h-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-3 overflow-hidden">
-            <div className="flex min-w-0 items-center gap-3 rounded-lg border border-[#CA8A04]/20 bg-[#CA8A04]/5 px-4 py-3 text-xs text-[#F8FAFC]/60">
-              <ScrollText className="size-5 text-[#CA8A04]/70 flex-shrink-0" />
+            <div className="soft-raised flex min-w-0 items-center gap-3 rounded-lg px-4 py-3 text-xs text-white/60">
+              <ScrollText className="size-5 text-[var(--soft-accent)]/70 flex-shrink-0" />
               <div className="min-w-0">
-                <div className="break-all text-[#F8FAFC]/70">Plan doc directory：<span className="text-[#CA8A04] font-semibold">{preview?.target_root || 'docs'}</span></div>
-                <div className="text-[#F8FAFC]/30 text-[10px] mt-0.5">Click Approve after confirmation to finalize docs.</div>
+                <div className="break-all text-white/70">Plan doc directory：<span className="text-[var(--soft-accent)] font-semibold">{preview?.target_root || 'docs'}</span></div>
+                <div className="text-white/30 text-[10px] mt-0.5">Click Approve after confirmation to finalize docs.</div>
               </div>
             </div>
             {tiaochenDraft.length > 0 ? (
-              <div className="rounded-lg border border-[#22C55E]/12 bg-[#22C55E]/5 px-4 py-3 text-xs text-[#F8FAFC]/60">
+              <div className="soft-raised rounded-lg px-4 py-3 text-xs text-white/60 border-[#22C55E]/15">
                 <div className="mb-2 font-bold tracking-widest text-[#22C55E]/60 text-[11px]">Plan · Draft</div>
                 <div className="space-y-0.5">
                   {tiaochenDraft.map((item, index) => (
@@ -860,22 +860,22 @@ export function DocsInitDialog({
                 </div>
               </div>
             ) : null}
-            <ScrollArea data-testid="docs-init-preview-scroll" className="h-full min-h-0 rounded-xl border border-[#00FFFF]/10 bg-[#0C0C1E]/80 backdrop-blur-sm">
+            <ScrollArea data-testid="docs-init-preview-scroll" className="soft-panel-subtle h-full min-h-0 rounded-xl">
               <div className="grid gap-4 p-4">
                 {preview?.files.map((file, index) => (
-                  <div key={file.path} className="min-w-0 overflow-hidden rounded-lg border border-[#F8FAFC]/6 bg-[#F8FAFC]/[0.02]">
-                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-[#F8FAFC]/6 bg-[#F8FAFC]/[0.02] px-4 py-2 text-[11px]">
-                      <span className="min-w-0 break-all font-mono text-[#00FFFF]/50">{file.path}</span>
+                  <div key={file.path} className="soft-inset min-w-0 overflow-hidden rounded-lg">
+                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] bg-white/[0.02] px-4 py-2 text-[11px]">
+                      <span className="min-w-0 break-all font-mono text-[var(--soft-accent)]/50">{file.path}</span>
                       {file.exists ? (
-                        <span className="rounded border border-[#CA8A04]/20 bg-[#CA8A04]/10 px-2 py-0.5 text-[9px] text-[#CA8A04]">已存在</span>
+                        <span className="soft-chip rounded px-2 py-0.5 text-[9px] text-[var(--soft-accent)]">已存在</span>
                       ) : (
-                        <span className="rounded border border-[#22C55E]/20 bg-[#22C55E]/10 px-2 py-0.5 text-[9px] text-[#22C55E]">新建</span>
+                        <span className="soft-chip rounded px-2 py-0.5 text-[9px] text-[#22C55E]">新建</span>
                       )}
                     </div>
                     <textarea
                       value={file.content}
                       onChange={(event) => updatePreviewFile(index, event.target.value)}
-                      className="min-h-[180px] w-full resize-y bg-transparent px-4 py-3 font-mono text-xs leading-relaxed text-[#F8FAFC]/70 outline-none"
+                      className="min-h-[180px] w-full resize-y bg-transparent px-4 py-3 font-mono text-xs leading-relaxed text-white/70 outline-none"
                     />
                   </div>
                 ))}
@@ -887,13 +887,13 @@ export function DocsInitDialog({
         </div>
 
         {/* ── Footer ── */}
-        <DialogFooter data-testid="docs-init-footer" className="flex flex-row flex-wrap items-center justify-between gap-2 border-t border-[#F8FAFC]/6 pt-3">
+        <DialogFooter data-testid="docs-init-footer" className="flex flex-row flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] pt-3">
           <div className="flex flex-wrap gap-2">
             {step === 3 ? (
               <Button
                 variant="secondary"
                 onClick={() => setStep(step - 1)}
-                className="cursor-pointer border-[#F8FAFC]/8 bg-[#F8FAFC]/[0.03] text-[#F8FAFC]/60 hover:bg-[#F8FAFC]/[0.06] hover:text-[#F8FAFC]/80 text-xs transition-colors duration-200"
+                className="cursor-pointer soft-chip text-white/60 hover:bg-white/[0.06] hover:text-white/80 text-xs transition-colors duration-200"
               >
                 <span className="flex items-center gap-1"><ChevronLeft className="size-3.5" />上一步</span>
               </Button>
@@ -903,7 +903,7 @@ export function DocsInitDialog({
             <Button
               variant="ghost"
               onClick={() => onOpenChange(false)}
-              className="cursor-pointer text-[#F8FAFC]/30 hover:text-[#F8FAFC]/60 text-xs transition-colors duration-200"
+              className="cursor-pointer text-white/30 hover:text-white/60 text-xs transition-colors duration-200"
             >
               Close
             </Button>
@@ -912,7 +912,7 @@ export function DocsInitDialog({
                 data-testid="docs-init-build-preview"
                 onClick={buildPreview}
                 disabled={loadingPreview}
-                className="cursor-pointer border border-[#CA8A04]/30 bg-[#CA8A04]/15 text-[#F8FAFC]/90 hover:bg-[#CA8A04]/25 hover:shadow-[0_0_24px_rgba(202,138,4,0.20)] shadow-[0_0_16px_rgba(202,138,4,0.10)] text-xs font-bold tracking-wide transition-all duration-200"
+                className="cursor-pointer soft-raised text-white/90 text-xs font-bold tracking-wide transition-all duration-200"
               >
                 <span className="flex items-center gap-1.5">
                   <ScrollText className="size-3.5" />
@@ -925,7 +925,7 @@ export function DocsInitDialog({
                 data-testid="docs-init-apply"
                 onClick={applyDocs}
                 disabled={applying}
-                className="cursor-pointer border border-red-500/25 bg-red-500/15 text-[#F8FAFC]/90 hover:bg-red-500/25 hover:shadow-[0_0_24px_rgba(220,38,38,0.15)] shadow-[0_0_16px_rgba(220,38,38,0.08)] text-xs font-bold tracking-wide transition-all duration-200"
+                className="cursor-pointer soft-raised border-red-500/20 text-white/90 text-xs font-bold tracking-wide transition-all duration-200"
               >
                 <span className="flex items-center gap-1.5">
                   <Stamp className="size-3.5" />

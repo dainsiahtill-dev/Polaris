@@ -374,7 +374,7 @@ export function ControlPanel({
       {/* Workspace */}
       <div className="flex-1 max-w-[26rem] mx-6 relative group">
         <div
-          className={`no-drag flex items-center gap-2 bg-bg-panel/50 backdrop-blur-sm rounded-lg px-3 py-1.5 border transition-all duration-300 ${workspaceError ? 'border-status-error/60 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'border-white/10 group-hover:border-accent/30 group-hover:shadow-glow'
+          className={`no-drag flex items-center gap-2 soft-inset rounded-lg px-3 py-1.5 transition-all duration-300 ${workspaceError ? 'border-status-error/60' : 'group-hover:border-accent/30'
             }`}
           title={workspaceError || workspace || undefined}
         >
@@ -407,7 +407,7 @@ export function ControlPanel({
         {workspaceError ? (
           <div
             id="workspace-error"
-            className="absolute left-0 right-0 top-full mt-1 text-xs text-status-error bg-bg-panel border border-status-error/30 rounded px-2 py-1 shadow-lg z-50 backdrop-blur-md"
+            className="absolute left-0 right-0 top-full mt-1 text-xs text-status-error bg-bg-panel border border-status-error/30 rounded px-2 py-1 shadow-md z-50"
           >
             {workspaceError}
           </div>
@@ -417,7 +417,7 @@ export function ControlPanel({
       {/* 控制按钮 */}
       <div className="flex items-center gap-3">
         {/* PM 控制 */}
-        <div className="no-drag flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/5 backdrop-blur-sm">
+        <div className="no-drag flex items-center gap-1.5 px-2 py-1 soft-panel-subtle rounded-lg">
           <span className="text-[10px] uppercase font-bold text-text-dim tracking-wider px-1">{UI_TERMS.roles.pm}</span>
           {pmBlockedReason ? (
             <span
@@ -432,7 +432,7 @@ export function ControlPanel({
             data-testid="control-panel-pm-toggle"
             disabled={pmDisabled || pmToggleBusy}
             className={`p-1.5 rounded-md transition-all duration-300 relative ${pmRunning
-              ? 'bg-gradient-primary text-white shadow-glow'
+              ? 'soft-raised text-accent'
               : 'bg-white/5 text-text-muted hover:bg-white/10 hover:text-text-main'
               } ${pmDisabled || pmToggleBusy ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
             title={pmDisabledTitle}
@@ -487,7 +487,7 @@ export function ControlPanel({
         </div>
 
         {/* Director 控制 */}
-        <div className="no-drag flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/5 backdrop-blur-sm">
+        <div className="no-drag flex items-center gap-1.5 px-2 py-1 soft-panel-subtle rounded-lg">
           <span className="text-[10px] uppercase font-bold text-text-dim tracking-wider px-1">{UI_TERMS.roles.director}</span>
           {directorBlockedReason ? (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-status-error/20 text-status-error border border-status-error/20">
@@ -499,7 +499,7 @@ export function ControlPanel({
             data-testid="control-panel-director-toggle"
             disabled={directorDisabled || directorToggleBusy}
             className={`p-1.5 rounded-md transition-all duration-300 relative ${directorRunning
-              ? 'bg-gradient-to-r from-accent-secondary to-blue-600 text-white shadow-[0_0_15px_rgba(6,182,212,0.4)]'
+              ? 'soft-raised text-accent'
               : 'bg-white/5 text-text-muted hover:bg-white/10 hover:text-text-main'
               } ${directorDisabled || directorToggleBusy ? 'opacity-50 cursor-not-allowed hover:bg-transparent' : ''}`}
             title={directorBlockedReason || undefined}
@@ -535,7 +535,7 @@ export function ControlPanel({
           <button
             onClick={onEnterFactoryMode}
             data-testid="control-panel-enter-factory"
-            className="no-drag p-1.5 rounded-md transition-all bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:shadow-[0_0_15px_rgba(16,185,129,0.4)]"
+            className="no-drag p-1.5 rounded-md transition-all soft-raised text-emerald-400"
             title="Factory 模式 - 无人值守开发工厂"
           >
             <Hammer className="size-3.5" />
@@ -547,7 +547,7 @@ export function ControlPanel({
           <button
             onClick={onEnterContextOS}
             data-testid="control-panel-enter-contextos"
-            className="no-drag flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all bg-accent-secondary/15 text-accent-secondary border border-accent-secondary/30 hover:bg-accent-secondary/25 hover:shadow-[0_0_15px_rgba(74,158,158,0.35)]"
+            className="no-drag flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all soft-chip text-text-muted hover:text-text-main"
             title="ContextOS 实时视图 - 上下文操作系统数据流监控"
           >
             <Network className="size-3.5" />
@@ -556,7 +556,7 @@ export function ControlPanel({
         )}
 
         {/* Vital Signs (Ping/Health) */}
-        <div className="no-drag flex items-center gap-2 px-2.5 py-1 bg-[rgba(35,25,14,0.55)] rounded-lg border border-white/5 backdrop-blur-md">
+        <div className="no-drag flex items-center gap-2 px-2.5 py-1 soft-panel-subtle rounded-lg">
           {/* 当前任务显示 */}
           {(pmRunning || directorRunning) && displayCurrentTask && (
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 max-w-[200px]">
@@ -567,8 +567,8 @@ export function ControlPanel({
           )}
           {/* 无任务时显示工具执行 */}
           {(pmRunning || directorRunning) && !displayCurrentTask && isExecutingTool && displayCurrentToolName && (
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30 max-w-[200px]">
-              <span className="text-[10px] text-cyan-300 truncate" title={displayCurrentToolName}>
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 max-w-[200px]">
+              <span className="text-[10px] text-amber-300 truncate" title={displayCurrentToolName}>
                 正在执行: {displayCurrentToolName}
               </span>
             </div>
@@ -591,7 +591,7 @@ export function ControlPanel({
             title={healthStatusDetail || '校验连通性'}
             data-testid="control-panel-health-ping"
           >
-            <div className={`size-1.5 rounded-full shadow-[0_0_8px_currentColor] transition-colors duration-500 ${healthTone}`} />
+            <div className={`size-1.5 rounded-full transition-colors duration-500 ${healthTone}`} />
             <span className="whitespace-nowrap text-[10px] font-mono uppercase text-text-dim transition-colors group-hover:text-text-muted">
               {healthLabel}
             </span>
@@ -626,7 +626,7 @@ export function ControlPanel({
         </div>
 
         {showAgents ? (
-          <div className="no-drag flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-status-warning/30 backdrop-blur-sm">
+          <div className="no-drag flex items-center gap-1.5 px-2 py-1 soft-panel-subtle rounded-lg border border-status-warning/30">
             <span className="text-[10px] uppercase font-bold text-status-warning tracking-wider px-1">AGENTS</span>
             <button
               onClick={agentsReady ? onOpenAgentsReview : onGenerateAgentsDraft}
@@ -644,7 +644,7 @@ export function ControlPanel({
         ) : null}
 
         {onStopOllama ? (
-          <div className="no-drag flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/5 backdrop-blur-sm">
+          <div className="no-drag flex items-center gap-1.5 px-2 py-1 soft-panel-subtle rounded-lg">
             <span className="text-[10px] uppercase font-bold text-text-dim tracking-wider px-1">Ollama</span>
             <button
               onClick={onStopOllama}

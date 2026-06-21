@@ -308,7 +308,7 @@ class TestPackageJsonParsing:
         (tmp_path / "package.json").write_text(
             json.dumps({"scripts": {"test": "vitest", "build": "vite build"}}), encoding="utf-8"
         )
-        assert executor._workspace_quality_commands({}) == [["npm", "test"], ["npm", "run", "build"]]
+        assert executor._workspace_quality_commands({}) == [["npm", "run", "build"], ["npm", "test"]]
 
     def test_workspace_quality_commands_configured_override(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -340,11 +340,39 @@ class TestRunWorkspaceQualityCommand:
         assert result["passed"] is True
         assert "ok" in result["stdout_tail"]
 
+    def test_real_subprocess_zero_exit_with_typescript_errors_fails(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        result = executor._run_workspace_quality_command(
+            [
+                sys.executable,
+                "-c",
+                'print("src/main.ts(1,1): error TS2305: missing export"); print("TypeScript check skipped")',
+            ],
+            30.0,
+        )
+        assert result["exit_code"] == 0
+        assert result["passed"] is False
+        assert "TypeScript compiler errors" in result["error"]
+
     def test_real_subprocess_nonzero_exit(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         result = executor._run_workspace_quality_command([sys.executable, "-c", "import sys; sys.exit(3)"], 30.0)
         assert result["exit_code"] == 3
         assert result["passed"] is False
+
+    def test_real_subprocess_nonzero_typescript_error_is_not_marked_masked(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        result = executor._run_workspace_quality_command(
+            [
+                sys.executable,
+                "-c",
+                "import sys; print(\"src/engine/renderer.ts(1,3780): error TS1005: '}' expected.\"); sys.exit(2)",
+            ],
+            30.0,
+        )
+        assert result["exit_code"] == 2
+        assert result["passed"] is False
+        assert "error" not in result
 
     def test_real_subprocess_timeout(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
@@ -408,7 +436,7 @@ class TestRunWorkspaceQualityChecks:
             repaired_source = (tmp_path / "src" / "simulation.ts").read_text(encoding="utf-8")
             repaired_tsconfig = json.loads((tmp_path / "tsconfig.json").read_text(encoding="utf-8"))
             repaired = (
-                "export type SimulationState = unknown;" in repaired_source
+                "export type SimulationState = any;" in repaired_source
                 and "export function updateSimulation(..._args: unknown[]): any" in repaired_source
                 and "DOM" in repaired_tsconfig["compilerOptions"]["lib"]
             )
@@ -451,6 +479,172 @@ class TestRunWorkspaceQualityChecks:
         assert [item["phase"] for item in payload["commands"]] == ["check", "check_after_repair"]
         assert "deterministic_typescript_missing_export_repair" in payload["repair"]["source_tools"]
         assert "deterministic_typescript_tsconfig_lib_repair" in payload["repair"]["source_tools"]
+
+    @pytest.mark.asyncio
+    async def test_repairs_typescript_enum_member_separator_and_reruns_commands(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        model_dir = tmp_path / "src" / "models"
+        model_dir.mkdir(parents=True)
+        moonphase = model_dir / "moonphase.ts"
+        moonphase.write_text(
+            "\n".join(
+                [
+                    "export enum MoonPhase {",
+                    "  New,",
+                    "  Full,",
+                    "  WaningCrescent;",
+                    "}",
+                    "",
+                    "export interface MoonState {",
+                    "  phase: MoonPhase;",
+                    "}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        run = FactoryRun(
+            id="factory-enum-repair",
+            config=FactoryConfig(name="enum-repair"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+        calls: list[list[str]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            calls.append(command)
+            repaired_source = moonphase.read_text(encoding="utf-8")
+            repaired = "  WaningCrescent," in repaired_source and "  phase: MoonPhase;" in repaired_source
+            if repaired:
+                return {
+                    "command": command,
+                    "exit_code": 0,
+                    "passed": True,
+                    "stdout_tail": "build passed",
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            return {
+                "command": command,
+                "exit_code": 2,
+                "passed": False,
+                "stdout_tail": (
+                    "src/models/moonphase.ts(4,18): error TS1357: "
+                    "An enum member name must be followed by a ',', '=', or '}'."
+                ),
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+
+        passed, artifact = await executor._run_workspace_quality_checks(run, {})
+
+        assert passed is True
+        assert calls == [["npm", "run", "build"], ["npm", "run", "build"]]
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["passed"] is True
+        assert [item["phase"] for item in payload["commands"]] == ["check", "check_after_repair"]
+        assert "deterministic_typescript_enum_member_separator_repair" in payload["repair"]["source_tools"]
+        assert "  WaningCrescent," in moonphase.read_text(encoding="utf-8")
+        assert "  phase: MoonPhase;" in moonphase.read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_repairs_typescript_unresolved_identifier_alias_and_reruns_commands(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        engine_dir = tmp_path / "src" / "engine"
+        engine_dir.mkdir(parents=True)
+        simulation = engine_dir / "simulation.ts"
+        simulation.write_text(
+            "\n".join(
+                [
+                    "export interface GardenState { moonPhase: number; humidity: number; tick: number; }",
+                    "",
+                    "export function tickGarden(state: GardenState): GardenState {",
+                    "  const newState = { ...state, tick: state.tick + 1 };",
+                    "  return newState;",
+                    "}",
+                    "",
+                    "export function getGardenSummary(state: GardenState): string {",
+                    "  return [",
+                    "    `${newState.moonPhase}`;",
+                    "    `${newState.humidity}`;",
+                    "    `${newState.tick}`;",
+                    "  ].join('\\n');",
+                    "}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        run = FactoryRun(
+            id="factory-unresolved-identifier-repair",
+            config=FactoryConfig(name="unresolved-identifier-repair"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+        calls: list[list[str]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            calls.append(command)
+            repaired_source = simulation.read_text(encoding="utf-8")
+            repaired = (
+                "`${state.moonPhase}`;" in repaired_source
+                and "`${state.humidity}`;" in repaired_source
+                and "`${state.tick}`;" in repaired_source
+                and "const newState = { ...state" in repaired_source
+            )
+            if repaired:
+                return {
+                    "command": command,
+                    "exit_code": 0,
+                    "passed": True,
+                    "stdout_tail": "build passed",
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            return {
+                "command": command,
+                "exit_code": 2,
+                "passed": False,
+                "stdout_tail": (
+                    "src/engine/simulation.ts(10,8): error TS2304: Cannot find name 'newState'.\n"
+                    "src/engine/simulation.ts(11,8): error TS2304: Cannot find name 'newState'.\n"
+                    "src/engine/simulation.ts(12,8): error TS2304: Cannot find name 'newState'."
+                ),
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+
+        passed, artifact = await executor._run_workspace_quality_checks(run, {})
+
+        assert passed is True
+        assert calls == [["npm", "run", "build"], ["npm", "run", "build"]]
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["passed"] is True
+        assert [item["phase"] for item in payload["commands"]] == ["check", "check_after_repair"]
+        assert "deterministic_typescript_unresolved_identifier_repair" in payload["repair"]["source_tools"]
+        repaired_source = simulation.read_text(encoding="utf-8")
+        assert "return newState;" in repaired_source
+        assert "`${state.moonPhase}`;" in repaired_source
+        assert "`${state.humidity}`;" in repaired_source
+        assert "`${state.tick}`;" in repaired_source
 
 
 # ---------------------------------------------------------------------------

@@ -46,7 +46,7 @@ const EMPTY_STATE: EvidenceState = {
 
 const TONE_CLASSES = {
   amber: {
-    border: 'border-amber-500/15',
+    border: 'border-amber-500/[0.15]',
     bg: 'bg-amber-500/5',
     text: 'text-amber-100',
     accent: 'text-amber-300',
@@ -54,7 +54,7 @@ const TONE_CLASSES = {
     hover: 'hover:bg-amber-500/10 hover:text-amber-100',
   },
   emerald: {
-    border: 'border-emerald-500/15',
+    border: 'border-emerald-500/[0.15]',
     bg: 'bg-emerald-500/5',
     text: 'text-emerald-100',
     accent: 'text-emerald-300',
@@ -62,7 +62,7 @@ const TONE_CLASSES = {
     hover: 'hover:bg-emerald-500/10 hover:text-emerald-100',
   },
   cyan: {
-    border: 'border-cyan-500/15',
+    border: 'border-cyan-500/[0.15]',
     bg: 'bg-cyan-500/5',
     text: 'text-cyan-100',
     accent: 'text-cyan-300',
@@ -70,7 +70,7 @@ const TONE_CLASSES = {
     hover: 'hover:bg-cyan-500/10 hover:text-cyan-100',
   },
   purple: {
-    border: 'border-purple-500/15',
+    border: 'border-purple-500/[0.15]',
     bg: 'bg-purple-500/5',
     text: 'text-purple-100',
     accent: 'text-purple-300',
@@ -78,7 +78,7 @@ const TONE_CLASSES = {
     hover: 'hover:bg-purple-500/10 hover:text-purple-100',
   },
   rose: {
-    border: 'border-rose-500/15',
+    border: 'border-rose-500/[0.15]',
     bg: 'bg-rose-500/5',
     text: 'text-rose-100',
     accent: 'text-rose-300',
@@ -86,7 +86,7 @@ const TONE_CLASSES = {
     hover: 'hover:bg-rose-500/10 hover:text-rose-100',
   },
   indigo: {
-    border: 'border-indigo-500/15',
+    border: 'border-indigo-500/[0.15]',
     bg: 'bg-indigo-500/5',
     text: 'text-indigo-100',
     accent: 'text-indigo-300',

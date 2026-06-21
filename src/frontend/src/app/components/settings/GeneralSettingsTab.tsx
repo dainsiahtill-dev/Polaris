@@ -84,8 +84,7 @@ interface GeneralSettingsTabProps {
   onSave: (payload: Record<string, unknown>) => Promise<void>;
 }
 
-// Glass Card Component
-function GlassCard({
+function SectionCard({
   children,
   className,
   title,
@@ -101,34 +100,22 @@ function GlassCard({
   return (
     <div
       className={cn(
-        'group relative overflow-hidden rounded-2xl border border-white/10',
-        'bg-gradient-to-br from-slate-800/80 via-slate-900/90 to-slate-950/95',
-        'backdrop-blur-xl shadow-2xl shadow-black/20',
-        'transition-all duration-300 ease-out',
-        'hover:border-emerald-500/30 hover:shadow-emerald-500/10',
+        'rounded-lg border border-slate-700/60 bg-slate-800/70 shadow-sm',
         className
       )}
     >
-      {/* Subtle gradient overlay */}
-      <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 via-transparent to-cyan-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-
-      {/* Header */}
-      <div className="relative flex items-center gap-3 px-6 py-4 border-b border-white/5">
-        <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 border border-emerald-500/20">
-          <Icon className="w-5 h-5 text-emerald-400" />
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-700/50">
+        <div className="flex items-center justify-center w-8 h-8 rounded-md bg-slate-700/60">
+          <Icon className="w-4 h-4 text-slate-400" />
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-slate-100 tracking-wide">
-            {title}
-          </h3>
+          <h3 className="text-sm font-medium text-slate-200">{title}</h3>
           {description && (
-            <p className="text-xs text-slate-400 mt-0.5 truncate">{description}</p>
+            <p className="text-xs text-slate-500 mt-0.5">{description}</p>
           )}
         </div>
       </div>
-
-      {/* Content */}
-      <div className="relative p-6">{children}</div>
+      <div className="p-5">{children}</div>
     </div>
   );
 }
@@ -196,7 +183,7 @@ function NumberInput({
         placeholder={placeholder}
         className={cn(
           'h-10 bg-slate-950/50 border-slate-700/50 text-slate-100',
-          'focus:border-emerald-500/50 focus:ring-emerald-500/20',
+          'focus:border-slate-500/50 focus:ring-slate-500/20',
           'placeholder:text-slate-600',
           suffix && 'pr-12'
         )}
@@ -225,8 +212,8 @@ function ToggleField({
   icon: React.ElementType;
 }) {
   return (
-    <div className="flex items-start gap-4 p-4 rounded-xl bg-slate-950/30 border border-white/5 hover:border-white/10 transition-colors">
-      <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-slate-800/50 shrink-0">
+    <div className="flex items-start gap-4 p-4 rounded-lg bg-slate-900/50 border border-slate-700/40 transition-colors">
+      <div className="flex items-center justify-center w-9 h-9 rounded-md bg-slate-800/70 shrink-0">
         <Icon className="w-5 h-5 text-slate-400" />
       </div>
       <div className="flex-1 min-w-0">
@@ -287,31 +274,30 @@ function ThemeSelector() {
             key={option.value}
             onClick={() => setTheme(option.value)}
             className={cn(
-              'relative flex flex-col items-center justify-center gap-2 p-4 rounded-xl',
-              'border transition-all duration-200',
-              'hover:scale-[1.02] hover:shadow-lg',
+              'relative flex flex-col items-center justify-center gap-2 p-4 rounded-lg',
+              'border transition-colors duration-150',
               isActive
-                ? 'bg-gradient-to-br from-emerald-500/20 to-cyan-500/20 border-emerald-500/50 shadow-emerald-500/20'
-                : 'bg-slate-950/30 border-white/5 hover:border-white/20'
+                ? 'bg-emerald-500/10 border-emerald-500/40'
+                : 'bg-slate-900/40 border-slate-700/50 hover:border-slate-600'
             )}
           >
-            <div
-              className={cn(
-                'flex items-center justify-center w-10 h-10 rounded-lg',
-                'transition-colors duration-200',
-                isActive ? 'bg-emerald-500/20' : 'bg-slate-800/50'
-              )}
-            >
-              <Icon
+              <div
                 className={cn(
-                  'w-5 h-5 transition-colors duration-200',
-                  isActive ? 'text-emerald-400' : 'text-slate-400'
+                  'flex items-center justify-center w-9 h-9 rounded-md',
+                  'transition-colors duration-150',
+                  isActive ? 'bg-emerald-500/[0.15]' : 'bg-slate-800/60'
                 )}
-              />
+              >
+                <Icon
+                  className={cn(
+                    'w-4 h-4 transition-colors duration-150',
+                    isActive ? 'text-emerald-400' : 'text-slate-400'
+                  )}
+                />
             </div>
             <span
               className={cn(
-                'text-sm font-medium transition-colors duration-200',
+                'text-sm font-medium transition-colors duration-150',
                 isActive ? 'text-emerald-400' : 'text-slate-300'
               )}
             >
@@ -489,11 +475,11 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
           onClick={handleSave}
           disabled={saving}
           className={cn(
-            'flex items-center gap-2 px-6 py-2.5 rounded-xl font-medium text-sm',
-            'transition-all duration-200',
+            'flex items-center gap-2 px-5 py-2 rounded-lg font-medium text-sm',
+            'transition-colors duration-150',
             saved
-              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-              : 'bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 hover:scale-[1.02]'
+              ? 'bg-emerald-500/[0.15] text-emerald-400 border border-emerald-500/30'
+              : 'bg-emerald-600 text-white hover:bg-emerald-700'
           )}
         >
           {saving ? (
@@ -516,7 +502,7 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400">
+        <div className="flex items-center gap-2 p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400">
           <AlertCircle className="w-5 h-5 shrink-0" />
           <span className="text-sm">{error}</span>
         </div>
@@ -525,12 +511,12 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
       {/* Network & Ports Section */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 uppercase tracking-wider">
-          <Globe className="w-4 h-4 text-cyan-400" />
+          <Globe className="w-4 h-4 text-slate-400" />
           网络与端口配置
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <GlassCard
+          <SectionCard
             title="后端服务端口"
             icon={Server}
             description="Backend API 服务监听端口"
@@ -545,9 +531,9 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
                 />
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
 
-          <GlassCard
+          <SectionCard
             title="前端开发端口"
             icon={Zap}
             description="Vite 开发服务器端口"
@@ -562,7 +548,7 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
                 />
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
         </div>
       </section>
 
@@ -574,7 +560,7 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <GlassCard title="基础参数" icon={Settings}>
+          <SectionCard title="基础参数" icon={Settings}>
             <div className="space-y-4">
               <FormField label="执行间隔" hint="PM 循环间隔时间">
                 <NumberInput
@@ -610,9 +596,9 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
                 </Select>
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
 
-          <GlassCard title="全链路执行" icon={Layers}>
+          <SectionCard title="全链路执行" icon={Layers}>
             <div className="space-y-3">
               <ToggleField
                 label="启用执行阶段"
@@ -649,9 +635,9 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
                 />
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
 
-          <GlassCard title="故障恢复" icon={RotateCcw}>
+          <SectionCard title="故障恢复" icon={RotateCcw}>
             <div className="space-y-4">
               <FormField label="最大失败次数" hint="超过后暂停任务">
                 <NumberInput
@@ -683,19 +669,19 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
                 />
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
         </div>
       </section>
 
       {/* Director Settings Section */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 uppercase tracking-wider">
-          <Cpu className="w-4 h-4 text-purple-400" />
+          <Cpu className="w-4 h-4 text-slate-400" />
           Director 执行器配置
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <GlassCard title="执行模式" icon={Activity}>
+          <SectionCard title="执行模式" icon={Activity}>
             <div className="space-y-4">
               <FormField label="执行模式">
                 <Select
@@ -742,9 +728,9 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
                 icon={Terminal}
               />
             </div>
-          </GlassCard>
+          </SectionCard>
 
-          <GlassCard title="超时配置" icon={Clock}>
+          <SectionCard title="超时配置" icon={Clock}>
             <div className="space-y-4">
               <FormField label="就绪超时">
                 <NumberInput
@@ -773,9 +759,9 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
                 />
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
 
-          <GlassCard title="任务超时" icon={AlertCircle}>
+          <SectionCard title="任务超时" icon={AlertCircle}>
             <div className="space-y-4">
               <FormField label="完成超时">
                 <NumberInput
@@ -805,7 +791,7 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
                 />
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
         </div>
       </section>
 
@@ -817,7 +803,7 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <GlassCard title="存储路径" icon={HardDrive}>
+          <SectionCard title="存储路径" icon={HardDrive}>
             <div className="space-y-4">
               <FormField label="Ramdisk 根目录" hint="可选，用于加速临时文件">
                 <Input
@@ -836,9 +822,9 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
                 />
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
 
-          <GlassCard title="IO 模式" icon={FileText}>
+          <SectionCard title="IO 模式" icon={FileText}>
             <div className="space-y-4">
               <FormField label="FSync 模式">
                 <Select
@@ -873,26 +859,26 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
                 </Select>
               </FormField>
             </div>
-          </GlassCard>
+          </SectionCard>
         </div>
       </section>
 
       {/* Theme Section */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 uppercase tracking-wider">
-          <Palette className="w-4 h-4 text-indigo-400" />
+          <Palette className="w-4 h-4 text-slate-400" />
           外观设置
         </div>
 
-        <GlassCard title="主题配置" icon={Sparkles} description="选择应用外观主题">
+        <SectionCard title="主题配置" icon={Sparkles} description="选择应用外观主题">
           <ThemeSelector />
-        </GlassCard>
+        </SectionCard>
       </section>
 
       {/* Features Section */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 uppercase tracking-wider">
-          <Sparkles className="w-4 h-4 text-pink-400" />
+          <Sparkles className="w-4 h-4 text-slate-400" />
           功能开关
         </div>
 
@@ -954,11 +940,11 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
       {/* Refresh Settings */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 uppercase tracking-wider">
-          <RotateCcw className="w-4 h-4 text-blue-400" />
+          <RotateCcw className="w-4 h-4 text-slate-400" />
           刷新设置
         </div>
 
-        <GlassCard title="自动刷新间隔" icon={Clock}>
+        <SectionCard title="自动刷新间隔" icon={Clock}>
           <div className="flex items-center gap-4">
             <div className="flex-1">
               <NumberInput
@@ -973,7 +959,7 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
               当前: {formState.refreshInterval} 秒
             </div>
           </div>
-        </GlassCard>
+        </SectionCard>
       </section>
     </div>
   );

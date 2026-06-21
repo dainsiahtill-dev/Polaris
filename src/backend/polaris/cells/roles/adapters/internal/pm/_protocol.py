@@ -170,6 +170,8 @@ if TYPE_CHECKING:
         def _evaluate_contract_quality(
             self,
             contracts: list[dict[str, Any]],
+            *,
+            directive: str = "",
         ) -> tuple[list[dict[str, Any]], dict[str, Any]]: ...
 
         def _validate_task_contracts(self, task_contracts: list[dict[str, Any]]) -> ValidationResult: ...

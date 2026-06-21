@@ -165,7 +165,7 @@ export const TaskNode = memo(function TaskNode({ data, id }: NodeProps<TaskNode>
             )}
           >
             {status === TaskStatusEnum.IN_PROGRESS && (
-              <span className="inline-block w-1.5 h-1.5 bg-amber-400 rounded-full mr-1 animate-pulse" />
+              <span className="inline-block w-1.5 h-1.5 bg-amber-400/80 rounded-full mr-1" />
             )}
             {statusLabel}
           </span>

@@ -59,8 +59,8 @@ function StatusWarningPanel({
         className={cn(
           'border-b px-3 py-1.5 text-[11px]',
           isWarningOnly
-            ? 'border-amber-400/15 bg-amber-500/5 text-amber-100'
-            : 'border-red-500/15 bg-red-500/5 text-red-100',
+            ? 'border-amber-400/[0.15] bg-amber-500/5 text-amber-100'
+            : 'border-red-500/[0.15] bg-red-500/5 text-red-100',
         )}
       >
         <div className="flex min-w-0 items-center gap-2">

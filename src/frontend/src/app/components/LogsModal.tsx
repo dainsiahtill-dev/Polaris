@@ -44,7 +44,7 @@ function SmartText({ text }: { text: string }) {
 
 const ROLE_BADGE_STYLES: Record<'user' | 'thinking' | 'exec', string> = {
   user: 'border-blue-500/40 bg-blue-500/20 text-blue-200',
-  thinking: 'border-purple-500/40 bg-purple-500/20 text-purple-200',
+  thinking: 'border-slate-500/40 bg-slate-500/20 text-slate-200',
   exec: 'border-amber-500/40 bg-amber-500/20 text-amber-200',
 };
 
@@ -81,7 +81,7 @@ function buildMarkupSrcDoc(kind: MarkupKind, source: string) {
   if (!trimmed) return '';
 
   if (kind === 'svg') {
-    return `<!doctype html><html><head><meta charset="utf-8" /><style>html,body{margin:0;padding:0;background:radial-gradient(1000px 600px at 20% 20%, rgba(34,211,238,.18), transparent 60%),radial-gradient(900px 500px at 80% 30%, rgba(168,85,247,.16), transparent 55%),#050816;color:#e5e7eb;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC','Source Han Sans SC','SimSun','SimHei',sans-serif;}a{color:#22d3ee;}code,pre{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;}</style></head><body style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="padding:14px;border:1px solid rgba(34,211,238,.25);border-radius:12px;background:rgba(3,7,18,.65);box-shadow:0 0 0 1px rgba(168,85,247,.12),0 0 24px rgba(34,211,238,.12),0 0 42px rgba(168,85,247,.10);">${trimmed}</div></body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8" /><style>html,body{margin:0;padding:0;background:#0f1117;color:#e5e7eb;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC','Source Han Sans SC','SimSun','SimHei',sans-serif;}a{color:#6ee7b7;}code,pre{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;}</style></head><body style="display:flex;align-items:center;justify-content:center;min-height:100vh;"><div style="padding:14px;border:1px solid rgba(148,163,184,.18);border-radius:8px;background:rgba(15,17,23,.85);">${trimmed}</div></body></html>`;
   }
 
   if (kind !== 'html') return '';
@@ -116,7 +116,7 @@ function buildMarkupSrcDoc(kind: MarkupKind, source: string) {
   )}</pre>`;
   const finalBody = visible ? sanitizeHtml(bodyHtml) : fallback;
 
-  return `<!doctype html><html><head><meta charset="utf-8" /><base target="_blank" />${headHtml}<style>html,body{margin:0;padding:0;background:radial-gradient(1100px 650px at 15% 20%, rgba(34,211,238,.16), transparent 62%),radial-gradient(900px 520px at 85% 25%, rgba(168,85,247,.14), transparent 58%),radial-gradient(900px 600px at 60% 90%, rgba(251,113,133,.10), transparent 60%),#050816;color:#e5e7eb;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC','Source Han Sans SC','SimSun','SimHei',sans-serif;}a{color:#22d3ee;}a:hover{color:#a855f7;}code,pre{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;}*{box-sizing:border-box;}hr{border:0;border-top:1px solid rgba(148,163,184,.22);}table{border-collapse:collapse;}td,th{border:1px solid rgba(148,163,184,.18);padding:6px 8px;}blockquote{border-left:3px solid rgba(34,211,238,.35);margin:8px 0;padding:6px 10px;background:rgba(3,7,18,.35);}img{max-width:100%;height:auto;} </style></head><body><div style="padding:14px;"><div style="border:1px solid rgba(34,211,238,.22);border-radius:12px;background:rgba(3,7,18,.62);box-shadow:0 0 0 1px rgba(168,85,247,.10),0 0 26px rgba(34,211,238,.12),0 0 46px rgba(168,85,247,.10);padding:12px;min-height:100%;backdrop-filter:blur(6px);">${finalBody}</div></div></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8" /><base target="_blank" />${headHtml}<style>html,body{margin:0;padding:0;background:#0f1117;color:#e5e7eb;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans SC','Source Han Sans SC','SimSun','SimHei',sans-serif;}a{color:#6ee7b7;}a:hover{color:#a7f3d0;}code,pre{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;}*{box-sizing:border-box;}hr{border:0;border-top:1px solid rgba(148,163,184,.22);}table{border-collapse:collapse;}td,th{border:1px solid rgba(148,163,184,.18);padding:6px 8px;}blockquote{border-left:3px solid rgba(148,163,184,.3);margin:8px 0;padding:6px 10px;background:rgba(15,17,23,.5);}img{max-width:100%;height:auto;} </style></head><body><div style="padding:14px;"><div style="border:1px solid rgba(148,163,184,.15);border-radius:8px;background:rgba(15,17,23,.85);padding:12px;min-height:100%;">${finalBody}</div></div></body></html>`;
 }
 
 function detectMarkupKind(source: string, pathHint?: string): MarkupKind | null {
@@ -1028,23 +1028,22 @@ export function LogsModal({
                             <>
                               <div className="flex items-center gap-2 text-xs text-gray-400">
                                 {roleBadge}
-                                <span className="uppercase tracking-wider text-[10px] text-cyan-200/90">词元耗用</span>
+                                <span className="uppercase tracking-wider text-[10px] text-slate-300">词元耗用</span>
                                 {compact ? (
-                                  <span className="ml-auto rounded-full border border-fuchsia-400/20 bg-fuchsia-500/10 px-2 py-0.5 text-[10px] text-fuchsia-200">
+                                  <span className="ml-auto rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-200">
                                     {compact}
                                   </span>
                                 ) : null}
                               </div>
                               <div className="mt-2 flex items-end justify-between gap-3">
-                                <div className="text-2xl font-semibold leading-none text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 via-fuchsia-300 to-pink-300">
+                                <div className="text-2xl font-semibold leading-none text-slate-100">
                                   {formatted}
                                 </div>
                                 <div className="text-[11px] text-gray-400">词元</div>
                               </div>
                               <div className="mt-2 h-1.5 w-full rounded-full bg-gray-800/80 overflow-hidden">
                                 <div
-                                  className="h-full w-full bg-gradient-to-r from-cyan-400/60 via-fuchsia-400/50 to-pink-400/50"
-                                  style={{ boxShadow: '0 0 18px rgba(34,211,238,.22), 0 0 28px rgba(168,85,247,.18)' }}
+                                  className="h-full w-full bg-emerald-500/50"
                                 />
                               </div>
                             </>
@@ -1067,7 +1066,7 @@ export function LogsModal({
                       const cleanBody = stripLlmTags(event.body);
                       nodes.push(
                         <details key={event.id} className="rounded border border-gray-700 bg-gray-900/40 p-3">
-                          <summary className="cursor-pointer text-sm text-purple-200 flex items-center gap-2">
+                          <summary className="cursor-pointer text-sm text-slate-300 flex items-center gap-2">
                             {roleBadge}
                             <span>{event.title || '思考'}</span>
                           </summary>

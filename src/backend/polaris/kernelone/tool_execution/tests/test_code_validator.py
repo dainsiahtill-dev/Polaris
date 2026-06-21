@@ -126,6 +126,32 @@ class TestMultiLanguageCodeValidator:
         result = validator.validate(code, "test.unknown")
         assert result.is_valid is True
 
+    def test_ts_keyword_identifier_glue_is_auto_fixed(self, monkeypatch: pytest.MonkeyPatch):
+        """High-confidence TS keyword glue should be repaired before write acceptance."""
+
+        def _prettier_missing(*_args: object, **_kwargs: object) -> object:
+            raise FileNotFoundError
+
+        monkeypatch.setattr("subprocess.run", _prettier_missing)
+
+        code = (
+            "exportenumFireflyMood{BRIGHT}"
+            "exportclassFirefly{"
+            "publicmood:FireflyMood;"
+            "update(){constflowerMood=1;returnthis.mood}"
+            "}"
+        )
+        validator = MultiLanguageCodeValidator()
+        result = validator.validate(code, "firefly.ts")
+
+        assert result.is_valid is True
+        assert result.fixed_code is not None
+        assert "export enum FireflyMood" in result.fixed_code
+        assert "export class Firefly" in result.fixed_code
+        assert "public mood:FireflyMood" in result.fixed_code
+        assert "const flowerMood=1" in result.fixed_code
+        assert "return this.mood" in result.fixed_code
+
 
 class TestFormatValidationError:
     """Test error formatting."""
@@ -178,6 +204,28 @@ class TestFixCodeWithTool:
         # If ruff not found, fixes will be empty
         assert isinstance(fixed, str)
         assert isinstance(fixes, list)
+
+    def test_fix_code_with_tool_prettier_uses_stdin_filepath(self, monkeypatch: pytest.MonkeyPatch):
+        """Prettier must not resolve relative target files against the server cwd."""
+        from polaris.kernelone.tool_execution.code_validator import fix_code_with_tool
+
+        code = "const x=1\n"
+
+        class _Result:
+            stdout = "const x = 1;\n"
+
+        def _fake_run(args: list[str], **kwargs: object) -> _Result:
+            assert args == ["npx", "prettier", "--stdin-filepath", "src/main.ts"]
+            assert kwargs["input"] == code
+            assert "cwd" not in kwargs
+            return _Result()
+
+        monkeypatch.setattr("subprocess.run", _fake_run)
+
+        fixed, fixes = fix_code_with_tool(code, "src/main.ts")
+
+        assert fixed == "const x = 1;\n"
+        assert fixes
 
     def test_fix_code_with_tool_unknown_extension(self):
         """Test fix_code_with_tool handles unknown extensions."""

@@ -744,6 +744,29 @@ class _CapturingCompletedCommandService(_CompletedCommandService):
         )
 
 
+class _CapturingQaCommandService(_CompletedCommandService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.qa_calls: list[dict[str, object]] = []
+        self.validation_exists_at_qa = False
+
+    async def execute_qa_run(self, workspace: str, target: str, options: dict) -> CommandResult:
+        validation_path = Path(resolve_runtime_path(workspace, "runtime/qa/workspace-validation.json"))
+        self.validation_exists_at_qa = validation_path.is_file()
+        self.qa_calls.append(
+            {
+                "workspace": workspace,
+                "target": target,
+                "options": dict(options),
+            }
+        )
+        return CommandResult(
+            run_id="qa-run-captured",
+            status="running",
+            message="QA run started",
+        )
+
+
 class _NeverTerminalCommandService:
     def __init__(self) -> None:
         self.query_calls = 0
@@ -1891,11 +1914,50 @@ class TestOrchestrationStageExecutor:
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
 
         assert result.status == "success"
-        assert executor.commands_seen == [["npm", "test"], ["npm", "run", "build"]]
+        assert executor.commands_seen == [["npm", "run", "build"], ["npm", "test"]]
         assert "workspace_checks_passed=True" in str(result.output)
         assert "runtime/qa/workspace-validation.json" in result.artifacts
         assert f"workspace/roles/qa/{run.id}/workspace-validation.json" in result.artifacts
         assert "workspace/qa/latest.workspace-validation.json" in result.artifacts
+
+    @pytest.mark.asyncio
+    async def test_quality_gate_injects_workspace_evidence_before_qa_llm(self, temp_workspace):
+        command_service = _CapturingQaCommandService()
+        executor = _WorkspaceValidationStageExecutor(temp_workspace, command_service, exit_codes=[0])
+        run = FactoryRun(
+            id="factory_test_quality_gate_workspace_evidence",
+            config=FactoryConfig(name="test-run", stages=["quality_gate"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        (temp_workspace / "package.json").write_text(
+            json.dumps({"scripts": {"build": "tsc"}}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        report_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/qa/report.json"))
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps({"passed": True, "score": 92, "critical_issue_count": 0}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        result = await executor._execute_quality_gate(
+            run,
+            context={"qa_target": "Quality gate", "qa_input": "original qa context"},
+        )
+
+        assert result.status == "success"
+        assert command_service.validation_exists_at_qa is True
+        assert len(command_service.qa_calls) == 1
+        qa_input = str(command_service.qa_calls[0]["options"]["input"])
+        assert "original qa context" in qa_input
+        assert "Workspace quality evidence collected before QA judgement" in qa_input
+        assert "runtime/qa/workspace-validation.json" in qa_input
+        assert '"command": [' in qa_input
+        assert '"npm"' in qa_input
+        assert '"run"' in qa_input
+        assert '"build"' in qa_input
+        assert '"exit_code": 0' in qa_input
 
     @pytest.mark.asyncio
     async def test_quality_gate_installs_node_dependencies_before_scripts(self, temp_workspace):

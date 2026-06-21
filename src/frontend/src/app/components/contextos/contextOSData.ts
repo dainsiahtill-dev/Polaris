@@ -291,6 +291,28 @@ function safeNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+/**
+ * Safely convert any value to a displayable string.
+ * Prevents [object Object] from leaking into the UI.
+ * Objects are JSON-stringified; primitives are coerced; null/undefined become fallback.
+ */
+export function safeText(value: unknown, fallback = ''): string {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value);
+  if (typeof value === 'object') {
+    try {
+      const json = JSON.stringify(value);
+      if (json === '{}') return fallback;
+      if (json.length > 200) return json.slice(0, 197) + '...';
+      return json;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
 function formatTokens(value: number): string {
   if (value >= 1000) {
     return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k`;
@@ -423,8 +445,8 @@ function deriveDecisions(dialogueEvents: DialogueEvent[], executionLogs: LogEntr
   const rows: Array<{ row: DecisionRow; epoch: number }> = [];
 
   dialogueEvents.slice(-14).forEach((event, index) => {
-    const speaker = String(event.speaker || 'System');
-    const kind = String(event.type || event.refs?.phase || 'message');
+    const speaker = safeText(event.speaker, 'System');
+    const kind = safeText(event.type || event.refs?.phase, 'message');
     const tone: DecisionRow['tone'] = /error|fail/i.test(kind)
       ? 'error'
       : /warn|block/i.test(kind)
@@ -439,7 +461,7 @@ function deriveDecisions(dialogueEvents: DialogueEvent[], executionLogs: LogEntr
         time: formatClock(event.timestamp),
         actor: speaker,
         kind,
-        summary: String(event.content || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+        summary: safeText(event.content).replace(/\s+/g, ' ').trim().slice(0, 120),
         tone,
         source: 'dialogue',
       },
@@ -459,9 +481,9 @@ function deriveDecisions(dialogueEvents: DialogueEvent[], executionLogs: LogEntr
       row: {
         id: log.id || `log-${index}`,
         time: formatClock(log.timestamp),
-        actor: String(log.source || 'runtime'),
-        kind: String(log.level || 'info'),
-        summary: String(log.message || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+        actor: safeText(log.source, 'runtime'),
+        kind: safeText(log.level, 'info'),
+        summary: safeText(log.message).replace(/\s+/g, ' ').trim().slice(0, 120),
         tone,
         source: 'log',
       },
@@ -484,18 +506,18 @@ function telemetryDecisionTone(event: ContextOSEvent): DecisionRow['tone'] {
 }
 
 function telemetryDecisionKind(event: ContextOSEvent): string {
-  if (event.name) return event.name;
+  if (event.name) return safeText(event.name);
   if (event.isProjection) return 'projection';
-  return event.kind || 'observation';
+  return safeText(event.kind, 'observation');
 }
 
 function deriveTelemetryDecisions(telemetry: ContextOSTelemetry, limit = 12): DecisionRow[] {
   return telemetry.events.slice(0, limit).map((event) => ({
     id: event.id,
     time: formatClock(event.ts) || '--:--:--',
-    actor: event.actor,
+    actor: safeText(event.actor),
     kind: telemetryDecisionKind(event),
-    summary: event.summary || telemetryDecisionKind(event),
+    summary: safeText(event.summary) || telemetryDecisionKind(event),
     tone: telemetryDecisionTone(event),
     source: 'telemetry' as const,
     tokens: event.hasUsage ? event.totalTokens : undefined,

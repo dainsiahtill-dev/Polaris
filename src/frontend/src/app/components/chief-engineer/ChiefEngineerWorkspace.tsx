@@ -1408,8 +1408,8 @@ export function ChiefEngineerWorkspace({
   const chiefRuntimeActive = directorRunning || !['', 'idle', 'unknown', 'none'].includes(normalizeToken(currentPhase));
 
   return (
-    <div data-testid="chief-engineer-workspace" className="flex h-full flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/30 text-slate-100">
-      <header className="flex h-14 items-center justify-between border-b border-cyan-500/20 bg-slate-950/80 px-4">
+    <div data-testid="chief-engineer-workspace" className="soft-app-bg flex h-full flex-col overflow-hidden text-slate-100">
+      <header className="flex h-14 items-center justify-between border-b border-white/[0.06] bg-slate-950/80 px-4">
         <div className="flex items-center gap-4">
           <Button
             variant="ghost"
@@ -1422,12 +1422,12 @@ export function ChiefEngineerWorkspace({
             返回
           </Button>
           <div className="flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-500/15 text-cyan-200 ring-1 ring-cyan-400/30">
+            <div className="soft-raised flex h-8 w-8 items-center justify-center rounded-lg text-slate-300">
               <Brain className="h-4 w-4" />
             </div>
             <div>
-              <h1 className="text-sm font-semibold text-cyan-100">Chief Engineer</h1>
-              <p className="text-[10px] uppercase tracking-wider text-cyan-400/70">Blueprint Control Room</p>
+              <h1 className="text-sm font-semibold text-slate-100">Chief Engineer</h1>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400/70">Blueprint Control Room</p>
             </div>
           </div>
         </div>
@@ -1439,7 +1439,7 @@ export function ChiefEngineerWorkspace({
             data-testid="chief-engineer-toggle-workbench"
             className={cn(
               'text-slate-300 hover:bg-white/5 hover:text-white',
-              activeView === 'workbench' && 'bg-cyan-500/10 text-cyan-100',
+              activeView === 'workbench' && 'soft-raised text-slate-100',
             )}
           >
             <GitBranch className="mr-1.5 h-3.5 w-3.5" />
@@ -1454,7 +1454,7 @@ export function ChiefEngineerWorkspace({
             title={activeView === 'workbench' ? '工作台内置对话面板' : '切换对话面板'}
             className={cn(
               'text-slate-300 hover:bg-white/5 hover:text-white',
-              showAIDialogue && 'bg-cyan-500/10 text-cyan-100',
+              showAIDialogue && 'soft-raised text-slate-100',
             )}
           >
             <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
@@ -1478,7 +1478,7 @@ export function ChiefEngineerWorkspace({
             disabled={directorToggleBusy || startDirectorBlocked}
             title={directorControlBusyReason || startDirectorBlockedTitle}
             data-testid="chief-engineer-start-director"
-            className="border-cyan-500/30 text-cyan-200 hover:bg-cyan-500/10"
+            className="soft-chip text-slate-200 hover:bg-white/[0.06]"
           >
             {directorToggleBusy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1.5 h-3.5 w-3.5" />}
             {directorPrimaryActionLabel}
@@ -1497,13 +1497,13 @@ export function ChiefEngineerWorkspace({
       </header>
 
       <section
-        className="border-b border-cyan-500/15 bg-slate-950/75 px-4 py-2 text-xs text-slate-300"
+        className="border-b border-white/[0.06] bg-slate-950/75 px-4 py-2 text-xs text-slate-300"
         data-testid="chief-engineer-backend-strip"
       >
-        <details className="group rounded-lg border border-cyan-500/15 bg-slate-900/35 px-3 py-2">
+        <details className="soft-panel-subtle group rounded-lg px-3 py-2">
           <summary className="flex min-w-0 cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
-            <div className="flex shrink-0 items-center gap-2 font-medium text-cyan-100">
-              <ShieldCheck className="h-3.5 w-3.5 text-cyan-300" />
+            <div className="flex shrink-0 items-center gap-2 font-medium text-slate-200">
+              <ShieldCheck className="h-3.5 w-3.5 text-slate-400" />
               Chief Engineer 后端状态
             </div>
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -1533,11 +1533,11 @@ export function ChiefEngineerWorkspace({
               </span>
             </div>
             <span className="shrink-0 text-[10px] text-slate-500 group-open:hidden">展开证据</span>
-            <span className="hidden shrink-0 text-[10px] text-cyan-300 group-open:inline">收起证据</span>
+            <span className="hidden shrink-0 text-[10px] text-slate-300 group-open:inline">收起证据</span>
           </summary>
           <div className="mt-2 grid gap-2 border-t border-white/10 pt-2 lg:grid-cols-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="shrink-0 font-medium text-cyan-100">Capabilities</span>
+              <span className="shrink-0 font-medium text-slate-200">Capabilities</span>
               <EvidenceEndpointBadge
                 endpoint="/v2/roles/capabilities/chief_engineer?host_kind=electron_workbench"
                 testId="chief-engineer-capabilities-endpoint"
@@ -1553,7 +1553,7 @@ export function ChiefEngineerWorkspace({
               )}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="shrink-0 font-medium text-cyan-100">LLM events</span>
+              <span className="shrink-0 font-medium text-slate-200">LLM events</span>
               <EvidenceEndpointBadge
                 endpoint={evidenceEndpoint('/v2/chief-engineer/llm-events?limit=5', workspace)}
                 testId="chief-engineer-llm-events-endpoint"
@@ -1570,7 +1570,7 @@ export function ChiefEngineerWorkspace({
               )}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="shrink-0 font-medium text-cyan-100">Kernel cache</span>
+              <span className="shrink-0 font-medium text-slate-200">Kernel cache</span>
               <EvidenceEndpointBadge
                 endpoint="/v2/chief-engineer/cache-stats"
                 testId="chief-engineer-cache-endpoint"
@@ -1588,7 +1588,7 @@ export function ChiefEngineerWorkspace({
                 onClick={() => { void handleClearChiefKernelCache(); }}
                 disabled={chiefKernelCacheClearing}
                 data-testid="chief-engineer-kernel-cache-clear"
-                className="h-6 px-1.5 text-[10px] text-cyan-200 hover:bg-cyan-500/10 hover:text-cyan-100"
+                className="h-6 px-1.5 text-[10px] text-slate-300 hover:bg-white/[0.06] hover:text-slate-100"
               >
                 {chiefKernelCacheClearing ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
                 clear
@@ -1598,14 +1598,14 @@ export function ChiefEngineerWorkspace({
                   data-testid="chief-engineer-kernel-cache-clear-result"
                   data-endpoint="/v2/chief-engineer/cache-clear"
                   title="/v2/chief-engineer/cache-clear"
-                  className="truncate text-cyan-200"
+                  className="truncate text-slate-300"
                 >
                   {chiefKernelCacheClearStatus}
                 </span>
               ) : null}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <span className="shrink-0 font-medium text-cyan-100">Token budget</span>
+              <span className="shrink-0 font-medium text-slate-200">Token budget</span>
               <EvidenceEndpointBadge
                 endpoint="/v2/chief-engineer/token-budget-stats"
                 testId="chief-engineer-token-budget-endpoint"
@@ -1636,12 +1636,12 @@ export function ChiefEngineerWorkspace({
 
       {directorToggleStatusEvidence.triggered ? (
         <section
-          className="border-b border-cyan-500/15 bg-slate-950/70 px-4 py-2 text-xs text-slate-300"
+          className="border-b border-white/[0.06] bg-slate-950/70 px-4 py-2 text-xs text-slate-300"
           data-testid="chief-engineer-director-status-evidence"
         >
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
             <div className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 font-medium text-cyan-100">Director command</span>
+              <span className="shrink-0 font-medium text-slate-200">Director command</span>
               <EvidenceEndpointBadge
                 endpoint={RUNTIME_PUSH_ENDPOINT}
                 testId="chief-engineer-director-status-endpoint"
@@ -1662,7 +1662,7 @@ export function ChiefEngineerWorkspace({
 
       {activeView === 'workbench' ? (
         <main className="min-h-0 flex-1 overflow-hidden p-4">
-          <div className="h-full overflow-hidden rounded-lg border border-cyan-500/20 bg-slate-950/45">
+          <div className="h-full overflow-hidden rounded-lg border border-white/[0.06] bg-slate-950/45">
             <ChiefEngineerWorkbenchPanel
               workspace={workspace}
               taskCount={tasks.length}
@@ -1693,7 +1693,7 @@ export function ChiefEngineerWorkspace({
                   <p className="mt-1 text-[11px] text-amber-300">蓝图 API 暂不可用: {blueprintApiError}</p>
                 ) : null}
               </div>
-              <span data-testid="chief-engineer-status" className="rounded-md border border-cyan-500/25 bg-cyan-500/10 px-2 py-1 text-[10px] uppercase tracking-wider text-cyan-200">
+                <span data-testid="chief-engineer-status" className="soft-chip rounded-md px-2 py-1 text-[10px] uppercase tracking-wider text-slate-300">
                 {chiefStatus}
               </span>
             </div>
@@ -1712,10 +1712,10 @@ export function ChiefEngineerWorkspace({
               </div>
             ) : (
               blueprintEvidence.map((item) => (
-                <article key={`${item.taskId}-${item.blueprintId || item.blueprintPath}`} className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+                <article key={`${item.taskId}-${item.blueprintId || item.blueprintPath}`} className="soft-panel-subtle rounded-lg p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2 text-sm font-medium text-cyan-100">
+                      <div className="flex items-center gap-2 text-sm font-medium text-slate-100">
                         <FileText className="h-4 w-4 shrink-0" />
                         <span className="truncate">{item.taskTitle}</span>
                       </div>
@@ -1729,7 +1729,7 @@ export function ChiefEngineerWorkspace({
                           size="sm"
                           onClick={() => { void loadBlueprintDetail(item.blueprintId); }}
                           data-testid={`chief-engineer-blueprint-open-${item.blueprintId}`}
-                          className="h-6 px-2 text-[10px] text-cyan-200 hover:bg-cyan-500/10 hover:text-cyan-100"
+                          className="h-6 px-2 text-[10px] text-slate-300 hover:bg-white/[0.06] hover:text-slate-100"
                           title="读取 Chief Engineer 蓝图详情"
                         >
                           <FileCode className="mr-1 h-3 w-3" />
@@ -1762,7 +1762,7 @@ export function ChiefEngineerWorkspace({
                     </div>
                   ) : null}
                   <div
-                    className="mt-2 inline-flex rounded-md border border-white/10 bg-slate-950/55 px-2 py-1 text-[10px] text-cyan-200"
+                    className="mt-2 inline-flex rounded-md border border-white/10 bg-slate-950/55 px-2 py-1 text-[10px] text-slate-300"
                     data-testid="chief-engineer-blueprint-provenance"
                     title={`source: ${item.source}`}
                   >
@@ -1798,12 +1798,12 @@ export function ChiefEngineerWorkspace({
             ) : null}
 
             {blueprintCandidateTasks.length > 0 || bulkGenerateError || bulkGenerateEvidence || bulkGeneratingBlueprints ? (
-              <div data-testid="chief-engineer-blueprint-candidates" className="rounded-lg border border-cyan-500/20 bg-slate-950/45 p-3">
+              <div data-testid="chief-engineer-blueprint-candidates" className="soft-panel-subtle rounded-lg p-3">
                 <div className="mb-2 flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wider text-cyan-200">
+                  <div className="flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
                     <FilePlus className="h-3.5 w-3.5" />
                     待生成蓝图
-                    <span className="rounded border border-cyan-500/20 bg-cyan-500/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100">
+                    <span className="soft-chip rounded px-1.5 py-0.5 font-mono text-[10px] text-slate-200">
                       {missingBlueprintHandoffTasks.length}
                     </span>
                   </div>
@@ -1814,7 +1814,7 @@ export function ChiefEngineerWorkspace({
                     disabled={bulkGeneratingBlueprints || diagnosticsGenerateBlocked || missingBlueprintHandoffTasks.length === 0}
                     title={diagnosticsGenerateBlocked ? diagnosticsGenerateBlockReason : '为全部缺失任务批量生成 Chief Engineer 蓝图'}
                     data-testid="chief-engineer-blueprint-generate-all"
-                    className="h-7 shrink-0 px-2 text-[10px] text-cyan-200 hover:bg-cyan-500/10 hover:text-cyan-100 disabled:opacity-50"
+                    className="h-7 shrink-0 px-2 text-[10px] text-slate-300 hover:bg-white/[0.06] hover:text-slate-100 disabled:opacity-50"
                   >
                     {bulkGeneratingBlueprints ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <FilePlus className="mr-1 h-3 w-3" />}
                     补齐全部
@@ -1840,7 +1840,7 @@ export function ChiefEngineerWorkspace({
                               onClick={() => { void handleCheckBlueprintStatus(task); }}
                               disabled={Boolean(statusCheck?.loading)}
                               data-testid={`chief-engineer-blueprint-status-${taskId}`}
-                              className="h-7 px-2 text-[10px] text-slate-300 hover:bg-white/5 hover:text-cyan-100"
+                              className="h-7 px-2 text-[10px] text-slate-300 hover:bg-white/5 hover:text-slate-100"
                             >
                               {statusCheck?.loading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <CheckCircle2 className="mr-1 h-3 w-3" />}
                               状态
@@ -1852,7 +1852,7 @@ export function ChiefEngineerWorkspace({
                               disabled={generationDisabled}
                               title={diagnosticsGenerateBlocked ? diagnosticsGenerateBlockReason : undefined}
                               data-testid={`chief-engineer-blueprint-generate-${taskId}`}
-                              className="h-7 px-2 text-[10px] text-cyan-200 hover:bg-cyan-500/10 hover:text-cyan-100"
+                              className="h-7 px-2 text-[10px] text-slate-300 hover:bg-white/[0.06] hover:text-slate-100"
                             >
                               {isGenerating ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <FilePlus className="mr-1 h-3 w-3" />}
                               生成
@@ -1866,7 +1866,7 @@ export function ChiefEngineerWorkspace({
                               'mt-2 rounded-md border px-2 py-1.5 text-[11px]',
                               statusCheck.error
                                 ? 'border-red-500/25 bg-red-500/10 text-red-100'
-                                : 'border-cyan-500/20 bg-cyan-500/5 text-cyan-100',
+                                : 'border-white/[0.06] bg-white/[0.03] text-slate-200',
                             )}
                           >
                             <div className="mb-1 flex items-center">
@@ -1982,7 +1982,7 @@ export function ChiefEngineerWorkspace({
 
           <section
             data-testid="chief-engineer-runtime-activity"
-            className="h-[340px] min-h-[280px] overflow-hidden rounded-lg border border-cyan-500/20 bg-slate-950/60"
+            className="h-[340px] min-h-[280px] overflow-hidden rounded-lg border border-white/[0.06] bg-slate-950/60"
           >
             <RealtimeActivityPanel
               executionLogs={executionLogs}
@@ -1995,8 +1995,8 @@ export function ChiefEngineerWorkspace({
           </section>
 
           <section data-testid="chief-engineer-director-task-pool" className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
-            <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
-              <ShieldCheck className="h-3.5 w-3.5 text-cyan-300" />
+              <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
+                <ShieldCheck className="h-3.5 w-3.5 text-slate-400" />
               Director 任务池
             </h3>
             <div className="mb-2 flex items-center justify-between gap-2">
@@ -2014,7 +2014,7 @@ export function ChiefEngineerWorkspace({
               <Metric label="阻塞" value={stats.blocked} tone="amber" />
               <Metric label="报错" value={stats.failed} tone="red" />
               <Metric label="完成" value={stats.completed} tone="emerald" />
-              <Metric label="总计" value={stats.total} tone="cyan" />
+              <Metric label="总计" value={stats.total} tone="slate" />
             </div>
             {lastDirectorStatus ? (
               <div className="mt-3 rounded-md border border-white/10 bg-slate-950/50 px-2 py-2 text-xs text-slate-300">
@@ -2024,8 +2024,8 @@ export function ChiefEngineerWorkspace({
           </section>
 
           <section className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
-            <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
-              <FileCode className="h-3.5 w-3.5 text-cyan-300" />
+              <h3 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-300">
+                <FileCode className="h-3.5 w-3.5 text-slate-400" />
               蓝图详情
             </h3>
             {!selectedBlueprintId ? (
@@ -2033,7 +2033,7 @@ export function ChiefEngineerWorkspace({
                 选择左侧蓝图后，这里展示后端持久化的原始 blueprint payload。
               </div>
             ) : blueprintDetailLoading ? (
-              <div data-testid="chief-engineer-blueprint-detail-loading" className="flex items-center gap-2 rounded-md border border-cyan-500/20 bg-cyan-500/10 p-3 text-xs text-cyan-100">
+              <div data-testid="chief-engineer-blueprint-detail-loading" className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.03] p-3 text-xs text-slate-200">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 正在读取 {selectedBlueprintId}
               </div>
@@ -2042,9 +2042,9 @@ export function ChiefEngineerWorkspace({
                 {selectedBlueprintId}: {blueprintDetailError}
               </div>
             ) : blueprintDetail ? (
-              <div data-testid="chief-engineer-blueprint-detail" className="min-w-0 rounded-md border border-cyan-500/20 bg-slate-950/60">
+              <div data-testid="chief-engineer-blueprint-detail" className="min-w-0 rounded-md border border-white/[0.06] bg-slate-950/60">
                 <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2 text-[11px]">
-                  <span className="truncate font-mono text-cyan-100">{blueprintDetail.blueprint_id}</span>
+                  <span className="truncate font-mono text-slate-200">{blueprintDetail.blueprint_id}</span>
                   <span className="shrink-0 rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-400">
                     {blueprintDetail.source || 'runtime/blueprints'}
                   </span>
@@ -2085,9 +2085,9 @@ export function ChiefEngineerWorkspace({
                       <span className="truncate font-medium text-slate-200">{worker.name || worker.id}</span>
                       <span className={cn(
                         'rounded px-1.5 py-0.5 text-[10px]',
-                        worker.status === 'busy' ? 'bg-blue-500/15 text-blue-200' :
-                          worker.status === 'failed' ? 'bg-red-500/15 text-red-200' :
-                            'bg-emerald-500/15 text-emerald-200',
+                        worker.status === 'busy' ? 'bg-blue-500/[0.15] text-blue-200' :
+                          worker.status === 'failed' ? 'bg-red-500/[0.15] text-red-200' :
+                            'bg-emerald-500/[0.15] text-emerald-200',
                       )}>
                         {worker.status || 'unknown'}
                       </span>
@@ -2120,7 +2120,7 @@ export function ChiefEngineerWorkspace({
         {showAIDialogue ? (
           <section
             data-testid="chief-engineer-dialogue"
-            className="min-h-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-slate-950/45"
+            className="min-h-0 overflow-hidden rounded-lg border border-white/[0.06] bg-slate-950/45"
           >
             <AIDialoguePanel
               dialogueRole="chief_engineer"
@@ -2172,14 +2172,13 @@ function DiagnosticRow({ label, value, tone }: { label: string; value: string; t
   );
 }
 
-function Metric({ label, value, tone }: { label: string; value: number; tone: 'slate' | 'blue' | 'amber' | 'red' | 'emerald' | 'cyan' }) {
+function Metric({ label, value, tone }: { label: string; value: number; tone: 'slate' | 'blue' | 'amber' | 'red' | 'emerald' }) {
   const tones = {
-    slate: 'border-slate-500/20 bg-slate-500/10 text-slate-200',
+    slate: 'border-white/[0.08] bg-white/[0.04] text-slate-200',
     blue: 'border-blue-500/25 bg-blue-500/10 text-blue-200',
     amber: 'border-amber-500/25 bg-amber-500/10 text-amber-200',
     red: 'border-red-500/25 bg-red-500/10 text-red-200',
     emerald: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-200',
-    cyan: 'border-cyan-500/25 bg-cyan-500/10 text-cyan-200',
   } satisfies Record<typeof tone, string>;
   return (
     <div className={cn('rounded-md border px-2 py-2', tones[tone])}>

@@ -79,16 +79,16 @@ export function StatusBar({
       : '—';
 
   return (
-    <div className="fixed bottom-4 right-4 z-[60] flex items-center gap-3 px-3 py-1.5 rounded-full glass-bubble shadow-2xl border-white/10 animate-in fade-in slide-in-from-bottom-4 duration-500 hover:scale-105 transition-transform cursor-default">
+    <div className="fixed bottom-4 right-4 z-[60] flex items-center gap-3 px-3 py-1.5 rounded-full glass-bubble shadow-lg border-white/10 animate-in fade-in slide-in-from-bottom-4 duration-500 cursor-default">
       {/* 运行状态 */}
       <div className="flex items-center gap-2 pr-3 border-r border-white/10">
         <div className="flex items-center gap-1.5">
-          <div className={`w-2 h-2 rounded-full shadow-[0_0_8px_currentColor] ${pmRunning ? 'bg-status-success text-status-success animate-pulse' : 'bg-text-dim text-text-dim'}`} />
+          <div className={`w-2 h-2 rounded-full ${pmRunning ? 'bg-status-success text-status-success animate-pulse' : 'bg-text-dim text-text-dim'}`} />
           <span className="text-[10px] text-text-muted font-bold tracking-tight">PM</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <div className={`w-2 h-2 rounded-full shadow-[0_0_8px_currentColor] ${directorRunning ? 'bg-status-secondary text-status-secondary animate-pulse' : 'bg-text-dim text-text-dim'}`} />
-          <span className="text-[10px] text-text-muted font-bold tracking-tight">Chief Engineer</span>
+          <div className={`w-2 h-2 rounded-full ${directorRunning ? 'bg-status-info text-status-info animate-pulse' : 'bg-text-dim text-text-dim'}`} />
+          <span className="text-[10px] text-text-muted font-bold tracking-tight">Director</span>
         </div>
       </div>
 

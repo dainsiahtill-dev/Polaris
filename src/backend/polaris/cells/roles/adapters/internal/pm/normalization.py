@@ -41,6 +41,58 @@ from .pm_text_utils import (
 )
 
 
+def _directive_requires_typescript_package_contract(directive: str) -> bool:
+    text = str(directive or "")
+    lower = text.lower()
+    has_typescript = "typescript" in lower or "ts_syntax" in lower or ".ts" in lower
+    has_package_contract = (
+        "package.json" in lower
+        or "npm" in lower
+        or "build/test/start" in lower
+        or "build, test, and start" in lower
+        or "build/test" in lower
+    )
+    return has_typescript and has_package_contract
+
+
+def _pm_contract_target_files(contracts: list[dict[str, Any]]) -> list[str]:
+    targets: list[str] = []
+    for contract in contracts:
+        raw_targets = contract.get("target_files")
+        values = raw_targets if isinstance(raw_targets, list) else []
+        for value in values:
+            token = str(value or "").replace("\\", "/").strip().lstrip("./")
+            if token and token not in targets:
+                targets.append(token)
+    return targets
+
+
+def _pm_typescript_factory_contract_missing(contracts: list[dict[str, Any]], directive: str) -> list[str]:
+    if not _directive_requires_typescript_package_contract(directive):
+        return []
+
+    targets = _pm_contract_target_files(contracts)
+    lower_targets = {target.lower() for target in targets}
+    missing: list[str] = []
+    if len(contracts) < 3:
+        missing.append("task_count>=3")
+    for required in ("package.json", "tsconfig.json", "index.html", "README.md"):
+        if required.lower() not in lower_targets:
+            missing.append(required)
+    if not any(target.startswith("src/") and target.endswith((".ts", ".tsx")) for target in targets):
+        missing.append("src/**/*.ts")
+    if not any(target.startswith("src/models/") and target.endswith((".ts", ".tsx")) for target in targets):
+        missing.append("src/models/*.ts")
+    if "src/engine/renderer.ts" not in lower_targets and "src/core/renderer.ts" not in lower_targets:
+        missing.append("src/engine/renderer.ts")
+    if not any(
+        target.startswith("tests/") and target.endswith((".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx"))
+        for target in targets
+    ):
+        missing.append("tests/*.test.ts")
+    return missing
+
+
 class PMContractNormalizationMixin(_PMAdapterMixinBase):
     """PM 合同归一化 mixin：标题/路径/scope/projection 字段归一与结构化校验。"""
 
@@ -470,6 +522,8 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
     def _evaluate_contract_quality(
         self,
         contracts: list[dict[str, Any]],
+        *,
+        directive: str = "",
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         payload = {"tasks": [dict(item) for item in contracts if isinstance(item, dict)]}
         autofix_pm_contract_for_quality(
@@ -480,6 +534,22 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
         _raw_tasks = payload.get("tasks") if isinstance(payload, dict) else None
         tasks: list[dict[str, Any]] = _raw_tasks if isinstance(_raw_tasks, list) else []
         normalized = [item for item in tasks if isinstance(item, dict)]
+        missing_typescript_contract = _pm_typescript_factory_contract_missing(normalized, directive)
+        if missing_typescript_contract:
+            quality = dict(quality)
+            raw_critical = quality.get("critical_issues")
+            critical = list(raw_critical) if isinstance(raw_critical, list) else []
+            critical.append("factory_typescript_contract_missing:" + ",".join(missing_typescript_contract[:10]))
+            raw_warnings = quality.get("warnings")
+            warnings = list(raw_warnings) if isinstance(raw_warnings, list) else []
+            warnings.append("factory TypeScript/npm directive requires package, src, engine, test, and README targets")
+            quality["ok"] = False
+            quality["score"] = min(int(quality.get("score") or 0), 40)
+            quality["critical_issues"] = critical
+            quality["warnings"] = warnings
+            summary = str(quality.get("summary") or "").strip()
+            suffix = "factory_typescript_contract_missing=" + ",".join(missing_typescript_contract[:10])
+            quality["summary"] = f"{summary}; {suffix}" if summary else suffix
         return normalized, quality
 
     def _validate_task_contracts(self, task_contracts: list[dict[str, Any]]) -> ValidationResult:

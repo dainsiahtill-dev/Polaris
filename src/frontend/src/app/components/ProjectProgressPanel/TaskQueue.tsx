@@ -9,7 +9,7 @@ export const TaskQueue = memo(function TaskQueue({ queueItems }: TaskQueueProps)
     return (
         <div className="mt-4 border-t border-white/5 pt-3">
             <div className="flex items-center justify-between text-xs text-text-muted">
-                <span className="font-medium uppercase tracking-wide">PM Office → Director Task队列</span>
+                <span className="font-medium uppercase tracking-wide">PM Office → Chief Engineer → Director Task队列</span>
                 <span className="font-mono">{queueItems.length ? `${queueItems.length} 项` : '-'}</span>
             </div>
             <div className="mt-2 max-h-40 space-y-1 overflow-auto pr-1 custom-scrollbar">

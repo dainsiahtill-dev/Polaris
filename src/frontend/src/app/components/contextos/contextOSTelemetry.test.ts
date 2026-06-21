@@ -445,6 +445,39 @@ describe('buildTelemetryFromStream', () => {
     expect(event.callId).toBe('call-99');
   });
 
+  it('surfaces context snapshot degraded evidence without leaking objects', () => {
+    const entry = logEntry({
+      id: 'llm-ctx-degraded',
+      timestamp: '2026-06-19T10:00:01Z',
+      level: 'success',
+      source: 'Director',
+      message: 'llm response completed',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        promptTokens: 100,
+        completionTokens: 50,
+        totalTokens: 150,
+        context_snapshot_degraded: {
+          code: 'CONTEXT_STORE_WRITE_FAILED',
+          reason: 'context_snapshot_store_failure',
+          message: 'disk full',
+          exception_type: 'OSError',
+        },
+      },
+    });
+    const t = buildTelemetryFromStream([entry], [], []);
+    const event = t.events[0];
+    expect(event.contextSnapshotRef).toBeNull();
+    expect(event.contextSnapshotDegraded).toEqual({
+      code: 'CONTEXT_STORE_WRITE_FAILED',
+      reason: 'context_snapshot_store_failure',
+      message: 'disk full',
+      exceptionType: 'OSError',
+    });
+  });
+
   it('defaults contextSnapshotRef, promptHash, turnId, and callId to null when absent', () => {
     const entry = logEntry({
       id: 'llm-plain',
@@ -466,6 +499,7 @@ describe('buildTelemetryFromStream', () => {
     expect(event.promptHash).toBeNull();
     expect(event.turnId).toBeNull();
     expect(event.callId).toBeNull();
+    expect(event.contextSnapshotDegraded).toBeNull();
   });
 
   it('uses callId as the strongest dedupe key for repeated completion envelopes', () => {

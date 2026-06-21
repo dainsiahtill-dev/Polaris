@@ -3,6 +3,7 @@ import { BaseProviderSettings } from './BaseProviderSettings';
 import { devLogger } from '@/app/utils/devLogger';
 import { type ProviderConfig, type ProviderValidateFn } from '../types';
 import { RefreshCw, Check, AlertCircle } from 'lucide-react';
+import { cyberInputClasses } from '@/app/components/ui/cyber-input-classes';
 
 interface OllamaProviderSettingsProps {
   provider: ProviderConfig;
@@ -10,8 +11,8 @@ interface OllamaProviderSettingsProps {
   onValidate: ProviderValidateFn;
 }
 
-const cyberInputClasses = "flex h-9 w-full min-w-0 rounded-md border border-white/10 bg-[rgba(35,25,14,0.55)] px-3 py-1 text-sm text-slate-100 placeholder:text-slate-500 transition-all duration-200 outline-none focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/20 focus:bg-[rgba(35,25,14,0.75)] hover:border-violet-400/30 hover:bg-[rgba(35,25,14,0.7)] disabled:opacity-50 disabled:cursor-not-allowed";
-const cyberSelectClasses = "flex h-9 w-full min-w-0 rounded-md border border-white/10 bg-[rgba(35,25,14,0.55)] px-3 py-1 text-sm text-slate-100 transition-all duration-200 outline-none focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/20 focus:bg-black/60 hover:border-violet-400/30 hover:bg-black/50 cursor-pointer appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%2394a3b8%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E')] bg-[length:16px] bg-[right_8px_center] bg-no-repeat pr-10";
+const cyberSelectClasses =
+  "flex h-9 w-full min-w-0 rounded-md border border-border bg-[rgba(6,15,28,0.88)] px-3 py-1 text-sm text-text-main shadow-[inset_0_1px_0_rgba(178,245,255,0.14),inset_0_-1px_0_rgba(0,0,0,0.38)] transition-all duration-200 outline-none hover:border-accent/45 hover:bg-[rgba(10,25,44,0.92)] focus:border-accent/70 focus:bg-[rgba(10,25,44,0.96)] focus:ring-2 focus:ring-accent/25 cursor-pointer appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%2300d8ff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E')] bg-[length:16px] bg-[right_8px_center] bg-no-repeat pr-10";
 
 export function OllamaProviderSettings({
   provider,
@@ -140,14 +141,14 @@ export function OllamaProviderSettings({
         )}
 
         {/* Model Selection */}
-        <div className="bg-[rgba(35,25,14,0.3)] rounded-lg p-3 border border-white/5">
+        <div className="soft-panel-subtle rounded-lg p-3">
           <div className="flex items-center justify-between mb-2">
             <label className="text-xs font-semibold text-text-main">模型选择</label>
             <button
               type="button"
               onClick={fetchModels}
               disabled={isLoadingModels}
-              className="text-[10px] flex items-center gap-1 text-cyan-400 hover:text-cyan-300 disabled:opacity-50"
+              className="flex items-center gap-1 text-[10px] text-accent-text hover:text-accent disabled:opacity-50"
             >
               <RefreshCw className={`size-3 ${isLoadingModels ? 'animate-spin' : ''}`} />
               {isLoadingModels ? '扫描中...' : '刷新模型'}
@@ -175,11 +176,11 @@ export function OllamaProviderSettings({
                   data-testid="ollama-model-id-input"
                   value={provider.model || ''}
                   onChange={(e) => handleFieldChange('model', e.target.value)}
-                  className="flex h-9 w-full min-w-0 rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-1 text-sm text-slate-100 placeholder:text-slate-500 transition-all duration-200 outline-none focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/20 focus:bg-black/60 font-mono"
+                  className={`${cyberInputClasses} font-mono`}
                   placeholder="请输入模型名（如 llama3:8b）"
                   autoFocus
                 />
-                <p className="text-[9px] text-indigo-300 mt-1 flex items-center gap-1">
+                <p className="mt-1 flex items-center gap-1 text-[9px] text-accent-text">
                   <AlertCircle className="size-3" />
                   已启用手动输入，请确认该模型已在 Ollama 中拉取。
                 </p>

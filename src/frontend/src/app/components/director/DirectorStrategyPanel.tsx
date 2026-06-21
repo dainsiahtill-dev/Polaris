@@ -268,7 +268,7 @@ export function DirectorStrategyPanel({
       className="flex h-full flex-col overflow-hidden bg-[linear-gradient(165deg,rgba(15,23,42,0.98),rgba(30,27,75,0.70),rgba(8,15,31,0.98))]"
       data-testid="director-strategy-panel"
     >
-      <header className="flex min-h-16 items-center justify-between gap-4 border-b border-indigo-400/15 px-4 py-3">
+      <header className="flex min-h-16 items-center justify-between gap-4 border-b border-indigo-400/[0.15] px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-cyan-400/25 bg-cyan-500/10">
             <SlidersHorizontal className="h-4 w-4 text-cyan-200" />
@@ -401,7 +401,7 @@ function ViewTab({
       className={cn(
         'flex h-7 items-center gap-1.5 rounded border px-2 text-xs transition-colors',
         active
-          ? 'border-indigo-400/30 bg-indigo-500/15 text-indigo-100'
+          ? 'border-indigo-400/30 bg-indigo-500/[0.15] text-indigo-100'
           : 'border-white/10 bg-white/[0.03] text-slate-400 hover:bg-white/5 hover:text-slate-200',
       )}
     >

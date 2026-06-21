@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -334,7 +336,8 @@ def test_real_run_gate_ts_build_before_test_order(monkeypatch: Any, tmp_path: Pa
                     "build": "tsc",
                     "test": "node dist/index.js",
                     "start": "node dist/index.js",
-                }
+                },
+                "devDependencies": {"typescript": "^5.6.0"},
             }
         ),
         encoding="utf-8",
@@ -381,7 +384,8 @@ def test_real_run_gate_ts_build_failure_blocks_gate(monkeypatch: Any, tmp_path: 
                     "build": "tsc",
                     "test": "node dist/index.js",
                     "start": "node dist/index.js",
-                }
+                },
+                "devDependencies": {"typescript": "^5.6.0"},
             }
         ),
         encoding="utf-8",
@@ -460,7 +464,8 @@ def test_real_run_gate_build_failure_blocks_npm_start(monkeypatch: Any, tmp_path
                 "scripts": {
                     "build": "tsc",
                     "start": "node dist/index.js",
-                }
+                },
+                "devDependencies": {"typescript": "^5.6.0"},
             }
         ),
         encoding="utf-8",
@@ -1322,6 +1327,37 @@ def test_failure_taxonomy_classifies_generated_typescript_syntax_failure_as_llm_
     assert taxonomy["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
 
 
+def test_failure_taxonomy_classifies_missing_typescript_dependency_as_llm_output() -> None:
+    record = {
+        "all_checks_passed": False,
+        "factory_gates": [
+            {"gate": "real_run_gate", "ok": False, "detail": "real run gate failed: environment_prepared"},
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: environment_prepared, build_test_lint_ran",
+            "requirements": {
+                "artifact_landed": {"ok": True, "detail": "4 generated code file(s)"},
+                "environment_prepared": {
+                    "ok": False,
+                    "detail": "package.json missing devDependency 'typescript' for TypeScript build",
+                },
+                "build_test_lint_ran": {"ok": False, "detail": "no build/test/lint command was discovered"},
+            },
+        },
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain_state": "partial",
+        "checks": [],
+        "has_plan_doc": True,
+        "wrong_product_suspect": False,
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "llm_output"
+    assert taxonomy["root_cause_signature"] == "llm_output:real_run_gate.environment_prepared"
+
+
 def test_failure_taxonomy_classifies_missing_blueprint_as_chief_engineer_blueprint() -> None:
     record = {
         "all_checks_passed": False,
@@ -1859,6 +1895,37 @@ def test_real_run_gate_ts_project_with_scaffolding_passes(tmp_path: Path) -> Non
     assert scaffolding["ok"] is True
     assert "package.json present" in scaffolding["detail"]
     assert "tsconfig.json present" in scaffolding["detail"]
+
+
+def test_real_run_gate_ts_project_requires_local_typescript_dependency(monkeypatch: Any, tmp_path: Path) -> None:
+    """Package-managed TypeScript projects must not borrow host global tsc."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.ts").write_text(
+        "export const hello = () => 'world';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "test", "scripts": {"build": "tsc", "test": "npm run build"}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"outDir": "dist"}}),
+        encoding="utf-8",
+    )
+    record = {"code_files": ["src/index.ts", "package.json", "tsconfig.json"]}
+
+    def fail_if_run(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("npm scripts must not run when TypeScript dependency is missing")
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/npm" if name == "npm" else None)
+    monkeypatch.setattr(subprocess, "run", fail_if_run)
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    environment = gate["requirements"]["environment_prepared"]
+    assert environment["ok"] is False
+    assert "missing devDependency 'typescript'" in environment["detail"]
+    assert not any(command.get("phase") == "build_test_lint" for command in gate["commands"])
 
 
 def test_real_run_gate_html_project_without_index_fails(tmp_path: Path) -> None:

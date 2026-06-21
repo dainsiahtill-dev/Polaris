@@ -262,7 +262,7 @@ function TabNavigation({
   const showDetailedDiagnostics = activeTab === 'config' && hasBlock && blockedRoleDiagnostics.length > 0;
 
   return (
-    <div className={`rounded-xl border border-cyan-500/20 bg-[rgba(5,10,24,0.72)] px-3 shadow-[0_0_18px_rgba(34,211,238,0.12)] ${activeTab === 'deepTest' ? 'py-1.5' : 'py-2'}`}>
+    <div className={`soft-panel-subtle rounded-xl px-3 ${activeTab === 'deepTest' ? 'py-1.5' : 'py-2'}`}>
       <div className="flex min-w-0 flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           <button
@@ -270,8 +270,8 @@ function TabNavigation({
             onClick={() => switchTab('config')}
             className={`px-3 py-1.5 text-[10px] font-semibold rounded-md border transition-colors ${
               activeTab === 'config'
-                ? 'bg-cyan-500/20 text-cyan-100 border-cyan-400/40'
-                : 'text-text-dim border-white/10 hover:border-cyan-400/40 hover:text-cyan-100'
+                ? 'bg-accent/15 text-accent-text border-accent/45 shadow-[0_8px_20px_rgba(47,127,120,0.13)]'
+                : 'text-text-dim border-border hover:border-accent/35 hover:text-text-main hover:bg-white/70'
             }`}
           >
             配置
@@ -282,8 +282,8 @@ function TabNavigation({
             onClick={() => switchTab('deepTest')}
             className={`px-3 py-1.5 text-[10px] font-semibold rounded-md border transition-colors ${
               activeTab === 'deepTest'
-                ? 'bg-emerald-500/20 text-emerald-100 border-emerald-400/40'
-                : 'text-text-dim border-white/10 hover:border-emerald-400/40 hover:text-emerald-100'
+                ? 'bg-status-success/15 text-status-success border-status-success/45 shadow-[0_8px_20px_rgba(40,122,85,0.13)]'
+                : 'text-text-dim border-border hover:border-status-success/35 hover:text-status-success hover:bg-white/70'
             }`}
           >
             深测
@@ -292,23 +292,23 @@ function TabNavigation({
 
         <div data-testid="llm-readiness-summary" className="flex min-w-0 flex-wrap items-center justify-start gap-1.5 xl:justify-end">
           {!hasBlock ? (
-            <CheckCircle2 className="size-3.5 text-emerald-400" />
+            <CheckCircle2 className="size-3.5 text-status-success" />
           ) : (
-            <AlertTriangle className="size-3.5 text-yellow-400" />
+            <AlertTriangle className="size-3.5 text-status-warning" />
           )}
-          <span className="text-[10px] px-2 py-1 rounded-md border border-white/10 bg-black/40">
+          <span className="soft-chip px-2 py-1 text-[10px] text-text-main">
             {statusLabel}
           </span>
           {hasBlock ? (
-            <span className="min-w-0 max-w-full truncate rounded-md border border-amber-400/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-200" title={tipTitle}>
+            <span className="min-w-0 max-w-full truncate rounded-md border border-status-warning/40 bg-status-warning/10 px-2 py-1 text-[10px] text-status-warning" title={tipTitle}>
               {tipText}
             </span>
           ) : null}
         </div>
       </div>
       {showDetailedDiagnostics ? (
-        <div className="mt-2 max-h-24 overflow-y-auto rounded-lg border border-white/10 bg-black/25" data-testid="llm-readiness-diagnostics">
-          <div className="divide-y divide-white/10">
+        <div className="soft-inset mt-2 max-h-24 overflow-y-auto rounded-lg" data-testid="llm-readiness-diagnostics">
+          <div className="divide-y divide-border">
             {blockedRoleDiagnostics.map((detail) => (
               <div
                 key={detail.roleId}
@@ -317,23 +317,23 @@ function TabNavigation({
                 title={formatBlockedRoleTitle(detail)}
               >
                 <div className="flex min-w-0 items-center gap-2">
-                  <span className="rounded border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 font-semibold text-amber-200">
+                  <span className="rounded border border-status-warning/35 bg-status-warning/10 px-2 py-0.5 font-semibold text-status-warning">
                     {detail.roleLabel}
                   </span>
-                  <span className={`h-2 w-2 rounded-full ${detail.runtimeSupported ? 'bg-amber-300' : 'bg-red-400'}`} />
+                  <span className={`h-2 w-2 rounded-full ${detail.runtimeSupported ? 'bg-status-warning' : 'bg-status-error'}`} />
                 </div>
                 <div className="min-w-0 text-text-muted">
                   <div data-testid="llm-readiness-diagnostic-provider" className="break-words text-text-main">
-                    Provider: <span className="font-semibold text-cyan-100">{detail.providerName}</span>
+                    Provider: <span className="font-semibold text-text-main">{detail.providerName}</span>
                     {detail.providerId && detail.providerName !== detail.providerId ? (
                       <span className="ml-1 text-text-dim">({detail.providerId})</span>
                     ) : null}
                   </div>
                   <div data-testid="llm-readiness-diagnostic-model" className="break-words">
-                    Model: <span className="text-emerald-100">{detail.configuredModel}</span>
+                    Model: <span className="text-status-success">{detail.configuredModel}</span>
                   </div>
                 </div>
-                <div className="min-w-0 text-amber-100">
+                <div className="min-w-0 text-status-warning">
                   <div data-testid="llm-readiness-diagnostic-reason" className="break-words">原因: {detail.issueLabel}</div>
                   <div data-testid="llm-readiness-diagnostic-tested" className="break-words text-text-dim">
                     最近测试: {detail.testedProviderId || detail.testedModel
@@ -481,20 +481,20 @@ function DeepTestPanel({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 basis-0 flex-col gap-2 overflow-hidden">
-      <div className="rounded-xl border border-emerald-500/20 bg-[rgba(3,12,20,0.66)] px-3 py-2 shadow-[0_0_16px_rgba(16,185,129,0.10)]">
+      <div className="soft-panel-subtle rounded-xl px-3 py-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2 text-[10px] text-text-dim">
-            <span className="font-semibold text-emerald-100">深测</span>
+            <span className="font-semibold text-status-success">深测</span>
             <span className="truncate">{selectedMeta?.label || selectedRole} / {selectedProviderId || '未选择提供商'}</span>
           </div>
-          <div className="flex items-center gap-1 rounded-md border border-white/10 bg-black/40 p-0.5">
+          <div className="soft-inset flex items-center gap-1 rounded-md p-0.5">
             <button
               data-testid="llm-deep-mode-interactive"
               onClick={() => setInterviewMode('interactive')}
               className={`px-2.5 py-1 text-[10px] font-semibold rounded transition-colors ${
                 interviewMode === 'interactive'
-                  ? 'bg-emerald-500/20 text-emerald-200'
-                  : 'text-text-dim hover:text-emerald-100'
+                  ? 'bg-status-success/15 text-status-success'
+                  : 'text-text-dim hover:text-status-success'
               }`}
             >
               交互问答
@@ -507,8 +507,8 @@ function DeepTestPanel({
               }}
               className={`px-2.5 py-1 text-[10px] font-semibold rounded transition-colors ${
                 interviewMode === 'auto'
-                  ? 'bg-cyan-500/20 text-cyan-200'
-                  : 'text-text-dim hover:text-cyan-100'
+                  ? 'bg-accent/15 text-accent-text'
+                  : 'text-text-dim hover:text-text-main'
               }`}
             >
               自动巡检
@@ -814,19 +814,19 @@ function LLMSettingsTabInner({
         <div className="min-h-0 min-w-0 overflow-hidden">
           {activeTab === 'config' && (
             <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
-              <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/25 px-3 py-2">
+              <div className="soft-panel-subtle flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl px-3 py-2">
                 <div className="min-w-0">
                   <h3 className="text-xs font-semibold text-text-main">LLM 提供商配置</h3>
                   <p className="truncate text-[10px] text-text-dim">列表配置与角色-模型连线。</p>
                 </div>
-                <div className="flex items-center gap-1 rounded-md border border-cyan-500/20 bg-black/40 p-0.5">
+                <div className="soft-inset flex items-center gap-1 rounded-md p-0.5">
                   <button
                     onClick={() => setConfigView('list')}
                     data-testid="llm-config-view-list"
                     className={`px-2.5 py-1 text-[10px] font-semibold rounded transition-colors ${
                       configView === 'list'
-                        ? 'bg-cyan-500/20 text-cyan-200'
-                        : 'text-text-dim hover:text-cyan-100'
+                        ? 'bg-accent/15 text-accent-text'
+                        : 'text-text-dim hover:text-text-main'
                     }`}
                   >
                     列表
@@ -837,8 +837,8 @@ function LLMSettingsTabInner({
                     aria-label="视觉视图"
                     className={`px-2.5 py-1 text-[10px] font-semibold rounded transition-colors ${
                       configView === 'visual'
-                        ? 'bg-fuchsia-500/20 text-fuchsia-200'
-                        : 'text-text-dim hover:text-fuchsia-100'
+                        ? 'bg-accent/15 text-accent-text'
+                        : 'text-text-dim hover:text-text-main'
                     }`}
                   >
                     视觉视图
@@ -903,7 +903,7 @@ function LLMSettingsTabInner({
           <aside
             ref={setPanelHost}
             data-testid="llm-test-panel-host"
-            className="pointer-events-auto min-h-[280px] min-w-0 max-w-full overflow-hidden rounded-xl border border-cyan-500/20 bg-[rgba(2,6,23,0.62)] p-2 shadow-[0_0_18px_rgba(34,211,238,0.12)] xl:min-h-0"
+            className="soft-panel pointer-events-auto min-h-[280px] min-w-0 max-w-full overflow-hidden rounded-xl p-2 xl:min-h-0"
             aria-label="LLM 测试面板"
           />
         ) : null}

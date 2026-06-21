@@ -15,7 +15,7 @@ interface ThemeState {
   setTheme: (theme: Theme) => void;
 }
 
-const THEME_STORAGE_KEY = 'polaris:ui:theme';
+const THEME_STORAGE_KEY = 'polaris:ui:theme:game-hud-v1';
 
 const getSystemTheme = (): ResolvedTheme => {
   if (typeof window === 'undefined') return 'dark';

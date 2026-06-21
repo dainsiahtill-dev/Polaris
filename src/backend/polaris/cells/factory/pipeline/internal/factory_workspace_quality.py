@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,17 @@ from typing import Any
 
 from . import factory_stage_helpers as helpers
 from .factory_run_models import _WORKSPACE_VALIDATION_TIMEOUT_SECONDS
+
+_MASKED_WORKSPACE_FAILURE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"\berror\s+TS\d+\s*:", re.IGNORECASE),
+        "command exited 0 but output contains TypeScript compiler errors",
+    ),
+    (
+        re.compile(r"\bTypeScript check skipped\b", re.IGNORECASE),
+        "command exited 0 but output reports TypeScript check skipped",
+    ),
+)
 
 
 class WorkspaceQualityRunner:
@@ -111,10 +123,10 @@ class WorkspaceQualityRunner:
 
         scripts = self.load_package_scripts()
         commands = []
-        if "test" in scripts:
-            commands.append(["npm", "test"])
         if "build" in scripts:
             commands.append(["npm", "run", "build"])
+        if "test" in scripts:
+            commands.append(["npm", "test"])
         return commands
 
     def run_command(self, command: list[str], timeout_seconds: float) -> dict[str, Any]:
@@ -146,15 +158,21 @@ class WorkspaceQualityRunner:
             )
             stdout = helpers.trim_command_output(completed.stdout)
             stderr = helpers.trim_command_output(completed.stderr)
-            return {
+            masked_failure_reason = ""
+            if int(completed.returncode) == 0:
+                masked_failure_reason = _masked_workspace_failure_reason(stdout, stderr)
+            result: dict[str, Any] = {
                 "command": command,
                 "started_at": started_at,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "exit_code": int(completed.returncode),
-                "passed": int(completed.returncode) == 0,
+                "passed": int(completed.returncode) == 0 and not masked_failure_reason,
                 "stdout_tail": stdout,
                 "stderr_tail": stderr,
             }
+            if masked_failure_reason:
+                result["error"] = masked_failure_reason
+            return result
         except subprocess.TimeoutExpired as exc:
             return {
                 "command": command,
@@ -177,3 +195,11 @@ class WorkspaceQualityRunner:
                 "stdout_tail": "",
                 "stderr_tail": "",
             }
+
+
+def _masked_workspace_failure_reason(stdout: str, stderr: str) -> str:
+    output = f"{stdout}\n{stderr}"
+    for pattern, reason in _MASKED_WORKSPACE_FAILURE_PATTERNS:
+        if pattern.search(output):
+            return reason
+    return ""

@@ -114,10 +114,10 @@ interface InterviewHallV2Props {
 type InterviewHallProps = InterviewHallLegacyProps | InterviewHallV2Props;
 
 const ROLE_BADGES: Record<string, string> = {
-  pm: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30',
-  director: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30',
-  qa: 'bg-blue-500/20 text-blue-200 border-blue-500/30',
-  architect: 'bg-amber-500/20 text-amber-200 border-amber-500/30'
+  pm: 'bg-white/[0.08] text-text-main border-white/[0.12]',
+  director: 'bg-emerald-500/[0.15] text-emerald-200 border-emerald-500/25',
+  qa: 'bg-blue-500/[0.15] text-blue-200 border-blue-500/25',
+  architect: 'bg-amber-500/[0.15] text-amber-200 border-amber-500/25'
 };
 
 const STATUS_STYLES: Record<string, { border: string; bg: string; dot: string; text: string }> = {
@@ -134,15 +134,15 @@ const STATUS_STYLES: Record<string, { border: string; bg: string; dot: string; t
     text: 'text-rose-300'
   },
   testing: {
-    border: 'border-cyan-500/40',
-    bg: 'bg-cyan-500/10',
-    dot: 'bg-cyan-300',
-    text: 'text-cyan-200'
+    border: 'border-amber-500/30',
+    bg: 'bg-amber-500/10',
+    dot: 'bg-amber-300',
+    text: 'text-amber-200'
   },
   untested: {
     border: 'border-white/10',
     bg: 'bg-white/5',
-    dot: 'bg-white/40',
+    dot: 'bg-white/[0.04]0',
     text: 'text-text-dim'
   }
 };
@@ -201,7 +201,7 @@ function InterviewHallLegacy({
                 onClick={() => onSelectRole(role.id)}
                 className={`w-full text-left rounded-xl border p-4 transition-all ${
                   isActive
-                    ? 'border-cyan-400/60 bg-cyan-500/10'
+                    ? 'soft-raised border-white/[0.15]'
                     : 'border-white/10 bg-white/5 hover:border-white/20'
                 }`}
               >
@@ -276,7 +276,7 @@ function InterviewHallLegacy({
               <button
                 onClick={onStartInterview}
                 disabled={!!disabledReason || running}
-                className="px-3 py-2 text-[11px] font-semibold bg-emerald-500/80 hover:bg-emerald-500 text-white rounded transition-colors disabled:opacity-60 flex items-center gap-1"
+                className="px-3 py-2 text-[11px] font-semibold bg-emerald-500/[0.08]0 hover:bg-emerald-500 text-white rounded transition-colors disabled:opacity-60 flex items-center gap-1"
               >
                 <PlayCircle className="size-3" />
                 {running ? '面试进行中...' : '开始面试'}
@@ -284,7 +284,7 @@ function InterviewHallLegacy({
               {onRunReadiness ? (
                 <button
                   onClick={onRunReadiness}
-                  className="px-3 py-2 text-[11px] border border-white/10 rounded hover:border-cyan-400/40"
+                  className="px-3 py-2 text-[11px] soft-chip rounded hover:border-white/20"
                 >
                   快速筛检
                 </button>
@@ -391,7 +391,7 @@ function InterviewHallV2({
                 onClick={() => onSelectRole(role.id)}
                 className={`w-full text-left rounded-xl border p-4 transition-all ${
                   isActive
-                    ? 'border-cyan-400/60 bg-cyan-500/10'
+                    ? 'soft-raised border-white/[0.15]'
                     : 'border-white/10 bg-white/5 hover:border-white/20'
                 }`}
               >
@@ -456,7 +456,7 @@ function InterviewHallV2({
                                   e.stopPropagation();
                                   setInspectingProvider(provider);
                                 }}
-                                className="text-text-dim hover:text-cyan-200 transition-colors"
+                                className="text-text-dim hover:text-text-main transition-colors"
                               >
                                 <Info className="size-3" />
                               </button>
@@ -522,7 +522,7 @@ function InterviewHallV2({
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-text-dim">连通性测试</span>
                 {connectivityRunning ? (
-                  <span className="flex items-center gap-1 text-cyan-200"><Loader2 className="size-3 animate-spin" />运行中</span>
+                  <span className="flex items-center gap-1 text-amber-200"><Loader2 className="size-3 animate-spin" />运行中</span>
                 ) : (
                   <span className={connectivityColor}>
                     {connectivityLabel}
@@ -567,7 +567,7 @@ function InterviewHallV2({
                   }
                 }}
                 disabled={!canRunConnectivity || connectivityRunning}
-                className="px-3 py-2 text-[11px] font-semibold bg-cyan-500/80 hover:bg-cyan-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1"
+                className="px-3 py-2 text-[11px] font-semibold bg-white/[0.12] hover:bg-white/[0.16] text-text-main rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1"
               >
                 <Cpu className="size-3" />
                 {connectivityRunning ? '连通性测试中...' : '连通性测试'}
@@ -584,7 +584,7 @@ function InterviewHallV2({
                   }
                 }}
                 disabled={!canRunInterview || interviewRunning}
-                className="px-3 py-2 text-[11px] font-semibold bg-emerald-500/80 hover:bg-emerald-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1"
+                className="px-3 py-2 text-[11px] font-semibold bg-emerald-500/[0.08]0 hover:bg-emerald-500 text-white rounded transition-colors disabled:opacity-60 flex items-center justify-center gap-1"
               >
                 <Zap className="size-3" />
                 {interviewRunning ? '面试进行中...' : '深度面试'}

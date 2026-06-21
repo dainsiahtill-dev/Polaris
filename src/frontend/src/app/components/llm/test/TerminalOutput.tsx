@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import type { TestEvent, TestEventType } from './types';
 
 const EVENT_STYLES: Record<TestEventType, { prefix: string; className: string }> = {
-  command: { prefix: '$', className: 'text-blue-400' },
-  stdout: { prefix: '>', className: 'text-green-400' },
-  stderr: { prefix: '!', className: 'text-yellow-400' },
-  response: { prefix: '<', className: 'text-cyan-400' },
-  result: { prefix: '✓', className: 'text-emerald-400' },
-  error: { prefix: '✗', className: 'text-red-400' }
+  command: { prefix: '$', className: 'text-accent-text' },
+  stdout: { prefix: '>', className: 'text-status-success' },
+  stderr: { prefix: '!', className: 'text-status-warning' },
+  response: { prefix: '<', className: 'text-accent-text' },
+  result: { prefix: '✓', className: 'text-status-success' },
+  error: { prefix: '✗', className: 'text-status-error' }
 };
 
 interface TerminalOutputProps {
@@ -57,10 +57,10 @@ export function TerminalOutput({
       ) : null}
       <div
         ref={outputRef}
-        className={`bg-black/70 text-green-200 font-mono text-[11px] p-3 rounded-lg border border-white/10 ${heightClassName} overflow-y-auto`}
+        className={`soft-inset rounded-lg p-3 font-mono text-[11px] text-text-main ${heightClassName} overflow-y-auto`}
       >
         {events.length === 0 ? (
-          <div className="text-gray-500">
+          <div className="text-text-dim">
             {placeholder || '$ 准备就绪，点击"测试"按钮开始...'}
           </div>
         ) : (
@@ -68,7 +68,7 @@ export function TerminalOutput({
             const style = EVENT_STYLES[event.type];
             return (
               <div key={`${event.timestamp}-${index}`} className="mb-1 whitespace-pre-wrap break-words">
-                <span className="text-gray-500">[{new Date(event.timestamp).toLocaleTimeString()}]</span>{' '}
+                <span className="text-text-dim">[{new Date(event.timestamp).toLocaleTimeString()}]</span>{' '}
                 <span className={style.className}>
                   {style.prefix} {event.content}
                 </span>

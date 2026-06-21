@@ -78,13 +78,13 @@ export function MemoryPanel({ content, mtime, loading, error, collapsed, onToggl
   };
 
   return (
-    <div className="h-full bg-[var(--ink-indigo)] border-l border-gray-800 flex flex-col">
-      <div className="px-4 py-3 border-b border-gray-800 bg-[#252526] flex items-center justify-between">
+    <div className="soft-panel-subtle h-full flex flex-col">
+      <div className="soft-panel-subtle px-4 py-3 border-b flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Database className="size-4 text-blue-400" />
-          <h2 className="text-sm font-semibold text-gray-300">记忆</h2>
+          <Database className="size-4 text-accent" />
+          <h2 className="text-sm font-semibold text-text-main">记忆</h2>
         </div>
-        <div className="flex items-center gap-3 text-xs text-gray-500">
+        <div className="flex items-center gap-3 text-xs text-text-dim">
           <div className="flex items-center gap-1">
             <Clock className="size-3" />
             <span>{mtime || '-'}</span>
@@ -93,7 +93,7 @@ export function MemoryPanel({ content, mtime, loading, error, collapsed, onToggl
             <button
               type="button"
               onClick={() => setShowRaw((prev) => !prev)}
-              className="rounded px-2 py-1 text-[11px] text-gray-400 hover:bg-white/5"
+              className="rounded px-2 py-1 text-[11px] text-text-muted hover:bg-white/70"
               aria-label={showRaw ? '隐藏原始 JSON' : '显示原始 JSON'}
             >
               {showRaw ? '隐藏原始' : '显示原始'}
@@ -106,58 +106,58 @@ export function MemoryPanel({ content, mtime, loading, error, collapsed, onToggl
       {collapsed ? null : (
         <div className="flex-1 overflow-auto">
           {error ? (
-            <div className="p-4 text-sm text-red-300 flex items-center gap-2">
+            <div className="p-4 text-sm text-status-error flex items-center gap-2">
               <AlertCircle className="size-4" />
               <span>{error}</span>
             </div>
           ) : null}
           {loading ? (
-            <div className="p-4 text-sm text-gray-300">加载中...</div>
+            <div className="p-4 text-sm text-text-muted">加载中...</div>
           ) : (
             <div className="p-3 space-y-3">
               {parsed ? (
                 <>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded border border-gray-800 bg-[#151515] p-3">
-                      <div className="flex items-center gap-2 text-xs text-gray-400">
+                    <div className="soft-panel rounded p-3">
+                      <div className="flex items-center gap-2 text-xs text-text-muted">
                         {statusOk ? (
-                          <CheckCircle className="size-4 text-green-400" />
+                          <CheckCircle className="size-4 text-status-success" />
                         ) : (
-                          <XCircle className="size-4 text-red-400" />
+                          <XCircle className="size-4 text-status-error" />
                         )}
-                        <span className={`rounded px-2 py-0.5 text-[10px] ${statusOk ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
+                        <span className={`rounded px-2 py-0.5 text-[10px] ${statusOk ? 'bg-emerald-500/15 text-status-success' : 'bg-red-500/15 text-status-error'}`}>
                           {statusOk ? '通过' : '失败'}
                         </span>
                         {lastRunAt ? (
-                          <span className="ml-2 flex items-center gap-1 text-gray-400">
+                          <span className="ml-2 flex items-center gap-1 text-text-muted">
                             <Clock className="size-3" />
                             {lastRunAt}
                           </span>
                         ) : null}
                       </div>
-                      <div className="mt-2 text-xs text-gray-300">
+                      <div className="mt-2 text-xs text-text-main">
                         {typeof lastRoundIndex === 'number' || typeof lastTargetIndex === 'number' ? (
                           <div className="flex items-center gap-2">
-                            <Target className="size-3.5 text-blue-400" />
+                            <Target className="size-3.5 text-accent" />
                             <span>轮次: {lastRoundIndex ?? '-'} / 目标序号: {lastTargetIndex ?? '-'}</span>
                           </div>
                         ) : null}
-                        {lastTarget ? <div className="mt-1 text-gray-400">目标：{lastTarget}</div> : null}
+                        {lastTarget ? <div className="mt-1 text-text-muted">目标：{lastTarget}</div> : null}
                       </div>
                     </div>
 
-                    <div className="rounded border border-gray-800 bg-[#151515] p-3">
-                      <div className="flex items-center gap-2 text-xs text-gray-400">
-                        <ListChecks className="size-4 text-yellow-300" />
+                    <div className="soft-panel rounded p-3">
+                      <div className="flex items-center gap-2 text-xs text-text-muted">
+                        <ListChecks className="size-4 text-gold" />
                         <span>摘要与下一步</span>
                       </div>
                       <div className="mt-2 space-y-1">
-                        <div className="text-xs text-gray-300">
-                          <span className="text-gray-500">摘要：</span>
+                        <div className="text-xs text-text-main">
+                          <span className="text-text-muted">摘要：</span>
                           {lastSummary || '(无)'}
                         </div>
-                        <div className="text-xs text-gray-300">
-                          <span className="text-gray-500">下一步：</span>
+                        <div className="text-xs text-text-main">
+                          <span className="text-text-muted">下一步：</span>
                           {lastNext || '(无)'}
                         </div>
                       </div>
@@ -165,30 +165,30 @@ export function MemoryPanel({ content, mtime, loading, error, collapsed, onToggl
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="rounded border border-gray-800 bg-[#151515] p-3">
-                      <div className="flex items-center gap-2 text-xs text-gray-400">
-                        <FileText className="size-4 text-blue-300" />
+                    <div className="soft-panel rounded p-3">
+                      <div className="flex items-center gap-2 text-xs text-text-muted">
+                        <FileText className="size-4 text-accent" />
                         <span>关联文件</span>
                       </div>
-                      <div className="mt-2 space-y-1 text-[11px] text-gray-400">
+                      <div className="mt-2 space-y-1 text-[11px] text-text-muted">
                         {lastLogPath ? <div>日志：{lastLogPath}</div> : null}
                         {lastRespPath ? <div>响应：{lastRespPath}</div> : null}
                       </div>
                     </div>
-                    <div className="rounded border border-gray-800 bg-[#151515] p-3">
-                      <div className="flex items-center gap-2 text-xs text-gray-400">
-                        <AlertCircle className="size-4 text-orange-300" />
+                    <div className="soft-panel rounded p-3">
+                      <div className="flex items-center gap-2 text-xs text-text-muted">
+                        <AlertCircle className="size-4 text-gold" />
                         <span>缺口复盘</span>
                       </div>
-                      <div className="mt-2 space-y-1 text-[11px] text-gray-400">
-                        {gapAt ? <div>时间：{gapAt}</div> : <div className="text-gray-500">(未记录)</div>}
+                      <div className="mt-2 space-y-1 text-[11px] text-text-muted">
+                        {gapAt ? <div>时间：{gapAt}</div> : <div className="text-text-dim">(未记录)</div>}
                         {gapPath ? <div>报告：{gapPath}</div> : null}
                       </div>
                     </div>
                   </div>
 
                   {lastError ? (
-                    <div className="rounded border border-red-800 bg-red-900/20 p-3 text-xs text-red-300">
+                    <div className="rounded border border-red-500/20 bg-red-500/10 p-3 text-xs text-status-error">
                       <div className="flex items-center gap-2">
                         <XCircle className="size-4" />
                         <span>错误</span>
@@ -198,9 +198,9 @@ export function MemoryPanel({ content, mtime, loading, error, collapsed, onToggl
                   ) : null}
 
                   {otherEntries.length > 0 ? (
-                    <div className="rounded border border-gray-800 bg-[#151515] p-3">
-                      <div className="flex items-center gap-2 text-xs text-gray-400">
-                        <ListChecks className="size-4 text-blue-300" />
+                    <div className="soft-panel rounded p-3">
+                      <div className="flex items-center gap-2 text-xs text-text-muted">
+                        <ListChecks className="size-4 text-accent" />
                         <span>其他字段</span>
                       </div>
                       <div className="mt-2 space-y-2">
@@ -208,22 +208,22 @@ export function MemoryPanel({ content, mtime, loading, error, collapsed, onToggl
                           const complex = isComplex(value);
                           const open = !!expanded[key];
                           return (
-                            <div key={key} className="rounded border border-gray-800 bg-[#101010] p-2">
+                            <div key={key} className="soft-inset rounded p-2">
                               <div className="flex items-center justify-between">
-                                <div className="text-[11px] text-gray-400">{key}</div>
+                                <div className="text-[11px] text-text-muted">{key}</div>
                                 {complex ? (
                                   <button
                                     type="button"
                                     onClick={() => toggleKey(key)}
-                                    className="rounded px-2 py-0.5 text-[10px] text-gray-400 hover:bg-white/5"
+                                    className="rounded px-2 py-0.5 text-[10px] text-text-muted hover:bg-white/70"
                                   >
                                     {open ? '收起' : '展开'}
                                   </button>
                                 ) : null}
                               </div>
-                              <div className="mt-1 text-xs text-gray-300">{brief(value)}</div>
+                              <div className="mt-1 text-xs text-text-main">{brief(value)}</div>
                               {complex && open ? (
-                                <pre className="mt-2 rounded border border-gray-800 bg-[#0f0f0f] p-2 text-[11px] text-gray-300 font-mono leading-relaxed whitespace-pre-wrap">
+                                <pre className="soft-inset mt-2 rounded p-2 text-[11px] text-text-main font-mono leading-relaxed whitespace-pre-wrap">
                                   <code>{(() => {
                                     try {
                                       return JSON.stringify(value, null, 2);
@@ -241,13 +241,13 @@ export function MemoryPanel({ content, mtime, loading, error, collapsed, onToggl
                   ) : null}
                 </>
               ) : (
-                <div className="rounded border border-gray-800 bg-[#151515] p-3 text-xs text-gray-400">
+                <div className="soft-panel rounded p-3 text-xs text-text-muted">
                   (无可解析的内存快照)
                 </div>
               )}
 
               {showRaw ? (
-                <pre className="rounded border border-gray-800 bg-[#0f0f0f] p-3 text-[11px] text-gray-300 font-mono leading-relaxed whitespace-pre-wrap">
+                <pre className="soft-inset rounded p-3 text-[11px] text-text-main font-mono leading-relaxed whitespace-pre-wrap">
                   <code>{content || '(空)'}</code>
                 </pre>
               ) : null}

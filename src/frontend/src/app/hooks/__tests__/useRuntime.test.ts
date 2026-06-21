@@ -457,6 +457,12 @@ describe('useRuntime llm filtering and dedup', () => {
             metadata: {
               elapsed_ms: 2500,
               context_snapshot_ref: 'ctx-provider-usage',
+              context_snapshot_degraded: {
+                code: 'CONTEXT_STORE_WRITE_FAILED',
+                reason: 'context_snapshot_store_failure',
+                message: 'disk full',
+                exception_type: 'OSError',
+              },
             },
           },
         },
@@ -470,11 +476,18 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(entry?.meta?.totalTokens).toBe(3666);
     expect(entry?.meta?.contextTokens).toBe(4096);
     expect(entry?.meta?.callId).toBe('provider-usage-1');
+    expect(entry?.meta?.contextSnapshotDegraded).toEqual({
+      code: 'CONTEXT_STORE_WRITE_FAILED',
+      reason: 'context_snapshot_store_failure',
+      message: 'disk full',
+      exception_type: 'OSError',
+    });
 
     const telemetry = buildTelemetryFromStream(result.current.llmStreamEvents, [], []);
     expect(telemetry.totalTokens).toBe(3666);
     expect(telemetry.contextTokensLatest).toBe(4096);
     expect(telemetryRoleTokens(telemetry, 'director')).toBe(3666);
+    expect(telemetry.events[0].contextSnapshotDegraded?.reason).toBe('context_snapshot_store_failure');
   });
 
   it('uses llm_completed response_content when no separate content preview is emitted', () => {

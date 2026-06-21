@@ -179,21 +179,21 @@ function GateItem({ gate }: { gate: QualityGate }) {
       bg: 'bg-emerald-500/5',
       icon: 'text-emerald-400',
       badge: 'bg-emerald-500/20 text-emerald-300',
-      glow: 'shadow-[0_0_12px_rgba(52,211,153,0.2)]',
+      glow: '',
     },
     yellow: {
       border: 'border-amber-500/30',
       bg: 'bg-amber-500/5',
       icon: 'text-amber-400',
       badge: 'bg-amber-500/20 text-amber-300',
-      glow: 'shadow-[0_0_12px_rgba(251,191,36,0.2)]',
+      glow: '',
     },
     red: {
       border: 'border-red-500/30',
       bg: 'bg-red-500/5',
       icon: 'text-red-400',
       badge: 'bg-red-500/20 text-red-300',
-      glow: 'shadow-[0_0_12px_rgba(248,113,113,0.2)]',
+      glow: '',
     },
     pending: {
       border: 'border-slate-600/30',
@@ -207,7 +207,7 @@ function GateItem({ gate }: { gate: QualityGate }) {
   const style = statusStyles[gate.status];
   
   return (
-    <div className={cn('rounded-xl border p-4', style.border, style.bg, style.glow)}>
+    <div className={cn('rounded-xl border p-4', style.border, style.bg)}>
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2">
           <div className={cn('rounded-lg p-1.5', style.icon)}>
@@ -278,8 +278,8 @@ export function QualityGatePanel() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <div className="h-4 w-0.5 rounded-full bg-gradient-to-b from-amber-400/60 to-cyan-400/60" />
-        <h2 className="text-xs font-bold tracking-[0.2em] text-amber-200/80">
+        <div className="h-4 w-0.5 rounded-full soft-divider" />
+        <h2 className="text-xs font-bold tracking-[0.2em] text-slate-300/80">
           质 量 门 禁
         </h2>
         

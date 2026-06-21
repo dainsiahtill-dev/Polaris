@@ -97,6 +97,12 @@ _TS_COMMA_EXPECTED_TSC_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 
+_TS_MISSING_CLOSING_BRACE_ERROR_RE = re.compile(
+    r"(?P<path>[^\s:(]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*"
+    r"error\s+TS1005:\s*['\"]?\}['\"]?\s+expected",
+    re.IGNORECASE,
+)
+
 _TS_ESCAPED_NEWLINE_IN_LINE_COMMENT_ERROR_RE = re.compile(
     r"TypeScript escaped newline in line comment before code in (?P<path>\S+)",
     re.IGNORECASE,
@@ -195,6 +201,7 @@ def _parse_materialization_quality_error_paths(artifact_quality_errors: list[str
             _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE,
             _DECLARED_TARGET_FILE_MISSING_ERROR_RE,
             _TS_RETURN_OBJECT_SEMICOLON_ERROR_RE,
+            _TS_MISSING_CLOSING_BRACE_ERROR_RE,
             _TS_ESCAPED_NEWLINE_IN_LINE_COMMENT_ERROR_RE,
             _TS_ZOD_TYPE_CLASS_COLLISION_ERROR_RE,
             _TS_NODE_BUILTIN_TYPES_ERROR_RE,

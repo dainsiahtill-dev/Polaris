@@ -5,54 +5,74 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 殿阁朱墨卷轴风 - Ancient Chinese Scroll Style
+        // Polaris game HUD brand system: void glass, tactical metal, precise cyan focus.
         bg: {
-          DEFAULT: "#0a0a0a", // 墨黑 - Ink Black
-          panel: "#141414", // 面板深色
-          surface: "#1a1a1a", // 表面
-          highlight: "#252525", // 高亮
-          secondary: "#0f0f0f", // 次级
-          tertiary: "#1c1c1c", // 三级
+          DEFAULT: "#070b14",
+          panel: "rgba(9, 18, 32, 0.88)",
+          surface: "#0d1a2b",
+          highlight: "#132744",
+          secondary: "#102033",
+          tertiary: "#17375c",
         },
         border: {
-          DEFAULT: "rgba(180, 160, 140, 0.15)", // 边框 - 古风米色调
-          glow: "rgba(200, 80, 60, 0.3)", // 朱砂红 glow
+          DEFAULT: "rgba(90, 217, 255, 0.24)",
+          glow: "rgba(0, 216, 255, 0.44)",
         },
         accent: {
-          DEFAULT: "#c85040", // 朱砂红 - Cinnabar Red (Primary)
-          hover: "#d46858", // 浅朱砂
-          secondary: "#4a9e9e", // 青玉 - Jade Cyan
-          pink: "#b86e50", // 赭石
-          dim: "rgba(200, 80, 60, 0.1)",
-          text: "#e8d0c8", // 淡米色
+          DEFAULT: "#00d8ff",
+          hover: "#48e8ff",
+          secondary: "#80a6b4",
+          pink: "#ff4d6d",
+          dim: "rgba(0, 216, 255, 0.16)",
+          text: "#c7f7ff",
         },
         status: {
-          success: "#5a8a6a", // 青玉绿
-          warning: "#c48840", // 鎏金橙
-          error: "#c85040", // 朱砂红
-          info: "#4a9e9e", // 青玉
-          secondary: "#8a6a5a", // 赭石
+          success: "#62ffcf",
+          warning: "#ffb848",
+          error: "#ff4d6d",
+          info: "#00d8ff",
+          secondary: "#80a6b4",
         },
         text: {
-          main: "#e8e4e0", // 宣纸白 - Rice Paper White
-          muted: "#8a8580", // 淡墨
-          dim: "#5a5550", // 暗墨
+          main: "#eafcff",
+          muted: "#b7dbe7",
+          dim: "#80a6b4",
         },
         gold: {
-          DEFAULT: "#c4a35a", // 鎏金
-          light: "#d4b87a",
-          dark: "#a48540",
+          DEFAULT: "#ffb848",
+          light: "#ffd786",
+          dark: "#9b681b",
         }
       },
       fontFamily: {
-        sans: ['"Noto Sans SC"', '"Microsoft YaHei"', "ui-sans-serif", "system-ui", "sans-serif"],
-        heading: ['"Noto Serif SC"', '"SimSun"', "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ['"Fira Code"', "ui-monospace", "monospace"],
+        sans: [
+          "ui-sans-serif",
+          "system-ui",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          '"SF Pro Text"',
+          '"Segoe UI"',
+          '"Noto Sans SC"',
+          '"Microsoft YaHei"',
+          "sans-serif",
+        ],
+        heading: [
+          "ui-sans-serif",
+          "system-ui",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          '"SF Pro Display"',
+          '"Segoe UI"',
+          '"Noto Sans SC"',
+          '"Microsoft YaHei"',
+          "sans-serif",
+        ],
+        mono: ['"SF Mono"', '"JetBrains Mono"', '"Fira Code"', "ui-monospace", "monospace"],
       },
       backgroundImage: {
-        'gradient-primary': 'linear-gradient(135deg, #c85040 0%, #b86e50 100%)',
-        'gradient-surface': 'linear-gradient(to bottom right, rgba(200, 80, 60, 0.05), rgba(74, 158, 158, 0.05))',
-        'gradient-gold': 'linear-gradient(135deg, #c4a35a 0%, #d4b87a 100%)',
+        'gradient-primary': 'linear-gradient(135deg, #00d8ff 0%, #62ffcf 100%)',
+        'gradient-surface': 'linear-gradient(to bottom right, rgba(18, 42, 70, 0.92), rgba(6, 14, 27, 0.86))',
+        'gradient-gold': 'linear-gradient(135deg, #ffb848 0%, #ffd786 100%)',
       },
       animation: {
         "pulse-slow": "pulse 6s cubic-bezier(0.4, 0, 0.6, 1) infinite",
@@ -70,10 +90,10 @@ export default {
         },
       },
       boxShadow: {
-        "glow": "0 0 15px rgba(200, 80, 60, 0.2)",
-        "glow-lg": "0 0 30px rgba(200, 80, 60, 0.3), 0 0 10px rgba(196, 163, 90, 0.2)",
-        "panel": "0 4px 20px 0 rgba(0, 0, 0, 0.4)",
-        "scroll": "0 2px 8px rgba(0, 0, 0, 0.3)",
+        "glow": "0 0 28px rgba(0, 216, 255, 0.24)",
+        "glow-lg": "0 0 64px rgba(0, 216, 255, 0.28), 0 10px 30px rgba(255, 184, 72, 0.12)",
+        "panel": "0 28px 80px rgba(0, 0, 0, 0.58), 0 0 44px rgba(0, 216, 255, 0.10)",
+        "scroll": "0 3px 12px rgba(0, 216, 255, 0.22)",
       }
     },
   },

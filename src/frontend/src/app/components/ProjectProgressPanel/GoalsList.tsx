@@ -6,7 +6,7 @@ interface GoalsListProps {
 
 export const GoalsList = memo(function GoalsList({ goals }: GoalsListProps) {
     return (
-        <div className="mt-4 rounded-2xl border border-white/5 bg-white/5 p-4 backdrop-blur-sm">
+        <div className="mt-4 soft-panel-subtle rounded-xl p-4">
             <div className="flex items-center justify-between text-xs text-text-muted">
                 <span className="font-medium uppercase tracking-wide">圣意总览</span>
                 <span className="font-mono">{goals.length ? `${goals.length} 项` : '-'}</span>

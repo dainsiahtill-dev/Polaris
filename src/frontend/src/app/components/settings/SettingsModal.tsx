@@ -122,18 +122,18 @@ export function SettingsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#020610]/78 backdrop-blur-xl p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) {
           onClose();
         }
       }}
     >
-      <div className="relative w-full max-w-6xl h-[85vh] bg-slate-900 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden flex flex-col">
+      <div className="soft-panel relative w-full max-w-6xl h-[85vh] rounded-xl overflow-hidden flex flex-col text-text-main">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/95">
+        <div className="soft-panel-subtle flex items-center justify-between px-6 py-4 border-b">
           <div className="flex items-center gap-4">
-            <h2 className="text-lg font-semibold text-slate-100">设置</h2>
+            <h2 className="text-lg font-semibold text-text-main">设置</h2>
 
             {/* Tab Navigation */}
             <nav className="flex items-center gap-1 ml-4">
@@ -144,8 +144,8 @@ export function SettingsModal({
                   className={cn(
                     'px-4 py-1.5 text-sm font-medium rounded-lg transition-all',
                     activeTab === tab.id
-                      ? 'bg-slate-800 text-slate-100'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                      ? 'soft-raised text-text-main'
+                      : 'text-text-muted hover:text-text-main hover:bg-white/60'
                   )}
                 >
                   {tab.label}
@@ -156,7 +156,7 @@ export function SettingsModal({
 
           <button
             onClick={onClose}
-            className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+            className="p-2 rounded-lg text-text-muted hover:text-text-main hover:bg-white/70 transition-colors"
             aria-label="关闭"
           >
             <X className="w-5 h-5" />

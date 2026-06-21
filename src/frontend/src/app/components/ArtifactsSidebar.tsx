@@ -145,7 +145,7 @@ export function ArtifactsSidebar({ onFileSelect, selectedFileId, onOpenWorkspace
                           }`}
                       >
                         {isSelected && (
-                          <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent shadow-[0_0_8px_currentColor]" />
+                          <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-accent" />
                         )}
                         <Icon className={`size-4 flex-shrink-0 ${isSelected ? 'text-accent' : 'text-text-dim'}`} />
                         <span className="text-xs truncate flex-1 text-left font-mono">

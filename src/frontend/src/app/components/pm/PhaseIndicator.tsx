@@ -62,7 +62,7 @@ export function PhaseIndicator({
   return (
     <div
       data-testid="phase-indicator"
-      className={cn("rounded-xl border border-white/10 bg-white/5 p-4", className)}
+      className={cn("soft-panel-subtle rounded-xl p-4", className)}
     >
       {/* 阶段流程 */}
       <div className="relative">
@@ -89,7 +89,7 @@ export function PhaseIndicator({
                   className={cn(
                     "relative z-10 flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all duration-300",
                     status === 'completed' && "border-emerald-500 bg-emerald-500/20 text-emerald-400",
-                    status === 'running' && "border-amber-500 bg-amber-500/20 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.3)]",
+                    status === 'running' && "border-amber-500 bg-amber-500/20 text-amber-400",
                     status === 'failed' && "border-red-500 bg-red-500/20 text-red-400",
                     status === 'blocked' && "border-orange-500 bg-orange-500/20 text-orange-400",
                     status === 'pending' && "border-white/20 bg-white/5 text-white/30",
@@ -106,9 +106,6 @@ export function PhaseIndicator({
                   )}
 
                   {/* 运行中的脉冲效果 */}
-                  {status === 'running' && (
-                    <span className="absolute inset-0 rounded-full animate-ping bg-amber-500/20" />
-                  )}
                 </div>
 
                 {/* 标签 */}

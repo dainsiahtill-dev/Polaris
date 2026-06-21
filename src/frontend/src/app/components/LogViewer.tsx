@@ -241,15 +241,15 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
   }, [displayLines]);
 
   return (
-    <div className={`flex flex-col h-full bg-[rgba(18,14,42,0.95)] ${className}`}>
+    <div className={`soft-panel-subtle flex flex-col h-full ${className}`}>
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 p-2 border-b border-amber-400/10 bg-[linear-gradient(165deg,rgba(50,35,18,0.30),rgba(28,18,48,0.40))]">
+      <div className="soft-panel-subtle flex flex-wrap items-center justify-between gap-2 p-2 border-b border-white/10">
         <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-          <div className="flex shrink-0 items-center gap-1 rounded bg-[rgba(18,14,42,0.40)] p-0.5">
+          <div className="soft-inset flex shrink-0 items-center gap-1 rounded p-0.5">
             {allowRaw && (
               <button
                 onClick={() => setViewMode('raw')}
-                className={`h-6 whitespace-nowrap rounded px-2 text-[10px] transition-colors ${viewMode === 'raw' ? 'bg-amber-500/20 text-amber-200' : 'text-gray-500 hover:text-gray-300'}`}
+                className={`h-6 whitespace-nowrap rounded px-2 text-[10px] transition-colors ${viewMode === 'raw' ? 'soft-raised text-accent' : 'text-text-dim hover:text-text-main'}`}
               >
                 原始
               </button>
@@ -257,25 +257,25 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
             {allowSmart && (
               <button
                 onClick={() => setViewMode('smart')}
-                className={`h-6 whitespace-nowrap rounded px-2 text-[10px] transition-colors ${viewMode === 'smart' ? 'bg-cyan-500/20 text-cyan-200' : 'text-gray-500 hover:text-gray-300'}`}
+                className={`h-6 whitespace-nowrap rounded px-2 text-[10px] transition-colors ${viewMode === 'smart' ? 'soft-raised text-accent' : 'text-text-dim hover:text-text-main'}`}
               >
                 智析
               </button>
             )}
           </div>
           {viewMode === 'smart' && hasLlmChannel && (
-            <span className="text-[10px] text-gray-500">{llmEvents.length} events</span>
+            <span className="text-[10px] text-text-dim">{llmEvents.length} events</span>
           )}
         </div>
         <div className="flex min-w-0 shrink-0 items-center justify-end gap-1.5">
           {/* Log Level Filter */}
           {!allowSmart && allowRaw && (
             <div className="flex items-center gap-1">
-              <Filter className="size-3 text-gray-500" />
+                <Filter className="size-3 text-text-dim" />
               <select
                 value={logLevelFilter}
                 onChange={e => setLogLevelFilter(e.target.value)}
-                className="bg-[rgba(18,14,42,0.40)] border border-amber-400/10 rounded px-1.5 py-0.5 text-[10px] text-gray-300 focus:outline-none focus:border-cyan-400/30"
+                className="soft-inset rounded px-1.5 py-0.5 text-[10px] text-text-main focus:outline-none focus:border-accent/30"
               >
                 <option value="all">全部</option>
                 <option value="error">Error</option>
@@ -291,7 +291,7 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
             <button
               onClick={() => setShowTimestamp(!showTimestamp)}
               title={showTimestamp ? '隐藏时间戳' : '显示时间戳'}
-              className={`p-1 rounded transition-colors ${showTimestamp ? 'text-cyan-400 bg-cyan-500/10' : 'text-gray-500 hover:text-gray-300'}`}
+              className={`p-1 rounded transition-colors ${showTimestamp ? 'soft-raised text-accent' : 'text-text-dim hover:text-text-main'}`}
             >
               <Clock className="size-3" />
             </button>
@@ -302,7 +302,7 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
             <button
               onClick={() => setAutoScroll(!autoScroll)}
               title={autoScroll ? '自动滚动: 开' : '自动滚动: 关'}
-              className={`p-1 rounded transition-colors ${autoScroll ? 'text-emerald-400 bg-emerald-500/10' : 'text-gray-500 hover:text-gray-300'}`}
+              className={`p-1 rounded transition-colors ${autoScroll ? 'soft-raised text-accent' : 'text-text-dim hover:text-text-main'}`}
             >
               <ArrowDown className="size-3" />
             </button>
@@ -326,17 +326,17 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
               disabled={isClearing}
               title={isClearing ? '清空中...' : '清空当前日志'}
               aria-label={isClearing ? '清空中' : '清空当前日志'}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-white/10 bg-white/5 text-gray-400 transition-colors hover:bg-amber-500/10 hover:text-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
+              className="soft-chip flex h-7 w-7 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Trash2 className="size-3" />
               <span className="sr-only">{isClearing ? '清空中' : '清空日志'}</span>
             </button>
           )}
-          <span className={`flex h-7 shrink-0 items-center gap-1 whitespace-nowrap text-[10px] ${live ? 'text-emerald-400' : 'text-gray-500'}`}>
+          <span className={`flex h-7 shrink-0 items-center gap-1 whitespace-nowrap text-[10px] ${live ? 'text-emerald-300' : 'text-text-dim'}`}>
             <Activity className="size-3" />
             {live ? '在线' : '离线'}
           </span>
-          <button onClick={refresh} title="刷新" className="flex h-7 w-7 shrink-0 items-center justify-center text-gray-500 hover:text-gray-300">
+          <button onClick={refresh} title="刷新" className="flex h-7 w-7 shrink-0 items-center justify-center text-text-dim hover:text-text-main">
             <RefreshCw className="size-3" />
           </button>
         </div>
@@ -344,11 +344,11 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
 
       {/* Search bar for smart mode */}
       {viewMode === 'smart' && hasLlmChannel && (
-        <div className="p-2 border-b border-amber-400/10 bg-[rgba(28,18,48,0.30)]">
+        <div className="p-2 border-b border-white/10 bg-transparent">
           <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-gray-500" />
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-text-dim" />
             <input
-              className="w-full bg-[rgba(35,25,14,0.40)] border border-amber-400/10 rounded pl-7 pr-2 py-1 text-[10px] text-gray-300 placeholder-gray-600 focus:outline-none focus:border-cyan-400/30"
+              className="soft-inset w-full rounded pl-7 pr-2 py-1 text-[10px] text-text-main placeholder:text-text-dim/70 focus:outline-none focus:border-accent/30"
               placeholder="搜索事件..."
               value={query}
               onChange={e => setQuery(e.target.value)}
@@ -359,11 +359,11 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
 
       {/* Search bar for raw mode */}
       {viewMode === 'raw' && allowRaw && (
-        <div className="p-2 border-b border-amber-400/10 bg-[rgba(28,18,48,0.30)]">
+        <div className="p-2 border-b border-white/10 bg-transparent">
           <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-gray-500" />
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-text-dim" />
             <input
-              className="w-full bg-[rgba(35,25,14,0.40)] border border-amber-400/10 rounded pl-7 pr-2 py-1 text-[10px] text-gray-300 placeholder-gray-600 focus:outline-none focus:border-cyan-400/30"
+              className="soft-inset w-full rounded pl-7 pr-2 py-1 text-[10px] text-text-main placeholder:text-text-dim/70 focus:outline-none focus:border-accent/30"
               placeholder="搜索日志..."
               value={query}
               onChange={e => setQuery(e.target.value)}

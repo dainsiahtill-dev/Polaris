@@ -548,4 +548,127 @@ test.describe('ContextOS realtime view visual audit', () => {
       fullPage: false,
     });
   });
+
+  test('ContextViewerModal shows empty state for CONTEXT_NOT_FOUND 404 (not crash)', async ({ page }) => {
+    const events = buildSyntheticEvents(4);
+    const target = events[0]; // PM worker — we will mock its context as 404 CONTEXT_NOT_FOUND.
+
+    // Stub the HTTP fetch for /v2/context/{ref} — return 404 CONTEXT_NOT_FOUND
+    // for the target worker's context, and 200 for others.
+    const contextFixtures = new Map<string, SyntheticContextPayload>();
+    for (const event of events) {
+      if (event.workerId !== target.workerId) {
+        contextFixtures.set(event.contextSnapshotRef, buildContextPayload(event.contextSnapshotRef));
+      }
+    }
+
+    await page.route('**/v2/context/*', async (route) => {
+      const url = route.request().url();
+      const ref = decodeURIComponent(url.split('/v2/context/').pop()?.split('?')[0] ?? '');
+      const payload = contextFixtures.get(ref);
+      if (!payload) {
+        // Return structured CONTEXT_NOT_FOUND error (matches backend shape).
+        await route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            detail: {
+              code: 'CONTEXT_NOT_FOUND',
+              message: `Context snapshot not found for hash ${ref}`,
+            },
+          }),
+        });
+        return;
+      }
+      const responseBody = {
+        schema_version: 1,
+        hash: payload.context_snapshot_ref,
+        trace_id: payload.trace_id,
+        call_id: payload.call_id,
+        messages: payload.messages,
+        stored_at: new Date().toISOString(),
+        message_count: payload.messages.length,
+        total_chars: payload.messages.reduce((sum, m) => sum + m.content.length, 0),
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(responseBody),
+      });
+    });
+
+    await installSyntheticWsRoute(page, events);
+
+    await page.goto(`${BASE_URL}/`);
+    await page.waitForSelector('[data-testid="control-panel-enter-contextos"]', { timeout: 10_000 });
+    await page.click('[data-testid="control-panel-enter-contextos"]');
+    await page.waitForSelector('[data-testid="contextos-workspace"]', { timeout: 10_000 });
+
+    // Click the worker whose context returns 404 CONTEXT_NOT_FOUND.
+    const viewButton = page.locator(`[data-testid="contextos-worker-view-${target.workerId}"]`);
+    await expect(viewButton).toBeVisible({ timeout: 5_000 });
+    await viewButton.click();
+
+    const modal = page.locator('[data-testid="contextos-viewer-modal"]');
+    await expect(modal).toBeVisible({ timeout: 5_000 });
+
+    // The component must show the "context missing" empty state, NOT an error
+    // state or a crash. The empty state testid is 'contextos-viewer-context-missing'.
+    const missingState = page.locator('[data-testid="contextos-viewer-context-missing"]');
+    await expect(missingState).toBeVisible({ timeout: 5_000 });
+    await expect(missingState).toContainText(/完整上下文快照不可用|快照不可用|上下文.*不可用/);
+
+    // ErrorState must NOT render — the 404 CONTEXT_NOT_FOUND path should
+    // surface the localised empty-state, not a generic HTTP error.
+    await expect(page.locator('[data-testid="contextos-viewer-error"]')).toHaveCount(0);
+    await expect(page.locator('text=HTTP 404')).toHaveCount(0);
+
+    // No [object Object] should appear anywhere in the modal.
+    const modalText = await modal.innerText();
+    expect(
+      modalText,
+      'modal must not display [object Object]',
+    ).not.toContain('[object Object]');
+
+    await page.screenshot({
+      path: 'playwright-report/contextos-audit/contextos-viewer-404-context-not-found.png',
+      fullPage: false,
+    });
+  });
+
+  test('WS event-driven page update: telemetry freshness flips on synthetic events', async ({ page }) => {
+    const events = buildSyntheticEvents(4);
+
+    // Install WS route BEFORE navigation so the renderer's first handshake
+    // succeeds and the synthetic backlog is drained on first paint.
+    await installSyntheticWsRoute(page, events);
+
+    await page.goto(`${BASE_URL}/`);
+    await page.waitForSelector('[data-testid="control-panel-enter-contextos"]', { timeout: 10_000 });
+    await page.click('[data-testid="control-panel-enter-contextos"]');
+    await page.waitForSelector('[data-testid="contextos-workspace"]', { timeout: 10_000 });
+
+    // Telemetry freshness badge should flip from "遥测待命" to "实时遥测"
+    // once the synthetic WS events land in the store. This proves the page
+    // updates via WS push, not via polling.
+    const freshness = page.locator('[data-testid="contextos-telemetry-freshness"]');
+    await expect(freshness).toContainText('实时遥测', { timeout: 10_000 });
+
+    // Resource chip must reflect at least the number of synthetic events.
+    const chip = page.locator('[data-testid="contextos-resource-chip"]');
+    await expect(chip).toBeVisible();
+    await expect(chip).toContainText(/\d+\s*调用/, { timeout: 10_000 });
+
+    // Verify no [object Object] anywhere in the workspace.
+    const workspaceText = await page.locator('[data-testid="contextos-workspace"]').innerText();
+    expect(
+      workspaceText,
+      'workspace must not display [object Object]',
+    ).not.toContain('[object Object]');
+
+    await page.screenshot({
+      path: 'playwright-report/contextos-audit/contextos-ws-event-driven-update.png',
+      fullPage: false,
+    });
+  });
 });

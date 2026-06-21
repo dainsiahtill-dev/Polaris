@@ -189,7 +189,7 @@ export function SimpleModelCard({
           <button
             onClick={onTest}
             disabled={provider.status === 'testing'}
-            className="px-3 py-1.5 text-[10px] font-semibold bg-cyan-500/80 hover:bg-cyan-500 text-white rounded transition-colors disabled:opacity-60 flex items-center gap-1"
+            className="px-3 py-1.5 text-[10px] font-semibold bg-cyan-500/[0.08]0 hover:bg-cyan-500 text-white rounded transition-colors disabled:opacity-60 flex items-center gap-1"
           >
             {provider.status === 'testing' ? (
               <Loader2 className="size-3 animate-spin" />

@@ -52,7 +52,7 @@ export function ContextMenu({ x, y, items, onClose, title }: ContextMenuProps) {
   return (
     <div
       ref={menuRef}
-      className="absolute z-50 min-w-[180px] overflow-hidden rounded-lg border border-white/10 bg-black/90 p-1 shadow-[0_0_24px_rgba(0,0,0,0.5)] backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+      className="absolute z-50 min-w-[180px] overflow-hidden soft-panel rounded-lg p-1 animate-in fade-in zoom-in-95 duration-100"
       style={style}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -89,7 +89,7 @@ export function ContextMenu({ x, y, items, onClose, title }: ContextMenuProps) {
                 }
               `}
             >
-              {Icon && <Icon size={14} className={isDanger ? 'text-red-400' : 'text-cyan-400'} />}
+              {Icon && <Icon size={14} className={isDanger ? 'text-red-400' : 'text-slate-400'} />}
               <span>{item.label}</span>
             </button>
           );

@@ -65,6 +65,8 @@ export interface ContextOSEvent {
   contextTokens: number | null;
   /** SHA-256 reference to the stored full context (post-compression messages). */
   contextSnapshotRef: string | null;
+  /** Structured evidence when the snapshot could not be stored. */
+  contextSnapshotDegraded: ContextSnapshotDegraded | null;
   /** SHA-256 of the serialized prompt (for integrity/audit). */
   promptHash: string | null;
   /** Correlates with the turn transaction this call belongs to. */
@@ -82,6 +84,13 @@ export interface ContextOSEvent {
    */
   workerId: string | null;
   category: 'projection' | 'call' | 'tool' | 'error' | 'state' | 'event';
+}
+
+export interface ContextSnapshotDegraded {
+  code: string;
+  reason: string;
+  message: string;
+  exceptionType: string;
 }
 
 export interface ModeAggregate {
@@ -212,6 +221,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function nonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function readContextSnapshotDegraded(meta: Record<string, unknown>): ContextSnapshotDegraded | null {
+  const degraded = isRecord(meta['contextSnapshotDegraded'])
+    ? meta['contextSnapshotDegraded']
+    : isRecord(meta['context_snapshot_degraded'])
+      ? meta['context_snapshot_degraded']
+      : null;
+  const reasonAlias =
+    nonEmptyString(meta['contextSnapshotDegradedReason']) ||
+    nonEmptyString(meta['context_snapshot_degraded_reason']);
+  if (!degraded && !reasonAlias) return null;
+  return {
+    code: nonEmptyString(degraded?.['code']) || 'CONTEXT_SNAPSHOT_DEGRADED',
+    reason: nonEmptyString(degraded?.['reason']) || reasonAlias || 'context_snapshot_degraded',
+    message: nonEmptyString(degraded?.['message']),
+    exceptionType:
+      nonEmptyString(degraded?.['exception_type']) ||
+      nonEmptyString(degraded?.['exceptionType']),
+  };
 }
 
 function toFiniteOrNull(value: unknown): number | null {
@@ -408,6 +437,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const requestHash = nonEmptyString(meta['request_hash']);
   const contextHash = nonEmptyString(meta['context_hash']) || requestHash || null;
   const contextSnapshotRef = nonEmptyString(meta['contextSnapshotRef']) || nonEmptyString(meta['context_snapshot_ref']);
+  const contextSnapshotDegraded = readContextSnapshotDegraded(meta);
   const promptHash = nonEmptyString(meta['promptHash']) || nonEmptyString(meta['prompt_hash']);
   const turnId = nonEmptyString(meta['turnId']) || nonEmptyString(meta['turn_id']);
   const callId = nonEmptyString(meta['callId']) || nonEmptyString(meta['call_id']);
@@ -523,6 +553,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     contextItems,
     contextTokens,
     contextSnapshotRef: contextSnapshotRef || null,
+    contextSnapshotDegraded,
     promptHash: promptHash || null,
     turnId: turnId || null,
     callId: callId || null,

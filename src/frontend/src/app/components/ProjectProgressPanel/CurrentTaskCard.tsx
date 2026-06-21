@@ -9,14 +9,14 @@ interface CurrentTaskCardProps {
 
 export const CurrentTaskCard = memo(function CurrentTaskCard({ currentSummary, lastTaskId }: CurrentTaskCardProps) {
     return (
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-md hover:border-accent/30 transition-all">
+        <div className="soft-panel-subtle rounded-xl p-4 transition-all">
             <div className="flex items-center justify-between gap-2">
                 <div className="text-xs font-semibold uppercase tracking-wide text-text-muted">当前Director Task</div>
-                <ArrowRight className="size-4 text-accent animate-pulse" />
+                <ArrowRight className="size-4 text-accent" />
             </div>
             {currentSummary ? (
                 <div className="mt-3 flex items-start gap-3">
-                    <div className="mt-1 flex size-8 items-center justify-center rounded-full bg-accent/20 text-accent shadow-[0_0_10px_rgba(124,58,237,0.3)]">
+                    <div className="mt-1 flex size-8 items-center justify-center soft-raised rounded-full text-accent">
                         <ArrowRight className="size-4" />
                     </div>
                     <div className="min-w-0">

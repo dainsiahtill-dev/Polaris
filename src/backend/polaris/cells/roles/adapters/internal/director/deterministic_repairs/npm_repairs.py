@@ -143,13 +143,34 @@ def _apply_deterministic_npm_test_script_repair(
 
     if any(_is_repairable_npm_test_script_error(error) for error in artifact_quality_errors):
         test_script = str(scripts.get("test") or "").strip()
-        if not test_script or _is_manifest_only_or_default_test_script_error(artifact_quality_errors):
+        if (
+            not test_script
+            or "test" in _placeholder_npm_script_names(artifact_quality_errors)
+            or "test" in _failure_swallow_npm_script_names(artifact_quality_errors)
+            or _is_manifest_only_or_default_test_script_error(artifact_quality_errors)
+            or _has_typescript_source_require_module_not_found(artifact_quality_errors)
+        ):
             scripts["test"] = "npm run build"
             changed_scripts["test"] = "npm run build"
+        elif _has_missing_jest_config_script_error(artifact_quality_errors):
+            repaired_test_script = _repair_jest_missing_config_script(test_script, payload)
+            if repaired_test_script and repaired_test_script != test_script:
+                scripts["test"] = repaired_test_script
+                changed_scripts["test"] = repaired_test_script
+
+    if "build" in _placeholder_npm_script_names(
+        artifact_quality_errors
+    ) or "build" in _failure_swallow_npm_script_names(artifact_quality_errors):
+        scripts["build"] = "tsc"
+        changed_scripts["build"] = "tsc"
 
     missing_start_entrypoint = _missing_npm_script_entrypoint(artifact_quality_errors, script_name="start")
-    if missing_start_entrypoint:
-        entrypoint = _package_entrypoint(payload, fallback=missing_start_entrypoint)
+    if missing_start_entrypoint or "start" in _placeholder_npm_script_names(artifact_quality_errors):
+        entrypoint = _compiled_typescript_entrypoint(
+            workspace_path,
+            payload,
+            fallback=missing_start_entrypoint or "dist/index.js",
+        )
         scripts["start"] = f"npm run build && node {entrypoint}"
         changed_scripts["start"] = str(scripts["start"])
 
@@ -201,6 +222,10 @@ def _is_repairable_npm_test_script_error(error: Any) -> bool:
         or "npm package manifest script 'test' has invalid shell syntax" in text
         or "npm package manifest script 'test' uses shell command substitution" in text
         or "npm package manifest script 'start' references missing local entrypoint" in text
+        or ("npm package manifest script" in text and "is a placeholder command" in text)
+        or ("npm package manifest script" in text and "swallows command failures" in text)
+        or _has_typescript_source_require_module_not_found([text])
+        or _has_missing_jest_config_script_error([text])
         or _has_package_scaffold_marker_error([text])
     )
 
@@ -221,6 +246,39 @@ def _has_package_scaffold_marker_error(errors: list[str]) -> bool:
     return "deterministic scaffold marker" in joined and "package.json" in joined
 
 
+def _has_typescript_source_require_module_not_found(errors: list[str]) -> bool:
+    joined = "\n".join(str(error or "") for error in errors).lower()
+    return (
+        "workspace validation command failed (npm test)" in joined
+        and "cannot find module './src/" in joined
+        and ("node -e" in joined or "require('./src/" in joined)
+    )
+
+
+def _has_missing_jest_config_script_error(errors: list[str]) -> bool:
+    joined = "\n".join(str(error or "") for error in errors).lower()
+    return "jest.config" in joined and (
+        (
+            "workspace validation command failed (npm test)" in joined
+            and ("provided path to resolve" in joined or "config file path" in joined)
+        )
+        or "references missing config file" in joined
+    )
+
+
+def _repair_jest_missing_config_script(test_script: str, payload: dict[str, Any]) -> str:
+    if not isinstance(payload.get("jest"), dict):
+        return "npm run build"
+    if "jest" not in test_script:
+        return "npm run build"
+    repaired = re.sub(
+        r"\s+--config(?:=|\s+)jest\.config\.[A-Za-z0-9]+",
+        "",
+        test_script,
+    ).strip()
+    return repaired or "npm run build"
+
+
 def _missing_npm_script_entrypoint(errors: list[str], *, script_name: str) -> str:
     pattern = re.compile(
         rf"npm package manifest script '{re.escape(script_name)}' references missing local entrypoint '([^']+)'"
@@ -232,9 +290,39 @@ def _missing_npm_script_entrypoint(errors: list[str], *, script_name: str) -> st
     return ""
 
 
+def _placeholder_npm_script_names(errors: list[str]) -> set[str]:
+    return _npm_script_names_matching(errors, marker="is a placeholder command")
+
+
+def _failure_swallow_npm_script_names(errors: list[str]) -> set[str]:
+    return _npm_script_names_matching(errors, marker="swallows command failures")
+
+
+def _npm_script_names_matching(errors: list[str], *, marker: str) -> set[str]:
+    pattern = re.compile(r"npm package manifest script '([^']+)'.*" + re.escape(marker), re.IGNORECASE)
+    names: set[str] = set()
+    for error in errors:
+        match = pattern.search(str(error or ""))
+        if match:
+            names.add(str(match.group(1) or "").strip())
+    return names
+
+
 def _package_entrypoint(payload: dict[str, Any], *, fallback: str) -> str:
     entrypoint = str(payload.get("main") or "").strip()
     return entrypoint or fallback or "dist/main.js"
+
+
+def _compiled_typescript_entrypoint(workspace_path: Path, payload: dict[str, Any], *, fallback: str) -> str:
+    entrypoint = _package_entrypoint(payload, fallback=fallback).replace("\\", "/")
+    if entrypoint.startswith("src/") and entrypoint.endswith(".ts"):
+        return f"dist/{entrypoint.removeprefix('src/').removesuffix('.ts')}.js"
+    if entrypoint.startswith("dist/") and entrypoint.endswith((".js", ".mjs", ".cjs")):
+        return entrypoint
+    for source_entry in ("src/main.ts", "src/index.ts", "src/verify.ts"):
+        if (workspace_path / source_entry).is_file():
+            return f"dist/{source_entry.removeprefix('src/').removesuffix('.ts')}.js"
+    return fallback or "dist/index.js"
 
 
 def _workspace_has_typescript_context(workspace_path: Path, payload: dict[str, Any]) -> bool:

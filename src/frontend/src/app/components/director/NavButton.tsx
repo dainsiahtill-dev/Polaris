@@ -17,7 +17,7 @@ export function NavButton({ icon, label, active, onClick }: NavButtonProps) {
       className={cn(
         'w-10 h-10 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200',
         active
-          ? 'bg-indigo-500/15 text-indigo-400 shadow-lg shadow-indigo-500/10'
+          ? 'bg-indigo-500/[0.15] text-indigo-400 shadow-lg shadow-indigo-500/10'
           : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
       )}
       title={label}

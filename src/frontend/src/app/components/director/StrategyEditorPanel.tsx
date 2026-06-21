@@ -397,7 +397,7 @@ export function StrategyEditorPanel({
     >
       <div className="flex min-h-14 items-center justify-between gap-3 border-b border-indigo-400/20 px-4 py-2">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-indigo-500/15 border border-indigo-400/25 flex items-center justify-center shadow-lg shadow-indigo-500/10">
+          <div className="w-8 h-8 rounded-lg bg-indigo-500/[0.15] border border-indigo-400/25 flex items-center justify-center shadow-lg shadow-indigo-500/10">
             <Code2 className="w-4 h-4 text-indigo-200" />
           </div>
           <div>
@@ -463,7 +463,7 @@ export function StrategyEditorPanel({
             disabled={!isValid || !isDirty || saveState === 'saving'}
             data-testid="strategy-editor-save"
             className={cn(
-              'bg-emerald-500/15 border border-emerald-400/30 text-emerald-100 hover:bg-emerald-500/25',
+              'bg-emerald-500/[0.15] border border-emerald-400/30 text-emerald-100 hover:bg-emerald-500/25',
               (!isValid || !isDirty || saveState === 'saving') && 'opacity-50 cursor-not-allowed'
             )}
           >

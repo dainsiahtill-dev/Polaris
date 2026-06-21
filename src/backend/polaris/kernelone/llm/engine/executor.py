@@ -461,6 +461,18 @@ class AIExecutor:
                     exc,
                 )
                 context_store_hash = None
+                # Inject structured degradation evidence so upstream consumers
+                # (ContextViewerModal, final_request_receipt, diagnostics) can
+                # audit the failure without digging through logs.  The payload
+                # is non-sensitive, JSON-serialisable, and stable across
+                # exception types.
+                if isinstance(request.context, dict):
+                    request.context["context_snapshot_degraded"] = {
+                        "code": "CONTEXT_STORE_WRITE_FAILED",
+                        "reason": "context_snapshot_store_failure",
+                        "message": str(exc)[:200],
+                        "exception_type": type(exc).__name__,
+                    }
         # Inject hash into request context so upstream emit_llm_event can include it.
         # Gate on truthy hash so a None from a failed disk write never leaks a
         # falsy-but-set key into request.context.
@@ -641,6 +653,7 @@ class AIExecutor:
             if receipt_required:
                 raise RuntimeError("final request receipt sink required but unavailable")
             return
+        context_snapshot_degraded = context.get("context_snapshot_degraded")
         receipt = {
             "receipt_type": "contextos.final_request",
             "payload": {
@@ -674,6 +687,9 @@ class AIExecutor:
                 "effective_prompt_sha256": effective_prompt_sha256,
                 "tool_schema_sha256": tool_schema_sha256,
                 "context_snapshot_ref": self._non_empty_str(context.get("context_snapshot_ref")),
+                "context_snapshot_degraded": dict(context_snapshot_degraded)
+                if isinstance(context_snapshot_degraded, dict)
+                else None,
             },
             "trace_refs": build_final_request_trace_refs(
                 trace_id=trace_id,

@@ -63,11 +63,11 @@ export function AIDialogueHeader({
   onToggleHistory,
 }: AIDialogueHeaderProps) {
   return (
-    <div className="flex h-14 min-w-0 items-center justify-between gap-3 border-b border-white/10 bg-gradient-to-r from-slate-900 to-slate-950 px-4">
+    <div className="flex h-14 min-w-0 items-center justify-between gap-3 border-b border-white/10 bg-slate-900 px-4">
       {/* 左侧：角色信息 */}
       <div className="flex min-w-0 items-center gap-2">
-        <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br", theme.gradient)}>
-          <Sparkles className="w-3.5 h-3.5 text-white" />
+        <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-700/80")}>
+          <Sparkles className="w-3.5 h-3.5 text-slate-300" />
         </div>
         <div className="min-w-0">
           <h3 className="truncate text-sm font-medium text-slate-200">AI 助手</h3>

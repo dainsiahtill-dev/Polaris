@@ -79,6 +79,18 @@ def _with_context_os_audit(metadata: dict[str, Any], prepared: PreparedLLMReques
     return payload
 
 
+def _with_context_snapshot_diagnostics(metadata: dict[str, Any], request: Any) -> dict[str, Any]:
+    """Attach context snapshot degradation evidence from AIRequest.context, when present."""
+    payload = dict(metadata)
+    ctx = getattr(request, "context", None)
+    if isinstance(ctx, dict):
+        degraded = ctx.get("context_snapshot_degraded")
+        if isinstance(degraded, dict):
+            payload["context_snapshot_degraded"] = dict(degraded)
+            payload["context_snapshot_degraded_reason"] = degraded.get("reason") or degraded.get("code")
+    return payload
+
+
 def _usage_int(payload: dict[str, Any], *keys: str) -> int:
     for key in keys:
         value = payload.get(key)
@@ -696,6 +708,7 @@ class LLMInvoker:
             "turn_round": turn_round,
             "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
         }
+        event_metadata = _with_context_snapshot_diagnostics(event_metadata, active_request)
         if provider_usage is not None:
             event_metadata["usage"] = provider_usage
             event_metadata["usage_source"] = "provider"
@@ -731,6 +744,7 @@ class LLMInvoker:
             "context_tokens": int(prepared.context_result.token_estimate) if prepared.context_result else 0,
             "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
         }
+        response_metadata = _with_context_snapshot_diagnostics(response_metadata, active_request)
         if provider_usage is not None:
             response_metadata["usage"] = provider_usage
             response_metadata["usage_source"] = "provider"

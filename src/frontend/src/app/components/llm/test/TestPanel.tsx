@@ -356,7 +356,7 @@ export function TestPanel({
               type="checkbox"
               checked={streamingEnabled}
               onChange={(event) => onStreamingEnabledChange(event.target.checked)}
-              className="h-3 w-3 rounded border-white/20 bg-black/40"
+              className="h-3 w-3 rounded border-border bg-[rgba(6,15,28,0.88)] text-accent"
             />
             实时流式
           </label>
@@ -365,7 +365,7 @@ export function TestPanel({
           <button
             type="button"
             onClick={onClearEvents}
-            className="p-1.5 rounded border border-white/10 hover:border-accent/40 text-text-dim"
+            className="rounded border border-border p-1.5 text-text-dim hover:border-accent/40 hover:text-text-main"
             title="清空日志"
           >
             <Eraser className="size-3" />
@@ -376,14 +376,14 @@ export function TestPanel({
 
   return (
     <div
-      className={`relative bg-black/30 bg-gradient-to-br from-cyan-500/10 via-purple-500/10 to-pink-500/10 rounded-xl border border-cyan-400/30 shadow-[0_0_20px_rgba(34,211,238,0.18),0_0_40px_rgba(168,85,247,0.12)] backdrop-blur-xl overflow-hidden transition-all ${
+      className={`soft-panel relative overflow-hidden rounded-lg transition-all ${
         embedded ? 'flex h-full min-h-0 w-full flex-col' : 'h-fit'
       } ${
         collapsed && !embedded ? 'max-w-[240px]' : 'w-full'
       }`}
       style={embedded ? undefined : { transform: `translate(${position.x}px, ${position.y}px)` }}
     >
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-cyan-400/60 via-fuchsia-400/50 to-pink-400/60" />
+      <div className="absolute inset-x-0 top-0 h-px bg-accent/50" />
       <div
         onPointerDown={handlePointerDown}
         className={`select-none ${embedded ? '' : dragging ? 'cursor-grabbing' : 'cursor-grab'}`}
@@ -409,17 +409,17 @@ export function TestPanel({
         <>
           <div className={`${embedded ? 'flex min-h-0 flex-1 flex-col gap-3 p-3' : 'p-4 space-y-3'}`}>
             <div className={`grid gap-2 text-[10px] text-text-dim ${panelMode === 'event-viewer' ? 'grid-cols-2 2xl:grid-cols-4' : 'grid-cols-1 2xl:grid-cols-3'}`}>
-              <div className="rounded border border-white/10 bg-black/20 px-2 py-1">
+              <div className="soft-chip rounded px-2 py-1">
                 状态: <span className="text-text-main">{statusLabel}</span>
               </div>
-              <div className="rounded border border-white/10 bg-black/20 px-2 py-1">
+              <div className="soft-chip rounded px-2 py-1">
                 提供商: <span className="text-text-main">{provider.name}</span>
               </div>
-              <div className="rounded border border-white/10 bg-black/20 px-2 py-1">
+              <div className="soft-chip rounded px-2 py-1">
                 模型: <span className="text-text-main">{provider.modelId || 'default'}</span>
               </div>
               {panelMode === 'event-viewer' ? (
-                <div className="rounded border border-white/10 bg-black/20 px-2 py-1">
+                <div className="soft-chip rounded px-2 py-1">
                   事件: <span className="text-text-main">{events.length}</span>
                 </div>
               ) : null}
@@ -434,7 +434,7 @@ export function TestPanel({
           </div>
 
           {panelMode === 'stream-runner' ? (
-            <div className={`${embedded ? 'p-3' : 'p-4'} border-t border-white/10 flex shrink-0 items-center gap-2`}>
+            <div className={`${embedded ? 'p-3' : 'p-4'} flex shrink-0 items-center gap-2 border-t border-border`}>
               <button
                 type="button"
                 onClick={() => {
@@ -445,7 +445,7 @@ export function TestPanel({
                   }
                 }}
                 disabled={false}
-                className="px-4 py-2 text-xs border border-white/10 rounded hover:border-red-400/40"
+                className="rounded border border-border px-4 py-2 text-xs hover:border-status-error/45 hover:text-status-error"
               >
                 {running ? '取消测试' : '取消'}
               </button>
@@ -453,14 +453,14 @@ export function TestPanel({
                 type="button"
                 onClick={handleRunTest}
                 disabled={running}
-                className="px-4 py-2 text-xs bg-emerald-500/80 hover:bg-emerald-500 text-white rounded disabled:opacity-60 flex items-center gap-1"
+                className="soft-primary-action flex items-center gap-1 rounded px-4 py-2 text-xs disabled:opacity-60"
               >
                 {running ? <Loader2 className="size-3 animate-spin" /> : <PlayCircle className="size-3" />}
                 {running ? '测试中...' : '测试'}
               </button>
             </div>
           ) : (
-            <div className={`${embedded ? 'p-3' : 'p-4'} border-t border-white/10 text-[10px] text-text-dim shrink-0`}>
+            <div className={`${embedded ? 'p-3' : 'p-4'} shrink-0 border-t border-border text-[10px] text-text-dim`}>
               日志由实时会话驱动，发送问题后会持续流式更新。
             </div>
           )}

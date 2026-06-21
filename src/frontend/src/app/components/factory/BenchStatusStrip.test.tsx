@@ -128,7 +128,7 @@ describe('BenchStatusStrip', () => {
 
     const strip = screen.getByTestId('bench-status-strip');
     expect(strip.getAttribute('data-bench-status')).toBe('cancelled');
-    expect(strip).toHaveTextContent('cancelled');
+    expect(strip).toHaveTextContent('已取消');
     expect(within(strip).getByTestId('bench-strip-progress').getAttribute('data-progress')).toBe('50');
   });
 

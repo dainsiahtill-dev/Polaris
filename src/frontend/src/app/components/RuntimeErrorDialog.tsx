@@ -50,19 +50,19 @@ export function RuntimeErrorDialog({
     >
       <AlertDialogContent
         data-testid="runtime-error-dialog"
-        className="grid max-h-[88vh] min-w-0 max-w-2xl grid-rows-[auto_auto_auto] overflow-hidden border border-red-500/30 bg-[#1f2125]"
+        className="soft-panel grid max-h-[88vh] min-w-0 max-w-2xl grid-rows-[auto_auto_auto] overflow-hidden border-red-500/30"
       >
         <AlertDialogHeader className="shrink-0">
-          <AlertDialogTitle className="break-words text-red-200">
+          <AlertDialogTitle className="break-words text-status-error">
             {issue?.title || '运行异常'}
           </AlertDialogTitle>
-          <AlertDialogDescription className="max-h-[48vh] overflow-y-auto whitespace-pre-wrap break-words pr-1 text-gray-300">
+          <AlertDialogDescription className="max-h-[48vh] overflow-y-auto whitespace-pre-wrap break-words pr-1 text-text-muted">
             {detail}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
         {code ? (
-          <div className="break-all rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-100">
+          <div className="break-all rounded-md border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-status-error">
             错误码: {code}
           </div>
         ) : null}

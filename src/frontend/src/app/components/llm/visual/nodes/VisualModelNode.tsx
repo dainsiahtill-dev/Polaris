@@ -4,8 +4,8 @@ import type { VisualModelNodeData } from '../types/visual';
 
 export function VisualModelNode({ data }: NodeProps<Node<VisualModelNodeData>>) {
   return (
-    <div className="min-w-[200px] rounded-xl border border-cyan-300/30 bg-black/60 px-3 py-2 text-text-main shadow-[0_0_10px_rgba(34,211,238,0.12)]">
-      <Handle type="target" position={Position.Left} className="!bg-cyan-200 !border-cyan-100" />
+    <div className="min-w-[200px] rounded-lg border border-slate-500/30 bg-black/60 px-3 py-2 text-text-main">
+      <Handle type="target" position={Position.Left} className="!bg-slate-300 !border-slate-200" />
       <Handle type="source" position={Position.Right} className="!bg-emerald-200 !border-emerald-100" />
       <div className="text-xs font-semibold">{data.label}</div>
       <div className="mt-1 text-[10px] text-text-dim">提供商: {data.providerId}</div>

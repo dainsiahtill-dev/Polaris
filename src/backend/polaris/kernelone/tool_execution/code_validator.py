@@ -697,9 +697,11 @@ def _fix_js_ts_with_prettier(
 ) -> tuple[str, list[HallucinationFix]]:
     """使用 prettier 自动修复 JS/TS 代码。"""
     try:
-        # prettier filepath (without --write) outputs formatted code to stdout
+        # Use stdin so relative target paths are not resolved against the Polaris
+        # server cwd. --stdin-filepath still gives prettier the right parser.
         result = subprocess.run(
-            ["npx", "prettier", filepath],
+            ["npx", "prettier", "--stdin-filepath", filepath],
+            input=code,
             capture_output=True,
             text=True,
             timeout=30,
@@ -866,6 +868,31 @@ class MultiLanguageCodeValidator:
 
     # JS/TS 幻觉修复模式
     JS_FIX_PATTERNS: list[tuple[str, str, str]] = [
+        (
+            r"\bexport((?:class|enum|interface|function|type|const|let|var))",
+            r"export \1",
+            "Missing space after export keyword",
+        ),
+        (
+            r"\b(enum|class|interface)([A-Z_$][A-Za-z0-9_$]*)(?P<tail>[\s{])",
+            r"\1 \2\g<tail>",
+            "Missing space after declaration keyword",
+        ),
+        (
+            r"\b(const|let|var)([A-Za-z_$][A-Za-z0-9_$]*\s*=)",
+            r"\1 \2",
+            "Missing space after variable declaration keyword",
+        ),
+        (
+            r"\b(public|private|protected)([A-Za-z_$][A-Za-z0-9_$]*\s*:)",
+            r"\1 \2",
+            "Missing space after class field modifier",
+        ),
+        (
+            r"\breturn(this|true|false|null|undefined|new)\b",
+            r"return \1",
+            "Missing space after return keyword",
+        ),
         # 缺少分号
         (r"(\w+)\s*\n\s*}", r"\1;\n}", "Missing semicolon at end of statement"),
         # function() {} 需要空格

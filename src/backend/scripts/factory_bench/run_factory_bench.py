@@ -5,7 +5,7 @@ For each project in ``projects_v2.json`` (L1→L12, sequential — the local vLL
 is a shared single GPU, so this runner IS the load mutex):
 
 1. create a fresh workspace directory;
-2. hand the project brief to the Polaris role chain (PM→Architect/CE→
+2. hand the project brief to the Polaris role chain (PM→Chief Engineer→
    Director→QA) headlessly;
 3. collect generated artifacts (plan/blueprint docs, QA verdicts, code);
 4. run the project's deterministic checks (``factory_audit``) and append a
@@ -63,6 +63,7 @@ _logger = logging.getLogger(__name__)
 
 _FIXTURE = Path(__file__).resolve().parent / "projects_v2.json"
 _BACKEND_ROOT = Path("/home/dains/Documents/polaris/src/backend")
+_REPO_ROOT = _BACKEND_ROOT.parent.parent
 FACTORY_BENCH_REQUIRED_LLM_ROLES = ("pm", "director")
 
 
@@ -75,6 +76,14 @@ def _sanitize_run_id(raw: str | None) -> str:
     """
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", str(raw or "").strip()).strip("-")
     return cleaned if cleaned else _uuid.uuid4().hex[:12]
+
+
+def _resolve_bench_work_dir(raw_work_dir: str) -> Path:
+    """Resolve the bench output root before deriving project workspaces."""
+    path = Path(raw_work_dir).expanduser()
+    if not path.is_absolute():
+        path = _REPO_ROOT / path
+    return path.resolve()
 
 
 def _next_immutable_json_path(path: Path) -> Path:
@@ -993,6 +1002,33 @@ def _push_bench_progress_to_backend(
     return response is not None and bool(response.get("updated", False))
 
 
+def _push_bench_workspace_to_backend(
+    *,
+    backend_url: str,
+    workspace: str,
+    token: str = "",
+    attempts: int = 3,
+    retry_delay_seconds: float = 0.25,
+) -> bool:
+    """Switch the desktop backend to the project workspace before observation starts."""
+    if not backend_url or not workspace:
+        return False
+    max_attempts = max(1, int(attempts))
+    for attempt in range(max_attempts):
+        response = _http_post_json(
+            f"{backend_url}/settings",
+            {"workspace": str(workspace)},
+            token=token,
+        )
+        if isinstance(response, dict):
+            returned_workspace = str(response.get("workspace") or response.get("workspace_path") or "").strip()
+            if returned_workspace:
+                return True
+        if attempt < max_attempts - 1 and retry_delay_seconds > 0:
+            time.sleep(retry_delay_seconds)
+    return False
+
+
 def _bench_gate(gate: str, ok: bool, detail: str) -> dict[str, Any]:
     return {"gate": gate, "ok": bool(ok), "detail": detail}
 
@@ -1208,9 +1244,9 @@ def _build_language_runnable_contract(primary_language: str) -> str:
 def _build_source_tree_contract(primary_language: str, project_type: str) -> str:
     """Build explicit source tree structure requirements for the given language/type.
 
-    This ensures the PM/CE/Director chain creates src/ directories and core
-    source files rather than only scaffolding files like package.json and
-    tsconfig.json.
+    This ensures the PM -> Chief Engineer -> Director chain creates src/
+    directories and core source files rather than only scaffolding files like
+    package.json and tsconfig.json.
     """
     lang = primary_language.lower().strip()
     ptype = project_type.lower().strip()
@@ -1218,7 +1254,7 @@ def _build_source_tree_contract(primary_language: str, project_type: str) -> str
     sections: list[str] = []
     sections.append("## Source Tree Structure Contract (MANDATORY)\n")
     sections.append(
-        "PM/CE/Director 必须按以下结构创建源代码文件, 仅生成 package.json / tsconfig.json 等配置文件"
+        "PM -> Chief Engineer -> Director 必须按以下结构创建源代码文件, 仅生成 package.json / tsconfig.json 等配置文件"
         "不算完成, 必须包含核心业务逻辑源码:\n"
     )
 
@@ -1314,7 +1350,7 @@ def _build_feature_keywords_contract(feature_keywords: list[str]) -> str:
         "\n## Feature Keywords Contract (MANDATORY)\n"
         f"以下关键词必须出现在生成的源代码文件中(变量名、类名、注释或字符串均可): "
         f"**{kw_list}**\n"
-        "PM/CE/Director 的任务目标和验收标准必须包含这些关键词。\n"
+        "PM -> Chief Engineer -> Director 的任务目标和验收标准必须包含这些关键词。\n"
         "Director 的 target_files 中的源文件必须至少包含其中一个关键词的实际使用。\n"
     )
 
@@ -1340,7 +1376,7 @@ def build_requirements_doc(project: dict[str, Any]) -> str:
         metadata_block = (
             "\n## Project Metadata\n"
             f"{domain_line}{type_line}{hook_line}"
-            "- PM/CE/Director/QA 必须在任务合同中保留这些元数据字段, "
+            "- PM -> Chief Engineer -> Director -> QA 必须在任务合同中保留这些元数据字段, "
             "确保目标语义不丢失。\n"
         )
 
@@ -1356,7 +1392,7 @@ def build_requirements_doc(project: dict[str, Any]) -> str:
         "- 附 README.md 说明如何运行。\n"
         f"- 关键验收维度: {project.get('test_focus', '')}。\n"
         "\n## Deterministic Checks\n"
-        "PM/CE/Director/QA 必须把以下检查转成任务目标和验收标准, 缺失任一项应视为未完成:\n"
+        "PM -> Chief Engineer -> Director -> QA 必须把以下检查转成任务目标和验收标准, 缺失任一项应视为未完成:\n"
         f"{checks_block}\n"
         "\n"
         f"{source_tree_contract}\n"
@@ -1546,7 +1582,7 @@ def run_factory_chain(
     ws_requirements.parent.mkdir(parents=True, exist_ok=True)
     ws_requirements.write_text(requirements_doc, encoding="utf-8")
 
-    # Embed catalog metadata in the workspace so PM/CE/Director can access it
+    # Embed catalog metadata in the workspace so PM -> Chief Engineer -> Director can access it
     catalog_contract_path = workspace / ".polaris" / "catalog_contract.json"
     catalog_contract_path.parent.mkdir(parents=True, exist_ok=True)
     feature_keywords = _extract_feature_keywords(project)
@@ -1559,7 +1595,9 @@ def run_factory_chain(
         "feature_keywords": feature_keywords,
         "checks": list(project.get("checks") or []),
         "test_focus": str(project.get("test_focus") or "").strip(),
-        "source_tree_mandate": "PM/CE/Director must create src/ with core source files, not just scaffolding",
+        "source_tree_mandate": (
+            "PM -> Chief Engineer -> Director must create src/ with core source files, not just scaffolding"
+        ),
     }
     catalog_contract_path.write_text(
         json.dumps(catalog_contract, ensure_ascii=False, indent=2) + "\n",
@@ -1691,7 +1729,7 @@ def run_chain(
     ws_requirements = workspace / ".polaris" / "docs" / "product" / "requirements.md"
     ws_requirements.parent.mkdir(parents=True, exist_ok=True)
     ws_requirements.write_text(requirements_doc, encoding="utf-8")
-    # Embed catalog metadata in the workspace so PM/CE/Director can access it
+    # Embed catalog metadata in the workspace so PM -> Chief Engineer -> Director can access it
     catalog_contract_path = workspace / ".polaris" / "catalog_contract.json"
     catalog_contract_path.parent.mkdir(parents=True, exist_ok=True)
     feature_keywords = _extract_feature_keywords(project)
@@ -1704,7 +1742,9 @@ def run_chain(
         "feature_keywords": feature_keywords,
         "checks": list(project.get("checks") or []),
         "test_focus": str(project.get("test_focus") or "").strip(),
-        "source_tree_mandate": "PM/CE/Director must create src/ with core source files, not just scaffolding",
+        "source_tree_mandate": (
+            "PM -> Chief Engineer -> Director must create src/ with core source files, not just scaffolding"
+        ),
     }
     catalog_contract_path.write_text(
         json.dumps(catalog_contract, ensure_ascii=False, indent=2) + "\n",
@@ -1772,7 +1812,7 @@ def run_chain(
     # planning role session replayed cross-project state.
     env["PYTHONPATH"] = str(_BACKEND_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     # Role bindings follow the user's GLOBAL llm config: orchestration roles
-    # (PM/CE/QA) on cloud large-context models, the Director coding role on the
+    # (PM/Chief Engineer/QA) on cloud large-context models, the Director coding role on the
     # local model under test. (The all-local override used during early bring-up
     # lives on in ~/Temp/factory-bench/llm_config_all_qwen.json — set
     # KERNELONE_LLM_CONFIG yourself to reproduce those runs.)
@@ -1853,7 +1893,7 @@ def main() -> int:
     ap.add_argument(
         "--use-legacy-chain",
         action="store_true",
-        help="Retired; Factory Bench refuses legacy PM->Director subprocess runs",
+        help="Retired; Factory Bench refuses legacy two-role subprocess runs",
     )
     ap.add_argument(
         "--real-run-timeout",
@@ -1911,7 +1951,7 @@ def main() -> int:
     # Handle --dry-run: validate and generate audit structure without running chain
     if args.dry_run:
         print(f"[factory-bench] dry-run mode: validating {len(selected)} project(s)", flush=True)
-        base = Path(args.work_dir)
+        base = _resolve_bench_work_dir(args.work_dir)
         base.mkdir(parents=True, exist_ok=True)
         audit_dir = base / "audits" / "dry-run"
         audit_dir.mkdir(parents=True, exist_ok=True)
@@ -1951,7 +1991,7 @@ def main() -> int:
         print(f"[factory-bench] dry-run complete: {len(selected)} audit package(s) -> {audit_dir}", flush=True)
         return 0
 
-    base = Path(args.work_dir)
+    base = _resolve_bench_work_dir(args.work_dir)
     base.mkdir(parents=True, exist_ok=True)
     records: list[dict[str, Any]] = []
     run_errors: list[str] = []
@@ -2022,6 +2062,13 @@ def main() -> int:
         print(f"[factory-bench] === {pid} {project['title']} ===", flush=True)
         project_level = int(project.get("level") or 0)
         project_title = str(project.get("title") or "")
+        workspace.mkdir(parents=True, exist_ok=True)
+        project_workspace = str(workspace.resolve())
+        workspace_switch_ok = _push_bench_workspace_to_backend(
+            backend_url=backend_url,
+            workspace=project_workspace,
+            token=backend_token,
+        )
         _emit_bench_event(
             workspace=base,
             project_id=pid,
@@ -2031,9 +2078,14 @@ def main() -> int:
             meta={
                 "session_id": bench_session_id,
                 "title": project_title,
-                "workspace": str(workspace.resolve()),
-                "workspace_path": str(workspace.resolve()),
-                "project_workspace": str(workspace.resolve()),
+                "workspace": project_workspace,
+                "workspace_path": project_workspace,
+                "project_workspace": project_workspace,
+                "workspace_switch": {
+                    "attempted": bool(backend_url),
+                    "ok": bool(workspace_switch_ok),
+                    "endpoint": "/settings",
+                },
             },
         )
         last_stage_event_key = ""

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "PM Tasks Contract",
-  "description": "PM -> Director contract. Goal/acceptance fields are immutable during execution; evidence may be appended.",
+  "description": "PM -> Chief Engineer -> Director contract. Goal/acceptance fields are immutable during execution; evidence may be appended.",
   "type": "object",
   "examples": [
     {
@@ -103,7 +103,7 @@
     },
     "engine": {
       "type": "object",
-      "description": "Optional engine execution hints for PM->Director orchestration.",
+      "description": "Optional engine execution hints for PM -> Chief Engineer -> Director orchestration.",
       "properties": {
         "director_execution_mode": {
           "type": "string",

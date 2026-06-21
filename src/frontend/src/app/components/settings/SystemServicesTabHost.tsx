@@ -29,7 +29,7 @@ export function SystemServicesTabHost({ className }: SystemServicesTabHostProps)
       {/* Header */}
       <div>
         <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-          <Terminal className="w-6 h-6 text-cyan-400" />
+          <Terminal className="w-6 h-6 text-slate-400" />
           系统服务
         </h2>
         <p className="text-sm text-slate-400 mt-1">

@@ -196,7 +196,7 @@ function streamEventIcon(log: LogEntry): React.ReactNode {
   if (streamEvent === 'content_chunk') return <Bot className="size-3 text-cyan-400" />;
   if (streamEvent === 'tool_call') return <Terminal className="size-3 text-green-400" />;
   if (streamEvent === 'tool_result') return <GitBranch className="size-3 text-emerald-400" />;
-  return <Cpu className="size-3 text-white/40" />;
+  return <Cpu className="size-3 text-text-dim" />;
 }
 
 function streamEventStyle(log: LogEntry): string {
@@ -205,7 +205,7 @@ function streamEventStyle(log: LogEntry): string {
   if (streamEvent === 'content_chunk') return 'border-cyan-400/30 bg-cyan-500/10';
   if (streamEvent === 'tool_call') return 'border-green-400/30 bg-green-500/10';
   if (streamEvent === 'tool_result') return 'border-emerald-400/30 bg-emerald-500/10';
-  return 'border-white/10 bg-white/[0.02]';
+  return 'border-border bg-white/45';
 }
 
 function isTypingStreamEvent(log: LogEntry): boolean {
@@ -256,9 +256,9 @@ function TypingMessage({
   const showCursor = animate && visibleChars < text.length;
 
   return (
-    <div className="text-[10px] text-white/70">
+    <div className="text-[10px] text-text-muted">
       <span>{rendered}</span>
-      {showCursor && <span className="ml-[1px] inline-block animate-pulse text-cyan-300">▋</span>}
+      {showCursor && <span className="ml-[1px] inline-block animate-pulse text-accent">▋</span>}
     </div>
   );
 }
@@ -411,54 +411,45 @@ export function LlmRuntimeOverlay({
           : 'bottom-16 sm:bottom-6 sm:w-[400px]',
       )}
     >
-      {/* Cyberpunk + Han/Tang fusion container */}
-      <div className="pointer-events-auto rounded-2xl border border-amber-400/20 bg-gradient-to-br from-[#0a0f1a] via-[#0d1525] to-[#0a0f1a] shadow-[0_18px_40px_rgba(0,0,0,0.5),0_0_30px_rgba(200,160,60,0.05)] backdrop-blur-xl">
-        {/* Glow accent line */}
-        <div className="h-px w-full bg-gradient-to-r from-transparent via-amber-400/30 to-transparent" />
+      {/* Runtime overlay container */}
+      <div className="soft-panel pointer-events-auto rounded-xl backdrop-blur-xl">
 
         <button
           type="button"
           onClick={() => setExpanded((prev) => !prev)}
-          className="group flex w-full items-center gap-2 rounded-t-xl px-3 py-2.5 text-left transition-all hover:bg-amber-500/5"
+          className="group flex w-full items-center gap-2 rounded-t-xl px-3 py-2.5 text-left transition-all hover:bg-white/70"
         >
-          <div className="relative flex items-center justify-center rounded-lg border border-amber-400/30 bg-amber-500/10 p-1.5 shadow-[0_0_12px_rgba(200,160,60,0.15)]">
+          <div className="soft-raised flex items-center justify-center rounded-lg p-1.5">
             {(running || websocketReconnecting) ? (
-              <Loader2 className="size-4 animate-spin text-amber-300" />
+              <Loader2 className="size-4 animate-spin text-gold" />
             ) : (
-              <Activity className="size-4 text-amber-300" />
-            )}
-            {/* Pulse indicator */}
-            {(running || websocketReconnecting) && (
-              <span className="absolute -right-0.5 -top-0.5 flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-400" />
-              </span>
+              <Activity className="size-4 text-gold" />
             )}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold tracking-wider text-amber-200">LLM Runtime</span>
-              <span className="rounded-full border border-amber-400/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-100/80">
+              <span className="text-xs font-bold tracking-wider text-text-main">LLM Runtime</span>
+              <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-gold">
                 {viewLabel(activeView)}
               </span>
               {/* Role status badges */}
               {pmRunning && (
-                <span className="rounded border border-green-500/30 bg-green-500/10 px-1 py-0.5 text-[8px] font-bold text-green-300 animate-pulse">
+                <span className="rounded border border-green-500/30 bg-green-500/10 px-1 py-0.5 text-[8px] font-bold text-green-300">
                   PM ACTIVE
                 </span>
               )}
               {directorRunning && (
-                <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1 py-0.5 text-[8px] font-bold text-cyan-300 animate-pulse">
+                <span className="rounded border border-cyan-500/30 bg-cyan-500/10 px-1 py-0.5 text-[8px] font-bold text-cyan-300">
                   DIR ACTIVE
                 </span>
               )}
             </div>
-            <div className="truncate text-[11px] font-medium text-white/65">{headline}</div>
+            <div className="truncate text-[11px] font-medium text-text-muted">{headline}</div>
           </div>
           {expanded ? (
-            <ChevronUp className="size-4 text-amber-400/70 transition-colors group-hover:text-amber-400" />
+            <ChevronUp className="size-4 text-gold transition-colors" />
           ) : (
-            <ChevronDown className="size-4 text-white/50 transition-colors group-hover:text-white/80" />
+            <ChevronDown className="size-4 text-text-muted transition-colors group-hover:text-text-main" />
           )}
         </button>
 
@@ -470,7 +461,7 @@ export function LlmRuntimeOverlay({
           )}
         >
           <div className="overflow-hidden">
-            <div className="border-t border-white/10 px-3 py-3">
+            <div className="border-t border-border px-3 py-3">
               {/* Status badges row - Cyberpunk style */}
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <StatusBadge color={pmRunning ? 'success' : 'default'} variant="dot" pulse={pmRunning}>
@@ -489,17 +480,17 @@ export function LlmRuntimeOverlay({
                 </StatusBadge>
               </div>
 
-              <div className="mb-3 rounded-xl border border-amber-400/15 bg-gradient-to-r from-amber-500/5 to-cyan-500/5 px-3 py-2.5">
+              <div className="soft-panel-subtle mb-3 rounded-xl px-3 py-2.5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Radar className="size-4 text-amber-400" />
-                    <span className="text-xs font-bold tracking-wider text-amber-200">当前阶段</span>
+                    <Radar className="size-4 text-gold" />
+                    <span className="text-xs font-bold tracking-wider text-text-main">当前阶段</span>
                   </div>
-                  <span className="rounded border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-xs font-bold text-amber-100">
+                  <span className="rounded border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-xs font-bold text-gold">
                     {phaseLabel}
                   </span>
                 </div>
-                <div className="mt-2 flex items-center justify-between text-[10px] text-white/50">
+                <div className="mt-2 flex items-center justify-between text-[10px] text-text-muted">
                   <span className="flex items-center gap-1">
                     <Bot className="size-3 text-cyan-400" />
                     LLM 更新
@@ -508,8 +499,8 @@ export function LlmRuntimeOverlay({
                 </div>
                 {qualityGate && (
                   <div className="mt-1.5 flex items-center justify-between text-[10px]">
-                    <span className="flex items-center gap-1 text-white/60">
-                      <Sparkles className="size-3 text-purple-400" />
+                    <span className="flex items-center gap-1 text-text-muted">
+                      <Sparkles className="size-3 text-accent" />
                       质量门控
                     </span>
                     <span className={cn(
@@ -522,7 +513,7 @@ export function LlmRuntimeOverlay({
                 )}
                 {latestFileEdit && (
                   <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px]" data-testid="llm-runtime-file-edit">
-                    <span className="flex min-w-0 items-center gap-1 text-white/60">
+                    <span className="flex min-w-0 items-center gap-1 text-text-muted">
                       <FileCode className="size-3 text-emerald-300" />
                       <span className="truncate">{latestFileEdit.filePath}</span>
                     </span>
@@ -534,7 +525,7 @@ export function LlmRuntimeOverlay({
               </div>
 
               {visibleRequiredRoles.length > 0 && (
-                <div className="mb-2 flex items-center gap-2 text-[10px] text-white/50">
+                <div className="mb-2 flex items-center gap-2 text-[10px] text-text-muted">
                   <Bot className="size-3.5 text-cyan-300" />
                   <span className="truncate">
                     required: {visibleRequiredRoles.join(', ')}
@@ -547,19 +538,19 @@ export function LlmRuntimeOverlay({
                 </div>
               )}
 
-              <div className="rounded-xl border border-white/10 bg-black/25 p-2">
-                <div className="mb-2 flex items-center justify-between text-[11px] text-white/70">
+              <div className="soft-panel-subtle rounded-xl p-2">
+                <div className="mb-2 flex items-center justify-between text-[11px] text-text-muted">
                   <span className="flex items-center gap-1.5">
                     {websocketLive ? <Wifi className="size-3.5 text-emerald-300" /> : <WifiOff className="size-3.5 text-amber-300" />}
                     实时推理流
                   </span>
-                  <span className="text-white/40">{recentSteps.length} events</span>
+                  <span className="text-text-dim">{recentSteps.length} events</span>
                 </div>
 
                 {/* Claude/Codex-style reasoning chain */}
                 <div className="space-y-1.5">
                   {recentSteps.length === 0 && (
-                    <div className="rounded-lg border border-white/5 bg-white/[0.02] px-2 py-1.5 text-[10px] text-white/35 italic">
+                    <div className="soft-inset rounded-lg px-2 py-1.5 text-[10px] text-text-dim italic">
                       等待 LLM 事件流...
                     </div>
                   )}
@@ -573,40 +564,36 @@ export function LlmRuntimeOverlay({
                         className={cn(
                           'relative rounded-lg border px-2 py-1.5 transition-all',
                           streamEventStyle(step),
-                          isLatest && 'ring-1 ring-cyan-400/30',
+                          isLatest && 'ring-1 ring-cyan-400/20',
                         )}
                       >
-                        {/* Timeline connector */}
-                        {idx < recentSteps.length - 1 && (
-                          <div className="absolute -bottom-3 left-3 top-1/2 h-4 w-px bg-gradient-to-b from-cyan-500/40 to-transparent" />
-                        )}
 
                         <div className="mb-0.5 flex items-center justify-between gap-2">
                           <div className="flex min-w-0 items-center gap-1.5">
                             {streamEventIcon(step)}
                             <span className={cn(
                               'truncate text-[10px] font-medium',
-                              isThinking ? 'text-amber-300' : isToolCall ? 'text-green-300' : 'text-cyan-100/90'
+                              isThinking ? 'text-gold' : isToolCall ? 'text-status-success' : 'text-accent-text'
                             )}>
                               {step.source}
                             </span>
                             {streamEventLabel(step) && (
                               <span className={cn(
                                 'shrink-0 rounded border px-1 py-0.5 text-[8px] font-bold tracking-wider',
-                                getStreamEvent(step) === 'thinking_chunk' && 'border-amber-400/40 bg-amber-500/20 text-amber-200',
-                                getStreamEvent(step) === 'content_chunk' && 'border-cyan-400/40 bg-cyan-500/20 text-cyan-200',
-                                getStreamEvent(step) === 'tool_call' && 'border-green-400/40 bg-green-500/20 text-green-200',
-                                getStreamEvent(step) === 'tool_result' && 'border-emerald-400/40 bg-emerald-500/20 text-emerald-200',
+                                getStreamEvent(step) === 'thinking_chunk' && 'border-amber-500/30 bg-amber-500/15 text-gold',
+                                getStreamEvent(step) === 'content_chunk' && 'border-teal-600/25 bg-teal-600/10 text-accent-text',
+                                getStreamEvent(step) === 'tool_call' && 'border-green-600/25 bg-green-600/10 text-status-success',
+                                getStreamEvent(step) === 'tool_result' && 'border-emerald-600/25 bg-emerald-600/10 text-status-success',
                               )}>
                                 {streamEventLabel(step)}
                               </span>
                             )}
                           </div>
-                          <span className="shrink-0 text-[9px] text-white/35">{toRelativeTime(step.timestamp)}</span>
+                          <span className="shrink-0 text-[9px] text-text-dim">{toRelativeTime(step.timestamp)}</span>
                         </div>
                         <TypingMessage text={displayLogMessage(step)} animate={isTypingStreamEvent(step)} />
                         {step.details && !isStructuredRuntimeText(step.details) && (
-                          <div className="mt-0.5 font-mono text-[9px] text-white/45">{step.details}</div>
+                          <div className="mt-0.5 font-mono text-[9px] text-text-muted">{step.details}</div>
                         )}
                       </div>
                     );
@@ -616,9 +603,6 @@ export function LlmRuntimeOverlay({
             </div>
           </div>
         </div>
-
-        {/* Glow accent line */}
-        <div className="h-px w-full bg-gradient-to-r from-transparent via-amber-400/30 to-transparent" />
       </div>
     </div>
   );

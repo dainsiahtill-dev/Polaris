@@ -389,7 +389,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
     <div
       data-testid="llm-visual-editor"
       ref={editorContainerRef}
-      className="relative rounded-2xl border border-white/10 bg-black/40 p-4 shadow-[0_0_24px_rgba(34,211,238,0.12)]"
+      className="relative soft-panel rounded-xl p-4"
     >
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div>
@@ -400,7 +400,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
           <button
             type="button"
             onClick={handleAutoLayout}
-            className="p-1.5 text-text-dim hover:text-cyan-400 transition-colors"
+            className="p-1.5 text-text-dim hover:text-text-main transition-colors"
             title="自动布局"
           >
             <LayoutGrid size={14} />
@@ -408,7 +408,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
           <button
             type="button"
             onClick={() => rfInstance?.fitView({ duration: 400 })}
-            className="p-1.5 text-text-dim hover:text-cyan-400 transition-colors"
+            className="p-1.5 text-text-dim hover:text-text-main transition-colors"
             title="适应视图"
           >
             <Maximize size={14} />
@@ -417,7 +417,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
           <button
             type="button"
             onClick={() => setShowAddModel((prev) => !prev)}
-            className="px-3 py-1.5 text-[10px] font-semibold bg-cyan-500/80 hover:bg-cyan-500 text-white rounded transition-colors"
+            className="px-3 py-1.5 text-[10px] font-semibold bg-white/[0.12] hover:bg-white/[0.16] text-text-main rounded transition-colors"
           >
             添加模型
           </button>
@@ -426,7 +426,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
               type="button"
               data-testid="llm-visual-save"
               onClick={handleSave}
-              className="px-3 py-1.5 text-[10px] font-semibold bg-emerald-500/80 hover:bg-emerald-500 text-white rounded transition-colors"
+              className="px-3 py-1.5 text-[10px] font-semibold bg-emerald-500/[0.15] hover:bg-emerald-500/25 text-emerald-200 rounded transition-colors"
             >
               保存配置
             </button>
@@ -444,9 +444,9 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
       </div>
 
       {showAddModel ? (
-        <div className="mb-3 grid grid-cols-1 md:grid-cols-[180px_1fr_auto] gap-2 items-center">
+        <div className="mb-3 grid grid-cols-1 md:grid-cols-[180px_1fr_auto] gap-2 items-center soft-panel-subtle rounded-lg p-2">
           <select
-            className="bg-black/40 border border-white/10 text-[10px] text-text-main rounded px-2 py-1.5"
+            className="soft-inset text-[10px] text-text-main rounded px-2 py-1.5"
             value={providerDraft}
             onChange={(event) => setProviderDraft(event.target.value)}
           >
@@ -464,7 +464,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
             })}
           </select>
           <input
-            className="bg-black/40 border border-white/10 text-[10px] text-text-main rounded px-2 py-1.5"
+            className="soft-inset text-[10px] text-text-main rounded px-2 py-1.5"
             placeholder="模型名称"
             value={modelDraft}
             onChange={(event) => setModelDraft(event.target.value)}
@@ -472,7 +472,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
           <button
             type="button"
             onClick={handleAddModel}
-            className="px-3 py-1.5 text-[10px] font-semibold bg-fuchsia-500/80 hover:bg-fuchsia-500 text-white rounded"
+            className="px-3 py-1.5 text-[10px] font-semibold bg-white/[0.12] hover:bg-white/[0.16] text-text-main rounded"
           >
             添加
           </button>
@@ -507,7 +507,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
                       step="1"
                       value={value}
                       onChange={(event) => handleProviderConcurrencyChange(providerId, event.target.value)}
-                      className="w-full rounded border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-text-main"
+                      className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
                       placeholder="auto"
                     />
                   </label>
@@ -538,7 +538,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
                       step="1"
                       value={value}
                       onChange={(event) => handleRoleConcurrencyChange(roleId, event.target.value)}
-                      className="w-full rounded border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-text-main"
+                      className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
                       placeholder="1"
                     />
                   </label>
@@ -581,7 +581,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
                           event.target.value
                         )
                       }
-                      className="w-full rounded border border-white/10 bg-black/40 px-2 py-1 text-[10px] text-text-main"
+                      className="w-full rounded soft-inset px-2 py-1 text-[10px] text-text-main"
                       placeholder="auto"
                     />
                   </label>
@@ -593,7 +593,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
         </div>
       </div>
 
-      <div className="h-[60vh] min-h-[520px] rounded-xl border border-white/10 overflow-hidden">
+      <div className="h-[60vh] min-h-[520px] soft-inset rounded-xl overflow-hidden">
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -609,7 +609,7 @@ export function LLMVisualEditor({ config, status, onConfigChange, onSave }: LLMV
           edgeTypes={edgeTypes}
           fitView
           isValidConnection={isValid}
-          className="bg-[radial-gradient(circle_at_top,_rgba(14,116,144,0.18),_transparent_60%)]"
+          className="bg-transparent"
         >
           <MiniMap
             nodeColor={nodeColor}

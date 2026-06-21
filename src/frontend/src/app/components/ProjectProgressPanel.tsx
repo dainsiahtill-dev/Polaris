@@ -591,7 +591,7 @@ export function ProjectProgressPanel({
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-heading font-bold text-text-main">PM 政务进度</span>
               {pmRunning ? (
-                <StatusBadge color="success" variant="dot" pulse className="animate-pulse shadow-[0_0_8px_rgba(90,138,106,0.3)]">
+                <StatusBadge color="success" variant="dot" pulse>
                   {UI_TERMS.states.running}
                 </StatusBadge>
               ) : (
@@ -636,7 +636,7 @@ export function ProjectProgressPanel({
             </button>
           ) : null}
           <div
-            className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-text-main backdrop-blur-sm"
+            className="flex items-center gap-2 soft-chip rounded-lg px-3 py-2 text-xs text-text-main"
             title={effectiveDetail || undefined}
           >
             {statusIcon}
@@ -673,7 +673,7 @@ export function ProjectProgressPanel({
           successRate={successStats?.rate}
         />
 
-        <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-md hover:border-accent/30 transition-all flex flex-col">
+        <div className="rounded-xl border border-white/10 bg-white/5 p-4 hover:border-accent/30 transition-all flex flex-col">
            <CurrentTaskCard
               currentSummary={currentSummary}
               lastTaskId={liveDirectorTask?.id || lastTaskId}
@@ -706,7 +706,7 @@ export function ProjectProgressPanel({
       {qaEvidence ? (
         <div
           data-testid="qa-evidence-grade"
-          className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-text-muted"
+          className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-text-muted"
           title={qaEvidence.summary || undefined}
         >
           <span className="font-medium text-text-main">QA evidence</span>
@@ -728,7 +728,7 @@ export function ProjectProgressPanel({
 
       {/* 可折叠的 Focus 总览 */}
       {goalList.length > 0 && (
-        <div className="mt-4 rounded-2xl border border-white/5 bg-white/5 overflow-hidden">
+        <div className="mt-4 rounded-xl border border-white/5 bg-white/5 overflow-hidden">
           <button
             onClick={() => setIsGoalsExpanded(!isGoalsExpanded)}
             className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors"
@@ -768,7 +768,7 @@ export function ProjectProgressPanel({
       </div>
 
       <div className="mt-4 flex min-h-0 flex-1 flex-col">
-        <section className="mb-3 rounded-2xl border border-white/10 bg-white/[0.045] p-3">
+        <section className="mb-3 rounded-xl border border-white/10 bg-white/[0.045] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted">
             <div className="flex items-center gap-2">
               <ListChecks className="size-4 text-text-dim" />
@@ -783,7 +783,7 @@ export function ProjectProgressPanel({
               <div
                 key={role.id}
                 data-testid={`project-chain-role-${role.id}`}
-                className="min-w-0 rounded-xl border border-white/10 bg-bg-surface/40 p-3"
+                className="min-w-0 rounded-lg border border-white/10 bg-bg-surface/40 p-3"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">

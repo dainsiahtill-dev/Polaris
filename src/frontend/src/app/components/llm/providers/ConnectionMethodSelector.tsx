@@ -27,9 +27,9 @@ const CONNECTION_METHODS: ConnectionMethodMeta[] = [
     pros: ['官方支持', '原生 thinking / streaming', '更好的错误处理', '更完整的功能'],
     cons: ['需要安装 SDK 依赖', '配置项稍多'],
     recommended: true,
-    accent: 'bg-emerald-500/15',
-    accentText: 'text-emerald-200',
-    accentBorder: 'border-emerald-400/40',
+    accent: 'bg-status-success/15',
+    accentText: 'text-status-success',
+    accentBorder: 'border-status-success/45',
   },
   {
     id: 'api',
@@ -38,9 +38,9 @@ const CONNECTION_METHODS: ConnectionMethodMeta[] = [
     pros: ['无需 SDK 依赖', '兼容多种服务', '部署简单'],
     cons: ['部分高级功能受限', '流式支持取决于服务端'],
     recommended: false,
-    accent: 'bg-cyan-500/15',
-    accentText: 'text-cyan-200',
-    accentBorder: 'border-cyan-400/40',
+    accent: 'bg-accent/15',
+    accentText: 'text-accent-text',
+    accentBorder: 'border-accent/45',
   },
   {
     id: 'cli',
@@ -49,9 +49,9 @@ const CONNECTION_METHODS: ConnectionMethodMeta[] = [
     pros: ['本地工具链', '参数灵活', '适合快速试用'],
     cons: ['输出解析复杂', '依赖 CLI 安装'],
     recommended: false,
-    accent: 'bg-fuchsia-500/15',
-    accentText: 'text-fuchsia-200',
-    accentBorder: 'border-fuchsia-400/40',
+    accent: 'bg-accent/15',
+    accentText: 'text-accent-text',
+    accentBorder: 'border-accent/45',
   },
 ];
 
@@ -71,7 +71,7 @@ export function ConnectionMethodSelector({ availableMethods }: ConnectionMethodS
   }, [availableMethods]);
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-[rgba(35,25,14,0.55)] p-4 shadow-[0_0_22px_rgba(34,211,238,0.12)]">
+    <div className="soft-panel-subtle rounded-lg p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-xs font-semibold text-text-main">连接方式选择</div>
@@ -79,7 +79,7 @@ export function ConnectionMethodSelector({ availableMethods }: ConnectionMethodS
         </div>
         <div className="flex items-center gap-2 text-[10px] text-text-dim">
           <span>推荐优先：</span>
-          <span className="px-2 py-1 rounded border border-emerald-400/40 bg-emerald-500/10 text-emerald-200">
+          <span className="rounded border border-status-success/40 bg-status-success/10 px-2 py-1 text-status-success">
             SDK 方式
           </span>
         </div>
@@ -95,8 +95,8 @@ export function ConnectionMethodSelector({ availableMethods }: ConnectionMethodS
               onClick={() => selectMethod(method.id)}
               className={`text-left rounded-xl border p-3 transition-all ${
                 selected
-                  ? `${method.accentBorder} ${method.accent} shadow-[0_0_18px_rgba(34,211,238,0.15)]`
-                  : 'border-white/10 bg-[rgba(35,25,14,0.3)] hover:border-white/30'
+                  ? `${method.accentBorder} ${method.accent}`
+                  : 'border-border bg-[rgba(6,15,28,0.72)] hover:border-accent/40 hover:bg-accent/10'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
@@ -104,7 +104,7 @@ export function ConnectionMethodSelector({ availableMethods }: ConnectionMethodS
                   {method.label}
                 </span>
                 {method.recommended && (
-                  <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-200 border border-emerald-500/40">
+                  <span className="rounded-full border border-status-success/40 bg-status-success/10 px-2 py-0.5 text-[9px] text-status-success">
                     推荐
                   </span>
                 )}
@@ -115,7 +115,7 @@ export function ConnectionMethodSelector({ availableMethods }: ConnectionMethodS
                   <div className="text-[9px] uppercase tracking-wider text-text-dim">优势</div>
                   <div className="flex flex-wrap gap-1">
                     {method.pros.slice(0, 2).map((item) => (
-                      <span key={item} className="px-2 py-0.5 rounded bg-white/5 text-text-dim">
+                      <span key={item} className="soft-chip px-2 py-0.5 text-text-dim">
                         {item}
                       </span>
                     ))}
@@ -125,7 +125,7 @@ export function ConnectionMethodSelector({ availableMethods }: ConnectionMethodS
                   <div className="text-[9px] uppercase tracking-wider text-text-dim">限制</div>
                   <div className="flex flex-wrap gap-1">
                     {method.cons.slice(0, 2).map((item) => (
-                      <span key={item} className="px-2 py-0.5 rounded bg-white/5 text-text-dim">
+                      <span key={item} className="soft-chip px-2 py-0.5 text-text-dim">
                         {item}
                       </span>
                     ))}

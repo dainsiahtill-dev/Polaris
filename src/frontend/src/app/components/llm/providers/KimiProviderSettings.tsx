@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { Key } from 'lucide-react';
 import { BaseProviderSettings } from './BaseProviderSettings';
 import { type ProviderConfig, type ProviderValidateFn } from '../types';
-import { cyberInputClasses } from '@/app/components/ui/cyber-input-classes';
+import { cyberInputClasses, cyberTextareaCompactClasses } from '@/app/components/ui/cyber-input-classes';
 
 interface KimiProviderSettingsProps {
   provider: ProviderConfig;
@@ -59,7 +59,7 @@ const parseCustomHeadersInput = (rawValue: string): Record<string, string> | nul
   return parsedHeaders;
 };
 
-const cyberTextareaClasses = "w-full min-w-0 rounded-md border border-white/10 bg-[rgba(35,25,14,0.55)] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 transition-all duration-200 outline-none focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/20 focus:bg-black/60 hover:border-violet-400/30 hover:bg-black/50 disabled:opacity-50 disabled:cursor-not-allowed font-mono h-16";
+const cyberTextareaClasses = cyberTextareaCompactClasses;
 
 // Predefined Kimi models for quick selection
 const KIMI_MODELS = [
@@ -218,7 +218,7 @@ export function KimiProviderSettings({
                 onClick={() => handleFieldChange('model', model.id)}
                 className={`text-[9px] px-2 py-1 rounded border transition-colors ${
                   currentModel === model.id
-                    ? 'bg-violet-500/20 border-violet-500/50 text-violet-200'
+                    ? 'bg-slate-500/20 border-slate-500/50 text-slate-200'
                     : 'bg-[rgba(35,25,14,0.45)] border-white/10 hover:border-white/20 text-text-dim'
                 }`}
               >
@@ -294,7 +294,7 @@ export function KimiProviderSettings({
         <div className="bg-[rgba(35,25,14,0.45)] rounded-lg p-4 border border-white/10">
           <div className="space-y-3 text-xs">
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-violet-400"></div>
+              <div className="w-2 h-2 rounded-full bg-slate-400"></div>
               <span className="text-text-main font-medium">Moonshot AI (Kimi)</span>
               <span className="text-text-dim">官方大语言模型</span>
             </div>
@@ -316,7 +316,7 @@ export function KimiProviderSettings({
                   href="https://platform.moonshot.cn/docs/api/chat"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-cyan-400 hover:text-cyan-300 ml-1"
+                  className="text-slate-300 hover:text-slate-200 ml-1"
                 >
                   Kimi API 文档
                 </a>

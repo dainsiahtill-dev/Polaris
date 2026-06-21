@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 from contextlib import ExitStack
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -416,6 +416,162 @@ class TestContextStoreInvokeFailure:
     (read by ContextViewerModal), not critical path.
     """
 
+    @pytest.mark.asyncio
+    async def test_oserror_injects_degraded_evidence(self) -> None:
+        """OSError from store must inject context_snapshot_degraded into request.context."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+
+        request = self._build_request()
+        executor = self._make_executor_with_mock_catalog()
+
+        async def _failing_store(*args: Any, **kwargs: Any) -> str:
+            raise OSError("disk full")
+
+        with ExitStack() as stack:
+            for p in self._patch_provider(executor_module):
+                stack.enter_context(p)
+            stack.enter_context(patch.object(executor, "_store_context_messages", side_effect=_failing_store))
+            stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+            response = await executor._execute_invoke(request, trace_id="trace-degraded-1")
+
+        assert response.ok is True
+        ctx = request.context if isinstance(request.context, dict) else {}
+        degraded = ctx.get("context_snapshot_degraded")
+        assert degraded is not None, "context_snapshot_degraded must be set on store failure"
+        assert degraded["code"] == "CONTEXT_STORE_WRITE_FAILED"
+        assert degraded["reason"] == "context_snapshot_store_failure"
+        assert degraded["exception_type"] == "OSError"
+        assert isinstance(degraded["message"], str)
+        assert len(degraded["message"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_valueerror_injects_degraded_evidence(self) -> None:
+        """ValueError from store must inject context_snapshot_degraded into request.context."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+
+        request = self._build_request()
+        executor = self._make_executor_with_mock_catalog()
+
+        async def _failing_store(*args: Any, **kwargs: Any) -> str:
+            raise ValueError("corrupt payload")
+
+        with ExitStack() as stack:
+            for p in self._patch_provider(executor_module):
+                stack.enter_context(p)
+            stack.enter_context(patch.object(executor, "_store_context_messages", side_effect=_failing_store))
+            stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+            response = await executor._execute_invoke(request, trace_id="trace-degraded-2")
+
+        assert response.ok is True
+        ctx = request.context if isinstance(request.context, dict) else {}
+        degraded = ctx.get("context_snapshot_degraded")
+        assert degraded is not None
+        assert degraded["code"] == "CONTEXT_STORE_WRITE_FAILED"
+        assert degraded["exception_type"] == "ValueError"
+
+    @pytest.mark.asyncio
+    async def test_success_path_no_degraded_evidence(self) -> None:
+        """Successful store must NOT inject context_snapshot_degraded."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+
+        request = self._build_request()
+        executor = self._make_executor_with_mock_catalog()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            executor.workspace = tmpdir
+            with ExitStack() as stack:
+                for p in self._patch_provider(executor_module):
+                    stack.enter_context(p)
+                stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+                response = await executor._execute_invoke(request, trace_id="trace-ok-1")
+
+        assert response.ok is True
+        ctx = request.context if isinstance(request.context, dict) else {}
+        assert "context_snapshot_degraded" not in ctx, "context_snapshot_degraded must NOT be present on success path"
+        # context_snapshot_ref should be present on success
+        assert ctx.get("context_snapshot_ref") is not None
+
+    @pytest.mark.asyncio
+    async def test_degraded_message_truncated_to_200_chars(self) -> None:
+        """Degraded message must be truncated to 200 chars to avoid bloat."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+
+        request = self._build_request()
+        executor = self._make_executor_with_mock_catalog()
+        long_msg = "x" * 500
+
+        async def _failing_store(*args: Any, **kwargs: Any) -> str:
+            raise OSError(long_msg)
+
+        with ExitStack() as stack:
+            for p in self._patch_provider(executor_module):
+                stack.enter_context(p)
+            stack.enter_context(patch.object(executor, "_store_context_messages", side_effect=_failing_store))
+            stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+            response = await executor._execute_invoke(request, trace_id="trace-degraded-3")
+
+        assert response.ok is True
+        ctx = request.context if isinstance(request.context, dict) else {}
+        degraded = ctx.get("context_snapshot_degraded")
+        assert degraded is not None
+        assert len(degraded["message"]) <= 200
+
+    @pytest.mark.asyncio
+    async def test_degraded_evidence_is_json_serialisable(self) -> None:
+        """Degraded evidence must be JSON-serialisable (no exotic types)."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+
+        request = self._build_request()
+        executor = self._make_executor_with_mock_catalog()
+
+        async def _failing_store(*args: Any, **kwargs: Any) -> str:
+            raise RuntimeError("some runtime error")
+
+        with ExitStack() as stack:
+            for p in self._patch_provider(executor_module):
+                stack.enter_context(p)
+            stack.enter_context(patch.object(executor, "_store_context_messages", side_effect=_failing_store))
+            stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+            response = await executor._execute_invoke(request, trace_id="trace-degraded-4")
+
+        assert response.ok is True
+        ctx = request.context if isinstance(request.context, dict) else {}
+        degraded = ctx.get("context_snapshot_degraded")
+        assert degraded is not None
+        # Must not raise
+        serialised = json.dumps(degraded, ensure_ascii=False)
+        restored = json.loads(serialised)
+        assert restored == degraded
+
+    @pytest.mark.asyncio
+    async def test_degraded_not_injected_when_context_is_not_dict(self) -> None:
+        """When request.context is not a dict, degraded evidence is not injected (no crash)."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+        from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
+
+        request = AIRequest(
+            task_type=TaskType.DIALOGUE,
+            role="test",
+            input="hello",
+            provider_id="mock-provider",
+            model="mock-model",
+            context=None,  # type: ignore[arg-type]
+        )
+        executor = self._make_executor_with_mock_catalog()
+
+        async def _failing_store(*args: Any, **kwargs: Any) -> str:
+            raise OSError("disk full")
+
+        with ExitStack() as stack:
+            for p in self._patch_provider(executor_module):
+                stack.enter_context(p)
+            stack.enter_context(patch.object(executor, "_store_context_messages", side_effect=_failing_store))
+            stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+            # Must not raise
+            response = await executor._execute_invoke(request, trace_id="trace-degraded-5")
+
+        assert response.ok is True
+
     @staticmethod
     def _build_request() -> Any:
         from polaris.kernelone.llm.engine.contracts import AIRequest, TaskType
@@ -445,7 +601,7 @@ class TestContextStoreInvokeFailure:
                 )
 
         executor = AIExecutor()
-        executor.model_catalog = _FakeModelCatalog()
+        cast(Any, executor).model_catalog = _FakeModelCatalog()
         return executor
 
     @staticmethod

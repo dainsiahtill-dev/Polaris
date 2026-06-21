@@ -22,6 +22,7 @@ from ..task_scope_paths import (
 )
 from ._common import (
     _TS_LINE_COMMENT_ESCAPED_NEWLINE_CODE_RE,
+    _TS_MISSING_CLOSING_BRACE_ERROR_RE,
     _TS_NAMED_IMPORT_RE,
     _TS_OBJECT_LITERAL_START_RE,
     _TS_OBJECT_PROPERTY_SEMICOLON_LINE_RE,
@@ -58,6 +59,44 @@ _TS_TOO_FEW_ARGUMENTS_ERROR_RE = re.compile(
     r"Expected\s+(?P<expected>\d+)\s+arguments?,\s+but\s+got\s+(?P<got>\d+)",
     re.IGNORECASE,
 )
+_TS_CANNOT_FIND_NAME_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2304:\s*"
+    r"Cannot\s+find\s+name\s+['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]",
+    re.IGNORECASE,
+)
+_TS_UNKNOWN_VALUE_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS18046:\s*"
+    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+of\s+type\s+['\"]unknown['\"]",
+    re.IGNORECASE,
+)
+_TS_REQUIRED_PROPERTY_MISSING_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2741:\s*"
+    r"Property\s+['\"](?P<member>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+missing\s+in\s+type\s+"
+    r".+?\s+but\s+required\s+in\s+type\s+['\"](?P<type>[A-Za-z_$][A-Za-z0-9_$]*)['\"]",
+    re.IGNORECASE | re.DOTALL,
+)
+_TS_REQUIRED_PROPERTIES_MISSING_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2739:\s*"
+    r"Type\s+.+?\s+is\s+missing\s+the\s+following\s+properties\s+from\s+type\s+"
+    r"['\"](?P<type>[A-Za-z_$][A-Za-z0-9_$]*)['\"]:\s*(?P<members>[^\n]+)",
+    re.IGNORECASE | re.DOTALL,
+)
+_TS_ENUM_MEMBER_SEPARATOR_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS1357:\s*"
+    r"An\s+enum\s+member\s+name\s+must\s+be\s+followed\s+by\s+a\s+',',\s*'=',\s*or\s*'}'",
+    re.IGNORECASE,
+)
+_TS_ENUM_DECLARATION_LINE_RE = re.compile(r"\benum\s+[A-Za-z_$][A-Za-z0-9_$]*\b[^{}]*{")
+_TS_ENUM_MEMBER_LINE_RE = re.compile(
+    r"^(?P<prefix>\s*[A-Za-z_$][A-Za-z0-9_$]*(?:\s*=\s*[^,;{}]+?)?)(?P<separator>[;,]?)(?P<space>\s*)(?P<comment>//.*)?$"
+)
+_TS_FUNCTION_DECLARATION_LINE_RE = re.compile(
+    r"^\s*(?:export\s+)?(?:async\s+)?function\s+[A-Za-z_$][A-Za-z0-9_$]*\s*\((?P<params>[^)]*)\)[^{]*{"
+)
+_TS_ARROW_FUNCTION_DECLARATION_LINE_RE = re.compile(
+    r"^\s*(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*"
+    r"(?:async\s*)?\((?P<params>[^)]*)\)\s*=>\s*{"
+)
 _TS_EXPORTED_CLASS_RE_TEMPLATE = r"export\s+(?:abstract\s+)?class\s+{type_name}\b[^{{]*{{"
 _TS_STRUCTURAL_TYPE_RE_TEMPLATE = r"(?:export\s+)?(?:interface\s+{type_name}\b[^{{]*{{|type\s+{type_name}\b\s*=\s*{{)"
 _TS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
@@ -73,8 +112,15 @@ _TS_NUMERIC_MEMBER_NAMES = {
     "humidity",
     "index",
     "intensity",
+    "hue",
     "moonphase",
     "phase",
+    "phaseangle",
+    "petalcount",
+    "r",
+    "g",
+    "b",
+    "alpha",
     "radius",
     "size",
     "speed",
@@ -339,7 +385,9 @@ def _apply_deterministic_typescript_missing_member_repair(
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
     missing_members = _parse_typescript_missing_member_errors(artifact_quality_errors)
-    if not missing_members:
+    unknown_values = _parse_typescript_unknown_value_errors(artifact_quality_errors)
+    missing_required_properties = _parse_typescript_missing_required_property_errors(artifact_quality_errors)
+    if not missing_members and not unknown_values and not missing_required_properties:
         return []
 
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
@@ -350,7 +398,8 @@ def _apply_deterministic_typescript_missing_member_repair(
     updated_by_path: dict[Path, str] = {}
     repaired_members: list[dict[str, str]] = []
     for item in missing_members:
-        type_name = item["type"]
+        raw_type_name = item["type"]
+        type_name = _typescript_declaration_type_name(raw_type_name)
         member = item["member"]
         declaration_kind = "class"
         declaration_path, declaration_text, class_start, class_end = _find_typescript_class_declaration(
@@ -371,17 +420,31 @@ def _apply_deterministic_typescript_missing_member_repair(
         if _typescript_class_text_has_member(class_text, member):
             continue
         usage_line = _typescript_error_usage_line(workspace_path, item)
+        inferred_type = _infer_typescript_missing_member_value_type(
+            workspace_path=workspace_path,
+            item=item,
+            member=member,
+            fallback_declaration_text=class_text,
+        )
         if declaration_kind == "class":
             member_declaration = _build_typescript_missing_member_declaration(
                 member=member,
                 usage_line=usage_line,
                 class_text=class_text,
+                inferred_type=inferred_type,
+                static_context=_typescript_static_member_access_context(
+                    raw_type_name=raw_type_name,
+                    type_name=type_name,
+                    member=member,
+                    usage_line=usage_line,
+                ),
             )
         else:
             member_declaration = _build_typescript_missing_member_signature(
                 member=member,
                 usage_line=usage_line,
                 declaration_text=class_text,
+                inferred_type=inferred_type,
             )
         if not member_declaration:
             continue
@@ -397,6 +460,36 @@ def _apply_deterministic_typescript_missing_member_repair(
                 "declaration_kind": declaration_kind,
             }
         )
+
+    repaired_members.extend(
+        _repair_typescript_structural_property_shapes(
+            workspace_path=workspace_path,
+            missing_members=missing_members,
+            unknown_values=unknown_values,
+            updated_by_path=updated_by_path,
+        )
+    )
+    repaired_members.extend(
+        _repair_typescript_unhostable_member_access_defaults(
+            workspace_path=workspace_path,
+            missing_members=missing_members,
+            updated_by_path=updated_by_path,
+        )
+    )
+    repaired_members.extend(
+        _repair_typescript_required_object_literals(
+            workspace_path=workspace_path,
+            missing_required_properties=missing_required_properties,
+            updated_by_path=updated_by_path,
+        )
+    )
+    repaired_members.extend(
+        _repair_typescript_return_object_literals_for_repaired_members(
+            workspace_path=workspace_path,
+            repaired_members=repaired_members,
+            updated_by_path=updated_by_path,
+        )
+    )
 
     if not updated_by_path:
         return []
@@ -636,6 +729,70 @@ def _parse_typescript_missing_member_errors(errors: list[str]) -> list[dict[str,
     return parsed
 
 
+def _parse_typescript_unknown_value_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for error in errors:
+        for match in _TS_UNKNOWN_VALUE_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": _normalize_declared_task_path(match.group("file")),
+                "line": str(match.group("line") or "").strip(),
+                "symbol": str(match.group("symbol") or "").strip(),
+            }
+            key = (item["file"], item["line"], item["symbol"])
+            if not item["file"] or not item["line"] or not _TS_IDENTIFIER_RE.fullmatch(item["symbol"]) or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _parse_typescript_missing_required_property_errors(errors: list[str]) -> list[dict[str, Any]]:
+    parsed: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    for error in errors:
+        text = str(error or "")
+        for match in _TS_REQUIRED_PROPERTY_MISSING_ERROR_RE.finditer(text):
+            member = str(match.group("member") or "").strip()
+            file_name = _normalize_declared_task_path(match.group("file"))
+            line = str(match.group("line") or "").strip()
+            type_name = str(match.group("type") or "").strip()
+            members = [member] if _TS_IDENTIFIER_RE.fullmatch(member) else []
+            key = (file_name, line, type_name, ",".join(members))
+            if not file_name or not line or not type_name or not members or key in seen:
+                continue
+            item = {
+                "file": file_name,
+                "line": line,
+                "type": type_name,
+                "members": members,
+            }
+            seen.add(key)
+            parsed.append(item)
+        for match in _TS_REQUIRED_PROPERTIES_MISSING_ERROR_RE.finditer(text):
+            members = [
+                token.strip()
+                for token in re.split(r",|\band\b", str(match.group("members") or ""))
+                if _TS_IDENTIFIER_RE.fullmatch(token.strip())
+            ]
+            members = _dedupe_preserve_order(members)
+            file_name = _normalize_declared_task_path(match.group("file"))
+            line = str(match.group("line") or "").strip()
+            type_name = str(match.group("type") or "").strip()
+            key = (file_name, line, type_name, ",".join(members))
+            if not file_name or not line or not type_name or not members or key in seen:
+                continue
+            item = {
+                "file": file_name,
+                "line": line,
+                "type": type_name,
+                "members": members,
+            }
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
 def _detect_typescript_entrypoint_from_package(package_data: dict[str, Any]) -> str:
     candidates: list[str] = []
     for key in ("main", "module", "browser"):
@@ -809,6 +966,61 @@ def _parse_typescript_too_few_arguments_errors(errors: list[str]) -> list[dict[s
     return parsed
 
 
+def _parse_typescript_enum_member_separator_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for error in errors:
+        for match in _TS_ENUM_MEMBER_SEPARATOR_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": _normalize_declared_task_path(match.group("file")),
+                "line": str(match.group("line") or "").strip(),
+                "col": str(match.group("col") or "").strip(),
+            }
+            key = (item["file"], item["line"], item["col"])
+            if not item["file"] or not item["line"] or not item["col"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _parse_typescript_missing_closing_brace_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for error in errors:
+        for match in _TS_MISSING_CLOSING_BRACE_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": _normalize_declared_task_path(match.group("path")),
+                "line": str(match.group("line") or "").strip(),
+                "col": str(match.group("col") or "").strip(),
+            }
+            key = (item["file"], item["line"], item["col"])
+            if not item["file"] or not item["line"] or not item["col"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _parse_typescript_cannot_find_name_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for error in errors:
+        for match in _TS_CANNOT_FIND_NAME_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": _normalize_declared_task_path(match.group("file")),
+                "line": str(match.group("line") or "").strip(),
+                "col": str(match.group("col") or "").strip(),
+                "symbol": str(match.group("symbol") or "").strip(),
+            }
+            key = (item["file"], item["line"], item["symbol"])
+            if not item["file"] or not item["line"] or not _TS_IDENTIFIER_RE.fullmatch(item["symbol"]) or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
 def _write_typescript_repair_results(
     adapter: Any,
     *,
@@ -861,7 +1073,8 @@ def _find_typescript_class_declaration(
     type_name: str,
     updated_by_path: dict[Path, str],
 ) -> tuple[Path | None, str | None, int, int]:
-    class_re = re.compile(_TS_EXPORTED_CLASS_RE_TEMPLATE.format(type_name=re.escape(type_name)))
+    declaration_type_name = _typescript_declaration_type_name(type_name)
+    class_re = re.compile(_TS_EXPORTED_CLASS_RE_TEMPLATE.format(type_name=re.escape(declaration_type_name)))
     for path in _iter_typescript_files(workspace_path):
         try:
             text = updated_by_path.get(path) or path.read_text(encoding="utf-8")
@@ -884,7 +1097,8 @@ def _find_typescript_structural_type_declaration(
     type_name: str,
     updated_by_path: dict[Path, str],
 ) -> tuple[Path | None, str | None, int, int]:
-    declaration_re = re.compile(_TS_STRUCTURAL_TYPE_RE_TEMPLATE.format(type_name=re.escape(type_name)))
+    declaration_type_name = _typescript_declaration_type_name(type_name)
+    declaration_re = re.compile(_TS_STRUCTURAL_TYPE_RE_TEMPLATE.format(type_name=re.escape(declaration_type_name)))
     for path in _iter_typescript_files(workspace_path):
         try:
             text = updated_by_path.get(path) or path.read_text(encoding="utf-8")
@@ -937,6 +1151,762 @@ def _typescript_error_usage_line(workspace_path: Path, item: dict[str, str]) -> 
     if line_no < 1 or line_no > len(lines):
         return ""
     return lines[line_no - 1]
+
+
+def _typescript_source_lines_for_error_item(
+    workspace_path: Path,
+    item: dict[str, Any],
+) -> tuple[Path | None, list[str], int]:
+    rel_path = str(item.get("file") or "").strip()
+    try:
+        line_no = int(str(item.get("line") or "0"))
+    except ValueError:
+        return None, [], 0
+    source_path = (workspace_path / rel_path).resolve()
+    if not _path_inside_workspace(source_path, workspace_path) or not source_path.is_file():
+        return None, [], 0
+    try:
+        return source_path, source_path.read_text(encoding="utf-8").splitlines(), line_no
+    except (OSError, UnicodeDecodeError):
+        return None, [], 0
+
+
+def _infer_typescript_missing_member_value_type(
+    *,
+    workspace_path: Path,
+    item: dict[str, str],
+    member: str,
+    fallback_declaration_text: str,
+) -> str:
+    usage_line = _typescript_error_usage_line(workspace_path, item)
+    object_shape = _infer_typescript_object_shape_for_symbol(
+        workspace_path=workspace_path,
+        item=item,
+        symbol=member,
+    )
+    if object_shape:
+        return object_shape
+    if _typescript_symbol_usage_treats_as_number(workspace_path=workspace_path, item=item, symbol=member):
+        return "number"
+    return _typescript_missing_member_value_type(member, usage_line, fallback_declaration_text)
+
+
+def _infer_typescript_object_shape_for_symbol(
+    *,
+    workspace_path: Path,
+    item: dict[str, Any],
+    symbol: str,
+) -> str:
+    _source_path, lines, line_no = _typescript_source_lines_for_error_item(workspace_path, item)
+    if not lines or line_no < 1:
+        return ""
+    children: dict[str, str] = {}
+    symbol_re = re.compile(rf"\b{re.escape(symbol)}\s*\.\s*(?P<child>[A-Za-z_$][A-Za-z0-9_$]*)\b")
+    start = max(0, line_no - 8)
+    end = min(len(lines), line_no + 80)
+    for line in lines[start:end]:
+        for match in symbol_re.finditer(line):
+            child = str(match.group("child") or "").strip()
+            if child:
+                children.setdefault(child, _infer_typescript_property_child_value_type(child, line))
+    if not children:
+        return ""
+    return _typescript_object_type_from_fields(children)
+
+
+def _typescript_symbol_usage_treats_as_number(
+    *,
+    workspace_path: Path,
+    item: dict[str, Any],
+    symbol: str,
+) -> bool:
+    _source_path, lines, line_no = _typescript_source_lines_for_error_item(workspace_path, item)
+    if not lines or line_no < 1:
+        return False
+    symbol_token = rf"\b{re.escape(symbol)}\b"
+    start = max(0, line_no - 8)
+    end = min(len(lines), line_no + 80)
+    for line in lines[start:end]:
+        if re.search(rf"{symbol_token}\s*(?:[*/%+\-]|[<>]=?)", line) or re.search(
+            rf"(?:[*/%+\-]|[<>]=?)\s*[^;\n]*{symbol_token}",
+            line,
+        ):
+            return True
+    return False
+
+
+def _infer_typescript_property_child_value_type(child: str, usage_line: str) -> str:
+    if _typescript_usage_line_treats_member_as_string(child, usage_line) or _typescript_member_name_suggests_string(
+        child
+    ):
+        return "string"
+    if _typescript_usage_line_treats_member_as_number(child, usage_line) or _typescript_member_name_suggests_number(
+        child
+    ):
+        return "number"
+    return "number"
+
+
+def _typescript_object_type_from_fields(fields: dict[str, str]) -> str:
+    parts = [f"{name}: {value_type}" for name, value_type in fields.items() if _TS_IDENTIFIER_RE.fullmatch(name)]
+    if not parts:
+        return "{}"
+    return "{ " + "; ".join(parts) + " }"
+
+
+def _repair_typescript_structural_property_shapes(
+    *,
+    workspace_path: Path,
+    missing_members: list[dict[str, str]],
+    unknown_values: list[dict[str, str]],
+    updated_by_path: dict[Path, str],
+) -> list[dict[str, str]]:
+    grouped: dict[tuple[str, str, Path], dict[str, str]] = {}
+    for item in missing_members:
+        if str(item.get("type") or "").strip().lower() not in {"string", "number", "boolean", "unknown"}:
+            continue
+        usage_line = _typescript_error_usage_line(workspace_path, item)
+        receiver = _typescript_receiver_for_member_access(usage_line, str(item.get("member") or ""))
+        if not receiver:
+            continue
+        parent_type, property_name = _typescript_parent_type_for_local_symbol(
+            workspace_path=workspace_path,
+            item=item,
+            symbol=receiver,
+        )
+        if not parent_type or not property_name:
+            continue
+        declaration_path, _declaration_text, _start, _end = _find_typescript_structural_type_declaration(
+            workspace_path=workspace_path,
+            type_name=parent_type,
+            updated_by_path=updated_by_path,
+        )
+        if declaration_path is None:
+            continue
+        grouped.setdefault((parent_type, property_name, declaration_path), {})[str(item.get("member") or "")] = (
+            _infer_typescript_property_child_value_type(str(item.get("member") or ""), usage_line)
+        )
+
+    for item in unknown_values:
+        symbol = str(item.get("symbol") or "").strip()
+        if not symbol:
+            continue
+        parent_type, property_name = _typescript_parent_type_for_local_symbol(
+            workspace_path=workspace_path,
+            item=item,
+            symbol=symbol,
+        )
+        if not parent_type or not property_name:
+            continue
+        declaration_path, _declaration_text, _start, _end = _find_typescript_structural_type_declaration(
+            workspace_path=workspace_path,
+            type_name=parent_type,
+            updated_by_path=updated_by_path,
+        )
+        if declaration_path is None:
+            continue
+        object_shape = _infer_typescript_object_shape_for_symbol(
+            workspace_path=workspace_path,
+            item=item,
+            symbol=symbol,
+        )
+        child_types = _typescript_object_type_fields(object_shape)
+        if child_types:
+            grouped.setdefault((parent_type, property_name, declaration_path), {}).update(child_types)
+
+    repaired: list[dict[str, str]] = []
+    for (type_name, property_name, declaration_path), child_types in grouped.items():
+        if not child_types:
+            continue
+        try:
+            declaration_text = updated_by_path.get(declaration_path) or declaration_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        new_text = _replace_typescript_structural_property_type(
+            declaration_text,
+            property_name=property_name,
+            replacement_type=_typescript_object_type_from_fields(child_types),
+        )
+        if new_text == declaration_text:
+            continue
+        updated_by_path[declaration_path] = new_text
+        repaired.append(
+            {
+                "file": declaration_path.relative_to(workspace_path).as_posix(),
+                "type": type_name,
+                "member": property_name,
+                "declaration_kind": "structural_property_shape",
+            }
+        )
+    return repaired
+
+
+def _typescript_receiver_for_member_access(usage_line: str, member: str) -> str:
+    safe_member = re.sub(r"[^A-Za-z0-9_$]", "", member)
+    if not safe_member:
+        return ""
+    match = re.search(rf"\b(?P<receiver>[A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*{re.escape(safe_member)}\b", usage_line)
+    return str(match.group("receiver") or "").strip() if match else ""
+
+
+def _typescript_parent_type_for_local_symbol(
+    *,
+    workspace_path: Path,
+    item: dict[str, Any],
+    symbol: str,
+) -> tuple[str, str]:
+    _source_path, lines, line_no = _typescript_source_lines_for_error_item(workspace_path, item)
+    if not lines or line_no < 1:
+        return "", ""
+    source_var = _typescript_destructuring_source_for_local_symbol(lines, line_no, symbol)
+    if not source_var:
+        return "", ""
+    parent_type = _typescript_type_for_local_variable(lines, line_no, source_var)
+    if not parent_type:
+        return "", ""
+    return parent_type, symbol
+
+
+def _typescript_destructuring_source_for_local_symbol(lines: list[str], line_no: int, symbol: str) -> str:
+    start = max(0, line_no - 80)
+    end = min(len(lines), max(line_no + 1, 1))
+    destructuring_re = re.compile(
+        r"\b(?:const|let|var)\s*{\s*(?P<members>[^}]+?)\s*}\s*=\s*(?P<source>[A-Za-z_$][A-Za-z0-9_$]*)"
+    )
+    for line in reversed(lines[start:end]):
+        match = destructuring_re.search(line)
+        if not match:
+            continue
+        members = {
+            part.split(":", 1)[-1].strip() for part in str(match.group("members") or "").split(",") if part.strip()
+        }
+        if symbol in members:
+            return str(match.group("source") or "").strip()
+    return ""
+
+
+def _typescript_type_for_local_variable(lines: list[str], line_no: int, variable: str) -> str:
+    start = max(0, line_no - 120)
+    end = min(len(lines), max(line_no + 1, 1))
+    typed_re = re.compile(rf"\b{re.escape(variable)}\s*:\s*(?P<type>[A-Za-z_$][A-Za-z0-9_$]*)\b")
+    assertion_re = re.compile(rf"\b{re.escape(variable)}\b[^;\n]*\bas\s+(?P<type>[A-Za-z_$][A-Za-z0-9_$]*)\b")
+    for line in reversed(lines[start:end]):
+        match = typed_re.search(line) or assertion_re.search(line)
+        if match:
+            return str(match.group("type") or "").strip()
+    return ""
+
+
+def _replace_typescript_structural_property_type(
+    declaration_text: str,
+    *,
+    property_name: str,
+    replacement_type: str,
+) -> str:
+    safe_property = re.sub(r"[^A-Za-z0-9_$]", "", property_name)
+    if not safe_property or not replacement_type.strip():
+        return declaration_text
+    lines = declaration_text.splitlines(keepends=True)
+    property_re = re.compile(rf"^(?P<indent>\s*){re.escape(safe_property)}(?P<optional>\??)\s*:\s*")
+    for index, line in enumerate(lines):
+        match = property_re.match(line)
+        if not match:
+            continue
+        newline = "\n" if line.endswith("\n") else ""
+        suffix = ";" if line.rstrip().endswith(";") else ","
+        lines[index] = (
+            f"{match.group('indent')}{safe_property}{match.group('optional')}: {replacement_type}{suffix}{newline}"
+        )
+        return "".join(lines)
+    return declaration_text
+
+
+def _typescript_object_type_fields(ts_type: str) -> dict[str, str]:
+    token = ts_type.strip()
+    if not token.startswith("{") or not token.endswith("}"):
+        return {}
+    body = token[1:-1]
+    fields: dict[str, str] = {}
+    for part in body.split(";"):
+        if ":" not in part:
+            continue
+        name, value_type = part.split(":", 1)
+        key = name.strip().rstrip("?")
+        value = value_type.strip()
+        if _TS_IDENTIFIER_RE.fullmatch(key) and value:
+            fields[key] = value
+    return fields
+
+
+def _repair_typescript_required_object_literals(
+    *,
+    workspace_path: Path,
+    missing_required_properties: list[dict[str, Any]],
+    updated_by_path: dict[Path, str],
+) -> list[dict[str, str]]:
+    repaired: list[dict[str, str]] = []
+    for item in missing_required_properties:
+        rel_path = str(item.get("file") or "").strip()
+        type_name = str(item.get("type") or "").strip()
+        members = [
+            str(member).strip() for member in item.get("members", []) if _TS_IDENTIFIER_RE.fullmatch(str(member))
+        ]
+        if not rel_path or not type_name or not members:
+            continue
+        source_path = (workspace_path / rel_path).resolve()
+        if not _path_inside_workspace(source_path, workspace_path) or not source_path.is_file():
+            continue
+        declaration_path, declaration_text, declaration_start, declaration_end = (
+            _find_typescript_structural_type_declaration(
+                workspace_path=workspace_path,
+                type_name=type_name,
+                updated_by_path=updated_by_path,
+            )
+        )
+        if declaration_path is None or declaration_text is None or declaration_start < 0 or declaration_end < 0:
+            continue
+        member_types = _typescript_structural_member_type_map(declaration_text[declaration_start:declaration_end])
+        additions = {
+            member: member_types[member]
+            for member in members
+            if member in member_types and member_types[member].strip()
+        }
+        if not additions:
+            continue
+        try:
+            source_text = updated_by_path.get(source_path) or source_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            line_no = int(str(item.get("line") or "0"))
+        except ValueError:
+            continue
+        bounds = _find_typescript_object_literal_bounds_for_line(source_text, line_no)
+        if bounds is None:
+            continue
+        open_brace, close_brace = bounds
+        new_text = _insert_typescript_object_literal_defaults(
+            source_text,
+            open_brace=open_brace,
+            close_brace=close_brace,
+            additions=additions,
+        )
+        if new_text == source_text:
+            continue
+        updated_by_path[source_path] = new_text
+        repaired.append(
+            {
+                "file": source_path.relative_to(workspace_path).as_posix(),
+                "type": type_name,
+                "member": ",".join(additions),
+                "declaration_kind": "object_literal_required_defaults",
+            }
+        )
+    return repaired
+
+
+def _repair_typescript_return_object_literals_for_repaired_members(
+    *,
+    workspace_path: Path,
+    repaired_members: list[dict[str, str]],
+    updated_by_path: dict[Path, str],
+) -> list[dict[str, str]]:
+    members_by_type: dict[str, set[str]] = {}
+    for item in repaired_members:
+        type_name = str(item.get("type") or "").strip()
+        member = str(item.get("member") or "").strip()
+        if not type_name or not member or "," in member:
+            continue
+        if str(item.get("declaration_kind") or "") not in {
+            "structural",
+            "structural_property_shape",
+        }:
+            continue
+        members_by_type.setdefault(type_name, set()).add(member)
+    if not members_by_type:
+        return []
+
+    type_member_defaults: dict[str, dict[str, str]] = {}
+    for type_name, members in members_by_type.items():
+        declaration_path, declaration_text, declaration_start, declaration_end = (
+            _find_typescript_structural_type_declaration(
+                workspace_path=workspace_path,
+                type_name=type_name,
+                updated_by_path=updated_by_path,
+            )
+        )
+        if declaration_path is None or declaration_text is None or declaration_start < 0 or declaration_end < 0:
+            continue
+        member_types = _typescript_structural_member_type_map(declaration_text[declaration_start:declaration_end])
+        additions = {member: member_types[member] for member in members if member in member_types}
+        if additions:
+            type_member_defaults[type_name] = additions
+    if not type_member_defaults:
+        return []
+
+    repaired: list[dict[str, str]] = []
+    for source_path in _iter_typescript_files(workspace_path):
+        try:
+            source_text = updated_by_path.get(source_path) or source_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        new_text = source_text
+        source_repairs: list[tuple[str, set[str]]] = []
+        for type_name, additions in type_member_defaults.items():
+            patched, patched_members = _patch_typescript_function_return_object_literals(
+                new_text,
+                type_name=type_name,
+                additions=additions,
+            )
+            if patched != new_text:
+                new_text = patched
+                source_repairs.append((type_name, patched_members))
+        if new_text == source_text:
+            continue
+        updated_by_path[source_path] = new_text
+        for type_name, members in source_repairs:
+            repaired.append(
+                {
+                    "file": source_path.relative_to(workspace_path).as_posix(),
+                    "type": type_name,
+                    "member": ",".join(sorted(members)),
+                    "declaration_kind": "return_object_literal_defaults",
+                }
+            )
+    return repaired
+
+
+def _patch_typescript_function_return_object_literals(
+    text: str,
+    *,
+    type_name: str,
+    additions: dict[str, str],
+) -> tuple[str, set[str]]:
+    if not additions:
+        return text, set()
+    function_re = re.compile(rf"\)\s*:\s*{re.escape(type_name)}\s*{{")
+    offset = 0
+    patched = text
+    patched_members: set[str] = set()
+    while True:
+        match = function_re.search(patched, offset)
+        if not match:
+            break
+        function_open = patched.find("{", match.start(), match.end())
+        function_close = _find_matching_brace(patched, function_open)
+        if function_open < 0 or function_close < 0:
+            offset = match.end()
+            continue
+        return_match = re.search(r"\breturn\s*{", patched[function_open:function_close])
+        if not return_match:
+            offset = function_close + 1
+            continue
+        object_open = function_open + return_match.end() - 1
+        object_close = _find_matching_brace(patched, object_open)
+        if object_close < 0 or object_close > function_close:
+            offset = function_close + 1
+            continue
+        before = patched
+        patched = _insert_typescript_object_literal_defaults(
+            patched,
+            open_brace=object_open,
+            close_brace=object_close,
+            additions=additions,
+        )
+        if patched != before:
+            existing_after = _typescript_object_literal_existing_properties(
+                patched[object_open + 1 : _find_matching_brace(patched, object_open)]
+            )
+            patched_members.update(member for member in additions if member in existing_after)
+            offset = object_close + (len(patched) - len(before)) + 1
+        else:
+            offset = object_close + 1
+    return patched, patched_members
+
+
+def _repair_typescript_unhostable_member_access_defaults(
+    *,
+    workspace_path: Path,
+    missing_members: list[dict[str, str]],
+    updated_by_path: dict[Path, str],
+) -> list[dict[str, str]]:
+    repaired: list[dict[str, str]] = []
+    for item in missing_members:
+        member = str(item.get("member") or "").strip()
+        type_name = str(item.get("type") or "").strip()
+        if not member or not type_name:
+            continue
+        if _typescript_type_has_structural_declaration(
+            workspace_path=workspace_path,
+            type_name=type_name,
+            updated_by_path=updated_by_path,
+        ):
+            continue
+        usage_line = _typescript_error_usage_line(workspace_path, item)
+        receiver = _typescript_receiver_for_member_access(usage_line, member)
+        if not receiver:
+            continue
+        parent_type, _property_name = _typescript_parent_type_for_local_symbol(
+            workspace_path=workspace_path,
+            item=item,
+            symbol=receiver,
+        )
+        if parent_type:
+            continue
+        source_path, lines, line_no = _typescript_source_lines_for_error_item(workspace_path, item)
+        if source_path is None or not lines or line_no < 1 or line_no > len(lines):
+            continue
+        try:
+            source_text = updated_by_path.get(source_path) or source_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        line_start, line_end = _typescript_line_bounds(source_text, line_no)
+        line = source_text[line_start:line_end]
+        default_type = _typescript_member_access_default_type(member, line)
+        replacement = _typescript_default_value_for_type(default_type)
+        call_default_type = _typescript_unhostable_call_default_type(type_name, default_type)
+        call_replacement = _typescript_expression_default_value(call_default_type)
+        new_line = _replace_typescript_member_access_with_default(
+            line,
+            receiver=receiver,
+            member=member,
+            replacement=replacement,
+            call_replacement=call_replacement,
+        )
+        if new_line == line:
+            continue
+        updated_by_path[source_path] = source_text[:line_start] + new_line + source_text[line_end:]
+        repaired.append(
+            {
+                "file": source_path.relative_to(workspace_path).as_posix(),
+                "type": type_name,
+                "member": member,
+                "declaration_kind": "unhostable_member_access_default",
+            }
+        )
+    return repaired
+
+
+def _typescript_declaration_type_name(type_name: str) -> str:
+    stripped = str(type_name or "").strip()
+    typeof_match = re.match(r"^typeof\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)$", stripped)
+    if typeof_match:
+        return str(typeof_match.group("name") or "").strip()
+    return stripped
+
+
+def _typescript_static_member_access_context(
+    *,
+    raw_type_name: str,
+    type_name: str,
+    member: str,
+    usage_line: str,
+) -> bool:
+    if not str(raw_type_name or "").strip().startswith("typeof "):
+        return False
+    declaration_type = _typescript_declaration_type_name(type_name)
+    safe_member = re.sub(r"[^A-Za-z0-9_$]", "", member)
+    if not declaration_type or not safe_member:
+        return False
+    return bool(re.search(rf"\b{re.escape(declaration_type)}\s*\.\s*{re.escape(safe_member)}\b", usage_line))
+
+
+def _typescript_type_has_structural_declaration(
+    *,
+    workspace_path: Path,
+    type_name: str,
+    updated_by_path: dict[Path, str],
+) -> bool:
+    declaration_path, _declaration_text, start, end = _find_typescript_class_declaration(
+        workspace_path=workspace_path,
+        type_name=type_name,
+        updated_by_path=updated_by_path,
+    )
+    if declaration_path is not None and start >= 0 and end >= 0:
+        return True
+    declaration_path, _declaration_text, start, end = _find_typescript_structural_type_declaration(
+        workspace_path=workspace_path,
+        type_name=type_name,
+        updated_by_path=updated_by_path,
+    )
+    return declaration_path is not None and start >= 0 and end >= 0
+
+
+def _typescript_member_access_default_type(member: str, usage_line: str) -> str:
+    if _typescript_usage_line_treats_member_as_string(member, usage_line) or _typescript_member_name_suggests_string(
+        member
+    ):
+        return "string"
+    if _typescript_usage_line_treats_member_as_number(member, usage_line) or _typescript_member_name_suggests_number(
+        member
+    ):
+        return "number"
+    return "unknown"
+
+
+def _typescript_unhostable_call_default_type(type_name: str, fallback_type: str) -> str:
+    declaration_type = _typescript_declaration_type_name(type_name)
+    if declaration_type and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", declaration_type):
+        return declaration_type
+    return fallback_type.strip() or "unknown"
+
+
+def _typescript_expression_default_value(ts_type: str) -> str:
+    value = _typescript_default_value_for_type(ts_type)
+    if " as " in value or value.startswith("{"):
+        return f"({value})"
+    return value
+
+
+def _replace_typescript_member_access_with_default(
+    line: str,
+    *,
+    receiver: str,
+    member: str,
+    replacement: str,
+    call_replacement: str,
+) -> str:
+    access_re = re.compile(rf"\b{re.escape(receiver)}\s*\.\s*{re.escape(member)}\b")
+    match = access_re.search(line)
+    if not match:
+        return line
+    cursor = match.end()
+    while cursor < len(line) and line[cursor].isspace():
+        cursor += 1
+    if cursor < len(line) and line[cursor] == "(":
+        call_end = _find_matching_paren(line, cursor)
+        if call_end >= 0:
+            return line[: match.start()] + call_replacement + line[call_end + 1 :]
+    return access_re.sub(replacement, line, count=1)
+
+
+def _find_matching_paren(text: str, open_paren: int) -> int:
+    if open_paren < 0 or open_paren >= len(text) or text[open_paren] != "(":
+        return -1
+    depth = 0
+    quote = ""
+    escaped = False
+    for index in range(open_paren, len(text)):
+        char = text[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            continue
+        if char in ("'", '"', "`"):
+            quote = char
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
+
+
+def _typescript_line_bounds(text: str, line_no: int) -> tuple[int, int]:
+    starts = _typescript_line_start_offsets(text)
+    if line_no < 1 or line_no > len(starts):
+        return 0, 0
+    start = starts[line_no - 1]
+    end = starts[line_no] if line_no < len(starts) else len(text)
+    return start, end
+
+
+def _typescript_structural_member_type_map(declaration_text: str) -> dict[str, str]:
+    member_types: dict[str, str] = {}
+    for line in declaration_text.splitlines():
+        if ":" not in line:
+            continue
+        stripped = line.strip()
+        match = re.match(r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\??\s*:\s*(?P<type>.+?)[;,]?$", stripped)
+        if not match:
+            continue
+        name = str(match.group("name") or "").strip()
+        value_type = str(match.group("type") or "").strip().rstrip(";,").strip()
+        if name and value_type:
+            member_types[name] = value_type
+    return member_types
+
+
+def _find_typescript_object_literal_bounds_for_line(text: str, line_no: int) -> tuple[int, int] | None:
+    if line_no < 1:
+        return None
+    line_starts = _typescript_line_start_offsets(text)
+    if line_no > len(line_starts):
+        return None
+    line_start = line_starts[line_no - 1]
+    next_line_start = line_starts[line_no] if line_no < len(line_starts) else len(text)
+    search_end = min(len(text), next_line_start + 240)
+    candidates: list[int] = []
+    inline_open = text.find("{", line_start, search_end)
+    if inline_open >= 0:
+        candidates.append(inline_open)
+    for previous_line_no in range(line_no - 1, max(0, line_no - 8), -1):
+        previous_start = line_starts[previous_line_no - 1]
+        previous_end = line_starts[previous_line_no] if previous_line_no < len(line_starts) else len(text)
+        previous_open = text.find("{", previous_start, previous_end)
+        if previous_open >= 0:
+            candidates.append(previous_open)
+    for open_brace in candidates:
+        close_brace = _find_matching_brace(text, open_brace)
+        if close_brace > line_start:
+            return open_brace, close_brace
+    return None
+
+
+def _typescript_line_start_offsets(text: str) -> list[int]:
+    starts = [0]
+    for match in re.finditer(r"\n", text):
+        starts.append(match.end())
+    return starts
+
+
+def _insert_typescript_object_literal_defaults(
+    text: str,
+    *,
+    open_brace: int,
+    close_brace: int,
+    additions: dict[str, str],
+) -> str:
+    body = text[open_brace + 1 : close_brace]
+    existing = _typescript_object_literal_existing_properties(body)
+    pending = {member: value_type for member, value_type in additions.items() if member not in existing}
+    if not pending:
+        return text
+    indent = _typescript_object_literal_property_indent(text, open_brace, close_brace)
+    inserted = "".join(
+        f"{indent}{member}: {_typescript_default_value_for_type(value_type)},\n"
+        for member, value_type in pending.items()
+        if _TS_IDENTIFIER_RE.fullmatch(member)
+    )
+    if not inserted:
+        return text
+    return text[:close_brace] + inserted + text[close_brace:]
+
+
+def _typescript_object_literal_existing_properties(body: str) -> set[str]:
+    existing: set[str] = set()
+    for line in body.splitlines():
+        match = re.match(r"\s*(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::|,)", line)
+        if match:
+            existing.add(str(match.group("name") or "").strip())
+    return existing
+
+
+def _typescript_object_literal_property_indent(text: str, open_brace: int, close_brace: int) -> str:
+    body = text[open_brace + 1 : close_brace]
+    for line in body.splitlines():
+        if line.strip():
+            indent_match = re.match(r"\s*", line)
+            return indent_match.group(0) if indent_match else "  "
+    line_start = text.rfind("\n", 0, open_brace) + 1
+    opening_indent = re.match(r"\s*", text[line_start:open_brace])
+    return (opening_indent.group(0) if opening_indent else "") + "  "
 
 
 def _wrap_typescript_argument_at_column_as_string(line: str, column: int) -> str:
@@ -1082,6 +2052,8 @@ def _typescript_param_with_default(param: str) -> str:
 
 def _typescript_default_value_for_type(ts_type: str) -> str:
     lowered = ts_type.strip().lower()
+    if lowered.startswith("{") and lowered.endswith("}"):
+        return _typescript_default_object_literal_for_type(ts_type)
     if lowered == "number":
         return "0"
     if lowered == "string":
@@ -1093,12 +2065,41 @@ def _typescript_default_value_for_type(ts_type: str) -> str:
     return f"undefined as unknown as {ts_type.strip()}"
 
 
-def _build_typescript_missing_member_declaration(*, member: str, usage_line: str, class_text: str) -> str:
+def _typescript_default_object_literal_for_type(ts_type: str) -> str:
+    body = ts_type.strip()[1:-1]
+    fields: list[str] = []
+    for match in re.finditer(r"\b(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\??\s*:\s*(?P<type>[^;{}]+)", body):
+        name = str(match.group("name") or "").strip()
+        field_type = str(match.group("type") or "").strip()
+        if not name or not field_type:
+            continue
+        fields.append(f"{name}: {_typescript_default_value_for_type(field_type)}")
+    if not fields:
+        return "{}"
+    return "{ " + ", ".join(fields) + " }"
+
+
+def _build_typescript_missing_member_declaration(
+    *,
+    member: str,
+    usage_line: str,
+    class_text: str,
+    inferred_type: str = "",
+    static_context: bool = False,
+) -> str:
     safe_member = re.sub(r"[^A-Za-z0-9_$]", "", member)
     if not safe_member:
         return ""
+    class_name = _typescript_class_name_from_text(class_text)
     if re.search(rf"\.{re.escape(safe_member)}\s*\(", usage_line):
         params = _typescript_method_params_from_usage_line(safe_member, usage_line)
+        if static_context and class_name:
+            constructor_args = _typescript_constructor_default_arguments(class_text)
+            return (
+                f"  public static {safe_member}({params}): {class_name} {{\n"
+                f"    return new {class_name}({constructor_args});\n"
+                "  }"
+            )
         return f"  public {safe_member}({params}): number {{\n    return 0;\n  }}"
     if re.search(rf"\.{re.escape(safe_member)}\s*\.length\b", usage_line):
         fallback = "this.id" if re.search(r"\bid\s*:", class_text) else '""'
@@ -1107,21 +2108,58 @@ def _build_typescript_missing_member_declaration(*, member: str, usage_line: str
         return f'  public get {safe_member}(): string {{\n    return "";\n  }}'
     if _typescript_usage_line_treats_member_as_number(safe_member, usage_line):
         return f"  public get {safe_member}(): number {{\n    return 0;\n  }}"
-    return f"  public get {safe_member}(): unknown {{\n    return undefined;\n  }}"
+    value_type = inferred_type.strip() or "unknown"
+    return f"  public get {safe_member}(): {value_type} {{\n    return {_typescript_default_value_for_type(value_type)};\n  }}"
 
 
-def _build_typescript_missing_member_signature(*, member: str, usage_line: str, declaration_text: str) -> str:
+def _typescript_class_name_from_text(class_text: str) -> str:
+    match = re.search(r"\bclass\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\b", class_text)
+    return str(match.group("name") or "").strip() if match else ""
+
+
+def _typescript_constructor_default_arguments(class_text: str) -> str:
+    match = re.search(r"\bconstructor\s*\((?P<params>[^)]*)\)", class_text, re.DOTALL)
+    if not match:
+        return ""
+    defaults: list[str] = []
+    for raw_param in str(match.group("params") or "").split(","):
+        param = raw_param.strip()
+        if not param:
+            continue
+        type_match = re.search(r":\s*(?P<type>[^=,]+)", param)
+        param_type = str(type_match.group("type") or "unknown").strip() if type_match else "unknown"
+        defaults.append(_typescript_expression_default_value(param_type))
+    return ", ".join(defaults)
+
+
+def _build_typescript_missing_member_signature(
+    *,
+    member: str,
+    usage_line: str,
+    declaration_text: str,
+    inferred_type: str = "",
+) -> str:
     safe_member = re.sub(r"[^A-Za-z0-9_$]", "", member)
     if not safe_member:
         return ""
     if re.search(rf"\.{re.escape(safe_member)}\s*\(", usage_line):
         params = _typescript_method_params_from_usage_line(safe_member, usage_line)
         return f"  {safe_member}({params}): number;"
-    return f"  {safe_member}: {_typescript_missing_member_value_type(safe_member, usage_line, declaration_text)};"
+    return (
+        f"  {safe_member}: "
+        f"{_typescript_missing_member_value_type(safe_member, usage_line, declaration_text, inferred_type)};"
+    )
 
 
-def _typescript_missing_member_value_type(member: str, usage_line: str, declaration_text: str) -> str:
+def _typescript_missing_member_value_type(
+    member: str,
+    usage_line: str,
+    declaration_text: str,
+    inferred_type: str = "",
+) -> str:
     del declaration_text
+    if inferred_type.strip():
+        return inferred_type.strip()
     if re.search(rf"\.{re.escape(member)}\s*\.length\b", usage_line):
         return "string"
     if _typescript_usage_line_treats_member_as_string(member, usage_line):
@@ -1140,7 +2178,12 @@ def _typescript_member_name_suggests_string(member: str) -> bool:
 
 
 def _typescript_member_name_suggests_number(member: str) -> bool:
-    return member.strip().lower() in _TS_NUMERIC_MEMBER_NAMES
+    lowered = member.strip().lower()
+    return (
+        lowered in _TS_NUMERIC_MEMBER_NAMES
+        or lowered.endswith(("count", "index", "size", "width", "height", "radius", "angle"))
+        or lowered.startswith(("x", "y"))
+    )
 
 
 def _typescript_usage_line_treats_member_as_string(member: str, usage_line: str) -> bool:
@@ -1229,6 +2272,114 @@ def _relative_import_specifier_for_actual_path(
     return relative
 
 
+_TS_IMPORT_FROM_SPECIFIER_TEMPLATE = (
+    r"(?m)^(?P<indent>\s*)import\s+(?P<clause>.*?)\s+from\s+"
+    r"(?P<quote>['\"]){specifier}(?P=quote)\s*;?\s*$"
+)
+
+
+def _typescript_import_pairs_for_specifier(content: str, specifier: str) -> list[tuple[str, str]]:
+    pattern = re.compile(_TS_IMPORT_FROM_SPECIFIER_TEMPLATE.format(specifier=re.escape(specifier)))
+    match = pattern.search(content)
+    if not match:
+        return []
+    clause = str(match.group("clause") or "").strip()
+    if clause.startswith("type "):
+        clause = clause[5:].strip()
+    pairs: list[tuple[str, str]] = []
+    namespace_match = re.fullmatch(r"\*\s+as\s+([A-Za-z_$][\w$]*)", clause)
+    if namespace_match:
+        return []
+    if clause.startswith("{") and clause.endswith("}"):
+        named_clause = clause[1:-1]
+        default_clause = ""
+    elif ",{" in clause.replace(" ", ""):
+        default_clause, named_clause = clause.split(",", 1)
+        named_clause = named_clause.strip()
+        named_clause = named_clause[1:-1] if named_clause.startswith("{") and named_clause.endswith("}") else ""
+    else:
+        default_clause = clause
+        named_clause = ""
+
+    default_name = default_clause.strip()
+    if _TS_IDENTIFIER_RE.fullmatch(default_name):
+        pairs.append(("default", default_name))
+
+    for raw_part in named_clause.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        if part.startswith("type "):
+            part = part[5:].strip()
+        alias_parts = re.split(r"\s+as\s+", part, maxsplit=1, flags=re.IGNORECASE)
+        imported = alias_parts[0].strip()
+        local = alias_parts[-1].strip()
+        if _TS_IDENTIFIER_RE.fullmatch(imported) and _TS_IDENTIFIER_RE.fullmatch(local):
+            pairs.append((imported, local))
+    return pairs
+
+
+def _typescript_import_statement_for_specifier(content: str, specifier: str) -> re.Match[str] | None:
+    pattern = re.compile(_TS_IMPORT_FROM_SPECIFIER_TEMPLATE.format(specifier=re.escape(specifier)))
+    return pattern.search(content)
+
+
+def _typescript_identifier_used_outside_span(content: str, name: str, span: tuple[int, int]) -> bool:
+    if not _TS_IDENTIFIER_RE.fullmatch(name):
+        return False
+    outside = content[: span[0]] + content[span[1] :]
+    return re.search(rf"\b{re.escape(name)}\b", outside) is not None
+
+
+def _remove_unused_typescript_import(content: str, specifier: str) -> str:
+    match = _typescript_import_statement_for_specifier(content, specifier)
+    if match is None:
+        return content
+    pairs = _typescript_import_pairs_for_specifier(content, specifier)
+    if not pairs:
+        return content
+    span = match.span()
+    if any(_typescript_identifier_used_outside_span(content, local, span) for _, local in pairs):
+        return content
+    start, end = span
+    if end < len(content) and content[end : end + 1] == "\n":
+        end += 1
+    return content[:start] + content[end:]
+
+
+def _find_unique_typescript_export_for_import(
+    *,
+    workspace_path: Path,
+    importer_path: Path,
+    content: str,
+    specifier: str,
+) -> Path | None:
+    match = _typescript_import_statement_for_specifier(content, specifier)
+    if match is None:
+        return None
+    pairs = _typescript_import_pairs_for_specifier(content, specifier)
+    needed_symbols = [
+        imported
+        for imported, local in pairs
+        if imported != "default" and _typescript_identifier_used_outside_span(content, local, match.span())
+    ]
+    if not needed_symbols:
+        return None
+
+    candidates: list[Path] = []
+    for candidate in workspace_path.rglob("*.ts"):
+        if candidate == importer_path or candidate.name.endswith(".d.ts"):
+            continue
+        try:
+            candidate.relative_to(workspace_path)
+            candidate_text = candidate.read_text(encoding="utf-8")
+        except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+            continue
+        if all(_typescript_module_runtime_exports_symbol(candidate_text, symbol) for symbol in needed_symbols):
+            candidates.append(candidate)
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _apply_deterministic_typescript_relative_import_case_repair(
     adapter: Any,
     *,
@@ -1255,6 +2406,12 @@ def _apply_deterministic_typescript_relative_import_case_repair(
         importer_rel = _normalize_declared_task_path(match.group("path"))
         if not specifier.startswith(".") or not importer_rel or importer_rel in rewritten_importers:
             continue
+        importer_path = (workspace_path / importer_rel).resolve()
+        try:
+            importer_path.relative_to(workspace_path)
+            content = importer_path.read_text(encoding="utf-8")
+        except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+            continue
         candidates = _relative_import_repair_target_candidates(
             root=workspace_path,
             importer_rel=importer_rel,
@@ -1270,6 +2427,64 @@ def _apply_deterministic_typescript_relative_import_case_repair(
                 actual_target_rel = case_variant
                 break
         if not actual_target_rel:
+            updated = _remove_unused_typescript_import(content, specifier)
+            source_tool = "deterministic_typescript_unused_import_repair"
+            metadata: dict[str, Any] = {"specifier": specifier}
+            if updated == content:
+                source_path = _find_unique_typescript_export_for_import(
+                    workspace_path=workspace_path,
+                    importer_path=importer_path,
+                    content=content,
+                    specifier=specifier,
+                )
+                if source_path is None:
+                    continue
+                actual_target_rel = source_path.relative_to(workspace_path).as_posix()
+                corrected_specifier = _relative_import_specifier_for_actual_path(
+                    root=workspace_path,
+                    importer_rel=importer_rel,
+                    original_specifier=specifier,
+                    actual_target_rel=actual_target_rel,
+                )
+                if corrected_specifier == specifier:
+                    continue
+                updated = content.replace(f"'{specifier}'", f"'{corrected_specifier}'").replace(
+                    f'"{specifier}"',
+                    f'"{corrected_specifier}"',
+                )
+                source_tool = "deterministic_typescript_unique_export_import_repair"
+                metadata = {
+                    "specifier": specifier,
+                    "corrected_specifier": corrected_specifier,
+                    "target_file": actual_target_rel,
+                }
+            write_result = executor.execute_tool(
+                "write_file",
+                {"file": importer_rel, "content": updated},
+                task_id=task_id,
+            )
+            if not bool(write_result.get("ok")):
+                continue
+            rewritten_importers.add(importer_rel)
+            with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+                adapter._update_task_progress(task_id, "executing", current_file=importer_rel)
+            results.append(
+                {
+                    "tool": "write_file",
+                    "tool_name": "write_file",
+                    "success": True,
+                    "result": {
+                        "ok": True,
+                        "source_tool": source_tool,
+                        "file": importer_rel,
+                        **metadata,
+                        "bytes_written": int(write_result.get("bytes_written") or len(updated.encode("utf-8"))),
+                        "operation": str(write_result.get("operation") or "overwrite"),
+                        "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                        "director_policy": write_result.get("director_policy"),
+                    },
+                }
+            )
             continue
         corrected_specifier = _relative_import_specifier_for_actual_path(
             root=workspace_path,
@@ -1278,12 +2493,6 @@ def _apply_deterministic_typescript_relative_import_case_repair(
             actual_target_rel=actual_target_rel,
         )
         if corrected_specifier == specifier:
-            continue
-        importer_path = (workspace_path / importer_rel).resolve()
-        try:
-            importer_path.relative_to(workspace_path)
-            content = importer_path.read_text(encoding="utf-8")
-        except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
             continue
         updated = content.replace(f"'{specifier}'", f"'{corrected_specifier}'").replace(
             f'"{specifier}"',
@@ -1385,6 +2594,350 @@ def _apply_deterministic_typescript_return_object_semicolon_repair(
             }
         )
     return results
+
+
+def _apply_deterministic_typescript_enum_member_separator_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    enum_errors = _parse_typescript_enum_member_separator_errors(artifact_quality_errors)
+    if not enum_errors:
+        return []
+
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired_members: list[dict[str, str]] = []
+    for item in enum_errors:
+        relative_path = item["file"]
+        full_path = (workspace_path / relative_path).resolve()
+        if not _path_inside_workspace(full_path, workspace_path) or not full_path.is_file():
+            continue
+        try:
+            original = updated_by_path.get(full_path) or full_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            line_number = int(item["line"])
+        except ValueError:
+            continue
+        repaired = _repair_typescript_enum_member_separator_lines(original, {line_number})
+        if repaired == original:
+            continue
+        updated_by_path[full_path] = repaired
+        repaired_members.append(
+            {
+                "file": relative_path,
+                "line": item["line"],
+                "col": item["col"],
+            }
+        )
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_enum_member_separator_repair",
+        metadata_key="enum_members",
+        metadata_value=repaired_members,
+    )
+
+
+def _typescript_brace_balance_delta(source: str) -> int:
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    line_comment = False
+    block_comment = False
+    index = 0
+    while index < len(source):
+        char = source[index]
+        next_char = source[index + 1] if index + 1 < len(source) else ""
+        if line_comment:
+            if char == "\n":
+                line_comment = False
+            index += 1
+            continue
+        if block_comment:
+            if char == "*" and next_char == "/":
+                block_comment = False
+                index += 2
+                continue
+            index += 1
+            continue
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            index += 1
+            continue
+        if char == "/" and next_char == "/":
+            line_comment = True
+            index += 2
+            continue
+        if char == "/" and next_char == "*":
+            block_comment = True
+            index += 2
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+            index += 1
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+        index += 1
+    return depth
+
+
+def _repair_typescript_missing_closing_braces(source: str) -> str:
+    missing_count = _typescript_brace_balance_delta(source)
+    if missing_count <= 0 or missing_count > 8:
+        return source
+    repaired = source.rstrip() + "\n"
+    repaired += "\n".join("}" for _ in range(missing_count))
+    return repaired + "\n"
+
+
+def _apply_deterministic_typescript_missing_closing_brace_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    syntax_errors = _parse_typescript_missing_closing_brace_errors(artifact_quality_errors)
+    if not syntax_errors:
+        return []
+
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired_items: list[dict[str, str]] = []
+    for item in syntax_errors:
+        relative_path = item["file"]
+        full_path = (workspace_path / relative_path).resolve()
+        if not _path_inside_workspace(full_path, workspace_path) or not full_path.is_file():
+            continue
+        try:
+            original = updated_by_path.get(full_path) or full_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        repaired = _repair_typescript_missing_closing_braces(original)
+        if repaired == original:
+            continue
+        updated_by_path[full_path] = repaired
+        repaired_items.append(
+            {
+                "file": relative_path,
+                "line": item["line"],
+                "col": item["col"],
+            }
+        )
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_missing_closing_brace_repair",
+        metadata_key="syntax_errors",
+        metadata_value=repaired_items,
+    )
+
+
+def _apply_deterministic_typescript_unresolved_identifier_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    unresolved = _parse_typescript_cannot_find_name_errors(artifact_quality_errors)
+    if not unresolved:
+        return []
+
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    replacements: list[dict[str, str]] = []
+    for item in unresolved:
+        relative_path = item["file"]
+        full_path = (workspace_path / relative_path).resolve()
+        if not _path_inside_workspace(full_path, workspace_path) or not full_path.is_file():
+            continue
+        try:
+            original = updated_by_path.get(full_path) or full_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        try:
+            line_number = int(item["line"])
+        except ValueError:
+            continue
+        repaired, replacement = _repair_typescript_unresolved_identifier_lines(
+            original,
+            target_line_number=line_number,
+            missing_symbol=item["symbol"],
+        )
+        if repaired == original or not replacement:
+            continue
+        updated_by_path[full_path] = repaired
+        replacements.append(
+            {
+                "file": relative_path,
+                "line": item["line"],
+                "col": item["col"],
+                "symbol": item["symbol"],
+                "replacement": replacement,
+            }
+        )
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_unresolved_identifier_repair",
+        metadata_key="identifiers",
+        metadata_value=replacements,
+    )
+
+
+def _repair_typescript_unresolved_identifier_lines(
+    text: str,
+    *,
+    target_line_number: int,
+    missing_symbol: str,
+) -> tuple[str, str]:
+    if target_line_number <= 0 or not _TS_IDENTIFIER_RE.fullmatch(missing_symbol):
+        return str(text or ""), ""
+    lines = str(text or "").splitlines(keepends=True)
+    target_index = target_line_number - 1
+    if target_index < 0 or target_index >= len(lines):
+        return str(text or ""), ""
+    replacement = _select_typescript_unresolved_identifier_replacement(lines, target_index, missing_symbol)
+    if not replacement:
+        return str(text or ""), ""
+
+    line = lines[target_index]
+    repaired_line = re.sub(rf"\b{re.escape(missing_symbol)}\b", replacement, line)
+    if repaired_line == line:
+        return str(text or ""), ""
+    lines[target_index] = repaired_line
+    return "".join(lines), replacement
+
+
+def _select_typescript_unresolved_identifier_replacement(
+    lines: list[str],
+    target_index: int,
+    missing_symbol: str,
+) -> str:
+    params = _typescript_function_param_names_for_line(lines, target_index)
+    for param in params:
+        if _typescript_identifier_alias_matches(missing_symbol, param):
+            return param
+    return ""
+
+
+def _typescript_function_param_names_for_line(lines: list[str], target_index: int) -> list[str]:
+    for start_index in range(target_index, -1, -1):
+        line_body = lines[start_index].rstrip("\r\n")
+        match = _TS_FUNCTION_DECLARATION_LINE_RE.match(line_body) or _TS_ARROW_FUNCTION_DECLARATION_LINE_RE.match(
+            line_body
+        )
+        if not match:
+            continue
+        if not _typescript_line_is_inside_scope(lines, start_index, target_index):
+            continue
+        return _parse_typescript_param_names(str(match.group("params") or ""))
+    return []
+
+
+def _typescript_line_is_inside_scope(lines: list[str], start_index: int, target_index: int) -> bool:
+    depth = 0
+    for index in range(start_index, target_index + 1):
+        line_body = lines[index].rstrip("\r\n")
+        depth += line_body.count("{")
+        depth -= line_body.count("}")
+        if index < target_index and depth <= 0:
+            return False
+    return depth > 0
+
+
+def _parse_typescript_param_names(params_text: str) -> list[str]:
+    names: list[str] = []
+    for raw_param in params_text.split(","):
+        param = raw_param.strip()
+        if not param:
+            continue
+        param = param.split("=", 1)[0].split(":", 1)[0].strip()
+        param = param.removeprefix("...").strip()
+        if _TS_IDENTIFIER_RE.fullmatch(param):
+            names.append(param)
+    return names
+
+
+def _typescript_identifier_alias_matches(missing_symbol: str, candidate: str) -> bool:
+    missing_lower = missing_symbol.lower()
+    candidate_lower = candidate.lower()
+    if not candidate_lower or missing_lower == candidate_lower:
+        return False
+    prefixes = ("new", "next", "updated", "current", "previous", "prev")
+    return any(missing_lower == f"{prefix}{candidate_lower}" for prefix in prefixes)
+
+
+def _repair_typescript_enum_member_separator_lines(text: str, target_line_numbers: set[int]) -> str:
+    if not target_line_numbers:
+        return str(text or "")
+    lines = str(text or "").splitlines(keepends=True)
+    repaired: list[str] = []
+    brace_depth = 0
+    enum_depth: int | None = None
+    changed = False
+    for line_number, line in enumerate(lines, start=1):
+        line_body = line.rstrip("\r\n")
+        newline = line[len(line_body) :]
+        line_to_append = line
+        if enum_depth is not None and line_number in target_line_numbers:
+            repaired_line = _repair_typescript_enum_member_line(line_body)
+            if repaired_line != line_body:
+                line_to_append = repaired_line + newline
+                changed = True
+        repaired.append(line_to_append)
+
+        opens = line_body.count("{")
+        closes = line_body.count("}")
+        if enum_depth is None and _TS_ENUM_DECLARATION_LINE_RE.search(line_body):
+            enum_depth = brace_depth + max(opens, 1)
+        brace_depth += opens - closes
+        if enum_depth is not None and brace_depth < enum_depth:
+            enum_depth = None
+    return "".join(repaired) if changed else str(text or "")
+
+
+def _repair_typescript_enum_member_line(line_body: str) -> str:
+    match = _TS_ENUM_MEMBER_LINE_RE.match(line_body)
+    if not match:
+        return line_body
+    if match.group("separator") == ",":
+        return line_body
+    prefix = str(match.group("prefix") or "").rstrip()
+    if not prefix or prefix.lstrip().startswith(("enum ", "export ")):
+        return line_body
+    comment = str(match.group("comment") or "")
+    space = " " if comment else str(match.group("space") or "")
+    return f"{prefix},{space}{comment}"
 
 
 def _repair_typescript_return_object_semicolon_lines(text: str) -> str:
@@ -1674,7 +3227,7 @@ def _build_typescript_missing_export_declaration(*, symbol: str, importer_text: 
     if _typescript_symbol_is_called(importer_text, symbol):
         return "function", (f"export function {symbol}(..._args: unknown[]): any {{\n  return undefined;\n}}")
     if symbol[:1].isupper():
-        return "type", f"export type {symbol} = unknown;"
+        return "type", f"export type {symbol} = any;"
     return "const", f"export const {symbol}: unknown = undefined;"
 
 

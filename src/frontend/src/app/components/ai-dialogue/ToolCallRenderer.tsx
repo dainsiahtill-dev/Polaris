@@ -18,7 +18,6 @@ import {
   PackageCheck,
   Activity,
   Search,
-  Sparkles,
   // 通用图标
   ChevronDown,
   ChevronRight,
@@ -26,12 +25,6 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
-  Zap,
-  Code2,
-  FileSearch,
-  Layers,
-  GitBranch,
-  Radar,
 } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -47,7 +40,6 @@ export interface ToolConfig {
   glowColor: string;
   badgeText: string;
   description: string;
-  animation?: string;
 }
 
 export const TOOL_CONFIGS: Record<string, ToolConfig> = {
@@ -61,20 +53,18 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     glowColor: 'shadow-indigo-500/20',
     badgeText: '代码分析',
     description: '分析变更影响范围和风险等级',
-    animation: 'diff-pulse',
   },
 
-  // 2. 语义上下文 - 青色网络图风格
+  // 2. 语义上下文 - 蓝灰色文件读取风格
   read_file: {
     name: 'read_file',
     icon: Network,
-    color: 'text-cyan-400',
-    bgGradient: 'from-cyan-950/40 via-teal-950/30 to-slate-950/50',
-    borderColor: 'border-cyan-500/30',
-    glowColor: 'shadow-cyan-500/20',
+    color: 'text-slate-400',
+    bgGradient: 'from-slate-950/60 via-slate-900/40 to-slate-950/50',
+    borderColor: 'border-slate-500/25',
+    glowColor: 'shadow-slate-500/10',
     badgeText: '语义上下文',
     description: '获取代码结构和依赖关系',
-    animation: 'network-pulse',
   },
 
   // 3. 索引构建 - 琥珀色数据库风格
@@ -87,7 +77,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     glowColor: 'shadow-amber-500/20',
     badgeText: '索引构建',
     description: '构建或更新代码索引',
-    animation: 'database-pulse',
   },
 
   // 4. 相似代码查找 - 粉色复制检测风格
@@ -100,7 +89,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     glowColor: 'shadow-pink-500/20',
     badgeText: '相似代码',
     description: '查找重复或相似代码片段',
-    animation: 'copy-pulse',
   },
 
   // 5. 导入验证 - 绿色检查风格
@@ -113,7 +101,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     glowColor: 'shadow-emerald-500/20',
     badgeText: '导入验证',
     description: '验证导入语句正确性',
-    animation: 'check-pulse',
   },
 
   // 6. 影响分析 - 红色波纹风格
@@ -126,20 +113,18 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     glowColor: 'shadow-rose-500/20',
     badgeText: '影响分析',
     description: '分析变更的级联影响',
-    animation: 'impact-ripple',
   },
 
-  // 7. ripgrep - 靛青色 Sparkle 风格
+  // 7. ripgrep - 靛青色检索风格
   ripgrep: {
     name: 'ripgrep',
     icon: Search,
-    color: 'text-violet-400',
-    bgGradient: 'from-violet-950/40 via-purple-950/30 to-slate-950/50',
-    borderColor: 'border-violet-500/30',
-    glowColor: 'shadow-violet-500/20',
+    color: 'text-indigo-400',
+    bgGradient: 'from-slate-950/60 via-slate-900/40 to-slate-950/50',
+    borderColor: 'border-slate-500/30',
+    glowColor: 'shadow-slate-500/10',
     badgeText: '快速检索',
     description: '基于 ripgrep 的高性能代码搜索',
-    animation: 'search-sparkle',
   },
 };
 
@@ -236,107 +221,9 @@ function parseToolCall(content: string): ParsedToolCall {
 // 工具特定动画组件
 // ═══════════════════════════════════════════════════════════════════════════
 
-// 代码分析动画 - Diff 对比效果
-function DiffAnimation() {
-  return (
-    <div className="flex items-center gap-1">
-      <div className="w-2 h-4 bg-emerald-500/40 rounded-sm animate-pulse" style={{ animationDelay: '0ms' }} />
-      <div className="w-2 h-6 bg-indigo-500/40 rounded-sm animate-pulse" style={{ animationDelay: '100ms' }} />
-      <div className="w-2 h-3 bg-rose-500/40 rounded-sm animate-pulse" style={{ animationDelay: '200ms' }} />
-      <div className="w-2 h-5 bg-indigo-500/40 rounded-sm animate-pulse" style={{ animationDelay: '300ms' }} />
-    </div>
-  );
-}
-
-// 网络图动画 - 节点连接效果
-function NetworkAnimation() {
-  return (
-    <div className="relative w-8 h-8">
-      <div className="absolute top-1/2 left-1/2 w-2 h-2 bg-cyan-400 rounded-full -translate-x-1/2 -translate-y-1/2 animate-pulse" />
-      <div className="absolute top-0 left-1/4 w-1.5 h-1.5 bg-cyan-400/60 rounded-full animate-ping" style={{ animationDuration: '1.5s' }} />
-      <div className="absolute bottom-0 right-1/4 w-1.5 h-1.5 bg-cyan-400/60 rounded-full animate-ping" style={{ animationDuration: '2s', animationDelay: '0.5s' }} />
-      <div className="absolute top-1/4 right-0 w-1.5 h-1.5 bg-cyan-400/60 rounded-full animate-ping" style={{ animationDuration: '1.8s', animationDelay: '0.3s' }} />
-      {/* 连接线 */}
-      <svg className="absolute inset-0 w-full h-full opacity-30">
-        <line x1="50%" y1="50%" x2="25%" y2="0" stroke="currentColor" className="text-cyan-400" strokeWidth="1" />
-        <line x1="50%" y1="50%" x2="75%" y2="100%" stroke="currentColor" className="text-cyan-400" strokeWidth="1" />
-        <line x1="50%" y1="50%" x2="100%" y2="25%" stroke="currentColor" className="text-cyan-400" strokeWidth="1" />
-      </svg>
-    </div>
-  );
-}
-
-// 数据库动画 - 堆叠层效果
-function DatabaseAnimation() {
-  return (
-    <div className="flex flex-col items-center gap-0.5">
-      <div className="w-4 h-1.5 bg-amber-400/60 rounded-full animate-pulse" style={{ animationDelay: '0ms' }} />
-      <div className="w-5 h-1.5 bg-amber-400/50 rounded-full animate-pulse" style={{ animationDelay: '100ms' }} />
-      <div className="w-5 h-1.5 bg-amber-400/40 rounded-full animate-pulse" style={{ animationDelay: '200ms' }} />
-      <div className="w-4 h-1.5 bg-amber-400/30 rounded-full animate-pulse" style={{ animationDelay: '300ms' }} />
-    </div>
-  );
-}
-
-// 相似代码动画 - 复制检测效果
-function CopyAnimation() {
-  return (
-    <div className="relative w-8 h-6">
-      <div className="absolute left-0 top-0 w-5 h-4 bg-pink-500/30 rounded border border-pink-400/40 animate-pulse" />
-      <div className="absolute left-2 top-1 w-5 h-4 bg-pink-500/20 rounded border border-pink-400/30 animate-pulse" style={{ animationDelay: '200ms' }} />
-      <div className="absolute -bottom-1 left-1 text-[8px] text-pink-400 font-mono">~90%</div>
-    </div>
-  );
-}
-
-// 检查动画 - 勾选效果
-function CheckAnimation() {
-  return (
-    <div className="relative w-6 h-6">
-      <svg viewBox="0 0 24 24" className="w-full h-full">
-        <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="2" className="text-emerald-400/30" />
-        <path d="M8 12l2.5 2.5L16 9" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-emerald-400 animate-draw-check" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    </div>
-  );
-}
-
-// 影响分析动画 - 波纹效果
-function ImpactAnimation() {
-  return (
-    <div className="relative w-8 h-8 flex items-center justify-center">
-      <div className="absolute w-2 h-2 bg-rose-400 rounded-full" />
-      <div className="absolute w-4 h-4 border border-rose-400/60 rounded-full animate-ping" style={{ animationDuration: '1s' }} />
-      <div className="absolute w-6 h-6 border border-rose-400/40 rounded-full animate-ping" style={{ animationDuration: '1.5s', animationDelay: '0.2s' }} />
-      <div className="absolute w-8 h-8 border border-rose-400/20 rounded-full animate-ping" style={{ animationDuration: '2s', animationDelay: '0.4s' }} />
-    </div>
-  );
-}
-
-// 智能搜索动画 - Sparkle 效果
-function SearchSparkleAnimation() {
-  return (
-    <div className="relative w-6 h-6">
-      <Search className="w-full h-full text-violet-400" />
-      <Sparkles className="absolute -top-1 -right-1 w-3 h-3 text-violet-300 animate-pulse" />
-    </div>
-  );
-}
-
-// 获取工具特定的动画组件
-function getToolAnimation(toolName: string): React.ReactNode {
-  // 转换为小写以支持大小写不敏感匹配
-  const normalizedToolName = toolName.toLowerCase();
-  switch (normalizedToolName) {
-    case 'search_code': return <DiffAnimation />;
-    case 'read_file': return <NetworkAnimation />;
-    case 'list_directory': return <DatabaseAnimation />;
-    case 'glob': return <CopyAnimation />;
-    case 'file_exists': return <CheckAnimation />;
-    case 'grep': return <ImpactAnimation />;
-    case 'ripgrep': return <SearchSparkleAnimation />;
-    default: return null;
-  }
+// 获取工具特定的动画组件（已移除装饰性微动画，保留语义图标）
+function getToolAnimation(_toolName: string): React.ReactNode {
+  return null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -370,8 +257,8 @@ export function ToolCallRenderer({ content, className }: ToolCallRendererProps) 
 
   return (
     <div className={cn(
-      'my-3 rounded-xl overflow-hidden border backdrop-blur-sm',
-      'bg-gradient-to-br', config.bgGradient,
+      'my-3 rounded-lg overflow-hidden border',
+      config.bgGradient ? 'bg-slate-900/60' : 'bg-slate-900/60',
       config.borderColor,
       className
     )}>
@@ -387,24 +274,18 @@ export function ToolCallRenderer({ content, className }: ToolCallRendererProps) 
         <div className="flex items-center gap-3">
           {/* 工具图标 */}
           <div className={cn(
-            'relative p-2 rounded-lg',
-            'bg-gradient-to-br from-white/10 to-white/5',
-            'border border-white/10',
+            'p-2 rounded-md',
+            'bg-slate-800/80',
+            'border border-white/5',
             config.color
           )}>
-            <Icon className="w-5 h-5" />
-            {/* 状态指示点 */}
-            <span className={cn(
-              'absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full',
-              'animate-pulse',
-              config.color.replace('text-', 'bg-')
-            )} />
+            <Icon className="w-4 h-4" />
           </div>
 
           {/* 工具信息 */}
           <div className="flex flex-col items-start">
             <div className="flex items-center gap-2">
-              <span className={cn('text-sm font-semibold', config.color)}>
+              <span className={cn('text-sm font-medium', config.color)}>
                 {config.badgeText}
               </span>
               <span className="text-[10px] text-slate-500 font-mono px-1.5 py-0.5 rounded bg-slate-800/50">
@@ -414,11 +295,6 @@ export function ToolCallRenderer({ content, className }: ToolCallRendererProps) 
             <span className="text-xs text-slate-400">
               {config.description}
             </span>
-          </div>
-
-          {/* 工具特定动画 */}
-          <div className="ml-2 hidden sm:block">
-            {getToolAnimation(parsed.toolName)}
           </div>
         </div>
 

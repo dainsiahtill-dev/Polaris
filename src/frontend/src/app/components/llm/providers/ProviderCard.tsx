@@ -103,25 +103,22 @@ export const ProviderCard = memo(function ProviderCard({
     const styleKey = connectivityStatus === 'running' ? 'unknown' : connectivityStatus;
     return {
       unknown: {
-        border: 'border-amber-500/30',
-        bg: 'bg-amber-500/5',
-        glow: 'shadow-[0_0_24px_rgba(251,191,36,0.15)]',
-        dot: 'bg-amber-400',
-        text: 'text-amber-300',
+        border: 'border-status-warning/35',
+        bg: 'bg-status-warning/10',
+        dot: 'bg-status-warning',
+        text: 'text-status-warning',
       },
       success: {
-        border: 'border-emerald-500/40',
-        bg: 'bg-emerald-500/5',
-        glow: 'shadow-[0_0_24px_rgba(16,185,129,0.18)]',
-        dot: 'bg-emerald-400',
-        text: 'text-emerald-300',
+        border: 'border-status-success/40',
+        bg: 'bg-status-success/10',
+        dot: 'bg-status-success',
+        text: 'text-status-success',
       },
       failed: {
-        border: 'border-rose-500/40',
-        bg: 'bg-rose-500/5',
-        glow: 'shadow-[0_0_24px_rgba(244,63,94,0.18)]',
-        dot: 'bg-rose-400',
-        text: 'text-rose-300',
+        border: 'border-status-error/40',
+        bg: 'bg-status-error/10',
+        dot: 'bg-status-error',
+        text: 'text-status-error',
       },
     }[styleKey];
   }, [connectivityStatus]);
@@ -221,10 +218,10 @@ export const ProviderCard = memo(function ProviderCard({
             <span className="min-w-0 max-w-full truncate font-mono sm:max-w-72">{provider.model || '默认'}</span>
             <span className={`${
               costClass.toLowerCase() === 'local' 
-                ? 'text-green-400' 
+                ? 'text-status-success'
                 : costClass.toLowerCase() === 'fixed' 
-                  ? 'text-blue-400' 
-                  : 'text-purple-400'
+                  ? 'text-accent-text'
+                  : 'text-status-warning'
             }`}>
               {costClass}
             </span>
@@ -233,35 +230,35 @@ export const ProviderCard = memo(function ProviderCard({
 
         <div data-testid={`provider-card-actions-${providerSlug}`} className="flex shrink-0 flex-wrap items-center gap-2 lg:justify-end">
           {/* Connectivity Status Badge */}
-          <div className={`flex shrink-0 items-center gap-1.5 rounded border px-2 py-1 ${statusStyles.border} bg-white/5`}>
+          <div className={`flex shrink-0 items-center gap-1.5 rounded border px-2 py-1 ${statusStyles.border} ${statusStyles.bg}`}>
             <CyberpunkGlitchText text={connectivityLabel} status={connectivityStatus} className="text-[10px]" />
           </div>
 
           {/* Readiness Status Badge */}
           <div
-            className="flex shrink-0 items-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 py-1"
+            className="soft-chip flex shrink-0 items-center gap-1.5 px-2 py-1"
             title={`就绪状态（综合套件）${providerReadiness?.grade ? `: ${providerReadiness.grade}` : ''}`}
           >
             {readinessStatus === 'passed' ? (
-              <CheckCircle2 className="size-3 text-emerald-400" />
+              <CheckCircle2 className="size-3 text-status-success" />
             ) : readinessStatus === 'failed' ? (
-              <AlertTriangle className="size-3 text-amber-400" />
+              <AlertTriangle className="size-3 text-status-warning" />
             ) : (
-              <HelpCircle className="size-3 text-gray-400" />
+              <HelpCircle className="size-3 text-text-muted" />
             )}
             <span className="text-[10px] text-text-main">{readinessLabel}</span>
           </div>
 
           {/* Deep Test Status Badge */}
-          <div className="flex shrink-0 items-center gap-1.5 rounded border border-white/10 bg-white/5 px-2 py-1">
+          <div className="soft-chip flex shrink-0 items-center gap-1.5 px-2 py-1">
             {providerInterview ? (
               providerInterview.status === 'passed' ? (
-                <UserCheck className="size-3 text-emerald-400" />
+                <UserCheck className="size-3 text-status-success" />
               ) : (
-                <UserX className="size-3 text-rose-400" />
+                <UserX className="size-3 text-status-error" />
               )
             ) : (
-              <HelpCircle className="size-3 text-gray-400" />
+              <HelpCircle className="size-3 text-text-muted" />
             )}
             <span className="text-[10px] text-text-main">
               {deepTestLabel}
@@ -273,7 +270,7 @@ export const ProviderCard = memo(function ProviderCard({
             disabled={testDisabled}
             data-provider-action="test"
             data-testid={`provider-test-button-${providerSlug}`}
-            className="p-1.5 rounded border border-cyan-500/30 hover:border-cyan-500/60 text-cyan-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="rounded border border-accent/35 p-1.5 text-accent-text transition-colors hover:border-accent/60 hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-50"
             title="测试连通性"
           >
             <PlayCircle className="size-3" />
@@ -284,9 +281,9 @@ export const ProviderCard = memo(function ProviderCard({
             data-provider-action="edit"
             data-testid={`provider-edit-button-${providerSlug}`}
             className={`p-1.5 rounded border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-              isEditing 
-                ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-200' 
-                : 'border-white/10 hover:border-accent/40'
+              isEditing
+                ? 'border-accent/55 bg-accent/15 text-accent-text'
+                : 'border-border text-text-muted hover:border-accent/40 hover:text-text-main'
             }`}
             title={isEditing ? '完成编辑' : '编辑提供商'}
           >
@@ -296,7 +293,7 @@ export const ProviderCard = memo(function ProviderCard({
             onClick={handleToggleExpand}
             data-provider-action="expand"
             data-testid={`provider-expand-button-${providerSlug}`}
-            className="p-1.5 rounded border border-white/10 hover:border-accent/40 transition-colors"
+            className="rounded border border-border p-1.5 text-text-muted transition-colors hover:border-accent/40 hover:text-text-main"
             title={isExpanded ? '收起详情' : '展开详情'}
           >
             {isExpanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
@@ -306,7 +303,7 @@ export const ProviderCard = memo(function ProviderCard({
             disabled={actionsDisabled}
             data-provider-action="delete"
             data-testid={`provider-delete-button-${providerSlug}`}
-            className="p-1.5 rounded border border-red-500/30 hover:border-red-500/40 text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="rounded border border-status-error/35 p-1.5 text-status-error transition-colors hover:border-status-error/55 hover:bg-status-error/10 disabled:cursor-not-allowed disabled:opacity-50"
             title="删除提供商"
           >
             {isDeleting ? <Loader2 className="size-3 animate-spin" /> : '×'}
@@ -316,27 +313,27 @@ export const ProviderCard = memo(function ProviderCard({
 
       {/* Expanded View */}
       {isExpanded && !isEditing && (
-        <div className="mt-4 pt-4 border-t border-white/10 space-y-4">
+        <div className="mt-4 space-y-4 border-t border-border pt-4">
           {/* Three-column info cards */}
           <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div className="flex items-center gap-2 px-3 py-2 rounded border border-white/10 bg-white/5">
-              <Zap className="size-3.5 text-amber-400" />
+            <div className="soft-chip flex items-center gap-2 rounded px-3 py-2">
+              <Zap className="size-3.5 text-status-warning" />
               <div className="flex-1 min-w-0">
                 <div className="text-[9px] text-text-dim uppercase tracking-wide">类型</div>
                 <div className="text-xs text-text-main truncate">{providerType}</div>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 px-3 py-2 rounded border border-white/10 bg-white/5">
-              <Key className="size-3.5 text-cyan-400" />
+            <div className="soft-chip flex items-center gap-2 rounded px-3 py-2">
+              <Key className="size-3.5 text-accent-text" />
               <div className="flex-1 min-w-0">
                 <div className="text-[9px] text-text-dim uppercase tracking-wide">认证</div>
                 <div className="text-xs text-text-main truncate">{authType}</div>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 px-3 py-2 rounded border border-white/10 bg-white/5">
-              <Shield className="size-3.5 text-green-400" />
+            <div className="soft-chip flex items-center gap-2 rounded px-3 py-2">
+              <Shield className="size-3.5 text-status-success" />
               <div className="flex-1 min-w-0">
                 <div className="text-[9px] text-text-dim uppercase tracking-wide">特性</div>
                 <div className="text-xs text-text-main truncate">
@@ -357,8 +354,8 @@ export const ProviderCard = memo(function ProviderCard({
               <div className="flex items-center gap-2">
                 <span className={`px-2 py-1 text-[10px] uppercase font-semibold rounded border ${
                   providerInterview.status === 'passed'
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                    : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                    ? 'bg-status-success/15 text-status-success border-status-success/35'
+                    : 'bg-status-error/15 text-status-error border-status-error/35'
                 }`}>
                   {providerInterview.status === 'passed' ? '通过' : '失败'}
                 </span>
@@ -379,7 +376,7 @@ export const ProviderCard = memo(function ProviderCard({
 
       {/* Edit View */}
       {isEditing && ProviderComponent && (
-        <div className="mt-4 pt-4 border-t border-white/10">
+        <div className="mt-4 border-t border-border pt-4">
           <ProviderComponent
             providerId={providerId}
             provider={{

@@ -1890,36 +1890,35 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#020610]/78 backdrop-blur-xl">
       <div className="relative isolate">
         <div
           data-settings-modal
           data-testid="settings-modal"
-          className="relative isolate flex w-full max-w-none max-h-none flex-col overflow-hidden rounded-xl border border-white/10 bg-[#0f1018] shadow-2xl shadow-black/60"
+          className="soft-panel relative isolate flex w-full max-w-none max-h-none flex-col overflow-hidden rounded-xl"
           style={{
             width: settingsModalSize.width,
             height: settingsModalSize.height,
-            background: 'rgb(15, 16, 24)',
             userSelect: settingsModalResizing ? 'none' : undefined,
           }}
         >
           {/* 头部 */}
-          <div className="flex items-center justify-between border-b border-white/10 bg-[#0f1018] p-4">
+          <div className="soft-panel-subtle flex items-center justify-between border-b p-4">
             <h2 className="text-lg font-heading font-bold text-text-main flex items-center gap-2">
-              <span className="w-1 h-5 bg-accent rounded-full shadow-[0_0_8px_rgba(124,58,237,0.5)]"></span>
+              <span className="w-1 h-5 bg-accent rounded-full shadow-[0_6px_16px_rgba(111,143,143,0.22)]"></span>
               系统配置
             </h2>
             <button
               data-testid="settings-modal-close"
               onClick={onClose}
-              className="text-text-dim hover:text-text-main hover:bg-white/5 rounded-full p-1 transition-colors"
+              className="text-text-dim hover:text-text-main hover:bg-white/70 rounded-full p-1 transition-colors"
             >
               <X className="size-5" />
             </button>
           </div>
 
           {/* 内容 */}
-          <div className="flex min-h-0 flex-1 flex-col bg-[#0f1018] p-4">
+          <div className="flex min-h-0 flex-1 flex-col p-4">
             {error ? (
               <div className="text-xs text-status-error bg-status-error/10 border border-status-error/20 rounded p-2 mb-4">
                 {error}
@@ -1935,11 +1934,11 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
               }}
               className="gap-4 flex flex-col flex-1 min-h-0"
             >
-              <TabsList className="bg-white/5 border border-white/5 p-1 rounded-lg flex-wrap shrink-0">
+              <TabsList className="soft-inset p-1 rounded-lg flex-wrap shrink-0">
                 <TabsTrigger value="general" data-testid="settings-tab-general" className="data-[state=active]:bg-accent/20 data-[state=active]:text-accent text-text-muted hover:text-text-main">通用设置</TabsTrigger>
                 <TabsTrigger value="llm" data-testid="settings-tab-llm" className="data-[state=active]:bg-accent/20 data-[state=active]:text-accent text-text-muted hover:text-text-main">LLM 设置</TabsTrigger>
-                <TabsTrigger value="arsenal" data-testid="settings-tab-arsenal" className="text-cyan-400 data-[state=active]:text-cyan-300">军械库</TabsTrigger>
-                <TabsTrigger value="services" data-testid="settings-tab-services" className="text-cyan-400 data-[state=active]:text-cyan-300">内务司</TabsTrigger>
+                <TabsTrigger value="arsenal" data-testid="settings-tab-arsenal" className="text-accent data-[state=active]:text-accent-text">军械库</TabsTrigger>
+                <TabsTrigger value="services" data-testid="settings-tab-services" className="text-accent data-[state=active]:text-accent-text">内务司</TabsTrigger>
               </TabsList>
 
               <TabsContent value="general" className="mt-6 space-y-6 flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-1">
@@ -2583,10 +2582,10 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
           </div>
 
           {/* 底部按钮 */}
-          <div className="flex items-center justify-end gap-3 border-t border-white/10 bg-[#17141f] p-4">
+          <div className="soft-panel-subtle flex items-center justify-end gap-3 border-t p-4">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-xs text-text-dim hover:text-text-main hover:bg-white/5 rounded transition-colors"
+              className="px-4 py-2 text-xs text-text-dim hover:text-text-main hover:bg-white/70 rounded transition-colors"
               disabled={saving}
             >
               取消
@@ -2607,7 +2606,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
             onPointerDown={handleResizePointerDown}
             className="absolute bottom-0 right-0 z-10 size-5 cursor-se-resize touch-none"
           >
-            <div className="absolute bottom-1 right-1 size-3 border-b-2 border-r-2 border-white/30" />
+            <div className="absolute bottom-1 right-1 size-3 border-b-2 border-r-2 border-text-dim/40" />
           </div>
         </div>
       </div>

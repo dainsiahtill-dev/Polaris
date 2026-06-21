@@ -613,7 +613,7 @@ export function PMWorkbenchPanel({
           <button
             type="button"
             onClick={handleNewSession}
-            className="inline-flex h-7 items-center gap-1.5 rounded border border-amber-500/25 bg-amber-500/15 px-2 text-xs text-amber-100 transition-colors hover:bg-amber-500/25"
+            className="inline-flex h-7 items-center gap-1.5 rounded border border-amber-500/25 bg-amber-500/[0.15] px-2 text-xs text-amber-100 transition-colors hover:bg-amber-500/25"
           >
             <PlusCircle className="h-3.5 w-3.5" />
             新建会话
@@ -622,7 +622,7 @@ export function PMWorkbenchPanel({
             <button
               type="button"
               onClick={handleExportToWorkflow}
-              className="inline-flex h-7 items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/15 px-2 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25"
+              className="inline-flex h-7 items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/[0.15] px-2 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25"
             >
               <UploadCloud className="h-3.5 w-3.5" />
               导出到流程
@@ -633,7 +633,7 @@ export function PMWorkbenchPanel({
               type="button"
               onClick={handleExportToFactory}
               disabled={isExportingFactory}
-              className="inline-flex h-7 items-center gap-1.5 rounded border border-cyan-500/25 bg-cyan-500/15 px-2 text-xs text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-7 items-center gap-1.5 rounded border border-cyan-500/25 bg-cyan-500/[0.15] px-2 text-xs text-cyan-100 transition-colors hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isExportingFactory ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -648,7 +648,7 @@ export function PMWorkbenchPanel({
 
       <RoleSessionEvidencePanel sessionId={sessionId} tone="amber" />
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-amber-500/15 bg-slate-950/60 px-4 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2 border-b border-amber-500/[0.15] bg-slate-950/60 px-4 py-2 text-xs">
         <div className="flex min-w-[220px] flex-1 items-center gap-2 rounded border border-amber-500/20 bg-slate-950/70 px-2 py-1.5">
           <GitBranch className="h-3.5 w-3.5 shrink-0 text-amber-300/80" />
           <input
@@ -669,7 +669,7 @@ export function PMWorkbenchPanel({
           <option value="pm">PM</option>
           <option value="architect">Architect</option>
         </select>
-        <label className="flex h-8 items-center gap-1.5 rounded border border-amber-500/15 bg-amber-500/5 px-2 text-[11px] text-amber-100">
+        <label className="flex h-8 items-center gap-1.5 rounded border border-amber-500/[0.15] bg-amber-500/5 px-2 text-[11px] text-amber-100">
           <input
             type="checkbox"
             checked={shouldRunDirector}
@@ -682,7 +682,7 @@ export function PMWorkbenchPanel({
         {shouldRunDirector ? (
           <div
             data-testid="pm-workbench-director-readiness"
-            className="flex h-8 items-center gap-1.5 rounded border border-amber-500/15 bg-slate-950/70 px-2 text-[11px] text-amber-100"
+            className="flex h-8 items-center gap-1.5 rounded border border-amber-500/[0.15] bg-slate-950/70 px-2 text-[11px] text-amber-100"
             title={roleHandoffBlockReason || 'Director handoff ready'}
           >
             {handoffDiagnosticsLoading ? (
@@ -719,7 +719,7 @@ export function PMWorkbenchPanel({
           disabled={!workspace || isLaunchingOrchestration || Boolean(roleHandoffBlockReason)}
           title={roleHandoffBlockReason || undefined}
           data-testid="pm-workbench-run-pm"
-          className="inline-flex h-8 items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/15 px-2.5 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-8 items-center gap-1.5 rounded border border-emerald-500/25 bg-emerald-500/[0.15] px-2.5 text-xs text-emerald-100 transition-colors hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isLaunchingOrchestration ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />

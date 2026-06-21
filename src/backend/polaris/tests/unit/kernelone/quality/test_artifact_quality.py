@@ -244,6 +244,75 @@ def test_scan_detects_npm_all_tests_passed_placeholder(tmp_path: Path) -> None:
     assert "npm placeholder test script" in errors[0]
 
 
+def test_scan_detects_npm_placeholder_start_script(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "garden-engine",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "echo \\"Open index.html in a browser\\""
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("script 'start' is a placeholder command" in error for error in errors)
+
+
+def test_scan_detects_npm_build_script_that_swallows_failures(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "garden-engine",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tsc --noEmit 2>/dev/null || echo \\"TypeScript check skipped\\""
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("script 'build' swallows command failures" in error for error in errors)
+
+
+def test_scan_detects_npm_script_missing_local_config_file(tmp_path: Path) -> None:
+    target = tmp_path / "package.json"
+    target.write_text(
+        """
+{
+  "name": "typescript-project",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "jest --config jest.config.js --forceExit"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("references missing config file 'jest.config.js'" in error for error in errors)
+
+
 def test_scan_detects_standalone_manifest_check_passed_test_script(tmp_path: Path) -> None:
     target = tmp_path / "package.json"
     target.write_text(
@@ -763,6 +832,43 @@ def test_scan_skips_global_tsc_when_node_resolution_project_declares_uninstalled
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/main.ts"])
 
     assert errors == []
+
+
+def test_scan_requires_typescript_dependency_for_package_tsc_without_global_tsc(tmp_path: Path, monkeypatch) -> None:
+    from polaris.kernelone.quality import artifact_quality as aq
+
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"build":"tsc","test":"npm run build"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"moduleResolution":"node"},"include":["src/**/*.ts"]}\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "src" / "main.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("export const ok = true;\n", encoding="utf-8")
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("global tsc must not run for package-managed TypeScript projects")
+
+    monkeypatch.setattr(aq.shutil, "which", lambda name: "/usr/bin/tsc" if name == "tsc" else None)
+    monkeypatch.setattr(aq.subprocess, "run", fail_if_called)
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json", "src/main.ts"])
+
+    assert any("requires 'typescript' devDependency" in error for error in errors)
+
+
+def test_scan_flags_npm_script_shell_command_substitution(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"scripts":{"test":"node -e \\"console.error(`Missing value`);\\""}}\n',
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("script 'test' uses shell command substitution" in error for error in errors)
 
 
 def test_scan_detects_html_typescript_module_script(tmp_path: Path) -> None:

@@ -79,13 +79,8 @@ export function DirectorHeader({
         </Button>
 
         <div className="flex items-center gap-3">
-          <div className="relative">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <Hammer className="w-4 h-4 text-indigo-100" />
-            </div>
-            {sessionStatus === 'running' && (
-              <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse" />
-            )}
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+            <Hammer className="w-4 h-4 text-indigo-100" />
           </div>
           <div>
             <h1 className="text-sm font-semibold text-indigo-100">Director</h1>

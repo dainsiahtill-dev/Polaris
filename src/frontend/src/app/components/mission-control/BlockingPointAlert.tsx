@@ -165,10 +165,10 @@ function AlertItem({ alert }: { alert: BlockingAlert }) {
       badge: 'bg-amber-500/20 text-amber-300',
     },
     info: {
-      border: 'border-cyan-500/30',
-      bg: 'bg-cyan-500/5',
-      icon: 'text-cyan-400',
-      badge: 'bg-cyan-500/20 text-cyan-300',
+      border: 'border-slate-500/30',
+      bg: 'bg-slate-500/5',
+      icon: 'text-slate-400',
+      badge: 'bg-slate-500/20 text-slate-300',
     },
   };
   
@@ -244,8 +244,8 @@ export function BlockingPointAlert() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <div className="h-4 w-0.5 rounded-full bg-gradient-to-b from-amber-400/60 to-cyan-400/60" />
-        <h2 className="text-xs font-bold tracking-[0.2em] text-amber-200/80">
+        <div className="h-4 w-0.5 rounded-full soft-divider" />
+        <h2 className="text-xs font-bold tracking-[0.2em] text-slate-300/80">
           阻 塞 预 警
         </h2>
         
@@ -264,15 +264,15 @@ export function BlockingPointAlert() {
             </span>
           )}
           {infoCount > 0 && (
-            <span className="flex items-center gap-1 rounded-full bg-cyan-500/20 px-2 py-0.5 text-[10px] text-cyan-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
+            <span className="flex items-center gap-1 rounded-full bg-slate-500/20 px-2 py-0.5 text-[10px] text-slate-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
               {infoCount}
             </span>
           )}
         </div>
       </div>
       
-      <div className="rounded-xl border border-slate-700/50 bg-slate-900/50 p-4">
+      <div className="rounded-xl soft-panel p-4">
         {alerts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-6 text-center">
             <div className="rounded-full bg-emerald-500/10 p-3 mb-2">

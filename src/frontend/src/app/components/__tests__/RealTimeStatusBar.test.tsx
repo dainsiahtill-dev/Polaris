@@ -60,11 +60,10 @@ describe('RealTimeStatusBar', () => {
         />
       );
 
-      // Should have idle states for both PM and Director
-      expect(screen.getAllByText(/Idle/i)).toHaveLength(4);
-      // Should have idle states for both PM and Director
-      expect(screen.getAllByText(/PM/i)).toHaveLength(2);
-      expect(screen.getAllByText(/Director/i)).toHaveLength(2);
+      // Should have one compact status card for each role.
+      expect(screen.getAllByText(/Idle/i)).toHaveLength(2);
+      expect(screen.getByText(/PM/i)).toBeInTheDocument();
+      expect(screen.getByText(/Director/i)).toBeInTheDocument();
     });
 
     it('should show active PM status with duration when running', () => {
@@ -189,7 +188,7 @@ describe('RealTimeStatusBar', () => {
       );
 
       // Should render without errors
-      expect(screen.getAllByText(/PM/i)).toHaveLength(2);
+      expect(screen.getByText(/PM/i)).toBeInTheDocument();
     });
 
     it('should handle future timestamps gracefully', () => {
@@ -413,7 +412,7 @@ describe('RealTimeStatusBar', () => {
       );
 
       // Component should still render without errors
-      expect(screen.getAllByText(/PM/i)).toHaveLength(2);
+      expect(screen.getByText(/PM/i)).toBeInTheDocument();
     });
   });
 
@@ -460,8 +459,8 @@ describe('RealTimeStatusBar', () => {
         />
       );
 
-      // PM should have at least one idle state
-      expect(screen.getAllByText(/PM/i)).toHaveLength(2);
+      // PM remains visible while Director is active.
+      expect(screen.getByText(/PM/i)).toBeInTheDocument();
       // Director active
       expect(screen.getByText(/Director/i)).toBeInTheDocument();
       expect(screen.getByText(/Active/i)).toBeInTheDocument();

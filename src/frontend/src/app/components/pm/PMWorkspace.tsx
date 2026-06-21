@@ -1089,11 +1089,8 @@ export function PMWorkspace({
           </Button>
 
           <div className="flex items-center gap-3">
-            <div className="relative">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-500/20">
-                <Crown className="w-4 h-4 text-amber-100" />
-              </div>
-              <div className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-500/20">
+              <Crown className="w-4 h-4 text-amber-100" />
             </div>
             <div>
               <h1 className="text-sm font-semibold text-amber-100">PM</h1>
@@ -1409,7 +1406,7 @@ export function PMWorkspace({
               {pmRuntimeBanner.cascades && pmRuntimeBanner.cascades.length > 0 ? (
                 <div
                   data-testid="pm-runtime-cascade"
-                  className="mt-2 rounded-md border border-amber-300/15 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-50/85"
+                  className="mt-2 rounded-md border border-amber-300/[0.15] bg-amber-500/10 px-2.5 py-2 text-xs text-amber-50/85"
                 >
                   <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-amber-200/75">
                     级联阻断
@@ -1618,7 +1615,7 @@ function NavButton({ icon, label, active, onClick }: NavButtonProps) {
       className={cn(
         'w-10 h-10 cursor-pointer rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all duration-200',
         active
-          ? 'bg-amber-500/15 text-amber-400 shadow-lg shadow-amber-500/10'
+          ? 'bg-amber-500/[0.15] text-amber-400 shadow-lg shadow-amber-500/10'
           : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
       )}
       title={label}
@@ -1943,7 +1940,7 @@ function PMRequirementsPanel({ workspace }: { workspace: string }) {
                       'w-full rounded-md border px-2 py-2 text-left text-xs transition-colors',
                       apiId && apiId === selectedRequirementId
                         ? 'border-amber-400/30 bg-amber-500/10 text-slate-100'
-                        : 'border-white/5 bg-slate-950/35 text-slate-300 hover:border-white/15 hover:bg-white/5',
+                        : 'border-white/5 bg-slate-950/35 text-slate-300 hover:border-white/[0.15] hover:bg-white/5',
                       !apiId && 'cursor-not-allowed opacity-60',
                     )}
                   >

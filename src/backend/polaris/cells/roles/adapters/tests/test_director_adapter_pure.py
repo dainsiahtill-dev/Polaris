@@ -139,6 +139,170 @@ def test_deterministic_npm_script_repair_builds_before_missing_dist_entrypoint(t
     assert not any("references missing local entrypoint" in error for error in repaired_errors)
 
 
+def test_deterministic_npm_script_repair_replaces_placeholder_start_and_swallowing_build(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_npm_test_script_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("console.log('firefly flower moon humidity');\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"outDir": "dist", "rootDir": "src"}, "include": ["src/**/*.ts"]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "glowing-insect-garden",
+                "version": "1.0.0",
+                "main": "src/main.ts",
+                "scripts": {
+                    "build": "tsc --noEmit 2>/dev/null || echo 'TypeScript check skipped'",
+                    "start": "echo 'Open index.html in a browser'",
+                    "test": "npm run build",
+                },
+                "devDependencies": {"typescript": "^5.6.0"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert any("script 'start' is a placeholder command" in error for error in errors)
+    assert any("script 'build' swallows command failures" in error for error in errors)
+
+    results = _apply_deterministic_npm_test_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["scripts"]["build"] == "tsc"
+    assert repaired["scripts"]["start"] == "npm run build && node dist/main.js"
+
+
+def test_deterministic_npm_script_repair_removes_shell_substitution_test(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_npm_test_script_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("console.log('hello');\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"target": "ES2020"}, "include": ["src/**/*.ts"]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "typescript-project",
+                "version": "1.0.0",
+                "main": "dist/main.js",
+                "scripts": {
+                    "build": "tsc",
+                    "test": 'node -e "console.error(`Missing value`);"',
+                },
+                "devDependencies": {"typescript": "^5.4.0"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert any("uses shell command substitution" in error for error in errors)
+
+    results = _apply_deterministic_npm_test_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["scripts"]["test"] == "npm run build"
+
+
+def test_deterministic_npm_script_repair_removes_missing_jest_config_flag(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_npm_test_script_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("export const ok = true;\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"target": "ES2020"}, "include": ["src/**/*.ts"]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "typescript-project",
+                "version": "1.0.0",
+                "scripts": {
+                    "build": "tsc",
+                    "test": "jest --config jest.config.js --forceExit",
+                },
+                "devDependencies": {"jest": "^29.0.0", "typescript": "^5.4.0"},
+                "jest": {"testEnvironment": "node"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert any("references missing config file 'jest.config.js'" in error for error in errors)
+
+    results = _apply_deterministic_npm_test_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["scripts"]["test"] == "jest --forceExit"
+
+
+def test_deterministic_runtime_dependency_repair_adds_typescript_dev_dependency(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_runtime_dependency_repair,
+    )
+
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "typescript-project",
+                "version": "1.0.0",
+                "scripts": {"build": "tsc", "test": "npm run build"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    results = _apply_deterministic_runtime_dependency_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=[
+            "Artifact quality scan failed: TypeScript project requires 'typescript' devDependency in package.json"
+        ],
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["devDependencies"]["typescript"] == "^5.6.0"
+
+
 def test_deterministic_npm_script_repair_cleans_package_scaffold_metadata(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
         _apply_deterministic_npm_test_script_repair,
@@ -393,6 +557,245 @@ def test_deterministic_typescript_missing_member_repair_adds_interface_propertie
     assert "  brightness: number;" in repaired
 
 
+def test_deterministic_typescript_missing_member_repair_infers_destructured_object_shapes(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "models.ts").write_text(
+        "export interface Firefly {\n  color: string;\n}\n\nexport interface Flower {\n  emotion: unknown;\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "render.ts").write_text(
+        "import type { Firefly, Flower } from './models.js';\n"
+        "export function drawFirefly(firefly: Firefly): string {\n"
+        "  const { color } = firefly;\n"
+        "  return `${color.r},${color.g},${color.b}`;\n"
+        "}\n"
+        "export function drawFlower(flower: Flower): number {\n"
+        "  const { emotion } = flower;\n"
+        "  return emotion.hue + emotion.intensity;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/render.ts(4,19): error TS2339: Property 'r' does not exist on type 'string'.\n"
+        "src/render.ts(4,30): error TS2339: Property 'g' does not exist on type 'string'.\n"
+        "src/render.ts(4,41): error TS2339: Property 'b' does not exist on type 'string'.\n"
+        "src/render.ts(8,10): error TS18046: 'emotion' is of type 'unknown'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "models.ts").read_text(encoding="utf-8")
+    assert "color: { r: number; g: number; b: number };" in repaired
+    assert "emotion: { hue: number; intensity: number };" in repaired
+
+
+def test_deterministic_typescript_missing_member_repair_fills_returns_when_adding_members(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "flower.ts").write_text(
+        "export interface Flower {\n"
+        "  name: string;\n"
+        "}\n\n"
+        "export function createFlower(name: string): Flower {\n"
+        "  return {\n"
+        "    name,\n"
+        "  };\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "render.ts").write_text(
+        "import type { Flower } from './flower.js';\n"
+        "export function drawFlower(flower: Flower): number {\n"
+        "  const { x, emotion, petalCount } = flower;\n"
+        "  return x + emotion.hue + emotion.intensity + petalCount;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/render.ts(3,11): error TS2339: Property 'x' does not exist on type 'Flower'.\n"
+        "src/render.ts(3,14): error TS2339: Property 'emotion' does not exist on type 'Flower'.\n"
+        "src/render.ts(3,23): error TS2339: Property 'petalCount' does not exist on type 'Flower'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "flower.ts").read_text(encoding="utf-8")
+    assert "  x: number;" in repaired
+    assert "  emotion: { hue: number; intensity: number };" in repaired
+    assert "  petalCount: number;" in repaired
+    assert "    x: 0," in repaired
+    assert "    emotion: { hue: 0, intensity: 0 }," in repaired
+    assert "    petalCount: 0," in repaired
+
+
+def test_deterministic_typescript_missing_member_repair_fills_required_object_literals(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "flower.ts").write_text(
+        "export interface Flower {\n"
+        "  name: string;\n"
+        "  x: number;\n"
+        "  y: number;\n"
+        "  emotion: { hue: number; intensity: number };\n"
+        "  petalCount: number;\n"
+        "}\n\n"
+        "export function createFlower(name: string): Flower {\n"
+        "  return {\n"
+        "    name,\n"
+        "  };\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/flower.ts(10,3): error TS2739: Type '{ name: string; }' is missing "
+        "the following properties from type 'Flower': x, y, emotion, petalCount"
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "flower.ts").read_text(encoding="utf-8")
+    assert "    x: 0," in repaired
+    assert "    y: 0," in repaired
+    assert "    emotion: { hue: 0, intensity: 0 }," in repaired
+    assert "    petalCount: 0," in repaired
+
+
+def test_deterministic_typescript_missing_member_repair_defaults_unhostable_union_access(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "moon.ts").write_text(
+        "export type MoonPhase = 'new' | 'full';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "render.ts").write_text(
+        "import type { MoonPhase } from './moon.js';\n"
+        "export function drawMoon(moon: MoonPhase): number {\n"
+        "  const phaseAngle = moon.phaseAngle;\n"
+        "  return phaseAngle;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/render.ts(3,27): error TS2339: Property 'phaseAngle' does not exist on type 'MoonPhase'.\n"
+        "  Property 'phaseAngle' does not exist on type '\"new\"'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "render.ts").read_text(encoding="utf-8")
+    assert "const phaseAngle = 0;" in repaired
+
+
+def test_deterministic_typescript_missing_member_repair_adds_static_factories_for_typeof_errors(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "models" / "flower.ts").write_text(
+        "export class Flower {\n  constructor(name: string, color: string, isBlooming: boolean = true) {}\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "models" / "firefly.ts").write_text(
+        "export class Firefly {\n  constructor(name: string, isGlowing: boolean = true) {}\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "models" / "moonphase.ts").write_text(
+        "export class MoonPhase {\n  constructor() {}\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "simulation.ts").write_text(
+        "import { Flower } from '../models/flower';\n"
+        "import { Firefly } from '../models/firefly';\n"
+        "import { MoonPhase } from '../models/moonphase';\n"
+        "const flowers: Flower[] = [];\n"
+        "flowers.push(Flower.createRandom(1));\n"
+        "const fireflies: Firefly[] = [];\n"
+        "fireflies.push(Firefly.createRandom(1));\n"
+        "let moonPhase = MoonPhase.random();\n"
+        "moonPhase = MoonPhase.next(moonPhase);\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/engine/simulation.ts(5,21): error TS2339: Property 'createRandom' does not exist on type "
+        "'typeof Flower'.\n"
+        "src/engine/simulation.ts(7,23): error TS2339: Property 'createRandom' does not exist on type "
+        "'typeof Firefly'.\n"
+        "src/engine/simulation.ts(8,27): error TS2339: Property 'random' does not exist on type "
+        "'typeof MoonPhase'.\n"
+        "src/engine/simulation.ts(9,23): error TS2339: Property 'next' does not exist on type "
+        "'typeof MoonPhase'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    flower = (tmp_path / "src" / "models" / "flower.ts").read_text(encoding="utf-8")
+    firefly = (tmp_path / "src" / "models" / "firefly.ts").read_text(encoding="utf-8")
+    moon = (tmp_path / "src" / "models" / "moonphase.ts").read_text(encoding="utf-8")
+    simulation = (tmp_path / "src" / "engine" / "simulation.ts").read_text(encoding="utf-8")
+    assert "public static createRandom(_arg0: unknown): Flower" in flower
+    assert 'return new Flower("", "", false);' in flower
+    assert "public static createRandom(_arg0: unknown): Firefly" in firefly
+    assert 'return new Firefly("", false);' in firefly
+    assert "public static random(): MoonPhase" in moon
+    assert "public static next(_arg0: unknown): MoonPhase" in moon
+    assert "undefined as unknown as unknown(" not in simulation
+
+
 def test_deterministic_typescript_missing_export_repair_adds_constructed_class(
     tmp_path: Any,
 ) -> None:
@@ -473,8 +876,44 @@ def test_deterministic_typescript_missing_export_repair_adds_type_and_function(
 
     assert results
     repaired = (tmp_path / "src" / "simulation.ts").read_text(encoding="utf-8")
-    assert "export type SimulationState = unknown;" in repaired
+    assert "export type SimulationState = any;" in repaired
     assert "export function updateSimulation(..._args: unknown[]): any" in repaired
+
+
+def test_deterministic_typescript_missing_export_repair_avoids_unknown_type_property_trap(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_export_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "render.ts").write_text(
+        "import { Moon } from './simulation';\n"
+        "export function renderMoon(moon: Moon): string {\n"
+        "  return `${moon.brightness}`;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "simulation.ts").write_text(
+        "export interface SimulationState { moon: { brightness: number }; }\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/render.ts(1,10): error TS2305: Module '\"./simulation\"' has no exported member 'Moon'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_export_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "simulation.ts").read_text(encoding="utf-8")
+    assert "export type Moon = any;" in repaired
+    assert "export type Moon = unknown;" not in repaired
 
 
 def test_deterministic_materialization_repair_routes_typescript_missing_export(
@@ -5106,6 +5545,91 @@ def test_typescript_relative_import_case_repair_rewrites_importer_only(tmp_path:
     assert moon.read_text(encoding="utf-8") == "export class Moon {}\n"
 
 
+def test_typescript_unresolved_unused_import_repair_removes_import(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    main = src / "main.ts"
+    main.write_text(
+        'import { Garden } from "./engine/garden";\nconsole.log("ready");\n',
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task={"target_files": []},
+        task_id="task-unused-import",
+        artifact_quality_errors=[
+            "Artifact quality scan failed: unresolved relative import './engine/garden' in src/main.ts"
+        ],
+    )
+
+    assert summary["attempted"] is True
+    assert any(
+        (item.get("result") or {}).get("source_tool") == "deterministic_typescript_unused_import_repair"
+        for item in results
+        if isinstance(item, dict)
+    )
+    assert main.read_text(encoding="utf-8") == 'console.log("ready");\n'
+
+
+def test_npm_test_script_repair_handles_ts_source_require_module_not_found(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "models" / "firefly.ts").write_text("export class Firefly {}\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"outDir":"dist","rootDir":"src"}}\n', encoding="utf-8")
+    package_path = tmp_path / "package.json"
+    package_path.write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "tsc",
+                    "test": "node -e \"require('./src/models/firefly')\"",
+                },
+                "devDependencies": {"typescript": "^5.0.0"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task={"target_files": []},
+        task_id="task-npm-test",
+        artifact_quality_errors=[
+            "Artifact quality scan failed: workspace validation command failed (npm test): "
+            "node -e \"require('./src/models/firefly')\"\nError: Cannot find module './src/models/firefly'"
+        ],
+    )
+
+    assert summary["attempted"] is True
+    assert any(
+        (item.get("result") or {}).get("source_tool") == "deterministic_npm_script_contract_repair"
+        for item in results
+        if isinstance(item, dict)
+    )
+    payload = json.loads(package_path.read_text(encoding="utf-8"))
+    assert payload["scripts"]["test"] == "npm run build"
+
+
 def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.execute_method import (
         _apply_deterministic_materialization_quality_repairs,
@@ -5176,6 +5700,167 @@ def test_typescript_comma_expected_repair_fixes_object_literal_semicolons(tmp_pa
     assert "wilted: this.wilted," in repaired
     assert "type: FlowerType;" in repaired
     assert "public type: FlowerType = FlowerType.Moonflower;" in repaired
+
+
+def test_typescript_enum_member_separator_repair_fixes_enum_semicolon_only(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    model_dir = tmp_path / "src" / "models"
+    model_dir.mkdir(parents=True)
+    moonphase = model_dir / "moonphase.ts"
+    moonphase.write_text(
+        "\n".join(
+            [
+                "export enum MoonPhase {",
+                "  New,",
+                "  Full,",
+                "  WaningCrescent;",
+                "}",
+                "",
+                "export interface MoonState {",
+                "  phase: MoonPhase;",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task={"target_files": ["src/models/moonphase.ts"]},
+        task_id="task-1",
+        artifact_quality_errors=[
+            "TypeScript syntax check failed: "
+            "src/models/moonphase.ts(4,18): error TS1357: "
+            "An enum member name must be followed by a ',', '=', or '}'."
+        ],
+    )
+
+    repaired = moonphase.read_text(encoding="utf-8")
+    assert summary["attempted"] is True
+    assert any(
+        (item.get("result") or {}).get("source_tool") == "deterministic_typescript_enum_member_separator_repair"
+        for item in results
+        if isinstance(item, dict)
+    )
+    assert "  WaningCrescent," in repaired
+    assert "  phase: MoonPhase;" in repaired
+
+
+def test_typescript_missing_closing_brace_repair_fixes_ts1005_brace_expected(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    engine_dir = tmp_path / "src" / "engine"
+    engine_dir.mkdir(parents=True)
+    renderer = engine_dir / "renderer.ts"
+    renderer.write_text(
+        "\n".join(
+            [
+                "export function renderGarden(): string {",
+                "  const firefly = { glow: 1 };",
+                "  if (firefly.glow > 0) {",
+                "    return 'firefly flower moon humidity';",
+                "  }",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task={"target_files": ["src/engine/renderer.ts"]},
+        task_id="task-1",
+        artifact_quality_errors=[
+            "TypeScript syntax check failed: src/engine/renderer.ts(1,3780): error TS1005: '}' expected."
+        ],
+    )
+
+    repaired = renderer.read_text(encoding="utf-8")
+    assert summary["attempted"] is True
+    assert any(
+        (item.get("result") or {}).get("source_tool") == "deterministic_typescript_missing_closing_brace_repair"
+        for item in results
+        if isinstance(item, dict)
+    )
+    assert repaired.rstrip().endswith("}")
+    assert repaired.count("{") == repaired.count("}")
+
+
+def test_typescript_unresolved_identifier_repair_uses_function_parameter_alias(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.execute_method import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    engine_dir = tmp_path / "src" / "engine"
+    engine_dir.mkdir(parents=True)
+    simulation = engine_dir / "simulation.ts"
+    simulation.write_text(
+        "\n".join(
+            [
+                "export interface GardenState { moonPhase: number; humidity: number; tick: number; }",
+                "",
+                "export function tickGarden(state: GardenState): GardenState {",
+                "  const newState = { ...state, tick: state.tick + 1 };",
+                "  return newState;",
+                "}",
+                "",
+                "export function getGardenSummary(state: GardenState): string {",
+                "  return [",
+                "    `${newState.moonPhase}`;",
+                "    `${newState.humidity}`;",
+                "    `${newState.tick}`;",
+                "  ].join('\\n');",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    adapter = SimpleNamespace(
+        workspace=str(tmp_path),
+        _execution=SimpleNamespace(_message_bus=None),
+        _update_task_progress=lambda *args, **kwargs: None,
+    )
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        adapter,
+        task={"target_files": ["src/engine/simulation.ts"]},
+        task_id="task-1",
+        artifact_quality_errors=[
+            "Artifact quality scan failed: TypeScript project typecheck failed: "
+            "src/engine/simulation.ts(10,8): error TS2304: Cannot find name 'newState'.",
+            "src/engine/simulation.ts(11,8): error TS2304: Cannot find name 'newState'.",
+            "src/engine/simulation.ts(12,8): error TS2304: Cannot find name 'newState'.",
+        ],
+    )
+
+    repaired = simulation.read_text(encoding="utf-8")
+    assert summary["attempted"] is True
+    assert any(
+        (item.get("result") or {}).get("source_tool") == "deterministic_typescript_unresolved_identifier_repair"
+        for item in results
+        if isinstance(item, dict)
+    )
+    assert "const newState = { ...state" in repaired
+    assert "return newState;" in repaired
+    assert "`${state.moonPhase}`;" in repaired
+    assert "`${state.humidity}`;" in repaired
+    assert "`${state.tick}`;" in repaired
 
 
 def test_typescript_comma_expected_repair_accepts_plain_tsc_error_format(tmp_path: Any) -> None:

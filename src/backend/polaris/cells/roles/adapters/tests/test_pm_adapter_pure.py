@@ -201,6 +201,7 @@ class TestFrontendTestRepairContracts:
         assert "tsconfig.json" in targets
         assert "src/index.ts" in targets
         assert "src/models/MoonPhase.ts" in targets
+        assert "src/engine/renderer.ts" in targets
         assert "index.html" in targets
         assert "README.md" in targets
         assert "styles.css" not in targets
@@ -208,6 +209,46 @@ class TestFrontendTestRepairContracts:
         assert "npm run test" in serialized
         assert quality["ok"] is True
         assert (quality.get("score") or 0) >= 80
+
+    def test_typescript_web_bad_llm_contract_fails_factory_guard(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        directive = """
+请基于 Architect 阶段产物生成 PM 执行任务合同。
+
+## Original Requirement Excerpt
+# Product Requirements — 发光昆虫花园模拟器
+
+## Goal
+- 用 TypeScript 实现「发光昆虫花园模拟器」。创意钩子: 萤火虫根据花朵情绪和月相组成实时灯光舞蹈。必须交付真实可运行代码、README、示例数据或种子内容,并包含至少一个可执行入口和一个能验证核心规则的脚本/测试/检查。
+
+## Acceptance Criteria
+- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。
+- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口; CLI 项目提供 package.json 脚本或可直接执行的 main 文件; API 项目提供可启动服务入口和健康检查说明。
+- package.json 脚本不得是只检查 manifest 的占位脚本; build/test/start 或等价脚本必须实际运行产品入口或核心规则验证。
+- 附 README.md 说明如何运行。
+- 关键验收维度: 萤火虫根据花朵情绪和月相组成实时灯光舞蹈; 同时验证 TypeScript 产物结构、入口可运行性和核心领域规则。
+""".strip()
+        bad_contracts = [
+            {
+                "id": "TASK-1",
+                "title": "实现→ TASK-2 → TASK-3 → TASK-5",
+                "goal": "验收标准汇总 ts_syntax package_scripts source_target_coverage:src/**/*.ts",
+                "target_files": ["tests/test_product.py"],
+                "acceptance": ["相关测试命令执行通过", "功能行为与预期一致"],
+            }
+        ]
+
+        _normalized, bad_quality = adapter._evaluate_contract_quality(bad_contracts, directive=directive)
+        recovered_contracts = adapter._synthesize_task_contracts_from_directive(directive=directive)
+        _recovered, recovered_quality = adapter._evaluate_contract_quality(
+            recovered_contracts,
+            directive=directive,
+        )
+
+        assert bad_quality["ok"] is False
+        assert "factory_typescript_contract_missing" in json.dumps(bad_quality, ensure_ascii=False)
+        assert recovered_quality["ok"] is True
+        assert int(recovered_quality["score"]) >= 80
 
     def test_synthesizes_focused_frontend_test_repair_contracts(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)

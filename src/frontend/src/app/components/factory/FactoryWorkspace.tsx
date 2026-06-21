@@ -1064,7 +1064,7 @@ function buildRoleLayers({
       icon: <ClipboardList className="h-4 w-4" />,
       tone: {
         idle: 'border-amber-500/20 bg-amber-500/5 hover:border-amber-400/40',
-        active: 'border-amber-400/50 bg-amber-500/12 shadow-[0_0_24px_rgba(245,158,11,0.12)]',
+        active: 'border-amber-400/60 bg-amber-500/14',
         text: 'text-amber-100',
         progress: 'from-amber-500 to-yellow-300',
       },
@@ -1087,7 +1087,7 @@ function buildRoleLayers({
       icon: <Brain className="h-4 w-4" />,
       tone: {
         idle: 'border-cyan-500/20 bg-cyan-500/5 hover:border-cyan-400/40',
-        active: 'border-cyan-400/50 bg-cyan-500/12 shadow-[0_0_24px_rgba(34,211,238,0.12)]',
+        active: 'border-cyan-400/50 bg-cyan-500/[0.12] shadow-[0_0_24px_rgba(34,211,238,0.12)]',
         text: 'text-cyan-100',
         progress: 'from-cyan-500 to-sky-300',
       },
@@ -1099,12 +1099,12 @@ function buildRoleLayers({
       subtitle: '执行交付层',
       status: directorRole?.status || (runningDirectorTasks > 0 ? 'running' : directorTasks.length > 0 ? 'ready' : 'idle'),
       progress: directorProgress,
-      metric: `${runningDirectorTasks} running`,
+      metric: `${runningDirectorTasks} 执行中`,
       detail: directorRole?.detail || directorRole?.current_task || '领取任务，执行文件变更、命令与验证',
       icon: <Hammer className="h-4 w-4" />,
       tone: {
         idle: 'border-indigo-500/20 bg-indigo-500/5 hover:border-indigo-400/40',
-        active: 'border-indigo-400/50 bg-indigo-500/12 shadow-[0_0_24px_rgba(99,102,241,0.14)]',
+        active: 'border-indigo-400/50 bg-indigo-500/[0.12] shadow-[0_0_24px_rgba(99,102,241,0.14)]',
         text: 'text-indigo-100',
         progress: 'from-indigo-500 to-violet-300',
       },
@@ -1207,8 +1207,8 @@ export function FactoryWorkspace({
   const workspaceDisplay = workspaceLabel(effectiveWorkspace);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-[#070b14] text-slate-100">
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/10 bg-slate-950/95 px-4">
+    <div className="polaris-soft-scope soft-app-bg relative flex h-full min-h-[100dvh] flex-col overflow-hidden text-slate-100">
+      <header className="soft-panel-subtle flex h-16 shrink-0 items-center justify-between border-b border-white/10 px-4">
         <div className="flex min-w-0 items-center gap-3">
           <button
             type="button"
@@ -1219,7 +1219,7 @@ export function FactoryWorkspace({
             <RotateCcw className="h-4 w-4" />
           </button>
           <div className="h-6 w-px bg-white/10" />
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-400/25 bg-emerald-500/10 text-emerald-200">
+          <div className="soft-raised flex h-9 w-9 items-center justify-center rounded-lg text-accent">
             <Hammer className="h-5 w-5" />
           </div>
           <div className="min-w-0">
@@ -1238,7 +1238,7 @@ export function FactoryWorkspace({
         <div className="flex min-w-0 items-center justify-end gap-2">
           <div
             className={cn(
-              'flex shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5',
+              'soft-chip flex shrink-0 items-center gap-2 rounded-lg px-3 py-1.5',
               factoryPhase === 'planning' && 'border-amber-500/30 bg-amber-500/10',
               factoryPhase === 'executing' && 'border-indigo-500/30 bg-indigo-500/10',
               factoryPhase === 'verifying' && 'border-cyan-500/30 bg-cyan-500/10',
@@ -1341,7 +1341,7 @@ export function FactoryWorkspace({
       >
         <section
           data-testid="factory-role-flow-rail"
-          className="shrink-0 border-b border-white/10 bg-slate-950/80 px-4 py-3"
+          className="soft-panel-subtle shrink-0 border-b border-white/10 px-4 py-3"
         >
           <RoleLayerRail
             layers={roleLayers}
@@ -1560,7 +1560,7 @@ function FactoryPmLayer({
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 2xl:grid-cols-[minmax(0,1fr)_320px]">
-        <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-amber-500/15 bg-white/[0.03]">
+        <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-amber-500/[0.15] bg-white/[0.03]">
           <div className="shrink-0 border-b border-white/10 px-4 py-3">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -1772,7 +1772,7 @@ function FactoryDirectorLayer({
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 2xl:grid-cols-[300px_minmax(0,1fr)_300px]">
-        <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-indigo-500/15 bg-white/[0.03]">
+        <aside className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-indigo-500/[0.15] bg-white/[0.03]">
           <div className="shrink-0 border-b border-white/10 px-3 py-3">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
@@ -1832,7 +1832,7 @@ function FactoryDirectorLayer({
           </div>
         </aside>
 
-        <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-indigo-500/15 bg-white/[0.03]">
+        <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-indigo-500/[0.15] bg-white/[0.03]">
           <div className="shrink-0 border-b border-white/10 px-4 py-3">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -2033,7 +2033,7 @@ function FactoryChiefEngineerLayer({
   const workspaceDisplay = workspaceLabel(workspace);
 
   return (
-    <div data-testid="factory-chief-layer" className="flex h-full flex-col overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-cyan-950/25">
+    <div data-testid="factory-chief-layer" className="flex h-full flex-col overflow-hidden bg-[#070b14]">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-cyan-500/20 bg-slate-950/80 px-4">
         <div className="flex items-center gap-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-400/30 bg-cyan-500/10 text-cyan-100">
@@ -2055,7 +2055,7 @@ function FactoryChiefEngineerLayer({
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden p-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
-        <section className="min-h-0 overflow-auto rounded-lg border border-cyan-500/15 bg-white/[0.035]">
+        <section className="min-h-0 overflow-auto rounded-lg border border-cyan-500/[0.15] bg-white/[0.035]">
           <div className="border-b border-white/10 px-4 py-3">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -2230,7 +2230,7 @@ function FactoryOperationsRail({
         </div>
         {failureBrief ? <FactoryFailureBriefPanel brief={failureBrief} /> : null}
         {sourceEvidence.length > 0 ? (
-          <div data-testid="factory-source-evidence" className="mt-3 rounded-lg border border-emerald-500/15 bg-emerald-500/[0.04] p-2">
+          <div data-testid="factory-source-evidence" className="mt-3 rounded-lg border border-emerald-500/[0.15] bg-emerald-500/[0.04] p-2">
             <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-emerald-300">
               <Route className="h-3.5 w-3.5" />
               来源证据
@@ -2470,9 +2470,9 @@ function FactoryAuditEvidencePanel({
 
 function StatusChip({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1">
-      <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
-      <div className="max-w-24 truncate text-xs text-slate-200">{value}</div>
+    <div className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5">
+      <div className="text-[9px] uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="max-w-16 truncate text-[11px] text-slate-200">{value}</div>
     </div>
   );
 }
