@@ -352,6 +352,47 @@ def test_deterministic_typescript_missing_member_repair_adds_method_parameters_f
     assert "public update(_arg0: unknown, _arg1: unknown): number" in repaired
 
 
+def test_deterministic_typescript_missing_member_repair_adds_interface_properties(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "simulation.ts").write_text(
+        "export interface Flower {\n  mood: number;\n}\n\nexport type Firefly = {\n  id: string;\n};\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "render.ts").write_text(
+        "import type { Firefly, Flower } from './simulation.js';\n"
+        "const flower = {} as Flower;\n"
+        "const firefly = {} as Firefly;\n"
+        "const radius = flower.size * 2;\n"
+        "const fill = flower.color;\n"
+        "const x = firefly.baseX + firefly.brightness;\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/render.ts(4,23): error TS2339: Property 'size' does not exist on type 'Flower'.\n"
+        "src/render.ts(5,21): error TS2339: Property 'color' does not exist on type 'Flower'.\n"
+        "src/render.ts(6,19): error TS2339: Property 'baseX' does not exist on type 'Firefly'.\n"
+        "src/render.ts(6,35): error TS2339: Property 'brightness' does not exist on type 'Firefly'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "simulation.ts").read_text(encoding="utf-8")
+    assert "  size: number;" in repaired
+    assert "  color: string;" in repaired
+    assert "  baseX: number;" in repaired
+    assert "  brightness: number;" in repaired
+
+
 def test_deterministic_typescript_missing_export_repair_adds_constructed_class(
     tmp_path: Any,
 ) -> None:
@@ -395,6 +436,45 @@ def test_deterministic_typescript_missing_export_repair_adds_constructed_class(
     assert "export class GardenSimulator" in repaired
     assert "public constructor(..._args: unknown[]) {}" in repaired
     assert "public report(..._args: unknown[]): string" in repaired
+
+
+def test_deterministic_typescript_missing_export_repair_adds_type_and_function(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_export_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "render.ts").write_text(
+        "import { SimulationState, updateSimulation } from './simulation';\n"
+        "type Snapshot = SimulationState;\n"
+        "const current: Snapshot = updateSimulation({ speed: 1 });\n"
+        "export { current };\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "simulation.ts").write_text(
+        "export class GardenSimulation {\n  public start(): void {}\n}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/render.ts(1,10): error TS2305: Module '\"./simulation\"' has no exported member "
+        "'SimulationState'.\n"
+        "src/render.ts(1,27): error TS2305: Module '\"./simulation\"' has no exported member "
+        "'updateSimulation'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_export_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "simulation.ts").read_text(encoding="utf-8")
+    assert "export type SimulationState = unknown;" in repaired
+    assert "export function updateSimulation(..._args: unknown[]): any" in repaired
 
 
 def test_deterministic_materialization_repair_routes_typescript_missing_export(
@@ -519,6 +599,48 @@ def test_deterministic_typescript_tsconfig_lib_repair_adds_dom(tmp_path: Any) ->
     errors = [
         "Artifact quality scan failed: TypeScript project typecheck failed: "
         "src/main.ts(1,1): error TS2584: Cannot find name 'console'. "
+        "Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'."
+    ]
+
+    results = _apply_deterministic_typescript_tsconfig_lib_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "tsconfig.json").read_text(encoding="utf-8"))
+    assert repaired["compilerOptions"]["lib"] == ["ES2020", "DOM"]
+
+
+def test_deterministic_typescript_tsconfig_lib_repair_adds_dom_for_window(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_tsconfig_lib_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("window.setInterval(() => undefined, 1000);\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps(
+            {
+                "compilerOptions": {
+                    "target": "ES2020",
+                    "module": "ES2020",
+                    "lib": ["ES2020"],
+                },
+                "include": ["src/**/*.ts"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/main.ts(1,1): error TS2304: Cannot find name 'window'. "
         "Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'."
     ]
 
@@ -809,6 +931,19 @@ async def test_empty_write_retry_existing_target_forces_edit_blocks(tmp_path: An
             self.retry_message = message
             self.retry_context = context
             return {"content": "calculator.py\n```python\npass\n```", "success": True}
+
+        async def _execute_tools(
+            self,
+            content: str,
+            target_task_id: str,
+            **kwargs: Any,
+        ) -> list[dict[str, Any]]:
+            return await self._execution.execute_tools(
+                content,
+                target_task_id,
+                self._update_task_progress,
+                **kwargs,
+            )
 
     adapter = _Adapter()
 
@@ -6488,7 +6623,7 @@ class TestQualityRepairMissingTargetContract:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _build_materialization_quality_repair_message,
         )
-        from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+        from polaris.cells.roles.kernel.public import (
             extract_target_files_from_message,
         )
 

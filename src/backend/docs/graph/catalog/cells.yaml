@@ -1666,6 +1666,7 @@ cells:
       - runtime.task_runtime
       - factory.cognitive_runtime
       - storage.layout
+      - roles.scout
     subgraphs:
       - execution_governance_pipeline
     state_owners: []
@@ -1994,6 +1995,9 @@ cells:
       - llm.provider_runtime
       - orchestration.pm_dispatch
       - chief_engineer.blueprint
+      - roles.kernel
+      - storage.layout
+      - roles.adapters
     subgraphs:
       - storage_archive_pipeline
       - execution_governance_pipeline
@@ -2204,6 +2208,7 @@ cells:
       - chief_engineer.blueprint
       - roles.adapters
       - director.task_consumer
+      - factory.pipeline
     subgraphs:
       - execution_governance_pipeline
     state_owners:
@@ -2751,6 +2756,7 @@ cells:
       - events.fact_stream
       - audit.verdict
       - roles.runtime
+      - llm.dialogue
     subgraphs:
       - execution_governance_pipeline
     state_owners:

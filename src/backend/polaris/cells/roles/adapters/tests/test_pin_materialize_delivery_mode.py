@@ -15,8 +15,8 @@ from polaris.cells.roles.adapters.internal.director import execute_method as dir
 from polaris.cells.roles.adapters.internal.director.execute_method import (
     _pin_materialize_delivery_mode,
 )
-from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryMode
-from polaris.cells.roles.kernel.internal.transaction.intent_classifier import resolve_delivery_mode
+from polaris.cells.roles.kernel.public import DeliveryMode
+from polaris.cells.roles.kernel.public.transaction_contracts import resolve_delivery_mode
 
 
 class TestPinMaterializeDeliveryMode:

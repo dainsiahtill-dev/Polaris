@@ -101,6 +101,7 @@ class TestFactoryStartRequest:
         assert req.start_from == "auto"
         assert req.run_director is True
         assert req.director_iterations == 0
+        assert req.director_dispatch_driver == "task-market"
 
     def test_directive_field(self) -> None:
         req = FactoryStartRequest(workspace="/tmp/ws", directive="Build a thing")
@@ -116,6 +117,10 @@ class TestFactoryStartRequest:
         for value in ("auto", "architect", "pm", "director"):
             req = FactoryStartRequest(workspace="/tmp/ws", start_from=value)  # type: ignore[arg-type]
             assert req.start_from == value
+
+    def test_rejects_legacy_director_dispatch_driver(self) -> None:
+        with pytest.raises(ValidationError):
+            FactoryStartRequest(workspace="/tmp/ws", director_dispatch_driver="workflow")  # type: ignore[arg-type]
 
 
 class TestFactoryControlRequest:

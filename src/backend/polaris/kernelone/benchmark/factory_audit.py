@@ -140,6 +140,14 @@ def _tool_unavailable_detail(tool: str, language: str, count: int) -> str:
     return f"{tool} unavailable — {count} {language} file(s) present but compile check could not run"
 
 
+def _typescript_compiler(workspace: str) -> str | None:
+    bin_name = "tsc.cmd" if os.name == "nt" else "tsc"
+    local_tsc = os.path.join(workspace, "node_modules", ".bin", bin_name)
+    if os.path.exists(local_tsc):
+        return local_tsc
+    return shutil.which("tsc")
+
+
 def _check_py_compile(workspace: str) -> tuple[bool, str]:
     failures: list[str] = []
     py_files = _iter_files(workspace, ".py")
@@ -208,20 +216,27 @@ def _check_ts_syntax(workspace: str) -> tuple[bool, str]:
     ts_files = [path for path in _iter_files_any(workspace, (".ts", ".tsx")) if not path.endswith(".d.ts")]
     if not ts_files:
         return False, "no .ts/.tsx files found"
-    tsc = shutil.which("tsc")
+    tsc = _typescript_compiler(workspace)
     if not tsc:
         return False, _tool_unavailable_detail("tsc", "TypeScript", len(ts_files))
-    cmd = [
-        tsc,
-        "--noEmit",
-        "--target",
-        "ES2020",
-        "--module",
-        "ESNext",
-        "--jsx",
-        "react-jsx",
-        *_rel_paths(workspace, ts_files[:80]),
-    ]
+    tsconfig = os.path.join(workspace, "tsconfig.json")
+    if os.path.exists(tsconfig):
+        cmd = [tsc, "--noEmit", "--pretty", "false", "--project", "tsconfig.json"]
+    else:
+        cmd = [
+            tsc,
+            "--noEmit",
+            "--pretty",
+            "false",
+            "--skipLibCheck",
+            "--target",
+            "ES2020",
+            "--module",
+            "ESNext",
+            "--jsx",
+            "react-jsx",
+            *_rel_paths(workspace, ts_files[:80]),
+        ]
     proc = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True, timeout=60, check=False)
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).strip().splitlines()

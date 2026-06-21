@@ -24,20 +24,28 @@ def _resolve_task_market_mode() -> str:
     rollout_mode = _resolve_task_market_rollout_mode()
     if rollout_mode in {"mainline", "mainline-design", "mainline-full", "mainline-durable"}:
         return "mainline"
-    if rollout_mode == "shadow":
-        return "shadow"
-    return "off"
+    return "mainline"
 
 
 def _resolve_task_market_rollout_mode() -> str:
     """Resolve task-market rollout phase from environment."""
-    raw_mode = str(os.environ.get("KERNELONE_TASK_MARKET_MODE", "off") or "off").strip().lower()
-    if raw_mode in {"off", "shadow", "mainline", "mainline-design", "mainline-full", "mainline-durable"}:
+    raw_mode = str(os.environ.get("KERNELONE_TASK_MARKET_MODE", "mainline-full") or "mainline-full").strip().lower()
+    if raw_mode in {"mainline", "mainline-design", "mainline-full", "mainline-durable"}:
         return raw_mode
     if raw_mode == "mainline-exec":
         # Preserve forward compatibility with docs that mention this phase.
         return "mainline-full"
-    return "off"
+    if raw_mode in {"off", "shadow"}:
+        logger.warning(
+            "KERNELONE_TASK_MARKET_MODE=%s is retired; forcing governed PM -> Chief Engineer -> Director flow",
+            raw_mode,
+        )
+    else:
+        logger.warning(
+            "unknown KERNELONE_TASK_MARKET_MODE=%s; forcing governed PM -> Chief Engineer -> Director flow",
+            raw_mode or "<empty>",
+        )
+    return "mainline-full"
 
 
 def _hash_payload(payload: Any) -> str:
@@ -156,7 +164,7 @@ def _normalize_task_market_route(value: Any) -> str:
         "exec",
         "execution",
     }:
-        return _TASK_ROUTE_DIRECT_TO_DIRECTOR
+        return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
     if token in {
         _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED,
         "chief",
@@ -198,7 +206,7 @@ def _task_market_route_for_task(task: dict[str, Any]) -> str:
             if explicit is True:
                 return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
             if explicit is False:
-                return _TASK_ROUTE_DIRECT_TO_DIRECTOR
+                return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
 
     role_values = (
         task.get("assigned_to"),
@@ -213,14 +221,12 @@ def _task_market_route_for_task(task: dict[str, Any]) -> str:
     if role_tokens & {"chief", "chief_engineer", "chiefengineer"}:
         return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
 
-    # Mainline defaults to the governed design route. PM can still explicitly
-    # mark narrow, already-scoped work as direct_to_director.
+    # Mainline always starts with the governed design route. Historical
+    # direct-to-Director aliases are normalized to this route above.
     return _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
 
 
 def _task_market_stage_for_route(route: str) -> str:
-    if route == _TASK_ROUTE_DIRECT_TO_DIRECTOR:
-        return "pending_exec"
     return "pending_design"
 
 

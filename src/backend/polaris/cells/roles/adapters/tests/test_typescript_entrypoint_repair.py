@@ -462,7 +462,7 @@ class TestEntrypointRepairNoConsoleDependency:
 
     def test_real_run_gate_enters_npm_start_smoke(self, tmp_path: Path) -> None:
         """build_real_run_gate should enter npm start smoke with generated entrypoint."""
-        from polaris.cells.factory.pipeline.internal.bench_gates import build_real_run_gate
+        from polaris.cells.factory.pipeline.public.service import build_real_run_gate
 
         src = tmp_path / "src"
         src.mkdir()

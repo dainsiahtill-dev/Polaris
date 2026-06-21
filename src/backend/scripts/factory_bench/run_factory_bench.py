@@ -605,11 +605,14 @@ def _emit_factory_phase_event(
         summary_parts.append(f"phase={phase}")
     if run_status:
         summary_parts.append(f"status={run_status}")
+    project_workspace_full = str(project_workspace.resolve())
     meta = {
         "project_id": project_id,
         "level": int(level),
         "title": title,
-        "workspace": str(project_workspace),
+        "workspace": project_workspace_full,
+        "workspace_path": project_workspace_full,
+        "project_workspace": project_workspace_full,
         "phase": phase,
         "status": run_status,
         "role": role,
@@ -1469,10 +1472,18 @@ def run_factory_chain(
     backend_token: str,
     timeout_s: int,
     log_path: Path,
+    director_workflow_execution_mode: str = "parallel",
+    director_dispatch_driver: str = "task-market",
     on_stage_change: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Start a /v2/factory/runs for the project workspace and wait for completion."""
     purge_project_runtime(workspace)
+    workflow_mode = str(director_workflow_execution_mode or "parallel").strip().lower()
+    if workflow_mode not in {"serial", "parallel"}:
+        raise ValueError(f"unsupported director workflow execution mode: {director_workflow_execution_mode!r}")
+    dispatch_driver = str(director_dispatch_driver or "task-market").strip().lower()
+    if dispatch_driver != "task-market":
+        raise ValueError("factory-bench only supports the PM→Chief Engineer→Director task-market chain")
 
     requirements_doc = build_requirements_doc(project)
     requirements_path = workspace / "requirements.md"
@@ -1516,6 +1527,8 @@ def run_factory_chain(
         "directive": requirements_doc,
         "run_director": True,
         "director_iterations": 0,
+        "director_workflow_execution_mode": workflow_mode,
+        "director_dispatch_driver": "task-market",
         "loop": False,
         "input_source": "directive",
         "persist_workspace": False,
@@ -1767,19 +1780,19 @@ def main() -> int:
     ap.add_argument(
         "--director-workflow-execution-mode",
         choices=("serial", "parallel"),
-        default="serial",
-        help="PM Director workflow mode; keep serial by default, use parallel with task-market role pools",
+        default="parallel",
+        help="Director execution mode for the HTTP Factory PM→Chief Engineer→Director chain",
     )
     ap.add_argument(
         "--director-dispatch-driver",
-        choices=("workflow", "task-market"),
-        default="workflow",
-        help="Director dispatch path: legacy PM workflow or task-market chain after PM planning",
+        choices=("task-market",),
+        default="task-market",
+        help="Director dispatch path; only task-market mainline-full is supported",
     )
     ap.add_argument(
         "--use-legacy-chain",
         action="store_true",
-        help="Use the legacy subprocess-based chain runner instead of the Factory HTTP API",
+        help="Retired; Factory Bench refuses legacy PM->Director subprocess runs",
     )
     ap.add_argument(
         "--real-run-timeout",
@@ -1799,6 +1812,13 @@ def main() -> int:
         help="limit number of projects to process; 0 disables limit",
     )
     args = ap.parse_args()
+    if args.use_legacy_chain:
+        print(
+            "[factory-bench] --use-legacy-chain is retired; use the HTTP Factory "
+            "PM→Chief Engineer→Director task-market chain",
+            flush=True,
+        )
+        return 2
 
     projects = load_projects() if args.projects_file == str(_FIXTURE) else load_projects(args.projects_file)
     if args.project_ids.strip():
@@ -1902,13 +1922,7 @@ def main() -> int:
         summary=f"factory-bench session {bench_session_id or 'local'}: {len(selected)} project(s)",
         meta={"session_id": bench_session_id, "total": len(selected), "backend_url": bool(backend_url)},
     )
-    use_legacy_chain = bool(args.use_legacy_chain or args.director_dispatch_driver == "task-market")
-    if use_legacy_chain and not args.use_legacy_chain and args.director_dispatch_driver == "task-market":
-        print(
-            "[factory-bench] task-market dispatch requires the legacy subprocess chain; "
-            "using legacy chain for this run",
-            flush=True,
-        )
+    use_legacy_chain = False
 
     # Compute catalog hash for immutable audit trail
     catalog_hash = hashlib.sha256(json.dumps(projects, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[
@@ -1953,7 +1967,13 @@ def main() -> int:
             level=project_level,
             name="project.started",
             summary=f"{pid} {project_title} starting",
-            meta={"session_id": bench_session_id, "title": project_title},
+            meta={
+                "session_id": bench_session_id,
+                "title": project_title,
+                "workspace": str(workspace.resolve()),
+                "workspace_path": str(workspace.resolve()),
+                "project_workspace": str(workspace.resolve()),
+            },
         )
         last_stage_event_key = ""
 
@@ -2002,6 +2022,8 @@ def main() -> int:
                     backend_token=backend_token,
                     timeout_s=args.timeout,
                     log_path=log_path,
+                    director_workflow_execution_mode=args.director_workflow_execution_mode,
+                    director_dispatch_driver=args.director_dispatch_driver,
                     on_stage_change=_on_factory_stage_change,
                 )
         except subprocess.TimeoutExpired:

@@ -100,6 +100,14 @@ class FactoryStartRequest(BaseModel):
         le=10,
         description="Director 迭代次数；0 表示由 Factory 按 TaskBoard 自动收敛",
     )
+    director_workflow_execution_mode: Literal["serial", "parallel"] | None = Field(
+        default=None,
+        description="Director 执行模式覆盖；Factory Bench 默认使用 parallel 全链路",
+    )
+    director_dispatch_driver: Literal["task-market"] = Field(
+        default="task-market",
+        description="唯一支持的 Director 调度链路：PM → Chief Engineer → Director task-market mainline-full",
+    )
     loop: bool = Field(default=False, description="是否循环运行")
     input_source: str | None = Field(default=None, description="输入来源: 'directive' | 'docs' | 'existing_project'")
     persist_workspace: bool = Field(

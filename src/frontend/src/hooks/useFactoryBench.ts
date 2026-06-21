@@ -86,6 +86,16 @@ function readObject(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function joinBenchWorkspace(workDir: string | null, projectId: string | null): string | null {
+  if (!workDir || !projectId) return null;
+  return `${workDir.replace(/[\\/]+$/, '')}/${projectId.replace(/^[\\/]+/, '')}`;
+}
+
+function singleProjectId(value: unknown): string | null {
+  const projectIds = readStringArray(value);
+  return projectIds && projectIds.length === 1 ? projectIds[0] : null;
+}
+
 function sessionIdFromEnvelope(
   envelope: Record<string, unknown>,
   payload: Record<string, unknown>,
@@ -122,14 +132,42 @@ function benchEventFromEnvelope(
 }
 
 function workspaceFromBenchEvent(event: FactoryBenchEvent): string | null {
-  if (!event.type.startsWith('factory_bench.project.')) return null;
   const meta = event.meta || {};
-  return (
-    readString(meta.workspace) ||
-    readString(meta.workspace_path) ||
-    readString(meta.project_workspace) ||
-    readString(meta.projectWorkspace)
-  );
+  if (event.type.startsWith('factory_bench.project.')) {
+    return (
+      readString(meta.workspace) ||
+      readString(meta.workspace_path) ||
+      readString(meta.project_workspace) ||
+      readString(meta.projectWorkspace) ||
+      joinBenchWorkspace(readString(meta.work_dir), readString(meta.project_id) || readString(meta.projectId))
+    );
+  }
+  if (event.type === 'factory_bench.session.started') {
+    return joinBenchWorkspace(readString(meta.work_dir), singleProjectId(meta.project_ids));
+  }
+  if (event.type === 'factory_bench.session.workspace') {
+    return readString(meta.workspace);
+  }
+  return null;
+}
+
+function workspaceFromBenchSession(session: FactoryBenchSessionDetail): string | null {
+  return joinBenchWorkspace(readString(session.work_dir), session.project_ids.length === 1 ? session.project_ids[0] : null);
+}
+
+function sessionWorkspaceEvent(session: FactoryBenchSessionDetail, workspace: string): FactoryBenchEvent {
+  return {
+    type: 'factory_bench.session.workspace',
+    summary: `Factory bench workspace observed: ${workspace}`,
+    meta: {
+      session_id: session.session_id,
+      work_dir: session.work_dir,
+      project_id: session.project_ids[0] || '',
+      workspace,
+    },
+    session_id: session.session_id,
+    ts: session.updated_at,
+  };
 }
 
 function mergeSessionSummary(
@@ -281,6 +319,11 @@ export function useFactoryBench(
           const latestWorkspaceEvent = [...detailEvents].reverse().find((item) => workspaceFromBenchEvent(item));
           if (latestWorkspaceEvent) {
             notifyWorkspaceChange(latestWorkspaceEvent);
+          } else {
+            const sessionWorkspace = workspaceFromBenchSession(detail);
+            if (sessionWorkspace) {
+              notifyWorkspaceChange(sessionWorkspaceEvent(detail, sessionWorkspace));
+            }
           }
           setCurrentSession(detail);
           setEvents((prev) => {

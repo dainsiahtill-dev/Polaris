@@ -210,6 +210,18 @@ function isFactoryRunScopedToBenchWorkDir(run: unknown, benchWorkDir: string): b
   return runWorkspace === normalizedBenchWorkDir || runWorkspace.startsWith(`${normalizedBenchWorkDir}/`);
 }
 
+function isAbsoluteWorkspacePath(value: string): boolean {
+  return value.startsWith('/') || value.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(value);
+}
+
+function resolveBenchObservedWorkspace(value: string, baseWorkspace: string): string {
+  const normalized = String(value || '').trim();
+  if (!normalized || isAbsoluteWorkspacePath(normalized)) return normalized;
+  const base = String(baseWorkspace || '').trim();
+  if (!base || !isAbsoluteWorkspacePath(base)) return normalized;
+  return `${base.replace(/[\\/]+$/, '')}/${normalized.replace(/^\.?[\\/]+/, '')}`;
+}
+
 function AppContent() {
   const workspacePanelRef = useRef<ImperativePanelHandle>(null);
   const terminalPanelRef = useRef<ImperativePanelHandle>(null);
@@ -238,12 +250,12 @@ function AppContent() {
 
   const handleBenchWorkspaceChange = useCallback(
     (nextWorkspace: string) => {
-      const normalized = nextWorkspace.trim();
+      const normalized = resolveBenchObservedWorkspace(nextWorkspace, settingsWorkspace);
       if (!normalized || normalized === workspace) return;
       setProgressSnapshot(null);
       setBenchObservedWorkspace(normalized);
     },
-    [workspace],
+    [settingsWorkspace, workspace],
   );
 
   const {

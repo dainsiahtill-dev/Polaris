@@ -290,6 +290,90 @@ describe('useFactoryBench', () => {
     );
   });
 
+  it('notifies the active workspace from project started events', async () => {
+    let handler: ((message: unknown) => void) | null = null;
+    runtimeTransportMock.registerMessageHandler.mockImplementation((nextHandler: (message: unknown) => void) => {
+      handler = nextHandler;
+      return vi.fn();
+    });
+    benchServiceMock.listBenchSessions.mockResolvedValueOnce({ ok: true, data: [] });
+    const onWorkspaceChange = vi.fn();
+
+    renderHook(() => useFactoryBench({ onWorkspaceChange }));
+
+    await waitFor(() => expect(handler).not.toBeNull());
+    act(() => {
+      handler?.({
+        schema_version: 'runtime.v2',
+        channel: 'event.bench:bench-live',
+        run_id: 'bench-live',
+        kind: 'factory_bench.project.started',
+        cursor: 103,
+        ts: '2026-06-18T07:13:00Z',
+        payload: {
+          type: 'factory_bench.project.started',
+          summary: 'L1-01 starting',
+          meta: {
+            session_id: 'bench-live',
+            project_id: 'L1-01',
+            workspace_path: '/tmp/bench/L1-01',
+            status: 'running',
+          },
+        },
+      });
+    });
+
+    await waitFor(() => expect(onWorkspaceChange).toHaveBeenCalledWith(
+      '/tmp/bench/L1-01',
+      expect.objectContaining({
+        type: 'factory_bench.project.started',
+        session_id: 'bench-live',
+      }),
+    ));
+  });
+
+  it('derives the active workspace from project events with work_dir and project_id', async () => {
+    let handler: ((message: unknown) => void) | null = null;
+    runtimeTransportMock.registerMessageHandler.mockImplementation((nextHandler: (message: unknown) => void) => {
+      handler = nextHandler;
+      return vi.fn();
+    });
+    benchServiceMock.listBenchSessions.mockResolvedValueOnce({ ok: true, data: [] });
+    const onWorkspaceChange = vi.fn();
+
+    renderHook(() => useFactoryBench({ onWorkspaceChange }));
+
+    await waitFor(() => expect(handler).not.toBeNull());
+    act(() => {
+      handler?.({
+        schema_version: 'runtime.v2',
+        channel: 'event.bench:bench-live',
+        run_id: 'bench-live',
+        kind: 'factory_bench.project.started',
+        cursor: 104,
+        ts: '2026-06-18T07:14:00Z',
+        payload: {
+          type: 'factory_bench.project.started',
+          summary: 'L1-01 starting',
+          meta: {
+            session_id: 'bench-live',
+            project_id: 'L1-01',
+            work_dir: '/tmp/bench',
+            status: 'running',
+          },
+        },
+      });
+    });
+
+    await waitFor(() => expect(onWorkspaceChange).toHaveBeenCalledWith(
+      '/tmp/bench/L1-01',
+      expect.objectContaining({
+        type: 'factory_bench.project.started',
+        session_id: 'bench-live',
+      }),
+    ));
+  });
+
   it('restores the active workspace from hydrated project bench events', async () => {
     const onWorkspaceChange = vi.fn();
     benchServiceMock.getBenchSession.mockResolvedValueOnce({
@@ -329,6 +413,67 @@ describe('useFactoryBench', () => {
     await waitFor(() => expect(onWorkspaceChange).toHaveBeenCalledWith(
       '/tmp/bench/L1-01',
       expect.objectContaining({ type: 'factory_bench.project.phase' }),
+    ));
+  });
+
+  it('restores a single-project workspace from hydrated session metadata', async () => {
+    const onWorkspaceChange = vi.fn();
+    benchServiceMock.listBenchSessions.mockResolvedValueOnce({
+      ok: true,
+      data: [
+        {
+          session_id: 'bench-terminal',
+          work_dir: '/tmp/bench-root',
+          project_ids: ['L1-01'],
+          total: 1,
+          completed: 1,
+          failed: 0,
+          status: 'completed',
+          created_at: '2026-06-18T07:08:00Z',
+          updated_at: '2026-06-18T07:09:00Z',
+          metadata: {},
+        },
+      ],
+    });
+    benchServiceMock.getBenchSession.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        session_id: 'bench-terminal',
+        work_dir: '/tmp/bench-root',
+        project_ids: ['L1-01'],
+        total: 1,
+        completed: 1,
+        failed: 0,
+        status: 'completed',
+        created_at: '2026-06-18T07:08:00Z',
+        updated_at: '2026-06-18T07:09:00Z',
+        metadata: {},
+        events_path: '/tmp/ws/events.jsonl',
+        events: [
+          {
+            seq: 12,
+            type: 'factory_bench.run.completed',
+            summary: 'bench completed',
+            meta: {
+              session_id: 'bench-terminal',
+              status: 'completed',
+            },
+            session_id: 'bench-terminal',
+          },
+        ],
+      },
+    });
+
+    const { result } = renderHook(() => useFactoryBench({ onWorkspaceChange, autoSelect: 'none' }));
+
+    await act(async () => {
+      await result.current.select('bench-terminal');
+    });
+
+    expect(benchServiceMock.getBenchSession).toHaveBeenCalledWith('bench-terminal');
+    await waitFor(() => expect(onWorkspaceChange).toHaveBeenCalledWith(
+      '/tmp/bench-root/L1-01',
+      expect.objectContaining({ type: 'factory_bench.session.workspace' }),
     ));
   });
 

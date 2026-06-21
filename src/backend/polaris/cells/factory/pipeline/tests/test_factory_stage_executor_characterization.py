@@ -352,6 +352,105 @@ class TestRunWorkspaceQualityCommand:
         assert "timeout after" in result["error"]
 
 
+class TestRunWorkspaceQualityChecks:
+    @pytest.mark.asyncio
+    async def test_repairs_typescript_failures_and_reruns_commands(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "render.ts").write_text(
+            "import { SimulationState, updateSimulation } from './simulation';\n"
+            "type Snapshot = SimulationState;\n"
+            "const current: Snapshot = updateSimulation({ speed: 1 });\n"
+            "export { current };\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "simulation.ts").write_text(
+            "export class GardenSimulation {\n"
+            "  public start(): void {\n"
+            "    window.setInterval(() => undefined, 1000);\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "tsconfig.json").write_text(
+            json.dumps(
+                {
+                    "compilerOptions": {
+                        "target": "ES2020",
+                        "module": "ES2020",
+                        "lib": ["ES2020"],
+                    },
+                    "include": ["src/**/*.ts"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        run = FactoryRun(
+            id="factory-quality-repair",
+            config=FactoryConfig(name="quality-repair"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+        calls: list[list[str]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            calls.append(command)
+            repaired_source = (tmp_path / "src" / "simulation.ts").read_text(encoding="utf-8")
+            repaired_tsconfig = json.loads((tmp_path / "tsconfig.json").read_text(encoding="utf-8"))
+            repaired = (
+                "export type SimulationState = unknown;" in repaired_source
+                and "export function updateSimulation(..._args: unknown[]): any" in repaired_source
+                and "DOM" in repaired_tsconfig["compilerOptions"]["lib"]
+            )
+            if repaired:
+                return {
+                    "command": command,
+                    "exit_code": 0,
+                    "passed": True,
+                    "stdout_tail": "build passed",
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            return {
+                "command": command,
+                "exit_code": 2,
+                "passed": False,
+                "stdout_tail": (
+                    "src/render.ts(1,10): error TS2305: Module '\"./simulation\"' has no exported member "
+                    "'SimulationState'.\n"
+                    "src/render.ts(1,27): error TS2305: Module '\"./simulation\"' has no exported member "
+                    "'updateSimulation'.\n"
+                    "src/simulation.ts(3,5): error TS2304: Cannot find name 'window'. "
+                    "Do you need to change your target library? Try changing the 'lib' compiler option to include "
+                    "'dom'."
+                ),
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+
+        passed, artifact = await executor._run_workspace_quality_checks(run, {})
+
+        assert passed is True
+        assert calls == [["npm", "run", "build"], ["npm", "run", "build"]]
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["passed"] is True
+        assert [item["phase"] for item in payload["commands"]] == ["check", "check_after_repair"]
+        assert "deterministic_typescript_missing_export_repair" in payload["repair"]["source_tools"]
+        assert "deterministic_typescript_tsconfig_lib_repair" in payload["repair"]["source_tools"]
+
+
 # ---------------------------------------------------------------------------
 # Director-evidence truth tables
 # ---------------------------------------------------------------------------
@@ -478,6 +577,96 @@ class _PartialFailureProgressExecutor(OrchestrationStageExecutor):
 
 
 class TestDirectorDispatchLoop:
+    @pytest.mark.asyncio
+    async def test_dispatch_passes_pm_plan_task_ids_to_director_fanout(self, tmp_path: Path) -> None:
+        class _CaptureTasksExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.captured_tasks: list[str] | None = None
+                self.stats = [
+                    {
+                        "total": 2,
+                        "pending": 2,
+                        "ready": 2,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 2,
+                        "pending": 2,
+                        "ready": 2,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 2,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 2,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                ]
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                return object()
+
+            def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+                return [
+                    {"provider_id": "p1", "model": "m1"},
+                    {"provider_id": "p2", "model": "m2"},
+                ]
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
+                tasks = kwargs.get("tasks")
+                self.captured_tasks = list(tasks) if isinstance(tasks, list) else None
+                return CommandResult(
+                    run_id="director-capture",
+                    status="completed",
+                    message="Run status: completed",
+                    metadata={"task_status_counts": {"completed": 2}},
+                )
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        executor = _CaptureTasksExecutor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {"id": "TASK-1", "target_files": ["package.json"]},
+                    {"id": "TASK-2", "target_files": ["src/index.ts"]},
+                ]
+            },
+        )
+        run = FactoryRun(
+            id="factory-capture-tasks",
+            config=FactoryConfig(name="capture-tasks"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
+        )
+
+        assert result.status == "success"
+        assert executor.captured_tasks == ["TASK-1", "TASK-2"]
+
     @pytest.mark.asyncio
     async def test_continues_after_partial_fanout_failure_when_taskboard_progresses(self, tmp_path: Path) -> None:
         executor = _PartialFailureProgressExecutor(tmp_path)

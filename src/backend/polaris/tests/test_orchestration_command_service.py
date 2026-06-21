@@ -9,6 +9,7 @@ import pytest
 from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import (
     OrchestrationCommandService,
     _canonical_factory_stage_sequence,
+    _select_pm_task_payloads,
 )
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts import (
     OrchestrationSnapshot,
@@ -16,6 +17,7 @@ from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts imp
     TaskPhase,
     TaskSnapshot,
 )
+from polaris.kernelone.storage import resolve_runtime_path
 
 
 class _StubOrchestrationService:
@@ -184,6 +186,54 @@ def test_factory_stage_sequence_forces_unique_full_chain() -> None:
         "director_dispatch",
         "quality_gate",
     ]
+
+
+def test_select_pm_task_payloads_discovers_chief_engineer_blueprint_file(tmp_path: Path) -> None:
+    contract_path = Path(resolve_runtime_path(str(tmp_path), "runtime/contracts/pm_tasks.contract.json"))
+    contract_path.parent.mkdir(parents=True, exist_ok=True)
+    contract_path.write_text(
+        ('{"tasks": [{"id": "TASK-1", "title": "Create app", "goal": "Write source", "metadata": {}}]}\n'),
+        encoding="utf-8",
+    )
+    blueprint_path = Path(resolve_runtime_path(str(tmp_path), "runtime/blueprints/ce_TASK-1_20260621.json"))
+    blueprint_path.parent.mkdir(parents=True, exist_ok=True)
+    blueprint_path.write_text('{"pm_task_id": "TASK-1", "construction_plan": {}}\n', encoding="utf-8")
+
+    payloads = _select_pm_task_payloads(str(tmp_path), ["TASK-1"])
+
+    assert len(payloads) == 1
+    metadata = payloads[0]["metadata"]
+    assert metadata["handoff_ready"] is True
+    assert metadata["handoff_source"] == "chief_engineer_blueprint_file"
+    assert metadata["chief_engineer_blueprint_id"] == "ce_TASK-1_20260621"
+    assert metadata["runtime_blueprint_path"] == str(blueprint_path)
+
+
+def test_select_pm_task_payloads_discovers_factory_pm_plan_mirror_and_workspace_blueprint(tmp_path: Path) -> None:
+    plan_path = tmp_path / ".polaris" / "plans" / "latest.plan.json"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(
+        (
+            '{"tasks": ['
+            '{"id": "TASK-1", "title": "Create app", "goal": "Write source", "metadata": {}},'
+            '{"id": "TASK-2", "title": "Add tests", "goal": "Run gate", "metadata": {}}'
+            "]}\n"
+        ),
+        encoding="utf-8",
+    )
+    blueprint_path = tmp_path / ".polaris" / "blueprints" / "ce_TASK-2_20260621.json"
+    blueprint_path.parent.mkdir(parents=True, exist_ok=True)
+    blueprint_path.write_text('{"task_id": "TASK-2", "construction_plan": {}}\n', encoding="utf-8")
+
+    payloads = _select_pm_task_payloads(str(tmp_path), ["TASK-2"])
+
+    assert len(payloads) == 1
+    assert payloads[0]["id"] == "TASK-2"
+    metadata = payloads[0]["metadata"]
+    assert metadata["handoff_ready"] is True
+    assert metadata["handoff_source"] == "chief_engineer_blueprint_file"
+    assert metadata["chief_engineer_blueprint_id"] == "ce_TASK-2_20260621"
+    assert metadata["runtime_blueprint_path"] == str(blueprint_path.resolve())
 
 
 @pytest.mark.asyncio

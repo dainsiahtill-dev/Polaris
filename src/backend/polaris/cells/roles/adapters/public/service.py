@@ -26,6 +26,9 @@ from polaris.cells.orchestration.workflow_runtime.public.service import (
 from ..internal.architect_adapter import ArchitectAdapter
 from ..internal.base import BaseRoleAdapter
 from ..internal.chief_engineer_adapter import ChiefEngineerAdapter
+from ..internal.director.deterministic_repairs.generic_repairs import (
+    _apply_deterministic_materialization_quality_repairs as apply_deterministic_materialization_quality_repairs,
+)
 from ..internal.pm_adapter import PMAdapter
 from ..internal.qa_adapter import QAAdapter
 from ..internal.schemas import (
@@ -114,6 +117,7 @@ except (RuntimeError, ValueError) as exc:
 
 __all__ = [
     "ROLE_OUTPUT_SCHEMAS",
+    "apply_deterministic_materialization_quality_repairs",
     "ArchitectAdapter",
     "BaseRoleAdapter",
     "BaseToolEnabledOutput",

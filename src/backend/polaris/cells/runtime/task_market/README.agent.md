@@ -55,11 +55,15 @@ Stage mapping:
 
 ## Rollout Mode
 
-- `KERNELONE_TASK_MARKET_MODE=off`: disabled (default)
-- `KERNELONE_TASK_MARKET_MODE=shadow`: PM dispatch keeps legacy direct workflow and also mirrors tasks into market
-- `KERNELONE_TASK_MARKET_MODE=mainline`: PM publishes to `pending_design` and exits mainline dispatch
+- Default and required runtime path: `mainline-full`.
+- `KERNELONE_TASK_MARKET_MODE=off` and `shadow` are retired compatibility inputs. Runtime normalizes them to
+  `mainline-full`; they must not re-enable direct PM -> Director dispatch.
+- `KERNELONE_TASK_MARKET_MODE=mainline`: PM publishes to `pending_design` and exits mainline dispatch for external
+  CE/Director/QA consumers.
 - `KERNELONE_TASK_MARKET_MODE=mainline-design`: alias of `mainline`
 - `KERNELONE_TASK_MARKET_MODE=mainline-full`: PM publishes then runs bounded CE -> Director -> QA inline consumer loop
+- Historical `direct_to_director` / `pending_exec` PM route hints are normalized to `chief_blueprint_required` and
+  `pending_design`. Director only receives work after ChiefEngineer emits blueprint/handoff evidence.
 
 ## Notes
 

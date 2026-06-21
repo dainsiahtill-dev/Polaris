@@ -33,7 +33,7 @@ from polaris.cells.orchestration.workflow_runtime.public.service import (
 # (API routes already do this, but factory flow needs it too)
 from polaris.cells.roles.adapters.public.service import register_all_adapters
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM, DEFAULT_MAX_WORKERS
-from polaris.kernelone.storage import resolve_runtime_path
+from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path
 
 # Re-export for backwards compatibility - import from polaris.kernelone.constants
 _DEFAULT_MAX_WORKERS = DEFAULT_MAX_WORKERS
@@ -116,6 +116,66 @@ def _has_chief_engineer_handoff(payload: dict[str, Any]) -> bool:
     return bool(merged.get("handoff_ready") is True and str(merged.get("handoff_source") or "").strip())
 
 
+def _safe_path_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _find_chief_engineer_blueprint_for_task(workspace: str, task_id: str) -> Path | None:
+    task_token = str(task_id or "").strip()
+    if not task_token:
+        return None
+    roots: list[Path] = []
+    try:
+        roots.append(Path(resolve_runtime_path(str(workspace), "runtime/blueprints")).resolve())
+    except (OSError, RuntimeError, ValueError):
+        logger.debug("Could not resolve runtime blueprints path for workspace=%s", workspace, exc_info=True)
+    try:
+        roots.append(Path(resolve_logical_path(str(workspace), "workspace/blueprints")).resolve())
+    except (OSError, RuntimeError, ValueError):
+        logger.debug("Could not resolve workspace blueprints path for workspace=%s", workspace, exc_info=True)
+    roots.append((Path(workspace) / ".polaris" / "blueprints").resolve())
+
+    seen: set[Path] = set()
+    candidates: list[Path] = []
+    for root in roots:
+        if root in seen or not root.is_dir():
+            continue
+        seen.add(root)
+        for path in root.glob("ce_*.json"):
+            name = path.name
+            if name == f"ce_{task_token}.json" or name.startswith(f"ce_{task_token}_"):
+                candidates.append(path.resolve())
+    if not candidates:
+        return None
+    candidates.sort(key=_safe_path_mtime, reverse=True)
+    return candidates[0]
+
+
+def _attach_chief_engineer_handoff_from_workspace(workspace: str, payload: dict[str, Any]) -> dict[str, Any]:
+    task_id = str(payload.get("id") or payload.get("task_id") or payload.get("pm_task_id") or "").strip()
+    if not task_id or _has_chief_engineer_handoff(payload):
+        return payload
+    blueprint_path = _find_chief_engineer_blueprint_for_task(workspace, task_id)
+    if blueprint_path is None:
+        return payload
+
+    updated = dict(payload)
+    metadata_raw = updated.get("metadata")
+    metadata: dict[str, Any] = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    metadata.setdefault("blueprint_id", blueprint_path.stem)
+    metadata.setdefault("chief_engineer_blueprint_id", blueprint_path.stem)
+    metadata.setdefault("chief_engineer_handoff_id", blueprint_path.stem)
+    metadata.setdefault("blueprint_path", str(blueprint_path))
+    metadata.setdefault("runtime_blueprint_path", str(blueprint_path))
+    metadata.setdefault("handoff_ready", True)
+    metadata.setdefault("handoff_source", "chief_engineer_blueprint_file")
+    updated["metadata"] = metadata
+    return updated
+
+
 def _pm_task_rows_from_payload(payload: Any) -> list[dict[str, Any]]:
     """Extract PM task rows from the persisted PM task contract payload."""
 
@@ -141,26 +201,59 @@ def _task_identity_values(task: dict[str, Any]) -> set[str]:
     return values
 
 
+def _candidate_pm_task_payload_paths(workspace: str) -> list[Path]:
+    workspace_token = str(workspace or "").strip()
+    if not workspace_token:
+        return []
+
+    paths: list[Path] = []
+    for resolver, rel_path in (
+        (resolve_runtime_path, "runtime/contracts/pm_tasks.contract.json"),
+        (resolve_runtime_path, "runtime/tasks/plan.json"),
+        (resolve_logical_path, "workspace/plans/latest.plan.json"),
+    ):
+        try:
+            paths.append(Path(resolver(workspace_token, rel_path)).resolve())
+        except (OSError, RuntimeError, ValueError):
+            logger.debug(
+                "Could not resolve PM task payload path workspace=%s rel_path=%s",
+                workspace_token,
+                rel_path,
+                exc_info=True,
+            )
+
+    workspace_root = Path(workspace_token).resolve()
+    paths.append(workspace_root / ".polaris" / "plans" / "latest.plan.json")
+
+    seen: set[Path] = set()
+    unique_paths: list[Path] = []
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique_paths.append(path)
+    return unique_paths
+
+
 def _load_pm_task_contract_rows(workspace: str) -> list[dict[str, Any]]:
-    """Read runtime/contracts/pm_tasks.contract.json if it exists."""
+    """Read persisted PM task payloads from contracts, runtime plans, or Factory mirrors."""
 
     workspace_token = str(workspace or "").strip()
     if not workspace_token:
         return []
-    try:
-        contract_path = Path(resolve_runtime_path(workspace_token, "runtime/contracts/pm_tasks.contract.json"))
-    except (OSError, RuntimeError, ValueError):
-        logger.debug("Could not resolve PM task contract path for workspace=%s", workspace_token, exc_info=True)
-        return []
-    if not contract_path.is_file():
-        return []
-    try:
-        with contract_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (json.JSONDecodeError, OSError, TypeError, ValueError):
-        logger.debug("Could not read PM task contract path=%s", contract_path, exc_info=True)
-        return []
-    return _pm_task_rows_from_payload(payload)
+    for payload_path in _candidate_pm_task_payload_paths(workspace_token):
+        if not payload_path.is_file():
+            continue
+        try:
+            with payload_path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            logger.debug("Could not read PM task payload path=%s", payload_path, exc_info=True)
+            continue
+        rows = _pm_task_rows_from_payload(payload)
+        if rows:
+            return rows
+    return []
 
 
 def _select_pm_task_payloads(workspace: str, task_ids: list[str]) -> list[dict[str, Any]]:
@@ -188,7 +281,7 @@ def _select_pm_task_payloads(workspace: str, task_ids: list[str]) -> list[dict[s
         if primary_id in seen:
             continue
         seen.add(primary_id)
-        selected.append(dict(matched_row))
+        selected.append(_attach_chief_engineer_handoff_from_workspace(workspace, dict(matched_row)))
     return selected
 
 

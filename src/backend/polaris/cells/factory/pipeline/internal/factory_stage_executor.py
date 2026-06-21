@@ -348,6 +348,31 @@ class OrchestrationStageExecutor:
     def _build_director_task_filter(self, tasks: list[dict[str, Any]]) -> str:
         return helpers.build_director_task_filter(tasks)
 
+    def _director_task_ids_from_pm_tasks(self, tasks: list[dict[str, Any]]) -> list[str]:
+        ids: list[str] = []
+        seen: set[str] = set()
+        for index, task in enumerate(tasks, start=1):
+            task_id = self._task_id(task, index)
+            if not task_id or task_id in seen:
+                continue
+            seen.add(task_id)
+            ids.append(task_id)
+        return ids
+
+    def _director_requested_task_ids(self, context: dict[str, Any], pm_tasks: list[dict[str, Any]]) -> list[str] | None:
+        explicit_tasks = context.get("tasks")
+        if isinstance(explicit_tasks, list):
+            ids: list[str] = []
+            seen: set[str] = set()
+            for index, item in enumerate(explicit_tasks, start=1):
+                task_id = self._task_id(item, index) if isinstance(item, dict) else str(item or "").strip()
+                if not task_id or task_id in seen:
+                    continue
+                seen.add(task_id)
+                ids.append(task_id)
+            return ids
+        return self._director_task_ids_from_pm_tasks(pm_tasks) or None
+
     @staticmethod
     def _task_string(task: dict[str, Any], *keys: str) -> str:
         return helpers.task_string(task, *keys)
@@ -1431,6 +1456,7 @@ class OrchestrationStageExecutor:
         plan_task_filter = self._build_director_task_filter(pm_tasks)
         configured_task_filter = str(context.get("task_filter") or "").strip()
         effective_task_filter = configured_task_filter or plan_task_filter
+        requested_task_ids = self._director_requested_task_ids(context, pm_tasks)
 
         service = self._build_orchestration_service(context)
         stage_signals: list[dict[str, Any]] = []
@@ -1524,7 +1550,7 @@ class OrchestrationStageExecutor:
                     command_result = await self._execute_director_binding_fanout(
                         service=service,
                         workspace=str(self.workspace),
-                        tasks=context.get("tasks"),
+                        tasks=requested_task_ids,
                         base_options=base_options,
                         bindings=director_binding_fanout,
                         timeout_seconds=int(context.get("timeout", 600)),
@@ -1536,7 +1562,7 @@ class OrchestrationStageExecutor:
                 else:
                     command_result = await service.execute_director_run(
                         workspace=str(self.workspace),
-                        tasks=context.get("tasks"),
+                        tasks=requested_task_ids,
                         options=base_options,
                     )
                     last_command_result = command_result
@@ -1927,6 +1953,78 @@ class OrchestrationStageExecutor:
     def _resolve_workspace_quality_command(command: list[str]) -> list[str]:
         return helpers.resolve_workspace_quality_command(command)
 
+    def _workspace_quality_repair_errors(self, results: list[dict[str, Any]]) -> list[str]:
+        errors: list[str] = []
+        for result in results:
+            if bool(result.get("passed")):
+                continue
+            output_parts = [
+                str(result.get(key) or "").strip()
+                for key in ("error", "stdout_tail", "stderr_tail")
+                if str(result.get(key) or "").strip()
+            ]
+            if not output_parts:
+                continue
+            command = result.get("command")
+            command_text = " ".join(str(part) for part in command) if isinstance(command, list) else str(command or "")
+            output = self._trim_command_output("\n".join(output_parts))
+            errors.append(
+                "Artifact quality scan failed: workspace validation command failed"
+                f" ({command_text or 'unknown command'}): {output}"
+            )
+
+        try:
+            from polaris.kernelone.quality.artifact_quality import scan_workspace_artifact_quality
+
+            errors.extend(scan_workspace_artifact_quality(str(self.workspace)))
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            errors.append(f"Artifact quality scan failed: workspace quality repair scan failed: {exc}")
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for error in errors:
+            normalized = str(error or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
+
+    def _apply_workspace_quality_repairs(
+        self,
+        *,
+        run_id: str,
+        artifact_quality_errors: list[str],
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        from polaris.cells.roles.adapters.public.service import (
+            apply_deterministic_materialization_quality_repairs as _apply_deterministic_materialization_quality_repairs,
+        )
+
+        class _QualityRepairAdapter:
+            def __init__(self, workspace: Path) -> None:
+                self.workspace = str(workspace)
+                self._execution = SimpleNamespace(_message_bus=None)
+
+            def _update_task_progress(
+                self,
+                task_id: str,
+                phase: str,
+                current_file: str | None = None,
+                event_code: str | None = None,
+                event_status: str | None = None,
+                event_reason: str | None = None,
+                event_detail: str | None = None,
+                event_refs: dict[str, Any] | None = None,
+            ) -> None:
+                del task_id, phase, current_file, event_code, event_status, event_reason, event_detail, event_refs
+
+        return _apply_deterministic_materialization_quality_repairs(
+            _QualityRepairAdapter(self.workspace),
+            task={"metadata": {"target_files": []}},
+            task_id=f"factory-quality-gate:{run_id}",
+            artifact_quality_errors=artifact_quality_errors,
+        )
+
     async def _run_workspace_quality_checks(self, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
         commands = self._workspace_quality_commands(context)
         if not commands:
@@ -1964,14 +2062,51 @@ class OrchestrationStageExecutor:
                     }
                 )
 
+        repair_errors: list[str] = []
+        repair_results: list[dict[str, Any]] = []
+        repair_summary: dict[str, Any] = {
+            "attempted": False,
+            "success": False,
+            "source_tools": [],
+            "tool_results": 0,
+        }
+        rerun_results: list[dict[str, Any]] = []
+        if run_commands and not prepare_failed and not all(bool(item.get("passed")) for item in results):
+            repair_errors = self._workspace_quality_repair_errors(results)
+            if repair_errors:
+                repair_results, repair_summary = await asyncio.to_thread(
+                    self._apply_workspace_quality_repairs,
+                    run_id=run.id,
+                    artifact_quality_errors=repair_errors,
+                )
+                repair_summary = dict(repair_summary)
+                repair_summary["attempted"] = True
+                repair_summary["artifact_quality_errors"] = repair_errors[:10]
+                repair_summary["tool_results"] = len(repair_results)
+                repair_summary["write_tool_evidence"] = any(
+                    bool(item.get("success")) and str(item.get("tool") or item.get("tool_name") or "") == "write_file"
+                    for item in repair_results
+                )
+                if repair_results:
+                    for command in run_commands:
+                        result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
+                        result["phase"] = "check_after_repair"
+                        results.append(result)
+                        rerun_results.append(result)
+
+        effective_results = rerun_results if rerun_results else results
+        if rerun_results:
+            effective_results = [item for item in results if str(item.get("phase") or "") == "prepare"] + rerun_results
+
         payload = {
             "schema_version": "factory.workspace_quality_checks.v1",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source": "factory_stage_executor",
             "factory_run_id": run.id,
             "workspace": str(self.workspace),
-            "passed": all(bool(item.get("passed")) for item in results),
+            "passed": all(bool(item.get("passed")) for item in effective_results),
             "commands": results,
+            "repair": repair_summary,
         }
         artifact = "runtime/qa/workspace-validation.json"
         self._write_json_artifact(artifact, payload)

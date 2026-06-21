@@ -132,6 +132,8 @@ Cell 是最小自治边界。
 4. `start_from=director`、`run_director=false` 等历史字段只能作为兼容输入被规范化到完整链路，不得改变执行链路。
 5. 缺少 CE 蓝图、handoff 或实时投影时必须 fail-closed：展示等待/阻塞 CE，不得把 PM 合同直接送入 Director。
 6. Factory Bench、首页主战场、PM/ChiefEngineer/Director 工作区必须展示同一条 `PM -> Chief Engineer -> Director` 三段状态事实。
+7. `KERNELONE_TASK_MARKET_MODE=off|shadow` 和 `direct_to_director|pending_exec` 只允许作为历史兼容输入；运行态必须归一到 `mainline-full` / `chief_blueprint_required`，不得恢复 PM 直达 Director。
+8. Factory Bench 必须经 HTTP Factory API 启动 `PM -> Chief Engineer -> Director` 全链路；`--use-legacy-chain`、`workflow` driver、subprocess PM->Director 只能 fail-closed，不得作为自动回退。
 
 ## 5. 根目录与归属裁决
 

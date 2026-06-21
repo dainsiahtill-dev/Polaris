@@ -182,6 +182,9 @@ async def test_v2_health_success(client: AsyncClient) -> None:
         assert data["python"] == "3.11"
         assert "pm" in data
         assert "director" in data
+        assert data["fingerprint"]
+        assert data["backend_fingerprint"] == data["fingerprint"]
+        assert data["backend_fingerprint_source"] == "runtime/fingerprint"
 
 
 @pytest.mark.asyncio
@@ -218,6 +221,30 @@ async def test_v2_health_lancedb_failure(client: AsyncClient) -> None:
         data = response.json()
         assert data["ok"] is False
         assert data["lancedb_error"] == "lancedb down"
+
+
+# ---------------------------------------------------------------------------
+# GET /v2/runtime/fingerprint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_v2_runtime_fingerprint_reports_backend_source(client: AsyncClient) -> None:
+    """Runtime fingerprint endpoint should expose bench-comparable backend metadata."""
+    with patch(
+        "scripts.factory_bench.backend_fingerprint.compute_source_fingerprint",
+        return_value="fixed-source-fp",
+    ):
+        response = await client.get("/v2/runtime/fingerprint")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["fingerprint"] == "fixed-source-fp"
+    assert isinstance(data["pid"], int)
+    assert data["startup_time"]
+    assert data["workspace"] == "."
+    assert data["source"] == "runtime/fingerprint"
 
 
 # ---------------------------------------------------------------------------

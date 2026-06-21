@@ -515,10 +515,17 @@ def _build_stage_context(stage: str, payload: FactoryStartRequest, state: AppSta
     if stage == "chief_engineer_review":
         context["directive"] = payload.directive
     if stage == "director_dispatch":
-        context["execution_mode"] = getattr(state.settings, "director_execution_mode", "parallel")
+        requested_execution_mode = str(payload.director_workflow_execution_mode or "").strip().lower()
+        context["execution_mode"] = (
+            requested_execution_mode
+            if requested_execution_mode in {"serial", "parallel"}
+            else getattr(state.settings, "director_execution_mode", "parallel")
+        )
         context["max_workers"] = getattr(
             state.settings, "director_max_parallel_tasks", DEFAULT_DIRECTOR_MAX_PARALLELISM
         )
+        context["director_dispatch_driver"] = "task-market"
+        context["dispatch_mode"] = "mainline-full"
         if int(payload.director_iterations) > 0:
             context["director_max_rounds"] = int(payload.director_iterations)
         context["timeout"] = _DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS

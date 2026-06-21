@@ -885,15 +885,14 @@ def _shadow_publish_dispatch_tasks_to_task_market(
     normalized: dict[str, Any] | None = None,
     docs_stage: dict[str, Any] | None = None,
 ) -> None:
-    """Best-effort task market publication for dispatch tasks.
+    """Compatibility helper that now publishes only governed design work.
 
-    This path is intentionally non-blocking for the current rollout:
-    - mode=off: disabled
-    - mode=shadow/mainline*: publish work items, but do not fail dispatch on errors
+    Historical shadow mode mirrored PM tasks directly to Director execution.
+    That route is retired: even calls through this helper publish to
+    ``pending_design`` with a Chief Engineer blueprint requirement.
     """
     mode = _resolve_task_market_mode()
-    if mode == "off":
-        return
+    rollout_mode = _resolve_task_market_rollout_mode()
     if not isinstance(tasks, list) or not tasks:
         return
 
@@ -929,7 +928,7 @@ def _shadow_publish_dispatch_tasks_to_task_market(
         if not task_id:
             continue
         trace_id = str(task.get("trace_id") or run_id).strip() or run_id
-        task_route = _TASK_ROUTE_DIRECT_TO_DIRECTOR
+        task_route = _TASK_ROUTE_CHIEF_BLUEPRINT_REQUIRED
         payload: dict[str, Any] = {
             "source_pm_task_id": task_id,
             "title": str(task.get("title") or task.get("goal") or task_id).strip(),
@@ -948,9 +947,11 @@ def _shadow_publish_dispatch_tasks_to_task_market(
             "qa_contract": task.get("qa_contract") if isinstance(task.get("qa_contract"), dict) else {},
             "pm_contract": dict(task),
             "task": dict(task),
+            "workspace": workspace_full,
+            "run_id": run_id,
             "route": task_route,
             "task_market_route": task_route,
-            "blueprint_required": False,
+            "blueprint_required": True,
         }
         try:
             command = publish_contract_type(
@@ -958,14 +959,16 @@ def _shadow_publish_dispatch_tasks_to_task_market(
                 trace_id=trace_id,
                 run_id=run_id,
                 task_id=task_id,
-                stage="pending_exec",
+                stage="pending_design",
                 source_role="PM",
                 payload=payload,
                 metadata={
                     "dispatch_mode": mode,
+                    "dispatch_rollout_mode": rollout_mode,
+                    "published_via": "legacy_shadow_normalized",
                     "route": task_route,
                     "task_market_route": task_route,
-                    "blueprint_required": False,
+                    "blueprint_required": True,
                     "plan_id": revision_context["plan_id"],
                     "plan_revision_id": revision_context["plan_revision_id"],
                 },
@@ -1362,10 +1365,9 @@ def run_dispatch_pipeline(
     rollout_mode = _resolve_task_market_rollout_mode()
 
     # Publish to task market based on mode.
-    # - off: disabled (do nothing)
-    # - shadow: best-effort publish to PENDING_EXEC for monitoring (non-blocking)
-    # - mainline: publish to PENDING_DESIGN for CE consumption, then skip
-    #   engine dispatch (PM's responsibility ends at task publication)
+    # Runtime PM dispatch has a single governed path:
+    # PM -> Chief Engineer blueprint -> Director execution -> QA.
+    # Retired off/shadow/direct modes must never fall back to engine dispatch.
     if mode == "mainline":
         mainline_results = _mainline_publish_dispatch_tasks_to_task_market(
             workspace_full=workspace_full,
@@ -1446,42 +1448,29 @@ def run_dispatch_pipeline(
         outcome["exit_code"] = 0 if not publish_failed_task_ids else 1
         outcome["error"] = "" if outcome["exit_code"] == 0 else "task_market_publish_failed"
         return outcome
-    elif mode == "shadow":
-        _shadow_publish_dispatch_tasks_to_task_market(
-            workspace_full=workspace_full,
-            run_id=run_id,
-            tasks=dispatch_tasks,
-            normalized=normalized,
-            docs_stage=docs_stage,
-        )
 
-    engine_dispatch_result = run_engine_dispatch(
-        callbacks=callbacks,
-        workspace_full=workspace_full,
-        run_id=run_id,
-        iteration=iteration,
-        tasks=dispatch_tasks,
-        run_events=run_events,
-        dialogue_full=dialogue_full,
-    )
-    outcome["engine_dispatch"] = engine_dispatch_result
-    outcome["director_result"] = engine_dispatch_result.get("director_result")
-    outcome["exit_code"] = engine_dispatch_result.get("exit_code", 0)
-
-    if outcome["exit_code"] == 0:
-        integration_qa_result = run_integration_qa(
-            workspace_full=workspace_full,
-            cache_root_full=cache_root_full,
-            run_dir=run_dir,
-            run_id=run_id,
-            iteration=iteration,
-            tasks=dispatch_tasks,
-            run_events=run_events,
-            dialogue_full=dialogue_full,
-            docs_stage=docs_stage,
-        )
-        outcome["integration_qa_result"] = integration_qa_result
-
+    outcome["engine_dispatch"] = {
+        "skipped": True,
+        "reason": "task_market_mainline_required",
+        "dispatch_mode": mode,
+        "dispatch_rollout_mode": rollout_mode,
+    }
+    outcome["director_result"] = {
+        "run_id": run_id,
+        "mode": "task_market_mainline_required",
+        "status": "blocked",
+        "total": len(dispatch_tasks),
+        "successes": 0,
+        "error": "task_market_mainline_required",
+    }
+    outcome["integration_qa_result"] = {
+        "enabled": True,
+        "ran": False,
+        "passed": False,
+        "reason": "task_market_mainline_required",
+    }
+    outcome["exit_code"] = 1
+    outcome["error"] = "task_market_mainline_required"
     outcome["used"] = True
     return outcome
 

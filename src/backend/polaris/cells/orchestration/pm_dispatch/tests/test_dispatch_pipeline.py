@@ -16,10 +16,14 @@ from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
     _build_workflow_input,
     _classify_integration_qa_evidence,
     _mainline_publish_dispatch_tasks_to_task_market,
+    _normalize_task_market_route,
+    _resolve_task_market_mode,
+    _resolve_task_market_rollout_mode,
     _resolve_workflow_submit_fn,
     _run_inline_task_market_consumers,
     _shadow_publish_dispatch_tasks_to_task_market,
     _start_durable_consumer_loops,
+    _task_market_stage_for_route,
     _tasks_touch_docs_only,
     record_dispatch_status_to_shangshuling,
     resolve_director_dispatch_tasks,
@@ -84,24 +88,17 @@ class TestResolveDirectorDispatchTasks:
 # ---------------------------------------------------------------------------
 
 
-def test_shadow_publish_skips_when_mode_off(monkeypatch) -> None:
+def test_task_market_off_mode_is_forced_to_mainline_full(monkeypatch) -> None:
     monkeypatch.setenv("KERNELONE_TASK_MARKET_MODE", "off")
-    calls: list[str] = []
 
-    def _fake_get_task_market_services():
-        calls.append("imported")
-        return None, None
+    assert _resolve_task_market_rollout_mode() == "mainline-full"
+    assert _resolve_task_market_mode() == "mainline"
 
-    monkeypatch.setattr(
-        "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._get_task_market_services",
-        _fake_get_task_market_services,
-    )
-    _shadow_publish_dispatch_tasks_to_task_market(
-        workspace_full="/ws",
-        run_id="run-1",
-        tasks=[{"id": "T01", "title": "Task 1"}],
-    )
-    assert calls == []
+
+def test_task_market_legacy_direct_route_is_forced_to_chief_blueprint() -> None:
+    assert _normalize_task_market_route("direct_to_director") == "chief_blueprint_required"
+    assert _normalize_task_market_route("pending_exec") == "chief_blueprint_required"
+    assert _task_market_stage_for_route("direct_to_director") == "pending_design"
 
 
 def test_shadow_publish_emits_publish_commands(monkeypatch) -> None:
@@ -140,10 +137,12 @@ def test_shadow_publish_emits_publish_commands(monkeypatch) -> None:
     assert isinstance(second, _PublishCommand)
     assert first.kwargs["workspace"] == "/workspace"
     assert first.kwargs["task_id"] == "T01"
-    assert first.kwargs["stage"] == "pending_exec"
-    assert first.kwargs["metadata"]["dispatch_mode"] == "shadow"
-    assert first.kwargs["metadata"]["route"] == "direct_to_director"
-    assert first.kwargs["metadata"]["blueprint_required"] is False
+    assert first.kwargs["stage"] == "pending_design"
+    assert first.kwargs["metadata"]["dispatch_mode"] == "mainline"
+    assert first.kwargs["metadata"]["dispatch_rollout_mode"] == "mainline-full"
+    assert first.kwargs["metadata"]["route"] == "chief_blueprint_required"
+    assert first.kwargs["metadata"]["blueprint_required"] is True
+    assert first.kwargs["metadata"]["published_via"] == "legacy_shadow_normalized"
     assert first.kwargs["plan_id"]
     assert first.kwargs["plan_revision_id"].startswith("rev-")
     assert second.kwargs["trace_id"] == "trace-2"
@@ -198,10 +197,10 @@ def test_mainline_publish_routes_tasks_by_contract(monkeypatch) -> None:
     assert first.kwargs["stage"] == "pending_design"
     assert first.kwargs["metadata"]["route"] == "chief_blueprint_required"
     assert first.kwargs["metadata"]["blueprint_required"] is True
-    # PM can still explicitly send narrow work directly to Director.
-    assert second.kwargs["stage"] == "pending_exec"
-    assert second.kwargs["metadata"]["route"] == "direct_to_director"
-    assert second.kwargs["metadata"]["blueprint_required"] is False
+    # Historical direct routes are normalized to the governed ChiefEngineer handoff.
+    assert second.kwargs["stage"] == "pending_design"
+    assert second.kwargs["metadata"]["route"] == "chief_blueprint_required"
+    assert second.kwargs["metadata"]["blueprint_required"] is True
     assert first.kwargs["metadata"]["dispatch_mode"] == "mainline"
     assert first.kwargs["metadata"]["published_via"] == "mainline"
     assert first.kwargs["plan_id"]
@@ -212,8 +211,8 @@ def test_mainline_publish_routes_tasks_by_contract(monkeypatch) -> None:
     assert results[0]["ok"] is True
     assert results[0]["route"] == "chief_blueprint_required"
     assert results[1]["task_id"] == "T02"
-    assert results[1]["stage"] == "pending_exec"
-    assert results[1]["route"] == "direct_to_director"
+    assert results[1]["stage"] == "pending_design"
+    assert results[1]["route"] == "chief_blueprint_required"
 
 
 def test_mainline_design_alias_publishes_pending_design(monkeypatch) -> None:

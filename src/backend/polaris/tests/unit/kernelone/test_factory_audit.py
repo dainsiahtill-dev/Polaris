@@ -388,6 +388,31 @@ def test_multilanguage_compile_checks_dispatch_to_toolchains(monkeypatch: Any, t
     assert [Path(command[0]).name for command in commands] == ["tsc", "go", "rustc", "g++", "javac"]
 
 
+def test_ts_syntax_uses_project_tsconfig_and_local_compiler(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.ts").write_text("export const answer: number = 42;\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"target":"ES2020","skipLibCheck":true},"include":["src/**/*"]}\n',
+        encoding="utf-8",
+    )
+    local_tsc = tmp_path / "node_modules" / ".bin" / "tsc"
+    local_tsc.parent.mkdir(parents=True)
+    local_tsc.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(factory_audit.shutil, "which", lambda _name: "/global/tsc")
+    monkeypatch.setattr(factory_audit.subprocess, "run", fake_run)
+
+    results = run_checks(str(tmp_path), ["ts_syntax"])
+
+    assert results[0]["ok"] is True
+    assert commands == [[str(local_tsc), "--noEmit", "--pretty", "false", "--project", "tsconfig.json"]]
+
+
 def test_multilanguage_compile_check_reports_missing_toolchain(monkeypatch: Any, tmp_path: Path) -> None:
     (tmp_path / "main.go").write_text("package main\nfunc main() {}\n", encoding="utf-8")
     monkeypatch.setattr(factory_audit.shutil, "which", lambda _name: None)

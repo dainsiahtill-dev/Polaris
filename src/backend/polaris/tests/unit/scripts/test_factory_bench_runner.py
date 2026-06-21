@@ -588,7 +588,7 @@ def test_run_chain_task_market_driver_plans_then_dispatches_market(
     assert "--fresh-market" in market_cmd
 
 
-def test_main_task_market_driver_uses_legacy_chain_without_explicit_flag(
+def test_main_task_market_driver_uses_http_factory_chain_without_legacy_fallback(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
@@ -620,11 +620,11 @@ def test_main_task_market_driver_uses_legacy_chain_without_explicit_flag(
 
     def _legacy_chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         calls.append("legacy")
-        raise KeyboardInterrupt()
+        raise AssertionError("task-market dispatch must not use the legacy subprocess chain")
 
     def _http_chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         calls.append("http")
-        raise AssertionError("task-market dispatch must not use the HTTP factory runner path")
+        raise KeyboardInterrupt()
 
     monkeypatch.setattr(bench, "run_chain", _legacy_chain)
     monkeypatch.setattr(bench, "run_factory_chain", _http_chain)
@@ -632,7 +632,7 @@ def test_main_task_market_driver_uses_legacy_chain_without_explicit_flag(
     result = bench.main()
 
     assert result == 130
-    assert calls == ["legacy"]
+    assert calls == ["http"]
 
 
 def test_main_marks_backend_session_failed_when_run_aborts(monkeypatch: Any, tmp_path: Path) -> None:
@@ -918,6 +918,8 @@ def test_run_factory_chain_success(monkeypatch: Any, tmp_path: Path) -> None:
     assert "audit_bundle" in result
     assert _LAST_FACTORY_START_PAYLOAD["workspace"] == str(workspace)
     assert _LAST_FACTORY_START_PAYLOAD["persist_workspace"] is False
+    assert _LAST_FACTORY_START_PAYLOAD["director_workflow_execution_mode"] == "parallel"
+    assert _LAST_FACTORY_START_PAYLOAD["director_dispatch_driver"] == "task-market"
 
 
 def test_run_factory_chain_start_failure(monkeypatch: Any, tmp_path: Path) -> None:

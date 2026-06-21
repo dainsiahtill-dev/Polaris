@@ -59,7 +59,31 @@ _TS_TOO_FEW_ARGUMENTS_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 _TS_EXPORTED_CLASS_RE_TEMPLATE = r"export\s+(?:abstract\s+)?class\s+{type_name}\b[^{{]*{{"
+_TS_STRUCTURAL_TYPE_RE_TEMPLATE = r"(?:export\s+)?(?:interface\s+{type_name}\b[^{{]*{{|type\s+{type_name}\b\s*=\s*{{)"
 _TS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+_TS_STRINGISH_MEMBER_NAMES = {"color", "colour", "id", "key", "label", "name", "title"}
+_TS_NUMERIC_MEMBER_NAMES = {
+    "amplitude",
+    "basex",
+    "basey",
+    "brightness",
+    "count",
+    "duration",
+    "height",
+    "humidity",
+    "index",
+    "intensity",
+    "moonphase",
+    "phase",
+    "radius",
+    "size",
+    "speed",
+    "time",
+    "width",
+    "x",
+    "y",
+    "z",
+}
 
 
 def _apply_deterministic_typescript_reexport_repair(
@@ -328,22 +352,37 @@ def _apply_deterministic_typescript_missing_member_repair(
     for item in missing_members:
         type_name = item["type"]
         member = item["member"]
+        declaration_kind = "class"
         declaration_path, declaration_text, class_start, class_end = _find_typescript_class_declaration(
             workspace_path=workspace_path,
             type_name=type_name,
             updated_by_path=updated_by_path,
         )
         if declaration_path is None or declaration_text is None or class_start < 0 or class_end < 0:
+            declaration_kind = "structural"
+            declaration_path, declaration_text, class_start, class_end = _find_typescript_structural_type_declaration(
+                workspace_path=workspace_path,
+                type_name=type_name,
+                updated_by_path=updated_by_path,
+            )
+        if declaration_path is None or declaration_text is None or class_start < 0 or class_end < 0:
             continue
         class_text = declaration_text[class_start:class_end]
         if _typescript_class_text_has_member(class_text, member):
             continue
         usage_line = _typescript_error_usage_line(workspace_path, item)
-        member_declaration = _build_typescript_missing_member_declaration(
-            member=member,
-            usage_line=usage_line,
-            class_text=class_text,
-        )
+        if declaration_kind == "class":
+            member_declaration = _build_typescript_missing_member_declaration(
+                member=member,
+                usage_line=usage_line,
+                class_text=class_text,
+            )
+        else:
+            member_declaration = _build_typescript_missing_member_signature(
+                member=member,
+                usage_line=usage_line,
+                declaration_text=class_text,
+            )
         if not member_declaration:
             continue
         new_text = (
@@ -355,6 +394,7 @@ def _apply_deterministic_typescript_missing_member_repair(
                 "file": declaration_path.relative_to(workspace_path).as_posix(),
                 "type": type_name,
                 "member": member,
+                "declaration_kind": declaration_kind,
             }
         )
 
@@ -460,7 +500,11 @@ def _apply_deterministic_typescript_tsconfig_lib_repair(
 
 def _typescript_errors_require_dom_lib(errors: list[str]) -> bool:
     joined = "\n".join(str(error or "").lower() for error in errors)
-    return "cannot find name 'console'" in joined and "include 'dom'" in joined
+    if "include 'dom'" not in joined:
+        return False
+    return any(
+        f"cannot find name '{name}'" in joined for name in ("console", "window", "document", "navigator", "location")
+    )
 
 
 def _apply_deterministic_typescript_number_to_string_argument_repair(
@@ -834,6 +878,29 @@ def _find_typescript_class_declaration(
     return None, None, -1, -1
 
 
+def _find_typescript_structural_type_declaration(
+    *,
+    workspace_path: Path,
+    type_name: str,
+    updated_by_path: dict[Path, str],
+) -> tuple[Path | None, str | None, int, int]:
+    declaration_re = re.compile(_TS_STRUCTURAL_TYPE_RE_TEMPLATE.format(type_name=re.escape(type_name)))
+    for path in _iter_typescript_files(workspace_path):
+        try:
+            text = updated_by_path.get(path) or path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        match = declaration_re.search(text)
+        if not match:
+            continue
+        open_brace = text.find("{", match.start())
+        close_brace = _find_matching_brace(text, open_brace)
+        if close_brace < 0:
+            continue
+        return path, text, match.start(), close_brace
+    return None, None, -1, -1
+
+
 def _find_matching_brace(text: str, open_brace: int) -> int:
     if open_brace < 0 or open_brace >= len(text) or text[open_brace] != "{":
         return -1
@@ -1043,12 +1110,47 @@ def _build_typescript_missing_member_declaration(*, member: str, usage_line: str
     return f"  public get {safe_member}(): unknown {{\n    return undefined;\n  }}"
 
 
+def _build_typescript_missing_member_signature(*, member: str, usage_line: str, declaration_text: str) -> str:
+    safe_member = re.sub(r"[^A-Za-z0-9_$]", "", member)
+    if not safe_member:
+        return ""
+    if re.search(rf"\.{re.escape(safe_member)}\s*\(", usage_line):
+        params = _typescript_method_params_from_usage_line(safe_member, usage_line)
+        return f"  {safe_member}({params}): number;"
+    return f"  {safe_member}: {_typescript_missing_member_value_type(safe_member, usage_line, declaration_text)};"
+
+
+def _typescript_missing_member_value_type(member: str, usage_line: str, declaration_text: str) -> str:
+    del declaration_text
+    if re.search(rf"\.{re.escape(member)}\s*\.length\b", usage_line):
+        return "string"
+    if _typescript_usage_line_treats_member_as_string(member, usage_line):
+        return "string"
+    if _typescript_member_name_suggests_string(member):
+        return "string"
+    if _typescript_usage_line_treats_member_as_number(member, usage_line):
+        return "number"
+    if _typescript_member_name_suggests_number(member):
+        return "number"
+    return "unknown"
+
+
+def _typescript_member_name_suggests_string(member: str) -> bool:
+    return member.strip().lower() in _TS_STRINGISH_MEMBER_NAMES
+
+
+def _typescript_member_name_suggests_number(member: str) -> bool:
+    return member.strip().lower() in _TS_NUMERIC_MEMBER_NAMES
+
+
 def _typescript_usage_line_treats_member_as_string(member: str, usage_line: str) -> bool:
     member_access = rf"\.{re.escape(member)}\b"
     comparison = r"(?:={2,3}|!==?)"
     string_literal = r"['\"]"
     stringish_identifier = r"[A-Za-z_$][A-Za-z0-9_$]*(?:Id|ID|Name|Key)\b"
-    member_name_is_stringish = bool(re.search(r"(?:id|name|key)$", member, re.IGNORECASE))
+    member_name_is_stringish = _typescript_member_name_suggests_string(member) or bool(
+        re.search(r"(?:id|name|key)$", member, re.IGNORECASE)
+    )
     return bool(
         re.search(rf"{member_access}\s*{comparison}\s*{string_literal}", usage_line)
         or re.search(rf"{string_literal}[^'\"]*{comparison}\s*[^;\n]*{member_access}", usage_line)
@@ -1567,10 +1669,12 @@ def _export_existing_typescript_declaration(text: str, symbol: str) -> str:
 def _build_typescript_missing_export_declaration(*, symbol: str, importer_text: str) -> tuple[str, str]:
     if not _TS_IDENTIFIER_RE.fullmatch(symbol):
         return "", ""
-    if _typescript_symbol_is_constructed(importer_text, symbol) or symbol[:1].isupper():
+    if _typescript_symbol_is_constructed(importer_text, symbol):
         return "class", _build_typescript_missing_export_class_declaration(symbol=symbol, importer_text=importer_text)
     if _typescript_symbol_is_called(importer_text, symbol):
         return "function", (f"export function {symbol}(..._args: unknown[]): any {{\n  return undefined;\n}}")
+    if symbol[:1].isupper():
+        return "type", f"export type {symbol} = unknown;"
     return "const", f"export const {symbol}: unknown = undefined;"
 
 

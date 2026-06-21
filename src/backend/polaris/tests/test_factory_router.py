@@ -330,6 +330,25 @@ def test_factory_director_context_honors_explicit_round_cap() -> None:
     assert context["director_max_rounds"] == 4
 
 
+def test_factory_director_context_honors_payload_execution_mode() -> None:
+    payload = FactoryStartRequest(
+        workspace="C:/tmp/workspace",
+        director_workflow_execution_mode="parallel",
+    )
+    state = SimpleNamespace(
+        settings=SimpleNamespace(
+            director_execution_mode="serial",
+            director_max_parallel_tasks=2,
+        )
+    )
+
+    context = factory_router_module._build_stage_context("director_dispatch", payload, state)
+
+    assert context["execution_mode"] == "parallel"
+    assert context["director_dispatch_driver"] == "task-market"
+    assert context["dispatch_mode"] == "mainline-full"
+
+
 def test_factory_readiness_roles_skip_local_chief_engineer_stage() -> None:
     roles = factory_router_module._required_ready_roles_for_stages(
         ["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],

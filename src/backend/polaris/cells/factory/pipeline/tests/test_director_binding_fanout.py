@@ -251,7 +251,7 @@ class TestBindingOverrideInWorkerThread:
     """Tests for binding override application in _run_role_adapter_in_worker."""
 
     def test_applies_binding_override(self) -> None:
-        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+        from polaris.cells.orchestration.workflow_runtime.public import (
             UnifiedOrchestrationService,
         )
 
@@ -281,7 +281,7 @@ class TestBindingOverrideInWorkerThread:
         mock_clear.assert_called_once_with("director")
 
     def test_no_override_when_binding_is_none(self) -> None:
-        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+        from polaris.cells.orchestration.workflow_runtime.public import (
             UnifiedOrchestrationService,
         )
 
@@ -964,7 +964,7 @@ class TestRunRoleAdapterInWorkerFanoutLock:
     async def test_binding_override_sets_fanout_locked_marker(self) -> None:
         """When binding_override is provided, _fanout_locked must be True."""
 
-        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+        from polaris.cells.orchestration.workflow_runtime.public import (
             UnifiedOrchestrationService,
         )
         from polaris.kernelone.llm.runtime_config import (
@@ -1008,7 +1008,7 @@ class TestRunRoleAdapterInWorkerFanoutLock:
     @pytest.mark.asyncio
     async def test_no_binding_override_no_fanout_locked(self) -> None:
         """When binding_override is None, no _fanout_locked marker should be set."""
-        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+        from polaris.cells.orchestration.workflow_runtime.public import (
             UnifiedOrchestrationService,
         )
         from polaris.kernelone.llm.runtime_config import (
@@ -1049,7 +1049,7 @@ class TestThreeWayMockBindingPropagation:
     @pytest.mark.asyncio
     async def test_three_bindings_invoke_three_distinct_provider_models(self) -> None:
         """Each binding must result in a distinct provider/model being passed to the LLM invoker."""
-        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+        from polaris.cells.orchestration.workflow_runtime.public import (
             UnifiedOrchestrationService,
         )
         from polaris.kernelone.llm.runtime_config import (
@@ -1118,7 +1118,7 @@ class TestThreeWayMockBindingPropagation:
         """_profile_for_healthy_binding must apply binding override provider/model to profile."""
         from types import SimpleNamespace
 
-        from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+        from polaris.cells.roles.kernel.public import LLMInvoker
         from polaris.kernelone.llm.runtime_config import set_role_binding_override
 
         profile = SimpleNamespace(
@@ -1146,7 +1146,7 @@ class TestThreeWayMockBindingPropagation:
         """Each of the 3 bindings must be correctly applied to the profile."""
         from types import SimpleNamespace
 
-        from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+        from polaris.cells.roles.kernel.public import LLMInvoker
         from polaris.kernelone.llm.runtime_config import set_role_binding_override
 
         bindings = [
@@ -1179,7 +1179,7 @@ class TestThreeWayMockBindingPropagation:
         """When a binding is missing/unreachable, the call must fail-closed."""
         from types import SimpleNamespace
 
-        from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+        from polaris.cells.roles.kernel.public import LLMInvoker
         from polaris.kernelone.llm.runtime_config import mark_role_binding_unhealthy, set_role_binding_override
 
         profile = SimpleNamespace(

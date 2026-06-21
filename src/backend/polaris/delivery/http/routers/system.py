@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _SETTINGS_UPDATE_LOCKS: dict[int, asyncio.Lock] = {}
+_SERVER_STARTUP_TIME = utc_now_str()
+_SERVER_START_MONOTONIC = time.monotonic()
 
 
 def _workspace_readiness_projection(workspace: str) -> tuple[bool, dict[str, Any]]:
@@ -111,9 +114,47 @@ def _get_settings_update_lock() -> asyncio.Lock:
     return lock
 
 
+def _backend_source_root() -> Path:
+    return Path(__file__).resolve().parents[4]
+
+
+def _active_workspace_from_request(request: Request | None) -> str:
+    if request is None:
+        return ""
+    try:
+        settings = get_state(request).settings
+    except (RuntimeError, ValueError, AttributeError):
+        return ""
+    for attr in ("workspace_path", "workspace"):
+        value = getattr(settings, attr, "")
+        if str(value or "").strip():
+            return str(value)
+    return ""
+
+
+def _build_runtime_fingerprint_response(request: Request | None = None) -> dict[str, Any]:
+    """Expose the live backend source fingerprint used by factory-bench freshness gates."""
+
+    from scripts.factory_bench.backend_fingerprint import compute_source_fingerprint
+
+    backend_root = _backend_source_root()
+    fingerprint = compute_source_fingerprint(backend_root)
+    return {
+        "ok": bool(fingerprint),
+        "fingerprint": fingerprint,
+        "pid": os.getpid(),
+        "startup_time": _SERVER_STARTUP_TIME,
+        "uptime_seconds": round(max(0.0, time.monotonic() - _SERVER_START_MONOTONIC), 3),
+        "workspace": _active_workspace_from_request(request),
+        "backend_root": str(backend_root),
+        "source": "runtime/fingerprint",
+    }
+
+
 async def _build_health_response() -> dict[str, Any]:
     """Build enhanced backend health including PM/Director runtime state."""
     lancedb_status = get_lancedb_status()
+    runtime_fingerprint = _build_runtime_fingerprint_response()
 
     # Get PM status
     pm_status: dict[str, Any] = {"status": "unknown", "running": False}
@@ -183,6 +224,11 @@ async def _build_health_response() -> dict[str, Any]:
         "pm": pm_status,
         "director": director_status,
         "context_admin": context_admin_status,
+        "fingerprint": runtime_fingerprint.get("fingerprint", ""),
+        "backend_fingerprint": runtime_fingerprint.get("fingerprint", ""),
+        "backend_pid": runtime_fingerprint.get("pid"),
+        "backend_startup_time": runtime_fingerprint.get("startup_time", ""),
+        "backend_fingerprint_source": runtime_fingerprint.get("source", ""),
     }
 
 
@@ -445,6 +491,12 @@ async def app_shutdown(request: Request) -> dict[str, Any]:
 async def v2_health() -> dict[str, Any]:
     """Get backend health status including PM/Director runtime state."""
     return await _build_health_response()
+
+
+@router.get("/v2/runtime/fingerprint", dependencies=[Depends(require_auth)])
+def v2_runtime_fingerprint(request: Request) -> dict[str, Any]:
+    """Get the running backend source fingerprint for factory-bench freshness gates."""
+    return _build_runtime_fingerprint_response(request)
 
 
 @router.get("/v2/settings", dependencies=[Depends(require_auth)], response_model=SettingsResponse)

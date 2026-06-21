@@ -27,6 +27,7 @@ Example::
 
 from __future__ import annotations
 
+from ..internal.bench_gates import build_real_run_gate
 from ..internal.factory_run_service import (
     TERMINAL_RUN_STATUSES,
     FactoryConfig,
@@ -57,6 +58,7 @@ from .contracts import (
 
 __all__ = [
     "TERMINAL_RUN_STATUSES",
+    "build_real_run_gate",
     "CancelFactoryRunCommandV1",
     "FactoryConfig",
     "FactoryPipelineError",
