@@ -231,10 +231,14 @@ function classifyStream(params: {
     streamEvent === 'invoke_done' ||
     streamEvent === 'invoke_error' ||
     streamEvent === 'llm_completed' ||
-    streamEvent === 'llm_failed';
+    streamEvent === 'llm_failed' ||
+    streamEvent === 'llm_call_end' ||
+    streamEvent === 'llm_call_error' ||
+    streamEvent === 'call_end' ||
+    streamEvent === 'call_error';
 
   let category: ContextOSEvent['category'];
-  if (isError || streamEvent === 'invoke_error' || streamEvent === 'llm_failed') category = 'error';
+  if (isError || streamEvent === 'invoke_error' || streamEvent === 'llm_failed' || streamEvent === 'llm_call_error' || streamEvent === 'call_error') category = 'error';
   else if (streamEvent === 'tool_call' || streamEvent === 'tool_result') category = 'tool';
   else if (isProjection) category = 'projection';
   else if (isCall) category = 'call';
@@ -348,8 +352,21 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const rawMeta = isRecord(log.meta) ? log.meta : {};
   const nestedOutput = isRecord(rawMeta['output']) ? rawMeta['output'] : {};
   const nestedData = isRecord(rawMeta['data']) ? rawMeta['data'] : {};
-  const meta = { ...nestedOutput, ...nestedData, ...rawMeta };
-  const streamEvent = (nonEmptyString(meta['streamEvent']) || (log.tags && log.tags[0]) || '').toLowerCase();
+  const nestedMetadata = isRecord(rawMeta['metadata'])
+    ? rawMeta['metadata']
+    : isRecord(nestedData['metadata'])
+      ? nestedData['metadata']
+      : isRecord(nestedOutput['metadata'])
+        ? nestedOutput['metadata']
+        : {};
+  const meta = { ...nestedOutput, ...nestedData, ...nestedMetadata, ...rawMeta };
+  const streamEvent = (
+    nonEmptyString(meta['streamEvent']) ||
+    nonEmptyString(meta['stream_event']) ||
+    nonEmptyString(meta['event_type']) ||
+    (log.tags && log.tags[0]) ||
+    ''
+  ).toLowerCase();
   const channel = nonEmptyString(meta['channel']) || channelFallback;
   const actor = nonEmptyString(log.source) || 'System';
   const isError = log.level === 'error';
@@ -359,7 +376,11 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   // 结构化信号（来自 meta = 事件 data/output）。
   const contextItems = toFiniteOrNull(meta['items_count']);
   // 上下文规模：context.build 的 total_tokens（全量装配规模）优先；llm 通道的 context_tokens_after 次之。
-  const contextTokens = toFiniteOrNull(meta['total_tokens']) ?? toFiniteOrNull(meta['contextTokens']);
+  const contextTokens = contextItems !== null
+    ? toFiniteOrNull(meta['total_tokens']) ?? toFiniteOrNull(meta['contextTokens'])
+    : toFiniteOrNull(meta['contextTokens']) ??
+      toFiniteOrNull(meta['context_tokens_after']) ??
+      toFiniteOrNull(meta['context_tokens_before']);
   const snapshotHash = nonEmptyString(meta['snapshot_hash']);
   const requestHash = nonEmptyString(meta['request_hash']);
   const contextHash = nonEmptyString(meta['context_hash']) || requestHash || null;
@@ -374,9 +395,28 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   // 兼容 snake_case（runtime_events 通道可能用 prompt_tokens/completion_tokens/total_tokens）。
   const usagePromptTokens = toFiniteOrNull(meta['promptTokens']) ?? toFiniteOrNull(meta['prompt_tokens']) ?? 0;
   const usageCompletionTokens = toFiniteOrNull(meta['completionTokens']) ?? toFiniteOrNull(meta['completion_tokens']) ?? 0;
-  const usageTotalTokens = toFiniteOrNull(meta['totalTokens']) ?? toFiniteOrNull(meta['total_tokens']) ?? (usagePromptTokens + usageCompletionTokens);
-  const hasUsage = usageTotalTokens > 0;
-  const metaDurationMs = toFiniteOrNull(meta['durationMs']);
+  const usageEvent = streamEvent === 'invoke_done' ||
+    streamEvent === 'invoke_error' ||
+    streamEvent === 'llm_completed' ||
+    streamEvent === 'llm_failed' ||
+    streamEvent === 'llm_call_end' ||
+    streamEvent === 'llm_call_error' ||
+    streamEvent === 'call_end' ||
+    streamEvent === 'call_error';
+  const nonFinalUsageEvent = streamEvent === 'content_preview' ||
+    streamEvent === 'content_chunk' ||
+    streamEvent === 'thinking_preview' ||
+    streamEvent === 'thinking_chunk' ||
+    streamEvent === 'llm_call_start' ||
+    streamEvent === 'call_start' ||
+    streamEvent === 'llm_waiting';
+  const usageAliasTotal = toFiniteOrNull(meta['totalTokens']) ?? (usageEvent ? toFiniteOrNull(meta['total_tokens']) : null);
+  const usageTotalTokens = usageAliasTotal ?? (usagePromptTokens + usageCompletionTokens);
+  const hasUsage = usageTotalTokens > 0 && !nonFinalUsageEvent && (usageEvent || usagePromptTokens > 0 || usageAliasTotal !== null);
+  const accountedPromptTokens = hasUsage ? usagePromptTokens : 0;
+  const accountedCompletionTokens = hasUsage ? usageCompletionTokens : 0;
+  const accountedTotalTokens = hasUsage ? usageTotalTokens : 0;
+  const metaDurationMs = toFiniteOrNull(meta['durationMs']) ?? toFiniteOrNull(meta['elapsed_ms']);
 
   // 投影 / 上下文装配的识别（按可靠性递减）：
   //  ① context.build 携带 items_count（装配规模，最可靠签名）；
@@ -422,9 +462,9 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     mode: channel || 'unknown',
     iteration: null,
     summary: (nonEmptyString(log.message) || nonEmptyString(log.title) || streamEvent).replace(/\s+/g, ' ').trim().slice(0, 160),
-    promptTokens: usagePromptTokens,
-    completionTokens: usageCompletionTokens,
-    totalTokens: usageTotalTokens,
+    promptTokens: accountedPromptTokens,
+    completionTokens: accountedCompletionTokens,
+    totalTokens: accountedTotalTokens,
     hasUsage,
     estimatedTokens: false,
     durationMs,

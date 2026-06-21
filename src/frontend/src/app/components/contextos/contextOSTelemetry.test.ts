@@ -212,6 +212,81 @@ describe('buildTelemetryFromStream', () => {
     expect(t.contextTokensLatest).toBe(1932);
   });
 
+  it('recovers runtime_events role LLM usage from event_type and snake_case fields', () => {
+    const pmRoleCall = logEntry({
+      id: 'rt-pm-llm-end',
+      timestamp: '2026-06-21T22:16:12Z',
+      level: 'success',
+      source: 'pm',
+      message: 'llm_call_end',
+      meta: {
+        channel: 'runtime_events',
+        event_type: 'llm_call_end',
+        role: 'pm',
+        model: 'kimi-for-coding',
+        prompt_tokens: 2732,
+        completion_tokens: 1954,
+        context_tokens_after: 2732,
+        metadata: {
+          elapsed_ms: 19177.76,
+          context_snapshot_ref: 'e3db3551d74e5741fd664b7b',
+        },
+      },
+    });
+    const t = buildTelemetryFromStream([], [pmRoleCall], []);
+
+    expect(t.totalCalls).toBe(1);
+    expect(t.totalTokens).toBe(4686);
+    expect(t.promptTokens).toBe(2732);
+    expect(t.completionTokens).toBe(1954);
+    expect(t.contextTokensLatest).toBe(2732);
+    expect(t.lastLatencyMs).toBe(19178);
+    expect(telemetryRoleTokens(t, 'pm')).toBe(4686);
+    expect(telemetryRoleHasUsageChannel(t, 'pm')).toBe(true);
+    expect(t.events[0].contextSnapshotRef).toBe('e3db3551d74e5741fd664b7b');
+  });
+
+  it('does not count content_preview completion tokens as final provider usage', () => {
+    const preview = logEntry({
+      id: 'rt-pm-preview',
+      timestamp: '2026-06-21T22:16:11Z',
+      level: 'info',
+      source: 'pm',
+      message: 'content_preview',
+      meta: {
+        channel: 'runtime_events',
+        event_type: 'content_preview',
+        role: 'pm',
+        completion_tokens: 1954,
+        metadata: {
+          context_snapshot_ref: 'e3db3551d74e5741fd664b7b',
+        },
+      },
+    });
+    const done = logEntry({
+      id: 'rt-pm-done',
+      timestamp: '2026-06-21T22:16:12Z',
+      level: 'success',
+      source: 'pm',
+      message: 'llm_call_end',
+      meta: {
+        channel: 'runtime_events',
+        event_type: 'llm_call_end',
+        role: 'pm',
+        prompt_tokens: 2732,
+        completion_tokens: 1954,
+        context_tokens_after: 2732,
+      },
+    });
+    const t = buildTelemetryFromStream([], [preview, done], []);
+
+    expect(t.totalCalls).toBe(1);
+    expect(t.promptTokens).toBe(2732);
+    expect(t.completionTokens).toBe(1954);
+    expect(t.totalTokens).toBe(4686);
+    expect(telemetryRoleTokens(t, 'pm')).toBe(4686);
+  });
+
   it('recovers structured signals (items_count / snapshot) from runtime_events meta', () => {
     // parseRuntimeEvent 把事件 name 覆盖成 summary，但 meta = data/output 仍保真携带结构化字段。
     const build = logEntry({
@@ -233,6 +308,8 @@ describe('buildTelemetryFromStream', () => {
     expect(t.receiptCount).toBe(1); // snapshot_hash signature
     expect(t.contextItemsCount).toBe(5);
     expect(t.contextTokensLatest).toBe(3200);
+    expect(t.totalCalls).toBe(0);
+    expect(t.totalTokens).toBe(0); // context.build total_tokens is context size, not LLM usage
 
     const nestedBuild = logEntry({
       id: 'b2',

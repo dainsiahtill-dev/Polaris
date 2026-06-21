@@ -9,8 +9,10 @@ describe('runtimeDisplay', () => {
   it('filters structured JSON fragments from compact runtime labels', () => {
     expect(isStructuredRuntimeFragmentText('}')).toBe(true);
     expect(isStructuredRuntimeFragmentText('"summary": {}')).toBe(true);
+    expect(isStructuredRuntimeFragmentText('[object Object]')).toBe(true);
     expect(cleanRuntimeDisplayText('}')).toBeNull();
     expect(cleanRuntimeDisplayText('"updated_at": "2026-05-07T07:16:25Z",')).toBeNull();
+    expect(cleanRuntimeDisplayText('[object Object]')).toBeNull();
   });
 
   it('keeps human-readable runtime labels', () => {

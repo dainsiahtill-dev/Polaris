@@ -1707,6 +1707,32 @@ def _check_failure_is_runtime_environment(check: dict[str, Any]) -> bool:
     return bool(re.search(r"\bunavailable\b|not found|toolchain unavailable|compiler unavailable", text, re.IGNORECASE))
 
 
+def _record_has_generated_artifact_failure(record: dict[str, Any]) -> bool:
+    """Return true when the failure points at malformed generated artifacts."""
+    failed_checks = _check_failures(record)
+    if any(
+        str(check.get("check") or "").lower() in {"ts_syntax", "js_syntax", "py_compile"} for check in failed_checks
+    ):
+        return True
+
+    text = json.dumps(
+        {
+            "checks": failed_checks,
+            "real_run_gate": record.get("real_run_gate"),
+        },
+        ensure_ascii=False,
+        default=str,
+    )
+    return bool(
+        re.search(
+            r"syntax check failed|syntaxerror|unexpected keyword|"
+            r"\bTS\d{3,5}\b|compile failed|build failed|lint failed|invalid source content",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
 def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     """Assign one stable root-cause category to a per-project bench record."""
     if record.get("all_checks_passed"):
@@ -1733,6 +1759,8 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
             category = "director_tool_execution"
         elif failed_requirement == "environment_prepared":
             category = "runtime_environment"
+        elif _record_has_generated_artifact_failure(record):
+            category = "llm_output"
         else:
             category = "target_project_baseline"
         evidence.append(str(record["real_run_gate"].get("summary") or ""))

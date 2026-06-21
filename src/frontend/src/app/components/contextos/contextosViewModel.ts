@@ -51,6 +51,88 @@ export interface ViewModelPayload {
   total_chars: number;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toNullableText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : null;
+  if (typeof value === 'boolean' || typeof value === 'bigint') return String(value);
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function toText(value: unknown, fallback = ''): string {
+  return toNullableText(value)?.trim() || fallback;
+}
+
+function toNumber(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+type NormalizedToolCall = NonNullable<ViewModelMessage['tool_calls']>[number];
+
+function normalizeToolCall(value: unknown): NormalizedToolCall | null {
+  if (!isRecord(value)) return null;
+  const fn = isRecord(value.function) ? value.function : null;
+  const args = toNullableText(fn?.arguments);
+  return {
+    id: toText(value.id) || undefined,
+    type: toText(value.type) || undefined,
+    function: fn
+      ? {
+          name: toText(fn.name) || undefined,
+          arguments: args ?? undefined,
+        }
+      : undefined,
+  };
+}
+
+function normalizeMessage(value: unknown): ViewModelMessage | null {
+  if (!isRecord(value)) return null;
+  const toolCalls = Array.isArray(value.tool_calls)
+    ? value.tool_calls.map(normalizeToolCall).filter((item): item is NonNullable<typeof item> => item !== null)
+    : undefined;
+  return {
+    role: toText(value.role, 'message'),
+    content: toNullableText(value.content),
+    name: toText(value.name) || undefined,
+    tool_call_id: toText(value.tool_call_id) || undefined,
+    tool_calls: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
+  };
+}
+
+export function normalizeViewModelPayload(raw: unknown): ViewModelPayload {
+  const root = isRecord(raw) ? raw : {};
+  const messages = Array.isArray(root.messages)
+    ? root.messages.map(normalizeMessage).filter((item): item is ViewModelMessage => item !== null)
+    : [];
+  const derivedTotalChars = messages.reduce((total, message) => total + (message.content?.length ?? 0), 0);
+  return {
+    schema_version: toNumber(root.schema_version, 1),
+    hash: toText(root.hash),
+    trace_id: toNullableText(root.trace_id),
+    call_id: toNullableText(root.call_id),
+    messages,
+    stored_at: toNullableText(root.stored_at),
+    message_count: toNumber(root.message_count, messages.length),
+    total_chars: toNumber(root.total_chars, derivedTotalChars),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // estimateTokens — 字符数 / 3.5 向上取整，至少 1（CJK 友好）。
 // ---------------------------------------------------------------------------
@@ -225,8 +307,16 @@ export function highlightInline(text: string, lang?: string): HighlightToken[] {
 // prettyJsonOrNull — 尝试 JSON.parse，pretty-print；失败返回 null。
 // ---------------------------------------------------------------------------
 
-export function prettyJsonOrNull(raw: string): string | null {
+export function prettyJsonOrNull(raw: unknown): string | null {
   if (!raw) return null;
+  if (typeof raw === 'object') {
+    try {
+      return JSON.stringify(raw, null, 2);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw !== 'string') return null;
   try {
     const parsed = JSON.parse(raw);
     return JSON.stringify(parsed, null, 2);

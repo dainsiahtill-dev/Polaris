@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { UseFactoryBenchResult } from '@/hooks/useFactoryBench';
 import type { PmTask } from '@/types/task';
 import { FactoryWorkspace } from './FactoryWorkspace';
 
@@ -69,6 +70,39 @@ describe('FactoryWorkspace', () => {
     expect(screen.getByTestId('factory-workspace-label')).toHaveAttribute('title', workspace);
     expect(screen.getByTestId('factory-pm-workspace-label')).toHaveTextContent('fashion-gen-studio');
     expect(screen.getByTestId('factory-pm-workspace-label')).not.toHaveTextContent('C:/Users/dains');
+  });
+
+  it('uses live bench project workspace metadata as the active Factory workspace display', () => {
+    const bench = {
+      sessions: [],
+      currentSession: null,
+      events: [
+        {
+          type: 'factory_bench.project.phase',
+          session_id: 'bench-live',
+          summary: 'L1-01 director running',
+          meta: {
+            project_id: 'L1-01',
+            workspace: '/home/dains/Documents/polaris/runtime/factory-bench/bench-live/L1-01',
+          },
+        },
+      ],
+      isStreaming: true,
+      isLoading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+      select: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn(),
+    } satisfies UseFactoryBenchResult;
+
+    render(<FactoryWorkspace {...baseProps} workspace="/home/dains/Documents/polaris" bench={bench} currentRun={null} events={[]} />);
+
+    expect(screen.getByTestId('factory-workspace-label')).toHaveTextContent('L1-01');
+    expect(screen.getByTestId('factory-workspace-label')).toHaveAttribute(
+      'title',
+      '/home/dains/Documents/polaris/runtime/factory-bench/bench-live/L1-01',
+    );
+    expect(screen.getByTestId('factory-pm-workspace-label')).toHaveTextContent('L1-01');
   });
 
   it('shows empty audit evidence states before artifacts are available', () => {

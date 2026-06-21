@@ -4,14 +4,17 @@ Extracted verbatim from ``worker_executor.WorkerExecutor`` (G7 decomposition,
 step 8). ``PromptBuilder`` assembles the single LLM prompt the worker sends per
 code-generation round: target/scope sections, architecture hints, ChiefEngineer
 blueprint hints, the verification-repair context, the output contract, and the
-prompt-size clamp.
+prompt-size clamp. Factory bench tasks are intentionally allowed a larger prompt
+cap because they validate whole-project generation, not a single narrow edit.
 
 The Chinese architecture-guideline literals, the module-order truncation
 (``... 及其他 N 个模块``), the ``stability_score > 0.3`` warning, the
 ``violation_constraints[:2]`` cap, the construction-hint membership filter / 12
-cap, the three-way ``target_scope_rule`` branch, and the ``KERNELONE_WORKER_PROMPT_MAX_CHARS``
-clamp (``min(max(value, 2000), 40000)``) MUST stay byte-identical to the original
-implementation; the bodies below are moved verbatim.
+cap, the three-way ``target_scope_rule`` branch, and the base
+``KERNELONE_WORKER_PROMPT_MAX_CHARS`` clamp (``min(max(value, 2000), 40000)``)
+MUST stay byte-identical to the original implementation; the bodies below are
+moved verbatim except for the factory-bench-specific cap escalation and PM/CE
+contract context section.
 
 ``_compact_prompt_fragment`` is NOT relocated here: it stays an instance method on
 ``WorkerExecutor`` (test contract) and is injected into this collaborator as a
@@ -34,6 +37,13 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from polaris.cells.director.tasking.internal import path_predicates
 from polaris.domain.entities import Task
+
+_DEFAULT_PROMPT_MAX_CHARS = 9000
+_MIN_PROMPT_MAX_CHARS = 2000
+_MAX_PROMPT_MAX_CHARS = 40000
+_FACTORY_BENCH_L1_PROMPT_MIN_CHARS = 24000
+_FACTORY_BENCH_L4_PROMPT_MIN_CHARS = 32000
+_FACTORY_BENCH_L8_PROMPT_MIN_CHARS = 40000
 
 if TYPE_CHECKING:
     from polaris.cells.director.tasking.internal.codegen_rounds import CodegenRoundPlanner
@@ -73,6 +83,123 @@ class PromptBuilder:
         metadata = task.metadata if isinstance(task.metadata, dict) else {}
         current_module = metadata.get("current_module", "unknown")
         return current_module if isinstance(current_module, str) else "unknown"
+
+    def _resolve_prompt_max_chars(self, task: Task) -> int:
+        """Resolve the codegen prompt cap, escalating factory bench tasks."""
+        raw_max_chars = os.environ.get("KERNELONE_WORKER_PROMPT_MAX_CHARS", str(_DEFAULT_PROMPT_MAX_CHARS))
+        try:
+            max_chars = int(raw_max_chars)
+        except ValueError:
+            max_chars = _DEFAULT_PROMPT_MAX_CHARS
+        max_chars = min(max(max_chars, _MIN_PROMPT_MAX_CHARS), _MAX_PROMPT_MAX_CHARS)
+
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        if not self._is_factory_bench_task(metadata):
+            return max_chars
+
+        level = self._factory_bench_level(metadata)
+        if level >= 8:
+            factory_floor = _FACTORY_BENCH_L8_PROMPT_MIN_CHARS
+        elif level >= 4:
+            factory_floor = _FACTORY_BENCH_L4_PROMPT_MIN_CHARS
+        else:
+            factory_floor = _FACTORY_BENCH_L1_PROMPT_MIN_CHARS
+        return min(max(max_chars, factory_floor), _MAX_PROMPT_MAX_CHARS)
+
+    @staticmethod
+    def _is_factory_bench_task(metadata: dict[str, Any]) -> bool:
+        return (
+            any(
+                str(metadata.get(key) or "").strip()
+                for key in (
+                    "factory_bench_session_id",
+                    "factory_bench_project_id",
+                    "factory_bench_project_workspace",
+                )
+            )
+            or metadata.get("factory_bench_level") is not None
+        )
+
+    @staticmethod
+    def _factory_bench_level(metadata: dict[str, Any]) -> int:
+        try:
+            return int(metadata.get("factory_bench_level") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _metadata_items(self, value: Any, *, limit: int = 8, max_chars: int = 260) -> list[str]:
+        if isinstance(value, str):
+            raw_items: list[Any] = [item.strip() for item in re.split(r"[\n;]+", value) if item.strip()]
+        elif isinstance(value, list | tuple):
+            raw_items = list(value)
+        else:
+            return []
+
+        items: list[str] = []
+        for item in raw_items:
+            if isinstance(item, dict):
+                text = str(item.get("description") or item.get("name") or item.get("command") or item.get("path") or "")
+            else:
+                text = str(item or "")
+            text = self._compact_prompt_fragment(text.strip(), max_chars=max_chars)
+            if text:
+                items.append(text)
+            if len(items) >= limit:
+                break
+        return items
+
+    def _contract_context_section(self, task: Task) -> str:
+        metadata = task.metadata if isinstance(task.metadata, dict) else {}
+        lines: list[str] = []
+
+        if self._is_factory_bench_task(metadata):
+            project_id = str(metadata.get("factory_bench_project_id") or "").strip()
+            title = str(metadata.get("factory_bench_title") or "").strip()
+            level = self._factory_bench_level(metadata)
+            workspace = str(metadata.get("factory_bench_project_workspace") or "").strip()
+            bench_label = f"L{level}" if level > 0 else "level n/a"
+            project_label = project_id or "project n/a"
+            title_suffix = f" - {title}" if title else ""
+            lines.append(f"- Factory bench: {project_label} ({bench_label}){title_suffix}")
+            if workspace:
+                lines.append(f"- Target workspace: {self._compact_prompt_fragment(workspace, max_chars=220)}")
+
+        section_specs = (
+            ("Acceptance criteria", "acceptance_criteria", 10),
+            ("Constraints", "constraints", 8),
+            ("Quality gates", "quality_gates", 8),
+            ("Verification commands", "verification_commands", 8),
+            ("Entrypoints", "entrypoints", 8),
+            ("Dependencies", "dependencies", 8),
+        )
+        for label, key, limit in section_specs:
+            items = self._metadata_items(metadata.get(key), limit=limit)
+            if items:
+                lines.append(f"- {label}: " + "; ".join(items))
+
+        task_context = metadata.get("task_context")
+        if isinstance(task_context, dict):
+            for label, key in (
+                ("Prior gate failures", "failed_gates"),
+                ("Previous errors", "errors"),
+                ("Required artifacts", "required_artifacts"),
+            ):
+                items = self._metadata_items(task_context.get(key), limit=6, max_chars=220)
+                if items:
+                    lines.append(f"- {label}: " + "; ".join(items))
+
+        previous_verification = metadata.get("previous_verification_result")
+        if isinstance(previous_verification, dict):
+            failed_checks = self._metadata_items(previous_verification.get("failed_checks"), limit=6, max_chars=220)
+            if failed_checks:
+                lines.append("- Previous failed checks: " + "; ".join(failed_checks))
+            error_text = str(previous_verification.get("error") or previous_verification.get("summary") or "").strip()
+            if error_text:
+                lines.append(
+                    "- Previous verification summary: " + self._compact_prompt_fragment(error_text, max_chars=360)
+                )
+
+        return "\n".join(lines) if lines else "- no additional PM/CE contract context"
 
     def extract_functional_requirements(self, description: str) -> list[str]:
         """Extract functional requirements from description.
@@ -216,6 +343,7 @@ class PromptBuilder:
             arch_hints.append(f"架构警告: {vc}")
 
         arch_section = "\n".join(f"- {h}" for h in arch_hints) if arch_hints else "- 无全局架构上下文"
+        contract_context = self._contract_context_section(task)
 
         prompt = f"""You are a software developer implementing a task.
 
@@ -227,6 +355,9 @@ Target files for this execution:
 
 Declared directory/module scopes:
 {scope_text}
+
+=== PM/CE Contract Context ===
+{contract_context}
 
 === Architecture Context (全局架构上下文) ===
 {arch_section}
@@ -292,10 +423,5 @@ Requirements:
   verification after file application.
 """
 
-        raw_max_chars = os.environ.get("KERNELONE_WORKER_PROMPT_MAX_CHARS", "9000")
-        try:
-            max_chars = int(raw_max_chars)
-        except ValueError:
-            max_chars = 9000
-        max_chars = min(max(max_chars, 2000), 40000)
+        max_chars = self._resolve_prompt_max_chars(task)
         return self._compact_prompt_fragment(prompt, max_chars=max_chars)

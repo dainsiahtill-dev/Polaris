@@ -137,6 +137,7 @@ function isStructuredRuntimeFragment(log: LogEntry): boolean {
 
   const message = String(log.message || '').trim();
   if (!message) return true;
+  if (/^\[object(?:\s+object)?\]$/i.test(message)) return true;
   if (/^[{}\[\],]+$/.test(message)) return true;
   if (/^["']?[}\]],?$/.test(message)) return true;
   if (/^:\d{2}(?:\.\d+)?z["']?,?$/i.test(message)) return true;
@@ -179,6 +180,14 @@ function streamEventLabel(log: LogEntry): string {
   if (streamEvent === 'tool_call') return '工具';
   if (streamEvent === 'tool_result') return '结果';
   return '';
+}
+
+function displayLogMessage(log: LogEntry): string {
+  const message = String(log.message || '').trim();
+  if (!/^\[object(?:\s+object)?\]$/i.test(message)) {
+    return message;
+  }
+  return String(log.title || streamEventLabel(log) || getStreamEvent(log) || '结构化事件').trim();
 }
 
 function streamEventIcon(log: LogEntry): React.ReactNode {
@@ -259,7 +268,7 @@ function pickHeadline(
   latestLog: LogEntry | null,
   currentPhase: string,
 ): string {
-  if (latestLog) return latestLog.message;
+  if (latestLog) return displayLogMessage(latestLog);
   if (active) return `正在执行 ${PHASE_LABELS[currentPhase] || currentPhase || '流程'}...`;
   return '系统待命';
 }
@@ -359,7 +368,7 @@ export function LlmRuntimeOverlay({
     const deduped: LogEntry[] = [];
     const seen = new Set<string>();
     for (const entry of ranked) {
-      const key = `${entry.source}|${entry.message}`;
+      const key = `${entry.source}|${displayLogMessage(entry)}`;
       if (seen.has(key)) continue;
       seen.add(key);
       deduped.push(entry);
@@ -595,7 +604,7 @@ export function LlmRuntimeOverlay({
                           </div>
                           <span className="shrink-0 text-[9px] text-white/35">{toRelativeTime(step.timestamp)}</span>
                         </div>
-                        <TypingMessage text={step.message} animate={isTypingStreamEvent(step)} />
+                        <TypingMessage text={displayLogMessage(step)} animate={isTypingStreamEvent(step)} />
                         {step.details && !isStructuredRuntimeText(step.details) && (
                           <div className="mt-0.5 font-mono text-[9px] text-white/45">{step.details}</div>
                         )}

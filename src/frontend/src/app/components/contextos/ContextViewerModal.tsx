@@ -58,6 +58,7 @@ import {
   buildMessageMarkdown,
   estimateTokens,
   highlightInline,
+  normalizeViewModelPayload,
   parseCodeFences,
   prettyJsonOrNull,
   type CodeFenceSegment,
@@ -647,7 +648,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worker
         const text = await res.text().catch(() => '');
         throw new Error(`HTTP ${res.status}${text ? ': ' + text : ''}`);
       }
-      const data = (await res.json()) as ContextPayload;
+      const data = normalizeViewModelPayload(await res.json());
       if (signal?.aborted) return;
       setContent(data);
     } catch (e) {

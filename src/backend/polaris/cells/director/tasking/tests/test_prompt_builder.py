@@ -278,6 +278,56 @@ def test_prompt_output_contract_literals() -> None:
     assert "IMPORTANT ARCHITECTURE GUIDELINES:" in prompt
 
 
+def test_factory_bench_prompt_cap_escalates_from_minimal_env(monkeypatch) -> None:
+    monkeypatch.setenv("KERNELONE_WORKER_PROMPT_MAX_CHARS", "2400")
+    executor = WorkerExecutor(workspace="/tmp")
+    low_level = _task(
+        {
+            "factory_bench_project_id": "L1-01",
+            "factory_bench_level": 1,
+            "target_files": ["src/a.ts"],
+        }
+    )
+    high_level = _task(
+        {
+            "factory_bench_project_id": "L8-01",
+            "factory_bench_level": 8,
+            "target_files": ["src/a.ts"],
+        }
+    )
+
+    assert executor._prompt_builder._resolve_prompt_max_chars(low_level) == 24000
+    assert executor._prompt_builder._resolve_prompt_max_chars(high_level) == 40000
+
+
+def test_prompt_includes_pm_ce_contract_context() -> None:
+    executor = WorkerExecutor(workspace="/tmp")
+    task = _task(
+        {
+            "factory_bench_project_id": "L1-01",
+            "factory_bench_level": 1,
+            "factory_bench_title": "Firefly Garden Simulator",
+            "factory_bench_project_workspace": "/tmp/factory/L1-01",
+            "target_files": ["src/a.ts"],
+            "acceptance_criteria": ["build passes", "web entrypoint starts"],
+            "constraints": ["do not mock success"],
+            "quality_gates": ["npm test"],
+            "verification_commands": ["npm run build"],
+            "entrypoints": ["npm run dev"],
+        }
+    )
+
+    prompt = executor._build_code_generation_prompt(task)
+
+    assert "=== PM/CE Contract Context ===" in prompt
+    assert "Factory bench: L1-01 (L1) - Firefly Garden Simulator" in prompt
+    assert "Acceptance criteria: build passes; web entrypoint starts" in prompt
+    assert "Constraints: do not mock success" in prompt
+    assert "Quality gates: npm test" in prompt
+    assert "Verification commands: npm run build" in prompt
+    assert "Entrypoints: npm run dev" in prompt
+
+
 # --------------------------------------------------------------------------
 # Dead-but-carried §8 helpers (preserve exact behavior)
 # --------------------------------------------------------------------------

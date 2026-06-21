@@ -5,6 +5,7 @@ import {
   buildMessageMarkdown,
   estimateTokens,
   highlightInline,
+  normalizeViewModelPayload,
   parseCodeFences,
   prettyJsonOrNull,
   type ViewModelMessage,
@@ -120,6 +121,43 @@ describe('prettyJsonOrNull', () => {
 
   it('returns null for empty input', () => {
     expect(prettyJsonOrNull('')).toBeNull();
+  });
+
+  it('pretty-prints object input without [object Object]', () => {
+    expect(prettyJsonOrNull({ a: 1 })).toBe('{\n  "a": 1\n}');
+  });
+});
+
+describe('normalizeViewModelPayload', () => {
+  it('serializes object-valued messages and tool arguments at the wire boundary', () => {
+    const payload = normalizeViewModelPayload({
+      schema_version: '2',
+      hash: 'hash-1',
+      trace_id: null,
+      call_id: 'call-1',
+      stored_at: '2026-06-21T00:00:00Z',
+      messages: [
+        {
+          role: 'assistant',
+          content: { summary: 'object content', ok: true },
+          tool_calls: [
+            {
+              type: 'function',
+              function: {
+                name: 'write_file',
+                arguments: { path: 'index.html', ok: true },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(payload.schema_version).toBe(2);
+    expect(payload.message_count).toBe(1);
+    expect(payload.messages[0]?.content).toContain('"summary": "object content"');
+    expect(payload.messages[0]?.content).not.toContain('[object Object]');
+    expect(payload.messages[0]?.tool_calls?.[0]?.function?.arguments).toContain('"path": "index.html"');
   });
 });
 

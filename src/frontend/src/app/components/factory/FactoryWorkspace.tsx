@@ -754,6 +754,36 @@ function workspaceLabel(workspace: string): string {
   return normalized.split('/').filter(Boolean).pop() || normalized;
 }
 
+function readBenchMetaString(meta: Record<string, unknown>, key: string): string {
+  const value = meta[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
+function joinBenchWorkspace(workDir: string, projectId: string): string {
+  if (!workDir || !projectId) return '';
+  return `${workDir.replace(/[\\/]+$/, '')}/${projectId.replace(/^[\\/]+/, '')}`;
+}
+
+function latestBenchProjectWorkspace(bench: UseFactoryBenchResult | undefined): string {
+  const events = bench?.events || [];
+  for (const event of [...events].reverse()) {
+    if (!event.type?.startsWith('factory_bench.project.')) continue;
+    const meta = event.meta || {};
+    const explicit =
+      readBenchMetaString(meta, 'workspace') ||
+      readBenchMetaString(meta, 'workspace_path') ||
+      readBenchMetaString(meta, 'project_workspace') ||
+      readBenchMetaString(meta, 'projectWorkspace');
+    if (explicit) return explicit;
+    const joined = joinBenchWorkspace(
+      readBenchMetaString(meta, 'work_dir'),
+      readBenchMetaString(meta, 'project_id') || readBenchMetaString(meta, 'projectId'),
+    );
+    if (joined) return joined;
+  }
+  return '';
+}
+
 function artifactTaskIdFromName(value: string): string {
   const base = basename(value).replace(/\.[^.]+$/, '').trim();
   if (!base) return '';
@@ -1173,7 +1203,8 @@ export function FactoryWorkspace({
     [blueprintCoverage, blueprintEvidence.length, currentRun, directorWorkflowTasks, pmWorkflowTasks]
   );
   const activeLayerView = roleLayers.find((layer) => layer.id === activeLayer) || roleLayers[0];
-  const workspaceDisplay = workspaceLabel(workspace);
+  const effectiveWorkspace = latestBenchProjectWorkspace(bench) || workspace;
+  const workspaceDisplay = workspaceLabel(effectiveWorkspace);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#070b14] text-slate-100">
@@ -1198,7 +1229,7 @@ export function FactoryWorkspace({
                 分层视图
               </span>
             </div>
-            <p data-testid="factory-workspace-label" className="truncate text-[11px] text-slate-500" title={workspace || workspaceDisplay}>
+            <p data-testid="factory-workspace-label" className="truncate text-[11px] text-slate-500" title={effectiveWorkspace || workspaceDisplay}>
               {workspaceDisplay}
             </p>
           </div>
@@ -1325,7 +1356,7 @@ export function FactoryWorkspace({
             {activeLayerView.id === 'pm' && (
               <FactoryPmLayer
                 tasks={pmWorkflowTasksWithRuntimeState}
-                workspace={workspace}
+                workspace={effectiveWorkspace}
                 executionLogs={executionLogs}
                 roleStatus={getRunRole(currentRun?.roles, ['pm'])}
                 currentRun={currentRun}
@@ -1334,7 +1365,7 @@ export function FactoryWorkspace({
             )}
             {activeLayerView.id === 'chief_engineer' && (
               <FactoryChiefEngineerLayer
-                workspace={workspace}
+                workspace={effectiveWorkspace}
                 blueprintEvidence={blueprintEvidence}
                 reviewArtifacts={chiefReviewArtifacts}
                 blueprintCoverage={blueprintCoverage}
@@ -1344,7 +1375,7 @@ export function FactoryWorkspace({
             )}
             {activeLayerView.id === 'director' && (
               <FactoryDirectorLayer
-                workspace={workspace}
+                workspace={effectiveWorkspace}
                 tasks={directorWorkflowTasks}
                 fileEditEvents={fileEditEvents}
                 executionLogs={executionLogs}

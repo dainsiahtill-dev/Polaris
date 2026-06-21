@@ -1285,6 +1285,43 @@ def test_failure_taxonomy_classifies_missing_toolchain_check_as_runtime_environm
     assert taxonomy["root_cause_signature"] == "runtime_environment:go_compile"
 
 
+def test_failure_taxonomy_classifies_generated_typescript_syntax_failure_as_llm_output() -> None:
+    record = {
+        "all_checks_passed": False,
+        "factory_gates": [
+            {"gate": "real_run_gate", "ok": False, "detail": "real run gate failed: build_test_lint_ran"},
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: build_test_lint_ran",
+            "requirements": {
+                "artifact_landed": {"ok": True, "detail": "22 generated code file(s)"},
+                "environment_prepared": {"ok": True, "detail": "npm available"},
+                "build_test_lint_ran": {
+                    "ok": False,
+                    "detail": "npm test failed: src/models/humidity.ts(1,29): error TS1434",
+                },
+            },
+        },
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain_state": "partial",
+        "checks": [
+            {
+                "check": "ts_syntax",
+                "ok": False,
+                "detail": "TypeScript syntax check failed: src/models/humidity.ts(1,29): TS1434",
+            }
+        ],
+        "has_plan_doc": True,
+        "wrong_product_suspect": False,
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "llm_output"
+    assert taxonomy["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
+
+
 def test_failure_taxonomy_classifies_missing_blueprint_as_chief_engineer_blueprint() -> None:
     record = {
         "all_checks_passed": False,

@@ -2,7 +2,23 @@ import { describe, expect, it } from 'vitest';
 import {
   extractFileEditEvents,
   extractRuntimeFileEditEvent,
+  firstDisplayString,
+  toDisplayString,
 } from '../runtimeParsing';
+
+describe('runtimeParsing display string normalization', () => {
+  it('serializes object payloads instead of leaking [object Object]', () => {
+    expect(toDisplayString({ message: 'Director ready', ok: true })).toBe('{"message":"Director ready","ok":true}');
+    expect(firstDisplayString(null, { summary: 'usable' })).toBe('{"summary":"usable"}');
+  });
+
+  it('handles circular object payloads without throwing', () => {
+    const circular: Record<string, unknown> = { summary: 'loop' };
+    circular.self = circular;
+
+    expect(toDisplayString(circular)).toBe('{"summary":"loop","self":"[Circular]"}');
+  });
+});
 
 describe('runtimeParsing file edit event normalization', () => {
   it('normalizes direct websocket file_edit payloads', () => {

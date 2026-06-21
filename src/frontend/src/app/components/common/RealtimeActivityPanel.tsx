@@ -137,6 +137,16 @@ function isToolStreamEvent(token: string): boolean {
   );
 }
 
+function isObjectObjectText(value: string | undefined): boolean {
+  return /^\[object(?:\s+object)?\]$/i.test(String(value || '').trim());
+}
+
+function displayLogText(value: string | undefined, fallback: string): string {
+  const text = String(value || '').trim();
+  if (text && !isObjectObjectText(text)) return text;
+  return fallback;
+}
+
 function thinkingSignalPriority(log: LogEntry): number {
   const token = streamEventToken(log);
   if (token === 'thinking_chunk' || token === 'content_chunk') return 0;
@@ -465,6 +475,8 @@ function LogItem({ log, isExpanded, onToggle, role }: LogItemProps) {
       : isToolStreamEvent(streamToken)
       ? '工具事件'
       : '';
+  const displayMessage = displayLogText(log.message, eventBadgeLabel || streamToken || level.toUpperCase());
+  const displayDetails = isObjectObjectText(log.details) ? '' : log.details;
 
   return (
     <div className={cn(
@@ -524,7 +536,7 @@ function LogItem({ log, isExpanded, onToggle, role }: LogItemProps) {
             'mt-1 text-xs text-slate-200',
             !isExpanded && 'line-clamp-2'
           )}>
-            {log.message}
+            {displayMessage}
           </div>
 
           {log.tags && log.tags.length > 0 && (
@@ -555,10 +567,10 @@ function LogItem({ log, isExpanded, onToggle, role }: LogItemProps) {
         </div>
       </button>
 
-      {isExpanded && log.details && (
+      {isExpanded && displayDetails && (
         <div className="px-4 pb-3">
           <div className="text-xs text-slate-400 bg-black/20 rounded p-2 font-mono whitespace-pre-wrap">
-            {log.details}
+            {displayDetails}
           </div>
         </div>
       )}

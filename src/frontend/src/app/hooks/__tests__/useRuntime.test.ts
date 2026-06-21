@@ -220,6 +220,97 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('factory_bench.gate.evaluated');
   });
 
+  it('serializes object-valued process summaries instead of rendering [object Object]', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'event.factory',
+      text: JSON.stringify({
+        type: 'factory_bench.project.updated',
+        actor: 'factory-bench',
+        message: {
+          project_id: 'L1-01',
+          phase: 'director_dispatch',
+          status: 'running',
+        },
+      }),
+    });
+
+    expect(result.current.processStreamEvents).toHaveLength(1);
+    expect(result.current.processStreamEvents[0]?.message).toContain('"phase":"director_dispatch"');
+    expect(result.current.processStreamEvents[0]?.message).not.toContain('[object Object]');
+  });
+
+  it('serializes object-valued runtime summaries instead of rendering [object Object]', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'runtime_events',
+      text: JSON.stringify({
+        event_id: 'runtime-object-summary',
+        name: 'llm_completed',
+        actor: 'Director',
+        summary: {
+          state: 'llm_completed',
+          provider: 'kimi',
+        },
+      }),
+    });
+
+    expect(result.current.executionLogs).toHaveLength(1);
+    expect(result.current.executionLogs[0]?.message).toContain('"state":"llm_completed"');
+    expect(result.current.executionLogs[0]?.message).not.toContain('[object Object]');
+  });
+
+  it('flattens runtime.v2 role LLM usage envelopes into execution log meta', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'event',
+      event: {
+        schema_version: 'runtime.v2',
+        channel: 'runtime_events',
+        kind: 'llm.state',
+        ts: '2026-06-21T22:16:12Z',
+        payload: {
+          raw: {
+            event_type: 'llm_call_end',
+            role: 'pm',
+            data: {
+              event_type: 'llm_call_end',
+              role: 'pm',
+              model: 'kimi-for-coding',
+              prompt_tokens: 2732,
+              completion_tokens: 1954,
+              context_tokens_after: 2732,
+              metadata: {
+                elapsed_ms: 19177.76,
+                context_snapshot_ref: 'e3db3551d74e5741fd664b7b',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.current.executionLogs).toHaveLength(1);
+    const entry = result.current.executionLogs[0];
+    expect(entry?.message).toBe('llm_call_end');
+    expect(entry?.meta?.prompt_tokens).toBe(2732);
+    expect(entry?.meta?.completion_tokens).toBe(1954);
+    expect(entry?.meta?.context_tokens_after).toBe(2732);
+    expect(entry?.meta?.elapsed_ms).toBe(19177.76);
+    expect(entry?.meta?.context_snapshot_ref).toBe('e3db3551d74e5741fd664b7b');
+  });
+
   it('routes runtime.v2 event.factory envelopes into process stream events', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })

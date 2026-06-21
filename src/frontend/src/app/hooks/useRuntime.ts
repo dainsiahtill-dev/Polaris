@@ -630,12 +630,12 @@ function extractToolPayload(
 }
 
 function readToolName(toolPayload: Record<string, unknown> | null): string {
-  return String(toolPayload?.tool || toolPayload?.tool_name || toolPayload?.name || '').trim();
+  return Parsing.firstDisplayString(toolPayload?.tool, toolPayload?.tool_name, toolPayload?.name);
 }
 
 function readToolArgs(toolPayload: Record<string, unknown> | null): string {
-  const args = firstRecord(toolPayload?.args, toolPayload?.arguments, toolPayload?.input);
-  return args ? JSON.stringify(args).slice(0, 180) : '';
+  const args = Parsing.firstDisplayString(toolPayload?.args, toolPayload?.arguments, toolPayload?.input);
+  return args ? args.slice(0, 180) : '';
 }
 
 function readToolResult(toolPayload: Record<string, unknown> | null): Record<string, unknown> | null {
@@ -675,7 +675,7 @@ function readLlmContentText(
     extraFields?.message,
   ];
   for (const candidate of candidates) {
-    const token = String(candidate || '').trim();
+    const token = Parsing.toDisplayString(candidate);
     if (token) return token;
   }
   return '';
@@ -698,20 +698,23 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     const ts = String(parsed.ts || parsed.timestamp || '').trim();
     if (ts) timestamp = ts;
 
-    const actor = String(parsed.actor || parsed.role || parsed.source || '').trim();
+    const actor = Parsing.firstDisplayString(parsed.actor, parsed.role, parsed.source);
     if (actor) source = Parsing.normalizeActorLabel(actor);
 
-    const thinking = String(parsed.thinking || parsed.content || parsed.message || '').trim();
-    const eventName = String(parsed.event || parsed.name || parsed.kind || '').trim();
+    const thinking = Parsing.firstDisplayString(parsed.thinking, parsed.content, parsed.message);
+    const eventName =
+      Parsing.toStringValue(parsed.event) ||
+      Parsing.toStringValue(parsed.name) ||
+      Parsing.toStringValue(parsed.kind);
     const eventToken = eventName.toLowerCase();
-    let modelName = String(parsed.model || parsed.model_name || '').trim();
+    let modelName = Parsing.firstDisplayString(parsed.model, parsed.model_name);
     const rawObj = Parsing.isRecord(parsed.raw) ? parsed.raw : null;
     const streamEvent = rawObj
-      ? String(rawObj.stream_event || rawObj.event_type || '').trim().toLowerCase()
+      ? Parsing.firstDisplayString(rawObj.stream_event, rawObj.event_type).toLowerCase()
       : '';
-    const rawEvent = rawObj ? String(rawObj.event || rawObj.name || '').trim() : '';
-    const rawSummary = rawObj ? String(rawObj.summary || rawObj.message || '').trim() : '';
-    const rawContent = rawObj ? String(rawObj.content || '').trim() : '';
+    const rawEvent = rawObj ? Parsing.firstDisplayString(rawObj.event, rawObj.name) : '';
+    const rawSummary = rawObj ? Parsing.firstDisplayString(rawObj.summary, rawObj.message) : '';
+    const rawContent = rawObj ? Parsing.firstDisplayString(rawObj.content) : '';
     // 规范 LLM 事件（journal `llm` 通道，CanonicalLogEventV2）把数据放在 raw.data；
     // 旧版 *.llm.events.jsonl 放在顶层 data。两者都兼容（顶层优先）。
     const eventData = parsed.data && typeof parsed.data === 'object'
@@ -720,14 +723,14 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
           ? (rawObj.data as Record<string, unknown>)
           : null);
     if (!modelName && eventData) {
-      modelName = String(eventData.model || eventData.model_name || '').trim();
+      modelName = Parsing.firstDisplayString(eventData.model, eventData.model_name);
     }
-    const dataSummary = eventData ? String(eventData.summary || eventData.message || '').trim() : '';
-    const dataPreview = eventData ? String(eventData.preview || '').trim() : '';
-    const dataBackend = eventData ? String(eventData.backend || '').trim() : '';
-    const dataDuration = eventData ? String(eventData.duration_ms || '').trim() : '';
-    const dataError = eventData ? String(eventData.error || '').trim() : '';
-    const dataTaskCount = eventData ? String(eventData.task_count || '').trim() : '';
+    const dataSummary = eventData ? Parsing.firstDisplayString(eventData.summary, eventData.message) : '';
+    const dataPreview = eventData ? Parsing.firstDisplayString(eventData.preview) : '';
+    const dataBackend = eventData ? Parsing.firstDisplayString(eventData.backend) : '';
+    const dataDuration = eventData ? Parsing.firstDisplayString(eventData.duration_ms) : '';
+    const dataError = eventData ? Parsing.firstDisplayString(eventData.error) : '';
+    const dataTaskCount = eventData ? Parsing.firstDisplayString(eventData.task_count) : '';
     const dataOutputChars = eventData ? Number(eventData.output_chars || 0) : 0;
     const dataStage = eventData ? String(eventData.stage || '').trim().toLowerCase() : '';
 
@@ -737,9 +740,9 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     const dataPromptTokens = Number(eventData?.prompt_tokens ?? dataMetadata?.prompt_tokens ?? 0);
     const dataCompletionTokens = Number(eventData?.completion_tokens ?? dataMetadata?.completion_tokens ?? 0);
     const dataContextTokens = Number(eventData?.context_tokens_after ?? dataMetadata?.context_tokens_after ?? 0);
-    const dataContextSnapshotRef = String(eventData?.context_snapshot_ref || dataMetadata?.context_snapshot_ref || '').trim();
-    const dataPromptHash = String(eventData?.prompt_hash || dataMetadata?.prompt_hash || '').trim();
-    const dataTurnId = String(eventData?.turn_id || dataMetadata?.turn_id || '').trim();
+    const dataContextSnapshotRef = Parsing.firstDisplayString(eventData?.context_snapshot_ref, dataMetadata?.context_snapshot_ref);
+    const dataPromptHash = Parsing.firstDisplayString(eventData?.prompt_hash, dataMetadata?.prompt_hash);
+    const dataTurnId = Parsing.firstDisplayString(eventData?.turn_id, dataMetadata?.turn_id);
     const dataElapsedMs = dataMetadata ? Number(dataMetadata.elapsed_ms ?? 0) : 0;
     const dataDurationMs = dataDuration && Number.isFinite(Number(dataDuration)) && Number(dataDuration) > 0
       ? Number(dataDuration)
@@ -772,7 +775,7 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       const status = rawSuccess === undefined ? 'done' : (rawSuccess ? 'ok' : 'failed');
       message = toolName ? `工具结果: ${toolName} (${status})` : `工具结果 (${status})`;
       const resultObj = readToolResult(toolPayload);
-      details = resultObj ? String(resultObj.error || resultObj.message || '') : '';
+      details = resultObj ? Parsing.firstDisplayString(resultObj.error, resultObj.message) : '';
       level = status === 'failed' ? 'error' : 'tool';
     } else if (normalizedEvent === 'llm_waiting' || normalizedEvent === 'call_start' || eventToken === 'llm_call_start') {
       // 规范 LLM 生命周期（journal `llm` 通道）：等待响应 = 一次调用的开始。
@@ -781,7 +784,7 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       level = 'thinking';
     } else if (normalizedEvent === 'llm_completed' || normalizedEvent === 'call_end' || eventToken === 'llm_call_end') {
       // 规范 LLM 生命周期：调用成功完成，携带真实 prompt/completion tokens 与时延。
-      const baseMsg = String(parsed.message || '').trim();
+      const baseMsg = Parsing.firstDisplayString(parsed.message);
       const responseContent = readLlmContentText(rawObj, eventData, parsed);
       message = responseContent || dataSummary || baseMsg || (safeCompletionTokens > 0 ? 'LLM 响应已返回' : 'LLM 响应已完成');
       const detailTokens = [
@@ -794,7 +797,7 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       level = 'success';
     } else if (normalizedEvent === 'llm_failed' || eventToken === 'llm_call_error') {
       // 规范 LLM 生命周期：调用失败。
-      const errMsg = (eventData ? String(eventData.error_message || eventData.error || '').trim() : '') || dataError;
+      const errMsg = (eventData ? Parsing.firstDisplayString(eventData.error_message, eventData.error) : '') || dataError;
       message = errMsg ? `LLM 调用失败: ${errMsg}` : 'LLM 调用失败';
       details = [
         modelName ? `model=${modelName}` : '',
@@ -851,7 +854,7 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       level = 'success';
     } else if (eventToken === 'director_task_started') {
       message = dataSummary || '开始执行任务';
-      const taskId = eventData ? String(eventData.task_id || '').trim() : '';
+      const taskId = eventData ? Parsing.firstDisplayString(eventData.task_id) : '';
       details = taskId ? `task=${taskId}` : (dataTaskCount ? `tasks=${dataTaskCount}` : '');
       level = 'info';
     } else if (eventToken === 'director_task_completed') {
@@ -874,7 +877,7 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     } else {
       message = thinking || rawSummary || dataSummary || dataPreview || eventName || rawEvent || raw;
       details = modelName ? `model=${modelName}` : '';
-      level = Parsing.mapSeverityToLevel(String(parsed.severity || '').trim(), 'thinking');
+      level = Parsing.mapSeverityToLevel(Parsing.firstDisplayString(parsed.severity), 'thinking');
     }
 
     const eventLabel = streamEventLabel(normalizedEvent);
@@ -966,37 +969,40 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
 
   const parsed = Parsing.tryParseJsonObject(raw);
   if (parsed) {
-    const canonicalChannel = String(parsed.channel || '').trim();
+    const canonicalChannel = Parsing.toStringValue(parsed.channel);
     if (channel === 'process' && canonicalChannel && canonicalChannel !== 'process') return null;
     if (channel === 'system' && canonicalChannel && canonicalChannel !== 'system') return null;
 
-    const parsedTs = String(parsed.ts || parsed.timestamp || parsed.time || '').trim();
+    const parsedTs = Parsing.firstDisplayString(parsed.ts, parsed.timestamp, parsed.time);
     if (parsedTs) timestamp = parsedTs;
 
-    const parsedRole = String(parsed.role || parsed.actor || parsed.source || '').trim();
+    const parsedRole = Parsing.firstDisplayString(parsed.role, parsed.actor, parsed.source);
     if (parsedRole) source = Parsing.normalizeActorLabel(parsedRole);
 
-    const eventName = String(parsed.event || parsed.name || parsed.kind || parsed.type || '').trim();
+    const eventName =
+      Parsing.toStringValue(parsed.event) ||
+      Parsing.toStringValue(parsed.name) ||
+      Parsing.toStringValue(parsed.kind) ||
+      Parsing.toStringValue(parsed.type);
     const eventToken = eventName.toLowerCase();
-    const summary = String(parsed.summary || parsed.message || parsed.text || '').trim();
+    const summary = Parsing.firstDisplayString(parsed.summary, parsed.message, parsed.text);
     const dataObj = parsed.data && typeof parsed.data === 'object' ? (parsed.data as Record<string, unknown>) : null;
     const rawObj = parsed.raw && typeof parsed.raw === 'object' ? (parsed.raw as Record<string, unknown>) : null;
-    const dataMsg = dataObj ? String(dataObj.message || dataObj.summary || '').trim() : '';
-    const rawMsg = rawObj ? String(rawObj.message || rawObj.summary || '').trim() : '';
-    streamEvent = String(
-      dataObj?.stream_event ||
-      dataObj?.event_type ||
-      rawObj?.stream_event ||
-      rawObj?.event_type ||
-      eventToken ||
-      ''
-    ).trim().toLowerCase();
+    const dataMsg = dataObj ? Parsing.firstDisplayString(dataObj.message, dataObj.summary) : '';
+    const rawMsg = rawObj ? Parsing.firstDisplayString(rawObj.message, rawObj.summary) : '';
+    streamEvent = (
+      Parsing.toStringValue(dataObj?.stream_event) ||
+      Parsing.toStringValue(dataObj?.event_type) ||
+      Parsing.toStringValue(rawObj?.stream_event) ||
+      Parsing.toStringValue(rawObj?.event_type) ||
+      eventToken
+    ).toLowerCase();
     const toolName = dataObj
-      ? String(dataObj.tool || dataObj.tool_name || rawObj?.tool || rawObj?.tool_name || '').trim()
-      : String(rawObj?.tool || rawObj?.tool_name || '').trim();
+      ? Parsing.firstDisplayString(dataObj.tool, dataObj.tool_name, rawObj?.tool, rawObj?.tool_name)
+      : Parsing.firstDisplayString(rawObj?.tool, rawObj?.tool_name);
     const command = dataObj
-      ? String(dataObj.command || rawObj?.command || '').trim()
-      : String(rawObj?.command || '').trim();
+      ? Parsing.firstDisplayString(dataObj.command, rawObj?.command)
+      : Parsing.firstDisplayString(rawObj?.command);
 
     if (streamEvent === 'tool_call' || streamEvent === 'tool_result' || toolName) {
       const rawSuccess = dataObj ? dataObj.success : rawObj?.success;
@@ -1004,9 +1010,9 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
       message = streamEvent === 'tool_result'
         ? (toolName ? `工具结果: ${toolName} (${status})` : `工具结果 (${status})`)
         : (toolName ? `调用工具: ${toolName}` : '调用工具');
-      const args = firstRecord(dataObj?.args, rawObj?.args, dataObj?.arguments, rawObj?.arguments);
+      const args = Parsing.firstDisplayString(dataObj?.args, rawObj?.args, dataObj?.arguments, rawObj?.arguments);
       details = [
-        args ? `args=${JSON.stringify(args).slice(0, 180)}` : '',
+        args ? `args=${args.slice(0, 180)}` : '',
         command ? `cmd=${command}` : '',
       ].filter((item) => item.length > 0).join(' ');
       level = status === 'failed' ? 'error' : 'tool';
@@ -1016,7 +1022,7 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
         .filter((item) => item.length > 0)
         .join(' ');
 
-      level = Parsing.mapSeverityToLevel(String(parsed.severity || '').trim(), level);
+      level = Parsing.mapSeverityToLevel(Parsing.firstDisplayString(parsed.severity), level);
       if (level === 'info') {
         const token = `${eventName} ${summary} ${dataMsg} ${rawMsg}`.toLowerCase();
         if (/error|failed|exception|traceback|timeout/.test(token)) level = 'error';
@@ -1052,11 +1058,31 @@ function parseProcessStreamLine(channel: string, line: string): LogEntry | null 
 }
 
 function parseRuntimeEvent(raw: Record<string, unknown>): LogEntry | null {
-  const eventId = String(raw.event_id || raw.seq || Date.now());
-  const ts = String(raw.ts || raw.timestamp || new Date().toISOString());
-  const actor = String(raw.actor || raw.role || 'System');
-  const eventName = String(raw.name || raw.event || 'unknown');
-  const data = (raw.data || raw.output || {}) as Record<string, unknown>;
+  const eventId = Parsing.firstDisplayString(raw.event_id, raw.seq) || String(Date.now());
+  const ts = Parsing.firstDisplayString(raw.ts, raw.timestamp) || new Date().toISOString();
+  const payload = firstRecord(raw.payload);
+  const payloadRaw = firstRecord(payload?.raw);
+  const rawBody = firstRecord(raw.raw, payloadRaw);
+  const data = firstRecord(
+    raw.data,
+    raw.output,
+    rawBody?.data,
+    payload?.data,
+    rawBody,
+    payload,
+  ) ?? {};
+  const metadata = firstRecord(data.metadata, rawBody?.metadata, payload?.metadata, raw.metadata);
+  const meta = metadata ? { ...metadata, ...data } : data;
+  const actor = Parsing.firstDisplayString(raw.actor, raw.role, data.actor, data.role, rawBody?.actor, rawBody?.role) || 'System';
+  const eventName =
+    Parsing.toStringValue(raw.name) ||
+    Parsing.toStringValue(raw.event) ||
+    Parsing.toStringValue(data.event_type) ||
+    Parsing.toStringValue(data.stream_event) ||
+    Parsing.toStringValue(rawBody?.event_type) ||
+    Parsing.toStringValue(rawBody?.stream_event) ||
+    Parsing.toStringValue(raw.kind) ||
+    'unknown';
 
   let level: LogEntry['level'] = 'info';
   if (raw.error || raw.ok === false) level = 'error';
@@ -1070,24 +1096,24 @@ function parseRuntimeEvent(raw: Record<string, unknown>): LogEntry | null {
   switch (eventName) {
     case 'pm_quality_gate_retry':
       message = '质量检查未通过，正在重试生成';
-      details = String((data as Record<string, string>)?.quality_summary || '');
+      details = Parsing.firstDisplayString(data.quality_summary);
       break;
     case 'pm_quality_gate':
-      message = (data as Record<string, boolean>)?.passed ? '质量检查通过' : '质量检查未通过';
-      details = `分数: ${String((data as Record<string, unknown>)?.score || (data as Record<string, string>)?.quality_summary || 'N/A')}`;
+      message = data.passed ? '质量检查通过' : '质量检查未通过';
+      details = `分数: ${Parsing.firstDisplayString(data.score, data.quality_summary) || 'N/A'}`;
       break;
     case 'llm_invoke':
-      message = `LLM 调用完成 (${String((data as Record<string, string>)?.model || 'unknown')})`;
-      details = `${String(((data as Record<string, Record<string, number>>)?.usage)?.total_tokens || '?')} tokens`;
+      message = `LLM 调用完成 (${Parsing.firstDisplayString(data.model) || 'unknown'})`;
+      details = `${Parsing.firstDisplayString(Parsing.isRecord(data.usage) ? data.usage.total_tokens : undefined) || '?'} tokens`;
       break;
     case 'iteration':
-      message = `开始第 ${String((data as Record<string, number>)?.iteration || '?')} 轮迭代`;
+      message = `开始第 ${Parsing.firstDisplayString(data.iteration) || '?'} 轮迭代`;
       break;
     case 'config':
       message = '配置加载完成';
       break;
     default:
-      message = String(raw.summary || eventName);
+      message = Parsing.firstDisplayString(raw.summary, raw.message, raw.text) || eventName;
   }
 
   return {
@@ -1097,28 +1123,34 @@ function parseRuntimeEvent(raw: Record<string, unknown>): LogEntry | null {
     source: actor,
     message,
     details,
-    meta: data,
+    meta,
   };
 }
 
 function parseQualityGateEvent(raw: Record<string, unknown>): QualityGateData | null {
-  const data = (raw.data || raw.output || {}) as Record<string, unknown>;
+  const data = Parsing.isRecord(raw.data)
+    ? raw.data
+    : Parsing.isRecord(raw.output)
+      ? raw.output
+      : {};
 
-  const qualitySummary = String((data as Record<string, string>)?.quality_summary || '');
+  const qualitySummary = Parsing.firstDisplayString(data.quality_summary);
   const scoreMatch = qualitySummary.match(/\d+/);
-  const score = parseInt(String(scoreMatch?.[0] || (data as Record<string, number>)?.score || 0), 10);
-  const attempt = parseInt(String(data.attempt || 1), 10);
-  const maxAttempts = parseInt(String(data.max_attempts || 3), 10);
+  const score = parseInt(Parsing.firstDisplayString(scoreMatch?.[0], data.score) || '0', 10);
+  const attempt = parseInt(Parsing.firstDisplayString(data.attempt) || '1', 10);
+  const maxAttempts = parseInt(Parsing.firstDisplayString(data.max_attempts) || '3', 10);
 
   const issues: QualityGateData['issues'] = [];
-  const criticalIssues = (data.critical_issues || []) as string[];
-  const warnings = (data.warnings || []) as string[];
+  const criticalIssues = Array.isArray(data.critical_issues) ? data.critical_issues : [];
+  const warnings = Array.isArray(data.warnings) ? data.warnings : [];
 
   criticalIssues.forEach((msg) => {
-    issues.push({ type: 'critical', message: msg });
+    const message = Parsing.toDisplayString(msg);
+    if (message) issues.push({ type: 'critical', message });
   });
   warnings.forEach((msg) => {
-    issues.push({ type: 'warning', message: msg });
+    const message = Parsing.toDisplayString(msg);
+    if (message) issues.push({ type: 'warning', message });
   });
 
   return {
@@ -1126,7 +1158,7 @@ function parseQualityGateEvent(raw: Record<string, unknown>): QualityGateData | 
     passed: score >= 80 && issues.filter(i => i.type === 'critical').length === 0,
     attempt,
     maxAttempts,
-    summary: String(data.quality_summary || ''),
+    summary: Parsing.firstDisplayString(data.quality_summary),
     issues,
     metrics: {
       critical: criticalIssues.length,

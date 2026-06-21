@@ -23,6 +23,47 @@ export function toStringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function safeJsonStringify(value: unknown): string {
+  const seen = new WeakSet<object>();
+  const encoded = JSON.stringify(value, (_key, next: unknown) => {
+    if (typeof next === 'bigint') {
+      return String(next);
+    }
+    if (typeof next === 'object' && next !== null) {
+      if (seen.has(next)) {
+        return '[Circular]';
+      }
+      seen.add(next);
+    }
+    return next;
+  });
+  return typeof encoded === 'string' ? encoded : '';
+}
+
+export function toDisplayString(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+  if (typeof value === 'boolean' || typeof value === 'bigint') return String(value);
+  if (value instanceof Error) return (value.message || value.name || '').trim();
+  if (typeof value === 'object') {
+    try {
+      return safeJsonStringify(value).trim();
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+export function firstDisplayString(...candidates: unknown[]): string {
+  for (const candidate of candidates) {
+    const value = toDisplayString(candidate);
+    if (value) return value;
+  }
+  return '';
+}
+
 export function toNumberValue(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -77,8 +118,7 @@ function readEventTokenValue(source: Record<string, unknown> | null | undefined)
 
 function normalizeLogMetaValue(value: unknown): string {
   if (typeof value === 'number' && Number.isFinite(value)) return String(Math.round(value));
-  if (typeof value === 'string') return value.trim();
-  return '';
+  return toDisplayString(value);
 }
 
 function readFirstLogMetaValue(source: Record<string, unknown> | null | undefined, keys: readonly string[]): string {
@@ -664,12 +704,12 @@ export function buildStableLogId(
       ? (parsed.data as Record<string, unknown>)
       : null;
     const fingerprint = [
-      String(parsed.run_id || parsed.runId || '').trim(),
-      String(parsed.seq || '').trim(),
-      String(parsed.ts || parsed.timestamp || parsed.time || '').trim(),
-      String(parsed.event || parsed.name || parsed.kind || parsed.type || '').trim(),
-      String(parsed.summary || parsed.message || parsed.text || '').trim(),
-      eventData ? String(eventData.stage || '').trim() : '',
+      firstDisplayString(parsed.run_id, parsed.runId),
+      firstDisplayString(parsed.seq),
+      firstDisplayString(parsed.ts, parsed.timestamp, parsed.time),
+      toStringValue(parsed.event) || toStringValue(parsed.name) || toStringValue(parsed.kind) || toStringValue(parsed.type),
+      firstDisplayString(parsed.summary, parsed.message, parsed.text),
+      eventData ? firstDisplayString(eventData.stage) : '',
       raw,
     ]
       .filter((item) => item.length > 0)

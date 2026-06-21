@@ -70,6 +70,66 @@ def _is_json_config_path(rel_path: str) -> bool:
     return normalized.endswith(".json")
 
 
+_SOURCE_CONTENT_EXTENSIONS = frozenset(
+    {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cs",
+        ".css",
+        ".go",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".mjs",
+        ".php",
+        ".py",
+        ".rb",
+        ".rs",
+        ".swift",
+        ".ts",
+        ".tsx",
+    }
+)
+
+_COLLAPSED_BARE_NEWLINE_MARKER_RE = re.compile(
+    r"(?<=[;{}),\]])n(?=\s{2,}|\s*(?:"
+    r"public|private|protected|readonly|constructor|class|interface|type|"
+    r"function|def|const|let|var|return|if|for|while|import|export"
+    r")\b)"
+)
+_ESCAPED_NEWLINE_MARKER_RE = re.compile(r"\\n(?=\s{2,}|\s*\w)")
+
+
+def _validate_source_write_content_shape(*, rel_path: str, content: str) -> dict[str, Any]:
+    """Reject source payloads that collapsed newlines into literal markers."""
+    suffix = Path(rel_path).suffix.lower()
+    if suffix not in _SOURCE_CONTENT_EXTENSIONS:
+        return {"ok": True}
+
+    text = str(content or "")
+    if "\n" in text or "\r" in text or len(text) < 120:
+        return {"ok": True}
+
+    bare_marker_count = len(_COLLAPSED_BARE_NEWLINE_MARKER_RE.findall(text))
+    escaped_marker_count = len(_ESCAPED_NEWLINE_MARKER_RE.findall(text))
+    if bare_marker_count < 3 and escaped_marker_count < 3:
+        return {"ok": True}
+
+    marker = "bare 'n'" if bare_marker_count >= escaped_marker_count else "escaped '\\n'"
+    return {
+        "ok": False,
+        "blocked": True,
+        "error_type": "invalid_source_content",
+        "error": (
+            f"Invalid source content for {rel_path}: appears to contain {marker} newline markers "
+            "instead of real UTF-8 line breaks. Retry write_file with normal multiline source text."
+        ),
+        "file": rel_path,
+    }
+
+
 def _validate_or_repair_json_config_content(
     *,
     rel_path: str,
@@ -273,6 +333,9 @@ class DirectorToolExecutor:
             if not json_config_result.get("ok"):
                 return json_config_result
             text = str(json_config_result.get("content") if json_config_result.get("content") is not None else text)
+            source_shape_result = _validate_source_write_content_shape(rel_path=rel_path, content=text)
+            if not source_shape_result.get("ok"):
+                return source_shape_result
 
             policy_result = self._validate_director_policy_for_write(
                 workspace=workspace,
