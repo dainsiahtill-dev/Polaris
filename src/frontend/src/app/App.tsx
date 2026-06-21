@@ -1257,6 +1257,7 @@ function AppContent() {
                       executionLogs={executionLogs}
                       dialogueEvents={dialogueEvents}
                       currentPhase={effectiveCurrentPhase}
+                      benchEvents={factoryBenchEvents}
                     />
                   </div>
                 </div>

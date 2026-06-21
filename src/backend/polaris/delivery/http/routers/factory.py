@@ -432,38 +432,36 @@ def _normalize_start_from(start_from: str, workspace: str) -> str:
     normalized = str(start_from or "auto").strip().lower()
     if normalized not in {"auto", "architect", "pm", "director"}:
         normalized = "auto"
+    if normalized == "director":
+        return "pm"
     if normalized != "auto":
         return normalized
     return "architect" if not _check_docs_ready(workspace) else "pm"
 
 
 def _build_stage_list(start_from: str, run_director: bool) -> list[str]:
+    del run_director
     normalized = str(start_from or "auto").strip().lower()
     if normalized == "architect":
         return [
             "docs_generation",
             "pm_planning",
             "chief_engineer_review",
-            *(["director_dispatch"] if run_director else []),
+            "director_dispatch",
             "quality_gate",
         ]
-    if normalized == "pm":
+    if normalized in {"pm", "director"}:
         return [
             "pm_planning",
             "chief_engineer_review",
-            *(["director_dispatch"] if run_director else []),
+            "director_dispatch",
             "quality_gate",
         ]
-    if normalized == "director":
-        return [
-            *(["director_dispatch"] if run_director else []),
-            "quality_gate",
-        ]
-    # fallback：auto 已在 _normalize_start_from 归一化，这里保守回退到 pm->qa
+    # auto is normalized before this point; fail closed to the canonical chain.
     return [
         "pm_planning",
         "chief_engineer_review",
-        *(["director_dispatch"] if run_director else []),
+        "director_dispatch",
         "quality_gate",
     ]
 
@@ -643,14 +641,14 @@ def _decide_delivery_loop_action(
         return {
             "action": "continue",
             "reason": "docs_pipeline_incomplete",
-            "message": "Architect docs pipeline incomplete; continue PM->Director loop",
+            "message": "Architect docs pipeline incomplete; continue PM→Chief Engineer→Director loop",
         }
 
     if signature_changed:
         return {
             "action": "continue",
             "reason": "plan_signature_changed",
-            "message": "PM produced new task contract; continue PM->Director loop",
+            "message": "PM produced new task contract; continue PM→Chief Engineer→Director loop",
         }
 
     return {
@@ -1109,7 +1107,7 @@ async def _execute_run_with_service(
     payload: FactoryStartRequest,
     state: AppState,
 ) -> None:
-    """Execute the configured factory stages with optional PM->Director delivery loop."""
+    """Execute the configured PM→Chief Engineer→Director factory stages."""
     active_stage = ""
     workspace = str(service.workspace)
 

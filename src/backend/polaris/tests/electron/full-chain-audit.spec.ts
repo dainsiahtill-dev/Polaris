@@ -705,7 +705,7 @@ function buildFullChainSettingsPayload(workspace: string): SettingsPayload {
   const modelOverride = optionalEnvValue("KERNELONE_E2E_FULL_CHAIN_MODEL");
   const pmModel = optionalEnvValue("KERNELONE_E2E_PM_MODEL") || modelOverride;
   const directorModel = optionalEnvValue("KERNELONE_E2E_DIRECTOR_MODEL") || modelOverride;
-  const payload: SettingsPayload = { workspace, pm_runs_director: false };
+  const payload: SettingsPayload = { workspace, pm_runs_director: true };
 
   if (modelOverride) {
     payload.model = modelOverride;

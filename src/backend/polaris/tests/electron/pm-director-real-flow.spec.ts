@@ -343,7 +343,7 @@ async function enterDirectorWorkspace(window: Page): Promise<void> {
 
 test.setTimeout(REAL_FLOW_TEST_TIMEOUT_MS);
 
-test("real PM -> Director flow reaches PM and Director workspaces", async ({ window, testEnv }, testInfo) => {
+test("real PM -> Chief Engineer -> Director flow reaches PM and Director workspaces", async ({ window, testEnv }, testInfo) => {
   test.skip(!testEnv.useRealSettings, "Set KERNELONE_E2E_USE_REAL_SETTINGS=1 to use real configured LLM settings.");
 
   const settings = await fetchJson<SettingsPayload>(window, "/settings");
@@ -354,7 +354,7 @@ test("real PM -> Director flow reaches PM and Director workspaces", async ({ win
       "real LLM E2E must use the isolated workspace unless KERNELONE_E2E_ALLOW_REAL_WORKSPACE_MUTATION=1 is explicit",
     ).toBe(path.resolve(testEnv.isolatedWorkspace));
   }
-  expect(settings.pm_runs_director, "real settings should keep PM -> Director enabled").toBe(true);
+  expect(settings.pm_runs_director, "real settings should keep PM -> Chief Engineer -> Director enabled").toBe(true);
 
   await dismissEngineFailureDialog(window);
   await enterPmWorkspace(window);

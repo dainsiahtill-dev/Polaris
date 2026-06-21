@@ -2704,7 +2704,7 @@ class StressEngine:
             self._set_quality_failure(
                 result,
                 failure_point="chain_trace_missing_tasks",
-                root_cause=("Round has no traced task lineage; cannot prove PM->Director task handoff"),
+                root_cause=("Round has no traced task lineage; cannot prove PM->Chief Engineer->Director task handoff"),
                 failure_evidence=(
                     f"trace.statistics.total_tasks={total_tasks}; "
                     f"workspace.new_code_file_count={new_code_file_count}; "

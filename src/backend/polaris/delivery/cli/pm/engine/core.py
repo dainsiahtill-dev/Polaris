@@ -1,7 +1,7 @@
-"""Core Polaris engine for PM -> Director orchestration.
+"""Core Polaris engine for PM -> Chief Engineer -> Director orchestration.
 
 This module contains the PolarisEngine class that decouples
-PM contract generation from Director execution.
+PM contract generation from Chief Engineer blueprint review and Director execution.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ class EngineRuntimeConfig:
 
 
 class PolarisEngine:
-    """Engine that dispatches Director tasks from PM contract."""
+    """Engine that dispatches Director tasks after Chief Engineer handoff."""
 
     def __init__(
         self,

@@ -557,7 +557,7 @@ class TestFactoryRunService:
     @pytest.mark.asyncio
     async def test_retry_run_from_stage_recovers_failed_run(self, temp_workspace):
         service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
-        config = FactoryConfig(name="test-run", stages=["pm_planning", "director_dispatch"])
+        config = FactoryConfig(name="test-run", stages=["pm_planning", "chief_engineer_review", "director_dispatch"])
         run = await service.create_run(config)
         await service.start_run(run.id)
         run = await service.get_run(run.id)
@@ -586,14 +586,17 @@ class TestFactoryRunService:
     @pytest.mark.asyncio
     async def test_retry_run_from_checkpoint_resumes_after_last_successful_stage(self, temp_workspace):
         service = FactoryRunService(temp_workspace, executor=FakeStageExecutor())
-        config = FactoryConfig(name="test-run", stages=["pm_planning", "director_dispatch", "quality_gate"])
+        config = FactoryConfig(
+            name="test-run",
+            stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
+        )
         run = await service.create_run(config)
         await service.start_run(run.id)
         run = await service.get_run(run.id)
         run.status = FactoryRunStatus.FAILED
         run.completed_at = "2026-05-24T00:00:00+00:00"
         run.recovery_point = "pm_planning"
-        run.stages_completed = ["pm_planning", "director_dispatch"]
+        run.stages_completed = ["pm_planning", "chief_engineer_review", "director_dispatch"]
         run.stages_failed = ["director_dispatch"]
         run.metadata["last_successful_stage"] = "pm_planning"
         run.metadata["last_failed_stage"] = "director_dispatch"
@@ -605,8 +608,8 @@ class TestFactoryRunService:
         assert retried.status == FactoryRunStatus.RECOVERING
         assert retried.recovery_point == "pm_planning"
         assert retried.metadata["retry_start_policy"] == "after_checkpoint"
-        assert retried.metadata["retry_execution_stage"] == "director_dispatch"
-        assert retried.metadata["current_stage"] == "director_dispatch"
+        assert retried.metadata["retry_execution_stage"] == "chief_engineer_review"
+        assert retried.metadata["current_stage"] == "chief_engineer_review"
         assert retried.stages_completed == ["pm_planning"]
         assert retried.stages_failed == []
 

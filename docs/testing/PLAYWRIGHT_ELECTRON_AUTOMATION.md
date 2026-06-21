@@ -13,11 +13,11 @@ npx playwright install
 # 非 LLM 主流程回归（推荐）
 npm run test:e2e -- src/backend/polaris/tests/electron/realtime-visibility.spec.ts src/backend/polaris/tests/electron/panel-error.spec.ts
 
-# PM -> Director 全链路（需要真实设置）
+# PM -> Chief Engineer -> Director 全链路（需要真实设置）
 set KERNELONE_E2E_USE_REAL_SETTINGS=1
 npm run test:e2e -- src/backend/polaris/tests/electron/pm-director-real-flow.spec.ts
 
-# Claude 无人值守修复循环（真实 PM -> Director 全链路）
+# Claude 无人值守修复循环（真实 PM -> Chief Engineer -> Director 全链路）
 npm run auto:fix:real-flow
 
 # 任务合同 dry-run（不执行，仅检查任务结构）
@@ -85,7 +85,7 @@ npm run test:e2e
 2. 面板门禁模板：`npm run test:e2e:panel`
 3. 非 LLM 可见性回归：
    `npm run test:e2e -- src/backend/polaris/tests/electron/realtime-visibility.spec.ts src/backend/polaris/tests/electron/panel-error.spec.ts`
-4. PM -> Director 全链路：
+4. PM -> Chief Engineer -> Director 全链路：
    `set KERNELONE_E2E_USE_REAL_SETTINGS=1 && npm run test:e2e -- src/backend/polaris/tests/electron/pm-director-real-flow.spec.ts`
 5. 任务合同 dry-run（仅结构检查，不执行）：
    `npm run test:e2e:task -- --dry-run --task-file infrastructure/e2e/tasks/complex-project-fullstack.task.json`

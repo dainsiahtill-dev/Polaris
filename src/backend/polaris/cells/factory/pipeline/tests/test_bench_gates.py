@@ -1285,6 +1285,33 @@ def test_failure_taxonomy_classifies_missing_toolchain_check_as_runtime_environm
     assert taxonomy["root_cause_signature"] == "runtime_environment:go_compile"
 
 
+def test_failure_taxonomy_classifies_missing_blueprint_as_chief_engineer_blueprint() -> None:
+    record = {
+        "all_checks_passed": False,
+        "factory_gates": [
+            {"gate": "plan_artifact_present", "ok": True, "detail": "plan artifact discovered"},
+            {"gate": "blueprint_artifact_present", "ok": False, "detail": "blueprint artifact missing"},
+            {"gate": "qa_verdict_artifact_present", "ok": True, "detail": "QA verdict artifact discovered"},
+            {"gate": "chain_clean", "ok": True, "detail": "chain_state=clean exit_code=0"},
+            {"gate": "integration_qa_passed", "ok": True, "detail": "qa_ran=True qa_passed=True"},
+            {"gate": "real_run_gate", "ok": True, "detail": "real run gate passed"},
+            {"gate": "llm_route_audit", "ok": True, "detail": "LLM route audit passed"},
+        ],
+        "real_run_gate": {"ok": True, "summary": "real run gate passed"},
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain_state": "clean",
+        "checks": [],
+        "has_plan_doc": True,
+        "has_blueprint_doc": False,
+        "wrong_product_suspect": False,
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "chief_engineer_blueprint"
+    assert taxonomy["root_cause_signature"] == "chief_engineer_blueprint:missing_or_invalid_blueprint"
+
+
 def test_aggregate_goal_audit_counts_real_route_and_root_causes() -> None:
     records = [
         {

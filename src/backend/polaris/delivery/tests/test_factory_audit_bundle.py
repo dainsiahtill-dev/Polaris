@@ -146,12 +146,14 @@ def test_get_factory_run_audit_bundle_partial_run_returns_quickly(
 
     async def _exercise() -> dict[str, Any]:
         service = FactoryRunService(tmp_path)
-        run = await service.create_run(FactoryConfig(name="partial-run", stages=["pm_planning", "director_dispatch"]))
+        run = await service.create_run(
+            FactoryConfig(name="partial-run", stages=["pm_planning", "chief_engineer_review", "director_dispatch"])
+        )
         run.status = FactoryRunStatus.FAILED
-        run.stages_completed = ["pm_planning"]
+        run.stages_completed = ["pm_planning", "chief_engineer_review"]
         run.stages_failed = ["director_dispatch"]
         run.metadata["current_stage"] = "director_dispatch"
-        run.metadata["last_successful_stage"] = "pm_planning"
+        run.metadata["last_successful_stage"] = "chief_engineer_review"
         run.metadata["failure"] = {
             "stage": "director_dispatch",
             "code": "FACTORY_STAGE_FAILED",
@@ -161,6 +163,8 @@ def test_get_factory_run_audit_bundle_partial_run_returns_quickly(
 
         await service._append_event(run.id, {"type": "stage_started", "stage": "pm_planning"})
         await service._append_event(run.id, {"type": "stage_completed", "stage": "pm_planning"})
+        await service._append_event(run.id, {"type": "stage_started", "stage": "chief_engineer_review"})
+        await service._append_event(run.id, {"type": "stage_completed", "stage": "chief_engineer_review"})
         await service._append_event(run.id, {"type": "stage_started", "stage": "director_dispatch"})
         await service._append_event(
             run.id,
@@ -181,7 +185,7 @@ def test_get_factory_run_audit_bundle_partial_run_returns_quickly(
     assert payload["run_id"].startswith("factory_")
     assert payload["status"] == "failed"
     assert payload["current_stage"] == "director_dispatch"
-    assert payload["last_successful_stage"] == "pm_planning"
+    assert payload["last_successful_stage"] == "chief_engineer_review"
     assert len(payload["events_tail"]) >= 1
     assert payload["summary_md"] is None
 
@@ -195,10 +199,12 @@ def test_get_factory_run_audit_bundle_partial_run_with_workspace_dispatch_logs(
     async def _exercise() -> dict[str, Any]:
         service = FactoryRunService(tmp_path)
         run = await service.create_run(
-            FactoryConfig(name="partial-with-logs", stages=["pm_planning", "director_dispatch"])
+            FactoryConfig(
+                name="partial-with-logs", stages=["pm_planning", "chief_engineer_review", "director_dispatch"]
+            )
         )
         run.status = FactoryRunStatus.FAILED
-        run.stages_completed = ["pm_planning"]
+        run.stages_completed = ["pm_planning", "chief_engineer_review"]
         run.stages_failed = ["director_dispatch"]
         await service.store.save_run(run)
 
@@ -235,11 +241,11 @@ def test_director_partial_audit_bundle_includes_convergence_diagnostics(
         run = await service.create_run(
             FactoryConfig(
                 name="director-partial",
-                stages=["pm_planning", "director_dispatch", "quality_gate"],
+                stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
             )
         )
         run.status = FactoryRunStatus.FAILED
-        run.stages_completed = ["pm_planning"]
+        run.stages_completed = ["pm_planning", "chief_engineer_review"]
         run.stages_failed = ["director_dispatch"]
         run.metadata["current_stage"] = "director_dispatch"
         run.metadata["last_successful_stage"] = "pm_planning"

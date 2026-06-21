@@ -1,4 +1,4 @@
-"""Workflow top-level workflow for PM -> Director -> QA orchestration."""
+"""Workflow top-level workflow for PM -> Chief Engineer -> Director -> QA orchestration."""
 
 from __future__ import annotations
 

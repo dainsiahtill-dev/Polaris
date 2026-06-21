@@ -4,14 +4,20 @@ import importlib.util
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BACKEND_ROOT = REPO_ROOT / "src" / "backend"
+BACKEND_ROOT = None
+for parent in Path(__file__).resolve().parents:
+    candidate = parent / "src" / "backend"
+    if (candidate / "polaris" / "delivery" / "cli" / "loop-director.py").is_file():
+        BACKEND_ROOT = candidate
+        break
+if BACKEND_ROOT is None:
+    raise RuntimeError("Failed to locate backend root")
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 
 def _load_loop_director():
-    module_path = BACKEND_ROOT / "scripts" / "loop-director.py"
+    module_path = BACKEND_ROOT / "polaris" / "delivery" / "cli" / "loop-director.py"
     spec = importlib.util.spec_from_file_location("loop_director_note", module_path)
     if spec is None or spec.loader is None:
         raise RuntimeError("Failed to load loop-director.py")

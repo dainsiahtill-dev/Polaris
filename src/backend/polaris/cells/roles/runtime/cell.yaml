@@ -61,14 +61,12 @@ public_contracts:
 depends_on:
 - chief_engineer.blueprint
 - code_intelligence.engine
-- context.catalog
 - context.engine
 - director.execution
 - factory.cognitive_runtime
 - factory.verification_guard
 - finops.budget_guard
 - llm.control_plane
-- orchestration.pm_planning
 - policy.permission
 - policy.workspace_guard
 - qa.audit_verdict
@@ -81,9 +79,7 @@ depends_on:
 - runtime.execution_broker
 - runtime.state_owner
 - archive.run_archive
-- audit.evidence
 - audit.diagnosis
-- orchestration.pm_dispatch
 - cognitive.knowledge_distiller
 subgraphs:
 - execution_governance_pipeline

@@ -407,7 +407,7 @@ function phaseToActiveStage(phase: string, running: boolean): string | null {
   if (!running) return null;
   if (token.includes('plan')) return 'projection';
   if (token.includes('dispatch')) return 'budget';
-  if (token.includes('implement') || token.includes('exec') || token.includes('code')) return 'llm';
+  if (token.includes('implement') || token.includes('exec') || token.includes('code') || token.includes('cod')) return 'llm';
   if (token.includes('review') || token.includes('qa') || token.includes('test')) return 'telemetry';
   return 'working_mem';
 }

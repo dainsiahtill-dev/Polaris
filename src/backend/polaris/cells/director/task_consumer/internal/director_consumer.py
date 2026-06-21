@@ -43,7 +43,7 @@ def _normalize_task_market_route(payload: dict[str, Any]) -> str:
                 "exec",
                 "execution",
             }:
-                return _ROUTE_DIRECT_TO_DIRECTOR
+                return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
             if token in {
                 _ROUTE_CHIEF_BLUEPRINT_REQUIRED,
                 "chief",
@@ -59,13 +59,13 @@ def _normalize_task_market_route(payload: dict[str, Any]) -> str:
         for key in ("blueprint_required", "requires_blueprint", "chief_engineer_required"):
             value = container.get(key)
             if isinstance(value, bool):
-                return _ROUTE_CHIEF_BLUEPRINT_REQUIRED if value else _ROUTE_DIRECT_TO_DIRECTOR
+                return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
             if isinstance(value, str):
                 bool_token = value.strip().lower()
                 if bool_token in {"1", "true", "yes", "y", "on"}:
                     return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
                 if bool_token in {"0", "false", "no", "n", "off"}:
-                    return _ROUTE_DIRECT_TO_DIRECTOR
+                    return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
     return _ROUTE_CHIEF_BLUEPRINT_REQUIRED
 
 
@@ -768,10 +768,11 @@ class DirectorExecutionConsumer:
         payload = dict(claim.payload) if claim.payload else {}
         route = _normalize_task_market_route(payload)
 
-        # Blueprint-mediated work must carry ChiefEngineer evidence. Direct PM
-        # execution work uses the PM task contract as the execution authority.
+        # All Director execution must carry ChiefEngineer evidence. Legacy
+        # direct PM task routes are parsed for compatibility, but never grant
+        # execution authority without a blueprint handoff.
         blueprint_id = payload.get("blueprint_id")
-        if not blueprint_id and route != _ROUTE_DIRECT_TO_DIRECTOR:
+        if not blueprint_id:
             self._svc.fail_task_stage(
                 FailTaskStageCommandV1(
                     workspace=self._workspace,
@@ -783,8 +784,6 @@ class DirectorExecutionConsumer:
                 )
             )
             return {"task_id": task_id, "ok": False, "reason": "missing_blueprint"}
-        if not blueprint_id:
-            blueprint_id = f"pm-direct::{task_id}"
 
         # Safe parallel conflict check
         if self._enable_safe_parallel:
@@ -913,10 +912,8 @@ class DirectorExecutionConsumer:
                         "blueprint_id": blueprint_id,
                         "route": route,
                         "task_market_route": route,
-                        "blueprint_required": route != _ROUTE_DIRECT_TO_DIRECTOR,
-                        "director_execution_authority": (
-                            "pm_task_contract" if route == _ROUTE_DIRECT_TO_DIRECTOR else "chief_engineer_blueprint"
-                        ),
+                        "blueprint_required": True,
+                        "director_execution_authority": "chief_engineer_blueprint",
                         "changed_files": changed_files,
                         "director_evidence_status": _director_evidence_status(changed_files, exec_result),
                         "director_files_changed_count": len(changed_files),

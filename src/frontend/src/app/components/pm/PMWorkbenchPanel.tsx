@@ -173,7 +173,7 @@ export function PMWorkbenchPanel({
   const [sessions, setSessions] = useState<RoleSessionListItem[]>([]);
   const [orchestrationDirective, setOrchestrationDirective] = useState('');
   const [orchestrationStage, setOrchestrationStage] = useState<NonNullable<RunPmPayload['stage']>>('pm');
-  const [shouldRunDirector, setShouldRunDirector] = useState(false);
+  const shouldRunDirector = true;
   const [isLaunchingOrchestration, setIsLaunchingOrchestration] = useState(false);
   const [workflowRunEvidence, setWorkflowRunEvidence] = useState<PMWorkflowRunEvidence>({
     runId: null,
@@ -673,11 +673,11 @@ export function PMWorkbenchPanel({
           <input
             type="checkbox"
             checked={shouldRunDirector}
-            onChange={(event) => setShouldRunDirector(event.target.checked)}
+            readOnly
             data-testid="pm-workbench-run-director"
             className="h-3.5 w-3.5 accent-amber-500"
           />
-          Director
+          全链路
         </label>
         {shouldRunDirector ? (
           <div

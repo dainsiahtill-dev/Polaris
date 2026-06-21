@@ -86,10 +86,14 @@ class FactoryStartRequest(BaseModel):
 
     workspace: str = Field(..., description="工作区路径")
     start_from: Literal["auto", "architect", "pm", "director"] = Field(
-        default="auto", description="入口策略: auto=自动判定, architect=从架构开始, pm=从规划开始, director=从执行开始"
+        default="auto",
+        description=(
+            "入口策略: auto=自动判定, architect=从架构开始, pm=从规划开始, "
+            "director=旧兼容别名，按 PM→Chief Engineer→Director 全链路执行"
+        ),
     )
     directive: str | None = Field(default=None, description="用户指令/需求描述")
-    run_director: bool = Field(default=True, description="是否运行 Director")
+    run_director: bool = Field(default=True, description="旧兼容开关；Factory 运行态强制执行到 Director")
     director_iterations: int = Field(
         default=0,
         ge=0,

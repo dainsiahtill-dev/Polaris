@@ -242,7 +242,7 @@ def test_stream_route_is_not_registered(
     assert "text/event-stream" not in response.headers.get("content-type", "")
 
 
-def test_start_from_director_builds_director_to_qa_chain(
+def test_start_from_director_alias_builds_full_pm_chief_engineer_director_chain(
     client: TestClient,
     service: FactoryRunService,
     temp_workspace: Path,
@@ -264,7 +264,12 @@ def test_start_from_director_builds_director_to_qa_chain(
 
     run = asyncio.run(service.get_run(run_id))
     assert run is not None
-    assert list(run.config.stages) == ["director_dispatch", "quality_gate"]
+    assert list(run.config.stages) == [
+        "pm_planning",
+        "chief_engineer_review",
+        "director_dispatch",
+        "quality_gate",
+    ]
 
 
 def test_start_from_pm_builds_pm_chief_engineer_director_chain(

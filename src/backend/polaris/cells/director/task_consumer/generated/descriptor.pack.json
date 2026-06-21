@@ -328,7 +328,7 @@
         },
         {
           "name": "test_direct_route_uses_pm_contract_without_blueprint",
-          "doc": "Direct PM->Director work should not require ChiefEngineer blueprint metadata."
+          "doc": "Legacy direct routes must not bypass ChiefEngineer blueprint metadata."
         },
         {
           "name": "test_no_execution_evidence_requeues_pending_exec",
@@ -340,7 +340,7 @@
         },
         {
           "name": "test_direct_route_target_file_not_in_changed_files_requeues",
-          "doc": "Direct PM->Director single-file work must also enforce target_files."
+          "doc": "ChiefEngineer-mediated single-file work must enforce target_files."
         },
         {
           "name": "test_execute_task_forwards_bounce_teaching_to_adapter_context",

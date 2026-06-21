@@ -171,7 +171,7 @@ def _contract_backed_task_rows(
     workspace: str,
     cache_root: str,
 ) -> list[dict[str, Any]]:
-    """Use the PM contract as Director diagnostics' full task universe."""
+    """Show PM contract rows as waiting for Chief Engineer handoff."""
 
     from polaris.delivery.http.v2 import director as _d
 
@@ -216,7 +216,9 @@ def _contract_backed_task_rows(
             )
             normalized_metadata.setdefault("pm_task_id", contract_id)
             normalized["metadata"] = normalized_metadata
-            merged_rows.append(_with_task_projection_source(normalized, fallback_source="pm_task_contract"))
+            merged_rows.append(
+                _with_task_projection_source(normalized, fallback_source="pm_contract_waiting_chief_engineer")
+            )
             continue
 
         matched_runtime_ids.add(id(runtime_row))
@@ -234,7 +236,7 @@ def _contract_backed_task_rows(
         for key in ("dependencies", "depends_on", "blocked_by", "blockedBy"):
             if not merged.get(key) and contract.get(key):
                 merged[key] = contract.get(key)
-        merged_rows.append(_with_task_projection_source(merged, fallback_source="pm_task_contract"))
+        merged_rows.append(_with_task_projection_source(merged, fallback_source="chief_engineer_handoff_projection"))
 
     for row in task_rows:
         if id(row) not in matched_runtime_ids:

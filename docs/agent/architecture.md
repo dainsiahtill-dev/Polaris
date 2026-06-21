@@ -380,7 +380,7 @@ Dashboard 采用 **流式解析器 (Streaming Parser)** 将非结构化日志转
 - **Reality-Driven**: 基于真实成本和资源设计，而非理想模型。
 - **Tool-Augmented**: 用工具链 (Lint/Test/RAG) 补足弱模型 (Local LLM) 的短板。
 - **Memory-over-IO**: 优先使用内存缓存 (Repo Index)，减少磁盘 IO。
-- **Control/Execute Separation**: PM 定义合约，Director 执行合约，Dashboard 旁路观测。
+- **Control/Review/Execute Separation**: PM 定义合约，Chief Engineer 产出蓝图与交接证据，Director 只执行 CE 交接后的任务，Dashboard 旁路观测。
 
 ### 7.2 Inner Voice 设计哲学
 

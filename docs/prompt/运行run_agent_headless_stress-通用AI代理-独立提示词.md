@@ -10,7 +10,7 @@
 
 这个目标只允许通过 Polaris 当前已经存在的正式接口与现成脚本完成，用来验证 Polaris 的 AI 代理主链是否稳定：
 
-`Architect/Court -> PM -> Director -> QA`
+`Architect/Court -> PM -> Chief Engineer -> Director -> QA`
 
 你要做的是：
 

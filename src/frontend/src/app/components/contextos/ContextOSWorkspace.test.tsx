@@ -510,4 +510,250 @@ describe('ContextOSWorkspace', () => {
     );
     expect(screen.queryByTestId('contextos-worker-panel')).toBeNull();
   });
+
+  it('renders provider latency from WS stream in the resource chip', () => {
+    const latencyStream: LogEntry[] = [
+      {
+        id: 'lat1',
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        source: 'PM',
+        message: 'pm call returned',
+        details: 'model=m prompt=100 completion=50 3200ms',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'PM',
+          promptTokens: 100,
+          completionTokens: 50,
+          totalTokens: 150,
+          durationMs: 3200,
+        },
+        tags: ['llm_completed'],
+      },
+    ];
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmStreamEvents={latencyStream}
+      />,
+    );
+    const resourceChip = screen.getByTestId('contextos-resource-chip');
+    expect(resourceChip.textContent).toContain('3200ms');
+  });
+
+  it('renders newest latency when multiple calls have different durations', () => {
+    const multiLatencyStream: LogEntry[] = [
+      {
+        id: 'lat1',
+        timestamp: new Date(Date.now() - 5000).toISOString(),
+        level: 'success',
+        source: 'PM',
+        message: 'first call',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'PM',
+          promptTokens: 100,
+          completionTokens: 50,
+          totalTokens: 150,
+          durationMs: 1200,
+        },
+        tags: ['llm_completed'],
+      },
+      {
+        id: 'lat2',
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        source: 'Director',
+        message: 'second call',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          promptTokens: 200,
+          completionTokens: 80,
+          totalTokens: 280,
+          durationMs: 4500,
+        },
+        tags: ['llm_completed'],
+      },
+    ];
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmStreamEvents={multiLatencyStream}
+      />,
+    );
+    const resourceChip = screen.getByTestId('contextos-resource-chip');
+    expect(resourceChip.textContent).toContain('4500ms');
+  });
+
+  it('renders provider error from llm_failed events in the telemetry badge', () => {
+    const errorStream: LogEntry[] = [
+      {
+        id: 'err1',
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        source: 'PM',
+        message: 'provider timeout',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_failed',
+          role: 'PM',
+          error: 'timeout',
+        },
+        tags: ['llm_failed'],
+      },
+    ];
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmStreamEvents={errorStream}
+      />,
+    );
+    // Error appears in the decision log
+    expect(screen.getByText('provider timeout')).toBeTruthy();
+  });
+
+  it('renders mixed success and error events from the WS stream', () => {
+    const mixedStream: LogEntry[] = [
+      {
+        id: 'err1',
+        timestamp: new Date(Date.now() - 3000).toISOString(),
+        level: 'error',
+        source: 'PM',
+        message: 'rate limit exceeded',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_failed',
+          role: 'PM',
+          error: 'rate_limit',
+        },
+        tags: ['llm_failed'],
+      },
+      {
+        id: 'ok1',
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        source: 'PM',
+        message: 'pm call succeeded',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'PM',
+          promptTokens: 100,
+          completionTokens: 50,
+          totalTokens: 150,
+          durationMs: 2000,
+        },
+        tags: ['llm_completed'],
+      },
+    ];
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmStreamEvents={mixedStream}
+      />,
+    );
+    // Both events appear in the decision log
+    expect(screen.getByText('rate limit exceeded')).toBeTruthy();
+    expect(screen.getByText('pm call succeeded')).toBeTruthy();
+    // Telemetry source shows activity
+    const sourceBadge = screen.getByTestId('contextos-telemetry-source');
+    expect(sourceBadge.textContent).toContain('REAL');
+  });
+
+  it('renders without crashing when all props are null/empty', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        usageStats={null}
+        llmRuntimeState={{
+          state: 'UNKNOWN',
+          blockedRoles: [],
+          requiredRoles: [],
+          lastUpdated: null,
+        }}
+        dialogueEvents={[]}
+        executionLogs={[]}
+        llmStreamEvents={[]}
+        processStreamEvents={[]}
+        snapshot={null}
+        qualityGate={null}
+      />,
+    );
+    expect(screen.getByTestId('contextos-workspace')).toBeTruthy();
+    // All pipeline stages render
+    for (const id of ['request', 'truthlog', 'working_mem', 'projection', 'role_signal', 'budget', 'prompt', 'llm']) {
+      expect(screen.getByTestId(`contextos-stage-${id}`)).toBeTruthy();
+    }
+  });
+
+  it('renders without crashing when llmRuntimeState has no roleDetails', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmRuntimeState={{
+          state: 'READY',
+          blockedRoles: [],
+          requiredRoles: ['pm'],
+          lastUpdated: null,
+        }}
+      />,
+    );
+    expect(screen.getByTestId('contextos-workspace')).toBeTruthy();
+    // Window source shows unknown state
+    const source = screen.getByTestId('contextos-window-source');
+    expect(source.textContent).toContain('未知');
+  });
+
+  it('renders without crashing when llmStreamEvents contains events with missing meta', () => {
+    const sparseStream: LogEntry[] = [
+      {
+        id: 'sparse1',
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        source: 'System',
+        message: 'event without meta',
+      },
+    ];
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmStreamEvents={sparseStream}
+      />,
+    );
+    expect(screen.getByTestId('contextos-workspace')).toBeTruthy();
+  });
+
+  it('renders blocked role cards when llmRuntimeState is BLOCKED', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmRuntimeState={{
+          state: 'BLOCKED',
+          blockedRoles: ['director'],
+          requiredRoles: ['director'],
+          lastUpdated: null,
+        }}
+        directorRunning
+      />,
+    );
+    // The workspace still renders
+    expect(screen.getByTestId('contextos-workspace')).toBeTruthy();
+    // Director role card exists
+    expect(screen.getByTestId('contextos-role-director')).toBeTruthy();
+  });
+
+  it('renders correctly when live=false and reconnecting=true', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        live={false}
+        reconnecting
+      />,
+    );
+    expect(screen.getByTestId('contextos-workspace')).toBeTruthy();
+  });
 });

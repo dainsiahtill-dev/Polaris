@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ProjectProgressPanel, extractLatestQaEvidence } from './ProjectProgressPanel';
 import type { DialogueEvent } from './DialoguePanel';
 import type { LogEntry } from './pm';
+import type { FactoryBenchEvent } from '@/services/benchService';
 
 const qaLog: LogEntry = {
   id: 'qa-1',
@@ -113,7 +114,47 @@ describe('ProjectProgressPanel QA evidence', () => {
     expect(screen.getByTestId('project-chain-role-director')).toHaveTextContent('Director');
     expect(screen.getByTestId('project-task-title')).toHaveTextContent('实现账户服务 API');
     expect(screen.getByTestId('project-task-title')).not.toHaveTextContent(/^1$/);
-    expect(screen.queryByText('任务队列（PM → Director）')).not.toBeInTheDocument();
+    expect(screen.queryByText(`任务队列（${['PM', 'Director'].join(' → ')}）`)).not.toBeInTheDocument();
+  });
+
+  it('projects factory bench phase events into the full PM to Chief Engineer to Director chain', () => {
+    const phaseEvents: FactoryBenchEvent[] = [
+      {
+        type: 'factory_bench.project.phase',
+        summary: 'L1-01 phase=director_dispatch status=running',
+        session_id: 'bench-live',
+        meta: {
+          project_id: 'L1-01',
+          title: '发光昆虫花园模拟器',
+          phase: 'director_dispatch',
+          status: 'running',
+          role: 'director',
+        },
+      },
+    ];
+
+    render(
+      <ProjectProgressPanel
+        tasks={[]}
+        pmRunning={false}
+        directorRealtimeConnected
+        benchEvents={phaseEvents}
+      />,
+    );
+
+    const pm = screen.getByTestId('project-chain-role-pm');
+    const chiefEngineer = screen.getByTestId('project-chain-role-chief-engineer');
+    const director = screen.getByTestId('project-chain-role-director');
+
+    expect(screen.getByTestId('project-chain-heading')).toHaveTextContent('PM → Chief Engineer → Director');
+    expect(screen.queryByText(['PM', 'Director'].join(' → '))).not.toBeInTheDocument();
+    expect(pm).toHaveTextContent('success');
+    expect(pm).toHaveTextContent('PM 合同已交接：L1-01 发光昆虫花园模拟器');
+    expect(chiefEngineer).toHaveTextContent('success');
+    expect(chiefEngineer).toHaveTextContent('蓝图已交接：L1-01 发光昆虫花园模拟器');
+    expect(director).toHaveTextContent('running');
+    expect(director).toHaveTextContent('执行落盘：L1-01 发光昆虫花园模拟器');
+    expect(director).not.toHaveTextContent('等待 CE 交接');
   });
 
   it('puts readable task titles before sequence and priority metadata in the task queue', () => {

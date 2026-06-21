@@ -40,6 +40,12 @@ _ATTRIBUTION_SIGS: list[tuple[str, re.Pattern[str], str]] = [
     ("circuit_breaker_dead_letter", re.compile(r"circuit_breaker", re.IGNORECASE), "platform_fixable"),
     ("F15_daemon_stdout_crash", re.compile(r"_enter_buffered_busy"), "post_failure_noise"),
 ]
+_COMPLETION_REQUIREMENTS = (
+    "artifact_landed",
+    "environment_prepared",
+    "build_test_lint_ran",
+    "entrypoint_smoke",
+)
 
 
 def _classify_chain_log(chain_log: Path) -> Counter[str]:
@@ -75,6 +81,14 @@ def _task_turn_passed(record: dict) -> bool:
     return chain.get("exit_code") == 0
 
 
+def _real_run_requirements(record: dict) -> dict:
+    real_run_gate = record.get("real_run_gate")
+    if not isinstance(real_run_gate, dict):
+        return {}
+    requirements = real_run_gate.get("requirements")
+    return requirements if isinstance(requirements, dict) else {}
+
+
 def _aggregate(records: list[dict], work_dir: Path) -> dict:
     """Compute the 4 fields across all projects in the work-dir."""
     total_steps_attempted = 0
@@ -82,6 +96,8 @@ def _aggregate(records: list[dict], work_dir: Path) -> dict:
     runnable = 0
     real_run_passed = 0
     llm_route_passed = 0
+    completion_counts = dict.fromkeys(_COMPLETION_REQUIREMENTS, 0)
+    completion_projects = 0
     wall_per_project: list[tuple[str, float | None]] = []
     root_cause_tally: Counter[str] = Counter()
 
@@ -103,6 +119,15 @@ def _aggregate(records: list[dict], work_dir: Path) -> dict:
             real_run_passed += 1
         if isinstance(r.get("llm_route_audit"), dict) and r["llm_route_audit"].get("ok"):
             llm_route_passed += 1
+        requirements = _real_run_requirements(r)
+        project_completion_ok = True
+        for name in _COMPLETION_REQUIREMENTS:
+            requirement = requirements.get(name)
+            requirement_ok = bool(isinstance(requirement, dict) and requirement.get("ok"))
+            completion_counts[name] += 1 if requirement_ok else 0
+            project_completion_ok = project_completion_ok and requirement_ok
+        if project_completion_ok:
+            completion_projects += 1
 
         # (c) 墙钟: chain.duration_s is the per-project wall
         dur = (r.get("chain") or {}).get("duration_s")
@@ -143,6 +168,19 @@ def _aggregate(records: list[dict], work_dir: Path) -> dict:
             "passed": llm_route_passed,
             "total": len(records),
             "rate": round(llm_route_passed / len(records), 3) if records else 0.0,
+        },
+        "completion_contract": {
+            "passed": completion_projects,
+            "total": len(records),
+            "rate": round(completion_projects / len(records), 3) if records else 0.0,
+            "requirements": {
+                name: {
+                    "passed": count,
+                    "total": len(records),
+                    "rate": round(count / len(records), 3) if records else 0.0,
+                }
+                for name, count in completion_counts.items()
+            },
         },
         "wall": {
             "per_project": wall_per_project,
@@ -224,6 +262,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     parser.add_argument("--history", default="", help="Optional root-cause history JSON path to update.")
     parser.add_argument("--batch-id", default="", help="Stable batch id stored when --history is used.")
+    parser.add_argument(
+        "--require-stable-batches",
+        type=int,
+        default=0,
+        help="Fail unless --history records at least N consecutive batches with no new root causes.",
+    )
     args = parser.parse_args(argv)
 
     work_dir = Path(args.work_dir).resolve()
@@ -242,9 +286,16 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.history).resolve(),
             batch_id=str(args.batch_id or ""),
         )
+    elif int(args.require_stable_batches or 0) > 0:
+        print("--require-stable-batches requires --history", file=sys.stderr)
+        return 2
 
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
+        if int(args.require_stable_batches or 0) > 0:
+            history = report.get("root_cause_history") or {}
+            streak = int(history.get("streak_without_new_common_root_causes") or 0)
+            return 0 if streak >= int(args.require_stable_batches) else 1
         return 0
 
     # Human-readable 4-field report
@@ -268,6 +319,12 @@ def main(argv: list[str] | None = None) -> int:
         f"({report['llm_route_audit']['passed']}/{report['llm_route_audit']['total']})"
     )
     print(
+        f"    completion gate: {report['completion_contract']['rate']:.3f}  "
+        f"({report['completion_contract']['passed']}/{report['completion_contract']['total']})"
+    )
+    for name, stats in report["completion_contract"]["requirements"].items():
+        print(f"      - {name}: {stats['passed']}/{stats['total']} ({stats['rate']:.3f})")
+    print(
         f"(c) 墙钟 max       : {report['wall']['max_s']}s  "
         f"sum={report['wall']['sum_s']}s  per_project={report['wall']['per_project']}"
     )
@@ -285,6 +342,13 @@ def main(argv: list[str] | None = None) -> int:
             f"{history.get('streak_without_new_common_root_causes')} "
             f"new={history.get('last_new_root_causes')}"
         )
+        required = int(args.require_stable_batches or 0)
+        if required > 0:
+            streak = int(history.get("streak_without_new_common_root_causes") or 0)
+            if streak < required:
+                print(f"    stable gate     : FAIL ({streak}/{required})")
+                return 1
+            print(f"    stable gate     : PASS ({streak}/{required})")
     return 0
 
 

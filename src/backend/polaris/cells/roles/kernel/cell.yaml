@@ -51,7 +51,6 @@ public_contracts:
   - RoleKernelErrorV1
 depends_on:
 - director.execution
-- kernelone.core
 - roles.profile
 - roles.session
 - runtime.task_runtime

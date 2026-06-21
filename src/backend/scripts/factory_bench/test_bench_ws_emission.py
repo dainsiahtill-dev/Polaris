@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 
-from scripts.factory_bench.run_factory_bench import _emit_bench_event
+from scripts.factory_bench.run_factory_bench import _emit_bench_event, _emit_factory_phase_event
 
 
 class TestBenchEventEmission(unittest.TestCase):
@@ -112,6 +112,46 @@ class TestBenchEventEmission(unittest.TestCase):
                 self.assertEqual(r["actor"], "factory-bench")
                 self.assertEqual(r["meta"]["project_id"], "L2-07")
                 self.assertEqual(r["meta"]["level"], 2)
+
+    def test_emit_factory_phase_event_projects_role_phase_and_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            td_path = Path(td)
+            cache_root = td_path / "cache"
+            run_id = "test-run-003"
+            (cache_root / "runs" / run_id / "events").mkdir(parents=True)
+            (cache_root / "latest_run.json").write_text(
+                json.dumps({"run_id": run_id}),
+                encoding="utf-8",
+            )
+            project_workspace = td_path / "bench" / "L1-01"
+
+            ok = _emit_factory_phase_event(
+                bench_workspace=td_path / "bench",
+                project_workspace=project_workspace,
+                project_id="L1-01",
+                level=1,
+                title="Glow Garden",
+                status="running",
+                phase_payload={
+                    "run_id": "factory-run-001",
+                    "status": "running",
+                    "phase": "chief_engineer_review",
+                },
+                cache_root=str(cache_root),
+            )
+
+            self.assertTrue(ok)
+            events_file = cache_root / "runs" / run_id / "events" / "runtime.events.jsonl"
+            record = json.loads(events_file.read_text(encoding="utf-8").strip())
+            self.assertEqual(record["name"], "factory_bench.project.phase")
+            self.assertEqual(record["summary"], "L1-01 chief_engineer phase=chief_engineer_review status=running")
+            self.assertEqual(record["meta"]["project_id"], "L1-01")
+            self.assertEqual(record["meta"]["title"], "Glow Garden")
+            self.assertEqual(record["meta"]["workspace"], str(project_workspace))
+            self.assertEqual(record["meta"]["phase"], "chief_engineer_review")
+            self.assertEqual(record["meta"]["status"], "running")
+            self.assertEqual(record["meta"]["role"], "chief_engineer")
+            self.assertEqual(record["meta"]["run_id"], "factory-run-001")
 
 
 if __name__ == "__main__":

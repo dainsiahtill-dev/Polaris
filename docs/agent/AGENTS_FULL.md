@@ -490,7 +490,7 @@ User Authorization:
 
 ### 1. 系统闭环 (The Loop)
 
-Polaris 内部采用 **PM → Director → QA** 的闭环控制流：
+Polaris 内部采用 **PM → Chief Engineer → Director → QA** 的闭环控制流：
 
 ```mermaid
 graph TD

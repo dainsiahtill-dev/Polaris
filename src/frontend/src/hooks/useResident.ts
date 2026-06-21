@@ -188,7 +188,7 @@ export function useResident(options: UseResidentOptions = {}) {
         () => residentService.stageGoal(goalId, workspace, promoteToPmRuntime),
         promoteToPmRuntime ? 'AGI 目标已写入 PM 运行态' : 'AGI 目标已暂存',
       ),
-    runGoal: (goalId: string, runDirector = false, directorIterations = 1) =>
+    runGoal: (goalId: string, runDirector = true, directorIterations = 1) =>
       runAction<ResidentGoalRunPayload>(
         'run-goal',
         () =>

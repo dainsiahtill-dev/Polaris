@@ -1,4 +1,4 @@
-"""Polaris engine for PM -> Director orchestration.
+"""Polaris engine for PM -> Chief Engineer -> Director orchestration.
 
 This module is a facade that re-exports from the modular engine package.
 The actual implementation has been refactored into focused modules:

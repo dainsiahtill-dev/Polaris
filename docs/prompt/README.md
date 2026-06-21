@@ -43,7 +43,7 @@
 
 ## 当前统一事实基线
 
-1. Polaris 主执行链仍是 `Architect/Court -> PM -> Director -> QA`，`Chief Engineer` 按需插入
+1. Polaris 主执行链固定为 `Architect/Court -> PM -> Chief Engineer -> Director -> QA`，禁止回退到旧的 PM->Director 直连
 2. `Software Engineering AGI` 已存在，但当前实现层是 `resident`，执行仍桥接 `PM/Director`
 3. AGI 当前没有独立 LLM role
 4. 主执行栈按当前治理为 `Playwright -> Computer Use`

@@ -633,6 +633,8 @@ class OrchestrationStageExecutor:
                 "active_binding_count": len(active_bindings),
                 "quarantined_binding_count": skipped_count,
                 "per_binding": per_binding,
+                "execution_mode": str(base_options.get("execution_mode", "")).strip(),
+                "max_workers": int(base_options.get("max_workers", 0)),
             },
         )
 

@@ -1,4 +1,4 @@
-"""Lightweight E2E chain test for PM -> Director -> QA workflow contract.
+"""Lightweight E2E chain test for PM -> Chief Engineer -> Director -> QA workflow contract.
 
 Validates the critical contract: PM payload tasks -> Director execution result -> QA verdict.
 Uses mocked activities to avoid calling real external LLMs.
@@ -198,7 +198,7 @@ class TestPMDirectorQAChainE2E:
 
     @pytest.mark.asyncio
     async def test_full_chain_with_mocked_activities(self, pm_input) -> None:
-        """Full PM -> Director -> QA chain with mocked activities.
+        """Full PM -> Chief Engineer -> Director -> QA chain with mocked activities.
 
         Validates:
         - PM extracts and validates tasks

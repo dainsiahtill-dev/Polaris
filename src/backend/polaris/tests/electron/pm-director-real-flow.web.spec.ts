@@ -85,7 +85,7 @@ async function waitForPmFinish(page: Parameters<typeof requestJson>[0]): Promise
   return await requestJson<PmStatusPayload>(page, "/v2/pm/status");
 }
 
-test("web entry triggers PM -> Director -> QA and verifies 16x4 runtime evidence placement", async ({ webPage, webTestEnv }, testInfo) => {
+test("web entry triggers PM -> Chief Engineer -> Director -> QA and verifies 16x4 runtime evidence placement", async ({ webPage, webTestEnv }, testInfo) => {
   const settings = await requestJson<SettingsPayload>(webPage, "/settings");
   expect(path.resolve(String(settings.workspace || ""))).toBe(path.resolve(webTestEnv.isolatedWorkspace));
   if (settings.pm_runs_director !== true) {

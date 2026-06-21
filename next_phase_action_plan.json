@@ -1,175 +1,115 @@
 {
-  "status": "RECONCILED_AFTER_BATCH11",
-  "reconcile_timestamp": "2026-06-21T16:52:00+08:00",
-  "basis": {
-    "codegraph_used": true,
-    "opencode_batch": "batch11",
-    "agents_completed": 10,
-    "focused_verification": {
-      "pytest_llm_director_factory": "170 passed, 2 warnings",
-      "pytest_jsonl_realtime_guards": "26 passed",
-      "pytest_contextos_pm_director_qa": "35 passed",
-      "vitest_api_process_ops": "44 passed",
-      "ruff_check_changed_python": "PASS",
-      "ruff_format_check_changed_python": "PASS",
-      "mypy_key_runtime_files": "PASS",
-      "frontend_typecheck": "PASS",
-      "git_diff_check": "PASS"
-    }
+  "status": "RECONCILED_AFTER_BATCH13",
+  "reconcile_timestamp": "2026-06-21T17:45:00+08:00",
+  "summary": {
+    "baseline_commit": "74b8de8d feat: Enhance ContextOS telemetry and add connectivity verification scripts",
+    "original_remaining_gaps_from_r12": 5,
+    "closed_original_gaps": 5,
+    "remaining_original_gaps": 0,
+    "new_gaps_found_after_batch12": 1,
+    "closed_new_gaps": 1,
+    "remaining_new_gaps": 0,
+    "total_unresolved_gaps": 0,
+    "active_opencode_processes": 0
+  },
+  "verified_gates": {
+    "batch13_backend_focus": "122 passed",
+    "context_adapter_regression": "27 passed",
+    "batch13_frontend_contextos": "131 passed",
+    "frontend_typecheck": "PASS",
+    "ruff_check_changed_python": "PASS",
+    "ruff_format_check_changed_python": "PASS",
+    "mypy_key_runtime_files": "PASS",
+    "git_diff_check": "PASS"
   },
   "closed_gaps": [
     {
-      "id": "B11-F001",
-      "severity": "P0",
-      "title": "Director adapter ignored max_workers/execution_mode",
-      "evidence": [
-        "src/backend/polaris/delivery/cli/pm/director_interface_core.py",
-        "src/backend/polaris/delivery/tests/test_director_interface_core.py"
-      ],
-      "status": "CLOSED"
-    },
-    {
-      "id": "B11-F002",
-      "severity": "P0",
-      "title": "LLM health endpoint missing",
-      "evidence": [
-        "src/backend/polaris/delivery/http/routers/llm.py",
-        "src/backend/polaris/tests/unit/delivery/http/routers/test_llm_v2.py"
-      ],
-      "status": "CLOSED",
-      "notes": "GET /v2/llm/health now exposes provider health and role bindings, including multi-binding Director evidence."
-    },
-    {
-      "id": "B11-F003",
-      "severity": "P1",
-      "title": "ContextOS snapshot to continuity/persistence/projection test gap",
-      "evidence": "src/backend/polaris/cells/roles/session/tests/test_contextos_e2e_cross_session.py",
-      "status": "CLOSED"
-    },
-    {
-      "id": "B11-F004",
-      "severity": "P1",
-      "title": "PM -> Director -> QA lightweight contract E2E missing",
-      "evidence": "src/backend/polaris/tests/e2e/test_pm_director_qa_chain_e2e.py",
-      "status": "CLOSED"
-    },
-    {
-      "id": "B11-F005",
-      "severity": "P2",
-      "title": "JSONL emit_event duplicate guard missing",
-      "evidence": "src/backend/polaris/tests/architecture/test_jsonl_emit_event_invariants.py",
-      "status": "CLOSED"
-    },
-    {
-      "id": "B11-F006",
-      "severity": "P1",
-      "title": "Factory catalog runner audit regression missing",
-      "evidence": "src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py",
-      "status": "CLOSED"
-    }
-  ],
-  "remaining_gaps": [
-    {
       "id": "R12-G001",
       "severity": "P0",
-      "category": "actual_bound_llm_runtime",
-      "title": "实际绑定 LLM 的 live smoke 尚未形成固定门禁",
-      "details": "需要以当前真实绑定为准：PM/CE=Kimi, QA=MiniMax, Director=qwen3.6-27b 多路绑定。必须验证 readiness、/v2/llm/health bindings、一次小型 factory run 产物证据，不用 mock 替代。",
-      "acceptance": [
-        "发现并打印当前有效 llm config 的角色/provider/model/bindings 摘要",
-        "/v2/llm/health 覆盖所有 Director bindings",
-        "真实 LLM smoke 失败时 fail-closed 并给出 provider/model/binding_id 证据"
-      ]
+      "title": "Actual bound LLM live smoke audit gate",
+      "status": "CLOSED",
+      "evidence": "src/backend/polaris/tests/test_live_smoke_binding_audit.py"
     },
     {
       "id": "R12-G002",
       "severity": "P1",
-      "category": "llm_observability",
-      "title": "LLM metrics/trend endpoint 尚未落地",
-      "details": "已有 /v2/llm/health 即时健康检查，但缺少近窗口 latency/error/cache_hit/role 调用趋势，ContextOS/LLM 状态 UI 仍只能展示瞬时状态。",
-      "acceptance": [
-        "GET /v2/llm/metrics 返回每角色近窗口调用数、错误数、p50/p95 latency、cache_hit 计数",
-        "指标来自现有 runtime/llm event，不新增轮询链路",
-        "前端只消费 runtime WS 或一次性显式刷新"
-      ]
+      "title": "LLM metrics/trend endpoint",
+      "status": "CLOSED",
+      "evidence": [
+        "src/backend/polaris/kernelone/audit/omniscient/interceptors/llm_metrics.py",
+        "src/backend/polaris/kernelone/audit/omniscient/tests/test_llm_metrics.py"
+      ],
+      "batch13_hardening": "Percentile latency fields now use recorded samples instead of fixed zero values."
     },
     {
       "id": "R12-G003",
       "severity": "P1",
-      "category": "factory_real_run",
-      "title": "L1-L12 120 项 catalog 已校验但未批量实跑审计",
-      "details": "目录完整性和 runner audit 已补测试；还需要按 level/语言抽样跑 factory_bench，确认真实产物能运行，而不只是静态 catalog 通过。",
-      "acceptance": [
-        "每个 level 至少 1 个项目跑出 audit 包",
-        "每种语言至少 1 个项目通过 real-run gate",
-        "失败聚类输出通用根因，不改目标项目代码"
+      "title": "Factory L1-L12 stratified real-run audit entry",
+      "status": "CLOSED",
+      "evidence": [
+        "src/backend/scripts/factory_bench/run_factory_bench.py",
+        "src/backend/polaris/tests/unit/scripts/test_factory_bench_stratified_sampling.py"
       ]
     },
     {
       "id": "R12-G004",
       "severity": "P1",
-      "category": "contextos_performance",
-      "title": "ContextOS 性能和大上下文回归缺失",
-      "details": "功能 E2E 已有，但缺 1000+ messages、不同 context window size、snapshot serialization 的性能边界测试。",
-      "acceptance": [
-        "1000+ messages projection/snapshot 测试",
-        "不同 role context window 不再显示统一 128k",
-        "性能阈值不依赖外部 LLM"
-      ]
+      "title": "ContextOS performance and large context regression",
+      "status": "CLOSED",
+      "evidence": "src/backend/polaris/kernelone/context/context_os/tests/test_contextos_performance.py"
     },
     {
       "id": "R12-G005",
       "severity": "P2",
-      "category": "docs_and_security",
-      "title": "Auth token discovery/dev fallback 需要用户可见文档和启动告警",
-      "details": "/v2/auth/token 默认禁用已完成，但生产/开发 token 边界需要文档与启动期 warning 防回归。",
-      "acceptance": [
-        "docs/security/token-configuration.md 或等价文档",
-        "非 dev 且使用默认 token 时 warning",
-        "测试覆盖 discovery disabled + Vite dev fallback"
+      "title": "Auth token discovery/dev fallback docs and warning",
+      "status": "CLOSED",
+      "evidence": [
+        "docs/frontend/api/token-discovery.md",
+        "src/frontend/src/api.test.ts"
+      ]
+    },
+    {
+      "id": "B13-G001",
+      "severity": "P1",
+      "title": "ContextOS UI observability for provider latency/error/runtime state on the single realtime rail",
+      "status": "CLOSED",
+      "evidence": [
+        "src/frontend/src/app/components/contextos/ContextOSWorkspace.test.tsx",
+        "src/frontend/src/app/components/contextos/contextOSData.test.ts",
+        "src/frontend/src/app/hooks/__tests__/useLlmRuntimeGate.test.ts",
+        "src/backend/polaris/tests/test_realtime_single_rail_static_guard.py"
+      ],
+      "batch13_hardening": "Added coverage for latency badges, provider error telemetry, null-safe runtime payloads, single-rail realtime guard, and coding-phase to LLM-stage mapping."
+    },
+    {
+      "id": "B13-G002",
+      "severity": "P1",
+      "title": "Director fanout audit metadata missing execution_mode/max_workers",
+      "status": "CLOSED",
+      "evidence": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_director_fanout_evidence.py"
+      ]
+    },
+    {
+      "id": "B13-G003",
+      "severity": "P2",
+      "title": "Role context adapter should degrade gracefully on repo-intelligence filesystem failures",
+      "status": "CLOSED",
+      "evidence": [
+        "src/backend/polaris/cells/roles/runtime/public/context_adapter.py",
+        "src/backend/polaris/cells/roles/runtime/public/tests/test_context_adapter.py"
       ]
     }
   ],
-  "batch12_opencode_prompts": [
-    {
-      "agent_id": "B12-01",
-      "prompt": "你是 Polaris Actual Bound LLM Readiness Agent。必须先用 codegraph MCP 探索 llm config/readiness/health/status 路由。任务：以当前真实绑定 PM/CE=Kimi、QA=MiniMax、Director=qwen3.6-27b 多路绑定为准，补一个不泄露密钥的 live-smoke 审计脚本或测试入口；默认只在显式环境变量启用时跑真实调用，未启用时输出 SKIP_WITH_EVIDENCE。验收：pytest/ruff/mypy 通过，输出 PATCH_STATUS JSON。"
-    },
-    {
-      "agent_id": "B12-02",
-      "prompt": "你是 Polaris LLM Metrics Agent。必须先用 codegraph MCP 探索 llm_caller event_emitter runtime events /v2/llm/status。任务：实现 /v2/llm/metrics 或等价 v2 endpoint，聚合近窗口 role/provider/model latency/error/cache_hit，不新增轮询链路。验收：单元测试覆盖空数据、正常数据、错误数据、binding 维度；ruff/mypy/pytest 通过。"
-    },
-    {
-      "agent_id": "B12-03",
-      "prompt": "你是 Polaris Factory Real-run Audit Agent。必须先用 codegraph MCP 探索 run_factory_bench.py bench_gates audit package projects_v2。任务：补一个小规模 L1-L12 stratified sampling 审计入口或测试，证明每级/每语言可产出 immutable audit 包；不要修改目标项目代码。验收：pytest 通过，真实运行入口有 --dry-run/--limit 安全参数。"
-    },
-    {
-      "agent_id": "B12-04",
-      "prompt": "你是 Polaris ContextOS Performance Agent。必须先用 codegraph MCP 探索 StateFirstContextOS SnapshotService ContextOSWorkspace context window。任务：补 1000+ messages、不同 role contextWindowTokens、snapshot serialization 的性能/正确性测试。验收：无外部 LLM，pytest/vitest/tsc 通过。"
-    },
-    {
-      "agent_id": "B12-05",
-      "prompt": "你是 Polaris Realtime Contract Agent。必须先用 codegraph MCP 探索 RuntimeTransportProvider runtimeSocketManager LogViewer ContextOS。任务：审计新增 LLM metrics/ContextOS UI 是否仍为 Nat-JetStream WS 单轨；扩展静态守卫禁止 setInterval/SSE/file polling。验收：pytest guard 通过。"
-    },
-    {
-      "agent_id": "B12-06",
-      "prompt": "你是 Polaris Auth Security Docs Agent。必须先用 codegraph MCP 探索 app_factory Auth endpoint_policy api.ts。任务：补 token discovery/default dev fallback 的用户文档和启动 warning 测试，不改变当前 Vite dev 可连行为。验收：pytest/vitest/ruff 通过。"
-    },
-    {
-      "agent_id": "B12-07",
-      "prompt": "你是 Polaris Director Fanout Evidence Agent。必须先用 codegraph MCP 探索 DirectorOrchestrator DirectorExecutionConfig factory_stage_executor。任务：补多路 Director fanout 的证据测试，验证 parallel/max_workers/binding_id 会进入事件/audit metadata。验收：pytest/mypy/ruff 通过。"
-    },
-    {
-      "agent_id": "B12-08",
-      "prompt": "你是 Polaris UI Health Integration Agent。必须先用 codegraph MCP 探索 ContextOSWorkspace useSettings llm status frontend api.ts。任务：将 LLM health/metrics 数据接入 UI 的一次性 snapshot 或 runtime event 视图，避免轮询；显示每个 role 的真实 context window 和 binding 状态。验收：vitest/tsc 通过，静态实时守卫通过。"
-    },
-    {
-      "agent_id": "B12-09",
-      "prompt": "你是 Polaris Regression Matrix Agent。必须先用 codegraph MCP 探索本轮所有改动。任务：选择并执行最小高信号回归矩阵，修复失败，不做无关重构。验收：ruff/mypy/pytest/vitest/tsc 通过，输出命令和结果。"
-    },
-    {
-      "agent_id": "B12-10",
-      "prompt": "你是 Polaris Plan Reconciler Agent。必须先用 codegraph MCP 并读取 batch12 日志。任务：在其他 B12 agents 完成后更新 next_phase_action_plan.json，删除已关闭 gap，列出剩余真实缺口和下一批 opencode 提示词。只改计划/文档。"
-    }
-  ]
+  "remaining_gaps": [],
+  "next_phase": {
+    "status": "READY_FOR_REAL_FACTORY_BATCH",
+    "known_code_defect_count": 0,
+    "objective": "Run a real bound-LLM factory_bench batch across L1-L12 and cluster any runtime-only failures into new root-cause gaps.",
+    "notes": [
+      "The current audit found no unresolved general code gaps after B13.",
+      "The next risk is not a known defect; it is empirical validation under larger real runs with PM/CE=Kimi, QA=MiniMax, Director=qwen3.6-27b multi-binding fanout."
+    ]
+  }
 }

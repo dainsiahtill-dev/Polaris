@@ -145,6 +145,14 @@
 6. 测试 harness 可以轮询状态端点等待异步完成，但不得把测试轮询包装为产品实时机制。
 7. 首页、Factory、PM、ChiefEngineer、Director、ContextOS 的实时显示变更必须以 Playwright 或等价浏览器审计证明：WebSocket 推送到达后页面无刷新更新。
 
+## 8.1 全链路任务流唯一标准
+
+1. 平台运行态任务链路唯一为 `PM → Chief Engineer → Director`；PM 产出任务合同，Chief Engineer 产出蓝图/交接证据，Director 执行 CE 交接后的任务。
+2. 禁止新增或保留 `PM → Director`、`PM->Director`、`PM -> Director` 旧链路作为产品执行路径、UI 文案、实时投影或兜底逻辑。
+3. 缺少 Chief Engineer 蓝图、handoff 或实时投影时必须 fail-closed：展示等待/阻塞 CE，不得把 PM 合同直接送入 Director，也不得用 Director 队列状态冒充 CE 已完成。
+4. Factory Bench、首页主战场、PM/ChiefEngineer/Director 工作区必须订阅同一 runtime.v2 事件事实，并展示 `PM → Chief Engineer → Director` 三段状态；任一阶段状态不得通过 HTTP 轮询或旧 PM→Director 快照推断补齐。
+5. 审计时必须 grep `PM → Director`、`PM->Director`、`PM -> Director`、`PM 规划 → Director`；命中产品代码或规范即 P0，除非文件明确标注为历史归档。
+
 ---
 
 ## 9. 文档与治理同步标准

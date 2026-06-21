@@ -18,6 +18,12 @@ def _write_audit(work_dir: Path, records: list[dict]) -> None:
 
 
 def _record(pid: str, all_passed: bool, task_market_ok: bool, dur: float, chain_log_text: str | None = None) -> dict:
+    requirements = {
+        "artifact_landed": {"ok": all_passed},
+        "environment_prepared": {"ok": all_passed},
+        "build_test_lint_ran": {"ok": all_passed},
+        "entrypoint_smoke": {"ok": all_passed},
+    }
     r = {
         "schema_version": "factory-audit/1",
         "project_id": pid,
@@ -32,7 +38,7 @@ def _record(pid: str, all_passed: bool, task_market_ok: bool, dur: float, chain_
             {"check": "py_compile", "ok": True, "detail": "ok"},
             {"check": "min_files:2", "ok": True, "detail": "ok"},
         ],
-        "real_run_gate": {"ok": all_passed},
+        "real_run_gate": {"ok": all_passed, "requirements": requirements},
         "llm_route_audit": {"ok": all_passed},
     }
     return r
@@ -63,6 +69,11 @@ class TestBatchReport(unittest.TestCase):
             self.assertEqual(report["by_level"], {2: {"total": 2, "passed": 1}})
             self.assertEqual(report["real_run_gate"]["passed"], 1)
             self.assertEqual(report["llm_route_audit"]["passed"], 1)
+            self.assertEqual(report["completion_contract"]["passed"], 1)
+            self.assertEqual(report["completion_contract"]["requirements"]["artifact_landed"]["passed"], 1)
+            self.assertEqual(report["completion_contract"]["requirements"]["environment_prepared"]["passed"], 1)
+            self.assertEqual(report["completion_contract"]["requirements"]["build_test_lint_ran"]["passed"], 1)
+            self.assertEqual(report["completion_contract"]["requirements"]["entrypoint_smoke"]["passed"], 1)
 
     def test_aggregate_prefers_structured_failure_taxonomy(self) -> None:
         import tempfile
@@ -144,6 +155,8 @@ class TestBatchReport(unittest.TestCase):
             self.assertIn("single_batch_contract_violation", out)
             self.assertIn("42.0", out)
             self.assertIn("real-run gate", out)
+            self.assertIn("completion gate", out)
+            self.assertIn("artifact_landed", out)
 
     def test_update_history_tracks_new_root_cause_streak(self) -> None:
         import tempfile
@@ -158,6 +171,37 @@ class TestBatchReport(unittest.TestCase):
             second = _update_history(report, history_path, batch_id="b2")
             self.assertEqual(second["last_new_root_causes"], [])
             self.assertEqual(second["streak_without_new_common_root_causes"], 1)
+
+    def test_main_stable_batches_gate_requires_history(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            _write_audit(d, [_record("L2-T", all_passed=True, task_market_ok=True, dur=1.0)])
+            self.assertEqual(main([str(d), "--require-stable-batches", "1"]), 2)
+
+    def test_main_stable_batches_gate_fails_until_streak_reaches_requirement(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            history = d / "root_cause_history.json"
+            record = _record("L2-F", all_passed=False, task_market_ok=False, dur=1.0)
+            record["failure_taxonomy"] = {
+                "ok": False,
+                "category": "chief_engineer_blueprint",
+                "root_cause_signature": "chief_engineer_blueprint:missing_or_invalid_blueprint",
+            }
+            _write_audit(d, [record])
+
+            self.assertEqual(
+                main([str(d), "--history", str(history), "--batch-id", "b1", "--require-stable-batches", "1"]),
+                1,
+            )
+            self.assertEqual(
+                main([str(d), "--history", str(history), "--batch-id", "b2", "--require-stable-batches", "1"]),
+                0,
+            )
 
 
 if __name__ == "__main__":

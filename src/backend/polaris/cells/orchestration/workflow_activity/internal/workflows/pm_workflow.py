@@ -1,4 +1,4 @@
-"""PM workflow for PM -> Director -> QA orchestration.
+"""PM workflow for PM -> Chief Engineer -> Director -> QA orchestration.
 
 Migrated from:
   polaris/cells/orchestration/workflow_runtime/internal/runtime_engine/workflows/pm_workflow.py

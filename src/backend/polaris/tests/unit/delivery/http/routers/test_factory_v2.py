@@ -143,7 +143,7 @@ def test_execution_stages_for_recovery_after_checkpoint() -> None:
 
     run = _make_factory_run(
         status="recovering",
-        stages=["pm_planning", "director_dispatch", "quality_gate"],
+        stages=["pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"],
         metadata={
             "current_stage": "director_dispatch",
             "last_successful_stage": "pm_planning",
@@ -153,7 +153,11 @@ def test_execution_stages_for_recovery_after_checkpoint() -> None:
     )
     run.recovery_point = "pm_planning"
 
-    assert _execution_stages_for_run(run, run.config.stages) == ["director_dispatch", "quality_gate"]
+    assert _execution_stages_for_run(run, run.config.stages) == [
+        "chief_engineer_review",
+        "director_dispatch",
+        "quality_gate",
+    ]
 
 
 def test_execution_stages_for_explicit_retry_phase_reruns_target_stage() -> None:

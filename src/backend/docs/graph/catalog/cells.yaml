@@ -76,6 +76,7 @@ cells:
       - polaris/delivery/http/routers/__init__.py
       - polaris/delivery/http/routers/_shared.py
       - polaris/delivery/http/routers/aggregate_chat.py
+      - polaris/delivery/http/routers/jetstream_utils.py
       - polaris/delivery/http/routers/sse_utils.py
       - polaris/delivery/http/v2/__init__.py
     public_contracts:
@@ -2968,6 +2969,7 @@ cells:
     owned_paths:
       - polaris/kernelone/events/**
       - polaris/infrastructure/log_pipeline/**
+      - polaris/infrastructure/messaging/nats/**
       - polaris/infrastructure/realtime/process_local/message_event_fanout.py
       - polaris/infrastructure/realtime/process_local/log_fanout.py
     public_contracts:
@@ -2998,6 +3000,9 @@ cells:
       - ws.outbound:runtime/*
       - network.http_outbound:*
       - process.exec:*
+      - process.spawn:*
+      - nats.publish:hp.runtime.>
+      - nats.consume:hp.runtime.>
     verification:
       tests:
         - tests/test_runtime_event_fanout.py

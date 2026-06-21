@@ -41,6 +41,7 @@ effects_allowed:
 - fs.read:runtime/events/*
 - fs.write:runtime/events/*
 - ws.outbound:runtime/*
+- process.spawn:*
 - nats.publish:hp.runtime.>
 - nats.consume:hp.runtime.>
 verification:

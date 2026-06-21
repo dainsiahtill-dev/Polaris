@@ -42,7 +42,7 @@ Polaris 采用**唐朝官员制度**的多 Agent 治理架构，每个角色有�
   - 探索模式 → 探索目录结构/模块
   - 搜索模式 → 搜索特定内容
   - 总结模式 → 读取并总结文件内容
-- **调用方式**: 由 PM/Director 按需调用
+- **调用方式**: 由 PM/Chief Engineer/Director 按需调用
 - **特点**: 只做读取，不做写入；由调用者自己汇总结果
 
 ```bash
@@ -69,6 +69,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 6. **运行策略为"直到通过"**：不设轮次上限，持续循环，直到所有验收门禁 PASS
 7. **只能修改 Polaris**：绝对不能修改目标项目的任何代码
 8. **实时推送单轨制**：应用/前端实时状态只能走统一 Nat-JetStream + `/v2/ws/runtime` WebSocket；禁止新增或保留 SSE、HTTP 长轮询、`setInterval`/timer fetch 轮询、轮询兜底、文件轮询伪实时。HTTP 只允许用于初始快照、显式用户刷新、一次性命令/查询；测试代码可为等待异步完成而轮询状态端点，但不得作为产品实时链路。
+9. **全链路任务流唯一制**：运行态任务链路只能是 `PM → Chief Engineer → Director`。PM 只能生成任务合同并交给 Chief Engineer 产出蓝图/交接证据；Director 只能消费 CE 交接后的任务。禁止任何产品代码、脚本、UI 或文档回退为 `PM → Director` 旧链路，缺少 CE 投影/蓝图时必须显示阻塞或等待 CE，不得直连 Director。
 
 ### 实时推送硬门禁
 
@@ -78,6 +79,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 - 新增实时事件必须先定义 JetStream subject/channel 映射，再由 `RuntimeTransportProvider`/`runtimeSocketManager` 订阅；不得在组件内用 `setInterval` 调接口模拟实时。
 - 允许的非推送请求只有：页面加载初始 snapshot、用户点击刷新、命令提交后的单次确认、Playwright/pytest 等测试等待循环。
 - 审计时必须 grep `EventSource`、`text/event-stream`、`StreamingResponse`、`setInterval`、`pollInterval`、`polling`、`轮询`、`fallback`、`fetchRunStatus`；命中产品实时路径即失败，除非有明确注释证明是 UI 动画/时钟/重连/测试等待而非数据刷新。
+- 审计时必须 grep `PM → Director`、`PM->Director`、`PM -> Director`、`PM 规划 → Director`；命中产品链路、UI 文案或运行路径即失败，除非明确标记为历史档案。当前唯一允许的主链路文本是 `PM → Chief Engineer → Director`。
 
 ### 后端迁移承载规则
 
@@ -187,7 +189,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 
 1. 检查 `integration_qa` 结果为通过态（目标 `reason=integration_qa_passed`）
 2. 若失败，定位失败源头（PM 合同、Director 执行、工具策略、代码实现、测试基线）并修复
-3. 修复后先回归失败门禁，再做整链回归（政事堂→PM→Director→QA）
+3. 修复后先回归失败门禁，再做整链回归（政事堂→PM→Chief Engineer→Director→QA）
 
 ---
 

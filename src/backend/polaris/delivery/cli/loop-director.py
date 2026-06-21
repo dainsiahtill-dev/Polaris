@@ -250,6 +250,27 @@ def extract_pm_tasks(pm_contract: dict) -> list[dict]:
     return extracted
 
 
+def _has_chief_engineer_handoff(task: dict[str, Any]) -> bool:
+    metadata_raw = task.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    for key in (
+        "blueprint_id",
+        "chief_engineer_blueprint_id",
+        "chief_engineer_handoff_id",
+        "blueprint_path",
+        "runtime_blueprint_path",
+    ):
+        if str(metadata.get(key) or task.get(key) or "").strip():
+            return True
+    chief_engineer = metadata.get("chief_engineer")
+    if isinstance(chief_engineer, dict) and chief_engineer:
+        return True
+    construction_plan = metadata.get("construction_plan")
+    if isinstance(construction_plan, dict) and construction_plan:
+        return True
+    return bool(metadata.get("handoff_ready") is True and str(metadata.get("handoff_source") or "").strip())
+
+
 def _normalize_dependency_ids(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -473,6 +494,19 @@ class DirectorV2Runner:
             # Load PM tasks
             pm_contract = load_pm_task_contract(pm_task_path)
             tasks = extract_pm_tasks(pm_contract)
+            missing_handoff = [
+                str(task.get("task_id") or task.get("subject") or "<unknown>").strip()
+                for task in tasks
+                if not _has_chief_engineer_handoff(task)
+            ]
+            if missing_handoff:
+                error = (
+                    "Chief Engineer blueprint/handoff evidence is required before Director execution; "
+                    f"missing for tasks: {', '.join(missing_handoff[:12])}"
+                )
+                logger.error("[DirectorV2] %s", error)
+                self.results["errors"].append(error)
+                return self.results
 
             logger.info("[DirectorV2] Loaded %s tasks from PM contract", len(tasks))
 

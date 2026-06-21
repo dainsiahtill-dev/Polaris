@@ -582,15 +582,15 @@ class TestPmThinCli:
         monkeypatch.setattr(
             sys,
             "argv",
-            ["pm-thin", "--workspace", "/tmp/ws", "--directive", "Do it", "--start-from", "director"],
+            ["pm-thin", "--workspace", "/tmp/ws", "--directive", "Do it", "--start-from", "pm"],
         )
 
         assert cli_thin.main() == 0
         assert captured["directive"] == "Do it"
-        assert captured["start_from"] == "director"
+        assert captured["start_from"] == "pm"
         assert "--directive" in captured["command"]
         assert "--start-from" in captured["command"]
-        assert captured["command"][captured["command"].index("--start-from") + 1] == "director"
+        assert captured["command"][captured["command"].index("--start-from") + 1] == "pm"
 
 
 # ---------------------------------------------------------------------------

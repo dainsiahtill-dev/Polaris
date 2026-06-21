@@ -542,6 +542,8 @@ describe('PMWorkbenchPanel RoleSession service bridge', () => {
     fireEvent.change(screen.getByTestId('pm-workbench-run-directive'), {
       target: { value: 'Plan the payment workflow' },
     });
+    const readiness = await screen.findByTestId('pm-workbench-director-readiness');
+    await waitFor(() => expect(readiness).toHaveTextContent('ready'));
     fireEvent.click(screen.getByTestId('pm-workbench-run-pm'));
 
     await waitFor(() => expect(pmServiceMocks.getPmRun).toHaveBeenCalledWith('pm-run-direct', 'C:/Temp/Product'));

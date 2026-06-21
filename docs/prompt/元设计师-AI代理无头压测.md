@@ -15,7 +15,7 @@
 
 你要验证的是：
 
-- Polaris 的 `Architect/Court -> PM -> Director -> QA` AI 代理链是否稳定
+- Polaris 的 `Architect/Court -> PM -> Chief Engineer -> Director -> QA` AI 代理链是否稳定
 - Claude / Codex 这类代理在 Polaris 里是否持续输出有效任务合同与执行结果
 - Nat-JetStream + `/v2/ws/runtime` runtime.v2 推送、PM 合同、Director 血缘、QA 结果是否一致
 - 当链路失败时，Polaris 能否自行定位根因、修复并回归

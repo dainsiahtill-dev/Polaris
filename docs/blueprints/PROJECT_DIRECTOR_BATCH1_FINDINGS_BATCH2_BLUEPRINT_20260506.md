@@ -245,7 +245,7 @@ Current real acceptance has two blocking failures:
    Observable state: Director is disabled by `LLM 就绪检查未通过`; runtime panel
    reports `required: pm, director, qa` and `blocked: pm, director, qa`; event
    count is `0`.
-2. `pm-director-real-flow.spec.ts` / `real PM -> Director flow reaches PM and
+2. `pm-director-real-flow.spec.ts` / `real PM -> Chief Engineer -> Director flow reaches PM and
    Director workspaces` fails. Evidence path:
    `test-results/electron/pm-director-real-flow-real-c864b--PM-and-Director-workspaces/`.
    Observable state: PM workspace has no tasks (`0/0`), no PM/Director

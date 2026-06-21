@@ -2,7 +2,7 @@
 
 > **面向单人开发者的云端主模型 + 本地 SLM 协同 AI 自动化软件开发指挥台**
 >
-> 用"PM 规划 → Director 执行 → QA 校验 → Dashboard 可视化"的闭环，把"写代码"从聊天式辅助升级为**可回放、可追溯、可治理**的工程流水线。
+> 用"PM 规划 → Chief Engineer 蓝图/交接 → Director 执行 → QA 校验 → Dashboard 可视化"的闭环，把"写代码"从聊天式辅助升级为**可回放、可追溯、可治理**的工程流水线。
 
 ---
 
@@ -105,7 +105,7 @@ Polaris 把"经验复用"工程化为四块能力：
 | --------------------------- | --------------------------------------------------- |
 | **Memory（记忆）**          | 把关键事件、结论沉淀到长期记忆（向量检索）          |
 | **Reflection（反思）**      | 从历史 run 归纳启发式规则，减少反复踩坑             |
-| **Persona（人设）**         | 用角色风格与禁忌约束行为（PM/Director/QA 边界明确） |
+| **Persona（人设）**         | 用角色风格与禁忌约束行为（PM/Chief Engineer/Director/QA 边界明确） |
 | **Inner Voice（内心独白）** | 从模型输出中抽取思考摘要，展示"自言自语"            |
 
 并通过 **Glass Mind（透明思维）** 在 UI 中展示：检索了哪些记忆、触发了哪些反思、上下文如何构建——让系统更可控、更可解释。
@@ -163,7 +163,7 @@ Polaris 把"经验复用"工程化为四块能力：
 ### LLM 面试模式
 
 - LLM 设置以“面试大厅 → 面试进行中”完成模型接入与胜任性测试。
-- PM/Director 为核心岗位，必须通过 thinking/reasoning 检测才可上岗。
+- PM/Chief Engineer/Director 为核心岗位，必须通过 thinking/reasoning 检测才可上岗。
 - QA/Docs 为辅助岗位，thinking 可选但会提示建议。
 - 面试通过后，可将任意已配置模型绑定到岗位，不再强制固定到单一后端。
 
@@ -267,7 +267,9 @@ Polaris 的所有设计决策都遵循以下原则：
 
 ### Control/Execute Separation（控制/执行分离）
 
-PM 定义合约，Director 执行合约，Dashboard 旁路观测。
+PM 定义合约，Chief Engineer 产出蓝图与交接证据，Director 执行 CE 交接后的合约，Dashboard 旁路观测。
+
+`PM → Chief Engineer → Director` 是唯一运行态任务流。缺少 Chief Engineer 蓝图、handoff 或实时投影时，系统必须显示等待/阻塞 CE；禁止回退到 `PM → Director` 旧链路，禁止用 Director 队列状态冒充 CE 已完成。
 
 ### Fact-First Narrative（事实优先叙事）
 

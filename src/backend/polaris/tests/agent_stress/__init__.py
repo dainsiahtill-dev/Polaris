@@ -4,7 +4,7 @@
 
 当前事实基线：
 - 入口是 `python -m polaris.tests.agent_stress.runner`
-- 主执行链由 Polaris 当前 Factory 编排决定，通常为 `Architect/Court -> PM -> Director -> QA`
+- 主执行链由 Polaris 当前 Factory 编排决定，固定为 `Architect/Court -> PM -> Chief Engineer -> Director -> QA`
 - `Chief Engineer` 仅在 Polaris 当前运行路径按需插入
 - 压测框架只通过 Polaris 对外 HTTP API 驱动，不直接调用内部 CLI
 

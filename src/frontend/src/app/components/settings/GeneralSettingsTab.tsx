@@ -612,11 +612,11 @@ export function GeneralSettingsTab({ settings, onSave }: GeneralSettingsTabProps
             </div>
           </GlassCard>
 
-          <GlassCard title="Director 集成" icon={Layers}>
+          <GlassCard title="全链路执行" icon={Layers}>
             <div className="space-y-3">
               <ToggleField
-                label="启用 Director"
-                description="PM 自动运行 Director"
+                label="启用执行阶段"
+                description="PM、Chief Engineer、Director 顺序执行"
                 checked={formState.pmRunsDirector}
                 onChange={(v) => updateField('pmRunsDirector', v)}
                 icon={Server}

@@ -33,25 +33,25 @@ def test_roles_runtime_depends_on_matches_imports() -> None:
     deps = _deps("roles.runtime")
     expected = {
         "archive.run_archive",
-        "architect.design",
         "audit.diagnosis",
         "chief_engineer.blueprint",
+        "code_intelligence.engine",
         "cognitive.knowledge_distiller",
-        "context.catalog",
         "context.engine",
         "director.execution",
+        "factory.cognitive_runtime",
         "factory.verification_guard",
         "finops.budget_guard",
         "llm.control_plane",
-        "orchestration.pm_planning",
         "policy.permission",
         "policy.workspace_guard",
         "qa.audit_verdict",
-        "roles.adapters",
         "roles.engine",
         "roles.kernel",
         "roles.profile",
         "roles.session",
+        "runtime.execution_broker",
+        "runtime.projection",
         "runtime.state_owner",
         "runtime.task_market",
     }
@@ -64,10 +64,7 @@ def test_roles_kernel_depends_on_matches_imports() -> None:
     expected = {
         "director.execution",
         "factory.cognitive_runtime",
-        "llm.dialogue",
-        "roles.adapters",
         "roles.profile",
-        "roles.runtime",
         "roles.session",
         "runtime.task_runtime",
         "storage.layout",
@@ -77,14 +74,22 @@ def test_roles_kernel_depends_on_matches_imports() -> None:
     assert "policy.workspace_guard" not in deps
     assert "audit.evidence" not in deps
     assert "finops.budget_guard" not in deps
+    # kernelone is the shared base layer, not a declared cell dependency
+    # (kernelone.* imports are zero cell-edge by the catalog gate's model).
+    assert "kernelone.core" not in deps
+    # roles.scout is imported only by a kernel *test* (dispatch probe) via its
+    # public contracts. Declaring it would close a cross-cell cycle
+    # (scout -> ... -> roles.kernel), so it is intentionally left undeclared and
+    # tracked as an accepted catalog-gate exception instead.
+    assert "roles.scout" not in deps
 
 
 def test_roles_adapters_depends_on_matches_imports() -> None:
     deps = _deps("roles.adapters")
     expected = {
         "director.execution",
+        "factory.cognitive_runtime",
         "factory.pipeline",
-        "llm.dialogue",
         "orchestration.pm_planning",
         "orchestration.workflow_runtime",
         "roles.engine",

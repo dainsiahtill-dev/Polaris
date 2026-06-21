@@ -41,7 +41,6 @@ depends_on:
 - director.execution
 - factory.cognitive_runtime
 - factory.pipeline
-- llm.dialogue
 - orchestration.pm_planning
 - orchestration.workflow_runtime
 - roles.engine

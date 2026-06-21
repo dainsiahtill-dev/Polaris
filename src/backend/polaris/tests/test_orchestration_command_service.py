@@ -193,6 +193,7 @@ async def test_execute_director_run_propagates_metadata_to_role_entry_and_reques
         options={
             "execution_mode": "parallel",
             "metadata": {
+                "blueprint_id": "ce-task-1",
                 "execution_backend": "projection_reproject",
                 "projection": {
                     "scenario_id": "scenario_alpha",
@@ -208,10 +209,26 @@ async def test_execute_director_run_propagates_metadata_to_role_entry_and_reques
     assert result.metadata["requested_task_ids"] == ["task-1"]
     assert stub.request is not None
     assert stub.request.role_entries[0].metadata["execution_backend"] == "projection_reproject"
+    assert stub.request.role_entries[0].metadata["blueprint_id"] == "ce-task-1"
     assert stub.request.role_entries[0].input == "Execute tasks: task-1"
     assert stub.request.metadata["tasks"] == ["task-1"]
     assert stub.request.metadata["execution_backend"] == "projection_reproject"
     assert stub.request.metadata["projection"]["experiment_id"] == "exp-001"
+
+
+@pytest.mark.asyncio
+async def test_execute_director_run_requires_chief_engineer_handoff(tmp_path: Path) -> None:
+    service = OrchestrationCommandService(settings={})
+
+    result = await service.execute_director_run(
+        workspace=str(tmp_path),
+        tasks=["task-1"],
+        options={"execution_mode": "parallel"},
+    )
+
+    assert result.status == "failed"
+    assert result.reason_code == "CHIEF_ENGINEER_HANDOFF_REQUIRED"
+    assert "Chief Engineer blueprint/handoff evidence" in result.message
 
 
 @pytest.mark.asyncio

@@ -57,7 +57,7 @@ npm run test:electron
 # 非 LLM 主流程回归（推荐）
 npm run test:e2e -- src/backend/polaris/tests/electron/realtime-visibility.spec.ts src/backend/polaris/tests/electron/panel-error.spec.ts
 
-# PM -> Director 全链路（需要真实设置）
+# PM -> Chief Engineer -> Director 全链路（需要真实设置）
 set KERNELONE_E2E_USE_REAL_SETTINGS=1
 npm run test:e2e -- src/backend/polaris/tests/electron/pm-director-real-flow.spec.ts
 

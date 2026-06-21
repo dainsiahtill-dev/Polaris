@@ -22,7 +22,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
     DeliveryContract,
     DeliveryMode,

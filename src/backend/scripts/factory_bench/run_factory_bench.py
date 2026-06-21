@@ -568,6 +568,65 @@ def _emit_bench_event(
     return local_ok or backend_ok
 
 
+def _factory_role_from_phase(phase: str) -> str:
+    token = str(phase or "").strip().lower()
+    if token in {"pending", "intake", "planning", "pm_planning", "docs_check"}:
+        return "pm"
+    if "chief" in token or "blueprint" in token or token in {"ce", "ce_review"}:
+        return "chief_engineer"
+    if "director" in token or token in {"implementation", "mutation", "execution", "handover"}:
+        return "director"
+    if "qa" in token or "verification" in token or "quality" in token:
+        return "qa"
+    return "unknown"
+
+
+def _emit_factory_phase_event(
+    *,
+    bench_workspace: Path,
+    project_workspace: Path,
+    project_id: str,
+    level: int,
+    title: str,
+    status: str,
+    phase_payload: dict[str, Any],
+    cache_root: str | None = None,
+) -> bool:
+    phase = str(phase_payload.get("phase") or "").strip()
+    run_status = str(phase_payload.get("status") or status or "").strip()
+    if not phase and not run_status:
+        return False
+    role = _factory_role_from_phase(phase)
+    run_id = str(phase_payload.get("run_id") or "").strip()
+    summary_parts = [project_id]
+    if role != "unknown":
+        summary_parts.append(role)
+    if phase:
+        summary_parts.append(f"phase={phase}")
+    if run_status:
+        summary_parts.append(f"status={run_status}")
+    meta = {
+        "project_id": project_id,
+        "level": int(level),
+        "title": title,
+        "workspace": str(project_workspace),
+        "phase": phase,
+        "status": run_status,
+        "role": role,
+    }
+    if run_id:
+        meta["run_id"] = run_id
+    return _emit_bench_event(
+        workspace=bench_workspace,
+        project_id=project_id,
+        level=level,
+        name="project.phase",
+        summary=" ".join(part for part in summary_parts if part),
+        meta=meta,
+        cache_root=cache_root,
+    )
+
+
 # --- Bench subprocess -> backend HTTP client ---
 #
 # The bench runs in a terminal and posts lifecycle events to the Factory
@@ -1765,7 +1824,7 @@ def main() -> int:
 
     # Apply --limit if specified
     if args.limit > 0:
-        selected = selected[:args.limit]
+        selected = selected[: args.limit]
         print(f"[factory-bench] limiting to {len(selected)} project(s) (--limit={args.limit})", flush=True)
 
     # Handle --dry-run: validate and generate audit structure without running chain
@@ -1775,16 +1834,16 @@ def main() -> int:
         base.mkdir(parents=True, exist_ok=True)
         audit_dir = base / "audits" / "dry-run"
         audit_dir.mkdir(parents=True, exist_ok=True)
-        
+
         catalog_hash = hashlib.sha256(
             json.dumps(projects, sort_keys=True, ensure_ascii=False).encode("utf-8")
         ).hexdigest()[:16]
-        
+
         for project in selected:
             pid = str(project.get("id") or "")
             level = int(project.get("level") or 0)
             lang = str(project.get("primary_language") or "")
-            
+
             audit_file = audit_dir / f"{pid}.audit.json"
             project_audit = {
                 "catalog_schema_version": "factory-bench/2",
@@ -1807,7 +1866,7 @@ def main() -> int:
             }
             _write_immutable_json(audit_file, project_audit)
             print(f"[factory-bench]   {pid} L{level} {lang}: audit package generated", flush=True)
-        
+
         print(f"[factory-bench] dry-run complete: {len(selected)} audit package(s) -> {audit_dir}", flush=True)
         return 0
 
@@ -1886,14 +1945,45 @@ def main() -> int:
             encoding="utf-8",
         )
         print(f"[factory-bench] === {pid} {project['title']} ===", flush=True)
+        project_level = int(project.get("level") or 0)
+        project_title = str(project.get("title") or "")
         _emit_bench_event(
             workspace=base,
             project_id=pid,
-            level=int(project.get("level") or 0),
+            level=project_level,
             name="project.started",
-            summary=f"{pid} {project['title']} starting",
-            meta={"session_id": bench_session_id, "title": project.get("title") or ""},
+            summary=f"{pid} {project_title} starting",
+            meta={"session_id": bench_session_id, "title": project_title},
         )
+        last_stage_event_key = ""
+
+        def _on_factory_stage_change(
+            stage_status: str,
+            status_payload: dict[str, Any],
+            *,
+            _project_id: str = pid,
+            _project_level: int = project_level,
+            _project_title: str = project_title,
+            _project_workspace: Path = workspace,
+        ) -> None:
+            nonlocal last_stage_event_key
+            phase = str(status_payload.get("phase") or "").strip()
+            run_status = str(status_payload.get("status") or stage_status or "").strip()
+            run_ref = str(status_payload.get("run_id") or "").strip()
+            event_key = f"{run_ref}:{run_status}:{phase}"
+            if not event_key.strip(":") or event_key == last_stage_event_key:
+                return
+            last_stage_event_key = event_key
+            _emit_factory_phase_event(
+                bench_workspace=base,
+                project_workspace=_project_workspace,
+                project_id=_project_id,
+                level=_project_level,
+                title=_project_title,
+                status=stage_status,
+                phase_payload=status_payload,
+            )
+
         try:
             if use_legacy_chain:
                 chain = run_chain(
@@ -1912,6 +2002,7 @@ def main() -> int:
                     backend_token=backend_token,
                     timeout_s=args.timeout,
                     log_path=log_path,
+                    on_stage_change=_on_factory_stage_change,
                 )
         except subprocess.TimeoutExpired:
             chain = {"exit_code": -1, "duration_s": float(args.timeout), "timeout": True}

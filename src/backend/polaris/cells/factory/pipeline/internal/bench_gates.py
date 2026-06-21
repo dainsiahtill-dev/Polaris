@@ -48,6 +48,7 @@ _CPP_SOURCE_SUFFIXES = (".cc", ".cpp", ".cxx")
 _ENTRYPOINT_FAILURE_MARKER_RE = re.compile(r"(?im)^\s*FAIL(?:ED)?(?:\b|:)")
 _FAILURE_CATEGORIES = {
     "pm_contract",
+    "chief_engineer_blueprint",
     "director_tool_execution",
     "llm_output",
     "context_budget",
@@ -1743,6 +1744,11 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     elif not record.get("has_plan_doc") or record.get("wrong_product_suspect"):
         category = "pm_contract"
         reason = "missing_or_wrong_contract"
+    elif record.get("has_blueprint_doc") is False or any(
+        gate.get("gate") == "blueprint_artifact_present" and not gate.get("ok") for gate in _gate_failures(record)
+    ):
+        category = "chief_engineer_blueprint"
+        reason = "missing_or_invalid_blueprint"
     elif str(record.get("chain_state") or "") != "clean":
         director = (
             record.get("chain_results", {}).get("director", {}) if isinstance(record.get("chain_results"), dict) else {}

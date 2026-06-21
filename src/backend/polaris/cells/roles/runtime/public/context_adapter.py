@@ -162,7 +162,11 @@ def augment_context_with_repo_intelligence(
             "ranked_symbols": len(repo_map_result.ranked_symbols),
         }
         return context_override
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
+        # Repo intelligence is a best-effort context augmentation. Filesystem
+        # failures from the tags cache (unwritable workspace, missing parent
+        # dir, permission denied) must degrade gracefully rather than crash
+        # role execution -- OSError covers PermissionError/FileNotFoundError.
         logger.debug("repo intelligence injection skipped: %s", exc)
         return context_override
 

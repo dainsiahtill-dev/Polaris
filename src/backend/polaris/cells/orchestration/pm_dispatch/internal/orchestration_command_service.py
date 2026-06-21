@@ -53,6 +53,24 @@ def _coerce_metadata_overrides(value: Any) -> dict[str, Any]:
     return overrides
 
 
+def _has_chief_engineer_handoff(payload: dict[str, Any]) -> bool:
+    metadata_raw = payload.get("metadata")
+    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    merged: dict[str, Any] = {}
+    merged.update(payload)
+    merged.update(metadata)
+    for key in (
+        "blueprint_id",
+        "chief_engineer_blueprint_id",
+        "chief_engineer_handoff_id",
+        "blueprint_path",
+        "runtime_blueprint_path",
+    ):
+        if str(merged.get(key) or "").strip():
+            return True
+    return bool(merged.get("handoff_ready") is True and str(merged.get("handoff_source") or "").strip())
+
+
 def _pm_task_rows_from_payload(payload: Any) -> list[dict[str, Any]]:
     """Extract PM task rows from the persisted PM task contract payload."""
 
@@ -151,8 +169,8 @@ def _director_role_entry_metadata(
     metadata["pm_task_id"] = normalized_task_id
     metadata.setdefault("source_task_id", normalized_task_id)
     metadata.setdefault("external_task_id", normalized_task_id)
-    metadata.setdefault("director_task_source", "pm_task_contract")
-    metadata.setdefault("source", "pm_task_contract")
+    metadata.setdefault("director_task_source", "chief_engineer_handoff")
+    metadata.setdefault("source", "chief_engineer_handoff")
     return metadata
 
 
@@ -416,6 +434,31 @@ class OrchestrationCommandService:
 
             selected_task_payloads = _select_pm_task_payloads(workspace, task_ids)
             if selected_task_payloads:
+                missing_handoff_ids: list[str] = []
+                for task_payload in selected_task_payloads:
+                    handoff_payload = dict(task_payload)
+                    handoff_payload.update(metadata_overrides)
+                    if not _has_chief_engineer_handoff(handoff_payload):
+                        missing_handoff_ids.append(
+                            str(
+                                task_payload.get("id")
+                                or task_payload.get("task_id")
+                                or task_payload.get("pm_task_id")
+                                or "<unknown>"
+                            ).strip()
+                        )
+                if missing_handoff_ids:
+                    return CommandResult(
+                        run_id=run_id,
+                        status="failed",
+                        message=(
+                            "Director run requires Chief Engineer blueprint/handoff evidence; "
+                            f"missing for tasks: {', '.join(missing_handoff_ids)}"
+                        ),
+                        reason_code="CHIEF_ENGINEER_HANDOFF_REQUIRED",
+                        started_at=started_at,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                    )
                 role_entries = []
                 for task_payload in selected_task_payloads:
                     task_id = str(
@@ -436,6 +479,15 @@ class OrchestrationCommandService:
                         )
                     )
             else:
+                if not _has_chief_engineer_handoff(metadata_overrides):
+                    return CommandResult(
+                        run_id=run_id,
+                        status="failed",
+                        message="Director run requires Chief Engineer blueprint/handoff evidence",
+                        reason_code="CHIEF_ENGINEER_HANDOFF_REQUIRED",
+                        started_at=started_at,
+                        completed_at=datetime.now(timezone.utc).isoformat(),
+                    )
                 # Build role entries
                 input_text = director_options.task_filter or "Execute ready tasks"
                 if task_ids:
@@ -614,7 +666,7 @@ class OrchestrationCommandService:
         Example:
             result = await service.execute_factory_run(
                 workspace=".",
-                config={"stages": ["docs", "pm", "director"]}
+                config={"stages": ["docs", "pm", "chief_engineer", "director"]}
             )
         """
         run_id = self._generate_run_id("factory")
@@ -632,10 +684,22 @@ class OrchestrationCommandService:
 
             factory_service = FactoryRunService(workspace=Path(opts.get("workspace", ".")))
 
+            requested_stages = opts.get(
+                "stages",
+                ["docs_generation", "pm_planning", "chief_engineer_review", "director_dispatch"],
+            )
+            stages = [str(stage).strip() for stage in requested_stages if str(stage).strip()]
+            if "director_dispatch" in stages:
+                director_index = stages.index("director_dispatch")
+                if "pm_planning" not in stages:
+                    stages.insert(0, "pm_planning")
+                    director_index = stages.index("director_dispatch")
+                if "chief_engineer_review" not in stages[:director_index]:
+                    stages.insert(director_index, "chief_engineer_review")
             config = FactoryConfig(
                 name=f"orch_factory_{run_id}",
                 description="Factory run from orchestration command",
-                stages=opts.get("stages", ["docs_generation", "pm_planning", "director_dispatch"]),
+                stages=stages,
                 auto_dispatch=factory_options.auto_start,
             )
 

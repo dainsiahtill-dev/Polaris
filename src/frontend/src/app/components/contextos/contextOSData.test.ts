@@ -884,3 +884,401 @@ describe('Phase 3+ multi-worker LLM tracking model', () => {
     expect(w1?.latestContextSnapshotRef).toBe('abc123');
   });
 });
+
+describe('provider latency from WS telemetry', () => {
+  function wsLog(over: Partial<LogEntry> & { id: string; timestamp: string }): LogEntry {
+    return { level: 'info', source: 'System', message: '', ...over };
+  }
+  const telemetryOf = (llm: LogEntry[] = [], exec: LogEntry[] = [], proc: LogEntry[] = []) =>
+    buildTelemetryFromStream(llm, exec, proc);
+
+  it('derives realLatencyMs from the newest llm_completed event', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({ id: 'c1', timestamp: '2026-06-15T10:00:00Z', level: 'success', source: 'PM', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 500, completionTokens: 200, totalTokens: 700, durationMs: 1200 }, tags: ['llm_completed'] }),
+      wsLog({ id: 'c2', timestamp: '2026-06-15T10:00:05Z', level: 'success', source: 'PM', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 600, completionTokens: 300, totalTokens: 900, durationMs: 3400 }, tags: ['llm_completed'] }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    // realLatencyMs = lastLatencyMs from newest event (3400ms)
+    expect(model.realLatencyMs).toBe(3400);
+    expect(model.lastLatencyMs).toBe(3400);
+  });
+
+  it('falls back to avgLatencyMs when no single latest latency is available', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({ id: 'c1', timestamp: '2026-06-15T10:00:00Z', level: 'success', source: 'PM', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 100, completionTokens: 50, totalTokens: 150, durationMs: 1000 }, tags: ['llm_completed'] }),
+      wsLog({ id: 'c2', timestamp: '2026-06-15T10:00:02Z', level: 'success', source: 'Director', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'Director', promptTokens: 200, completionTokens: 100, totalTokens: 300, durationMs: 2000 }, tags: ['llm_completed'] }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    // realLatencyMs = lastLatencyMs from newest event (Director's 2000ms)
+    expect(model.realLatencyMs).toBe(2000);
+  });
+
+  it('shows null latency when no llm_completed events carry durationMs', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({ id: 'c1', timestamp: '2026-06-15T10:00:00Z', level: 'success', source: 'PM', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 100, completionTokens: 50, totalTokens: 150 }, tags: ['llm_completed'] }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    expect(model.realLatencyMs).toBeNull();
+    expect(model.lastLatencyMs).toBeNull();
+  });
+
+  it('derives per-role latency from role-specific llm_completed events', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({ id: 'pm1', timestamp: '2026-06-15T10:00:00Z', level: 'success', source: 'PM', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 500, completionTokens: 200, totalTokens: 700, durationMs: 2400 }, tags: ['llm_completed'] }),
+      wsLog({ id: 'dir1', timestamp: '2026-06-15T10:00:02Z', level: 'success', source: 'Director', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'Director', promptTokens: 800, completionTokens: 300, totalTokens: 1100, durationMs: 1800 }, tags: ['llm_completed'] }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    const pm = model.roles.find((r) => r.id === 'pm')!;
+    const director = model.roles.find((r) => r.id === 'director')!;
+    // PM role events carry durationMs=2400; Director carries 1800
+    expect(pm.internalContext.events[0]?.durationMs).toBe(2400);
+    expect(director.internalContext.events[0]?.durationMs).toBe(1800);
+  });
+
+  it('renders latency in the pipeline LLM metric', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({ id: 'c1', timestamp: '2026-06-15T10:00:00Z', level: 'success', source: 'PM', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 100, completionTokens: 50, totalTokens: 150, durationMs: 3200 }, tags: ['llm_completed'] }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    const llmStage = model.pipeline.find((s) => s.id === 'llm')!;
+    expect(llmStage.metric).toContain('3200ms');
+  });
+});
+
+describe('provider error handling', () => {
+  function wsLog(over: Partial<LogEntry> & { id: string; timestamp: string }): LogEntry {
+    return { level: 'info', source: 'System', message: '', ...over };
+  }
+  const telemetryOf = (llm: LogEntry[] = [], exec: LogEntry[] = [], proc: LogEntry[] = []) =>
+    buildTelemetryFromStream(llm, exec, proc);
+
+  it('counts llm_failed events as errors in telemetry', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({ id: 'f1', timestamp: '2026-06-15T10:00:00Z', level: 'error', source: 'PM', message: 'provider timeout', meta: { channel: 'llm', streamEvent: 'llm_failed', role: 'PM', error: 'timeout' }, tags: ['llm_failed'] }),
+      wsLog({ id: 'c1', timestamp: '2026-06-15T10:00:02Z', level: 'success', source: 'PM', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 100, completionTokens: 50, totalTokens: 150, durationMs: 1000 }, tags: ['llm_completed'] }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    expect(model.errorCount).toBe(1);
+    expect(model.calls).toBe(2); // both llm_failed and llm_completed count as calls
+  });
+
+  it('flags telemetry component as blocked when errors exist', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({ id: 'f1', timestamp: '2026-06-15T10:00:00Z', level: 'error', source: 'Director', message: 'rate limit exceeded', meta: { channel: 'llm', streamEvent: 'llm_failed', role: 'Director', error: 'rate_limit' }, tags: ['llm_failed'] }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    expect(model.errorCount).toBe(1);
+    const telemetryComponent = model.components.find((c) => c.id === 'telemetry');
+    expect(telemetryComponent?.state).toBe('blocked');
+  });
+
+  it('does not count llm_failed events as token usage', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({ id: 'f1', timestamp: '2026-06-15T10:00:00Z', level: 'error', source: 'PM', message: 'failed', meta: { channel: 'llm', streamEvent: 'llm_failed', role: 'PM', error: 'internal_error' }, tags: ['llm_failed'] }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    expect(model.totalTokens).toBe(0);
+    expect(model.errorCount).toBe(1);
+  });
+
+  it('propagates provider error to role internal context', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({ id: 'f1', timestamp: '2026-06-15T10:00:00Z', level: 'error', source: 'PM', message: 'provider error', meta: { channel: 'llm', streamEvent: 'llm_failed', role: 'PM', error: 'provider_unavailable' }, tags: ['llm_failed'] }),
+      wsLog({ id: 'c1', timestamp: '2026-06-15T10:00:02Z', level: 'success', source: 'PM', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 100, completionTokens: 50, totalTokens: 150, durationMs: 500 }, tags: ['llm_completed'] }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    const pm = model.roles.find((r) => r.id === 'pm')!;
+    expect(pm.internalContext.eventCount).toBe(2);
+    // The error event is in the events list
+    const errorEvent = pm.internalContext.events.find((e) => e.category === 'error');
+    expect(errorEvent).toBeDefined();
+  });
+
+  it('shows error count in the telemetry component metric', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({ id: 'f1', timestamp: '2026-06-15T10:00:00Z', level: 'error', source: 'PM', message: 'err1', meta: { channel: 'llm', streamEvent: 'llm_failed', role: 'PM', error: 'timeout' }, tags: ['llm_failed'] }),
+      wsLog({ id: 'f2', timestamp: '2026-06-15T10:00:02Z', level: 'error', source: 'Director', message: 'err2', meta: { channel: 'llm', streamEvent: 'llm_failed', role: 'Director', error: 'rate_limit' }, tags: ['llm_failed'] }),
+      wsLog({ id: 'c1', timestamp: '2026-06-15T10:00:04Z', level: 'success', source: 'PM', message: 'ok', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 100, completionTokens: 50, totalTokens: 150, durationMs: 500 }, tags: ['llm_completed'] }),
+    ];
+    const model = buildContextOSModel(baseInput({ telemetry: telemetryOf(llmStream) }));
+    const telemetryComponent = model.components.find((c) => c.id === 'telemetry')!;
+    expect(telemetryComponent.state).toBe('blocked');
+    expect(telemetryComponent.metric).toContain('2 错误');
+    expect(telemetryComponent.metric).toContain('3 调用');
+  });
+});
+
+describe('runtime running state transitions', () => {
+  it('sets running=false when both pmRunning and directorRunning are false', () => {
+    const model = buildContextOSModel(baseInput({ pmRunning: false, directorRunning: false }));
+    expect(model.running).toBe(false);
+    expect(model.dataIdle).toBe(true);
+  });
+
+  it('sets running=true when pmRunning is true', () => {
+    const model = buildContextOSModel(baseInput({ pmRunning: true, currentPhase: 'planning' }));
+    expect(model.running).toBe(true);
+    expect(model.dataIdle).toBe(false);
+  });
+
+  it('sets running=true when directorRunning is true', () => {
+    const model = buildContextOSModel(baseInput({ directorRunning: true, currentPhase: 'implementing' }));
+    expect(model.running).toBe(true);
+  });
+
+  it('maps planning phase to projection stage', () => {
+    const model = buildContextOSModel(baseInput({ pmRunning: true, currentPhase: 'planning' }));
+    const projection = model.pipeline.find((s) => s.id === 'projection');
+    expect(projection?.state).toBe('active');
+  });
+
+  it('maps dispatch phase to budget stage', () => {
+    const model = buildContextOSModel(baseInput({ directorRunning: true, currentPhase: 'dispatch' }));
+    const budget = model.pipeline.find((s) => s.id === 'budget');
+    expect(budget?.state).toBe('active');
+  });
+
+  it('maps implementing phase to llm stage', () => {
+    const model = buildContextOSModel(baseInput({ directorRunning: true, currentPhase: 'implementing' }));
+    const llm = model.pipeline.find((s) => s.id === 'llm');
+    expect(llm?.state).toBe('active');
+  });
+
+  it('maps executing phase to llm stage', () => {
+    const model = buildContextOSModel(baseInput({ directorRunning: true, currentPhase: 'executing' }));
+    const llm = model.pipeline.find((s) => s.id === 'llm');
+    expect(llm?.state).toBe('active');
+  });
+
+  it('maps coding phase to llm stage', () => {
+    const model = buildContextOSModel(baseInput({ directorRunning: true, currentPhase: 'coding' }));
+    const llm = model.pipeline.find((s) => s.id === 'llm');
+    expect(llm?.state).toBe('active');
+  });
+
+  it('maps review/qa/test phase to telemetry stage', () => {
+    for (const phase of ['review', 'qa', 'testing']) {
+      const model = buildContextOSModel(baseInput({ directorRunning: true, currentPhase: phase }));
+      const telemetry = model.components.find((c) => c.id === 'telemetry');
+      expect(telemetry?.state).toBe('active');
+    }
+  });
+
+  it('maps unknown running phase to working_mem stage', () => {
+    const model = buildContextOSModel(baseInput({ pmRunning: true, currentPhase: 'thinking' }));
+    const workingMem = model.pipeline.find((s) => s.id === 'working_mem');
+    expect(workingMem?.state).toBe('active');
+  });
+
+  it('returns null active stage when not running even with a phase', () => {
+    const model = buildContextOSModel(baseInput({ pmRunning: false, directorRunning: false, currentPhase: 'planning' }));
+    const projection = model.pipeline.find((s) => s.id === 'projection');
+    expect(projection?.state).toBe('idle');
+  });
+
+  it('marks pm role card as active when pmRunning is true', () => {
+    const model = buildContextOSModel(baseInput({ pmRunning: true }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+    expect(pm?.state).toBe('active');
+  });
+
+  it('marks director role card as active when directorRunning is true', () => {
+    const model = buildContextOSModel(baseInput({ directorRunning: true }));
+    const director = model.roles.find((r) => r.id === 'director');
+    expect(director?.state).toBe('active');
+  });
+});
+
+describe('null-safe fallback', () => {
+  it('handles null snapshot without crashing', () => {
+    const model = buildContextOSModel(baseInput({ snapshot: null }));
+    expect(model.taskCount).toBe(0);
+    expect(model.iteration).toBeNull();
+  });
+
+  it('handles snapshot with missing tasks array', () => {
+    const snapshot = { pm_state: {} } as unknown as import('@/app/types/appContracts').SnapshotPayload;
+    const model = buildContextOSModel(baseInput({ snapshot }));
+    expect(model.taskCount).toBe(0);
+    expect(model.iteration).toBeNull();
+  });
+
+  it('handles snapshot with non-array tasks', () => {
+    const snapshot = { tasks: 'not-an-array' } as unknown as import('@/app/types/appContracts').SnapshotPayload;
+    const model = buildContextOSModel(baseInput({ snapshot }));
+    expect(model.taskCount).toBe(0);
+  });
+
+  it('handles snapshot with non-object pm_state', () => {
+    const snapshot = { tasks: [], pm_state: 'invalid' } as unknown as import('@/app/types/appContracts').SnapshotPayload;
+    const model = buildContextOSModel(baseInput({ snapshot }));
+    expect(model.iteration).toBeNull();
+  });
+
+  it('handles snapshot with non-finite pm_iteration', () => {
+    const snapshot = { tasks: [], pm_state: { pm_iteration: Infinity } } as unknown as import('@/app/types/appContracts').SnapshotPayload;
+    const model = buildContextOSModel(baseInput({ snapshot }));
+    expect(model.iteration).toBeNull();
+  });
+
+  it('handles snapshot with string pm_iteration', () => {
+    const snapshot = { tasks: [], pm_state: { pm_iteration: '7' } } as unknown as import('@/app/types/appContracts').SnapshotPayload;
+    const model = buildContextOSModel(baseInput({ snapshot }));
+    expect(model.iteration).toBe(7);
+  });
+
+  it('handles null usageStats gracefully', () => {
+    const model = buildContextOSModel(baseInput({ usageStats: null }));
+    expect(model.totalTokens).toBe(0);
+    expect(model.promptTokens).toBe(0);
+    expect(model.completionTokens).toBe(0);
+    expect(model.avgPerCall).toBe(0);
+  });
+
+  it('handles empty dialogueEvents and executionLogs', () => {
+    const model = buildContextOSModel(baseInput({ dialogueEvents: [], executionLogs: [] }));
+    expect(model.decisions).toHaveLength(0);
+    expect(model.errorCount).toBe(0);
+    expect(model.lastLatencyMs).toBeNull();
+  });
+
+  it('handles llmRuntimeState with no roleDetails', () => {
+    const llm: LlmRuntimeGateState = {
+      state: 'READY',
+      blockedRoles: [],
+      requiredRoles: ['pm'],
+      lastUpdated: null,
+    };
+    const model = buildContextOSModel(baseInput({ llmRuntimeState: llm }));
+    expect(model.contextWindowTokens).toBeNull();
+    expect(model.contextWindowSource).toBe('unknown');
+    for (const role of model.roles) {
+      expect(role.contextWindowTokens).toBeNull();
+      expect(role.contextWindowProvider).toBeNull();
+      expect(role.contextWindowModel).toBeNull();
+    }
+  });
+
+  it('handles llmRuntimeState with empty roleDetails object', () => {
+    const llm: LlmRuntimeGateState = {
+      state: 'READY',
+      blockedRoles: [],
+      requiredRoles: ['pm'],
+      lastUpdated: null,
+      roleDetails: {},
+    };
+    const model = buildContextOSModel(baseInput({ llmRuntimeState: llm }));
+    expect(model.contextWindowTokens).toBeNull();
+    expect(model.contextWindowSource).toBe('unknown');
+  });
+
+  it('handles role detail with null/undefined provider fields', () => {
+    const llm: LlmRuntimeGateState = {
+      state: 'READY',
+      blockedRoles: [],
+      requiredRoles: ['pm'],
+      lastUpdated: null,
+      roleDetails: {
+        pm: {
+          providerId: '',
+          providerName: '',
+          providerType: '',
+          model: '',
+          maxContextTokens: null,
+          maxOutputTokens: null,
+          bindings: [],
+          ready: null,
+          runtimeSupported: null,
+          runtimeIssue: '',
+          readinessIssue: '',
+          readinessSource: '',
+          testedProviderId: '',
+          testedModel: '',
+          testedTimestamp: null,
+          timestamp: null,
+        },
+      },
+    };
+    const model = buildContextOSModel(baseInput({ llmRuntimeState: llm }));
+    const pm = model.roles.find((r) => r.id === 'pm')!;
+    expect(pm.contextWindowTokens).toBeNull();
+    expect(pm.contextWindowSource).toBe('unknown');
+    expect(pm.contextWindowProvider).toBeNull();
+    expect(pm.contextWindowModel).toBeNull();
+    expect(pm.contextWindowLabel).toBe('窗口未知');
+  });
+
+  it('handles role detail with bindings containing null maxContextTokens', () => {
+    const llm: LlmRuntimeGateState = {
+      state: 'READY',
+      blockedRoles: [],
+      requiredRoles: ['pm'],
+      lastUpdated: null,
+      roleDetails: {
+        pm: {
+          providerId: 'test',
+          providerName: 'Test Provider',
+          providerType: 'openai_compat',
+          model: 'test-model',
+          maxContextTokens: null,
+          maxOutputTokens: null,
+          bindings: [
+            {
+              providerId: 'test',
+              providerName: 'Test Provider',
+              providerType: 'openai_compat',
+              model: 'test-model',
+              profile: '',
+              maxContextTokens: null,
+              maxOutputTokens: null,
+            },
+          ],
+          ready: true,
+          runtimeSupported: true,
+          runtimeIssue: '',
+          readinessIssue: '',
+          readinessSource: 'role_index',
+          testedProviderId: 'test',
+          testedModel: 'test-model',
+          testedTimestamp: null,
+          timestamp: null,
+        },
+      },
+    };
+    const model = buildContextOSModel(baseInput({ llmRuntimeState: llm }));
+    const pm = model.roles.find((r) => r.id === 'pm')!;
+    expect(pm.contextWindowTokens).toBeNull();
+    expect(pm.contextWindowSource).toBe('unknown');
+    // Provider/model ARE available even when tokens are null
+    expect(pm.contextWindowProvider).toBe('Test Provider');
+    expect(pm.contextWindowModel).toBe('test-model');
+  });
+
+  it('handles empty llmStreamEvents and processStreamEvents without crashing', () => {
+    const model = buildContextOSModel(baseInput());
+    expect(model.telemetryActive).toBe(false);
+    expect(model.calls).toBe(0);
+    expect(model.projectionCount).toBe(0);
+    expect(model.workers).toEqual([]);
+    expect(model.hasWorkers).toBe(false);
+  });
+
+  it('handles executionLogs with missing message/details gracefully', () => {
+    const logs: import('@/types/log').LogEntry[] = [
+      { id: 'l1', timestamp: '2026-06-15T10:00:00Z', level: 'info', source: 'System', message: '' },
+      { id: 'l2', timestamp: '2026-06-15T10:00:01Z', level: 'error', source: 'Director', message: '' },
+    ];
+    const model = buildContextOSModel(baseInput({ executionLogs: logs }));
+    expect(model.errorCount).toBe(1);
+    expect(model.lastLatencyMs).toBeNull(); // no latency pattern in message
+  });
+
+  it('handles dialogueEvents with missing speaker/type gracefully', () => {
+    const dialogue: import('@/app/components/DialoguePanel').DialogueEvent[] = [
+      { speaker: '', content: '', timestamp: 'invalid', type: '' },
+    ];
+    const model = buildContextOSModel(baseInput({ dialogueEvents: dialogue }));
+    expect(model.decisions.length).toBeGreaterThanOrEqual(0);
+    expect(model.running).toBe(false);
+  });
+});

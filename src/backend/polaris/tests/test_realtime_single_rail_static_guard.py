@@ -142,6 +142,36 @@ JETSTREAM_BRIDGE_EVENT_DRAIN_FILES = (
     REPO_ROOT / "src" / "backend" / "polaris" / "delivery" / "http" / "routers" / "docs.py",
     REPO_ROOT / "src" / "backend" / "polaris" / "delivery" / "http" / "routers" / "interview.py",
 )
+
+RUNTIME_PROJECTION_FILES = (
+    FRONTEND_SRC / "runtime" / "projection.ts",
+    FRONTEND_SRC / "runtime" / "projectionCompat.ts",
+    FRONTEND_SRC / "runtime" / "guards.ts",
+    FRONTEND_SRC / "runtime" / "selectors.ts",
+    FRONTEND_SRC / "runtime" / "v2.ts",
+)
+
+RUNTIME_PROJECTION_FORBIDDEN_PATTERNS = (
+    "apiFetch(",
+    "fetch(",
+    "EventSource",
+    "text/event-stream",
+    "setInterval(",
+    "setTimeout(",
+    "pollInterval",
+    "usePolling",
+    "useInterval",
+    "/state/snapshot",
+    "/v2/pm/status",
+    "/v2/director/status",
+    "/v2/health",
+)
+
+RUNTIME_PROJECTION_REQUIRED_WS_MARKERS = (
+    "health",
+    "metrics",
+)
+
 DIRECTOR_EXECUTION_EVENT_WAKE_FILES = (
     REPO_ROOT / "src" / "backend" / "polaris" / "cells" / "director" / "execution" / "service.py",
 )
@@ -882,5 +912,91 @@ def test_realtime_policy_docs_make_no_polling_constraint_explicit() -> None:
         for phrase in REQUIRED_POLICY_PHRASES:
             if phrase not in text:
                 findings.append(f"{path.relative_to(REPO_ROOT)} missing {phrase!r}")
+
+    assert findings == []
+
+
+def test_runtime_projection_files_have_no_polling_for_health_or_metrics() -> None:
+    """Runtime projection/guards/selectors must derive health/metrics from WS push, not polling."""
+
+    findings: list[str] = []
+    combined_text = ""
+    for path in RUNTIME_PROJECTION_FILES:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        combined_text += text
+        for token in RUNTIME_PROJECTION_FORBIDDEN_PATTERNS:
+            if token in text:
+                findings.append(f"{path.relative_to(REPO_ROOT)} contains {token!r}")
+
+    for marker in RUNTIME_PROJECTION_REQUIRED_WS_MARKERS:
+        if marker not in combined_text:
+            findings.append(f"Runtime projection layer missing WS-derived marker {marker!r}")
+
+    assert findings == []
+
+
+def test_runtime_projection_compat_derives_director_metrics_from_ws_push() -> None:
+    """projectionCompat.ts must derive director metrics from WS message, not HTTP fetch."""
+
+    text = FRONTEND_SRC / "runtime" / "projectionCompat.ts"
+    if not text.exists():
+        return
+    content = text.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    for marker in (
+        "DirectorServiceMetrics",
+        "metricValue",
+        "normalizeHealthStatus",
+        "engine_health",
+        "health",
+    ):
+        if marker not in content:
+            findings.append(f"projectionCompat.ts missing WS-derived {marker!r}")
+
+    for forbidden in ("apiFetch(", "fetch(", "setInterval(", "pollInterval"):
+        if forbidden in content:
+            findings.append(f"projectionCompat.ts contains polling pattern {forbidden!r}")
+
+    assert findings == []
+
+
+def test_runtime_guards_check_health_without_polling() -> None:
+    """guards.ts must check LanceDB/health status from WS state, not HTTP polling."""
+
+    guards_file = FRONTEND_SRC / "runtime" / "guards.ts"
+    if not guards_file.exists():
+        return
+    content = guards_file.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    for marker in ("health", "ready", "healthy"):
+        if marker not in content:
+            findings.append(f"guards.ts missing health marker {marker!r}")
+
+    for forbidden in ("apiFetch(", "fetch(", "setInterval(", "EventSource"):
+        if forbidden in content:
+            findings.append(f"guards.ts contains polling pattern {forbidden!r}")
+
+    assert findings == []
+
+
+def test_runtime_event_v2_schema_includes_metrics_field() -> None:
+    """v2.ts RuntimeEventV2 schema must include metrics field for WS-pushed health/metrics data."""
+
+    v2_file = FRONTEND_SRC / "runtime" / "v2.ts"
+    if not v2_file.exists():
+        return
+    content = v2_file.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    if "metrics: z.record" not in content:
+        findings.append("v2.ts missing 'metrics: z.record' in RuntimeEventV2 schema")
+
+    for forbidden in ("apiFetch(", "fetch(", "setInterval(", "EventSource"):
+        if forbidden in content:
+            findings.append(f"v2.ts contains polling pattern {forbidden!r}")
 
     assert findings == []

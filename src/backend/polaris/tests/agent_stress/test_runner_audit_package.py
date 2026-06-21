@@ -32,7 +32,7 @@ def _build_round_result(
             '  "updated_at": "2026-03-20T12:00:00Z",\n'
             '  "completed_at": "2026-03-20T12:01:00Z",\n'
             '  "metadata": {"current_stage": "quality_gate", "last_successful_stage": "quality_gate"},\n'
-            '  "stages_completed": ["docs_generation", "pm_planning", "director_dispatch", "quality_gate"]\n'
+            '  "stages_completed": ["docs_generation", "pm_planning", "chief_engineer_review", "director_dispatch", "quality_gate"]\n'
             "}\n"
         ),
         encoding="utf-8",

@@ -129,7 +129,7 @@
 - 在引入额外 Runtime 扩展前，先把 PM/Director 主流程跑通到“可控基线”。
 
 准入门槛（满足后再开始并入）：
-1. `PM -> Director -> QA -> 产物回写` 端到端连续稳定通过（建议至少 10 轮）。
+1. `PM -> Chief Engineer -> Director -> QA -> 产物回写` 端到端连续稳定通过（建议至少 10 轮）。
 2. 关键失败路径可恢复：超时、QA 失败、工具异常、子进程中断。
 3. 事实链一致：`PM_TASKS.json`、`DIRECTOR_RESULT.json`、`events.jsonl` 可对账、可回放。
 4. 有固定回归命令集，可在并入前后快速对比是否回退。

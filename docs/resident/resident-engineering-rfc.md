@@ -7,7 +7,7 @@ Polaris 的目标叙事现在明确为：
 - `Software Engineering AGI`
 - 自动化专业开发软件领域的 AGI
 
-当前实现方式不是把整个系统重写成一个单体 `agi_orchestrator`，而是在现有 `PM -> Director -> QA` 主链路上增加一个长期驻留、可治理、可恢复的 AGI 内核。
+当前实现方式不是把整个系统重写成一个单体 `agi_orchestrator`，而是在现有 `PM -> Chief Engineer -> Director -> QA` 主链路上增加一个长期驻留、可治理、可恢复的 AGI 内核。
 
 实现层位于 `src/backend/polaris/cells/resident/autonomy/` 这个 Cell，保留 `resident` 命名，原因是：
 

@@ -10,6 +10,7 @@
 
 - **角色边界**：每个角色的职责范围和禁止行为
 - **通信协议**：角色间只能通过定义的接口通信
+- **全链路顺序**：运行态任务流唯一为 PM → Chief Engineer → Director
 - **反模式**：明确禁止的架构反模式
 - **数据契约**：输入输出格式约束
 
@@ -78,7 +79,7 @@
 - 访问其他任务状态 (`access_other_task_state`)
 
 **通信边界**：
-- 上游：ChiefEngineer, PM
+- 上游：ChiefEngineer
 - 下游：QA, Policy
 
 ### 2.4 QA
@@ -103,18 +104,28 @@
 - 上游：Director
 - 下游：PM（只反馈，不指挥）
 
+### 2.5 全链路任务流不可变量
+
+`PM → Chief Engineer → Director` 是 Polaris 的唯一运行态任务流。
+
+- PM 只能把任务合同交给 Chief Engineer，禁止直接指挥 Director。
+- Chief Engineer 必须为进入 Director 的任务提供蓝图、handoff 或等价可审计交接证据。
+- Director 只能消费 Chief Engineer 交接后的任务；缺少 CE 证据时必须拒绝或等待。
+- UI、Factory Bench、脚本和文档不得把 `PM → Director` 作为执行路径、显示路径或兜底路径。
+- 实时投影必须把 PM、Chief Engineer、Director 三段状态都作为一等事实展示；缺少任一阶段事实时不得用旧快照补齐。
+
 ## 3. 通信协议
 
 ### 3.1 合法通信路径
 
 ```
 PM ────────────────> ChiefEngineer
-  \                       |
-   \                      v
-    \                Director
-     \                    |
-      \                   v
-       └─────────────> QA ─────> PM (闭环)
+                         |
+                         v
+                    Director
+                         |
+                         v
+                    QA ─────> PM (闭环)
 ```
 
 ### 3.2 消息契约
@@ -141,6 +152,7 @@ PM ────────────────> ChiefEngineer
 |--------|------|------|
 | `SELF_APPROVAL` | FATAL | 自己批准自己的工作 |
 | `QA_WRITES_CODE` | FATAL | QA 写代码 |
+| `PM_DIRECTOR_BYPASS` | FATAL | PM 直接把任务交给 Director，绕过 Chief Engineer 蓝图/交接 |
 | `SKIP_AUDIT` | FATAL | 绕过 QA 审计 |
 | `STATE_SHARING` | FATAL | 角色间共享可变状态 |
 | `CIRCULAR_DEPENDENCY` | FATAL | 循环依赖 |

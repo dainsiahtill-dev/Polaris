@@ -5,10 +5,14 @@ from pathlib import Path
 
 
 def _load_loop_director_module():
-    repo_root = Path(__file__).resolve().parents[1]
-    module_path = repo_root / "src" / "backend" / "scripts" / "loop-director.py"
-    if not module_path.is_file():
-        raise RuntimeError(f"Failed to locate loop-director.py: {module_path}")
+    module_path = None
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "src" / "backend" / "polaris" / "delivery" / "cli" / "loop-director.py"
+        if candidate.is_file():
+            module_path = candidate
+            break
+    if module_path is None:
+        raise RuntimeError("Failed to locate loop-director.py")
     spec = importlib.util.spec_from_file_location("loop_director", module_path)
     if spec is None or spec.loader is None:
         raise RuntimeError("Failed to load loop-director.py")

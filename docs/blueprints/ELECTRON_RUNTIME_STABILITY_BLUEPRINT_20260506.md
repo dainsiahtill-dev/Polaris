@@ -3,7 +3,7 @@
 ## Current Understanding
 
 Polaris is an Electron desktop app with a Python FastAPI backend. The failing
-Electron acceptance flow exercises Court -> PM -> Director -> QA. PM is
+Electron acceptance flow exercises Court -> PM -> Chief Engineer -> Director -> QA. PM is
 configured with `pm_runs_director=true`, so the PM workflow already launches
 Director and QA.
 

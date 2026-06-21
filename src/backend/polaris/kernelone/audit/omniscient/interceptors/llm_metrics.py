@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
@@ -45,6 +44,7 @@ class _DimensionAccumulator:
     latency_sum_ms: float = 0.0
     latency_min_ms: float = float("inf")
     latency_max_ms: float = 0.0
+    latencies: list[float] = field(default_factory=list)
     prompt_tokens_sum: int = 0
     completion_tokens_sum: int = 0
 
@@ -140,6 +140,7 @@ class LLMMetricsStore:
             acc.latency_sum_ms += ev.latency_ms
             acc.latency_min_ms = min(acc.latency_min_ms, ev.latency_ms)
             acc.latency_max_ms = max(acc.latency_max_ms, ev.latency_ms)
+            acc.latencies.append(ev.latency_ms)
             acc.prompt_tokens_sum += ev.prompt_tokens
             acc.completion_tokens_sum += ev.completion_tokens
 
@@ -149,6 +150,7 @@ class LLMMetricsStore:
             total.latency_sum_ms += ev.latency_ms
             total.latency_min_ms = min(total.latency_min_ms, ev.latency_ms)
             total.latency_max_ms = max(total.latency_max_ms, ev.latency_ms)
+            total.latencies.append(ev.latency_ms)
             total.prompt_tokens_sum += ev.prompt_tokens
             total.completion_tokens_sum += ev.completion_tokens
 
@@ -165,11 +167,33 @@ class LLMMetricsStore:
     # -- internals ----------------------------------------------------------
 
     @staticmethod
+    def _percentile(sorted_values: list[float], p: float) -> float:
+        """Compute the *p*-th percentile from a pre-sorted list.
+
+        Uses linear interpolation between closest ranks (same method as
+        NumPy's default ``numpy.percentile``).  Returns 0.0 for empty input.
+        """
+        if not sorted_values:
+            return 0.0
+        n = len(sorted_values)
+        if n == 1:
+            return round(sorted_values[0], 2)
+        # rank formula: (p/100) * (n-1)
+        idx = (p / 100.0) * (n - 1)
+        lower = int(idx)
+        upper = lower + 1
+        if upper >= n:
+            return round(sorted_values[-1], 2)
+        frac = idx - lower
+        return round(sorted_values[lower] * (1 - frac) + sorted_values[upper] * frac, 2)
+
+    @staticmethod
     def _build_rows(dims: dict[tuple[str, str, str], _DimensionAccumulator]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for (role, provider, model), acc in sorted(dims.items()):
             count = acc.total_calls
             success = count - acc.error_calls
+            sorted_lat = sorted(acc.latencies)
             rows.append(
                 {
                     "role": role,
@@ -179,9 +203,9 @@ class LLMMetricsStore:
                     "error_calls": acc.error_calls,
                     "error_rate": round(acc.error_calls / count, 4) if count > 0 else 0.0,
                     "avg_latency_ms": round(acc.latency_sum_ms / count, 2) if count > 0 else 0.0,
-                    "p50_latency_ms": 0.0,
-                    "p95_latency_ms": 0.0,
-                    "p99_latency_ms": 0.0,
+                    "p50_latency_ms": LLMMetricsStore._percentile(sorted_lat, 50),
+                    "p95_latency_ms": LLMMetricsStore._percentile(sorted_lat, 95),
+                    "p99_latency_ms": LLMMetricsStore._percentile(sorted_lat, 99),
                     "min_latency_ms": round(acc.latency_min_ms, 2) if acc.latency_min_ms != float("inf") else 0.0,
                     "max_latency_ms": round(acc.latency_max_ms, 2),
                     "prompt_tokens_sum": acc.prompt_tokens_sum,
@@ -195,14 +219,15 @@ class LLMMetricsStore:
     def _build_total_row(acc: _DimensionAccumulator) -> dict[str, Any]:
         count = acc.total_calls
         success = count - acc.error_calls
+        sorted_lat = sorted(acc.latencies)
         return {
             "total_calls": count,
             "error_calls": acc.error_calls,
             "error_rate": round(acc.error_calls / count, 4) if count > 0 else 0.0,
             "avg_latency_ms": round(acc.latency_sum_ms / count, 2) if count > 0 else 0.0,
-            "p50_latency_ms": 0.0,
-            "p95_latency_ms": 0.0,
-            "p99_latency_ms": 0.0,
+            "p50_latency_ms": LLMMetricsStore._percentile(sorted_lat, 50),
+            "p95_latency_ms": LLMMetricsStore._percentile(sorted_lat, 95),
+            "p99_latency_ms": LLMMetricsStore._percentile(sorted_lat, 99),
             "min_latency_ms": round(acc.latency_min_ms, 2) if acc.latency_min_ms != float("inf") else 0.0,
             "max_latency_ms": round(acc.latency_max_ms, 2),
             "prompt_tokens_sum": acc.prompt_tokens_sum,

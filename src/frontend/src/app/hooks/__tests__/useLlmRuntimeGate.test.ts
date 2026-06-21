@@ -371,3 +371,244 @@ describe('useLlmRuntimeGate', () => {
     expect(result.current.llmRuntimeState.blockedRoles).toEqual([]);
   });
 });
+
+describe('normalizeLlmRuntimeGatePayload null-safe fallback', () => {
+  it('returns UNKNOWN state for null payload', () => {
+    const state = normalizeLlmRuntimeGatePayload(null);
+    expect(state.state).toBe('UNKNOWN');
+    expect(state.blockedRoles).toEqual([]);
+    expect(state.requiredRoles).toEqual([]);
+    expect(state.lastUpdated).toBeNull();
+    expect(state.roleDetails).toEqual({});
+  });
+
+  it('returns UNKNOWN state for non-object payload', () => {
+    const state = normalizeLlmRuntimeGatePayload('invalid');
+    expect(state.state).toBe('UNKNOWN');
+    expect(state.blockedRoles).toEqual([]);
+    expect(state.requiredRoles).toEqual([]);
+  });
+
+  it('returns UNKNOWN state for empty object payload', () => {
+    const state = normalizeLlmRuntimeGatePayload({});
+    expect(state.state).toBe('UNKNOWN');
+    expect(state.blockedRoles).toEqual([]);
+    expect(state.requiredRoles).toEqual([]);
+    expect(state.lastUpdated).toBeNull();
+  });
+
+  it('normalizes unknown state token to UNKNOWN', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'some_random_value',
+      blocked_roles: [],
+      required_ready_roles: ['pm'],
+    });
+    expect(state.state).toBe('UNKNOWN');
+  });
+
+  it('handles non-array blocked_roles and required_ready_roles gracefully', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'BLOCKED',
+      blocked_roles: 'not-an-array',
+      required_ready_roles: null,
+    });
+    expect(state.state).toBe('BLOCKED');
+    expect(state.blockedRoles).toEqual([]);
+    expect(state.requiredRoles).toEqual([]);
+  });
+
+  it('handles role detail with missing fields gracefully', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'BLOCKED',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm'],
+      roles: {
+        pm: {
+          provider_id: 'test',
+          model: 'test-model',
+          ready: false,
+        },
+      },
+    });
+    expect(state.state).toBe('BLOCKED');
+    expect(state.blockedRoles).toEqual(['pm']);
+    expect(state.roleDetails?.pm?.providerId).toBe('test');
+    expect(state.roleDetails?.pm?.model).toBe('test-model');
+    expect(state.roleDetails?.pm?.providerName).toBe('');
+    expect(state.roleDetails?.pm?.providerType).toBe('');
+    expect(state.roleDetails?.pm?.readinessIssue).toBe('');
+    expect(state.roleDetails?.pm?.runtimeIssue).toBe('');
+  });
+
+  it('handles non-object role entries gracefully', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'READY',
+      blocked_roles: [],
+      required_ready_roles: ['pm'],
+      roles: {
+        pm: null,
+        director: 'invalid',
+        qa: {
+          provider_id: 'test',
+          model: 'test-model',
+          ready: true,
+        },
+      },
+    });
+    expect(state.roleDetails?.pm?.providerId).toBe('');
+    expect(state.roleDetails?.pm?.model).toBe('');
+    expect(state.roleDetails?.qa?.providerId).toBe('test');
+  });
+
+  it('handles non-array bindings gracefully', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'READY',
+      blocked_roles: [],
+      required_ready_roles: ['pm'],
+      roles: {
+        pm: {
+          provider_id: 'test',
+          model: 'test-model',
+          bindings: 'not-an-array',
+        },
+      },
+    });
+    expect(state.roleDetails?.pm?.bindings).toEqual([]);
+  });
+
+  it('handles last_updated as non-string gracefully', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'READY',
+      blocked_roles: [],
+      required_ready_roles: ['pm'],
+      last_updated: 12345,
+    });
+    expect(state.lastUpdated).toBeNull();
+  });
+});
+
+describe('isRoleLlmBlocked null-safe edge cases', () => {
+  it('returns false for empty role string', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'BLOCKED',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm'],
+    });
+    expect(isRoleLlmBlocked(state, '')).toBe(false);
+  });
+
+  it('returns false for whitespace-only role string', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'BLOCKED',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm'],
+    });
+    expect(isRoleLlmBlocked(state, '   ')).toBe(false);
+  });
+
+  it('returns false when state is not BLOCKED', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'READY',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm'],
+    });
+    expect(isRoleLlmBlocked(state, 'pm')).toBe(false);
+  });
+
+  it('returns false when role is not in requiredRoles', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'BLOCKED',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['director'],
+    });
+    expect(isRoleLlmBlocked(state, 'pm')).toBe(false);
+  });
+});
+
+describe('getRoleLlmBlockedReason provider error normalization', () => {
+  it('returns empty reason for non-blocked role', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'BLOCKED',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm'],
+    });
+    expect(getRoleLlmBlockedReason(state, 'qa', 'QA')).toBe('');
+  });
+
+  it('returns generic reason when role has no detail', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'BLOCKED',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm'],
+    });
+    const reason = getRoleLlmBlockedReason(state, 'pm', 'PM');
+    expect(reason).toContain('PM');
+    expect(reason).toContain('provider/model');
+  });
+
+  it('includes readiness_issue label when available', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'BLOCKED',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm'],
+      roles: {
+        pm: {
+          provider_id: 'codex_cli',
+          model: 'gpt-5.3-codex',
+          ready: false,
+          readiness_issue: 'model_mismatch',
+          tested_provider_id: 'codex_cli',
+          tested_model: 'gpt-4',
+        },
+      },
+    });
+    const reason = getRoleLlmBlockedReason(state, 'pm', 'PM');
+    expect(reason).toContain('最近测试记录的模型不是当前绑定模型');
+  });
+
+  it('includes runtime_issue when readiness_issue is empty', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'BLOCKED',
+      blocked_roles: ['director'],
+      required_ready_roles: ['director'],
+      roles: {
+        director: {
+          provider_id: 'minimax',
+          model: 'MiniMax-M3',
+          ready: false,
+          readiness_issue: '',
+          runtime_issue: 'runtime_unsupported',
+        },
+      },
+    });
+    const reason = getRoleLlmBlockedReason(state, 'director', 'Director');
+    expect(reason).toContain('当前 Provider 类型不支持该角色运行时');
+  });
+
+  it('falls back to role_readiness_missing when both issues are empty', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'BLOCKED',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm'],
+      roles: {
+        pm: {
+          provider_id: 'test',
+          model: 'test-model',
+          ready: false,
+        },
+      },
+    });
+    const reason = getRoleLlmBlockedReason(state, 'pm', 'PM');
+    expect(reason).toContain('该角色还没有通过必需的深度测试');
+  });
+
+  it('uses role id as fallback when roleDisplayName is empty', () => {
+    const state = normalizeLlmRuntimeGatePayload({
+      state: 'BLOCKED',
+      blocked_roles: ['pm'],
+      required_ready_roles: ['pm'],
+    });
+    const reason = getRoleLlmBlockedReason(state, 'pm', '');
+    expect(reason).toContain('pm');
+  });
+});

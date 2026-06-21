@@ -349,7 +349,7 @@ export const residentService = {
       body: JSON.stringify({
         workspace,
         run_type: options.runType || 'pm',
-        run_director: options.runDirector ?? false,
+        run_director: options.runDirector ?? true,
         director_iterations: options.directorIterations ?? 1,
       }),
     });

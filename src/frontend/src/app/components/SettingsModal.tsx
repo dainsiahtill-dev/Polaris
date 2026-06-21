@@ -2080,7 +2080,7 @@ export function SettingsModal({ isOpen, initialTab = 'general', onClose, onLlmSt
                           className="w-4 h-4 rounded bg-[rgba(35,25,14,0.55)] border-white/10 checked:bg-accent text-accent focus:ring-accent/50"
                         />
                         <label htmlFor="pm-runs-director" className="text-sm text-text-muted cursor-pointer select-none">
-                          PM 触发 Director
+                          PM→Chief Engineer→Director
                         </label>
                       </div>
 

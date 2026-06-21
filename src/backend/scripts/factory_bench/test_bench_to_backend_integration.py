@@ -261,6 +261,48 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self.assertEqual(result.get("exit_code"), 0)
         self.assertEqual(result.get("run_id"), run_id)
 
+    def test_run_factory_chain_forwards_stage_changes(self) -> None:
+        project = {
+            "id": "L1-01",
+            "title": "Hello World",
+            "brief": "Print hello world",
+            "level": 1,
+            "test_focus": "basic output",
+        }
+        log_path = Path(self._tmp.name) / "chain.log"
+        run_id = self._expected_run_id()
+        self._setup_audit_bundle(run_id, qa_passed=True)
+        stage_events: list[tuple[str, str]] = []
+
+        def _fake_wait(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            on_status = kwargs.get("on_status")
+            self.assertTrue(callable(on_status))
+            on_status({"run_id": run_id, "status": "running", "phase": "pm_planning"})
+            on_status({"run_id": run_id, "status": "running", "phase": "chief_engineer_review"})
+            on_status({"run_id": run_id, "status": "running", "phase": "director_dispatch"})
+            return {"run_id": run_id, "status": "completed", "phase": "qa_gate"}
+
+        with patch("scripts.factory_bench.run_factory_bench.wait_run_until_terminal", _fake_wait):
+            result = run_factory_chain(
+                project,
+                self.workspace,
+                backend_url=self.backend_url,
+                backend_token="",
+                timeout_s=30,
+                log_path=log_path,
+                on_stage_change=lambda status, payload: stage_events.append((status, str(payload.get("phase") or ""))),
+            )
+
+        self.assertEqual(result.get("exit_code"), 0)
+        self.assertEqual(
+            stage_events,
+            [
+                ("running", "pm_planning"),
+                ("running", "chief_engineer_review"),
+                ("running", "director_dispatch"),
+            ],
+        )
+
     def test_run_factory_chain_failed_qa(self) -> None:
         """Mock returns a failed QA state; assert exit_code=1 and exit_class=qa_failed."""
         project = {

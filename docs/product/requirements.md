@@ -4,7 +4,7 @@
 
 Polaris 是一个**单人云端主模型 + 本地 SLM 协同**的自动化编程指挥台，要求对接的 LLM 模型具备**思考过程**和**流式输出**能力。
 
-通过 PM 规划 → Director 执行 → QA 校验 → Dashboard 可视化的闭环流程，构建一个**可控、可追溯、可回放、可长期长跑**的个人软件工厂。
+通过 PM 规划 → Chief Engineer 蓝图/交接 → Director 执行 → QA 校验 → Dashboard 可视化的闭环流程，构建一个**可控、可追溯、可回放、可长期长跑**的个人软件工厂。
 
 **设计根源**：面向**无人值守**的自动化写代码；**宁修不滚（Fix-Forward）**——默认不自动回滚，宁愿保留问题代码后续修，也不白写再回滚浪费时间和 token。详见 `docs/agent/invariants.md` 不变量 #10。
 
@@ -19,13 +19,14 @@ Polaris 是一个**单人云端主模型 + 本地 SLM 协同**的自动化编程
 
 ### FR-1: 思考过程支持
 
-**描述**：模型必须能够输出结构化的思考过程，确保 PM 和 Director 的决策透明可追溯
+**描述**：模型必须能够输出结构化的思考过程，确保 PM、Chief Engineer 和 Director 的决策透明可追溯
 
 **验收标准**：
-- PM/Director 角色输出包含 `<thinking>` 标签或 `reasoning_summary` 字段
+- PM/Chief Engineer/Director 角色输出包含 `<thinking>` 标签或 `reasoning_summary` 字段
 - 思考过程逻辑清晰，可理解，能说明决策依据
 - 支持工具调用前的推理说明
 - 未检测到 thinking 信号的角色将被标记为不胜任
+- 运行态链路必须展示并执行 `PM → Chief Engineer → Director`；禁止回退到 `PM → Director` 旧链路，缺少 Chief Engineer 蓝图/交接证据时必须阻塞 Director
 
 **优先级**：P0（必须）
 
@@ -36,6 +37,7 @@ Polaris 是一个**单人云端主模型 + 本地 SLM 协同**的自动化编程
 **验收标准**：
 - Provider 层可以解析上游模型的原生流式格式，但产品/前端实时通道禁止 SSE、HTTP 长轮询、文件轮询和定时 fetch 轮询
 - 所有 PM、Chief Engineer、Director、Factory、ContextOS 运行态事件必须发布到 Nat-JetStream，并通过 `/v2/ws/runtime` runtime.v2 WebSocket 推送给前端
+- Factory Bench 和首页主战场必须通过实时事件联动 `PM → Chief Engineer → Director` 三段状态，不得用 HTTP status/get/list 轮询或 PM→Director 快照兜底
 - WebSocket 订阅/连接失败时，前端必须显示断线或订阅失败；禁止自动改用 HTTP status/get/list 接口作为实时兜底，禁止展示旧快照冒充实时推送
 - Token 输出延迟 < 100ms
 - 支持中断和恢复机制
@@ -57,10 +59,10 @@ Polaris 是一个**单人云端主模型 + 本地 SLM 协同**的自动化编程
 
 ### FR-4: 角色路由与胜任性测试
 
-**描述**：支持为不同角色（PM/Director/QA/Docs）选择不同模型，并验证其胜任性
+**描述**：支持为不同角色（PM/Chief Engineer/Director/QA/Docs）选择不同模型，并验证其胜任性
 
 **验收标准**：
-- PM/Director 必须同时支持 Thinking + Streaming
+- PM/Chief Engineer/Director 必须同时支持 Thinking + Streaming
 - QA/Docs 必须支持 Streaming，Thinking 推荐但不强制
 - 面试模式验证角色胜任性
 - 未通过验证的角色标记为 BLOCKED
@@ -218,6 +220,6 @@ async def test_pm_qualification():
 | Streaming | 逐 token 的实时输出；产品实时展示统一经 Nat-JetStream + `/v2/ws/runtime` WebSocket 推送 |
 | Provider | LLM 的接入方式（CLI / Local HTTP / HTTPS） |
 | Cost Channel | 成本类型（LOCAL/FIXED/METERED） |
-| Role | Polaris 中的角色（PM/Director/QA/Docs） |
+| Role | Polaris 中的角色（PM/Chief Engineer/Director/QA/Docs） |
 | Run ID | 全局唯一的运行标识符 |
 | Glass Mind | 可视化 AI 思考过程的面板 |

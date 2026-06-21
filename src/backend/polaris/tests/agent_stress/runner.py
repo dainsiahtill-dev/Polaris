@@ -1392,7 +1392,7 @@ class AgentStressRunner:
             "director_dispatch": "Director 调度阶段失败，可能是任务血缘、执行权限或工具调用异常",
             "qa": "QA 审查发现严重质量问题",
             "quality_gate": "质量门禁阶段失败，可能是 integration QA 或验收门禁未通过",
-            "chain_stage_sequence_invalid": "主链阶段顺序异常，未满足Architect->PM->Director->QA 的固定执行顺序",
+            "chain_stage_sequence_invalid": "主链阶段顺序异常，未满足Architect->PM->Chief Engineer->Director->QA 的固定执行顺序",
             "chain_stage_artifacts_missing": "主链阶段声称完成但未产出可审计产物，链路证据缺失",
             "pm_contract_incomplete": "PM 任务合同缺少目标/作用域/执行步骤/可测验收，无法指导有效执行",
             "project_output_placeholder_code": "项目产物包含 TODO/FIXME/stub 等占位实现，未形成可交付业务逻辑",

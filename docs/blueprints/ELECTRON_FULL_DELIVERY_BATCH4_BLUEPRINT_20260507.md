@@ -3,7 +3,7 @@
 ## 1. Current Understanding
 
 - Polaris is an Electron desktop orchestrator for Architect/Court planning, PM task planning, Director execution, and QA verification.
-- Current Electron acceptance can complete Court -> PM -> Director -> QA through real Playwright operation.
+- Current Electron acceptance can complete Court -> PM -> Chief Engineer -> Director -> QA through real Playwright operation.
 - ChiefEngineer and QA still lack first-class clickable UI workspaces; current evidence is mostly projection/artifact based.
 - This batch focuses on runtime stability and observability before adding broader UI surfaces.
 

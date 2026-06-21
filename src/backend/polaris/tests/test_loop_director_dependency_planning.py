@@ -7,10 +7,14 @@ import pytest
 
 
 def _load_loop_director_module():
-    repo_root = Path(__file__).resolve().parents[3]
-    module_path = repo_root / "src" / "backend" / "polaris" / "delivery" / "cli" / "loop-director.py"
-    if not module_path.is_file():
-        module_path = repo_root / "src" / "backend" / "scripts" / "loop-director.py"
+    module_path = None
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "src" / "backend" / "polaris" / "delivery" / "cli" / "loop-director.py"
+        if candidate.is_file():
+            module_path = candidate
+            break
+    if module_path is None:
+        raise RuntimeError("Failed to locate loop-director.py")
     spec = importlib.util.spec_from_file_location("loop_director_dependency_planning", module_path)
     if spec is None or spec.loader is None:
         raise RuntimeError("Failed to load loop-director.py")
@@ -90,8 +94,13 @@ async def test_runner_uses_planned_order_for_single_iteration(monkeypatch) -> No
         "load_pm_task_contract",
         lambda _path: {
             "tasks": [
-                {"id": "TASK-2", "title": "dependent", "depends_on": ["TASK-1"]},
-                {"id": "TASK-1", "title": "root", "depends_on": []},
+                {
+                    "id": "TASK-2",
+                    "title": "dependent",
+                    "depends_on": ["TASK-1"],
+                    "metadata": {"blueprint_id": "ce-TASK-2"},
+                },
+                {"id": "TASK-1", "title": "root", "depends_on": [], "metadata": {"blueprint_id": "ce-TASK-1"}},
             ]
         },
     )

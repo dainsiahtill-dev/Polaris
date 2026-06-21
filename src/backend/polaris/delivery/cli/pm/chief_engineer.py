@@ -1,4 +1,4 @@
-"""Deterministic ChiefEngineer blueprint service for PM -> Director bridge.
+"""Deterministic ChiefEngineer blueprint service for PM -> Chief Engineer -> Director handoff.
 
 ChiefEngineer (Chief Engineer) - Blueprint Designer
 =============================================

@@ -35,7 +35,7 @@ The 3 skipped E2E tests are **by design** and do not block Beta release:
 | Test | Skip Reason | Resolution |
 |------|-------------|------------|
 | pm-director-real-flow | Requires `KERNELONE_E2E_USE_REAL_SETTINGS=1` with configured LLM | Needs real LLM for PM execution |
-| full-chain-audit | Requires real LLM | Full flow requires PM->Director->QA |
+| full-chain-audit | Requires real LLM | Full flow requires PM->Chief Engineer->Director->QA |
 | panel-task | Requires `E2E_PANEL_TASK_JSON_BASE64` | Needs specific UI task definition |
 
 These tests are integration tests that require a running LLM. They can be manually executed in CI with proper LLM configuration.

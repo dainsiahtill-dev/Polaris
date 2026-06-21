@@ -647,7 +647,7 @@ def _case_small_window_budget_enforcement() -> dict[str, Any]:
     """
     from unittest.mock import PropertyMock, patch
 
-    from polaris.cells.roles.kernel.internal.context_gateway import RoleContextGateway
+    from polaris.cells.roles.kernel.public.service import RoleContextGateway
     from polaris.kernelone.context.contracts import TurnEngineContextRequest as GatewayContextRequest
 
     checks: list[dict[str, Any]] = []
