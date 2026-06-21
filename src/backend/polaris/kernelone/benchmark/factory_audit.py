@@ -22,6 +22,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 from typing import Any
 
 FACTORY_AUDIT_SCHEMA_VERSION = "factory-audit/1"
@@ -74,6 +75,68 @@ _SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(
     r"(?:npm\s+run\s+(?:build|compile)|pnpm\s+(?:build|compile)|yarn\s+(?:build|compile)|\btsc\b)",
     re.IGNORECASE,
 )
+_TS_SYNTAX_CHECKER_JS = r"""
+const fs = require('fs');
+let ts;
+try {
+  ts = require('typescript');
+} catch (error) {
+  console.log(JSON.stringify({
+    ok: false,
+    unavailable: true,
+    detail: `typescript module unavailable: ${error && error.message ? error.message : String(error)}`
+  }));
+  process.exit(2);
+}
+
+const payload = JSON.parse(fs.readFileSync(0, 'utf8') || '{}');
+const files = Array.isArray(payload.files) ? payload.files : [];
+const failures = [];
+for (const rel of files) {
+  const text = fs.readFileSync(rel, 'utf8');
+  const sourceFile = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true);
+  const parseDiagnostic = (sourceFile.parseDiagnostics || []).find(
+    (item) => item.category === ts.DiagnosticCategory.Error
+  );
+  if (parseDiagnostic) {
+    const message = ts.flattenDiagnosticMessageText(parseDiagnostic.messageText, ' ');
+    let location = rel;
+    if (typeof parseDiagnostic.start === 'number') {
+      const pos = sourceFile.getLineAndCharacterOfPosition(parseDiagnostic.start);
+      location = `${rel}(${pos.line + 1},${pos.character + 1})`;
+    }
+    failures.push(`${location}: TS${parseDiagnostic.code}: ${message}`);
+    break;
+  }
+  const result = ts.transpileModule(text, {
+    fileName: rel,
+    reportDiagnostics: true,
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2020,
+      module: ts.ModuleKind.ESNext,
+      jsx: ts.JsxEmit.ReactJSX,
+      isolatedModules: true
+    }
+  });
+  const diagnostic = (result.diagnostics || []).find((item) => item.category === ts.DiagnosticCategory.Error);
+  if (diagnostic) {
+    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ');
+    let location = rel;
+    if (typeof diagnostic.start === 'number') {
+      const pos = sourceFile.getLineAndCharacterOfPosition(diagnostic.start);
+      location = `${rel}(${pos.line + 1},${pos.character + 1})`;
+    }
+    failures.push(`${location}: TS${diagnostic.code}: ${message}`);
+    break;
+  }
+}
+
+if (failures.length) {
+  console.log(JSON.stringify({ok: false, detail: failures[0]}));
+  process.exit(1);
+}
+console.log(JSON.stringify({ok: true, checked: files.length}));
+"""
 
 
 def collect_workspace_inventory(workspace: str) -> dict[str, Any]:
@@ -148,6 +211,23 @@ def _typescript_compiler(workspace: str) -> str | None:
     return shutil.which("tsc")
 
 
+def _typescript_syntax_node_env(workspace: str) -> dict[str, str]:
+    env = os.environ.copy()
+    node_paths: list[str] = []
+    local_node_modules = os.path.join(workspace, "node_modules")
+    if os.path.isdir(local_node_modules):
+        node_paths.append(local_node_modules)
+    repo_node_modules = os.path.join(Path(__file__).resolve().parents[5], "node_modules")
+    if os.path.isdir(repo_node_modules):
+        node_paths.append(repo_node_modules)
+    existing = env.get("NODE_PATH", "").strip()
+    if existing:
+        node_paths.append(existing)
+    if node_paths:
+        env["NODE_PATH"] = os.pathsep.join(node_paths)
+    return env
+
+
 def _check_py_compile(workspace: str) -> tuple[bool, str]:
     failures: list[str] = []
     py_files = _iter_files(workspace, ".py")
@@ -216,32 +296,36 @@ def _check_ts_syntax(workspace: str) -> tuple[bool, str]:
     ts_files = [path for path in _iter_files_any(workspace, (".ts", ".tsx")) if not path.endswith(".d.ts")]
     if not ts_files:
         return False, "no .ts/.tsx files found"
-    tsc = _typescript_compiler(workspace)
-    if not tsc:
-        return False, _tool_unavailable_detail("tsc", "TypeScript", len(ts_files))
-    tsconfig = os.path.join(workspace, "tsconfig.json")
-    if os.path.exists(tsconfig):
-        cmd = [tsc, "--noEmit", "--pretty", "false", "--project", "tsconfig.json"]
-    else:
-        cmd = [
-            tsc,
-            "--noEmit",
-            "--pretty",
-            "false",
-            "--skipLibCheck",
-            "--target",
-            "ES2020",
-            "--module",
-            "ESNext",
-            "--jsx",
-            "react-jsx",
-            *_rel_paths(workspace, ts_files[:80]),
-        ]
-    proc = subprocess.run(cmd, cwd=workspace, capture_output=True, text=True, timeout=60, check=False)
+    node = shutil.which("node")
+    if not node:
+        return False, _tool_unavailable_detail("node", "TypeScript", len(ts_files))
+    rel_files = _rel_paths(workspace, ts_files[:120])
+    proc = subprocess.run(
+        [node, "-e", _TS_SYNTAX_CHECKER_JS],
+        cwd=workspace,
+        input=json.dumps({"files": rel_files}, ensure_ascii=False),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env=_typescript_syntax_node_env(workspace),
+    )
+    detail_payload: dict[str, Any] = {}
+    stdout = (proc.stdout or "").strip()
+    if stdout:
+        try:
+            detail_payload = json.loads(stdout.splitlines()[-1])
+        except json.JSONDecodeError:
+            detail_payload = {}
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout).strip().splitlines()
-        return False, "tsc --noEmit failed: " + (detail[0] if detail else "unknown TypeScript error")
-    return True, f"{len(ts_files)} TypeScript files pass tsc --noEmit"
+        if detail_payload.get("unavailable"):
+            return False, str(detail_payload.get("detail") or _tool_unavailable_detail("typescript", "TypeScript", len(ts_files)))
+        detail = str(detail_payload.get("detail") or "").strip()
+        if not detail:
+            lines = (proc.stderr or proc.stdout).strip().splitlines()
+            detail = lines[0] if lines else "unknown TypeScript syntax error"
+        return False, "TypeScript syntax check failed: " + detail
+    return True, f"{len(ts_files)} TypeScript files pass TypeScript syntax parser"
 
 
 def _check_go_compile(workspace: str) -> tuple[bool, str]:

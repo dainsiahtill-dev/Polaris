@@ -10,9 +10,11 @@ from reading the source, not idealized contracts.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
@@ -577,6 +579,61 @@ class _PartialFailureProgressExecutor(OrchestrationStageExecutor):
 
 
 class TestDirectorDispatchLoop:
+    @pytest.mark.asyncio
+    async def test_director_binding_fanout_waits_submitted_runs_concurrently(self, tmp_path: Path) -> None:
+        class _FanoutService:
+            def __init__(self) -> None:
+                self.next_id = 0
+
+            async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                self.next_id += 1
+                return CommandResult(run_id=f"run-{self.next_id}", status="running", message="submitted")
+
+        class _ConcurrentWaitExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.started_waits: list[str] = []
+                self.all_waits_started = asyncio.Event()
+
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+            ) -> CommandResult:
+                del service, timeout_seconds, cancel_event, abort_checker
+                self.started_waits.append(initial_result.run_id)
+                if len(self.started_waits) >= 2:
+                    self.all_waits_started.set()
+                await self.all_waits_started.wait()
+                return CommandResult(run_id=initial_result.run_id, status="completed", message="done")
+
+        executor = _ConcurrentWaitExecutor(tmp_path)
+        result = await asyncio.wait_for(
+            executor._execute_director_binding_fanout(
+                service=_FanoutService(),
+                workspace=str(tmp_path),
+                tasks=["TASK-1", "TASK-2"],
+                base_options={"execution_mode": "parallel", "max_workers": 2},
+                bindings=[
+                    {"provider_id": "p1", "model": "m1", "binding_id": "b1"},
+                    {"provider_id": "p2", "model": "m2", "binding_id": "b2"},
+                ],
+                timeout_seconds=10,
+            ),
+            timeout=0.5,
+        )
+
+        assert result.status == "completed"
+        assert sorted(executor.started_waits) == ["run-1", "run-2"]
+        per_binding = (result.metadata or {}).get("per_binding")
+        assert isinstance(per_binding, list)
+        assert [item["status"] for item in per_binding] == ["completed", "completed"]
+
     @pytest.mark.asyncio
     async def test_dispatch_passes_pm_plan_task_ids_to_director_fanout(self, tmp_path: Path) -> None:
         class _CaptureTasksExecutor(OrchestrationStageExecutor):

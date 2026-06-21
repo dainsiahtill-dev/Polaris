@@ -118,6 +118,41 @@ class TestStoreContextMessages:
             call_id="call-123",
         )
         assert isinstance(hash_key, str)
+
+    def test_dot_workspace_prefers_kernelone_workspace_env(self, tmp_path, monkeypatch) -> None:
+        """workspace='.' must use the active workspace env, not worker cwd."""
+        active_workspace = tmp_path / "active-workspace"
+        worker_cwd = tmp_path / "worker-cwd"
+        active_workspace.mkdir()
+        worker_cwd.mkdir()
+        monkeypatch.setenv("KERNELONE_WORKSPACE", str(active_workspace))
+        monkeypatch.chdir(worker_cwd)
+
+        messages = [{"role": "user", "content": "env-bound context"}]
+        hash_key = AIExecutor._store_context_messages_sync(
+            workspace=".",
+            messages=messages,
+            trace_id="trace-env-workspace",
+            call_id="call-env-workspace",
+        )
+
+        from polaris.kernelone.storage import StorageLayout
+        from polaris.kernelone.storage.io_paths import build_cache_root
+
+        active_layout = StorageLayout(
+            workspace=str(active_workspace),
+            runtime_base=build_cache_root("", str(active_workspace)),
+        )
+        cwd_layout = StorageLayout(
+            workspace=str(worker_cwd),
+            runtime_base=build_cache_root("", str(worker_cwd)),
+        )
+        shard = hash_key[:2]
+        active_file = active_layout.resolve_artifact_path(f"runtime/contexts/{shard}/{hash_key}")
+        cwd_file = cwd_layout.resolve_artifact_path(f"runtime/contexts/{shard}/{hash_key}")
+
+        assert active_file.is_file(), f"Expected context snapshot under active workspace: {active_file}"
+        assert not cwd_file.exists(), f"Context snapshot must not be written under worker cwd: {cwd_file}"
         assert len(hash_key) == 24
 
     def test_empty_messages_still_returns_hash(self) -> None:

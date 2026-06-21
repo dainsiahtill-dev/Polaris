@@ -240,6 +240,33 @@ describe('ContextViewerModal', () => {
     });
     expect(mockedApiFetch).toHaveBeenCalledTimes(2);
   });
+
+  it('renders a context-missing empty state for structured CONTEXT_NOT_FOUND 404', async () => {
+    mockedApiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: async () =>
+        JSON.stringify({
+          detail: {
+            code: 'CONTEXT_NOT_FOUND',
+            message: 'Context snapshot not found for hash abc',
+          },
+        }),
+      json: async () => ({
+        detail: {
+          code: 'CONTEXT_NOT_FOUND',
+          message: 'Context snapshot not found for hash abc',
+        },
+      }),
+    });
+
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+
+    const missing = await waitFor(() => screen.getByTestId('contextos-viewer-context-missing'));
+    expect(missing.textContent).toContain('完整上下文快照不可用');
+    expect(screen.queryByTestId('contextos-viewer-error')).toBeNull();
+    expect(screen.queryByText(/HTTP 404/)).toBeNull();
+  });
 });
 
 describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {

@@ -565,11 +565,12 @@ class OrchestrationStageExecutor:
             elif isinstance(item, CommandResult):
                 submitted.append((active_bindings[idx], item))
 
-        final_results: list[tuple[dict[str, str], CommandResult]] = []
-        for binding, sub_result in submitted:
+        async def _wait_submitted_binding(
+            binding: dict[str, str],
+            sub_result: CommandResult,
+        ) -> tuple[dict[str, str], CommandResult]:
             if sub_result.status in terminal_statuses or not str(sub_result.run_id or "").strip():
-                final_results.append((binding, sub_result))
-                continue
+                return binding, sub_result
             try:
                 waited = await self._wait_run_completion(
                     service,
@@ -578,12 +579,14 @@ class OrchestrationStageExecutor:
                     cancel_event=cancel_event,
                     abort_checker=abort_checker,
                 )
-                final_results.append((binding, waited))
+                return binding, waited
             except (RuntimeError, OSError, ValueError, TypeError) as exc:
                 logger.warning("Director binding fanout wait failed for run %s: %s", sub_result.run_id, exc)
-                final_results.append(
-                    (binding, CommandResult(run_id=sub_result.run_id, status="failed", message=f"Wait failed: {exc}"))
-                )
+                return binding, CommandResult(run_id=sub_result.run_id, status="failed", message=f"Wait failed: {exc}")
+
+        final_results: list[tuple[dict[str, str], CommandResult]] = list(
+            await asyncio.gather(*[_wait_submitted_binding(binding, sub_result) for binding, sub_result in submitted])
+        )
 
         for binding, result in final_results:
             key = _binding_key(binding)

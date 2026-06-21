@@ -85,6 +85,13 @@ export interface ContextViewerModalProps {
   workerId?: string | null;
 }
 
+interface ContextViewerErrorBody {
+  detail?: {
+    code?: string;
+    message?: string;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -579,6 +586,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worker
   const [content, setContent] = useState<ContextPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [contextMissing, setContextMissing] = useState(false);
   // When the backend returns 403 WORKSPACE_FORBIDDEN we surface a localised
   // "other workspace" empty-state instead of a generic error banner.  The
   // advisory ACL only fires when the caller explicitly names a different
@@ -600,6 +608,7 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worker
     if (!contextSnapshotRef) return;
     setLoading(true);
     setError(null);
+    setContextMissing(false);
     setWorkspaceForbidden(false);
     try {
       const res = await apiFetch(`/v2/context/${contextSnapshotRef}`);
@@ -620,6 +629,19 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worker
           return;
         }
         throw new Error(`HTTP ${res.status}`);
+      }
+      if (res.status === 404) {
+        let isContextMissing = false;
+        try {
+          const body = (await res.json()) as ContextViewerErrorBody;
+          isContextMissing = body?.detail?.code === 'CONTEXT_NOT_FOUND';
+        } catch {
+          isContextMissing = false;
+        }
+        if (isContextMissing) {
+          setContextMissing(true);
+          return;
+        }
       }
       if (!res.ok) {
         const text = await res.text().catch(() => '');
@@ -953,6 +975,11 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worker
             <EmptyState
               reason="该快照属于其他工作区，请切换到对应工作区后再查看"
               testId="contextos-viewer-workspace-forbidden"
+            />
+          ) : contextMissing ? (
+            <EmptyState
+              reason="完整上下文快照不可用：可能尚未落盘、已被清理，或来自旧运行事件"
+              testId="contextos-viewer-context-missing"
             />
           ) : error ? (
             <ErrorState message={error} onRetry={fetchContext} />

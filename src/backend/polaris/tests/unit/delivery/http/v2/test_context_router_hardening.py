@@ -15,6 +15,7 @@ Three layers of coverage:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -142,6 +143,46 @@ def test_workspace_acl_missing_hash_returns_404_without_leaking(tmp_path) -> Non
     assert response.status_code == 404, response.text
     detail = response.json().get("detail", {})
     assert detail.get("code") == "CONTEXT_NOT_FOUND", detail
+
+
+def test_legacy_runtime_context_fallback_reads_exact_hash(tmp_path) -> None:
+    """Legacy Polaris runtime contexts remain viewable by exact hash.
+
+    Factory/bench workers can leave context files under the old Polaris
+    runtime projects root.  The active workspace lookup should remain first,
+    but a missing active file may fall back to the bounded legacy candidate.
+    """
+    workspace_a = tmp_path / "workspaceA"
+    workspace_a.mkdir()
+    hash_key = "c24c57d5069883b282f4e32b"
+    legacy_file = tmp_path / "legacy" / "contexts" / hash_key[:2] / hash_key
+    legacy_file.parent.mkdir(parents=True)
+    legacy_file.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "trace_id": "trace-legacy",
+                "call_id": "call-legacy",
+                "messages": [{"role": "user", "content": "legacy context"}],
+                "stored_at": "2026-06-21T13:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = _build_client(str(workspace_a))
+
+    with patch(
+        "polaris.delivery.http.v2.context._legacy_context_file_candidates",
+        return_value=[legacy_file],
+    ):
+        response = client.get(f"/v2/context/{hash_key}")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["hash"] == hash_key
+    assert body["trace_id"] == "trace-legacy"
+    assert body["messages"] == [{"role": "user", "content": "legacy context"}]
+    assert body["storage_source"] == "legacy_runtime"
 
 
 # ----------------------------------------------------------------------------

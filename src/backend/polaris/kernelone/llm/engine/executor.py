@@ -730,6 +730,21 @@ class AIExecutor:
         return text or None
 
     @staticmethod
+    def _resolve_context_store_workspace(workspace: str | None) -> str:
+        """Resolve the workspace used by the per-LLM context snapshot store.
+
+        Empty strings and "." are not stable enough for cross-process UI
+        lookup because worker cwd can differ from the backend process.  The
+        backend binds KERNELONE_WORKSPACE to the active workspace, so prefer it
+        for those ambiguous inputs and only then fall back to cwd.
+        """
+        raw = str(workspace or "").strip()
+        if not raw or raw == ".":
+            env_workspace = str(os.environ.get("KERNELONE_WORKSPACE") or "").strip()
+            raw = env_workspace or raw or "."
+        return os.path.abspath(os.path.expanduser(raw))
+
+    @staticmethod
     def _store_context_messages_sync(
         workspace: str | None,
         messages: list[Any],
@@ -776,7 +791,7 @@ class AIExecutor:
         # silently writing a key no reader can look up.
         hash_key = validate_context_hash(full_hash[:24])
 
-        ws = workspace or "."
+        ws = AIExecutor._resolve_context_store_workspace(workspace)
         cache_root = build_cache_root("", ws)
         layout = StorageLayout(workspace=ws, runtime_base=cache_root)
         # Shard to avoid directory explosion: runtime/contexts/ab/abcdef...

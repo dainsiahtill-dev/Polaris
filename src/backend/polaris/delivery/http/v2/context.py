@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -30,6 +31,44 @@ from .workspace_acl import check_advisory_workspace_acl
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _legacy_context_file_candidates(canonical_hash: str) -> list[Path]:
+    """Return bounded legacy Polaris runtime candidates for a context hash.
+
+    Older factory/bench workers can write per-LLM context snapshots under
+    ``~/.cache/polaris/.polaris/projects`` while the current reader resolves
+    active workspaces through KernelOne's runtime root.  This compatibility
+    lookup is deliberately limited to that legacy runtime root and the exact
+    hash shard; it is not a general cross-workspace filesystem scan.
+    """
+    shard = canonical_hash[:2]
+    projects_root = Path.home() / ".cache" / "polaris" / ".polaris" / "projects"
+    if not projects_root.is_dir():
+        return []
+    pattern = f"*/runtime/projects/*/runtime/contexts/{shard}/{canonical_hash}"
+    return [path for path in projects_root.glob(pattern) if path.is_file()]
+
+
+def _load_context_payload(file_path: Path, canonical_hash: str) -> dict[str, Any]:
+    try:
+        with open(file_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (RuntimeError, ValueError) as exc:
+        logger.error("Failed to read context snapshot %s: %s", canonical_hash, exc)
+        raise StructuredHTTPException(
+            status_code=500,
+            code="CONTEXT_READ_ERROR",
+            message="Failed to read context snapshot",
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise StructuredHTTPException(
+            status_code=500,
+            code="CONTEXT_FORMAT_ERROR",
+            message="Context snapshot has invalid format",
+        )
+    return payload
 
 
 @router.get("/v2/context/{hash}", dependencies=[Depends(require_auth)])
@@ -79,23 +118,19 @@ def get_context_by_hash(request: Request, hash: str) -> dict[str, Any]:
     # unsupported prefix — even if get_path is later loosened.
     file_path = layout.resolve_artifact_path(f"runtime/contexts/{shard}/{canonical_hash}")
 
-    if not os.path.isfile(file_path):
-        raise StructuredHTTPException(
-            status_code=404,
-            code="CONTEXT_NOT_FOUND",
-            message=f"Context snapshot not found for hash {canonical_hash}",
-        )
-
-    try:
-        with open(file_path, encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (RuntimeError, ValueError) as exc:
-        logger.error("Failed to read context snapshot %s: %s", canonical_hash, exc)
-        raise StructuredHTTPException(
-            status_code=500,
-            code="CONTEXT_READ_ERROR",
-            message="Failed to read context snapshot",
-        ) from exc
+    storage_source = "active_workspace"
+    if os.path.isfile(file_path):
+        payload = _load_context_payload(Path(file_path), canonical_hash)
+    else:
+        legacy_candidates = _legacy_context_file_candidates(canonical_hash)
+        if not legacy_candidates:
+            raise StructuredHTTPException(
+                status_code=404,
+                code="CONTEXT_NOT_FOUND",
+                message=f"Context snapshot not found for hash {canonical_hash}",
+            )
+        storage_source = "legacy_runtime"
+        payload = _load_context_payload(legacy_candidates[0], canonical_hash)
 
     if not isinstance(payload, dict):
         raise StructuredHTTPException(
@@ -117,6 +152,7 @@ def get_context_by_hash(request: Request, hash: str) -> dict[str, Any]:
         "stored_at": payload.get("stored_at"),
         "message_count": message_count,
         "total_chars": len(content_str),
+        "storage_source": storage_source,
     }
 
 

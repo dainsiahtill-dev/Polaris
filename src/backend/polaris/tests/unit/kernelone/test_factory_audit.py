@@ -377,6 +377,8 @@ def test_multilanguage_compile_checks_dispatch_to_toolchains(monkeypatch: Any, t
 
     def fake_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         commands.append(cmd)
+        if Path(cmd[0]).name == "node":
+            return subprocess.CompletedProcess(cmd, 0, stdout='{"ok":true,"checked":1}\n', stderr="")
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(factory_audit.shutil, "which", fake_which)
@@ -385,32 +387,54 @@ def test_multilanguage_compile_checks_dispatch_to_toolchains(monkeypatch: Any, t
     results = run_checks(str(tmp_path), ["ts_syntax", "go_compile", "rust_compile", "cpp_compile", "java_compile"])
 
     assert [item["ok"] for item in results] == [True, True, True, True, True]
-    assert [Path(command[0]).name for command in commands] == ["tsc", "go", "rustc", "g++", "javac"]
+    assert [Path(command[0]).name for command in commands] == ["node", "go", "rustc", "g++", "javac"]
 
 
-def test_ts_syntax_uses_project_tsconfig_and_local_compiler(monkeypatch: Any, tmp_path: Path) -> None:
+def test_ts_syntax_uses_isolated_typescript_syntax_parser(monkeypatch: Any, tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.ts").write_text("export const answer: number = 42;\n", encoding="utf-8")
     (tmp_path / "tsconfig.json").write_text(
         '{"compilerOptions":{"target":"ES2020","skipLibCheck":true},"include":["src/**/*"]}\n',
         encoding="utf-8",
     )
-    local_tsc = tmp_path / "node_modules" / ".bin" / "tsc"
-    local_tsc.parent.mkdir(parents=True)
-    local_tsc.write_text("#!/usr/bin/env node\n", encoding="utf-8")
     commands: list[list[str]] = []
+    kwargs_seen: list[dict[str, Any]] = []
 
     def fake_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         commands.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        kwargs_seen.append(_kwargs)
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"ok":true,"checked":1}\n', stderr="")
 
-    monkeypatch.setattr(factory_audit.shutil, "which", lambda _name: "/global/tsc")
+    monkeypatch.setattr(factory_audit.shutil, "which", lambda _name: "/tool/node")
     monkeypatch.setattr(factory_audit.subprocess, "run", fake_run)
 
     results = run_checks(str(tmp_path), ["ts_syntax"])
 
     assert results[0]["ok"] is True
-    assert commands == [[str(local_tsc), "--noEmit", "--pretty", "false", "--project", "tsconfig.json"]]
+    assert commands and commands[0][:2] == ["/tool/node", "-e"]
+    assert kwargs_seen[0]["cwd"] == str(tmp_path)
+    assert json.loads(kwargs_seen[0]["input"]) == {"files": ["src/app.ts"]}
+
+
+def test_ts_syntax_reports_real_typescript_syntax_error(monkeypatch: Any, tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "broken.ts").write_text("export const answer = ;\n", encoding="utf-8")
+
+    def fake_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout='{"ok":false,"detail":"src/broken.ts(1,23): TS1109: Expression expected."}\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(factory_audit.shutil, "which", lambda _name: "/tool/node")
+    monkeypatch.setattr(factory_audit.subprocess, "run", fake_run)
+
+    results = run_checks(str(tmp_path), ["ts_syntax"])
+
+    assert results[0]["ok"] is False
+    assert "Expression expected" in results[0]["detail"]
 
 
 def test_multilanguage_compile_check_reports_missing_toolchain(monkeypatch: Any, tmp_path: Path) -> None:
