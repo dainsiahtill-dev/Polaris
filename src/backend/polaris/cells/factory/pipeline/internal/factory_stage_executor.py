@@ -1552,6 +1552,14 @@ class OrchestrationStageExecutor:
                 after_stats = self._read_taskboard_stats()
                 metadata_payload = director_result.metadata if isinstance(director_result.metadata, dict) else {}
                 metadata_progress = self._metadata_indicates_execution(metadata_payload)
+                # When upstream is non-success, only count metadata progress if there
+                # are completed tasks (forward movement), not just failed-only evidence.
+                # Failed-only metadata should not suppress specific error handling.
+                director_status_early = str(director_result.status or "").strip().lower()
+                if director_status_early not in {"completed", "success"} and metadata_progress:
+                    counts = metadata_payload.get("task_status_counts")
+                    has_completed = isinstance(counts, dict) and int(counts.get("completed") or 0) > 0
+                    metadata_progress = has_completed
                 progress_made = self._has_director_progress(before_stats, after_stats) or metadata_progress
                 attempt_entry = {
                     "round": round_index,

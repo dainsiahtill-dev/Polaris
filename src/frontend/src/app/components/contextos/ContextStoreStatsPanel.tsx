@@ -85,6 +85,9 @@ export function ContextStoreStatsPanel({ workspace, enabled = true }: ContextSto
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {state.kind === 'ready' && <StatusDot status={classifyStatusFromStats(state.data)} />}
+          {state.kind === 'ready' && !state.isAdmin && (
+            <span className="rounded bg-white/5 px-1.5 py-0.5 text-[9px] text-text-dim">只读</span>
+          )}
           <Button
             type="button"
             variant="outline"
@@ -152,7 +155,8 @@ function renderBody({ state, sweepPending, sweepError, onTriggerSweep }: RenderB
     : state.kind === 'error' ? state.previous
     : state.previous;
   if (!data) return null;
-  return <ReadyView data={data} sweepPending={sweepPending} sweepError={sweepError} onTriggerSweep={onTriggerSweep} errorMessage={state.kind === 'error' ? state.message : null} />;
+  const isAdmin = state.kind === 'ready' ? state.isAdmin : false;
+  return <ReadyView data={data} sweepPending={sweepPending} sweepError={sweepError} onTriggerSweep={onTriggerSweep} errorMessage={state.kind === 'error' ? state.message : null} isAdmin={isAdmin} />;
 }
 
 // --- disabled hint ---------------------------------------------------------
@@ -216,9 +220,10 @@ interface ReadyViewProps {
   sweepError: string | null;
   onTriggerSweep: () => void;
   errorMessage: string | null;
+  isAdmin: boolean;
 }
 
-function ReadyView({ data, sweepPending, sweepError, onTriggerSweep, errorMessage }: ReadyViewProps) {
+function ReadyView({ data, sweepPending, sweepError, onTriggerSweep, errorMessage, isAdmin }: ReadyViewProps) {
   const status = classifyStatusFromStats(data);
   const statusColor = STATS_STATUS_COLOR[status];
   const oldestAgeSec = deriveOldestAgeSeconds(data);
@@ -288,32 +293,34 @@ function ReadyView({ data, sweepPending, sweepError, onTriggerSweep, errorMessag
         <SweepReportCard report={data.last_sweep_report} />
       )}
 
-      {/* sweep 按钮 */}
-      <div className="flex items-center justify-between gap-2 rounded-lg border border-status-warning/20 bg-status-warning/5 px-3 py-2">
-        <div className="min-w-0 text-[10px] leading-relaxed text-text-muted">
-          <div className="font-semibold text-text-main">强制清理（destructive）</div>
-          <div className="truncate" title="按 oldest-first 顺序删除最早文件直到回到 TTL/容量上限；不可恢复。">
-            按 oldest-first 顺序删除最早文件直到回到 TTL/容量上限。
+      {/* sweep 按钮 - 仅在 admin 端点可用时显示 */}
+      {isAdmin && (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-status-warning/20 bg-status-warning/5 px-3 py-2">
+          <div className="min-w-0 text-[10px] leading-relaxed text-text-muted">
+            <div className="font-semibold text-text-main">强制清理（destructive）</div>
+            <div className="truncate" title="按 oldest-first 顺序删除最早文件直到回到 TTL/容量上限；不可恢复。">
+              按 oldest-first 顺序删除最早文件直到回到 TTL/容量上限。
+            </div>
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onTriggerSweep}
+            disabled={sweepPending || !enabled}
+            data-testid="contextos-store-stats-sweep"
+            aria-label="强制清理上下文存储"
+            className="border-status-warning/40 text-status-warning hover:bg-status-warning/15"
+          >
+            {sweepPending ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="mr-1 h-3.5 w-3.5" />
+            )}
+            清理
+          </Button>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onTriggerSweep}
-          disabled={sweepPending || !enabled}
-          data-testid="contextos-store-stats-sweep"
-          aria-label="强制清理上下文存储"
-          className="border-status-warning/40 text-status-warning hover:bg-status-warning/15"
-        >
-          {sweepPending ? (
-            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Trash2 className="mr-1 h-3.5 w-3.5" />
-          )}
-          清理
-        </Button>
-      </div>
+      )}
 
       {sweepError && (
         <div className="rounded-md border border-status-error/30 bg-status-error/10 px-2 py-1.5 font-mono text-[10px] text-status-error">

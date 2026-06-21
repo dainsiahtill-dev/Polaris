@@ -88,6 +88,7 @@ _POLARIS_TO_KERNELONE: dict[str, str] = {
     "POLARIS_IO_FSYNC_MODE": "KERNELONE_IO_FSYNC_MODE",
     # ─── Context OS / Cognitive Runtime ─────────────────────────────────────
     "POLARIS_CONTEXT_OS_ENABLED": "KERNELONE_CONTEXT_OS_ENABLED",
+    "POLARIS_CONTEXT_ADMIN_ENABLED": "KERNELONE_CONTEXT_ADMIN_ENABLED",
     "POLARIS_COGNITIVE_RUNTIME_MODE": "KERNELONE_COGNITIVE_RUNTIME_MODE",
     # ─── Audit ──────────────────────────────────────────────────────────────
     "POLARIS_AUDIT_LLM_ENABLED": "KERNELONE_AUDIT_LLM_ENABLED",

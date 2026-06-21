@@ -1728,6 +1728,17 @@ def main() -> int:
         default=60,
         help="seconds for each generated project's dependency/build/entrypoint real-run gate",
     )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate projects and generate audit structure without running the chain",
+    )
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="limit number of projects to process; 0 disables limit",
+    )
     args = ap.parse_args()
 
     projects = load_projects() if args.projects_file == str(_FIXTURE) else load_projects(args.projects_file)
@@ -1751,6 +1762,54 @@ def main() -> int:
     if not selected:
         print("[factory-bench] nothing selected", flush=True)
         return 1
+
+    # Apply --limit if specified
+    if args.limit > 0:
+        selected = selected[:args.limit]
+        print(f"[factory-bench] limiting to {len(selected)} project(s) (--limit={args.limit})", flush=True)
+
+    # Handle --dry-run: validate and generate audit structure without running chain
+    if args.dry_run:
+        print(f"[factory-bench] dry-run mode: validating {len(selected)} project(s)", flush=True)
+        base = Path(args.work_dir)
+        base.mkdir(parents=True, exist_ok=True)
+        audit_dir = base / "audits" / "dry-run"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        
+        catalog_hash = hashlib.sha256(
+            json.dumps(projects, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()[:16]
+        
+        for project in selected:
+            pid = str(project.get("id") or "")
+            level = int(project.get("level") or 0)
+            lang = str(project.get("primary_language") or "")
+            
+            audit_file = audit_dir / f"{pid}.audit.json"
+            project_audit = {
+                "catalog_schema_version": "factory-bench/2",
+                "catalog_hash": catalog_hash,
+                "run_id": "dry-run",
+                "project_id": pid,
+                "level": level,
+                "primary_language": lang,
+                "title": str(project.get("title") or ""),
+                "domain": str(project.get("domain") or ""),
+                "project_type": str(project.get("project_type") or ""),
+                "record": {
+                    "project_id": pid,
+                    "level": level,
+                    "primary_language": lang,
+                    "dry_run": True,
+                    "validation_passed": True,
+                },
+                "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            _write_immutable_json(audit_file, project_audit)
+            print(f"[factory-bench]   {pid} L{level} {lang}: audit package generated", flush=True)
+        
+        print(f"[factory-bench] dry-run complete: {len(selected)} audit package(s) -> {audit_dir}", flush=True)
+        return 0
 
     base = Path(args.work_dir)
     base.mkdir(parents=True, exist_ok=True)

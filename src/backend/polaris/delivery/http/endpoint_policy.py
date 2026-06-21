@@ -16,7 +16,7 @@ class EndpointPolicy(StrEnum):
     STREAM_RUNTIME = "stream_runtime"
 
 
-_PUBLIC_PROBES = frozenset({"/health", "/ready", "/live"})
+_PUBLIC_PROBES = frozenset({"/health", "/ready", "/live", "/v2/auth/token"})
 _INFRASTRUCTURE_PATHS = frozenset({"/metrics", "/favicon.ico"})
 _LOW_SIGNAL_PATHS = frozenset({"/health", "/metrics", "/favicon.ico"})
 _LOW_SIGNAL_PREFIXES = tuple(f"{path}/" for path in _LOW_SIGNAL_PATHS)

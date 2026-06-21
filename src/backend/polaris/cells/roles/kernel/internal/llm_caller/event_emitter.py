@@ -18,6 +18,13 @@ _CANONICAL_LLM_EVENT_MARKER = "_emits_canonical_llm_events"
 _MAX_CONTENT_PREVIEW_CHARS = 2000
 
 
+def _get_dedup() -> Any:
+    """Lazy import to avoid circular dependency."""
+    from polaris.kernelone.audit.omniscient.dedup import get_global_llm_dedup
+
+    return get_global_llm_dedup()
+
+
 def _build_content_preview_payload(payload: dict[str, Any], response_content: str) -> dict[str, Any] | None:
     """Return bounded metadata for CONTENT_PREVIEW without full response duplication."""
 
@@ -86,6 +93,7 @@ class LLMEventEmitter:
         task_id: str | None,
         attempt: int,
         model: str,
+        provider: str = "",
         error_category: str,
         error_message: str,
         call_id: str,
@@ -93,12 +101,38 @@ class LLMEventEmitter:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Emit call error event."""
+        dedup = _get_dedup()
+        dedup_event_data: dict[str, Any] = {
+            "event_type": "call_error",
+            "model": model,
+            "attempt": attempt,
+            "error_category": error_category,
+            "error_message": error_message,
+        }
+        if provider:
+            dedup_event_data["provider"] = provider
+        if not dedup.should_emit(
+            session_id=run_id,
+            role=role,
+            event_data=dedup_event_data,
+            call_id=call_id,
+        ):
+            logger.debug(
+                "[LLMEventEmitter] Suppressed duplicate call_error: role=%s run_id=%s call_id=%s",
+                role,
+                run_id,
+                call_id,
+            )
+            return
+
         _payload = dict(metadata or {})
         _payload.setdefault("call_id", call_id)
         _payload.setdefault("elapsed_ms", round(elapsed_ms, 2))
         _payload.setdefault("workspace", self.workspace)
         _payload.setdefault("error_category", error_category)
         _payload.setdefault("error_message", error_message)
+        if provider:
+            _payload.setdefault("provider", provider)
         self.publish_uep_lifecycle_event(
             role=role,
             run_id=run_id,
@@ -113,6 +147,7 @@ class LLMEventEmitter:
                 task_id=task_id,
                 attempt=attempt,
                 model=model,
+                provider=provider,
                 error_category=error_category,
                 error_message=error_message,
                 call_id=call_id,
@@ -127,16 +162,21 @@ class LLMEventEmitter:
             payload.setdefault("call_id", call_id)
             payload.setdefault("elapsed_ms", round(elapsed_ms, 2))
             payload.setdefault("workspace", self.workspace)
+            kwargs: dict[str, Any] = {
+                "event_type": LLMEventType.CALL_ERROR,
+                "role": role,
+                "run_id": run_id,
+                "task_id": task_id,
+                "attempt": attempt,
+                "model": model,
+                "error_category": error_category,
+                "error_message": error_message,
+                "metadata": payload,
+            }
+            if provider:
+                kwargs["provider"] = provider
             emit_llm_event(
-                event_type=LLMEventType.CALL_ERROR,
-                role=role,
-                run_id=run_id,
-                task_id=task_id,
-                attempt=attempt,
-                model=model,
-                error_category=error_category,
-                error_message=error_message,
-                metadata=payload,
+                **kwargs,
             )
 
     def emit_call_start_event(
@@ -148,6 +188,7 @@ class LLMEventEmitter:
         task_id: str | None,
         attempt: int,
         model: str,
+        provider: str = "",
         prompt_tokens: int = 0,
         call_id: str,
         context_tokens_before: int | None = None,
@@ -156,9 +197,34 @@ class LLMEventEmitter:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Emit call start event."""
+        dedup = _get_dedup()
+        dedup_event_data: dict[str, Any] = {
+            "event_type": "call_start",
+            "model": model,
+            "attempt": attempt,
+            "prompt_tokens": prompt_tokens,
+        }
+        if provider:
+            dedup_event_data["provider"] = provider
+        if not dedup.should_emit(
+            session_id=run_id,
+            role=role,
+            event_data=dedup_event_data,
+            call_id=call_id,
+        ):
+            logger.debug(
+                "[LLMEventEmitter] Suppressed duplicate call_start: role=%s run_id=%s call_id=%s",
+                role,
+                run_id,
+                call_id,
+            )
+            return
+
         _payload = dict(metadata or {})
         _payload.setdefault("call_id", call_id)
         _payload.setdefault("workspace", self.workspace)
+        if provider:
+            _payload.setdefault("provider", provider)
         if messages is not None:
             _payload["messages"] = messages
         if context_tokens_before is not None:
@@ -179,6 +245,7 @@ class LLMEventEmitter:
                 task_id=task_id,
                 attempt=attempt,
                 model=model,
+                provider=provider,
                 prompt_tokens=prompt_tokens,
                 call_id=call_id,
                 context_tokens_before=context_tokens_before,
@@ -205,6 +272,8 @@ class LLMEventEmitter:
                 "prompt_tokens": prompt_tokens,
                 "metadata": payload,
             }
+            if provider:
+                kwargs["provider"] = provider
             if context_tokens_before is not None:
                 kwargs["context_tokens_before"] = context_tokens_before
             if compression_strategy is not None:
@@ -232,6 +301,29 @@ class LLMEventEmitter:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Emit call end event."""
+        dedup = _get_dedup()
+        dedup_event_data: dict[str, Any] = {
+            "event_type": "call_end",
+            "model": model,
+            "attempt": attempt,
+            "completion_tokens": completion_tokens,
+        }
+        if provider:
+            dedup_event_data["provider"] = provider
+        if not dedup.should_emit(
+            session_id=run_id,
+            role=role,
+            event_data=dedup_event_data,
+            call_id=call_id,
+        ):
+            logger.debug(
+                "[LLMEventEmitter] Suppressed duplicate call_end: role=%s run_id=%s call_id=%s",
+                role,
+                run_id,
+                call_id,
+            )
+            return
+
         _payload = dict(metadata or {})
         _payload.setdefault("call_id", call_id)
         _payload.setdefault("workspace", self.workspace)
@@ -291,6 +383,7 @@ class LLMEventEmitter:
                         task_id=task_id,
                         attempt=attempt,
                         model=model,
+                        provider=provider,
                         completion_tokens=completion_tokens,
                         metadata=preview_payload,
                     )
@@ -325,17 +418,43 @@ class LLMEventEmitter:
         task_id: str | None,
         attempt: int,
         model: str,
+        provider: str = "",
         call_id: str,
         retry_decision: str,
         backoff_seconds: float,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Emit call retry event."""
+        dedup = _get_dedup()
+        dedup_event_data: dict[str, Any] = {
+            "event_type": "call_retry",
+            "model": model,
+            "attempt": attempt,
+            "retry_decision": retry_decision,
+        }
+        if provider:
+            dedup_event_data["provider"] = provider
+        if not dedup.should_emit(
+            session_id=run_id,
+            role=role,
+            event_data=dedup_event_data,
+            call_id=call_id,
+        ):
+            logger.debug(
+                "[LLMEventEmitter] Suppressed duplicate call_retry: role=%s run_id=%s call_id=%s",
+                role,
+                run_id,
+                call_id,
+            )
+            return
+
         _payload = dict(metadata or {})
         _payload.setdefault("call_id", call_id)
         _payload.setdefault("workspace", self.workspace)
         _payload.setdefault("retry_decision", retry_decision)
         _payload.setdefault("backoff_seconds", backoff_seconds)
+        if provider:
+            _payload.setdefault("provider", provider)
         self.publish_uep_lifecycle_event(
             role=role,
             run_id=run_id,
@@ -350,6 +469,7 @@ class LLMEventEmitter:
                 task_id=task_id,
                 attempt=attempt,
                 model=model,
+                provider=provider,
                 call_id=call_id,
                 retry_decision=retry_decision,
                 backoff_seconds=backoff_seconds,
@@ -362,17 +482,20 @@ class LLMEventEmitter:
             payload = dict(metadata or {})
             payload.setdefault("call_id", call_id)
             payload.setdefault("workspace", self.workspace)
-            emit_llm_event(
-                event_type=LLMEventType.CALL_RETRY,
-                role=role,
-                run_id=run_id,
-                task_id=task_id,
-                attempt=attempt,
-                model=model,
-                retry_decision=retry_decision,
-                backoff_seconds=max(0.0, float(backoff_seconds)),
-                metadata=payload,
-            )
+            kwargs: dict[str, Any] = {
+                "event_type": LLMEventType.CALL_RETRY,
+                "role": role,
+                "run_id": run_id,
+                "task_id": task_id,
+                "attempt": attempt,
+                "model": model,
+                "retry_decision": retry_decision,
+                "backoff_seconds": max(0.0, float(backoff_seconds)),
+                "metadata": payload,
+            }
+            if provider:
+                kwargs["provider"] = provider
+            emit_llm_event(**kwargs)
 
 
 __all__ = ["LLMEventEmitter"]

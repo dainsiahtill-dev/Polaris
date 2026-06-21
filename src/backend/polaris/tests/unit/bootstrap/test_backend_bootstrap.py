@@ -389,9 +389,7 @@ class TestBackendBootstrapperRuntimeEnvironment:
             },
             SourceType.ENV,
         )
-        request = MagicMock()
-        request.token = ""
-        request.workspace = ""
+        request = BackendLaunchRequest(token="")
 
         BackendBootstrapper()._setup_environment_variables(snapshot, request)
 

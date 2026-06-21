@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -537,3 +538,273 @@ async def test_get_role_runtime_status_no_lock(client: AsyncClient, tmp_path) ->
         assert data["running"] is False
         assert data["roleId"] == "qa"
         assert data["config"]["provider_id"] == "openai"
+
+
+# ---------------------------------------------------------------------------
+# GET /v2/llm/health
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_llm_health_success(client: AsyncClient) -> None:
+    """GET /v2/llm/health should return health check results."""
+    mock_config = {
+        "providers": {
+            "openai": {"type": "openai_compat", "api_key": "sk-123"},
+            "ollama": {"type": "ollama", "base_url": "http://localhost:11434"},
+        },
+        "roles": {
+            "pm": {"provider_id": "openai", "model": "gpt-4"},
+            "director": {"provider_id": "ollama", "model": "llama2"},
+        },
+    }
+
+    mock_health_results = {
+        "openai": {"ok": True, "latency_ms": 100},
+        "ollama": {"ok": False, "latency_ms": 50, "error": "Connection refused"},
+    }
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.llm.llm_config.load_llm_config",
+            return_value=mock_config,
+        ),
+        patch(
+            "polaris.delivery.http.routers.llm._provider_manager.health_check_all",
+            return_value=mock_health_results,
+        ),
+    ):
+        response = await client.get("/v2/llm/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is False  # Not all providers healthy
+        assert "latency_ms" in data
+        assert "providers" in data
+        assert "roles" in data
+        assert "timestamp" in data
+        assert data["error"] is not None
+        assert "Failed providers: ollama" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_get_llm_health_all_providers_healthy(client: AsyncClient) -> None:
+    """GET /v2/llm/health should return ok=True when all providers are healthy."""
+    mock_config = {
+        "providers": {
+            "openai": {"type": "openai_compat", "api_key": "sk-123"},
+        },
+        "roles": {
+            "pm": {"provider_id": "openai", "model": "gpt-4"},
+        },
+    }
+
+    mock_health_results = {
+        "openai": {"ok": True, "latency_ms": 100},
+    }
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.llm.llm_config.load_llm_config",
+            return_value=mock_config,
+        ),
+        patch(
+            "polaris.delivery.http.routers.llm._provider_manager.health_check_all",
+            return_value=mock_health_results,
+        ),
+    ):
+        response = await client.get("/v2/llm/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_llm_health_no_providers(client: AsyncClient) -> None:
+    """GET /v2/llm/health should return ok=False when no providers configured."""
+    mock_config: dict[str, Any] = {
+        "providers": {},
+        "roles": {},
+    }
+
+    mock_health_results: dict[str, dict[str, Any]] = {}
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.llm.llm_config.load_llm_config",
+            return_value=mock_config,
+        ),
+        patch(
+            "polaris.delivery.http.routers.llm._provider_manager.health_check_all",
+            return_value=mock_health_results,
+        ),
+    ):
+        response = await client.get("/v2/llm/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is False  # No providers means not healthy
+        assert data["providers"] == {}
+        assert data["roles"] == {}
+
+
+@pytest.mark.asyncio
+async def test_get_llm_health_with_workspace_override(client: AsyncClient) -> None:
+    """GET /v2/llm/health should accept workspace query parameter."""
+    mock_config = {
+        "providers": {
+            "openai": {"type": "openai_compat", "api_key": "sk-123"},
+        },
+        "roles": {
+            "pm": {"provider_id": "openai", "model": "gpt-4"},
+        },
+    }
+
+    mock_health_results = {
+        "openai": {"ok": True, "latency_ms": 100},
+    }
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.llm.llm_config.load_llm_config",
+            return_value=mock_config,
+        ),
+        patch(
+            "polaris.delivery.http.routers.llm._provider_manager.health_check_all",
+            return_value=mock_health_results,
+        ),
+    ):
+        response = await client.get("/v2/llm/health?workspace=/tmp/test")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_llm_health_provider_error(client: AsyncClient) -> None:
+    """GET /v2/llm/health should handle provider health check errors."""
+    mock_config = {
+        "providers": {
+            "openai": {"type": "openai_compat", "api_key": "sk-123"},
+        },
+        "roles": {
+            "pm": {"provider_id": "openai", "model": "gpt-4"},
+        },
+    }
+
+    mock_health_results = {
+        "openai": {"ok": False, "latency_ms": 0, "error": "Invalid API key"},
+    }
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.llm.llm_config.load_llm_config",
+            return_value=mock_config,
+        ),
+        patch(
+            "polaris.delivery.http.routers.llm._provider_manager.health_check_all",
+            return_value=mock_health_results,
+        ),
+    ):
+        response = await client.get("/v2/llm/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is False
+        assert "openai" in data["providers"]
+        assert data["providers"]["openai"]["ok"] is False
+        assert data["providers"]["openai"]["error"] == "Invalid API key"
+
+
+@pytest.mark.asyncio
+async def test_get_llm_health_roles_mapping(client: AsyncClient) -> None:
+    """GET /v2/llm/health should correctly map provider health to roles."""
+    mock_config = {
+        "providers": {
+            "openai": {"type": "openai_compat", "api_key": "sk-123"},
+            "anthropic": {"type": "anthropic_compat", "api_key": "sk-ant-123"},
+        },
+        "roles": {
+            "pm": {"provider_id": "openai", "model": "gpt-4"},
+            "architect": {"provider_id": "anthropic", "model": "claude-3"},
+        },
+    }
+
+    mock_health_results = {
+        "openai": {"ok": True, "latency_ms": 100},
+        "anthropic": {"ok": True, "latency_ms": 150},
+    }
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.llm.llm_config.load_llm_config",
+            return_value=mock_config,
+        ),
+        patch(
+            "polaris.delivery.http.routers.llm._provider_manager.health_check_all",
+            return_value=mock_health_results,
+        ),
+    ):
+        response = await client.get("/v2/llm/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert "pm" in data["roles"]
+        assert "architect" in data["roles"]
+        assert data["roles"]["pm"]["provider_ok"] is True
+        assert data["roles"]["pm"]["provider_latency_ms"] == 100
+        assert data["roles"]["architect"]["provider_ok"] is True
+        assert data["roles"]["architect"]["provider_latency_ms"] == 150
+
+
+@pytest.mark.asyncio
+async def test_get_llm_health_role_bindings_mapping(client: AsyncClient) -> None:
+    """GET /v2/llm/health should expose each binding for multi-bound roles."""
+    mock_config = {
+        "providers": {
+            "director-main": {"type": "openai_compat", "api_key": "sk-123"},
+            "director-shadow": {"type": "openai_compat", "api_key": "sk-456"},
+        },
+        "roles": {
+            "director": {
+                "bindings": [
+                    {
+                        "binding_id": "main",
+                        "provider_id": "director-main",
+                        "model": "qwen3.6-27b",
+                    },
+                    {
+                        "binding_id": "shadow",
+                        "provider_id": "director-shadow",
+                        "model": "qwen3.6-27b",
+                    },
+                ],
+            },
+        },
+    }
+
+    mock_health_results = {
+        "director-main": {"ok": True, "latency_ms": 100},
+        "director-shadow": {"ok": False, "latency_ms": 250, "error": "quota exceeded"},
+    }
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.llm.llm_config.load_llm_config",
+            return_value=mock_config,
+        ),
+        patch(
+            "polaris.delivery.http.routers.llm._provider_manager.health_check_all",
+            return_value=mock_health_results,
+        ),
+    ):
+        response = await client.get("/v2/llm/health")
+        assert response.status_code == 200
+        data = response.json()
+        director = data["roles"]["director"]
+        assert director["provider_ok"] is False
+        assert director["provider_latency_ms"] == 250
+        assert director["provider_error"] == "quota exceeded"
+        assert len(director["bindings"]) == 2
+        assert director["bindings"][0]["binding_id"] == "main"
+        assert director["bindings"][0]["provider_ok"] is True
+        assert director["bindings"][1]["binding_id"] == "shadow"
+        assert director["bindings"][1]["provider_ok"] is False

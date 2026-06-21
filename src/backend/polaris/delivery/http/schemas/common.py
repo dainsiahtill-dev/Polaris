@@ -650,6 +650,28 @@ class LLMMigrateConfigResponse(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class LLMHealthResponse(BaseModel):
+    """Response model for LLM health check endpoint."""
+
+    model_config = {"extra": "allow"}
+    ok: bool
+    latency_ms: int
+    providers: dict[str, Any]
+    roles: dict[str, Any]
+    timestamp: str
+    error: str | None = None
+
+
+class LLMMetricsResponse(BaseModel):
+    """Response model for LLM metrics endpoint."""
+
+    model_config = {"extra": "allow"}
+    window_seconds: int
+    generated_at: float
+    total: dict[str, Any]
+    dimensions: list[dict[str, Any]]
+
+
 # ---- Runtime response models ----
 
 
@@ -695,6 +717,7 @@ class HealthResponse(BaseModel):
     python: str | None = None
     pm: dict[str, Any]
     director: dict[str, Any]
+    context_admin: dict[str, Any] | None = None
 
 
 class PrimaryHealthResponse(BaseModel):

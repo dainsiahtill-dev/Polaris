@@ -24,6 +24,7 @@ FRONTEND_WORKSPACE_REALTIME_FILES = (
     FRONTEND_SRC / "app" / "components" / "pm" / "PMWorkspace.tsx",
     FRONTEND_SRC / "app" / "components" / "chief-engineer" / "ChiefEngineerWorkspace.tsx",
     FRONTEND_SRC / "app" / "components" / "director" / "DirectorWorkspace.tsx",
+    FRONTEND_SRC / "app" / "components" / "contextos" / "ContextOSWorkspace.tsx",
     FRONTEND_SRC / "app" / "hooks" / "useLiveTaskQueues.ts",
     FRONTEND_SRC / "app" / "hooks" / "useRuntime.ts",
     FRONTEND_SRC / "app" / "hooks" / "useRuntimeConnection.ts",
@@ -32,6 +33,14 @@ FRONTEND_WORKSPACE_REALTIME_FILES = (
     FRONTEND_SRC / "hooks" / "useProcessOperations.ts",
 )
 FRONTEND_LOG_VIEWER_FILE = FRONTEND_SRC / "app" / "components" / "LogViewer.tsx"
+FRONTEND_CONTEXTOS_WORKSPACE_FILE = FRONTEND_SRC / "app" / "components" / "contextos" / "ContextOSWorkspace.tsx"
+FRONTEND_CONTEXTOS_HELPER_FILES = (
+    FRONTEND_SRC / "app" / "components" / "contextos" / "contextOSTelemetry.ts",
+    FRONTEND_SRC / "app" / "components" / "contextos" / "contextOSData.ts",
+    FRONTEND_SRC / "app" / "components" / "contextos" / "contextosViewModel.ts",
+    FRONTEND_SRC / "app" / "components" / "contextos" / "useContextStoreStats.ts",
+    FRONTEND_SRC / "app" / "components" / "contextos" / "contextosStoreStats.ts",
+)
 FRONTEND_SETTINGS_MODAL_FILE = FRONTEND_SRC / "app" / "components" / "SettingsModal.tsx"
 FRONTEND_REALTIME_AUDIT_SPEC = (
     REPO_ROOT / "src" / "backend" / "polaris" / "tests" / "electron" / "realtime-nat-jetstream-workspaces.spec.ts"
@@ -163,6 +172,9 @@ FRONTEND_FORBIDDEN = (
     "long-poll",
     "ReadableStream",
     "getReader(",
+    "fetchRunStatus",
+    "usePolling(",
+    "useInterval(",
 )
 
 BACKEND_ROUTER_FORBIDDEN = (
@@ -376,6 +388,281 @@ def test_log_viewer_uses_runtime_transport_not_file_read_tail_polling() -> None:
     for token in ("useRuntimeTransport", "subscribeChannels", "registerMessageHandler", "tailLines: 400"):
         if token not in text:
             findings.append(f"{FRONTEND_LOG_VIEWER_FILE.relative_to(REPO_ROOT)} missing {token!r}")
+
+    assert findings == []
+
+
+CONTEXTOS_FORBIDDEN_DATA_REFRESH_PATTERNS = (
+    "setInterval(",
+    "setTimeout(",
+    "useInterval",
+    "usePolling",
+    "pollInterval",
+    "EventSource",
+    "text/event-stream",
+    "apiFetchFresh",
+    "fetchRunStatus",
+    "/state/snapshot",
+    "/v2/pm/status",
+    "/v2/director/status",
+    "apiFetch('/runtime",
+    'apiFetch("/runtime',
+    "tail_lines=",
+    "/files/read",
+)
+
+CONTEXTOS_REQUIRED_REALTIME_MARKERS = (
+    "buildTelemetryFromStream",
+    "llmStreamEvents",
+    "executionLogs",
+    "processStreamEvents",
+)
+
+
+def test_contextos_workspace_uses_runtime_transport_not_http_polling() -> None:
+    """ContextOS realtime view must derive data from WebSocket push, not HTTP polling or SSE."""
+
+    text = FRONTEND_CONTEXTOS_WORKSPACE_FILE.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    for token in CONTEXTOS_FORBIDDEN_DATA_REFRESH_PATTERNS:
+        if token in text:
+            findings.append(f"{FRONTEND_CONTEXTOS_WORKSPACE_FILE.relative_to(REPO_ROOT)} contains {token!r}")
+
+    for token in CONTEXTOS_REQUIRED_REALTIME_MARKERS:
+        if token not in text:
+            findings.append(f"{FRONTEND_CONTEXTOS_WORKSPACE_FILE.relative_to(REPO_ROOT)} missing {token!r}")
+
+    assert findings == []
+
+
+def test_contextos_workspace_does_not_import_use_runtime_transport_directly() -> None:
+    """ContextOS must receive realtime data via props, not subscribe independently."""
+
+    text = FRONTEND_CONTEXTOS_WORKSPACE_FILE.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    forbidden_imports = (
+        "useRuntimeTransport",
+        "useRuntime(",
+        "useRuntimeConnection",
+        "runtimeSocketManager",
+    )
+
+    for token in forbidden_imports:
+        if token in text:
+            findings.append(
+                f"{FRONTEND_CONTEXTOS_WORKSPACE_FILE.relative_to(REPO_ROOT)} directly imports {token!r}; "
+                "ContextOS should receive data via props from parent workspace"
+            )
+
+    assert findings == []
+
+
+CONTEXTOS_HELPER_FORBIDDEN_PATTERNS = (
+    "setInterval(",
+    "setTimeout(",
+    "useInterval",
+    "usePolling",
+    "pollInterval",
+    "EventSource",
+    "text/event-stream",
+    "apiFetchFresh",
+    "fetchRunStatus",
+    "/files/read",
+    "tail_lines=",
+)
+
+LLM_COMPONENTS_DIR = FRONTEND_SRC / "app" / "components" / "llm"
+
+LLM_COMPONENTS_FORBIDDEN_PATTERNS = (
+    "EventSource",
+    "text/event-stream",
+    "useWebSocketWithFallback",
+    "fallbackInterval",
+    "maxFallbackAttempts",
+    "longPolling",
+    "long-poll",
+    "fetchRunStatus",
+    "usePolling(",
+    "useInterval(",
+)
+
+LLM_COMPONENTS_REQUIRED_TRANSPORT_MARKERS = (
+    "useRuntimeTransport",
+    "runtimeSocketManager",
+)
+
+LLM_VISUAL_HOOK_FILE = FRONTEND_SRC / "app" / "components" / "llm" / "visual" / "hooks" / "useVisualLLMConfig.ts"
+
+LLM_INTERVIEW_STREAM_FILE = FRONTEND_SRC / "app" / "components" / "llm" / "interview" / "useInterviewStream.ts"
+
+LLM_TEST_STREAM_FILE = FRONTEND_SRC / "app" / "components" / "llm" / "test" / "streamingTest.ts"
+
+
+def test_contextos_helper_files_have_no_polling_or_sse() -> None:
+    """ContextOS helper modules must not introduce HTTP polling, SSE, or timer-based data refresh."""
+
+    findings: list[str] = []
+    for path in FRONTEND_CONTEXTOS_HELPER_FILES:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for token in CONTEXTOS_HELPER_FORBIDDEN_PATTERNS:
+            if token in text:
+                findings.append(f"{path.relative_to(REPO_ROOT)} contains {token!r}")
+
+    assert findings == []
+
+
+def test_llm_components_directory_has_no_sse_or_polling() -> None:
+    """LLM metrics/UI components must use WS transport, not SSE or polling."""
+
+    findings: list[str] = []
+    for path in LLM_COMPONENTS_DIR.rglob("*"):
+        if not path.is_file():
+            continue
+        if path.suffix not in {".ts", ".tsx"}:
+            continue
+        if "__tests__" in path.parts or ".test." in path.name:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for token in LLM_COMPONENTS_FORBIDDEN_PATTERNS:
+            if token in text:
+                findings.append(f"{path.relative_to(REPO_ROOT)} contains {token!r}")
+
+    assert findings == []
+
+
+def test_llm_interview_stream_uses_runtime_transport() -> None:
+    """LLM interview stream must consume data via runtime transport, not polling."""
+
+    if not LLM_INTERVIEW_STREAM_FILE.exists():
+        return
+
+    text = LLM_INTERVIEW_STREAM_FILE.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    has_transport = any(m in text for m in LLM_COMPONENTS_REQUIRED_TRANSPORT_MARKERS)
+    if not has_transport:
+        findings.append(
+            f"{LLM_INTERVIEW_STREAM_FILE.relative_to(REPO_ROOT)} missing runtime transport "
+            f"(expected one of: {LLM_COMPONENTS_REQUIRED_TRANSPORT_MARKERS})"
+        )
+
+    for token in LLM_COMPONENTS_FORBIDDEN_PATTERNS:
+        if token in text:
+            findings.append(f"{LLM_INTERVIEW_STREAM_FILE.relative_to(REPO_ROOT)} contains {token!r}")
+
+    assert findings == []
+
+
+def test_llm_test_stream_uses_runtime_transport() -> None:
+    """LLM test stream must use runtimeSocketManager, not custom polling."""
+
+    if not LLM_TEST_STREAM_FILE.exists():
+        return
+
+    text = LLM_TEST_STREAM_FILE.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    if "runtimeSocketManager" not in text:
+        findings.append(f"{LLM_TEST_STREAM_FILE.relative_to(REPO_ROOT)} missing 'runtimeSocketManager'")
+
+    for token in LLM_COMPONENTS_FORBIDDEN_PATTERNS:
+        if token in text:
+            findings.append(f"{LLM_TEST_STREAM_FILE.relative_to(REPO_ROOT)} contains {token!r}")
+
+    assert findings == []
+
+
+def test_llm_visual_config_hook_uses_one_shot_fetch_not_polling() -> None:
+    """LLM visual config hook must fetch runtime status once on mount, not poll."""
+
+    if not LLM_VISUAL_HOOK_FILE.exists():
+        return
+
+    text = LLM_VISUAL_HOOK_FILE.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    if "apiFetch('/v2/llm/runtime-status')" not in text and 'apiFetch("/v2/llm/runtime-status")' not in text:
+        findings.append(f"{LLM_VISUAL_HOOK_FILE.relative_to(REPO_ROOT)} missing one-shot runtime-status fetch")
+
+    for token in ("setInterval(", "setTimeout(", "pollInterval", "usePolling"):
+        if token in text:
+            findings.append(f"{LLM_VISUAL_HOOK_FILE.relative_to(REPO_ROOT)} contains {token!r}")
+
+    assert findings == []
+
+
+def test_contextos_workspace_llm_metrics_derive_from_ws_push() -> None:
+    """ContextOS LLM metrics (calls, tokens, latency) must derive from WS push data, not HTTP polling."""
+
+    text = FRONTEND_CONTEXTOS_WORKSPACE_FILE.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    for token in (
+        "model.calls",
+        "model.totalTokens",
+        "model.realLatencyMs",
+        "llmRuntimeState",
+    ):
+        if token not in text:
+            findings.append(f"{FRONTEND_CONTEXTOS_WORKSPACE_FILE.relative_to(REPO_ROOT)} missing {token!r}")
+
+    ws_markers = (
+        "WebSocket /v2/ws/runtime",
+        "Nat-Jetstream",
+        "runtime.v2",
+    )
+    has_ws_marker = any(m in text for m in ws_markers)
+    if not has_ws_marker:
+        findings.append(
+            f"{FRONTEND_CONTEXTOS_WORKSPACE_FILE.relative_to(REPO_ROOT)} missing WS transport marker "
+            "(WebSocket /v2/ws/runtime, Nat-Jetstream, or runtime.v2)"
+        )
+
+    assert findings == []
+
+
+def test_llm_runtime_overlay_data_from_props_not_polling() -> None:
+    """LlmRuntimeOverlay must receive data via props, not fetch or timer."""
+
+    llm_overlay = FRONTEND_SRC / "app" / "components" / "LlmRuntimeOverlay.tsx"
+    if not llm_overlay.exists():
+        return
+
+    text = llm_overlay.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    for token in ("apiFetch(", "fetch(", "EventSource", "pollInterval"):
+        if token in text:
+            findings.append(f"{llm_overlay.relative_to(REPO_ROOT)} contains {token!r}")
+
+    for token in ("setInterval(",):
+        if token not in text:
+            findings.append(f"{llm_overlay.relative_to(REPO_ROOT)} missing UI timer (setInterval)")
+
+    assert findings == []
+
+
+def test_frontend_use_usage_stats_has_no_polling() -> None:
+    """useUsageStats must derive from WS push, not file polling or HTTP polling."""
+
+    usage_file = FRONTEND_SRC / "app" / "hooks" / "useUsageStats.ts"
+    if not usage_file.exists():
+        return
+
+    text = usage_file.read_text(encoding="utf-8")
+    findings: list[str] = []
+
+    for token in FRONTEND_FORBIDDEN:
+        if token in text:
+            findings.append(f"{usage_file.relative_to(REPO_ROOT)} contains {token!r}")
+
+    for token in ("setInterval(", "setTimeout("):
+        if token in text:
+            findings.append(f"{usage_file.relative_to(REPO_ROOT)} contains {token!r}")
 
     assert findings == []
 

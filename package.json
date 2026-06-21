@@ -41,6 +41,8 @@
     "pretest:e2e:dual-full-chain": "npm run e2e:prepare",
     "test:e2e:production-stability": "node --env-file-if-exists=.env infrastructure/scripts/run-production-stability-validation.mjs",
     "pretest:e2e:production-stability": "npm run e2e:prepare",
+    "test:e2e:connectivity": "node infrastructure/scripts/run-connectivity-verification.mjs",
+    "pretest:e2e:connectivity": "npm run e2e:prepare",
     "test:e2e:panel": "playwright test -c playwright.electron.config.ts src/backend/polaris/tests/electron/panel-error.spec.ts",
     "pretest:e2e:panel": "npm run e2e:prepare",
     "test:e2e:task": "node --env-file-if-exists=.env infrastructure/scripts/run-panel-task-e2e.mjs",

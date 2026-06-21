@@ -135,12 +135,39 @@ class CanonicalDirectorAdapter(DirectorInterface):
                 DirectorOrchestrator,
             )
 
+            raw_workers = (
+                self.config.get("max_directors")
+                or self.config.get("max_parallel_tasks")
+                or self.config.get("director_max_parallel_tasks")
+                or self.config.get("max_workers")
+            )
+            max_workers = 1
+            if raw_workers is not None:
+                try:
+                    parsed = int(raw_workers)
+                    max_workers = max(1, parsed)
+                except (RuntimeError, ValueError):
+                    pass
+
+            raw_mode = (
+                self.config.get("director_execution_mode")
+                or self.config.get("director_workflow_execution_mode")
+                or self.config.get("execution_mode")
+            )
+            execution_mode = "serial"
+            if raw_mode is not None:
+                mode_token = str(raw_mode).strip().lower()
+                if mode_token in ("parallel", "concurrent", "multi"):
+                    execution_mode = "parallel"
+                elif mode_token in ("serial", "sequential", "single"):
+                    execution_mode = "serial"
+
             orchestrator = DirectorOrchestrator(
                 DirectorExecutionConfig(
                     workspace=str(self.workspace),
                     model=str(self.config.get("model") or ""),
-                    max_workers=1,
-                    execution_mode="serial",
+                    max_workers=max_workers,
+                    execution_mode=execution_mode,
                     timeout_seconds=int(self.config.get("timeout") or 3600),
                 )
             )

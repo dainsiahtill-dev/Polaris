@@ -219,6 +219,11 @@ class BackendLaunchRequest:
             config_snapshot=self.config_snapshot,
         )
 
+    # Default token for local development — must match the frontend's
+    # DEFAULT_BACKEND_TOKEN constant (src/frontend/src/api.ts) to allow
+    # out-of-the-box connectivity without explicit token configuration.
+    _DEFAULT_LOCAL_DEV_TOKEN = "polaris-local-dev"
+
     def get_effective_token(self) -> str:
         """Get authentication token (from explicit or generate new).
 
@@ -231,10 +236,11 @@ class BackendLaunchRequest:
             token = self.config_snapshot.get("security.token")
             if token:
                 return str(token)
-        # Generate random token
-        import secrets
-
-        return secrets.token_urlsafe(32)
+        # Use the default local development token so that the frontend
+        # (which defaults to the same token) can connect without explicit
+        # configuration.  Production deployments should always provide an
+        # explicit token via --token or config.
+        return self._DEFAULT_LOCAL_DEV_TOKEN
 
     def get_effective_cors_origins(self) -> list[str]:
         """Get effective CORS origins list.

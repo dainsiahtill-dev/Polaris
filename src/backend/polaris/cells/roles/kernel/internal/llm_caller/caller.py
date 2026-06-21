@@ -732,6 +732,7 @@ class LLMCaller:
         task_id: str | None,
         attempt: int,
         model: str,
+        provider: str | None = None,
         error_category: str,
         error_message: str,
         call_id: str,
@@ -742,16 +743,23 @@ class LLMCaller:
         payload.setdefault("call_id", call_id)
         payload.setdefault("elapsed_ms", round(elapsed_ms, 2))
         payload.setdefault("workspace", self.workspace)
+        if provider:
+            payload.setdefault("provider", provider)
+        kwargs: dict[str, Any] = {
+            "event_type": LLMEventType.CALL_ERROR,
+            "role": role,
+            "run_id": run_id,
+            "task_id": task_id,
+            "attempt": attempt,
+            "model": model,
+            "error_category": error_category,
+            "error_message": error_message,
+            "metadata": payload,
+        }
+        if provider:
+            kwargs["provider"] = provider
         emit_llm_event(
-            event_type=LLMEventType.CALL_ERROR,
-            role=role,
-            run_id=run_id,
-            task_id=task_id,
-            attempt=attempt,
-            model=model,
-            error_category=error_category,
-            error_message=error_message,
-            metadata=payload,
+            **kwargs,
         )
 
     def _emit_call_start_event(
@@ -762,6 +770,7 @@ class LLMCaller:
         task_id: str | None,
         attempt: int,
         model: str,
+        provider: str | None = None,
         prompt_tokens: int = 0,
         call_id: str,
         context_tokens_before: int | None = None,
@@ -772,6 +781,8 @@ class LLMCaller:
         payload = dict(metadata or {})
         payload.setdefault("call_id", call_id)
         payload.setdefault("workspace", self.workspace)
+        if provider:
+            payload.setdefault("provider", provider)
         if messages is not None:
             payload["messages"] = messages
         kwargs: dict[str, Any] = {
@@ -784,6 +795,8 @@ class LLMCaller:
             "prompt_tokens": prompt_tokens,
             "metadata": payload,
         }
+        if provider:
+            kwargs["provider"] = provider
         if context_tokens_before is not None:
             kwargs["context_tokens_before"] = context_tokens_before
         if compression_strategy is not None:
@@ -844,6 +857,7 @@ class LLMCaller:
         task_id: str | None,
         attempt: int,
         model: str,
+        provider: str | None = None,
         call_id: str,
         retry_decision: str,
         backoff_seconds: float,
@@ -852,16 +866,23 @@ class LLMCaller:
         payload = dict(metadata or {})
         payload.setdefault("call_id", call_id)
         payload.setdefault("workspace", self.workspace)
+        if provider:
+            payload.setdefault("provider", provider)
+        kwargs: dict[str, Any] = {
+            "event_type": LLMEventType.CALL_RETRY,
+            "role": role,
+            "run_id": run_id,
+            "task_id": task_id,
+            "attempt": attempt,
+            "model": model,
+            "retry_decision": retry_decision,
+            "backoff_seconds": max(0.0, float(backoff_seconds)),
+            "metadata": payload,
+        }
+        if provider:
+            kwargs["provider"] = provider
         emit_llm_event(
-            event_type=LLMEventType.CALL_RETRY,
-            role=role,
-            run_id=run_id,
-            task_id=task_id,
-            attempt=attempt,
-            model=model,
-            retry_decision=retry_decision,
-            backoff_seconds=max(0.0, float(backoff_seconds)),
-            metadata=payload,
+            **kwargs,
         )
 
     # Public API methods - delegate to LLMInvoker

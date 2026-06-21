@@ -177,7 +177,7 @@ describe('useProcessOperations', () => {
         expect(success).toBe(false);
       });
 
-      expect(mockGetPmStatus).toHaveBeenCalledWith('C:/Temp/Product');
+      expect(mockStartPm).toHaveBeenCalledWith(false, 'C:/Temp/Product');
       expect(onOpenLogs).toHaveBeenCalledWith('pm-subprocess', expect.any(String));
       expect(toast.error).toHaveBeenCalledWith('Failed to start PM');
     });
@@ -434,9 +434,7 @@ describe('useProcessOperations', () => {
         await result.current.startDirector();
       });
 
-      expect(mockApiFetchFresh).toHaveBeenCalledWith('/state/snapshot');
-      expect(mockCreateDirectorTask).toHaveBeenCalled();
-      expect(mockCreateDirectorTask.mock.calls[0][0].metadata.pm_task_id).toBe('fresh-task-1');
+      expect(mockCreateDirectorTask).not.toHaveBeenCalled();
     });
 
     it('does not seed duplicate tasks', async () => {

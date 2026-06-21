@@ -127,9 +127,7 @@ class QAAdapter(BaseRoleAdapter):
             review_result = self._run_static_review(target, run_id=run_id)
             message = self._build_qa_message(review_type, target, review_result=review_result)
             prompt_appendix = self._build_qa_prompt_appendix()
-            response = await invoke_role_runtime_first(
-                workspace=self.workspace,
-                role=self.role_id,
+            response = await self._call_role_llm(
                 message=message,
                 context={
                     "task_id": task_id,
@@ -142,11 +140,16 @@ class QAAdapter(BaseRoleAdapter):
                         "qa_output_contract": "json_only_verdict",
                     },
                 },
+                prompt_appendix=prompt_appendix,
                 validate_output=False,
                 max_retries=1,
-                prompt_appendix=prompt_appendix,
             )
-            raw_content = str(response.get("response") or "") if isinstance(response, dict) else str(response or "")
+            if isinstance(response, dict):
+                raw_content = str(
+                    response.get("response") if response.get("response") is not None else response.get("content") or ""
+                )
+            else:
+                raw_content = str(response or "")
             llm_review = self._parse_review_result(raw_content)
             if not bool(llm_review.get("parsed_json")):
                 repair_message = self._build_qa_json_repair_message(
@@ -155,9 +158,7 @@ class QAAdapter(BaseRoleAdapter):
                     review_result=review_result,
                     previous_output=raw_content,
                 )
-                repair_response = await invoke_role_runtime_first(
-                    workspace=self.workspace,
-                    role=self.role_id,
+                repair_response = await self._call_role_llm(
                     message=repair_message,
                     context={
                         "task_id": task_id,
@@ -175,11 +176,14 @@ class QAAdapter(BaseRoleAdapter):
                     max_retries=1,
                     prompt_appendix=self._build_qa_json_repair_prompt_appendix(),
                 )
-                repair_content = (
-                    str(repair_response.get("response") or "")
-                    if isinstance(repair_response, dict)
-                    else str(repair_response or "")
-                )
+                if isinstance(repair_response, dict):
+                    repair_content = str(
+                        repair_response.get("response")
+                        if repair_response.get("response") is not None
+                        else repair_response.get("content") or ""
+                    )
+                else:
+                    repair_content = str(repair_response or "")
                 repair_review = self._parse_review_result(repair_content)
                 if bool(repair_review.get("parsed_json")):
                     raw_content = f"{raw_content}\n\n[qa_json_repair]\n{repair_content}"
@@ -214,6 +218,7 @@ class QAAdapter(BaseRoleAdapter):
                 "taskboard_qa_update": taskboard_update,
                 "content_length": len(raw_content),
             }
+
         except (RuntimeError, ValueError) as exc:
             run_id = str(context.get("run_id") or "").strip() if isinstance(context, dict) else ""
             fallback_review = self._run_static_review(target, run_id=run_id)
@@ -261,6 +266,38 @@ class QAAdapter(BaseRoleAdapter):
                 "taskboard_qa_update": taskboard_update,
                 "error": str(exc),
             }
+
+    async def _call_role_llm(
+        self,
+        *,
+        message: str,
+        context: dict[str, Any],
+        prompt_appendix: str = "",
+        validate_output: bool = True,
+        max_retries: int = 1,
+    ) -> dict[str, Any]:
+        response = await invoke_role_runtime_first(
+            workspace=self.workspace,
+            role=self.role_id,
+            message=message,
+            context=context,
+            validate_output=validate_output,
+            max_retries=max_retries,
+            prompt_appendix=prompt_appendix,
+        )
+        if isinstance(response, dict):
+            if "response" in response and response.get("response") is not None:
+                return response
+            if "content" in response:
+                response_content = str(response.get("content") or "")
+                success = bool(response.get("success", True))
+                return {
+                    "response": response_content,
+                    "content": response_content,
+                    "success": success,
+                }
+            return response
+        return {"response": str(response or ""), "content": str(response or ""), "success": False}
 
     def _apply_taskboard_qa_verdict(
         self,
@@ -903,7 +940,7 @@ class QAAdapter(BaseRoleAdapter):
     def _load_runtime_stage_signals(self, *, run_id: str = "") -> list[dict[str, Any]]:
         signals: list[dict[str, Any]] = []
         current_run_id = str(run_id or "").strip()
-        signal_dir = Path(resolve_runtime_path(self.workspace, "runtime/signals"))
+        signal_dir = Path(self.workspace).resolve() / "runtime" / "signals"
         if not signal_dir.exists() or not signal_dir.is_dir():
             return signals
         for file_path in sorted(signal_dir.glob("*.json")):

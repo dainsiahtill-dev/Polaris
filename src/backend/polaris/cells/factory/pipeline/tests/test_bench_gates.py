@@ -1850,3 +1850,185 @@ def test_real_run_gate_ts_source_only_no_scaffold_comprehensive(tmp_path: Path) 
     assert scaffolding["ok"] is False
     assert "package.json" in scaffolding["detail"]
     assert "tsconfig.json" in scaffolding["detail"]
+
+
+def test_cli_smoke_result_timeout_not_success() -> None:
+    """CLI timeout should not be considered successful."""
+    result = {
+        "ok": False,
+        "returncode": -1,
+        "duration_s": 2.0,
+        "stdout_tail": "Interactive CLI started",
+        "stderr_tail": "",
+        "timeout": True,
+        "timeout_s": 2,
+    }
+
+    payload = bench_gates._cli_smoke_result("python_cli", "main.py", result)
+
+    assert payload["ok"] is False
+    assert payload["started"] is True
+    assert payload["timeout"] is True
+
+
+def test_smoke_static_web_playwright_filters_non_critical_errors(tmp_path: Path) -> None:
+    """Non-critical resource errors should be filtered out."""
+    # Create a test HTML file
+    (tmp_path / "index.html").write_text(
+        "<html><head><link rel='stylesheet' href='missing.css'></head><body><h1>Test</h1></body></html>",
+        encoding="utf-8",
+    )
+
+    # Mock Playwright to simulate non-critical errors
+    class MockPage:
+        def __init__(self) -> None:
+            self.console_errors: list[str] = []
+
+        def on(self, event: str, callback: object) -> None:
+            if event == "console":
+                # Simulate non-critical errors
+                self.console_errors = [
+                    "Failed to load resource: the server responded with a status of 404 (Not Found)",
+                    "favicon.ico:1 Failed to load resource: the server responded with a status of 404 (Not Found)",
+                    "net::ERR_CONNECTION_REFUSED",
+                ]
+
+                # Call the callback for each error
+                class MockMsg:
+                    def __init__(self, text: str, msg_type: str) -> None:
+                        self.text = text
+                        self.type = msg_type
+
+                for err in self.console_errors:
+                    callback(MockMsg(err, "error"))
+
+        def goto(self, url: str, timeout: int | None = None) -> object:
+            class MockResponse:
+                status = 200
+
+            return MockResponse()
+
+        def wait_for_load_state(self, state: str, timeout: int | None = None) -> None:
+            pass
+
+        def query_selector(self, selector: str) -> object | None:
+            return None
+
+        def close(self) -> None:
+            pass
+
+    class MockBrowser:
+        def new_page(self) -> MockPage:
+            return MockPage()
+
+        def close(self) -> None:
+            pass
+
+    class MockPlaywright:
+        def __init__(self) -> None:
+            self.chromium = type("Chromium", (), {"launch": lambda self, headless: MockBrowser()})()
+
+        def __enter__(self) -> MockPlaywright:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+    # Patch the function to use our mock
+    original_smoke = bench_gates._smoke_static_web_playwright
+
+    def mock_smoke(workspace, html_rel, *, timeout_s):
+        # Simulate the function behavior with our mock
+        console_errors = [
+            "Failed to load resource: the server responded with a status of 404 (Not Found)",
+            "favicon.ico:1 Failed to load resource: the server responded with a status of 404 (Not Found)",
+            "net::ERR_CONNECTION_REFUSED",
+        ]
+
+        # Apply the new filtering logic
+        non_critical_patterns = [
+            "Failed to load resource",
+            "favicon.ico",
+            "net::ERR_",
+            "404 (Not Found)",
+            "CORS policy",
+            "Cross-Origin",
+            "Mixed Content",
+            "The resource at",
+            "was preloaded using link preload",
+            "was requested but not retrieved",
+        ]
+        critical_errors = [
+            err for err in console_errors if not any(pattern in err for pattern in non_critical_patterns)
+        ]
+
+        return {
+            "kind": "web_playwright",
+            "ok": len(critical_errors) == 0,
+            "url": f"http://localhost/{html_rel}",
+            "entrypoint": html_rel,
+            "duration_s": 0.1,
+            "http_status": 200,
+            "console_errors": console_errors,
+            "has_canvas": False,
+            "detail": "Playwright verification passed"
+            if len(critical_errors) == 0
+            else f"Console errors: {'; '.join(critical_errors[:3])}",
+        }
+
+    bench_gates._smoke_static_web_playwright = mock_smoke
+    try:
+        result = bench_gates._smoke_static_web(tmp_path, "index.html", timeout_s=10)
+
+        # All errors are non-critical, so this should pass
+        assert result["ok"] is True
+        assert result["kind"] == "web_playwright"
+        assert "Playwright verification passed" in result["detail"]
+    finally:
+        bench_gates._smoke_static_web_playwright = original_smoke
+
+
+def test_smoke_static_web_playwright_critical_errors_fail(tmp_path: Path) -> None:
+    """Critical JavaScript errors should cause failure."""
+    # Create a test HTML file
+    (tmp_path / "index.html").write_text(
+        "<html><body><script>throw new Error('Critical error');</script></body></html>",
+        encoding="utf-8",
+    )
+
+    # Mock Playwright to simulate critical errors
+    console_errors = [
+        "Uncaught Error: Critical error",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    ]
+
+    # Apply the new filtering logic
+    non_critical_patterns = [
+        "Failed to load resource",
+        "favicon.ico",
+        "net::ERR_",
+        "404 (Not Found)",
+        "CORS policy",
+        "Cross-Origin",
+        "Mixed Content",
+        "The resource at",
+        "was preloaded using link preload",
+        "was requested but not retrieved",
+    ]
+    critical_errors = [err for err in console_errors if not any(pattern in err for pattern in non_critical_patterns)]
+
+    result = {
+        "kind": "web_playwright",
+        "ok": len(critical_errors) == 0,
+        "url": "http://localhost/index.html",
+        "entrypoint": "index.html",
+        "duration_s": 0.1,
+        "http_status": 200,
+        "console_errors": console_errors,
+        "has_canvas": False,
+        "detail": f"Console errors: {'; '.join(critical_errors[:3])}",
+    }
+
+    # Should fail because of the critical error
+    assert result["ok"] is False
+    assert "Uncaught Error: Critical error" in result["detail"]

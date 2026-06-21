@@ -878,6 +878,14 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                 "goal": "Implement typed asset entities, provider-agnostic generation specs, local edit tasks, and a mock generation service.",
                 "description": "Represent the requested creative workflow as data and service contracts before UI screens consume it.",
                 "scope": ["src/types", "src/spec", "src/services", "src/store", "tests/spec"],
+                "target_files": [
+                    "src/types/asset.ts",
+                    "src/spec/GenerationSpec.ts",
+                    "src/services/mockGenerationService.ts",
+                    "src/services/generationService.ts",
+                    "src/store/workbench.ts",
+                    "tests/spec/GenerationSpec.test.ts",
+                ],
                 "steps": [
                     "Define asset, reference-purpose, face identity, template, result, and local edit task types",
                     "Implement GenerationSpec builder and validator with task-type specific required inputs",

@@ -190,6 +190,9 @@ function RoleHex({ role, selected, onSelect }: { role: RoleCard; selected: boole
   const windowLabel = ctx.contextWindowTokens !== null
     ? contextOSFormat.windowTokens(ctx.contextWindowTokens)
     : '窗口未知';
+  const windowSourceLabel = ctx.contextWindowSource === 'binding'
+    ? ctx.contextWindowModel ? `${ctx.contextWindowModel} 绑定` : '绑定'
+    : '未知';
   return (
     <button
       type="button"
@@ -226,7 +229,7 @@ function RoleHex({ role, selected, onSelect }: { role: RoleCard; selected: boole
             className="shrink-0 rounded bg-white/5 px-1 text-text-muted"
             title={role.contextWindowDetail}
           >
-            / {windowLabel}
+            / {windowLabel} <span className="text-text-dim/70">({windowSourceLabel})</span>
           </span>
         </div>
       </div>
@@ -362,6 +365,9 @@ function ContextStructurePanel({ model, telemetry }: { model: ContextOSModel; te
                 const windowLabel = ctx.contextWindowTokens !== null
                   ? contextOSFormat.windowTokens(ctx.contextWindowTokens)
                   : '未知';
+                const windowSourceLabel = ctx.contextWindowSource === 'binding'
+                  ? ctx.contextWindowModel ? `${ctx.contextWindowModel} 绑定` : '绑定'
+                  : '未知';
                 return (
                   <div key={role.id} className="grid grid-cols-[72px_minmax(0,1fr)_64px_58px] items-center gap-2 rounded-md bg-white/[0.02] px-2 py-1.5 text-[10px]">
                     <span className="truncate font-semibold text-text-main" title={role.title}>{role.title}</span>
@@ -386,7 +392,7 @@ function ContextStructurePanel({ model, telemetry }: { model: ContextOSModel; te
                       className="truncate text-right font-mono text-text-muted"
                       title={ctx.contextWindowDetail}
                     >
-                      {windowLabel}
+                      {windowLabel} <span className="text-text-dim/70">({windowSourceLabel})</span>
                     </span>
                   </div>
                 );
@@ -520,7 +526,7 @@ function RoleInternalPanel({ role, onViewContext }: { role: RoleCard; onViewCont
         <RoleInternalStat
           label="窗口"
           value={ctx.contextWindowTokens !== null ? contextOSFormat.windowTokens(ctx.contextWindowTokens) : '未知'}
-          sub={ctx.contextWindowDetail}
+          sub={ctx.contextWindowSource === 'binding' ? `${ctx.contextWindowProvider ?? ''}${ctx.contextWindowModel ? ` / ${ctx.contextWindowModel}` : ''} · maxContextTokens` : ctx.contextWindowDetail}
           highlight={ctx.contextWindowTokens !== null}
         />
         <RoleInternalStat
@@ -892,9 +898,10 @@ export function ContextOSWorkspace({
   );
   const selectedRole = activeRole ? model.roles.find((role) => role.id === activeRole) ?? null : null;
   const budgetWindowTokens = selectedRole?.contextWindowTokens ?? model.contextWindowTokens;
+  const budgetWindowSource = selectedRole?.contextWindowSource ?? model.contextWindowSource;
   const budgetWindowLabel = selectedRole
-    ? `${selectedRole.title} · ${selectedRole.contextWindowLabel}`
-    : model.contextWindowLabel;
+    ? `${selectedRole.title} · ${selectedRole.contextWindowLabel}${budgetWindowSource === 'binding' ? ' · 绑定' : ''}`
+    : `${model.contextWindowLabel}${budgetWindowSource === 'binding' ? ' · 绑定' : ''}`;
   const budgetWindowDetail = selectedRole?.contextWindowDetail ?? model.contextWindowDetail;
   const globalWindowOccupancyTokens = model.windowOccupancyTokens > 0 ? model.windowOccupancyTokens : null;
   const budgetWindowOccupancyTokens = selectedRole
@@ -902,7 +909,7 @@ export function ContextOSWorkspace({
     : globalWindowOccupancyTokens;
   const budgetWindowOccupancyLabel = selectedRole
     ? selectedRole.internalContext.windowOccupancyLabel
-    : globalWindowOccupancyTokens !== null ? '平均提示' : '无 usage';
+    : globalWindowOccupancyTokens !== null ? '平均提示 (估算)' : '无 usage';
   const budgetWindowOccupancyDetail = selectedRole
     ? `${selectedRole.internalContext.windowOccupancyDetail} · ${budgetWindowDetail}`
     : globalWindowOccupancyTokens !== null ? budgetWindowDetail : `尚无全局 usage 观测 · ${budgetWindowDetail}`;

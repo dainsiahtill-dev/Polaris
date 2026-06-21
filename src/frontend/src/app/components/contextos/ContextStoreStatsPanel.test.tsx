@@ -85,8 +85,11 @@ describe('ContextStoreStatsPanel', () => {
     vi.useRealTimers();
   });
 
-  it('renders disabled hint when admin endpoint returns 404 ADMIN_DISABLED', async () => {
+  it('renders disabled hint when admin endpoint returns 404 ADMIN_DISABLED and basic endpoint also fails', async () => {
+    // Admin endpoint returns 404
     mockAdminDisabled();
+    // Basic endpoint also returns 404 (not available)
+    mockedApiFetch.mockResolvedValueOnce(mockJsonResponse(404, { code: 'NOT_FOUND' }));
     render(<ContextStoreStatsPanel workspace="/repo" />);
     await waitFor(() => {
       expect(screen.getByTestId('contextos-store-stats-disabled')).toBeTruthy();
@@ -95,7 +98,7 @@ describe('ContextStoreStatsPanel', () => {
     expect(screen.queryByTestId('contextos-store-stats-ready')).toBeNull();
   });
 
-  it('renders ready view with capacity/utilization/last-sweep when stats endpoint returns 200', async () => {
+  it('renders ready view with capacity/utilization/last-sweep when admin stats endpoint returns 200', async () => {
     mockAdminReady();
     render(<ContextStoreStatsPanel workspace="/repo" />);
     await waitFor(() => {
@@ -107,8 +110,44 @@ describe('ContextStoreStatsPanel', () => {
     // last sweep report card with removed_files=250
     const lastSweep = screen.getByTestId('contextos-store-stats-last-sweep');
     expect(within(lastSweep).getByText('250')).toBeTruthy();
-    // sweep button
+    // sweep button should be visible when admin endpoint is available
     expect(screen.getByTestId('contextos-store-stats-sweep')).toBeTruthy();
+    // should not show read-only badge
+    expect(screen.queryByText('只读')).toBeNull();
+  });
+
+  it('renders ready view without sweep button when basic stats endpoint returns 200', async () => {
+    // Admin endpoint returns 404
+    mockAdminDisabled();
+    // Basic endpoint returns 200 with stats
+    mockedApiFetch.mockResolvedValueOnce(mockJsonResponse(200, {
+      workspace: '/repo',
+      contexts_root: '/repo/runtime/contexts',
+      file_count: 1500,
+      total_bytes: 104857600,
+      oldest_mtime: 1718000000.0,
+      newest_mtime: 1718500000.0,
+      config: {
+        ttl_seconds: 604800,
+        max_total_bytes: 524288000,
+        max_files: 20000,
+        sweep_min_interval_seconds: 300,
+        enabled: true,
+      },
+      last_sweep_at: 1718400000.0,
+      last_sweep_report: null,
+    }));
+    render(<ContextStoreStatsPanel workspace="/repo" />);
+    await waitFor(() => {
+      expect(screen.getByTestId('contextos-store-stats-ready')).toBeTruthy();
+    });
+    // utilization bar present
+    expect(screen.getByText(/文件数利用比/)).toBeTruthy();
+    expect(screen.getByText(/字节利用比/)).toBeTruthy();
+    // sweep button should NOT be visible when using basic endpoint
+    expect(screen.queryByTestId('contextos-store-stats-sweep')).toBeNull();
+    // should show read-only badge
+    expect(screen.getByText('只读')).toBeTruthy();
   });
 
   it('shows healthy status when under 70% utilization', async () => {

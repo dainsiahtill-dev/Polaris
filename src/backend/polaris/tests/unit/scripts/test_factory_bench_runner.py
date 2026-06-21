@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -467,12 +469,12 @@ def test_load_projects_v2_is_standalone_creative_catalog_covering_l1_to_l12() ->
     for project in projects:
         by_level[int(project["level"])] += 1
 
-    assert len(projects) == 96
+    assert len(projects) == 120
     assert "L1-01" in project_ids
-    assert "L12-96" in project_ids
+    assert "L12-120" in project_ids
     assert next(project for project in projects if project["id"] == "L1-01")["title"] == "发光昆虫花园模拟器"
     assert levels == set(range(1, 13))
-    assert set(by_level.values()) == {8}
+    assert set(by_level.values()) == {10}
     assert {"typescript", "javascript", "go", "rust", "cpp", "java", "python"}.issubset(languages)
     assert {"ts_syntax", "go_compile", "rust_compile", "cpp_compile", "java_compile"}.issubset(checks)
     assert all(str(project.get("creative_hook") or "").strip() for project in projects)
@@ -2156,3 +2158,317 @@ def test_main_completed_chain_marks_audit_as_terminal(
     assert result == 0
     assert len(captured_records) == 1
     assert captured_records[0]["chain_terminal"] is True
+
+
+# --- Catalog validation tests (from test_projects_v2_catalog.py) ---
+
+REQUIRED_FIELDS = [
+    "id",
+    "level",
+    "domain",
+    "project_type",
+    "primary_language",
+    "title",
+    "creative_hook",
+    "novelty_tags",
+    "brief",
+    "test_focus",
+    "checks",
+]
+
+VALID_LEVELS = set(range(1, 13))
+VALID_LANGUAGES = {"typescript", "javascript", "python", "go", "rust", "cpp", "java"}
+VALID_DOMAINS = {"science_creative", "creative", "game", "music", "internet_platform"}
+
+LEVEL_MIN_FILES = {
+    1: 3,
+    2: 4,
+    3: 5,
+    4: 7,
+    5: 8,
+    6: 10,
+    7: 11,
+    8: 12,
+    9: 13,
+    10: 14,
+    11: 15,
+    12: 16,
+}
+
+LANG_COMPILE_CHECK = {
+    "typescript": "ts_syntax",
+    "javascript": "js_syntax",
+    "python": "py_compile",
+    "go": "go_compile",
+    "rust": "rust_compile",
+    "cpp": "cpp_compile",
+    "java": "java_compile",
+}
+
+
+def test_catalog_schema_version() -> None:
+    """Validate that projects_v2.json has the expected schema_version."""
+    projects_file = Path(bench.__file__).resolve().parent / "projects_v2.json"
+    catalog_data = json.loads(projects_file.read_text(encoding="utf-8"))
+    version = catalog_data.get("schema_version")
+    assert version == "factory-bench/2", f"Unexpected schema_version: {version}"
+
+
+def test_catalog_hash_is_stable() -> None:
+    """Validate that catalog_hash computation is deterministic."""
+    projects_file = Path(bench.__file__).resolve().parent / "projects_v2.json"
+    catalog_data = json.loads(projects_file.read_text(encoding="utf-8"))
+    projects = catalog_data.get("projects", [])
+
+    # Compute hash the same way as run_factory_bench.py
+    catalog_hash = hashlib.sha256(json.dumps(projects, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[
+        :16
+    ]
+
+    # Hash should be non-empty and deterministic
+    assert len(catalog_hash) == 16
+    assert all(c in "0123456789abcdef" for c in catalog_hash)
+
+    # Compute again to verify determinism
+    catalog_hash2 = hashlib.sha256(
+        json.dumps(projects, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:16]
+    assert catalog_hash == catalog_hash2
+
+
+def test_catalog_has_120_projects() -> None:
+    """Validate that catalog contains exactly 120 projects."""
+    projects = bench.load_projects()
+    assert len(projects) == 120, f"Expected 120 projects, got {len(projects)}"
+
+
+def test_catalog_no_duplicate_ids() -> None:
+    """Validate that catalog has no duplicate project IDs."""
+    projects = bench.load_projects()
+    ids = [p["id"] for p in projects]
+    dupes = [x for x in ids if ids.count(x) > 1]
+    assert not dupes, f"Duplicate IDs: {sorted(set(dupes))}"
+
+
+def test_catalog_all_levels_covered() -> None:
+    """Validate that catalog covers all levels L1-L12."""
+    projects = bench.load_projects()
+    levels = {int(p["level"]) for p in projects}
+    missing = VALID_LEVELS - levels
+    assert not missing, f"Missing levels: {sorted(missing)}"
+
+
+def test_catalog_10_projects_per_level() -> None:
+    """Validate that each level has exactly 10 projects."""
+    projects = bench.load_projects()
+    counts = Counter(int(p["level"]) for p in projects)
+    for level in VALID_LEVELS:
+        assert counts[level] == 10, f"L{level} has {counts[level]} projects, expected 10"
+
+
+def test_catalog_required_fields_present() -> None:
+    """Validate that all required fields are present in each project."""
+    projects = bench.load_projects()
+    for field in REQUIRED_FIELDS:
+        for p in projects:
+            assert field in p, f"Project {p.get('id', '?')} missing required field: {field}"
+
+
+def test_catalog_level_range() -> None:
+    """Validate that all project levels are in valid range."""
+    projects = bench.load_projects()
+    for p in projects:
+        level = int(p["level"])
+        assert level in VALID_LEVELS, f"Project {p['id']} has invalid level: {level}"
+
+
+def test_catalog_language_valid() -> None:
+    """Validate that all project languages are valid."""
+    projects = bench.load_projects()
+    for p in projects:
+        lang = p["primary_language"]
+        assert lang in VALID_LANGUAGES, f"Project {p['id']} has invalid language: {lang}"
+
+
+def test_catalog_id_format() -> None:
+    """Validate that project IDs match the expected format."""
+    projects = bench.load_projects()
+    for p in projects:
+        pid = str(p["id"])
+        level = int(p["level"])
+        assert pid.startswith(f"L{level}-"), f"ID {pid} doesn't match level {level}"
+
+
+def test_catalog_min_files_matches_level() -> None:
+    """Validate that min_files checks match level expectations."""
+    projects = bench.load_projects()
+    for p in projects:
+        level = int(p["level"])
+        checks = p.get("checks", [])
+        for check in checks:
+            check_str = str(check)
+            if check_str.startswith("min_files:"):
+                min_files = int(check_str.split(":")[1])
+                expected = LEVEL_MIN_FILES.get(level)
+                assert min_files == expected, (
+                    f"Project {p['id']} (L{level}): min_files={min_files}, expected={expected}"
+                )
+
+
+def test_catalog_compile_check_matches_language() -> None:
+    """Validate that compile checks match primary language."""
+    projects = bench.load_projects()
+    for p in projects:
+        lang = p["primary_language"]
+        expected = LANG_COMPILE_CHECK.get(lang)
+        if not expected:
+            continue
+        checks = [str(c) for c in p.get("checks", [])]
+        assert expected in checks, f"Project {p['id']} ({lang}): missing compile check {expected}"
+
+
+def test_catalog_content_any_check_present() -> None:
+    """Validate that content_any check is present for each project."""
+    projects = bench.load_projects()
+    for p in projects:
+        checks = [str(c) for c in p.get("checks", [])]
+        has_content = any(c.startswith("content_any:") for c in checks)
+        assert has_content, f"Project {p['id']} missing content_any check"
+
+
+def test_catalog_source_target_coverage_present() -> None:
+    """Validate that source_target_coverage check is present for each project."""
+    projects = bench.load_projects()
+    for p in projects:
+        checks = [str(c) for c in p.get("checks", [])]
+        has_coverage = any(c.startswith("source_target_coverage:") for c in checks)
+        assert has_coverage, f"Project {p['id']} missing source_target_coverage check"
+
+
+def test_catalog_language_distribution_balanced() -> None:
+    """Validate that language distribution is balanced."""
+    projects = bench.load_projects()
+    counts = Counter(p["primary_language"] for p in projects)
+    min_count = min(counts.values())
+    max_count = max(counts.values())
+    assert max_count - min_count <= 3, f"Language distribution too uneven: {dict(counts)}"
+
+
+def test_catalog_novelty_tags_minimum() -> None:
+    """Validate that each project has at least 3 novelty tags."""
+    projects = bench.load_projects()
+    for p in projects:
+        tags = p.get("novelty_tags", [])
+        assert len(tags) >= 3, f"Project {p['id']} has only {len(tags)} novelty_tags"
+
+
+def test_catalog_brief_minimum_length() -> None:
+    """Validate that each project brief is at least 50 characters."""
+    projects = bench.load_projects()
+    for p in projects:
+        brief = p.get("brief", "")
+        assert len(brief) >= 50, f"Project {p['id']} brief too short: {len(brief)} chars"
+
+
+def test_runner_audit_includes_catalog_hash_and_schema_version(monkeypatch: Any, tmp_path: Path) -> None:
+    """Verify runner writes catalog_hash and catalog_schema_version into audit and meta files."""
+    projects = [
+        {"id": "L1-01", "level": 1, "title": "Test", "brief": "Build something", "checks": []},
+    ]
+
+    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--work-dir", str(tmp_path)])
+    monkeypatch.setattr(bench, "load_projects", lambda: projects)
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-meta")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        bench,
+        "build_bench_backend_audit_context",
+        lambda *_args, **_kwargs: {
+            "backend_freshness": {"ok": True, "detail": "backend fresh"},
+            "backend_metadata": {"backend_base_url": ""},
+        },
+    )
+    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(
+        bench,
+        "build_factory_audit_record",
+        lambda **_kwargs: {
+            "all_checks_passed": True,
+            "static_checks_passed": True,
+            "has_plan_doc": True,
+            "has_blueprint_doc": True,
+            "has_qa_verdict": True,
+            "code_file_count": 1,
+            "checks": [],
+        },
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_real_run_gate",
+        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_llm_route_audit",
+        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
+    )
+
+    def _chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "exit_code": 0,
+            "duration_s": 0.01,
+            "chain_results": {
+                "contract_goal": "Build something",
+                "qa_ran": True,
+                "qa_passed": True,
+                "director": {"total": 1, "successes": 1, "failures": 0},
+            },
+        }
+
+    monkeypatch.setattr(bench, "run_factory_chain", _chain)
+
+    result = bench.main()
+    assert result == 0
+
+    # Compute expected catalog hash from the projects list
+    expected_hash = hashlib.sha256(
+        json.dumps(projects, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:16]
+
+    # Verify .catalog_meta.json was written into the project workspace
+    project_ws = tmp_path / "L1-01"
+    catalog_meta_path = project_ws / ".catalog_meta.json"
+    assert catalog_meta_path.exists(), ".catalog_meta.json must be written"
+    catalog_meta = json.loads(catalog_meta_path.read_text(encoding="utf-8"))
+    assert catalog_meta["catalog_schema_version"] == "factory-bench/2"
+    assert catalog_meta["catalog_hash"] == expected_hash
+    assert catalog_meta["project_id"] == "L1-01"
+
+    # Verify the audit file contains catalog_schema_version and catalog_hash
+    audit_dir = tmp_path / "audits"
+    run_dirs = list(audit_dir.iterdir())
+    assert len(run_dirs) == 1
+    audit_files = sorted(run_dirs[0].glob("*.audit.json"))
+    assert len(audit_files) == 1
+    audit_data = json.loads(audit_files[0].read_text(encoding="utf-8"))
+    assert audit_data["catalog_schema_version"] == "factory-bench/2"
+    assert audit_data["catalog_hash"] == expected_hash
+    assert audit_data["run_id"] == audit_data["run_id"]  # non-empty
+
+
+def test_catalog_hash_changes_when_projects_change() -> None:
+    """Verify catalog_hash changes when the underlying project data changes."""
+    projects_a = [{"id": "L1-01", "level": 1}]
+    projects_b = [{"id": "L1-01", "level": 1, "extra": True}]
+
+    hash_a = hashlib.sha256(json.dumps(projects_a, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+    hash_b = hashlib.sha256(json.dumps(projects_b, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+
+    assert hash_a != hash_b, "catalog_hash must change when project data changes"

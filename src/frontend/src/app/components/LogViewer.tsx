@@ -138,7 +138,7 @@ export const LogViewer = memo(function LogViewer({ sourceId, runId, className }:
       setLive(true);
       setLoading(false);
       const unsubscribe = subscribeChannels(
-        channels.map((channel) => ({ channel, tailLines: 0 })),
+        channels.map((channel) => ({ channel, tailLines: 400 })),
       );
 
       const unregister = registerMessageHandler((raw) => {

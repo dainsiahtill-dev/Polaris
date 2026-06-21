@@ -22,6 +22,8 @@ from polaris.delivery.http.routers._shared import (
 )
 from polaris.delivery.http.schemas.common import (
     LLMConfigResponse,
+    LLMHealthResponse,
+    LLMMetricsResponse,
     LLMMigrateConfigResponse,
     LLMRoleRuntimeStatusResponse,
     LLMRuntimeStatusResponse,
@@ -52,6 +54,29 @@ def _normalize_runtime_role_id(role_id: str) -> str:
     if normalized == "docs":
         return "architect"
     return normalized
+
+
+def _provider_health_result(provider_health_results: dict[str, dict[str, Any]], provider_id: str) -> dict[str, Any]:
+    if not provider_id:
+        return {}
+    result = provider_health_results.get(provider_id)
+    return result if isinstance(result, dict) else {}
+
+
+def _role_health_entry(
+    *,
+    provider_health_results: dict[str, dict[str, Any]],
+    provider_id: str,
+    model: str,
+) -> dict[str, Any]:
+    provider_health = _provider_health_result(provider_health_results, provider_id)
+    return {
+        "provider_id": provider_id,
+        "model": model,
+        "provider_ok": bool(provider_health.get("ok", False)),
+        "provider_latency_ms": int(provider_health.get("latency_ms") or 0),
+        "provider_error": provider_health.get("error"),
+    }
 
 
 def _read_json_file(path: str) -> dict[str, Any]:
@@ -226,10 +251,118 @@ def get_role_runtime_status_v2(request: Request, role_id: str) -> dict[str, Any]
     return get_role_runtime_status(request, role_id)
 
 
+@router.get("/v2/llm/health", dependencies=[Depends(require_auth)], response_model=LLMHealthResponse)
+def llm_health_v2(request: Request, workspace: str = "") -> dict[str, Any]:
+    """Perform health checks on all configured LLM providers."""
+    import time
+
+    start_time = time.time()
+
+    state = get_state(request)
+    settings = settings_with_workspace_override(state.settings, workspace)
+    workspace_val, cache_root = _workspace_and_cache_root(settings)
+
+    # Load LLM config
+    config = llm_config.load_llm_config(workspace_val, cache_root, settings=settings)
+    providers_cfg = config.get("providers", {}) if isinstance(config.get("providers"), dict) else {}
+
+    # Perform health checks on all providers
+    provider_health_results = _provider_manager.health_check_all(providers_cfg)
+
+    # Build roles health status
+    roles_cfg = config.get("roles", {}) if isinstance(config.get("roles"), dict) else {}
+    roles_health: dict[str, Any] = {}
+
+    for role, role_cfg in roles_cfg.items():
+        if not isinstance(role_cfg, dict):
+            continue
+        provider_id = str(role_cfg.get("provider_id") or "").strip()
+        model = str(role_cfg.get("model") or "").strip()
+        bindings_raw = role_cfg.get("bindings")
+        bindings: list[dict[str, Any]] = []
+        if isinstance(bindings_raw, list):
+            for binding in bindings_raw:
+                if not isinstance(binding, dict):
+                    continue
+                binding_provider_id = str(binding.get("provider_id") or "").strip()
+                binding_model = str(binding.get("model") or "").strip()
+                if not binding_provider_id or not binding_model:
+                    continue
+                entry = _role_health_entry(
+                    provider_health_results=provider_health_results,
+                    provider_id=binding_provider_id,
+                    model=binding_model,
+                )
+                entry["binding_id"] = str(binding.get("binding_id") or "").strip()
+                bindings.append(entry)
+
+        if bindings:
+            roles_health[role] = {
+                "provider_id": provider_id,
+                "model": model,
+                "provider_ok": all(bool(binding.get("provider_ok")) for binding in bindings),
+                "provider_latency_ms": max(int(binding.get("provider_latency_ms") or 0) for binding in bindings),
+                "provider_error": next(
+                    (binding.get("provider_error") for binding in bindings if binding.get("provider_error")),
+                    None,
+                ),
+                "bindings": bindings,
+            }
+        else:
+            roles_health[role] = _role_health_entry(
+                provider_health_results=provider_health_results,
+                provider_id=provider_id,
+                model=model,
+            )
+
+    latency_ms = int((time.time() - start_time) * 1000)
+
+    # Determine overall health
+    all_providers_ok = all(result.get("ok", False) for result in provider_health_results.values())
+    overall_ok = all_providers_ok and len(provider_health_results) > 0
+
+    error_message = None
+    if not overall_ok:
+        failed_providers = [pid for pid, result in provider_health_results.items() if not result.get("ok", False)]
+        error_message = f"Failed providers: {', '.join(failed_providers)}"
+
+    return {
+        "ok": overall_ok,
+        "latency_ms": latency_ms,
+        "providers": provider_health_results,
+        "roles": roles_health,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "error": error_message,
+    }
+
+
+@router.get("/v2/llm/metrics", dependencies=[Depends(require_auth)], response_model=LLMMetricsResponse)
+def llm_metrics_v2(request: Request, window_seconds: int = 300) -> dict[str, Any]:
+    """Get aggregated LLM call metrics within a sliding time window.
+
+    Aggregates recent LLM call events by role / provider / model
+    dimensions, reporting call counts, error rates, latency percentiles
+    and token usage.  Data is sourced from the in-process
+    ``LLMMetricsStore`` which is fed by the existing audit interceptor
+    event path — no new polling or real-time link is introduced.
+
+    Query parameters:
+        window_seconds: Size of the sliding window (default 300 s).
+    """
+    from polaris.kernelone.audit.omniscient.interceptors.llm_metrics import (
+        get_llm_metrics_store,
+    )
+
+    store = get_llm_metrics_store()
+    return store.query(window_seconds=window_seconds)
+
+
 __all__ = [
     "get_llm_config",
     "get_role_runtime_status",
     "get_runtime_status",
+    "llm_health_v2",
+    "llm_metrics_v2",
     "llm_status",
     "migrate_config",
     "router",

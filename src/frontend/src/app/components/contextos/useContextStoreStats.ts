@@ -24,7 +24,7 @@ import {
 export type StatsFetchState =
   | { kind: 'idle' }
   | { kind: 'loading'; previous: ContextStoreStatsResponse | null }
-  | { kind: 'ready'; data: ContextStoreStatsResponse }
+  | { kind: 'ready'; data: ContextStoreStatsResponse; isAdmin: boolean }
   | { kind: 'disabled'; reason: string }
   | { kind: 'error'; message: string; previous: ContextStoreStatsResponse | null };
 
@@ -89,7 +89,9 @@ export function useContextStoreStats(options: {
 
     setState((prev) => ({ kind: 'loading', previous: prev.kind === 'ready' ? prev.data : lastGoodRef.current }));
 
+    // 先尝试 admin 端点
     let response: Response;
+    let isAdmin = true;
     try {
       response = await apiFetch('/v2/context/admin/stats', {
         method: 'GET',
@@ -108,14 +110,34 @@ export function useContextStoreStats(options: {
 
     if (controller.signal.aborted) return;
 
-    // 404 / ADMIN_DISABLED → disabled 状态（不是错误，端点就是 opt-in）。
+    // 404 / ADMIN_DISABLED → 尝试基本 stats 端点
     if (response.status === 404) {
-      const text = await response.text().catch(() => '');
-      const payload = readErrorPayload(text);
-      const reason = payload.message || payload.code || 'Context admin surface is disabled';
-      setState({ kind: 'disabled', reason });
-      return;
+      const adminText = await response.text().catch(() => '');
+      const adminPayload = readErrorPayload(adminText);
+      const adminReason = adminPayload.message || adminPayload.code || 'Context admin surface is disabled';
+
+      try {
+        response = await apiFetch('/v2/context/stats', {
+          method: 'GET',
+          signal: controller.signal,
+          timeout: REQUEST_TIMEOUT_MS,
+        });
+        isAdmin = false;
+      } catch (err) {
+        if (controller.signal.aborted || isAbortLikeError(err)) return;
+        // 如果基本端点也失败，显示 disabled 状态
+        setState({ kind: 'disabled', reason: adminReason });
+        return;
+      }
+
+      // 如果基本端点也返回 404，显示 disabled 状态
+      if (response.status === 404) {
+        setState({ kind: 'disabled', reason: adminReason });
+        return;
+      }
     }
+
+    if (controller.signal.aborted) return;
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
@@ -139,7 +161,7 @@ export function useContextStoreStats(options: {
         return;
       }
       lastGoodRef.current = parsed;
-      setState({ kind: 'ready', data: parsed });
+      setState({ kind: 'ready', data: parsed, isAdmin });
     } catch (err) {
       if (controller.signal.aborted) return;
       setState({

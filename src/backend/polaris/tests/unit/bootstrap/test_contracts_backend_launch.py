@@ -54,6 +54,10 @@ class TestBackendLaunchRequest:
         req = BackendLaunchRequest(token="mytoken")
         assert req.get_effective_token() == "mytoken"
 
+    def test_get_effective_token_default(self) -> None:
+        req = BackendLaunchRequest()
+        assert req.get_effective_token() == "polaris-local-dev"
+
     def test_get_effective_cors_origins_explicit(self) -> None:
         req = BackendLaunchRequest(cors_origins=["http://example.com"])
         assert req.get_effective_cors_origins() == ["http://example.com"]

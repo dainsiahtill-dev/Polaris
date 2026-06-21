@@ -21,6 +21,7 @@ Architecture constraints (AGENTS.md):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Mapping
@@ -360,9 +361,52 @@ class DirectorOrchestrator:
         batch = ready_tasks[:batch_size]
 
         results: list[DirectorTaskResult] = []
-        for task in batch:
-            result = await self.execute_task(task)
-            results.append(result)
+        if self._config.execution_mode == "parallel" and batch_size > 1:
+            # Parallel execution: run all tasks concurrently
+            logger.info(
+                "director parallel dispatch: batch_size=%s task_ids=%s",
+                len(batch),
+                [str(t.get("id", "unknown")) for t in batch],
+            )
+            raw_results = list(
+                await asyncio.gather(
+                    *[self.execute_task(task) for task in batch],
+                    return_exceptions=True,
+                )
+            )
+            # Convert exceptions to failed DirectorTaskResult and log firewall events
+            for i, result in enumerate(raw_results):
+                if isinstance(result, BaseException):
+                    task_id = str(batch[i].get("id", "unknown"))
+                    subject = str(batch[i].get("subject") or batch[i].get("title") or "unknown")
+                    logger.warning(
+                        "director task exception in parallel batch: task_id=%s error_type=%s error=%s",
+                        task_id,
+                        type(result).__name__,
+                        str(result),
+                    )
+                    results.append(
+                        DirectorTaskResult(
+                            task_id=task_id,
+                            subject=subject,
+                            success=False,
+                            status="failed",
+                            error=str(result),
+                            metadata={"error_type": type(result).__name__},
+                        )
+                    )
+                else:
+                    results.append(result)
+        else:
+            # Serial execution: run tasks one by one
+            logger.info(
+                "director serial dispatch: batch_size=%s task_ids=%s",
+                len(batch),
+                [str(t.get("id", "unknown")) for t in batch],
+            )
+            for task in batch:
+                result = await self.execute_task(task)
+                results.append(result)
 
         success_count = sum(1 for r in results if r.success)
 

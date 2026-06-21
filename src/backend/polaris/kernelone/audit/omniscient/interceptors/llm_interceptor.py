@@ -58,6 +58,7 @@ from polaris.kernelone.audit.omniscient.bus import (
 from polaris.kernelone.audit.omniscient.context_manager import (
     get_current_audit_context,
 )
+from polaris.kernelone.audit.omniscient.interceptors.llm_metrics import get_llm_metrics_store
 from polaris.kernelone.audit.omniscient.schemas.llm_event import (
     LLMFinishReason,
     LLMStrategy,
@@ -468,6 +469,21 @@ class LLMCallInterceptor:
             self._error_count += 1
             self._consecutive_failures += 1
             self._check_failure_threshold()
+
+        # Feed time-windowed metrics store
+        try:
+            store = get_llm_metrics_store()
+            store.record(
+                role=event.get("role", ""),
+                provider=provider,
+                model=model,
+                latency_ms=latency_ms,
+                is_error=not is_success,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+        except (RuntimeError, ValueError):
+            logger.debug("[llm_interceptor] Failed to record metrics to store", exc_info=True)
 
         logger.debug(
             "[llm_interceptor] LLM event: model=%s, tokens=%d, latency=%.2fms",

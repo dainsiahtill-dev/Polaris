@@ -140,6 +140,6 @@ class TestAuthContextWorkspaceAccess:
         """get_user_workspace_access returns default access flags."""
         auth = AuthContext()
         access = auth.get_user_workspace_access("user1", "workspace1")
-        assert access["read"] is True
-        assert access["write"] is True
+        assert access["read"] is False
+        assert access["write"] is False
         assert access["admin"] is False

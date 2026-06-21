@@ -371,9 +371,10 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const workerId = nonEmptyString(meta['worker_id']) || nonEmptyString(meta['workerId']) || null;
 
   // 真实 per-call 用量（来自 journal `llm` 通道 raw.data，经 parseLlmStreamLine 注入 meta）。
-  const usagePromptTokens = toFiniteOrNull(meta['promptTokens']) ?? 0;
-  const usageCompletionTokens = toFiniteOrNull(meta['completionTokens']) ?? 0;
-  const usageTotalTokens = toFiniteOrNull(meta['totalTokens']) ?? (usagePromptTokens + usageCompletionTokens);
+  // 兼容 snake_case（runtime_events 通道可能用 prompt_tokens/completion_tokens/total_tokens）。
+  const usagePromptTokens = toFiniteOrNull(meta['promptTokens']) ?? toFiniteOrNull(meta['prompt_tokens']) ?? 0;
+  const usageCompletionTokens = toFiniteOrNull(meta['completionTokens']) ?? toFiniteOrNull(meta['completion_tokens']) ?? 0;
+  const usageTotalTokens = toFiniteOrNull(meta['totalTokens']) ?? toFiniteOrNull(meta['total_tokens']) ?? (usagePromptTokens + usageCompletionTokens);
   const hasUsage = usageTotalTokens > 0;
   const metaDurationMs = toFiniteOrNull(meta['durationMs']);
 

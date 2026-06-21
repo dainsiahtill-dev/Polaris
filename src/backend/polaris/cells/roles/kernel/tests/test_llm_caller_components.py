@@ -44,6 +44,14 @@ from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     StructuredLLMResponse,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import StreamEngine
+from polaris.kernelone.audit.omniscient.dedup import LLMEventDeduplicator, set_global_llm_dedup
+
+
+@pytest.fixture(autouse=True)
+def reset_llm_event_dedup() -> None:
+    """Keep global LLM event dedup state from leaking across component tests."""
+    set_global_llm_dedup(LLMEventDeduplicator())
+
 
 # ============ DecisionCaller Tests ============
 

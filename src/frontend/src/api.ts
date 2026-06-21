@@ -95,7 +95,9 @@ async function isBackendReachable(info: BackendInfo): Promise<boolean> {
     if (info.token) {
       headers.set("Authorization", `Bearer ${info.token}`);
     }
-    const res = await fetch(`${info.baseUrl}/v2/live`, {
+    // Use the public /health endpoint (no auth required) to check reachability.
+    // /v2/live requires auth and would fail if the token is not yet known.
+    const res = await fetch(`${info.baseUrl}/health`, {
       cache: "no-store",
       headers,
       signal: controller.signal,
@@ -140,6 +142,15 @@ export async function getBackendInfo(options: BackendInfoOptions = {}): Promise<
       getEnvBackendToken() ||
       (options.ignoreStoredToken ? null : localStorage.getItem(STORED_TOKEN_KEY)) ||
       (isViteWebDevMode ? DEFAULT_BACKEND_TOKEN : null);
+
+    // Warn if the default dev-only token is being used in Vite web mode.
+    if (isViteWebDevMode && fallbackToken === DEFAULT_BACKEND_TOKEN) {
+      console.warn(
+        `[Polaris] Using default development token "${DEFAULT_BACKEND_TOKEN}" for local backend. ` +
+          'This is intended for local development only and MUST NOT be used in production.'
+      );
+    }
+
     const info: BackendInfo = {
       port: null,
       token: fallbackToken,
@@ -211,6 +222,22 @@ export async function apiFetch(
     });
   };
 
+  const discoverToken = async (baseUrl: string): Promise<string | null> => {
+    try {
+      const res = await fetch(`${baseUrl}/v2/auth/token`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { token?: string };
+        return data?.token || null;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  };
+
   const doFallbackFetch = async (previousInfo: BackendInfo): Promise<Response | null> => {
     const fallbackInfo = await getDefaultLocalBackendInfo();
     if (sameBackendInfo(previousInfo, fallbackInfo)) {
@@ -226,8 +253,23 @@ export async function apiFetch(
   try {
     let info = await getBackendInfo();
     try {
-      const res = await doFetch(info);
+      let res = await doFetch(info);
       if (res.status === 401) {
+        // Try to discover the token from the backend's public endpoint.
+        const baseUrl = info.baseUrl || getDefaultBackendUrl();
+        const discoveredToken = await discoverToken(baseUrl);
+        if (discoveredToken && discoveredToken !== info.token) {
+          const newInfo: BackendInfo = {
+            ...info,
+            token: discoveredToken,
+          };
+          rememberRecoveredBackend(newInfo);
+          info = newInfo;
+          res = await doFetch(info);
+          if (res.status !== 401) {
+            return res;
+          }
+        }
         clearBackendInfoCache();
         const fallbackResponse = await doFallbackFetch(info);
         if (fallbackResponse) {
@@ -268,6 +310,24 @@ export async function connectWebSocket(_forceRefresh = false): Promise<WebSocket
     info = await getBackendInfo({ bypassCache: true });
   }
   info = await resolveReachableBackendInfo(info);
+
+  // If no token is available, try to discover it from the backend.
+  if (!info.token) {
+    const baseUrl = info.baseUrl || getDefaultBackendUrl();
+    try {
+      const res = await fetch(`${baseUrl}/v2/auth/token`, { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as { token?: string };
+        if (data?.token) {
+          info = { ...info, token: data.token };
+          rememberRecoveredBackend(info);
+        }
+      }
+    } catch {
+      // ignore discovery failure
+    }
+  }
+
   const wsBaseUrl = info.baseUrl
     ? info.baseUrl.replace(/^http/, "ws")
     : getSameOriginWebSocketBaseUrl();

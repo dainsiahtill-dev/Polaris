@@ -324,6 +324,61 @@ class TestCanonicalDirectorAdapter:
         assert result.patches == [{"path": "src/app.py"}]
         assert result.metadata["canonical_role_adapter"] == "roles.adapters.director"
         assert captured["payload"]
+        config = captured["config"]
+        assert config.max_workers == 1
+        assert config.execution_mode == "serial"
+
+    def test_execute_reads_max_workers_from_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """max_workers should be read from config keys, not hardcoded."""
+        captured: dict[str, object] = {}
+
+        class _Result:
+            success = True
+            error = ""
+            metadata: dict[str, object] = {}
+
+        class _Orchestrator:
+            def __init__(self, config) -> None:
+                captured["config"] = config
+
+            async def execute_task(self, payload):
+                return _Result()
+
+        monkeypatch.setattr(
+            "polaris.application.orchestration.director_orchestrator.DirectorOrchestrator",
+            _Orchestrator,
+        )
+        adapter = CanonicalDirectorAdapter(tmp_path, {"max_directors": 4})
+        adapter.execute(
+            DirectorTask(task_id="T1", goal="g", target_files=[], acceptance_criteria=[], constraints=[], context={})
+        )
+        assert captured["config"].max_workers == 4
+
+    def test_execute_reads_execution_mode_from_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """execution_mode should be read from config keys, not hardcoded."""
+        captured: dict[str, object] = {}
+
+        class _Result:
+            success = True
+            error = ""
+            metadata: dict[str, object] = {}
+
+        class _Orchestrator:
+            def __init__(self, config) -> None:
+                captured["config"] = config
+
+            async def execute_task(self, payload):
+                return _Result()
+
+        monkeypatch.setattr(
+            "polaris.application.orchestration.director_orchestrator.DirectorOrchestrator",
+            _Orchestrator,
+        )
+        adapter = CanonicalDirectorAdapter(tmp_path, {"director_execution_mode": "parallel"})
+        adapter.execute(
+            DirectorTask(task_id="T1", goal="g", target_files=[], acceptance_criteria=[], constraints=[], context={})
+        )
+        assert captured["config"].execution_mode == "parallel"
 
 
 class TestDirectorFactory:

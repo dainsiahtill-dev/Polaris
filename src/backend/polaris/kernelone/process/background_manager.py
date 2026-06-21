@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.constants import DEFAULT_OPERATION_TIMEOUT_SECONDS, MAX_WORKFLOW_TIMEOUT_SECONDS
 from polaris.kernelone.fs.jsonl.locking import file_lock
-from polaris.kernelone.fs.text_ops import append_text_atomic, write_json_atomic
+from polaris.kernelone.fs.jsonl.ops import append_jsonl_atomic
+from polaris.kernelone.fs.text_ops import write_json_atomic
 from polaris.kernelone.process.command_executor import CommandExecutionService
 from polaris.kernelone.storage import resolve_runtime_path
 
@@ -70,7 +71,7 @@ def _write_json_atomic(path: str, payload: dict[str, Any]) -> None:
 
 
 def _append_jsonl(path: str, payload: dict[str, Any]) -> None:
-    append_text_atomic(path, json.dumps(payload, ensure_ascii=False) + "\n")
+    append_jsonl_atomic(path, payload)
 
 
 def _read_json(path: str) -> dict[str, Any]:

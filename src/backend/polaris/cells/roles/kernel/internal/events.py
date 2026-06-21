@@ -400,6 +400,32 @@ def emit_llm_event(
         run_id: 运行 ID
         **kwargs: 其他字段
     """
+    # Dedup guard: suppress repeated emissions of the same logical event
+    from polaris.kernelone.audit.omniscient.dedup import get_global_llm_dedup
+
+    _dedup = get_global_llm_dedup()
+    _meta_raw = kwargs.get("metadata")
+    _meta_dict = _meta_raw if isinstance(_meta_raw, dict) else {}
+    _call_id = str(_meta_dict.get("call_id") or kwargs.get("call_id") or "")
+    _dedup_data: dict[str, Any] = {"event_type": event_type, "model": kwargs.get("model", "")}
+    _provider = str(kwargs.get("provider") or "")
+    if _provider:
+        _dedup_data["provider"] = _provider
+    if not _dedup.should_emit(
+        session_id=run_id,
+        role=role,
+        event_data=_dedup_data,
+        call_id=_call_id,
+    ):
+        logger.debug(
+            "[emit_llm_event] Suppressed duplicate: type=%s role=%s run_id=%s call_id=%s",
+            event_type,
+            role,
+            run_id,
+            _call_id,
+        )
+        return
+
     known_kwargs: dict[str, Any] = {}
     unknown_kwargs: dict[str, Any] = {}
     for key, value in kwargs.items():

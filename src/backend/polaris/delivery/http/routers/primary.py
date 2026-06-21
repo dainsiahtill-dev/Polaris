@@ -6,7 +6,7 @@ that are not part of the /v2 API namespace.
 
 from typing import Any
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 from polaris.bootstrap.config import get_settings
 from polaris.delivery.http.routers._shared import StructuredHTTPException
 from polaris.delivery.http.schemas.common import PrimaryHealthResponse, PrimaryLiveResponse, PrimaryReadyResponse
@@ -96,3 +96,15 @@ async def readiness_check() -> dict[str, Any]:
 async def liveness_check() -> dict[str, Any]:
     """Liveness probe for container orchestration."""
     return {"alive": True, "timestamp": "ok"}
+
+
+@primary_router.get("/v2/auth/token")
+async def auth_token_discovery() -> dict[str, Any]:
+    """Optionally expose the runtime auth token for local debugging only."""
+    from polaris.delivery.http.app_factory import get_effective_token, is_auth_token_discovery_enabled
+
+    if not is_auth_token_discovery_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="token discovery disabled")
+
+    token = get_effective_token()
+    return {"token": token}

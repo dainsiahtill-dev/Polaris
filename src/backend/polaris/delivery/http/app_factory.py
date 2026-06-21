@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets as _secrets
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
@@ -19,6 +20,27 @@ from polaris.cells.storage.layout.public.service import sync_process_settings_en
 from polaris.delivery.http.error_handlers import setup_exception_handlers
 
 logger = logging.getLogger(__name__)
+
+# Module-level store for the effective runtime token actually enforced by
+# Auth().  Public discovery is disabled by default; see
+# ``is_auth_token_discovery_enabled``.
+_effective_token: str = ""
+_token_was_auto_generated: bool = False
+
+
+def get_effective_token() -> str:
+    """Return the token that Auth() is enforcing at runtime."""
+    return _effective_token
+
+
+def is_auth_token_discovery_enabled() -> bool:
+    """Return whether the public auth-token discovery endpoint may expose a token."""
+    return str(os.environ.get("KERNELONE_AUTH_TOKEN_DISCOVERY_ENABLED", "") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 @asynccontextmanager
@@ -79,7 +101,18 @@ async def lifespan(app: FastAPI):
 
     # Refresh Auth from the environment at startup time so that tokens
     # injected after create_app() (e.g. in tests or subprocesses) are picked up.
-    app.state.auth = Auth(os.environ.get("KERNELONE_TOKEN", ""))
+    # The default token "polaris-local-dev" is set by get_effective_token() in
+    # BackendLaunchRequest when no explicit token is provided.  If it is still
+    # empty at this point (should not happen), fall back to a random token so
+    # that Auth() never rejects all requests with an empty token.
+    global _effective_token
+    token = os.environ.get("KERNELONE_TOKEN", "").strip()
+    if not token:
+        token = _secrets.token_urlsafe(32)
+        os.environ["KERNELONE_TOKEN"] = token
+        logger.warning("[startup] Auto-generated random KERNELONE_TOKEN (was empty)")
+    _effective_token = token
+    app.state.auth = Auth(token, allow_dev_fallback=_token_was_auto_generated)
 
     workspace = str(getattr(app.state.settings, "workspace", "") or "").strip()
     if workspace:
@@ -112,6 +145,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings is None:
         settings = get_settings()
 
+    # Ensure KERNELONE_TOKEN is always set. When started via bootstrap the
+    # token is auto-generated, but direct uvicorn invocation may skip that
+    # step, leaving Auth("") which rejects *every* request with 401.
+    global _token_was_auto_generated
+    if not os.environ.get("KERNELONE_TOKEN", "").strip():
+        os.environ["KERNELONE_TOKEN"] = _secrets.token_urlsafe(32)
+        _token_was_auto_generated = True
+
     sync_process_settings_environment(settings)
     from polaris.cells.events.fact_stream.public.service import configure_debug_tracing
 
@@ -131,7 +172,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.state.settings = settings
     app.state.app_state = AppState(settings=settings)
-    app.state.auth = Auth(os.environ.get("KERNELONE_TOKEN", ""))
+    # Auto-generate token if KERNELONE_TOKEN is not set.  The lifespan
+    # handler will also refresh this, but we need a valid token at
+    # create_app time so that pre-lifespan test scenarios work.
+    global _effective_token
+    token = os.environ.get("KERNELONE_TOKEN", "").strip()
+    if not token:
+        token = _secrets.token_urlsafe(32)
+        os.environ["KERNELONE_TOKEN"] = token
+    _effective_token = token
+    app.state.auth = Auth(token, allow_dev_fallback=_token_was_auto_generated)
     app.state.connection_state = ConnectionState()
 
     _setup_observability(app)

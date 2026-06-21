@@ -438,6 +438,59 @@ describe('telemetry role helpers', () => {
   });
 });
 
+describe('Real token verification — not hardcoded estimates', () => {
+  it('aggregates real per-call tokens that vary by event, never fixed at 1200', () => {
+    // Two calls with DIFFERENT token counts
+    const call1 = logEntry({
+      id: 'real-1',
+      timestamp: '2026-06-15T10:00:01Z',
+      level: 'success',
+      source: 'PM',
+      message: 'llm response completed',
+      meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 5000, completionTokens: 2500, totalTokens: 7500, durationMs: 3000 },
+      tags: ['llm_completed'],
+    });
+    const call2 = logEntry({
+      id: 'real-2',
+      timestamp: '2026-06-15T10:00:03Z',
+      level: 'success',
+      source: 'Director',
+      message: 'llm response completed',
+      meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'Director', promptTokens: 200, completionTokens: 100, totalTokens: 300, durationMs: 800 },
+      tags: ['llm_completed'],
+    });
+    const t = buildTelemetryFromStream([call1, call2], [], []);
+
+    // Total = 7500 + 300 = 7800, NOT 1200
+    expect(t.totalTokens).toBe(7800);
+    expect(t.totalTokens).not.toBe(1200);
+
+    // Per-role tokens also vary
+    expect(telemetryRoleTokens(t, 'pm')).toBe(7500);
+    expect(telemetryRoleTokens(t, 'director')).toBe(300);
+
+    // estimatedCalls = 0 because journal usage is real, never char-estimated
+    expect(t.estimatedCalls).toBe(0);
+  });
+
+  it('reports zero tokens when no event carries usage (not a fake 1.2k)', () => {
+    const noUsage = logEntry({
+      id: 'no-use',
+      timestamp: '2026-06-15T10:00:01Z',
+      level: 'success',
+      source: 'PM',
+      message: 'invoke done',
+      meta: { channel: 'llm', streamEvent: 'invoke_done', role: 'PM' },
+      tags: ['invoke_done'],
+    });
+    const t = buildTelemetryFromStream([noUsage], [], []);
+    // No usage in meta → totalTokens = 0, NOT 1200
+    expect(t.totalTokens).toBe(0);
+    expect(t.totalTokens).not.toBe(1200);
+    expect(telemetryRoleTokens(t, 'pm')).toBe(0);
+  });
+});
+
 describe('Phase 3+ multi-worker LLM tracking', () => {
   it('reports hasWorkers=false and an empty byWorker map when no event carries worker_id', () => {
     const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);

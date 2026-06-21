@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.audit.omniscient.bus import AuditEventEnvelope, AuditPriority
 from polaris.kernelone.audit.omniscient.interceptors.base import BaseAuditInterceptor
+from polaris.kernelone.audit.omniscient.interceptors.llm_metrics import get_llm_metrics_store
 
 if TYPE_CHECKING:
     from polaris.kernelone.audit.omniscient.bus import OmniscientAuditBus
@@ -134,13 +135,29 @@ class LLMAuditInterceptor(BaseAuditInterceptor):
         self._provider_counts[provider] = self._provider_counts.get(provider, 0) + 1
 
         # Track success/error
-        if event_type == "llm_interaction_error" or error:
+        is_error = event_type == "llm_interaction_error" or bool(error)
+        if is_error:
             self._error_count += 1
             self._consecutive_failures += 1
             self._check_failure_threshold()
         else:
             self._success_count += 1
             self._consecutive_failures = 0
+
+        # Feed time-windowed metrics store
+        try:
+            store = get_llm_metrics_store()
+            store.record(
+                role=event.get("role", ""),
+                provider=provider,
+                model=model,
+                latency_ms=latency_ms,
+                is_error=is_error,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+        except (RuntimeError, ValueError):
+            logger.debug("[llm_audit] Failed to record metrics to store", exc_info=True)
 
         logger.debug(
             "[llm_audit] Processed LLM event: model=%s, tokens=%d, latency=%.2fms, error=%s",

@@ -346,6 +346,7 @@ class LLMInvoker:
                     task_id=task_id,
                     attempt=attempt,
                     model=model,
+                    provider=slot.provider_id,
                     call_id=call_id,
                     retry_decision="role_binding_fallback",
                     backoff_seconds=0.0,
@@ -1055,6 +1056,7 @@ class LLMInvoker:
                 task_id=task_id,
                 attempt=attempt,
                 model=model,
+                provider=str(getattr(profile, "provider_id", "") or ""),
                 prompt_tokens=prompt_tokens,
                 call_id=call_id,
                 context_tokens_before=context_result.token_estimate if context_result else None,
@@ -1715,6 +1717,7 @@ class LLMInvoker:
                 task_id=task_id,
                 attempt=attempt,
                 model=model,
+                provider=str(getattr(profile, "provider_id", "") or ""),
                 prompt_tokens=prompt_tokens,
                 call_id=call_id,
                 context_tokens_before=context_result.token_estimate if context_result else None,
@@ -2231,10 +2234,12 @@ class LLMInvoker:
 
     def _emit_call_error_event(self, **kwargs: Any) -> None:
         """Backward-compatible delegate to LLMEventEmitter.emit_call_error_event."""
+        self._fill_provider_from_metadata(kwargs)
         self._event_emitter.emit_call_error_event(**kwargs)
 
     def _emit_call_start_event(self, **kwargs: Any) -> None:
         """Backward-compatible delegate to LLMEventEmitter.emit_call_start_event."""
+        self._fill_provider_from_metadata(kwargs)
         self._event_emitter.emit_call_start_event(**kwargs)
 
     def _emit_call_end_event(self, **kwargs: Any) -> None:
@@ -2243,7 +2248,19 @@ class LLMInvoker:
 
     def _emit_call_retry_event(self, **kwargs: Any) -> None:
         """Backward-compatible delegate to LLMEventEmitter.emit_call_retry_event."""
+        self._fill_provider_from_metadata(kwargs)
         self._event_emitter.emit_call_retry_event(**kwargs)
+
+    @staticmethod
+    def _fill_provider_from_metadata(kwargs: dict[str, Any]) -> None:
+        if kwargs.get("provider"):
+            return
+        metadata = kwargs.get("metadata")
+        if not isinstance(metadata, dict):
+            return
+        provider = metadata.get("provider") or metadata.get("provider_id") or metadata.get("to_provider")
+        if provider:
+            kwargs["provider"] = str(provider)
 
 
 __all__ = ["LLMInvoker"]

@@ -35,22 +35,30 @@ class AppState:
     director_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
+_DEV_FALLBACK_TOKEN = "polaris-local-dev"
+
+
 class Auth:
     """Authentication handler with strict security policy.
 
     Security rules:
     - Missing token = all connections rejected
     - Token configured = strict Bearer token validation required
+    - In development mode (no explicit token configured before startup),
+      the well-known dev token is accepted as a fallback so that the
+      Vite dev-server frontend can reach the backend without IPC.
     """
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, *, allow_dev_fallback: bool = False) -> None:
         self.token = token or ""
+        self._allow_dev_fallback = allow_dev_fallback and bool(self.token)
 
     def check(self, header_value: str) -> bool:
         """Validate authentication header against configured token.
 
         Returns True only if:
         - Valid Bearer token is provided matching configured token
+        - OR dev fallback is active and the dev token is provided
 
         Returns False if:
         - No token is configured
@@ -64,7 +72,14 @@ class Auth:
         if not header_value.lower().startswith("bearer "):
             return False
         value = header_value.split(" ", 1)[1].strip()
-        return secrets.compare_digest(value, self.token)
+        if secrets.compare_digest(value, self.token):
+            return True
+        # Dev fallback: accept the well-known dev token when the backend
+        # was started with an auto-generated token (i.e. no explicit token
+        # was configured via env/config).  This bridges the gap between
+        # the backend's random token and the Vite frontend's hardcoded
+        # DEFAULT_BACKEND_TOKEN when running outside Electron.
+        return bool(self._allow_dev_fallback and secrets.compare_digest(value, _DEV_FALLBACK_TOKEN))
 
 
 class ConnectionState:

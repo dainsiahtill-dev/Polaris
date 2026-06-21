@@ -325,8 +325,22 @@ def _smoke_static_web_playwright(workspace: Path, html_rel: str, *, timeout_s: i
 
             browser.close()
 
-        # Filter out resource loading errors (CSS, JS, images)
-        critical_errors = [err for err in console_errors if "Failed to load resource" not in err]
+        # Filter out non-critical resource loading errors (CSS, JS, images, favicon, network errors)
+        non_critical_patterns = [
+            "Failed to load resource",
+            "favicon.ico",
+            "net::ERR_",
+            "404 (Not Found)",
+            "CORS policy",
+            "Cross-Origin",
+            "Mixed Content",
+            "The resource at",
+            "was preloaded using link preload",
+            "was requested but not retrieved",
+        ]
+        critical_errors = [
+            err for err in console_errors if not any(pattern in err for pattern in non_critical_patterns)
+        ]
         status_ok = 200 <= http_status < 400
         ok = status_ok and len(critical_errors) == 0
         if not status_ok:
@@ -400,7 +414,7 @@ def _cli_smoke_result(kind: str, entrypoint: str, result: dict[str, Any]) -> dic
         return payload
     output = f"{result.get('stdout_tail') or ''}\n{result.get('stderr_tail') or ''}".lower()
     if result.get("timeout"):
-        payload["ok"] = True
+        payload["ok"] = False
         payload["started"] = True
         return payload
     if (

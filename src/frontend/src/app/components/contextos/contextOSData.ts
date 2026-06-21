@@ -25,7 +25,10 @@ import {
   type WorkerAggregate,
 } from './contextOSTelemetry';
 
-/** 无绑定窗口时的兜底上下文窗口；真实显示优先使用 /v2/llm/status 的角色绑定窗口。 */
+/**
+ * @deprecated 仅用于测试断言。生产代码绝不使用此值作为兜底窗口——
+ * 真实窗口来自 /v2/llm/status 的角色绑定 maxContextTokens；无绑定时显示 null（"未知"）。
+ */
 export const NOMINAL_CONTEXT_WINDOW = 128_000;
 
 export type PipelineState = 'active' | 'idle' | 'blocked';
@@ -86,6 +89,12 @@ export interface RoleInternalContext {
   contextWindowTokens: number | null;
   contextWindowLabel: string;
   contextWindowDetail: string;
+  /** 上下文窗口数据来源：binding=LLM角色绑定，unknown=无绑定。 */
+  contextWindowSource: 'binding' | 'unknown';
+  /** 绑定的 provider 名称（如 "Kimi Coding"），无绑定时 null。 */
+  contextWindowProvider: string | null;
+  /** 绑定的 model 名称（如 "kimi-for-coding"），无绑定时 null。 */
+  contextWindowModel: string | null;
   /** 当前窗口占用的角色级分子。优先真实 context token，其次该角色平均 prompt token；无数据为 null。 */
   windowOccupancyTokens: number | null;
   windowOccupancyLabel: string;
@@ -128,6 +137,12 @@ export interface RoleCard {
   contextWindowTokens: number | null;
   contextWindowLabel: string;
   contextWindowDetail: string;
+  /** 上下文窗口数据来源：binding=LLM角色绑定，unknown=无绑定。 */
+  contextWindowSource: 'binding' | 'unknown';
+  /** 绑定的 provider 名称，无绑定时 null。 */
+  contextWindowProvider: string | null;
+  /** 绑定的 model 名称，无绑定时 null。 */
+  contextWindowModel: string | null;
   receiptCount: number;
   internalContext: RoleInternalContext;
 }
@@ -287,8 +302,14 @@ function formatWindowTokens(value: number): string {
   if (value >= 1_000_000) {
     return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
   }
+  if (value >= 100_000) {
+    return `${(value / 1000).toFixed(0)}k`;
+  }
+  if (value >= 10_000) {
+    return `${(value / 1000).toFixed(1)}k`;
+  }
   if (value >= 1000) {
-    return `${(value / 1000).toFixed(value >= 100_000 ? 0 : 1)}k`;
+    return `${(value / 1000).toFixed(2)}k`;
   }
   return String(Math.round(value));
 }
@@ -313,10 +334,10 @@ function bindingWindow(binding: LlmRuntimeRoleBinding): number | null {
 function deriveRoleContextWindow(
   state: LlmRuntimeGateState,
   roleKey: string,
-): { tokens: number | null; label: string; detail: string } {
+): { tokens: number | null; label: string; detail: string; source: 'binding' | 'unknown'; provider: string | null; model: string | null } {
   const detail = roleDetailForWindow(state, roleKey);
   if (!detail) {
-    return { tokens: null, label: '窗口未知', detail: 'LLM status 未提供角色绑定窗口' };
+    return { tokens: null, label: '窗口未知', detail: 'LLM status 未提供角色绑定窗口', source: 'unknown', provider: null, model: null };
   }
 
   const bindingWindows = detail.bindings
@@ -326,22 +347,34 @@ function deriveRoleContextWindow(
     ? detail.maxContextTokens
     : null;
   const tokens = bindingWindows.length > 0 ? Math.min(...bindingWindows) : directWindow;
-  const provider = detail.providerName || detail.providerId || 'Provider';
-  const model = detail.model || detail.bindings[0]?.model || '';
+  const provider = detail.providerName || detail.providerId || null;
+  const model = detail.model || detail.bindings[0]?.model || null;
   const bindingCount = detail.bindings.length;
 
   if (!tokens) {
     return {
       tokens: null,
       label: model ? `${modelLabel(model)} 窗口未知` : '窗口未知',
-      detail: `${provider}${model ? ` / ${model}` : ''}`,
+      detail: provider ? `${provider}${model ? ` / ${model}` : ''} · 无 maxContextTokens 绑定` : 'LLM status 未提供窗口字段',
+      source: 'unknown',
+      provider,
+      model,
     };
   }
 
+  const windowLabel = bindingCount > 1
+    ? `${bindingCount} 路最小窗口`
+    : model
+      ? `${modelLabel(model)} 绑定`
+      : '绑定窗口';
+
   return {
     tokens,
-    label: bindingCount > 1 ? `${bindingCount} 路最小窗口` : '绑定窗口',
-    detail: `${provider}${model ? ` / ${model}` : ''}`,
+    label: windowLabel,
+    detail: provider ? `${provider}${model ? ` / ${model}` : ''} · maxContextTokens` : `绑定窗口 ${contextOSFormat.windowTokens(tokens)}`,
+    source: 'binding',
+    provider,
+    model,
   };
 }
 
@@ -553,7 +586,7 @@ export function buildContextOSModel(input: {
   // 遥测只看到尾部窗口（某条 WS 流已达环形缓冲上限）时为 true：把「累计」诚实降级为「最近窗口」。
   const telemetryWindowed = telemetry.windowed;
 
-  const roleWindowByKey: Record<string, { tokens: number | null; label: string; detail: string }> = Object.fromEntries(
+  const roleWindowByKey: Record<string, { tokens: number | null; label: string; detail: string; source: 'binding' | 'unknown'; provider: string | null; model: string | null }> = Object.fromEntries(
     ROLE_DEFINITIONS.map((role) => [role.key, deriveRoleContextWindow(llmRuntimeState, role.key)] as const),
   );
   const configuredRoleWindows = Object.values(roleWindowByKey)
@@ -791,21 +824,21 @@ export function buildContextOSModel(input: {
     const contextItemsCount = lastContextBuild ? lastContextBuild.contextItems : null;
     const contextTokensLatest = lastContextSize ? lastContextSize.contextTokens : null;
     const workingMemoryItems = contextItemsCount ?? (roleEvents.length > 0 ? roleEvents.length : null);
-    const roleWindow = roleWindowByKey[role.key] ?? { tokens: null, label: '窗口未知', detail: 'LLM status 未提供角色绑定窗口' };
+    const roleWindow = roleWindowByKey[role.key] ?? { tokens: null, label: '窗口未知', detail: 'LLM status 未提供角色绑定窗口', source: 'unknown' as const, provider: null, model: null };
     const usageCallCount = roleEvents.filter((event) => event.hasUsage).length;
     const promptAverage = usageCallCount > 0 && promptTokens > 0 ? Math.round(promptTokens / usageCallCount) : null;
     const windowOccupancyTokens = contextTokensLatest !== null && contextTokensLatest > 0
       ? contextTokensLatest
       : promptAverage;
     const windowOccupancyLabel = contextTokensLatest !== null && contextTokensLatest > 0
-      ? '最新上下文'
+      ? '最新上下文 (实测)'
       : promptAverage !== null
-        ? '平均提示'
+        ? '平均提示 (估算)'
         : '无 usage';
     const windowOccupancyDetail = contextTokensLatest !== null && contextTokensLatest > 0
-      ? '来自该角色最近一次 context.build/context_tokens_after'
+      ? '来自该角色最近一次 context.build/context_tokens_after (真实上下文 token)'
       : promptAverage !== null
-        ? '来自该角色 usage 事件的 prompt_tokens 平均值'
+        ? '来自该角色 usage 事件的 prompt_tokens 平均值 (非窗口实测)'
         : '该角色尚无带 usage 的实时观测事件';
 
     // 当前任务：ContextOSEvent 目前未携带 refs，先诚实留空；后续可在 logEntryToEvent 中扩展
@@ -844,6 +877,9 @@ export function buildContextOSModel(input: {
       contextWindowTokens: roleWindow.tokens,
       contextWindowLabel: roleWindow.label,
       contextWindowDetail: roleWindow.detail,
+      contextWindowSource: roleWindow.source,
+      contextWindowProvider: roleWindow.provider ?? null,
+      contextWindowModel: roleWindow.model ?? null,
       windowOccupancyTokens,
       windowOccupancyLabel,
       windowOccupancyDetail,
@@ -890,6 +926,9 @@ export function buildContextOSModel(input: {
       contextWindowTokens: internalContext.contextWindowTokens,
       contextWindowLabel: internalContext.contextWindowLabel,
       contextWindowDetail: internalContext.contextWindowDetail,
+      contextWindowSource: internalContext.contextWindowSource,
+      contextWindowProvider: internalContext.contextWindowProvider,
+      contextWindowModel: internalContext.contextWindowModel,
       receiptCount: internalContext.receiptCount,
       internalContext,
     };

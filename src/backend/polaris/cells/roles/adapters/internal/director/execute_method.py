@@ -281,10 +281,9 @@ async def _run_empty_write_content_materialization_retry(
         or not has_successful_write_tool(retry_tool_results)
         or _empty_write_content_retry_needed(retry_tool_results)
     ):
-        fallback_tool_results = await adapter._execution.execute_tools(
+        fallback_tool_results = await adapter._execute_tools(
             retry_content,
             target_task_id,
-            adapter._update_task_progress,
             allowed_tool_names={forced_tool_name},
             allow_patch_fallback=forced_tool_name == "write_file",
         )
@@ -1821,9 +1820,7 @@ async def _phase_first_llm_call(
         extracted_tool_results = adapter._execution.extract_kernel_tool_results(result)
         tool_results.extend(extracted_tool_results)
         if not extracted_tool_results or not has_successful_write_tool(extracted_tool_results):
-            fallback_tool_results = await adapter._execution.execute_tools(
-                content, target_task_id, adapter._update_task_progress
-            )
+            fallback_tool_results = await adapter._execute_tools(content, target_task_id)
             if fallback_tool_results:
                 tool_results.extend(fallback_tool_results)
 

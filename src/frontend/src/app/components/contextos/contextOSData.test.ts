@@ -204,7 +204,7 @@ describe('buildContextOSModel', () => {
     expect(model.contextWindowLabel).toBe('最小绑定窗口');
     expect(model.windowOccupancy).toBeCloseTo(0.5, 5);
     expect(pm?.contextWindowTokens).toBe(262_144);
-    expect(pm?.contextWindowLabel).toBe('绑定窗口');
+    expect(pm?.contextWindowLabel).toBe('kimi-for-coding 绑定');
     expect(director?.contextWindowTokens).toBe(32_768);
     expect(director?.contextWindowLabel).toBe('2 路最小窗口');
     expect(qa?.contextWindowTokens).toBe(1_000_000);
@@ -381,9 +381,9 @@ describe('buildContextOSModel with real WS telemetry', () => {
 
     expect(model.windowOccupancyTokens).toBe(Math.round((1932 + 800) / 2));
     expect(pm?.internalContext.windowOccupancyTokens).toBe(1932);
-    expect(pm?.internalContext.windowOccupancyLabel).toBe('平均提示');
+    expect(pm?.internalContext.windowOccupancyLabel).toBe('平均提示 (估算)');
     expect(director?.internalContext.windowOccupancyTokens).toBe(800);
-    expect(director?.internalContext.windowOccupancyLabel).toBe('平均提示');
+    expect(director?.internalContext.windowOccupancyLabel).toBe('平均提示 (估算)');
   });
 
   it('flags windowed when a WS stream reaches its ring-buffer cap', () => {
@@ -570,7 +570,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(pm?.internalContext.workingMemoryEstimated).toBe(false);
     expect(pm?.internalContext.contextTokensLatest).toBe(3200);
     expect(pm?.internalContext.windowOccupancyTokens).toBe(3200);
-    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新上下文');
+    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新上下文 (实测)');
   });
 
   it('truncates RoleInternalContext.events to MAX_ROLE_EVENTS while preserving newest-first order', () => {
@@ -616,6 +616,148 @@ describe('decisionMatchesRole', () => {
   });
   it('does not match unrelated actor', () => {
     expect(decisionMatchesRole('Director', 'pm')).toBe(false);
+  });
+});
+
+describe('ContextOS window/token/provider real-view verification', () => {
+  it('shows null window (not 128k) when no role bindings exist — "窗口未知" not NOMINAL_CONTEXT_WINDOW', () => {
+    // READY_LLM has no roleDetails at all → every role should get tokens=null, source='unknown'
+    const model = buildContextOSModel(baseInput({ llmRuntimeState: READY_LLM }));
+    const pm = model.roles.find((r) => r.id === 'pm')!;
+    const director = model.roles.find((r) => r.id === 'director')!;
+    const qa = model.roles.find((r) => r.id === 'qa')!;
+
+    // Global context window must be null when no bindings → NOT 128k
+    expect(model.contextWindowTokens).toBeNull();
+    expect(model.contextWindowSource).toBe('unknown');
+    expect(model.contextWindowLabel).toBe('未知');
+    // Each role individually has no window
+    expect(pm.contextWindowTokens).toBeNull();
+    expect(pm.contextWindowSource).toBe('unknown');
+    expect(pm.contextWindowLabel).toBe('窗口未知');
+    expect(director.contextWindowTokens).toBeNull();
+    expect(qa.contextWindowTokens).toBeNull();
+    // Provider/model are null when no roleDetails
+    expect(pm.contextWindowProvider).toBeNull();
+    expect(pm.contextWindowModel).toBeNull();
+    // Verify NOMINAL_CONTEXT_WINDOW (128k) is NOT used as fallback
+    expect(model.contextWindowTokens).not.toBe(NOMINAL_CONTEXT_WINDOW);
+  });
+
+  it('shows null window when roleDetails exist but have empty bindings and no maxContextTokens', () => {
+    const emptyBindingsLlm: LlmRuntimeGateState = {
+      state: 'READY',
+      blockedRoles: [],
+      requiredRoles: ['pm'],
+      lastUpdated: null,
+      roleDetails: {
+        pm: {
+          providerId: 'local',
+          providerName: 'Local LLM',
+          providerType: 'openai_compat',
+          model: 'local-model',
+          maxContextTokens: 0, // explicitly zero/invalid
+          maxOutputTokens: 4096,
+          bindings: [],
+          ready: true,
+          runtimeSupported: true,
+          runtimeIssue: '',
+          readinessIssue: '',
+          readinessSource: 'role_index',
+          testedProviderId: 'local',
+          testedModel: 'local-model',
+          testedTimestamp: null,
+          timestamp: null,
+        },
+      },
+    };
+    const model = buildContextOSModel(baseInput({ llmRuntimeState: emptyBindingsLlm }));
+    const pm = model.roles.find((r) => r.id === 'pm')!;
+
+    // Empty bindings + invalid maxContextTokens → null window, not 128k
+    expect(pm.contextWindowTokens).toBeNull();
+    expect(pm.contextWindowSource).toBe('unknown');
+    expect(pm.contextWindowLabel).toContain('窗口未知');
+    // Provider/model ARE available even when window is unknown
+    expect(pm.contextWindowProvider).toBe('Local LLM');
+    expect(pm.contextWindowModel).toBe('local-model');
+  });
+
+  it('real token aggregation is NOT fixed at 1200 — varies with actual WS telemetry', () => {
+    // Build telemetry with tokens = 3386 (PM) + 1000 (Director) = 4386
+    const telemetry = buildTelemetryFromStream(
+      [
+        { id: 'c1', timestamp: '2026-06-15T10:00:02Z', level: 'success', source: 'PM', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'PM', promptTokens: 1932, completionTokens: 1454, totalTokens: 3386, durationMs: 2400 }, tags: ['llm_completed'] } as LogEntry,
+        { id: 'c2', timestamp: '2026-06-15T10:00:04Z', level: 'success', source: 'Director', message: 'done', meta: { channel: 'llm', streamEvent: 'llm_completed', role: 'Director', promptTokens: 800, completionTokens: 200, totalTokens: 1000, durationMs: 1800 }, tags: ['llm_completed'] } as LogEntry,
+      ],
+      [],
+      [],
+    );
+    const model = buildContextOSModel(baseInput({ telemetry }));
+
+    // Total tokens = 4386, NOT 1200
+    expect(model.totalTokens).toBe(4386);
+    expect(model.totalTokens).not.toBe(1200);
+
+    // formatTokens(4386) = '4.4k', NOT '1.2k'
+    expect(contextOSFormat.tokens(model.totalTokens)).toBe('4.4k');
+    expect(contextOSFormat.tokens(model.totalTokens)).not.toBe('1.2k');
+
+    // Per-role tokens also vary
+    const pm = model.roles.find((r) => r.id === 'pm')!;
+    const director = model.roles.find((r) => r.id === 'director')!;
+    expect(pm.tokens).toBe(3386);
+    expect(pm.detail).toBe('3.4k tok');
+    expect(director.tokens).toBe(1000);
+    expect(director.detail).toBe('1.0k tok');
+
+    // Verify formatTokens produces different outputs for different inputs
+    expect(contextOSFormat.tokens(500)).toBe('500');
+    expect(contextOSFormat.tokens(1200)).toBe('1.2k');
+    expect(contextOSFormat.tokens(3386)).toBe('3.4k');
+    expect(contextOSFormat.tokens(100_000)).toBe('100k');
+    expect(contextOSFormat.tokens(1_200_000)).toBe('1200k');
+  });
+
+  it('derives provider/model from role bindings for display on role cards', () => {
+    // READY_LLM_WITH_WINDOWS: pm=Kimi Coding/kimi-for-coding, director=Qwen A/qwen3.6-27b-gpu0, qa=MiniMax/MiniMax-M3
+    const model = buildContextOSModel(baseInput({ llmRuntimeState: READY_LLM_WITH_WINDOWS }));
+    const pm = model.roles.find((r) => r.id === 'pm')!;
+    const director = model.roles.find((r) => r.id === 'director')!;
+    const qa = model.roles.find((r) => r.id === 'qa')!;
+
+    // PM: single binding → provider/model from detail
+    expect(pm.contextWindowSource).toBe('binding');
+    expect(pm.contextWindowProvider).toBe('Kimi Coding');
+    expect(pm.contextWindowModel).toBe('kimi-for-coding');
+    expect(pm.contextWindowTokens).toBe(262_144);
+    expect(pm.contextWindowLabel).toBe('kimi-for-coding 绑定');
+
+    // Director: 2 bindings → takes min(32768, 65536) = 32768
+    expect(director.contextWindowSource).toBe('binding');
+    expect(director.contextWindowProvider).toBe('Qwen A');
+    expect(director.contextWindowModel).toBe('qwen3.6-27b-gpu0');
+    expect(director.contextWindowTokens).toBe(32_768);
+    expect(director.contextWindowLabel).toBe('2 路最小窗口');
+
+    // QA: direct maxContextTokens (no bindings array entries, but detail has it)
+    expect(qa.contextWindowSource).toBe('binding');
+    expect(qa.contextWindowProvider).toBe('MiniMax');
+    expect(qa.contextWindowModel).toBe('MiniMax-M3');
+    expect(qa.contextWindowTokens).toBe(1_000_000);
+
+    // Global min window = 32768 (Director's min binding)
+    expect(model.contextWindowTokens).toBe(32_768);
+    expect(model.contextWindowSource).toBe('binding');
+  });
+
+  it('provider/model are null when no roleDetails exist but label correctly says "窗口未知"', () => {
+    const model = buildContextOSModel(baseInput({ llmRuntimeState: READY_LLM }));
+    const pm = model.roles.find((r) => r.id === 'pm')!;
+    expect(pm.contextWindowProvider).toBeNull();
+    expect(pm.contextWindowModel).toBeNull();
+    expect(pm.contextWindowLabel).toBe('窗口未知');
+    expect(pm.contextWindowDetail).toBe('LLM status 未提供角色绑定窗口');
   });
 });
 

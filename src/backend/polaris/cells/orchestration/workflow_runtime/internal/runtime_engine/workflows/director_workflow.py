@@ -34,9 +34,17 @@ def _extract_ready_tasks(
     fallback: list[TaskContract],
 ) -> list[TaskContract]:
     if not isinstance(payload, dict):
+        logger.warning(
+            "director workflow: payload is not a dict, using fallback tasks count=%s",
+            len(fallback),
+        )
         return list(fallback)
     activity_payload = payload.get("payload")
     if not isinstance(activity_payload, dict):
+        logger.warning(
+            "director workflow: activity_payload is not a dict, using fallback tasks count=%s",
+            len(fallback),
+        )
         return list(fallback)
     raw_tasks_val = activity_payload.get("tasks")
     raw_tasks: list[Any] = raw_tasks_val if isinstance(raw_tasks_val, list) else []
@@ -45,6 +53,11 @@ def _extract_ready_tasks(
         contract = TaskContract.from_mapping(item)
         if contract.task_id:
             tasks.append(contract)
+    if not tasks:
+        logger.warning(
+            "director workflow: no valid tasks extracted from payload, using fallback tasks count=%s",
+            len(fallback),
+        )
     return tasks or list(fallback)
 
 

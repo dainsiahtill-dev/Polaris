@@ -156,6 +156,23 @@ async def _build_health_response() -> dict[str, Any]:
         logger.debug(f"Director service not available: {e}")
         director_status = {"status": "unavailable", "state": "idle"}
 
+    # Get Context admin status
+    context_admin_enabled = os.environ.get("KERNELONE_CONTEXT_ADMIN_ENABLED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    context_admin_status = {
+        "enabled": context_admin_enabled,
+        "endpoints": ["/v2/context/admin/stats", "/v2/context/admin/sweep"] if context_admin_enabled else [],
+        "reason": "Context admin surface is disabled"
+        if not context_admin_enabled
+        else "Context admin surface is enabled",
+        "env_var": "KERNELONE_CONTEXT_ADMIN_ENABLED",
+        "current_value": os.environ.get("KERNELONE_CONTEXT_ADMIN_ENABLED", "not set"),
+    }
+
     return {
         "ok": bool(lancedb_status.get("ok")),
         "version": "0.1",
@@ -165,6 +182,7 @@ async def _build_health_response() -> dict[str, Any]:
         "python": lancedb_status.get("python"),
         "pm": pm_status,
         "director": director_status,
+        "context_admin": context_admin_status,
     }
 
 

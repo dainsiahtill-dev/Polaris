@@ -354,10 +354,12 @@ class BackendBootstrapper:
             config: Configuration snapshot
             request: Launch request
         """
-        # Set token (Canonical KERNELONE_* only)
-        token = request.token or config.get("security.token", "")
-        if token:
-            os.environ["KERNELONE_TOKEN"] = token
+        # Set token (Canonical KERNELONE_* only).
+        # Always use get_effective_token() which auto-generates a random
+        # token when none is explicitly provided, so Auth() is never
+        # initialised with an empty token (which would reject all requests).
+        token = request.get_effective_token()
+        os.environ["KERNELONE_TOKEN"] = token
 
         self_upgrade_mode = config.get_typed("self_upgrade_mode", bool, False)
         if self_upgrade_mode:

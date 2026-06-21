@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from .adapter import DirectorAdapter
+from .adapter import DirectorAdapter, generate_role_response
 from .execution import DirectorPatchExecutor
 from .execution_tools import DirectorToolExecutor
 from .security import (
@@ -32,6 +32,7 @@ __all__ = [
     "DirectorPatchExecutor",
     "DirectorStateTracker",
     "DirectorToolExecutor",
+    "generate_role_response",
     "is_command_allowed",
     "is_command_blocked",
 ]

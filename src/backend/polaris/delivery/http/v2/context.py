@@ -167,6 +167,34 @@ def _build_retention(workspace: str) -> ContextStoreRetention:
 
 
 @router.get(
+    "/v2/context/stats",
+    response_model=ContextStoreStatsResponse,
+    dependencies=[Depends(require_auth)],
+)
+def get_context_stats(request: Request) -> dict[str, Any]:
+    """Return basic stats about the ``runtime/contexts/`` tree.
+
+    This is a lightweight endpoint that doesn't require admin privileges.
+    It returns basic statistics but doesn't include sweep functionality
+    or detailed sweep reports.
+    """
+    workspace = _resolve_workspace(request)
+    retention = _build_retention(workspace)
+    stats = retention.get_stats()
+    return {
+        "workspace": stats["workspace"],
+        "contexts_root": stats["contexts_root"],
+        "file_count": stats["file_count"],
+        "total_bytes": stats["total_bytes"],
+        "oldest_mtime": stats["oldest_mtime"],
+        "newest_mtime": stats["newest_mtime"],
+        "config": stats["config"],
+        "last_sweep_at": stats["last_sweep_at"],
+        "last_sweep_report": None,
+    }
+
+
+@router.get(
     "/v2/context/admin/stats",
     response_model=ContextStoreStatsResponse,
     dependencies=[Depends(require_auth)],

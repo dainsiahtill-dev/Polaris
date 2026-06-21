@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from polaris.kernelone.fs.jsonl.ops import append_jsonl_atomic
+from polaris.kernelone.fs.text_ops import append_text_atomic
 from polaris.kernelone.utils.time_utils import utc_now_iso
 
 # HP Protocol - 7 Phase Ritual (符节状态机)
@@ -131,14 +133,10 @@ class PolicyRuntime:
         return mode_value in {"S0", "S2"}
 
     def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        append_jsonl_atomic(str(path), payload)
 
     def _append_hp_sentinel(self, path: Path, payload: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write("@@hp " + json.dumps(payload, ensure_ascii=False) + "\n")
+        append_text_atomic(str(path), "@@hp " + json.dumps(payload, ensure_ascii=False) + "\n")
 
     def _advance_phase(self, phase: str, summary: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         expected = self._next_expected_phase()

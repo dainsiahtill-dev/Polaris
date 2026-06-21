@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 from dataclasses import replace
 from typing import Any
 
@@ -36,6 +37,44 @@ from .state_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def generate_role_response(
+    *,
+    workspace: str,
+    settings: Any,
+    role: str,
+    message: str,
+    context: dict[str, Any] | None = None,
+    validate_output: bool = False,
+    max_retries: int = 1,
+    invoke_role_dialogue: Any = None,
+    **_: Any,
+) -> dict[str, Any]:
+    """Compatibility-compatible role response invocation used by test monkeypatches.
+
+    This wrapper keeps legacy module-level monkeypatch points alive while the
+    adapter can still route through runtime-first behavior by default.
+    """
+    del settings, validate_output  # preserve compatibility signature
+
+    invoke_strategy = invoke_role_dialogue
+    if callable(invoke_strategy):
+        return _normalize_director_role_response(await invoke_strategy(message=message, context=context))
+
+    # Fallback for non-fallback-callers: route directly through Role Runtime
+    # to keep behavior aligned with adapter policy and avoid drift from runtime path.
+    from polaris.cells.roles.adapters.internal.runtime_dialogue import invoke_role_runtime_first
+
+    runtime_payload = await invoke_role_runtime_first(
+        workspace=workspace,
+        role=role,
+        message=message,
+        context=context,
+        validate_output=False,
+        max_retries=max_retries,
+    )
+    return _normalize_director_role_response(runtime_payload)
 
 
 def _copy_mapping_payload(value: Any) -> dict[str, Any] | None:
@@ -712,6 +751,49 @@ class DirectorAdapter(BaseRoleAdapter):
             metadata=metadata,
         )
 
+    def _build_ephemeral_task(self, requested_task_id: str, input_data: dict[str, Any]) -> dict[str, Any]:
+        """Build a safe ephemeral task enriched with pending board contract hints."""
+        task = self._materialize_runtime_task(requested_task_id, input_data)
+        input_metadata_raw = input_data.get("metadata")
+        input_metadata: dict[str, Any] = input_metadata_raw if isinstance(input_metadata_raw, dict) else {}
+
+        pending_task_raw = self._select_pending_board_task()
+        pending_task: dict[str, Any] = pending_task_raw if isinstance(pending_task_raw, dict) else {}
+        pending_subject = str(
+            pending_task.get("subject")
+            or pending_task.get("title")
+            or str(input_metadata.get("title") or "").strip()
+            or str(input_metadata.get("subject") or "").strip()
+            or ""
+        ).strip()
+        pending_description = str(
+            pending_task.get("description") or pending_task.get("goal") or input_metadata.get("description") or ""
+        ).strip()
+
+        snapshot = self._state_tracker.build_taskboard_observation_snapshot(self.task_runtime)
+        board_brief = self._taskboard_snapshot_brief(snapshot)
+
+        current_desc = str(task.get("description") or "").strip()
+        current_desc = board_brief if not current_desc else f"{current_desc}\n{board_brief}"
+
+        task_contract_lines: list[str] = []
+        if pending_subject:
+            task_contract_lines.append(f"Pending TaskBoard contract: {pending_subject}")
+        if pending_description:
+            task_contract_lines.append(f"Pending TaskBoard description: {pending_description}")
+        if task_contract_lines:
+            current_desc = f"{current_desc}\n" + "\n".join(task_contract_lines)
+        else:
+            current_desc = f"{current_desc}\nNo pending TaskBoard contract found; use TaskBoard pending queue first."
+
+        task["description"] = current_desc
+        task["board_snapshot_brief"] = board_brief
+        task["pending_task_contract"] = {
+            "subject": pending_subject,
+            "description": pending_description,
+        }
+        return task
+
     def _build_materialized_metadata(self, requested_task_id: str, input_data: dict[str, Any]) -> dict[str, Any]:
         """Build metadata dict for materialized runtime task."""
         if input_data is None:
@@ -1022,3 +1104,76 @@ class DirectorAdapter(BaseRoleAdapter):
     def _taskboard_snapshot_brief(self, snapshot: dict[str, Any]) -> str:
         """TaskBoard 快照简要描述"""
         return taskboard_snapshot_brief(snapshot)
+
+    # -------------------------------------------------------------------------
+    # Compatibility Proxy Methods (thin shims for test / legacy callers)
+    # -------------------------------------------------------------------------
+
+    def _collect_workspace_code_files(self) -> dict[str, str]:
+        """Proxy to state tracker collect_workspace_code_files."""
+        return self._state_tracker.collect_workspace_code_files()
+
+    def _build_taskboard_observation_snapshot(self, sample_limit: int = 5) -> dict[str, Any]:
+        """Proxy to state tracker build_taskboard_observation_snapshot."""
+        return self._state_tracker.build_taskboard_observation_snapshot(self.task_runtime, sample_limit=sample_limit)
+
+    async def _call_role_llm(
+        self,
+        message: str,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Compatibility shim: invoke Director LLM with disable_internal_tool_rounds logic."""
+        ctx = dict(context) if isinstance(context, dict) else {}
+        if not os.environ.get("KERNELONE_DIRECTOR_ENABLE_INTERNAL_TOOL_ROUNDS"):
+            ctx["disable_internal_tool_rounds"] = True
+        max_retries = self._resolve_kernel_retry_budget(self.role_id)
+        from polaris.cells.roles.adapters.internal import director_adapter as director_adapter_module
+
+        generate_fn = getattr(director_adapter_module, "generate_role_response", None)
+        if not callable(generate_fn):
+            generate_fn = generate_role_response
+
+        raw_result = await generate_fn(
+            workspace=self.workspace,
+            settings=get_settings_safe(),
+            role=self.role_id,
+            message=message,
+            context=ctx,
+            validate_output=False,
+            max_retries=max_retries,
+            invoke_role_dialogue=self._invoke_role_dialogue,
+        )
+        return _normalize_director_role_response(raw_result)
+
+    async def _call_role_llm_with_timeout(
+        self,
+        message: str,
+        *,
+        context: dict[str, Any] | None = None,
+        timeout_seconds: float = _DEFAULT_LLM_CALL_TIMEOUT_SECONDS,
+        stage_label: str = "call",
+    ) -> dict[str, Any]:
+        """Compatibility alias for _invoke_role_dialogue_with_timeout."""
+        return await self._invoke_role_dialogue_with_timeout(
+            message,
+            context=context,
+            timeout_seconds=timeout_seconds,
+            stage_label=stage_label,
+        )
+
+    async def _execute_tools(
+        self,
+        response: str,
+        task_id: str,
+        *,
+        allowed_tool_names: set[str] | None = None,
+        allow_patch_fallback: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Compatibility proxy for _execution.execute_tools."""
+        return await self._execution.execute_tools(
+            response,
+            task_id,
+            self._update_task_progress,
+            allowed_tool_names=allowed_tool_names,
+            allow_patch_fallback=allow_patch_fallback,
+        )
