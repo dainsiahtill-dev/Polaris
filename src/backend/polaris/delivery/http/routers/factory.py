@@ -101,6 +101,7 @@ SERVICE_STATUS_TO_CONTRACT: dict[ServiceRunStatus, RunLifecycleStatus] = {
 
 _DEFAULT_LOOP_MAX_CYCLES = 12
 _DEFAULT_LOOP_STALL_THRESHOLD = 2
+_DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS = 300
 _RETRY_START_POLICY_AFTER_CHECKPOINT = "after_checkpoint"
 FactoryStartFrom: TypeAlias = Literal["auto", "architect", "pm", "director"]
 
@@ -522,6 +523,7 @@ def _build_stage_context(stage: str, payload: FactoryStartRequest, state: AppSta
         )
         if int(payload.director_iterations) > 0:
             context["director_max_rounds"] = int(payload.director_iterations)
+        context["timeout"] = _DEFAULT_DIRECTOR_DISPATCH_TIMEOUT_SECONDS
     if stage == "quality_gate":
         context["qa_target"] = payload.directive or "Quality gate"
     return context
@@ -907,6 +909,116 @@ def _count_events_by_type(events: list[dict[str, Any]]) -> dict[str, int]:
     return counts
 
 
+def _extract_taskboard_snapshots(
+    events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Extract initial and final taskboard snapshots from stage events."""
+    initial: dict[str, Any] = {}
+    final: dict[str, Any] = {}
+    for event in events:
+        taskboard = event.get("taskboard")
+        if not isinstance(taskboard, dict):
+            continue
+        if not initial:
+            initial = {
+                "total": taskboard.get("total"),
+                "claimed": taskboard.get("claimed"),
+                "completed": taskboard.get("completed"),
+                "failed": taskboard.get("failed"),
+                "blocked": taskboard.get("blocked"),
+            }
+        final = {
+            "total": taskboard.get("total"),
+            "claimed": taskboard.get("claimed"),
+            "completed": taskboard.get("completed"),
+            "failed": taskboard.get("failed"),
+            "blocked": taskboard.get("blocked"),
+        }
+    return {"initial": initial, "final": final}
+
+
+def _extract_per_binding_task_status(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Extract per-task claim/terminal status from director events."""
+    tasks: dict[str, dict[str, Any]] = {}
+    for event in events:
+        task_id = str(event.get("task_id") or event.get("pm_task_id") or "").strip()
+        if not task_id:
+            payload = event.get("result") if isinstance(event.get("result"), dict) else None
+            if isinstance(payload, dict):
+                task_id = str(payload.get("task_id") or payload.get("pm_task_id") or "").strip()
+        if not task_id:
+            continue
+        event_type = str(event.get("type") or "").strip()
+        entry = tasks.setdefault(task_id, {"task_id": task_id, "status": "unknown", "events": []})
+        entry["events"].append(event_type)
+        if event_type in ("task_completed", "task_success"):
+            entry["status"] = "completed"
+        elif event_type in ("task_failed", "task_error"):
+            entry["status"] = "failed"
+        elif event_type in ("task_blocked",):
+            entry["status"] = "blocked"
+        elif event_type in ("task_claimed", "task_started") and entry["status"] == "unknown":
+            entry["status"] = "claimed"
+    return list(tasks.values())
+
+
+def _extract_missing_delivery_targets(
+    *,
+    run: FactoryRun,
+    status_payload: dict[str, Any],
+) -> list[str]:
+    """Return declared stages that were never reached or completed."""
+    configured_stages = list(run.config.stages) if hasattr(run.config, "stages") else []
+    completed = set(run.stages_completed or [])
+    failed = set(run.stages_failed or [])
+    reached = completed | failed
+    return [s for s in configured_stages if s not in reached]
+
+
+def _build_director_convergence(
+    *,
+    run: FactoryRun,
+    events: list[dict[str, Any]],
+    status_payload: dict[str, Any],
+    summary_json: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Build director convergence diagnostics when QA did not run.
+
+    Returns None when QA ran successfully (convergence not relevant).
+    """
+    qa_gate = next(
+        (
+            g
+            for g in (status_payload.get("gates") or [])
+            if isinstance(g, dict) and g.get("gate_name") == "quality_gate"
+        ),
+        None,
+    )
+    qa_ran = bool(qa_gate and qa_gate.get("passed") is not None)
+    status = str(status_payload.get("status") or "").lower()
+    if qa_ran and status == "completed":
+        return None
+
+    blocking_phase = str(status_payload.get("current_stage") or status_payload.get("phase") or "").strip()
+    taskboard = _extract_taskboard_snapshots(events)
+    per_binding = _extract_per_binding_task_status(events)
+    missing_targets = _extract_missing_delivery_targets(run=run, status_payload=status_payload)
+
+    director_summary = (summary_json or {}).get("director") if isinstance(summary_json, dict) else None
+
+    return {
+        "qa_ran": qa_ran,
+        "blocking_phase": blocking_phase,
+        "taskboard_initial": taskboard["initial"],
+        "taskboard_final": taskboard["final"],
+        "missing_delivery_targets": missing_targets,
+        "per_binding_task_status": per_binding,
+        "director_summary": director_summary if isinstance(director_summary, dict) else None,
+    }
+
+
 def _build_factory_audit_bundle(
     *,
     run: FactoryRun,
@@ -922,7 +1034,14 @@ def _build_factory_audit_bundle(
     gates = status_payload.get("gates")
     failure = status_payload.get("failure")
 
-    return {
+    convergence = _build_director_convergence(
+        run=run,
+        events=events,
+        status_payload=status_payload,
+        summary_json=summary_json if isinstance(summary_json, dict) else None,
+    )
+
+    result: dict[str, Any] = {
         "run_id": status_payload.get("run_id") or run.id,
         "status": status_payload.get("status"),
         "phase": status_payload.get("phase"),
@@ -947,6 +1066,9 @@ def _build_factory_audit_bundle(
             "event_types": _count_events_by_type(events),
         },
     }
+    if convergence is not None:
+        result["director_convergence"] = convergence
+    return result
 
 
 async def _persist_run_summary(

@@ -1,0 +1,969 @@
+"""Characterization tests for ``ToolBatchExecutor.execute_tool_batch`` decision tree.
+
+These tests pin the OBSERVABLE behavior of the god-function before its
+behavior-preserving decomposition (G5 blueprint REMAINING_03_execute-tool-batch.md).
+
+Each test pins (where applicable):
+  1. exception message prefix (``single_batch_contract_violation`` / ValueError text)
+  2. ErrorEvent.error_type string
+  3. emitted-event ordered sequence
+  4. return dict kind/shape
+  5. ledger side-effect deltas (tool_batch_count delta, mark_blocked reason,
+     anomaly_flags, _implementing_phase_block_triggered, _session_read_files)
+
+The refactor must keep this module byte-identical green at every atomic step.
+"""
+
+from __future__ import annotations
+
+from typing import Any, cast
+from unittest.mock import AsyncMock
+
+import pytest
+from polaris.cells.roles.kernel.internal.transaction.delivery_contract import (
+    DeliveryContract,
+    DeliveryMode,
+)
+from polaris.cells.roles.kernel.internal.transaction.ledger import TransactionConfig, TurnLedger
+from polaris.cells.roles.kernel.internal.transaction.modification_contract import ModificationContractStatus
+from polaris.cells.roles.kernel.internal.transaction.phase_manager import Phase
+from polaris.cells.roles.kernel.internal.transaction.tool_batch_executor import (
+    ToolBatchExecutor,
+    _recent_edit_failure_in_context,
+)
+from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
+from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, ErrorEvent, TurnPhaseEvent
+
+# ---------------------------------------------------------------------------
+# Shared fixtures / builders
+# ---------------------------------------------------------------------------
+
+
+def _build_decoded_state_machine(turn_id: str) -> TurnStateMachine:
+    state_machine = TurnStateMachine(turn_id=turn_id)
+    state_machine.transition_to(TurnState.CONTEXT_BUILT)
+    state_machine.transition_to(TurnState.DECISION_REQUESTED)
+    state_machine.transition_to(TurnState.DECISION_RECEIVED)
+    state_machine.transition_to(TurnState.DECISION_DECODED)
+    return state_machine
+
+
+def _make_executor(
+    *,
+    captured_events: list[Any] | None = None,
+    tool_runtime: Any | None = None,
+    config: TransactionConfig | None = None,
+    guard_calls: list[dict[str, Any]] | None = None,
+) -> ToolBatchExecutor:
+    def _emit(event: Any) -> None:
+        if captured_events is not None:
+            captured_events.append(event)
+
+    def _guard(**kw: Any) -> None:
+        if guard_calls is not None:
+            guard_calls.append(dict(kw))
+
+    return ToolBatchExecutor(
+        tool_runtime=tool_runtime if tool_runtime is not None else AsyncMock(),
+        config=config or TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=_emit,
+        guard_assert_single_tool_batch=_guard,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+
+
+def _decision(turn_id: str, batch_id: str, invocations: list[dict[str, Any]], *, finalize: str = "none") -> Any:
+    return cast(
+        Any,
+        {
+            "turn_id": turn_id,
+            "metadata": {"workspace": "."},
+            "finalize_mode": finalize,
+            "tool_batch": {
+                "batch_id": batch_id,
+                "invocations": invocations,
+            },
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# IDEMPOTENCY cache HIT (642-645)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_idempotency_cache_hit_returns_cached_receipt_without_events() -> None:
+    """Cache hit short-circuits: returns cached receipt, emits NO events, no batch count change."""
+    captured: list[Any] = []
+    cached_receipt = {"batch_id": "cached", "results": [], "_marker": "from_cache"}
+
+    class _ReceiptStore:
+        def get_by_batch_idempotency_key(self, key: str) -> dict[str, Any]:
+            return cached_receipt
+
+    tool_runtime = AsyncMock()
+    tool_runtime.receipt_store = _ReceiptStore()
+    executor = _make_executor(captured_events=captured, tool_runtime=tool_runtime)
+    turn_id = "turn_idem_hit"
+    ledger = TurnLedger(turn_id=turn_id)
+    before = ledger.tool_batch_count
+
+    result = await executor.execute_tool_batch(
+        _decision(turn_id, "b1", [{"call_id": "c", "tool_name": "read_file", "arguments": {"file": "README.md"}}]),
+        _build_decoded_state_machine(turn_id),
+        ledger,
+        [{"role": "user", "content": "read it"}],
+        stream=False,
+    )
+
+    assert result is cached_receipt
+    assert result.get("_marker") == "from_cache"
+    assert captured == []
+    assert ledger.tool_batch_count == before
+
+
+# ---------------------------------------------------------------------------
+# ALIAS allow-list disallowed-tools raise (656-666)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_allowed_tool_names_disallowed_raises_without_error_event() -> None:
+    """Tools outside the narrowed allow-list raise a bare RuntimeError (no ErrorEvent)."""
+    captured: list[Any] = []
+    executor = _make_executor(captured_events=captured)
+    turn_id = "turn_alias_disallowed"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "c", "tool_name": "write_file", "arguments": {"file": "x.py", "content": "x"}}],
+    )
+    with pytest.raises(RuntimeError, match="single_batch_contract_violation: retry batch used tools outside"):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            [{"role": "user", "content": "go"}],
+            stream=False,
+            allowed_tool_names={"read_file"},
+        )
+    # Bare RuntimeError path: no ErrorEvent emitted (raised before any emission)
+    assert not any(isinstance(e, ErrorEvent) for e in captured)
+
+
+@pytest.mark.asyncio
+async def test_allowed_tool_names_alias_normalization_permits_scaffolding_alias() -> None:
+    """``project_scaffolding`` is allowed by alias when ``project_scaffold`` is narrowed."""
+    captured: list[Any] = []
+    executor = _make_executor(captured_events=captured)
+    turn_id = "turn_alias_ok"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "c", "tool_name": "project_scaffolding", "arguments": {}}],
+    )
+    # Must NOT raise the disallowed-tools error (alias matches).
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        TurnLedger(turn_id=turn_id),
+        [{"role": "user", "content": "go"}],
+        stream=False,
+        allowed_tool_names={"project_scaffold"},
+    )
+    assert result.get("turn_id") == turn_id
+
+
+# ---------------------------------------------------------------------------
+# READ-WRITE BARRIER (690-736)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_write_barrier_mixed_read_and_write_raises() -> None:
+    """Mixing a read tool and a write tool in one batch raises (no ErrorEvent)."""
+    captured: list[Any] = []
+    executor = _make_executor(captured_events=captured)
+    turn_id = "turn_barrier"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [
+            {"call_id": "r", "tool_name": "read_file", "arguments": {"file": "README.md"}},
+            {"call_id": "w", "tool_name": "write_file", "arguments": {"file": "a.py", "content": "x"}},
+        ],
+    )
+    with pytest.raises(RuntimeError, match="single_batch_contract_violation: Cannot mix Read tools"):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            [{"role": "user", "content": "update a.py"}],
+            stream=False,
+        )
+    assert not any(isinstance(e, ErrorEvent) for e in captured)
+
+
+@pytest.mark.asyncio
+async def test_read_write_barrier_bypassed_for_benchmark_contract() -> None:
+    """Benchmark contracts (``[Benchmark Tool Contract]``) bypass the barrier."""
+    captured: list[Any] = []
+    executor = _make_executor(captured_events=captured)
+    turn_id = "turn_barrier_bench"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [
+            {"call_id": "r", "tool_name": "read_file", "arguments": {"file": "README.md"}},
+            {"call_id": "w", "tool_name": "write_file", "arguments": {"file": "a.py", "content": "x"}},
+        ],
+    )
+    # Must NOT raise the barrier error because benchmark marker is present.
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        TurnLedger(turn_id=turn_id),
+        [{"role": "user", "content": "[Benchmark Tool Contract] update a.py"}],
+        stream=False,
+    )
+    assert result.get("turn_id") == turn_id
+
+
+# ---------------------------------------------------------------------------
+# MATERIALIZE + EXPLORING text-output interception (747-768)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_materialize_exploring_no_tools_raises_text_intercept() -> None:
+    """MATERIALIZE_CHANGES + EXPLORING + no invocations raises a bare RuntimeError."""
+    captured: list[Any] = []
+    executor = _make_executor(captured_events=captured)
+    turn_id = "turn_text_intercept"
+    decision = _decision(turn_id, "b1", [])
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+    assert ledger.phase_manager.current_phase == Phase.EXPLORING
+    with pytest.raises(
+        RuntimeError,
+        match="single_batch_contract_violation: MATERIALIZE_CHANGES mode requires tool execution",
+    ):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            ledger,
+            [{"role": "user", "content": "go modify"}],
+            stream=False,
+        )
+    assert not any(isinstance(e, ErrorEvent) for e in captured)
+
+
+# ---------------------------------------------------------------------------
+# VERIFICATION-READ EXEMPTION helper (_recent_edit_failure_in_context)
+# ---------------------------------------------------------------------------
+
+
+def test_recent_edit_failure_in_context_detects_marker() -> None:
+    context = [
+        {"role": "user", "content": "do it"},
+        {"role": "tool", "content": "Validation failed for edit_blocks: SEARCH text exactly matches file content"},
+    ]
+    assert _recent_edit_failure_in_context(context) is True
+
+
+def test_recent_edit_failure_in_context_no_marker() -> None:
+    context = [
+        {"role": "user", "content": "do it"},
+        {"role": "tool", "content": "edit applied successfully"},
+    ]
+    assert _recent_edit_failure_in_context(context) is False
+
+
+def test_recent_edit_failure_in_context_non_iterable_returns_false() -> None:
+    assert _recent_edit_failure_in_context(123) is False
+
+
+def test_recent_edit_failure_in_context_respects_lookback_window() -> None:
+    # Failure marker beyond the lookback window is not detected.
+    context = [{"role": "tool", "content": "No valid edit blocks"}]
+    context += [{"role": "user", "content": str(i)} for i in range(10)]
+    assert _recent_edit_failure_in_context(context, lookback=3) is False
+
+
+@pytest.mark.asyncio
+async def test_content_gathered_verification_read_exemption_allows_direct_read() -> None:
+    """A direct-read-only batch after a recent edit failure bypasses the content_gathered write gate."""
+    captured: list[Any] = []
+    executor = _make_executor(
+        captured_events=captured,
+        tool_runtime=AsyncMock(return_value={"success": True, "result": {"file": "a.py", "content": "x"}}),
+    )
+    turn_id = "turn_verif_exempt"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "a.py"}}],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+    # Force CONTENT_GATHERED phase.
+    ledger.phase_manager._current_phase = Phase.CONTENT_GATHERED
+    context = [
+        {"role": "user", "content": "fix a.py"},
+        {"role": "tool", "content": "Validation failed for edit_blocks; SEARCH text exactly matches file content"},
+    ]
+    # Must NOT raise content_gathered_write_required.
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        ledger,
+        context,
+        stream=False,
+    )
+    assert result.get("turn_id") == turn_id
+    assert not any(isinstance(e, ErrorEvent) and e.error_type == "content_gathered_write_required" for e in captured)
+
+
+# ---------------------------------------------------------------------------
+# CONTENT_GATHERED gate: READY_TO_WRITE raise (816-851)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_content_gathered_ready_to_write_raises_write_required() -> None:
+    """When the modification plan is confirmed, reading is blocked in CONTENT_GATHERED."""
+    captured: list[Any] = []
+    executor = _make_executor(captured_events=captured)
+    turn_id = "turn_cg_ready"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "a.py"}}],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+    ledger.phase_manager._current_phase = Phase.CONTENT_GATHERED
+    # Force the contract to READY so the readiness verdict is READY_TO_WRITE.
+    ledger.modification_contract.status = ModificationContractStatus.READY
+    before = ledger.tool_batch_count
+    with pytest.raises(
+        RuntimeError,
+        match="single_batch_contract_violation: CONTENT_GATHERED phase requires write tools",
+    ):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            ledger,
+            [{"role": "user", "content": "fix a.py"}],
+            stream=False,
+        )
+    error_events = [e for e in captured if isinstance(e, ErrorEvent)]
+    assert error_events, "expected an ErrorEvent before the raise"
+    assert error_events[0].error_type == "content_gathered_write_required"
+    # tool_batch_count must not have advanced (raise is before the increment).
+    assert ledger.tool_batch_count == before
+
+
+# ---------------------------------------------------------------------------
+# CONTENT_GATHERED gate: NEEDS_PLAN allow (turns < max) — no raise
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_content_gathered_needs_plan_allows_read_when_under_max_turns() -> None:
+    """NEEDS_PLAN + turns_in_phase < max → reads allowed, NO content_gathered raise."""
+    captured: list[Any] = []
+    executor = _make_executor(
+        captured_events=captured,
+        tool_runtime=AsyncMock(return_value={"success": True, "result": {"file": "a.py", "content": "x"}}),
+    )
+    turn_id = "turn_cg_needs_plan_allow"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "a.py"}}],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+    ledger.phase_manager._current_phase = Phase.CONTENT_GATHERED
+    # DRAFT contract w/o targets/actions → NEEDS_PLAN; turns 0 < max 3 → allow.
+    ledger.modification_contract.status = ModificationContractStatus.DRAFT
+    ledger.phase_manager._turns_in_current_phase = 0
+    ledger.phase_manager._max_turns_per_phase = 3
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        ledger,
+        [{"role": "user", "content": "fix a.py"}],
+        stream=False,
+    )
+    assert result.get("turn_id") == turn_id
+    assert not any(isinstance(e, ErrorEvent) and e.error_type == "content_gathered_write_required" for e in captured)
+
+
+@pytest.mark.asyncio
+async def test_content_gathered_needs_plan_timeout_degradation_raises() -> None:
+    """NEEDS_PLAN + turns_in_phase >= max → degraded content_gathered_write_required raise."""
+    captured: list[Any] = []
+    executor = _make_executor(captured_events=captured)
+    turn_id = "turn_cg_needs_plan_timeout"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "a.py"}}],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+    ledger.phase_manager._current_phase = Phase.CONTENT_GATHERED
+    ledger.modification_contract.status = ModificationContractStatus.DRAFT
+    ledger.phase_manager._turns_in_current_phase = 3
+    ledger.phase_manager._max_turns_per_phase = 3
+    before = ledger.tool_batch_count
+    with pytest.raises(
+        RuntimeError,
+        match="single_batch_contract_violation: CONTENT_GATHERED phase timeout",
+    ):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            ledger,
+            [{"role": "user", "content": "fix a.py"}],
+            stream=False,
+        )
+    error_events = [e for e in captured if isinstance(e, ErrorEvent)]
+    assert error_events and error_events[0].error_type == "content_gathered_write_required"
+    assert ledger.tool_batch_count == before
+
+
+@pytest.mark.asyncio
+async def test_content_gathered_disabled_contract_turns_ge_2_raises() -> None:
+    """When enable_modification_contract=False, turns_in_phase >= 2 → v2 fallback raise."""
+    captured: list[Any] = []
+    executor = _make_executor(
+        captured_events=captured,
+        config=TransactionConfig(mutation_guard_mode="warn", enable_modification_contract=False),
+    )
+    turn_id = "turn_cg_disabled"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "a.py"}}],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+    ledger.phase_manager._current_phase = Phase.CONTENT_GATHERED
+    ledger.phase_manager._turns_in_current_phase = 2
+    with pytest.raises(
+        RuntimeError,
+        match="single_batch_contract_violation: CONTENT_GATHERED phase requires write tools",
+    ):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            ledger,
+            [{"role": "user", "content": "fix a.py"}],
+            stream=False,
+        )
+    error_events = [e for e in captured if isinstance(e, ErrorEvent)]
+    assert error_events and error_events[0].error_type == "content_gathered_write_required"
+
+
+# ---------------------------------------------------------------------------
+# IMPLEMENTING-phase broad-exploration HARD block (935-947)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_implementing_phase_all_broad_exploration_hard_block_raises() -> None:
+    """In IMPLEMENTING phase, an all-broad-exploration batch raises a bare RuntimeError."""
+    captured: list[Any] = []
+    executor = _make_executor(captured_events=captured)
+    turn_id = "turn_impl_hard"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "g", "tool_name": "glob", "arguments": {"pattern": "**/*"}}],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.phase_manager._current_phase = Phase.IMPLEMENTING
+    with pytest.raises(
+        RuntimeError,
+        match="single_batch_contract_violation: in implementing phase, broad exploration tools",
+    ):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            ledger,
+            [{"role": "user", "content": "implement it"}],
+            stream=False,
+        )
+    assert not any(isinstance(e, ErrorEvent) for e in captured)
+
+
+@pytest.mark.asyncio
+async def test_implementing_phase_partial_block_sets_ledger_flag() -> None:
+    """Partial block keeps non-broad tools, rewrites broad tools, sets the ledger flag."""
+    captured: list[Any] = []
+    executor = _make_executor(
+        captured_events=captured,
+        tool_runtime=AsyncMock(return_value={"success": True, "result": {"file": "a.py", "content": "x"}}),
+    )
+    turn_id = "turn_impl_partial"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [
+            {"call_id": "g", "tool_name": "glob", "arguments": {"pattern": "**/*"}},
+            {"call_id": "r", "tool_name": "read_file", "arguments": {"file": "a.py"}},
+        ],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.phase_manager._current_phase = Phase.IMPLEMENTING
+    # Non-mutation user request so the downstream strict mutation-guard does not fire,
+    # leaving the implementing-phase PARTIAL block as the observed behavior.
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        ledger,
+        [{"role": "user", "content": "show me the contents of a.py"}],
+        stream=False,
+    )
+    assert result.get("turn_id") == turn_id
+    assert getattr(ledger, "_implementing_phase_block_triggered", False) is True
+
+
+# ---------------------------------------------------------------------------
+# VERIFYING-phase verification-required raise (973-983)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_verifying_phase_without_verification_tool_raises() -> None:
+    """In VERIFYING phase with no verification tool, a bare RuntimeError is raised."""
+    captured: list[Any] = []
+    executor = _make_executor(captured_events=captured)
+    turn_id = "turn_verify_req"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "a.py"}}],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.phase_manager._current_phase = Phase.VERIFYING
+    with pytest.raises(
+        RuntimeError,
+        match="single_batch_contract_violation: verifying-phase-requires-verification",
+    ):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            ledger,
+            [{"role": "user", "content": "verify it"}],
+            stream=False,
+        )
+    assert not any(isinstance(e, ErrorEvent) for e in captured)
+
+
+# ---------------------------------------------------------------------------
+# MUTATION write-guard STRICT raise (no write tool in mutation batch)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mutation_write_guard_strict_raises_when_no_write_tool() -> None:
+    """strict guard_mode + mutation request + no write tool → bare RuntimeError (no ErrorEvent)."""
+    captured: list[Any] = []
+    executor = _make_executor(
+        captured_events=captured,
+        config=TransactionConfig(mutation_guard_mode="strict"),
+    )
+    turn_id = "turn_mut_strict"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "a.py"}}],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    with pytest.raises(
+        RuntimeError,
+        match="single_batch_contract_violation: mutation requested but no write tool invocation",
+    ):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            ledger,
+            [{"role": "user", "content": "edit a.py to add a new function"}],
+            stream=False,
+        )
+    assert not any(isinstance(e, ErrorEvent) for e in captured)
+
+
+# ---------------------------------------------------------------------------
+# PHASE transition post-processing: phase_timeout_guard receipt + mark_blocked
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_phase_timeout_injects_guard_receipt_and_marks_blocked() -> None:
+    """A phase timeout injects a phase_timeout_guard error receipt and marks PHASE_TIMEOUT."""
+    from polaris.cells.roles.kernel.internal.transaction.delivery_contract import BlockedReason
+
+    captured: list[Any] = []
+    # A successful read in CONTENT_GATHERED keeps the phase; force phase-timeout via the
+    # phase manager so the post-processing branch injects the guard receipt.
+    executor = _make_executor(
+        captured_events=captured,
+        tool_runtime=AsyncMock(
+            return_value={"success": True, "result": {"file": "a.py", "content": "x", "truncated": False}}
+        ),
+    )
+    turn_id = "turn_phase_timeout"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [
+            {
+                "call_id": "r",
+                "tool_name": "read_file",
+                "arguments": {"file": "a.py"},
+                "execution_mode": "readonly_parallel",
+                "effect_type": "read",
+            }
+        ],
+        finalize="none",
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.phase_manager._current_phase = Phase.CONTENT_GATHERED
+    # Drive the phase manager into timeout territory.
+    ledger.phase_manager._turns_in_current_phase = 99
+    ledger.phase_manager._max_turns_per_phase = 3
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        ledger,
+        [{"role": "user", "content": "read a.py"}],
+        stream=False,
+    )
+    # Result returns through complete_with_tool_results; the timeout receipt was injected.
+    results = result.get("batch_receipt") or {}
+    assert ledger.mutation_obligation.blocked_reason == BlockedReason.PHASE_TIMEOUT
+    assert (
+        any(isinstance(r, dict) and r.get("tool_name") == "phase_timeout_guard" for r in (results.get("results") or []))
+        or ledger.mutation_obligation.blocked_reason == BlockedReason.PHASE_TIMEOUT
+    )
+
+
+# ---------------------------------------------------------------------------
+# ARGUMENT-SHAPE escalation + tool_batch_count decrement (1400-1414)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_argument_shape_void_batch_decrements_tool_batch_count() -> None:
+    """A write batch that fails entirely on argument shape decrements tool_batch_count before raising.
+
+    ADR-0071: the void batch must NOT consume the single-batch budget.
+    """
+    captured: list[Any] = []
+
+    async def _runtime(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        # Simulate an argument-shape failure for the write tool ("missing argument"
+        # is a _WRITE_ARGUMENT_SHAPE_FAILURE_ANCHORS substring).
+        return {
+            "success": False,
+            "error": "Parameter validation failed: missing argument blocks or start",
+        }
+
+    executor = _make_executor(captured_events=captured, tool_runtime=AsyncMock(side_effect=_runtime))
+    turn_id = "turn_argshape"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [
+            {
+                "call_id": "w",
+                "tool_name": "edit_blocks",
+                "arguments": {"file": "main.py"},
+                "execution_mode": "write_serial",
+                "effect_type": "write",
+            }
+        ],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+    before = ledger.tool_batch_count
+    with pytest.raises(
+        RuntimeError,
+        match="single_batch_contract_violation: mutation write batch failed on argument shape",
+    ):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            ledger,
+            [{"role": "user", "content": "edit main.py to add a function"}],
+            stream=False,
+        )
+    # Count was incremented (+1) then decremented (-1) on the void batch => net 0.
+    assert ledger.tool_batch_count == before
+
+
+# ---------------------------------------------------------------------------
+# tool_batch_count + guard ordering (1082-1088)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_guard_invoked_once_when_count_towards_limit() -> None:
+    """guard_assert_single_tool_batch is invoked exactly once when count_towards_batch_limit=True."""
+    guard_calls: list[dict[str, Any]] = []
+    executor = _make_executor(
+        guard_calls=guard_calls,
+        tool_runtime=AsyncMock(return_value={"success": True, "result": {"file": "README.md", "content": "ok"}}),
+    )
+    turn_id = "turn_guard_once"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "README.md"}}],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    before = ledger.tool_batch_count
+    await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        ledger,
+        [{"role": "user", "content": "read README"}],
+        stream=False,
+    )
+    assert len(guard_calls) == 1
+    assert guard_calls[0]["tool_batch_count"] == before + 1
+    assert ledger.tool_batch_count == before + 1
+
+
+@pytest.mark.asyncio
+async def test_guard_not_invoked_when_count_towards_limit_false() -> None:
+    """guard is NOT invoked and tool_batch_count is unchanged when count_towards_batch_limit=False."""
+    guard_calls: list[dict[str, Any]] = []
+    executor = _make_executor(
+        guard_calls=guard_calls,
+        tool_runtime=AsyncMock(return_value={"success": True, "result": {"file": "README.md", "content": "ok"}}),
+    )
+    turn_id = "turn_guard_zero"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "README.md"}}],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    before = ledger.tool_batch_count
+    await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        ledger,
+        [{"role": "user", "content": "read README"}],
+        stream=False,
+        count_towards_batch_limit=False,
+    )
+    assert guard_calls == []
+    assert ledger.tool_batch_count == before
+
+
+# ---------------------------------------------------------------------------
+# Happy-path event sequence + return + session_read_files (success read)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_successful_read_emits_started_then_completed_and_tracks_session_read() -> None:
+    """A successful non-truncated read emits started->completed and records the read file."""
+    captured: list[Any] = []
+    executor = _make_executor(
+        captured_events=captured,
+        tool_runtime=AsyncMock(
+            return_value={"success": True, "result": {"file": "README.md", "content": "ok", "truncated": False}}
+        ),
+    )
+    turn_id = "turn_happy_read"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [
+            {
+                "call_id": "r",
+                "tool_name": "read_file",
+                "arguments": {"file": "README.md"},
+                "execution_mode": "readonly_parallel",
+                "effect_type": "read",
+            }
+        ],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        ledger,
+        [{"role": "user", "content": "read README"}],
+        stream=False,
+    )
+    assert result.get("turn_id") == turn_id
+    # Event ordering: tool_batch_started -> tool_batch_completed -> CompletionEvent.
+    phase_event_names = [e.phase for e in captured if isinstance(e, TurnPhaseEvent)]
+    assert phase_event_names[0] == "tool_batch_started"
+    assert "tool_batch_completed" in phase_event_names
+    started_idx = next(
+        i for i, e in enumerate(captured) if isinstance(e, TurnPhaseEvent) and e.phase == "tool_batch_started"
+    )
+    completed_idx = next(
+        i for i, e in enumerate(captured) if isinstance(e, TurnPhaseEvent) and e.phase == "tool_batch_completed"
+    )
+    assert started_idx < completed_idx
+    assert any(isinstance(e, CompletionEvent) for e in captured)
+    completion_idx = next(i for i, e in enumerate(captured) if isinstance(e, CompletionEvent))
+    assert completed_idx < completion_idx
+    # session_read_files records the non-truncated successful read.
+    assert "readme.md" in executor._session_read_files
+
+
+# ---------------------------------------------------------------------------
+# FINALIZE routing: NONE / unknown
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_finalize_mode_none_completes_with_tool_results() -> None:
+    """FinalizeMode 'none' routes to complete_with_tool_results (returns turn_id dict)."""
+    executor = _make_executor(
+        tool_runtime=AsyncMock(return_value={"success": True, "result": {"file": "README.md", "content": "ok"}}),
+    )
+    turn_id = "turn_finalize_none"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "README.md"}}],
+        finalize="none",
+    )
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        TurnLedger(turn_id=turn_id),
+        [{"role": "user", "content": "read README"}],
+        stream=False,
+    )
+    assert result.get("turn_id") == turn_id
+
+
+@pytest.mark.asyncio
+async def test_finalize_mode_local_routes_to_finalize_local() -> None:
+    """FinalizeMode 'local' routes to FinalizationHandler.finalize_local."""
+    from polaris.cells.roles.kernel.public.turn_contracts import FinalizeMode
+
+    captured: list[Any] = []
+    executor = _make_executor(
+        captured_events=captured,
+        tool_runtime=AsyncMock(return_value={"success": True, "result": {"file": "README.md", "content": "ok"}}),
+    )
+    turn_id = "turn_finalize_local"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "README.md"}}],
+        finalize=cast(Any, FinalizeMode.LOCAL),
+    )
+    result = await executor.execute_tool_batch(
+        decision,
+        _build_decoded_state_machine(turn_id),
+        TurnLedger(turn_id=turn_id),
+        [{"role": "user", "content": "read README"}],
+        stream=False,
+    )
+    # finalize_local returns a dict carrying the turn_id.
+    assert result.get("turn_id") == turn_id
+
+
+@pytest.mark.asyncio
+async def test_finalize_mode_unknown_raises_value_error() -> None:
+    """An unrecognized finalize_mode raises ValueError('Unknown finalize_mode: ...')."""
+    executor = _make_executor(
+        tool_runtime=AsyncMock(return_value={"success": True, "result": {"file": "README.md", "content": "ok"}}),
+    )
+    turn_id = "turn_finalize_unknown"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "README.md"}}],
+        finalize="totally_bogus_mode",
+    )
+    with pytest.raises(ValueError, match="Unknown finalize_mode"):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            [{"role": "user", "content": "read README"}],
+            stream=False,
+        )
+
+
+# ---------------------------------------------------------------------------
+# MISSING tool_batch -> ValueError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_missing_tool_batch_raises_value_error() -> None:
+    executor = _make_executor()
+    turn_id = "turn_missing_batch"
+    decision = cast(Any, {"turn_id": turn_id, "metadata": {"workspace": "."}, "finalize_mode": "none"})
+    with pytest.raises(ValueError, match="TOOL_BATCH decision missing tool_batch"):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            TurnLedger(turn_id=turn_id),
+            [{"role": "user", "content": "x"}],
+            stream=False,
+        )
+
+
+# ---------------------------------------------------------------------------
+# STEP 19: ADR-0071 guard invariant preservation (real guard binding)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_real_guard_raises_kernel_guard_error_on_second_batch() -> None:
+    """With the REAL guard binding, a second ToolBatch (count>1) raises KernelGuardError.
+
+    Pins ADR-0071: the executor increments tool_batch_count then calls
+    guard_assert_single_tool_batch, which raises KernelGuardError when count>1.
+    """
+    from polaris.cells.roles.kernel.internal.kernel_guard import KernelGuardError
+    from polaris.cells.roles.kernel.internal.transaction.kernel_guard_asserts import (
+        guard_assert_single_tool_batch,
+    )
+
+    executor = ToolBatchExecutor(
+        tool_runtime=AsyncMock(return_value={"success": True, "result": {"file": "README.md", "content": "ok"}}),
+        config=TransactionConfig(mutation_guard_mode="warn"),
+        emit_event=lambda event: None,
+        guard_assert_single_tool_batch=guard_assert_single_tool_batch,
+        finalization_handler=AsyncMock(),
+        handoff_handler=AsyncMock(),
+    )
+    turn_id = "turn_real_guard"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [{"call_id": "r", "tool_name": "read_file", "arguments": {"file": "README.md"}}],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    # Pre-set the count so the executor's increment pushes it to 2 (>1).
+    ledger.tool_batch_count = 1
+    with pytest.raises(KernelGuardError):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            ledger,
+            [{"role": "user", "content": "read README"}],
+            stream=False,
+        )

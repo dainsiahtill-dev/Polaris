@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -135,3 +136,224 @@ def test_get_factory_run_audit_bundle_missing_run_returns_404(
         "message": "Run missing not found",
         "details": {},
     }
+
+
+def test_get_factory_run_audit_bundle_partial_run_returns_quickly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit bundle must return quickly for partial runs with missing source dirs."""
+
+    async def _exercise() -> dict[str, Any]:
+        service = FactoryRunService(tmp_path)
+        run = await service.create_run(FactoryConfig(name="partial-run", stages=["pm_planning", "director_dispatch"]))
+        run.status = FactoryRunStatus.FAILED
+        run.stages_completed = ["pm_planning"]
+        run.stages_failed = ["director_dispatch"]
+        run.metadata["current_stage"] = "director_dispatch"
+        run.metadata["last_successful_stage"] = "pm_planning"
+        run.metadata["failure"] = {
+            "stage": "director_dispatch",
+            "code": "FACTORY_STAGE_FAILED",
+            "detail": "Director timed out",
+        }
+        await service.store.save_run(run)
+
+        await service._append_event(run.id, {"type": "stage_started", "stage": "pm_planning"})
+        await service._append_event(run.id, {"type": "stage_completed", "stage": "pm_planning"})
+        await service._append_event(run.id, {"type": "stage_started", "stage": "director_dispatch"})
+        await service._append_event(
+            run.id,
+            {
+                "type": "stage_completed",
+                "stage": "director_dispatch",
+                "result": {"status": "failed", "artifacts": ["nonexistent/missing.json"]},
+            },
+        )
+
+        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
+        response = await factory_router_module.get_factory_run_audit_bundle(run.id, limit=5, state=state)
+        return response.model_dump(mode="json")
+
+    payload = asyncio.run(_exercise())
+
+    assert payload["run_id"].startswith("factory_")
+    assert payload["status"] == "failed"
+    assert payload["current_stage"] == "director_dispatch"
+    assert payload["last_successful_stage"] == "pm_planning"
+    assert len(payload["events_tail"]) >= 1
+    assert payload["summary_md"] is None
+
+
+def test_get_factory_run_audit_bundle_partial_run_with_workspace_dispatch_logs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit bundle for a partial run should still include stage artifacts that resolve."""
+
+    async def _exercise() -> dict[str, Any]:
+        service = FactoryRunService(tmp_path)
+        run = await service.create_run(
+            FactoryConfig(name="partial-with-logs", stages=["pm_planning", "director_dispatch"])
+        )
+        run.status = FactoryRunStatus.FAILED
+        run.stages_completed = ["pm_planning"]
+        run.stages_failed = ["director_dispatch"]
+        await service.store.save_run(run)
+
+        artifacts_dir = service.store.get_run_dir(run.id) / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        (artifacts_dir / "dispatch.json").write_text(
+            json.dumps({"dispatch": {"tasks": []}}),
+            encoding="utf-8",
+        )
+
+        await service._append_event(run.id, {"type": "stage_started", "stage": "pm_planning"})
+        await service._append_event(run.id, {"type": "stage_completed", "stage": "pm_planning"})
+
+        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
+        response = await factory_router_module.get_factory_run_audit_bundle(run.id, limit=5, state=state)
+        return response.model_dump(mode="json")
+
+    payload = asyncio.run(_exercise())
+
+    assert payload["status"] == "failed"
+    assert len(payload["artifacts"]) >= 1
+    assert payload["artifacts"][0]["name"] == "dispatch.json"
+
+
+def test_director_partial_audit_bundle_includes_convergence_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """director_partial must expose blocking_phase, missing targets, taskboard state — not just qa_ran=False."""
+
+    async def _exercise() -> dict[str, Any]:
+        service = FactoryRunService(tmp_path)
+        run = await service.create_run(
+            FactoryConfig(
+                name="director-partial",
+                stages=["pm_planning", "director_dispatch", "quality_gate"],
+            )
+        )
+        run.status = FactoryRunStatus.FAILED
+        run.stages_completed = ["pm_planning"]
+        run.stages_failed = ["director_dispatch"]
+        run.metadata["current_stage"] = "director_dispatch"
+        run.metadata["last_successful_stage"] = "pm_planning"
+        run.metadata["failure"] = {
+            "stage": "director_dispatch",
+            "code": "FACTORY_STAGE_FAILED",
+            "detail": "Director only executed 1/3 tasks",
+        }
+        run.metadata["summary_json"] = {
+            "director": {"total": 3, "successes": 1, "failures": 2, "blocked": 0},
+        }
+        await service.store.save_run(run)
+
+        await service._append_event(run.id, {"type": "stage_started", "stage": "pm_planning"})
+        await service._append_event(run.id, {"type": "stage_completed", "stage": "pm_planning"})
+        await service._append_event(run.id, {"type": "stage_started", "stage": "director_dispatch"})
+        await service._append_event(
+            run.id,
+            {
+                "type": "task_started",
+                "stage": "director_dispatch",
+                "task_id": "TASK-1",
+                "taskboard": {"total": 3, "claimed": 1, "completed": 0, "failed": 0, "blocked": 0},
+            },
+        )
+        await service._append_event(
+            run.id,
+            {
+                "type": "task_completed",
+                "stage": "director_dispatch",
+                "task_id": "TASK-1",
+                "taskboard": {"total": 3, "claimed": 1, "completed": 1, "failed": 0, "blocked": 0},
+            },
+        )
+        await service._append_event(
+            run.id,
+            {
+                "type": "task_failed",
+                "stage": "director_dispatch",
+                "task_id": "TASK-2",
+                "taskboard": {"total": 3, "claimed": 2, "completed": 1, "failed": 1, "blocked": 0},
+            },
+        )
+        await service._append_event(
+            run.id,
+            {
+                "type": "stage_completed",
+                "stage": "director_dispatch",
+                "result": {"status": "failed", "total": 3, "successes": 1, "failures": 2},
+            },
+        )
+
+        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
+        response = await factory_router_module.get_factory_run_audit_bundle(run.id, limit=20, state=state)
+        return response.model_dump(mode="json")
+
+    payload = asyncio.run(_exercise())
+
+    assert payload["status"] == "failed"
+    assert payload["current_stage"] == "director_dispatch"
+
+    conv = payload.get("director_convergence")
+    assert conv is not None, "director_partial bundle must include director_convergence"
+    assert conv["qa_ran"] is False
+    assert conv["blocking_phase"] == "director_dispatch"
+    assert conv["missing_delivery_targets"] == ["quality_gate"]
+    assert conv["director_summary"] == {"total": 3, "successes": 1, "failures": 2, "blocked": 0}
+
+    tb_final = conv["taskboard_final"]
+    assert tb_final.get("total") == 3
+    assert tb_final.get("completed") == 1
+    assert tb_final.get("failed") == 1
+
+    bindings = conv["per_binding_task_status"]
+    task_ids = {b["task_id"] for b in bindings}
+    assert "TASK-1" in task_ids
+    assert "TASK-2" in task_ids
+    task1 = next(b for b in bindings if b["task_id"] == "TASK-1")
+    task2 = next(b for b in bindings if b["task_id"] == "TASK-2")
+    assert task1["status"] == "completed"
+    assert task2["status"] == "failed"
+
+
+def test_qa_completed_bundle_omits_convergence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When QA ran and run completed, director_convergence must be absent."""
+
+    async def _exercise() -> dict[str, Any]:
+        service = FactoryRunService(tmp_path)
+        run = await service.create_run(FactoryConfig(name="clean-run", stages=["pm_planning", "quality_gate"]))
+        run.status = FactoryRunStatus.COMPLETED
+        run.stages_completed = ["pm_planning", "quality_gate"]
+        await service.store.save_run(run)
+
+        await service._append_event(run.id, {"type": "stage_started", "stage": "pm_planning"})
+        await service._append_event(run.id, {"type": "stage_completed", "stage": "pm_planning"})
+        await service._append_event(
+            run.id,
+            {
+                "type": "stage_completed",
+                "stage": "quality_gate",
+                "result": {"passed": True},
+            },
+        )
+
+        monkeypatch.setattr(factory_router_module, "_get_service", lambda workspace: service)
+        state: Any = SimpleNamespace(settings=SimpleNamespace(workspace=tmp_path))
+        response = await factory_router_module.get_factory_run_audit_bundle(run.id, limit=5, state=state)
+        return response.model_dump(mode="json")
+
+    payload = asyncio.run(_exercise())
+
+    assert payload["status"] == "completed"
+    assert "director_convergence" not in payload

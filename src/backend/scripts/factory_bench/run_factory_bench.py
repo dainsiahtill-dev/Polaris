@@ -47,6 +47,10 @@ from polaris.kernelone.benchmark.factory_audit import (
     aggregate_factory_audits,
     build_factory_audit_record,
 )
+from scripts.factory_bench.backend_fingerprint import (
+    build_run_backend_metadata,
+    check_backend_freshness,
+)
 from scripts.factory_bench.factory_http_client import (
     _http_post_json as _shared_http_post_json,
     cancel_factory_run,
@@ -980,6 +984,25 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
             ),
         ),
     ]
+    # Backend fingerprint freshness gate (fail-closed)
+    backend_freshness = record.get("backend_freshness")
+    if isinstance(backend_freshness, dict):
+        gates.append(
+            _bench_gate(
+                "stale_backend_or_unknown",
+                bool(backend_freshness.get("ok")),
+                str(backend_freshness.get("detail") or "backend freshness check missing detail"),
+            )
+        )
+    else:
+        gates.append(
+            _bench_gate(
+                "stale_backend_or_unknown",
+                False,
+                "backend freshness gate missing; cannot verify backend is current",
+            )
+        )
+
     real_run_gate = record.get("real_run_gate")
     if isinstance(real_run_gate, dict):
         gates.append(
@@ -1005,6 +1028,36 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
     return gates
 
 
+def build_bench_backend_audit_context(
+    backend_url: str,
+    *,
+    backend_token: str = "",
+    workspace: str = "",
+) -> dict[str, Any]:
+    """Build backend freshness and trace metadata for every bench record."""
+    freshness = check_backend_freshness(
+        backend_url,
+        token=backend_token,
+        backend_root=_BACKEND_ROOT,
+    )
+    backend_info = freshness.get("backend_info")
+    backend_info_dict: dict[str, Any] = backend_info if isinstance(backend_info, dict) else {}
+    metadata = build_run_backend_metadata(
+        backend_url,
+        token_source="configured" if backend_token else "missing",
+        workspace=workspace,
+        expected_fingerprint=str(freshness.get("expected_fingerprint") or ""),
+        actual_fingerprint=str(freshness.get("actual_fingerprint") or ""),
+        backend_pid=backend_info_dict.get("pid") if isinstance(backend_info_dict.get("pid"), int) else None,
+        backend_startup_time=str(backend_info_dict.get("startup_time") or ""),
+        fingerprint_source=str(backend_info_dict.get("source") or ""),
+    )
+    return {
+        "backend_freshness": freshness,
+        "backend_metadata": metadata,
+    }
+
+
 def apply_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> None:
     """Fold full-chain gates into ``all_checks_passed`` in-place."""
 
@@ -1015,14 +1068,172 @@ def apply_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
     record["all_checks_passed"] = static_checks_passed and all(gate["ok"] for gate in gates)
 
 
+def _build_language_runnable_contract(primary_language: str) -> str:
+    """Build a runnable-language contract specifying how the project must be executable."""
+    lang = primary_language.lower().strip()
+    if lang == "typescript":
+        return (
+            "## Language-Specific Runnable Contract (TypeScript)\n"
+            "- 必须包含 `package.json` 且定义 `scripts.start` / `scripts.build` 脚本。\n"
+            "- `npm install && npm run build` 必须成功。\n"
+            "- 必须包含 `tsconfig.json`。\n"
+            "- `tsc --noEmit` 必须通过。\n"
+        )
+    if lang == "python":
+        return (
+            "## Language-Specific Runnable Contract (Python)\n"
+            "- 必须包含 `requirements.txt` 或 `pyproject.toml`。\n"
+            "- `python -m pip install -r requirements.txt` 或等价命令必须成功。\n"
+        )
+    if lang == "rust":
+        return "## Language-Specific Runnable Contract (Rust)\n- 必须包含 `Cargo.toml`。\n- `cargo build` 必须成功。\n"
+    return ""
+
+
+def _build_source_tree_contract(primary_language: str, project_type: str) -> str:
+    """Build explicit source tree structure requirements for the given language/type.
+
+    This ensures the PM/CE/Director chain creates src/ directories and core
+    source files rather than only scaffolding files like package.json and
+    tsconfig.json.
+    """
+    lang = primary_language.lower().strip()
+    ptype = project_type.lower().strip()
+
+    sections: list[str] = []
+    sections.append("## Source Tree Structure Contract (MANDATORY)\n")
+    sections.append(
+        "PM/CE/Director 必须按以下结构创建源代码文件, 仅生成 package.json / tsconfig.json 等配置文件"
+        "不算完成, 必须包含核心业务逻辑源码:\n"
+    )
+
+    if lang == "typescript":
+        sections.append(
+            "- 必须包含 `src/` 目录, 核心业务逻辑在 `src/` 下的 `.ts` 文件中。\n"
+            "- 至少包含以下类型的源文件:\n"
+            "  - `src/models/` — 数据模型/实体定义\n"
+            "  - `src/engine/` 或 `src/core/` — 核心引擎/逻辑\n"
+            "  - `src/index.ts` — 应用入口\n"
+            "- 必须包含 `tests/` 目录下的至少一个 `.test.ts` 测试文件。\n"
+            '- tsconfig.json 的 `include` 必须包含 `"src/**/*.ts"`。\n'
+        )
+    elif lang == "javascript":
+        sections.append(
+            "- 必须包含 `src/` 目录, 核心业务逻辑在 `src/` 下的 `.js` 文件中。\n"
+            "- 至少包含以下类型的源文件:\n"
+            "  - `src/models/` — 数据模型/实体定义\n"
+            "  - `src/engine/` 或 `src/core/` — 核心引擎/逻辑\n"
+            "  - `src/index.js` — 应用入口\n"
+            "- 必须包含 `tests/` 目录下的至少一个测试文件。\n"
+        )
+    elif lang == "python":
+        sections.append(
+            "- 必须包含 `src/` 目录(或项目级 Python 包), 核心业务逻辑在 `.py` 文件中。\n"
+            "- 至少包含以下类型的源文件:\n"
+            "  - `src/models/` — 数据模型/实体定义\n"
+            "  - `src/engine/` 或 `src/core/` — 核心引擎/逻辑\n"
+            "  - `src/__init__.py` 或项目入口 `.py` 文件\n"
+            "- 必须包含 `tests/` 目录下的至少一个 `test_*.py` 测试文件。\n"
+        )
+    elif lang == "go":
+        sections.append(
+            "- 必须包含 `src/` 或项目级 Go 包, 核心业务逻辑在 `.go` 文件中。\n"
+            "- 至少包含以下类型的源文件:\n"
+            "  - `src/models/` 或 `models/` — 数据模型/实体定义\n"
+            "  - `src/engine/` 或 `engine/` — 核心引擎/逻辑\n"
+            "  - `main.go` 或 `cmd/` — 应用入口\n"
+            "- 必须包含 `*_test.go` 测试文件。\n"
+        )
+    elif lang == "rust":
+        sections.append(
+            "- 必须包含 `src/` 目录, 核心业务逻辑在 `src/` 下的 `.rs` 文件中。\n"
+            "- 至少包含以下类型的源文件:\n"
+            "  - `src/models/` 或 `src/model.rs` — 数据模型/实体定义\n"
+            "  - `src/engine/` 或 `src/lib.rs` — 核心引擎/逻辑\n"
+            "  - `src/main.rs` — 应用入口\n"
+            "- 必须包含 `tests/` 目录下的集成测试或 `#[test]` 单元测试。\n"
+        )
+    elif lang == "cpp":
+        sections.append(
+            "- 必须包含 `src/` 目录, 核心业务逻辑在 `.cpp`/`.hpp` 文件中。\n"
+            "- 至少包含以下类型的源文件:\n"
+            "  - `src/models/` 或 `include/models/` — 数据模型/实体定义\n"
+            "  - `src/engine/` 或 `src/core/` — 核心引擎/逻辑\n"
+            "  - `src/main.cpp` — 应用入口\n"
+            "- 必须包含 `tests/` 目录下的测试文件。\n"
+        )
+    elif lang == "java":
+        sections.append(
+            "- 必须包含 `src/main/java/` 目录, 核心业务逻辑在 `.java` 文件中。\n"
+            "- 至少包含以下类型的源文件:\n"
+            "  - `src/main/java/**/models/` — 数据模型/实体定义\n"
+            "  - `src/main/java/**/engine/` 或 `core/` — 核心引擎/逻辑\n"
+            "  - `src/main/java/**/App.java` — 应用入口\n"
+            "- 必须包含 `src/test/java/` 下的测试文件。\n"
+        )
+    else:
+        sections.append(
+            f"- primary_language={lang!r} — 请按该语言惯例创建 src/ 目录结构, "
+            "包含核心业务逻辑源码、数据模型和测试文件。\n"
+        )
+
+    if "simulation" in ptype or "game" in ptype or "interactive" in ptype:
+        sections.append(
+            "- simulation/game/interactive 项目必须包含一个可渲染的场景/引擎核心文件 "
+            "(如 `src/engine/renderer.ts`, `src/core/simulation.py` 等)。\n"
+        )
+
+    sections.append(
+        "\n**重要**: Director 任务的 target_files 必须覆盖 src/ 下的源文件, "
+        "不能只包含 package.json / tsconfig.json / index.html 等脚手架文件。\n"
+    )
+    return "".join(sections)
+
+
+def _build_feature_keywords_contract(feature_keywords: list[str]) -> str:
+    """Build a contract section requiring feature keywords in generated source code."""
+    if not feature_keywords:
+        return ""
+    kw_list = ", ".join(feature_keywords)
+    return (
+        "\n## Feature Keywords Contract (MANDATORY)\n"
+        f"以下关键词必须出现在生成的源代码文件中(变量名、类名、注释或字符串均可): "
+        f"**{kw_list}**\n"
+        "PM/CE/Director 的任务目标和验收标准必须包含这些关键词。\n"
+        "Director 的 target_files 中的源文件必须至少包含其中一个关键词的实际使用。\n"
+    )
+
+
 def build_requirements_doc(project: dict[str, Any]) -> str:
     """Frame the project brief as the requirements file the PM chain consumes."""
     checks = [str(item).strip() for item in project.get("checks", []) if str(item).strip()]
     checks_block = "\n".join(f"- {item}" for item in checks) if checks else "- 未声明额外 deterministic checks。"
+    primary_language = str(project.get("primary_language") or "").strip()
+    project_type = str(project.get("project_type") or "").strip()
+    domain = str(project.get("domain") or "").strip()
+    creative_hook = str(project.get("creative_hook") or "").strip()
+    feature_keywords = _extract_feature_keywords(project)
+    lang_contract = _build_language_runnable_contract(primary_language)
+    source_tree_contract = _build_source_tree_contract(primary_language, project_type)
+    feature_contract = _build_feature_keywords_contract(feature_keywords)
+
+    domain_line = f"- 领域: {domain}\n" if domain else ""
+    type_line = f"- 项目类型: {project_type}\n" if project_type else ""
+    hook_line = f"- 创意钩子: {creative_hook}\n" if creative_hook else ""
+    metadata_block = ""
+    if domain_line or type_line or hook_line:
+        metadata_block = (
+            "\n## Project Metadata\n"
+            f"{domain_line}{type_line}{hook_line}"
+            "- PM/CE/Director/QA 必须在任务合同中保留这些元数据字段, "
+            "确保目标语义不丢失。\n"
+        )
+
     return (
         f"# Product Requirements — {project['title']}\n\n"
         "## Goal\n"
         f"- {project['brief']}\n\n"
+        f"{metadata_block}\n"
         "## Acceptance Criteria\n"
         "- 完整可运行的实现落盘到工作区根(不是描述,是真实代码文件)。\n"
         "- 必须提供至少一种真实可执行入口, 且验收脚本可自动发现: Web/visual/simulation/game 项目提供含 <html> 的 index.html 或等价 HTML 入口; CLI 项目提供 package.json 脚本或可直接执行的 main 文件; API 项目提供可启动服务入口和健康检查说明。\n"
@@ -1032,6 +1243,10 @@ def build_requirements_doc(project: dict[str, Any]) -> str:
         "\n## Deterministic Checks\n"
         "PM/CE/Director/QA 必须把以下检查转成任务目标和验收标准, 缺失任一项应视为未完成:\n"
         f"{checks_block}\n"
+        "\n"
+        f"{source_tree_contract}\n"
+        f"{feature_contract}\n"
+        f"{lang_contract}\n"
     )
 
 
@@ -1055,6 +1270,138 @@ def purge_project_runtime(workspace: Path) -> None:
             continue
 
 
+def _extract_feature_keywords(project: dict[str, Any]) -> list[str]:
+    """Extract feature keywords from content_any checks in the project catalog.
+
+    Returns a deduplicated list of keywords that the Director must embed in the
+    generated source code to pass deterministic content checks.
+    """
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for check in project.get("checks", []):
+        check_str = str(check).strip()
+        if check_str.startswith("content_any:"):
+            raw = check_str[len("content_any:") :]
+            for kw in raw.split("|"):
+                kw = kw.strip()
+                if kw and kw.lower() not in seen:
+                    keywords.append(kw)
+                    seen.add(kw.lower())
+    return keywords
+
+
+def _fallback_audit_bundle_from_workspace(workspace: Path) -> dict[str, Any]:
+    """Build a partial audit bundle from workspace ``.polaris`` artifacts.
+
+    Used as a fallback when the backend ``/audit-bundle`` endpoint times out or
+    returns empty.  Reads dispatch logs, CE review, and plan artifacts that the
+    Director writes directly into the workspace.
+    """
+    bundle: dict[str, Any] = {"gates": [], "events_tail": [], "artifacts": [], "summary_json": None}
+    polaris_dir = workspace / ".polaris"
+    if not polaris_dir.is_dir():
+        return bundle
+
+    events: list[dict[str, Any]] = []
+    artifacts: list[dict[str, Any]] = []
+
+    # Collect dispatch logs
+    dispatch_dir = polaris_dir / "dispatch"
+    if dispatch_dir.is_dir():
+        for log_file in sorted(dispatch_dir.glob("*.log.json")):
+            try:
+                payload = json.loads(log_file.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    events.append(
+                        {
+                            "type": "stage_completed",
+                            "stage": "director_dispatch",
+                            "message": f"dispatch log: {log_file.name}",
+                            "result": payload,
+                            "source": "workspace_fallback",
+                        }
+                    )
+                    artifacts.append(
+                        {
+                            "name": log_file.name,
+                            "path": str(log_file.relative_to(workspace)),
+                            "size": log_file.stat().st_size,
+                            "source": "workspace_fallback",
+                        }
+                    )
+            except (OSError, ValueError):
+                continue
+
+    # Collect roles director logs
+    roles_dir = polaris_dir / "roles" / "director"
+    if roles_dir.is_dir():
+        for log_file in sorted(roles_dir.rglob("*.log.json")):
+            try:
+                payload = json.loads(log_file.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    events.append(
+                        {
+                            "type": "stage_completed",
+                            "stage": "director_dispatch",
+                            "message": f"director log: {log_file.name}",
+                            "result": payload,
+                            "source": "workspace_fallback",
+                        }
+                    )
+                    artifacts.append(
+                        {
+                            "name": log_file.name,
+                            "path": str(log_file.relative_to(workspace)),
+                            "size": log_file.stat().st_size,
+                            "source": "workspace_fallback",
+                        }
+                    )
+            except (OSError, ValueError):
+                continue
+
+    # Collect CE / blueprint review
+    for ce_pattern in ("**/ce_*.json", "**/blueprint_*.json", "**/chief_engineer_*.json"):
+        for review_file in sorted(polaris_dir.glob(ce_pattern)):
+            if not review_file.is_file():
+                continue
+            try:
+                payload = json.loads(review_file.read_text(encoding="utf-8"))
+                if isinstance(payload, dict) and payload.get("task_id"):
+                    artifacts.append(
+                        {
+                            "name": review_file.name,
+                            "path": str(review_file.relative_to(workspace)),
+                            "size": review_file.stat().st_size,
+                            "task_id": payload.get("task_id"),
+                            "source": "workspace_fallback",
+                        }
+                    )
+            except (OSError, ValueError):
+                continue
+
+    # Collect plan
+    plan_path = polaris_dir / "docs" / "product" / "plan.json"
+    if plan_path.is_file():
+        try:
+            plan_data = json.loads(plan_path.read_text(encoding="utf-8"))
+            if isinstance(plan_data, dict):
+                bundle["summary_json"] = {"plan": plan_data}
+                artifacts.append(
+                    {
+                        "name": "plan.json",
+                        "path": str(plan_path.relative_to(workspace)),
+                        "size": plan_path.stat().st_size,
+                        "source": "workspace_fallback",
+                    }
+                )
+        except (OSError, ValueError):
+            pass
+
+    bundle["events_tail"] = events
+    bundle["artifacts"] = artifacts
+    return bundle
+
+
 def run_factory_chain(
     project: dict[str, Any],
     workspace: Path,
@@ -1074,6 +1421,26 @@ def run_factory_chain(
     ws_requirements = workspace / ".polaris" / "docs" / "product" / "requirements.md"
     ws_requirements.parent.mkdir(parents=True, exist_ok=True)
     ws_requirements.write_text(requirements_doc, encoding="utf-8")
+
+    # Embed catalog metadata in the workspace so PM/CE/Director can access it
+    catalog_contract_path = workspace / ".polaris" / "catalog_contract.json"
+    catalog_contract_path.parent.mkdir(parents=True, exist_ok=True)
+    feature_keywords = _extract_feature_keywords(project)
+    catalog_contract = {
+        "project_id": str(project.get("id") or "").strip(),
+        "domain": str(project.get("domain") or "").strip(),
+        "project_type": str(project.get("project_type") or "").strip(),
+        "primary_language": str(project.get("primary_language") or "").strip(),
+        "creative_hook": str(project.get("creative_hook") or "").strip(),
+        "feature_keywords": feature_keywords,
+        "checks": list(project.get("checks") or []),
+        "test_focus": str(project.get("test_focus") or "").strip(),
+        "source_tree_mandate": "PM/CE/Director must create src/ with core source files, not just scaffolding",
+    }
+    catalog_contract_path.write_text(
+        json.dumps(catalog_contract, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     if not (workspace / ".git").exists():
         subprocess.run(["git", "init", "-q"], cwd=str(workspace), check=False)
@@ -1140,7 +1507,14 @@ def run_factory_chain(
                 "error": "event_wait_timeout",
             }
 
-    audit_bundle = get_audit_bundle(backend_url, run_id, token=backend_token, workspace=str(workspace)) or {}
+    audit_bundle = get_audit_bundle(backend_url, run_id, token=backend_token, workspace=str(workspace))
+    if not audit_bundle:
+        _logger.warning(
+            "factory-bench: audit-bundle GET returned empty/None for run %s; "
+            "falling back to workspace .polaris artifacts",
+            run_id,
+        )
+        audit_bundle = _fallback_audit_bundle_from_workspace(workspace)
     chain_results = map_factory_run_to_chain_results(terminal_status, audit_bundle)
 
     # Read contract_goal from workspace tasks/plan.json if available
@@ -1184,6 +1558,25 @@ def run_chain(
     ws_requirements = workspace / ".polaris" / "docs" / "product" / "requirements.md"
     ws_requirements.parent.mkdir(parents=True, exist_ok=True)
     ws_requirements.write_text(requirements_doc, encoding="utf-8")
+    # Embed catalog metadata in the workspace so PM/CE/Director can access it
+    catalog_contract_path = workspace / ".polaris" / "catalog_contract.json"
+    catalog_contract_path.parent.mkdir(parents=True, exist_ok=True)
+    feature_keywords = _extract_feature_keywords(project)
+    catalog_contract = {
+        "project_id": str(project.get("id") or "").strip(),
+        "domain": str(project.get("domain") or "").strip(),
+        "project_type": str(project.get("project_type") or "").strip(),
+        "primary_language": str(project.get("primary_language") or "").strip(),
+        "creative_hook": str(project.get("creative_hook") or "").strip(),
+        "feature_keywords": feature_keywords,
+        "checks": list(project.get("checks") or []),
+        "test_focus": str(project.get("test_focus") or "").strip(),
+        "source_tree_mandate": "PM/CE/Director must create src/ with core source files, not just scaffolding",
+    }
+    catalog_contract_path.write_text(
+        json.dumps(catalog_contract, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     # Director bundle machinery wants a git base sha; give the workspace a repo.
     if not (workspace / ".git").exists():
         subprocess.run(["git", "init", "-q"], cwd=str(workspace), check=False)
@@ -1378,6 +1771,11 @@ def main() -> int:
         token=backend_token,
     )
     configure_bench_backend(backend_url, bench_session_id, backend_token)
+    backend_audit_context = build_bench_backend_audit_context(
+        backend_url,
+        backend_token=backend_token,
+        workspace=str(base),
+    )
     _emit_bench_event(
         workspace=base,
         project_id="-",
@@ -1494,6 +1892,7 @@ def main() -> int:
                 "duration_s": 0.0,
                 "error": error,
                 "exception": type(exc).__name__,
+                "_runner_exception": True,
             }
         _emit_bench_event(
             workspace=base,
@@ -1510,10 +1909,30 @@ def main() -> int:
         )
         runtime_dirs = resolve_runtime_dirs_for_workspace(workspace)
         runtime_dir = runtime_dirs[0] if runtime_dirs else None
+        # Determine whether the chain reached a genuine terminal state.
+        # - chain.get("error") == "start_failed": backend rejected the run;
+        #   the chain never entered the pipeline → non-terminal snapshot.
+        # - chain.get("_runner_exception"): runner crashed before chain
+        #   finished → non-terminal snapshot.
+        # - chain.get("error") == "event_wait_timeout": we force-cancelled;
+        #   the chain was killed → terminal (interrupted).
+        # - chain.get("timeout"): subprocess timeout → terminal (interrupted).
+        # - KeyboardInterrupt: user cancelled → terminal (interrupted).
+        # - Otherwise: wait_run_until_terminal returned a terminal status
+        #   dict → terminal.
+        chain_error = str(chain.get("error") or "")
+        chain_is_terminal = chain_error not in ("start_failed",) and not chain.get("_runner_exception")
+        chain_status_raw = str(
+            chain.get("chain_results", {}).get("exit_class", "") if isinstance(chain.get("chain_results"), dict) else ""
+        )
+        chain_phase_raw = chain_error or ("timeout" if chain.get("timeout") else "")
         record = build_factory_audit_record(
             project=project,
             workspace=str(workspace),
             artifact_globs=discover_artifacts(workspace, runtime_dirs),
+            chain_terminal=chain_is_terminal,
+            chain_status=chain_status_raw,
+            chain_phase=chain_phase_raw,
         )
         record["runtime_dir"] = str(runtime_dir) if runtime_dir else None
         record["runtime_dirs"] = [str(path) for path in runtime_dirs]
@@ -1550,7 +1969,9 @@ def main() -> int:
         record["wrong_product_suspect"] = bool(contract_goal and best_other > max(0.18, own_overlap + 0.1))
         record["wrong_product_match"] = best_other_id if record["wrong_product_suspect"] else ""
         record["chain_state"] = grade_chain_state(record["chain_results"], chain.get("exit_code"))
-        audit_bundle = chain.get("audit_bundle") if isinstance(chain.get("audit_bundle"), dict) else {}
+        raw_audit_bundle = chain.get("audit_bundle")
+        audit_bundle: dict[str, Any] = raw_audit_bundle if isinstance(raw_audit_bundle, dict) else {}
+        record.update(backend_audit_context)
         record["real_run_gate"] = build_real_run_gate(
             workspace,
             record,
@@ -1564,10 +1985,14 @@ def main() -> int:
         )
         apply_factory_bench_gates(record, chain)
         record["failure_taxonomy"] = classify_factory_bench_failure(record)
+        convergence = audit_bundle.get("director_convergence")
+        if isinstance(convergence, dict):
+            record["director_convergence"] = convergence
         records.append(record)
         status = "PASS" if record["all_checks_passed"] else "FAIL"
         print(
-            f"[factory-bench] {pid} {status}: chain={record['chain_state']} files={record['code_file_count']} "
+            f"[factory-bench] {pid} {status}: chain={record['chain_state']} "
+            f"files={record['code_file_count']} source={record.get('source_file_count', '?')} "
             f"plan={record['has_plan_doc']} blueprint={record['has_blueprint_doc']} "
             f"verdict={record['has_qa_verdict']} qa_ran={record['chain_results']['qa_ran']} "
             f"qa_passed={record['chain_results']['qa_passed']} director={record['chain_results']['director']} "

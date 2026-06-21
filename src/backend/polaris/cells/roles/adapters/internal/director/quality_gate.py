@@ -92,16 +92,34 @@ def _format_unresolved_relative_import_error_for_repair_prompt(error: Any) -> st
         specifier=specifier,
     )
     target = candidates[0] if candidates else ""
+    safe_specifier = _relative_import_specifier_safe_for_repair_prompt(specifier)
     if not target:
+        if safe_specifier:
+            return f"Artifact quality scan failed: unresolved relative import '{specifier}' in {importer_rel}."
         return (
             "Artifact quality scan failed: unresolved relative import "
-            f"in {importer_rel}; raw relative specifier omitted for path safety."
+            f"in {importer_rel}; Raw relative specifier omitted for path safety."
+        )
+    if safe_specifier:
+        return (
+            "Artifact quality scan failed: unresolved relative import "
+            f"'{specifier}' in {importer_rel}; create missing module target {target} and export the imported symbols."
         )
     return (
         "Artifact quality scan failed: unresolved relative import "
         f"in {importer_rel}; create missing module target {target} and export the imported symbols. "
         "Raw relative specifier omitted for path safety."
     )
+
+
+def _relative_import_specifier_safe_for_repair_prompt(specifier: str) -> bool:
+    token = str(specifier or "").strip()
+    if not token.startswith("./") or "\\" in token:
+        return False
+    if any(marker in token for marker in ("*", "?", "\x00", ":")):
+        return False
+    parts = [part for part in token.split("/") if part]
+    return bool(parts) and all(part not in {".", ".."} for part in parts[1:])
 
 
 def _format_quality_error_for_repair_prompt(error: Any) -> str:

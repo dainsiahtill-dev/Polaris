@@ -22,7 +22,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:3",
-    "content_any:firefly|flower|moon|humidity"
+    "content_any:firefly|flower|moon|humidity",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -45,7 +46,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:3",
-    "content_any:dream|alchemy|note|recipe"
+    "content_any:dream|alchemy|note|recipe",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -67,7 +69,8 @@
    "checks": [
     "py_compile",
     "min_files:3",
-    "content_any:planet|weather|cloud|wind"
+    "content_any:planet|weather|cloud|wind",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -89,7 +92,8 @@
    "checks": [
     "go_compile",
     "min_files:3",
-    "content_any:pet|spell|mood|ascii"
+    "content_any:pet|spell|mood|ascii",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -111,7 +115,8 @@
    "checks": [
     "rust_compile",
     "min_files:3",
-    "content_any:flavor|palette|ingredient|recipe"
+    "content_any:flavor|palette|ingredient|recipe",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -133,7 +138,8 @@
    "checks": [
     "cpp_compile",
     "min_files:3",
-    "content_any:moon|postcard|stamp|poem"
+    "content_any:moon|postcard|stamp|poem",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -155,7 +161,8 @@
    "checks": [
     "java_compile",
     "min_files:3",
-    "content_any:rhythm|monster|beat|pattern"
+    "content_any:rhythm|monster|beat|pattern",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -178,7 +185,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:3",
-    "content_any:plane|wind|angle|flight"
+    "content_any:plane|wind|angle|flight",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -201,7 +209,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:4",
-    "content_any:lost|alien|galaxy|clue"
+    "content_any:lost|alien|galaxy|clue",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -223,7 +232,8 @@
    "checks": [
     "py_compile",
     "min_files:4",
-    "content_any:mood|weather|radio|forecast"
+    "content_any:mood|weather|radio|forecast",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -245,7 +255,8 @@
    "checks": [
     "go_compile",
     "min_files:4",
-    "content_any:capsule|museum|riddle|unlock"
+    "content_any:capsule|museum|riddle|unlock",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -267,7 +278,8 @@
    "checks": [
     "rust_compile",
     "min_files:4",
-    "content_any:treasure|budget|port|reef"
+    "content_any:treasure|budget|port|reef",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -289,7 +301,8 @@
    "checks": [
     "cpp_compile",
     "min_files:4",
-    "content_any:robot|patrol|queue|energy"
+    "content_any:robot|patrol|queue|energy",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -311,7 +324,8 @@
    "checks": [
     "java_compile",
     "min_files:4",
-    "content_any:plant|melody|season|growth"
+    "content_any:plant|melody|season|growth",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -334,7 +348,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:4",
-    "content_any:market|fairy|inventory|reputation"
+    "content_any:market|fairy|inventory|reputation",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -357,7 +372,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:4",
-    "content_any:meteor|wish|queue|priority"
+    "content_any:meteor|wish|queue|priority",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -379,7 +395,8 @@
    "checks": [
     "py_compile",
     "min_files:5",
-    "content_any:subway|dream|station|memory"
+    "content_any:subway|dream|station|memory",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -401,7 +418,8 @@
    "checks": [
     "go_compile",
     "min_files:5",
-    "content_any:bubble|physics|note|gravity"
+    "content_any:bubble|physics|note|gravity",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -423,7 +441,8 @@
    "checks": [
     "rust_compile",
     "min_files:5",
-    "content_any:restaurant|queue|menu|patience"
+    "content_any:restaurant|queue|menu|patience",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -445,7 +464,8 @@
    "checks": [
     "cpp_compile",
     "min_files:5",
-    "content_any:invisible|diary|cipher|moon"
+    "content_any:invisible|diary|cipher|moon",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -467,7 +487,8 @@
    "checks": [
     "java_compile",
     "min_files:5",
-    "content_any:debris|orbit|fuel|collision"
+    "content_any:debris|orbit|fuel|collision",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -490,7 +511,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:5",
-    "content_any:monster|habitat|mutation|food"
+    "content_any:monster|habitat|mutation|food",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -513,7 +535,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:5",
-    "content_any:poem|weave|rhyme|image"
+    "content_any:poem|weave|rhyme|image",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -535,7 +558,8 @@
    "checks": [
     "py_compile",
     "min_files:5",
-    "content_any:maze|coffee|route|order"
+    "content_any:maze|coffee|route|order",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -557,7 +581,8 @@
    "checks": [
     "go_compile",
     "min_files:7",
-    "content_any:WebSocket|ghost|graffiti|fade"
+    "content_any:WebSocket|ghost|graffiti|fade",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -579,7 +604,8 @@
    "checks": [
     "rust_compile",
     "min_files:7",
-    "content_any:mail|island|dragon|route"
+    "content_any:mail|island|dragon|route",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -601,7 +627,8 @@
    "checks": [
     "cpp_compile",
     "min_files:7",
-    "content_any:gesture|orchestra|section|tempo"
+    "content_any:gesture|orchestra|section|tempo",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -623,7 +650,8 @@
    "checks": [
     "java_compile",
     "min_files:7",
-    "content_any:pet|evolve|task|reminder"
+    "content_any:pet|evolve|task|reminder",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -646,7 +674,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:7",
-    "content_any:nebula|material|stability|spectrum"
+    "content_any:nebula|material|stability|spectrum",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -669,7 +698,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:7",
-    "content_any:contract|dungeon|risk|reward"
+    "content_any:contract|dungeon|risk|reward",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -691,7 +721,8 @@
    "checks": [
     "py_compile",
     "min_files:7",
-    "content_any:whale|song|spectrum|translation"
+    "content_any:whale|song|spectrum|translation",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -713,7 +744,8 @@
    "checks": [
     "go_compile",
     "min_files:7",
-    "content_any:furniture|constellation|layout|room"
+    "content_any:furniture|constellation|layout|room",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -735,7 +767,8 @@
    "checks": [
     "rust_compile",
     "min_files:8",
-    "content_any:monster|breed|market|weather"
+    "content_any:monster|breed|market|weather",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -757,7 +790,8 @@
    "checks": [
     "cpp_compile",
     "min_files:8",
-    "content_any:timeline|kanban|causal|task"
+    "content_any:timeline|kanban|causal|task",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -779,7 +813,8 @@
    "checks": [
     "java_compile",
     "min_files:8",
-    "content_any:theater|rehearsal|scene|feedback"
+    "content_any:theater|rehearsal|scene|feedback",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -802,7 +837,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:8",
-    "content_any:planet|city|resource|happiness"
+    "content_any:planet|city|resource|happiness",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -825,7 +861,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:8",
-    "content_any:library|recommend|spell|mood"
+    "content_any:library|recommend|spell|mood",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -847,7 +884,8 @@
    "checks": [
     "py_compile",
     "min_files:8",
-    "content_any:toy|workshop|order|quality"
+    "content_any:toy|workshop|order|quality",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -869,7 +907,8 @@
    "checks": [
     "go_compile",
     "min_files:8",
-    "content_any:chat|vote|adventure|event"
+    "content_any:chat|vote|adventure|event",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -891,7 +930,8 @@
    "checks": [
     "rust_compile",
     "min_files:8",
-    "content_any:sample|garden|sound|plant"
+    "content_any:sample|garden|sound|plant",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -913,7 +953,8 @@
    "checks": [
     "cpp_compile",
     "min_files:10",
-    "content_any:NPC|memory|rumor|relationship"
+    "content_any:NPC|memory|rumor|relationship",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -935,7 +976,8 @@
    "checks": [
     "java_compile",
     "min_files:10",
-    "content_any:radio|signal|schedule|interference"
+    "content_any:radio|signal|schedule|interference",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -958,7 +1000,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:10",
-    "content_any:comic|storyboard|dialogue|panel"
+    "content_any:comic|storyboard|dialogue|panel",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -981,7 +1024,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:10",
-    "content_any:drone|package|no-fly|weather"
+    "content_any:drone|package|no-fly|weather",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -1003,7 +1047,8 @@
    "checks": [
     "py_compile",
     "min_files:10",
-    "content_any:camp|craft|chat|shared"
+    "content_any:camp|craft|chat|shared",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -1025,7 +1070,8 @@
    "checks": [
     "go_compile",
     "min_files:10",
-    "content_any:museum|patrol|artifact|anomaly"
+    "content_any:museum|patrol|artifact|anomaly",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -1047,7 +1093,8 @@
    "checks": [
     "rust_compile",
     "min_files:10",
-    "content_any:emotion|track|version|compose"
+    "content_any:emotion|track|version|compose",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -1069,7 +1116,8 @@
    "checks": [
     "cpp_compile",
     "min_files:10",
-    "content_any:river|species|budget|restoration"
+    "content_any:river|species|budget|restoration",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -1091,7 +1139,8 @@
    "checks": [
     "java_compile",
     "min_files:11",
-    "content_any:quest|NPC|reputation|dependency"
+    "content_any:quest|NPC|reputation|dependency",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -1114,7 +1163,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:11",
-    "content_any:ticket|SLA|emotion|escalation"
+    "content_any:ticket|SLA|emotion|escalation",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -1137,7 +1187,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:11",
-    "content_any:sensor|factory|dragon|capacity"
+    "content_any:sensor|factory|dragon|capacity",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -1159,7 +1210,8 @@
    "checks": [
     "py_compile",
     "min_files:11",
-    "content_any:shot|actor|prop|budget"
+    "content_any:shot|actor|prop|budget",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -1181,7 +1233,8 @@
    "checks": [
     "go_compile",
     "min_files:11",
-    "content_any:visa|spaceport|queue|fairness"
+    "content_any:visa|spaceport|queue|fairness",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -1203,7 +1256,8 @@
    "checks": [
     "rust_compile",
     "min_files:11",
-    "content_any:archive|sound|restore|ritual"
+    "content_any:archive|sound|restore|ritual",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -1225,7 +1279,8 @@
    "checks": [
     "cpp_compile",
     "min_files:11",
-    "content_any:chess|spectator|cooldown|replay"
+    "content_any:chess|spectator|cooldown|replay",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -1247,7 +1302,8 @@
    "checks": [
     "java_compile",
     "min_files:11",
-    "content_any:farm|planet|cold chain|festival"
+    "content_any:farm|planet|cold chain|festival",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -1270,7 +1326,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:12",
-    "content_any:memory|stealth|guard|puzzle"
+    "content_any:memory|stealth|guard|puzzle",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -1293,7 +1350,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:12",
-    "content_any:process|dream|attention|nightmare"
+    "content_any:process|dream|attention|nightmare",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -1315,7 +1373,8 @@
    "checks": [
     "py_compile",
     "min_files:12",
-    "content_any:cook|ingredient|alien|score"
+    "content_any:cook|ingredient|alien|score",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -1337,7 +1396,8 @@
    "checks": [
     "go_compile",
     "min_files:12",
-    "content_any:legend|graph|clue|credibility"
+    "content_any:legend|graph|clue|credibility",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -1359,7 +1419,8 @@
    "checks": [
     "rust_compile",
     "min_files:12",
-    "content_any:emotion|lighting|chord|stage"
+    "content_any:emotion|lighting|chord|stage",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -1381,7 +1442,8 @@
    "checks": [
     "cpp_compile",
     "min_files:12",
-    "content_any:oxygen|fungi|heat|culture"
+    "content_any:oxygen|fungi|heat|culture",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -1403,7 +1465,8 @@
    "checks": [
     "java_compile",
     "min_files:12",
-    "content_any:lore|foreshadow|contradiction|canon"
+    "content_any:lore|foreshadow|contradiction|canon",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -1426,7 +1489,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:12",
-    "content_any:theme|evolve|motion|behavior"
+    "content_any:theme|evolve|motion|behavior",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -1449,7 +1513,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:13",
-    "content_any:council|faction|bill|sanction"
+    "content_any:council|faction|bill|sanction",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -1471,7 +1536,8 @@
    "checks": [
     "py_compile",
     "min_files:13",
-    "content_any:beast|migration|hunt|ecosystem"
+    "content_any:beast|migration|hunt|ecosystem",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -1493,7 +1559,8 @@
    "checks": [
     "go_compile",
     "min_files:13",
-    "content_any:whiteboard|morph|operation|merge"
+    "content_any:whiteboard|morph|operation|merge",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -1515,7 +1582,8 @@
    "checks": [
     "rust_compile",
     "min_files:13",
-    "content_any:music|starmap|chord|tempo"
+    "content_any:music|starmap|chord|tempo",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -1537,7 +1605,8 @@
    "checks": [
     "cpp_compile",
     "min_files:13",
-    "content_any:alchemy|supply|risk|volatility"
+    "content_any:alchemy|supply|risk|volatility",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -1559,7 +1628,8 @@
    "checks": [
     "java_compile",
     "min_files:13",
-    "content_any:glyph|grammar|root|confidence"
+    "content_any:glyph|grammar|root|confidence",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -1582,7 +1652,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:13",
-    "content_any:undersea|pressure|evacuation|oxygen"
+    "content_any:undersea|pressure|evacuation|oxygen",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -1605,7 +1676,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:13",
-    "content_any:toy|script|sensor|replay"
+    "content_any:toy|script|sensor|replay",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -1627,7 +1699,8 @@
    "checks": [
     "py_compile",
     "min_files:14",
-    "content_any:theme park|visitor|queue|incident"
+    "content_any:theme park|visitor|queue|incident",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -1649,7 +1722,8 @@
    "checks": [
     "go_compile",
     "min_files:14",
-    "content_any:combat|music layer|tension|transition"
+    "content_any:combat|music layer|tension|transition",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -1671,7 +1745,8 @@
    "checks": [
     "rust_compile",
     "min_files:14",
-    "content_any:agent|fairy tale|economy|rumor"
+    "content_any:agent|fairy tale|economy|rumor",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -1693,7 +1768,8 @@
    "checks": [
     "cpp_compile",
     "min_files:14",
-    "content_any:reconcile|dream|resource|controller"
+    "content_any:reconcile|dream|resource|controller",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -1715,7 +1791,8 @@
    "checks": [
     "java_compile",
     "min_files:14",
-    "content_any:asset|universe|rights|version"
+    "content_any:asset|universe|rights|version",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -1738,7 +1815,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:14",
-    "content_any:idol|tour|venue|fan"
+    "content_any:idol|tour|venue|fan",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -1761,7 +1839,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:14",
-    "content_any:hospital|diagnosis|potion|ethics"
+    "content_any:hospital|diagnosis|potion|ethics",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -1783,7 +1862,8 @@
    "checks": [
     "py_compile",
     "min_files:14",
-    "content_any:timeline|branch|merge|review"
+    "content_any:timeline|branch|merge|review",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -1805,7 +1885,8 @@
    "checks": [
     "go_compile",
     "min_files:15",
-    "content_any:stargate|fuel|SLA|pirate"
+    "content_any:stargate|fuel|SLA|pirate",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -1827,7 +1908,8 @@
    "checks": [
     "rust_compile",
     "min_files:15",
-    "content_any:ecosystem|quest|faction|rumor"
+    "content_any:ecosystem|quest|faction|rumor",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -1849,7 +1931,8 @@
    "checks": [
     "cpp_compile",
     "min_files:15",
-    "content_any:canon|timeline|character|continuity"
+    "content_any:canon|timeline|character|continuity",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -1871,7 +1954,8 @@
    "checks": [
     "java_compile",
     "min_files:15",
-    "content_any:microgrid|emotion|storage|demand"
+    "content_any:microgrid|emotion|storage|demand",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -1894,7 +1978,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:15",
-    "content_any:scan|fear|memory leak|nightmare"
+    "content_any:scan|fear|memory leak|nightmare",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -1917,7 +2002,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:15",
-    "content_any:park|build|visitor|sync"
+    "content_any:park|build|visitor|sync",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -1939,7 +2025,8 @@
    "checks": [
     "py_compile",
     "min_files:15",
-    "content_any:robot|battery|script|stage"
+    "content_any:robot|battery|script|stage",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -1961,7 +2048,8 @@
    "checks": [
     "go_compile",
     "min_files:15",
-    "content_any:bestiary|evidence|habitat|version"
+    "content_any:bestiary|evidence|habitat|version",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -1983,7 +2071,8 @@
    "checks": [
     "rust_compile",
     "min_files:16",
-    "content_any:planet|faction|weather|economy"
+    "content_any:planet|faction|weather|economy",
+    "source_target_coverage:src/**/*.rs"
    ]
   },
   {
@@ -2005,7 +2094,8 @@
    "checks": [
     "cpp_compile",
     "min_files:16",
-    "content_any:worldbuilding|asset|release|fan"
+    "content_any:worldbuilding|asset|release|fan",
+    "source_target_coverage:src/**/*.cpp"
    ]
   },
   {
@@ -2027,7 +2117,8 @@
    "checks": [
     "java_compile",
     "min_files:16",
-    "content_any:disaster|fleet|resource|latency"
+    "content_any:disaster|fleet|resource|latency",
+    "source_target_coverage:src/main/java/**/*.java"
    ]
   },
   {
@@ -2050,7 +2141,8 @@
     "ts_syntax",
     "package_scripts",
     "min_files:16",
-    "content_any:transaction|memory|rollback|isolation"
+    "content_any:transaction|memory|rollback|isolation",
+    "source_target_coverage:src/**/*.ts"
    ]
   },
   {
@@ -2073,7 +2165,8 @@
     "js_syntax",
     "package_scripts",
     "min_files:16",
-    "content_any:climate|music|dashboard|action"
+    "content_any:climate|music|dashboard|action",
+    "source_target_coverage:src/**/*.js"
    ]
   },
   {
@@ -2095,7 +2188,8 @@
    "checks": [
     "py_compile",
     "min_files:16",
-    "content_any:organization|culture|conflict|performance"
+    "content_any:organization|culture|conflict|performance",
+    "source_target_coverage:src/**/*.py"
    ]
   },
   {
@@ -2117,7 +2211,8 @@
    "checks": [
     "go_compile",
     "min_files:16",
-    "content_any:deity|faith|miracle|city-state"
+    "content_any:deity|faith|miracle|city-state",
+    "source_target_coverage:**/*.go"
    ]
   },
   {
@@ -2139,7 +2234,8 @@
    "checks": [
     "rust_compile",
     "min_files:16",
-    "content_any:installation|audience|lighting|feedback"
+    "content_any:installation|audience|lighting|feedback",
+    "source_target_coverage:src/**/*.rs"
    ]
   }
  ]

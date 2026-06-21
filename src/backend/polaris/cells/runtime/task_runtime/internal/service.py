@@ -308,7 +308,12 @@ class TaskRuntimeService:
         requested_task_id: Any = None,
         prefer_resumable: bool = True,
     ) -> dict[str, Any] | None:
-        """Return the next claimable task row, preferring resumable work."""
+        """Return the next claimable task row, preferring resumable work.
+
+        This is a deterministic preview API. Concurrent Director fanout must
+        use ``claim_next_execution`` so selection and claim stay in one retryable
+        operation.
+        """
         requested = self.get_task(requested_task_id) if requested_task_id else None
         if isinstance(requested, dict) and self._is_row_claimable(requested):
             return requested
@@ -333,6 +338,103 @@ class TaskRuntimeService:
 
         candidates.sort(key=_candidate_key)
         return candidates[0]
+
+    def claim_next_execution(
+        self,
+        *,
+        worker_id: str,
+        role_id: str,
+        run_id: str = "",
+        lease_ttl_seconds: int = 120,
+        selection_source: str = "",
+        prefer_resumable: bool = True,
+    ) -> dict[str, Any]:
+        """Atomically select and claim the next executable task.
+
+        Enumerates claimable candidates in priority order and attempts to claim
+        each one. If a candidate has a lease_conflict, is terminal, or is blocked,
+        the next candidate is tried. This eliminates the race window between
+        ``select_next_task`` and ``claim_execution``.
+
+        Returns:
+            A dict with keys:
+            - success (bool): Whether a task was successfully claimed
+            - task (dict | None): The claimed task row, if successful
+            - session (dict | None): The execution session, if successful
+            - attempts (list[dict]): Details of each claim attempt
+            - reason (str): Reason for failure (if success is False)
+        """
+        rows = self.list_task_rows(include_terminal=False)
+        candidates = [row for row in rows if self._is_row_claimable(row)]
+        if not candidates:
+            return {
+                "success": False,
+                "task": None,
+                "session": None,
+                "attempts": [],
+                "reason": "no_claimable_tasks",
+            }
+
+        def _candidate_key(row: dict[str, Any]) -> tuple[int, int, float, int]:
+            resume_state = str(row.get("resume_state") or "").strip().lower()
+            resume_priority = 0 if prefer_resumable and resume_state == "resumable" else 1
+            try:
+                priority = -int(row.get("priority") or 0)
+            except (RuntimeError, ValueError):
+                logger.debug("Task priority parse failed for task_id=%s, using 0", row.get("id"))
+                priority = 0
+            created_at = float(row.get("created_at") or 0.0)
+            row_task_id = self.normalize_task_id(row.get("id")) or 10**9
+            return (resume_priority, priority, created_at, row_task_id)
+
+        candidates.sort(key=_candidate_key)
+        attempts: list[dict[str, Any]] = []
+
+        for candidate in candidates:
+            task_id = self.normalize_task_id(candidate.get("id"))
+            if task_id is None:
+                continue
+
+            claim_result = self.claim_execution(
+                task_id,
+                worker_id=worker_id,
+                role_id=role_id,
+                run_id=run_id,
+                lease_ttl_seconds=lease_ttl_seconds,
+                selection_source=selection_source,
+            )
+
+            attempt_info = {
+                "task_id": task_id,
+                "success": bool(claim_result.get("success")),
+                "reason": str(claim_result.get("reason") or "").strip(),
+            }
+            attempts.append(attempt_info)
+
+            if claim_result.get("success"):
+                return {
+                    "success": True,
+                    "task": claim_result.get("task"),
+                    "session": claim_result.get("session"),
+                    "attempts": attempts,
+                    "reason": "",
+                }
+
+            # Continue to next candidate on lease_conflict, task_terminal, task_blocked
+            reason = str(claim_result.get("reason") or "").strip()
+            if reason in ("lease_conflict", "task_terminal", "task_blocked"):
+                continue
+
+            # For other failures (invalid_task_id, task_not_found), also continue
+            continue
+
+        return {
+            "success": False,
+            "task": None,
+            "session": None,
+            "attempts": attempts,
+            "reason": "all_candidates_unavailable",
+        }
 
     def claim_execution(
         self,

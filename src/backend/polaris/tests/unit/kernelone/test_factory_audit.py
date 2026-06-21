@@ -52,7 +52,7 @@ class TestInventoryAndChecks:
 
     def test_html_and_min_files(self, tmp_path: Path) -> None:
         ws = _project_workspace(tmp_path)
-        results = run_checks(str(ws), ["html", "min_files:2", "min_files:99"])
+        results = run_checks(str(ws), ["html", "min_files:1", "min_files:99"])
         assert results[0]["ok"] is True
         assert results[1]["ok"] is True
         assert results[2]["ok"] is False
@@ -396,3 +396,372 @@ def test_multilanguage_compile_check_reports_missing_toolchain(monkeypatch: Any,
 
     assert results[0]["ok"] is False
     assert "go unavailable" in results[0]["detail"]
+
+
+def test_inventory_separates_source_from_scaffold(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "index.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"name": "test"}', encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+    (tmp_path / ".catalog_meta.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
+    (tmp_path / "style.css").write_text("body {}", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Test", encoding="utf-8")
+
+    inv = collect_workspace_inventory(str(tmp_path))
+
+    assert "main.py" in inv["source_files"]
+    assert "index.ts" in inv["source_files"]
+    assert "package.json" not in inv["source_files"]
+    assert "tsconfig.json" not in inv["source_files"]
+    assert ".catalog_meta.json" not in inv["source_files"]
+    assert "index.html" not in inv["source_files"]
+    assert "style.css" not in inv["source_files"]
+    # All still in code_files for backward compatibility
+    assert "package.json" in inv["code_files"]
+    assert "index.html" in inv["code_files"]
+    # Doc files separate
+    assert "README.md" in inv["doc_files"]
+
+
+def test_min_files_uses_source_count_not_code_count(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name": "test"}', encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+    (tmp_path / ".catalog_meta.json").write_text("{}", encoding="utf-8")
+
+    results = run_checks(str(tmp_path), ["min_files:1"])
+
+    assert results[0]["ok"] is False
+    assert "0 source files" in results[0]["detail"]
+
+
+def test_min_files_passes_with_real_source(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "lib.py").write_text("def helper(): pass\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"name": "test"}', encoding="utf-8")
+
+    results = run_checks(str(tmp_path), ["min_files:2"])
+
+    assert results[0]["ok"] is True
+    assert "2 source files" in results[0]["detail"]
+
+
+def test_content_any_requires_source_file_match(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"name": "firefly-garden", "description": "moon humidity firefly"}',
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+
+    results = run_checks(str(tmp_path), ["content_any:firefly|moon|humidity"])
+
+    assert results[0]["ok"] is False
+    assert "not found in any source file" in results[0]["detail"]
+
+
+def test_content_any_passes_on_source_file_match(tmp_path: Path) -> None:
+    (tmp_path / "garden.ts").write_text(
+        "const firefly = { glow: true, brightness: 0.8 };\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        '{"name": "firefly-garden"}',
+        encoding="utf-8",
+    )
+
+    results = run_checks(str(tmp_path), ["content_any:firefly|moon|humidity"])
+
+    assert results[0]["ok"] is True
+    assert "garden.ts" in results[0]["detail"]
+
+
+def test_content_any_fails_when_only_scaffold_has_keyword(tmp_path: Path) -> None:
+    (tmp_path / "style.css").write_text(".firefly { color: yellow; }\n", encoding="utf-8")
+
+    results = run_checks(str(tmp_path), ["content_any:firefly"])
+
+    assert results[0]["ok"] is False
+    assert "not found in any source file" in results[0]["detail"]
+
+
+def test_source_target_coverage_passes_when_files_exist(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    (tmp_path / "src" / "engine.ts").write_text("export class Engine {}\n", encoding="utf-8")
+
+    results = run_checks(str(tmp_path), ["source_target_coverage:src/**/*.ts"])
+
+    assert results[0]["ok"] is True
+    assert "2 file(s) found" in results[0]["detail"]
+
+
+def test_source_target_coverage_fails_for_scaffold_only(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name": "test"}', encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+
+    results = run_checks(str(tmp_path), ["source_target_coverage:src/**/*.ts"])
+
+    assert results[0]["ok"] is False
+    assert "no source files found" in results[0]["detail"]
+    assert "scaffold" in results[0]["detail"]
+
+
+def test_audit_record_includes_source_file_count(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"name": "test"}', encoding="utf-8")
+
+    record = build_factory_audit_record(
+        project={"id": "L1-01", "level": 1, "checks": ["py_compile"]},
+        workspace=str(tmp_path),
+    )
+
+    assert record["source_file_count"] == 1
+    assert record["code_file_count"] == 2
+    assert "main.py" in record["source_files"]
+    assert "package.json" not in record["source_files"]
+
+
+def test_aggregate_reports_zero_source_files(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "pkg.json").write_text("{}", encoding="utf-8")
+    scaffold_ws = tmp_path / "scaffold"
+    scaffold_ws.mkdir()
+    (scaffold_ws / "package.json").write_text("{}", encoding="utf-8")
+
+    good = build_factory_audit_record(
+        project={"id": "L1-01", "level": 1, "checks": ["py_compile"]},
+        workspace=str(tmp_path),
+    )
+    bad = build_factory_audit_record(
+        project={"id": "L1-02", "level": 1, "checks": ["min_files:1"]},
+        workspace=str(scaffold_ws),
+    )
+
+    agg = aggregate_factory_audits([good, bad])
+
+    assert agg["with_source_files"] == 1
+    assert agg["zero_source_files"] == 1
+
+
+def test_declared_source_targets_from_plan_json(tmp_path: Path) -> None:
+    """plan.json with target_files yields declared source targets."""
+    polaris_dir = tmp_path / ".polaris" / "docs" / "product"
+    polaris_dir.mkdir(parents=True)
+    (polaris_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "goal": "Create main module",
+                        "target_files": ["src/index.ts", "src/utils.ts", "README.md"],
+                    },
+                    {
+                        "goal": "Create config",
+                        "target_files": ["src/config.ts", "package.json"],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.ts").write_text("export const x = 1;\n", encoding="utf-8")
+
+    record = build_factory_audit_record(
+        project={"id": "L1-01", "level": 1, "checks": []},
+        workspace=str(tmp_path),
+    )
+
+    assert record["declared_source_target_count"] == 3
+    assert "src/index.ts" in record["declared_source_targets"]
+    assert "src/utils.ts" in record["declared_source_targets"]
+    assert "src/config.ts" in record["declared_source_targets"]
+    assert record["missing_declared_source_target_count"] == 2
+    assert "src/utils.ts" in record["missing_declared_source_targets"]
+    assert "src/config.ts" in record["missing_declared_source_targets"]
+    assert record["pm_plan_missing_source_targets"] is False
+
+
+def test_declared_source_targets_all_present(tmp_path: Path) -> None:
+    """All declared source targets exist -> no missing."""
+    polaris_dir = tmp_path / ".polaris" / "docs" / "product"
+    polaris_dir.mkdir(parents=True)
+    (polaris_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "goal": "Create main module",
+                        "target_files": ["src/index.ts"],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.ts").write_text("export const x = 1;\n", encoding="utf-8")
+
+    record = build_factory_audit_record(
+        project={"id": "L1-01", "level": 1, "checks": []},
+        workspace=str(tmp_path),
+    )
+
+    assert record["declared_source_target_count"] == 1
+    assert record["missing_declared_source_target_count"] == 0
+    assert record["missing_declared_source_targets"] == []
+
+
+def test_pm_plan_missing_source_targets_signal(tmp_path: Path) -> None:
+    """PM plan with no source targets -> pm_plan_missing_source_targets=True."""
+    polaris_dir = tmp_path / ".polaris" / "docs" / "product"
+    polaris_dir.mkdir(parents=True)
+    (polaris_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "goal": "Write docs",
+                        "target_files": ["README.md", "docs/guide.md"],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = build_factory_audit_record(
+        project={"id": "L1-01", "level": 1, "checks": []},
+        workspace=str(tmp_path),
+    )
+
+    assert record["declared_source_target_count"] == 0
+    assert record["pm_plan_missing_source_targets"] is True
+
+
+def test_no_plan_json_no_declared_targets(tmp_path: Path) -> None:
+    """No plan.json -> no declared source targets, no risk signal."""
+    record = build_factory_audit_record(
+        project={"id": "L1-01", "level": 1, "checks": []},
+        workspace=str(tmp_path),
+    )
+
+    assert record["declared_source_target_count"] == 0
+    assert record["missing_declared_source_target_count"] == 0
+    assert record["pm_plan_missing_source_targets"] is False
+
+
+class TestAuditSnapshotMetadata:
+    def test_terminal_chain_produces_terminal_snapshot(self, tmp_path: Path) -> None:
+        ws = _project_workspace(tmp_path)
+        record = build_factory_audit_record(
+            project={"id": "L1-01", "level": 1, "checks": ["py_compile"]},
+            workspace=str(ws),
+            chain_terminal=True,
+            chain_status="clean",
+            chain_phase="completed",
+        )
+
+        assert record["audit_snapshot_kind"] == "terminal"
+        assert record["audit_terminal"] is True
+        assert record["terminal_status"] == "clean"
+        assert record["terminal_phase"] == "completed"
+
+    def test_non_terminal_chain_produces_non_terminal_snapshot(self, tmp_path: Path) -> None:
+        ws = _project_workspace(tmp_path)
+        record = build_factory_audit_record(
+            project={"id": "L1-01", "level": 1, "checks": ["py_compile"]},
+            workspace=str(ws),
+            chain_terminal=False,
+            chain_status="",
+            chain_phase="start_failed",
+        )
+
+        assert record["audit_snapshot_kind"] == "non_terminal"
+        assert record["audit_terminal"] is False
+        assert record["terminal_status"] == ""
+        assert record["terminal_phase"] == "start_failed"
+
+    def test_default_chain_terminal_is_true(self, tmp_path: Path) -> None:
+        """Backward compatibility: callers that don't pass chain_terminal get terminal."""
+        ws = _project_workspace(tmp_path)
+        record = build_factory_audit_record(
+            project={"id": "L1-01", "level": 1, "checks": ["py_compile"]},
+            workspace=str(ws),
+        )
+
+        assert record["audit_snapshot_kind"] == "terminal"
+        assert record["audit_terminal"] is True
+
+    def test_source_files_appear_after_early_snapshot_final_includes_them(self, tmp_path: Path) -> None:
+        """Simulate R17-E scenario: early snapshot has zero source files, but
+        files appear later. A second (terminal) audit must capture them."""
+        ws = tmp_path / "project"
+        ws.mkdir()
+        # Phase 1: workspace has only scaffold (like the early R17-E snapshot)
+        (ws / ".catalog_meta.json").write_text("{}", encoding="utf-8")
+
+        early_record = build_factory_audit_record(
+            project={"id": "L1-01", "level": 1, "checks": []},
+            workspace=str(ws),
+            chain_terminal=False,
+            chain_status="",
+            chain_phase="start_failed",
+        )
+
+        assert early_record["source_file_count"] == 0
+        assert early_record["audit_snapshot_kind"] == "non_terminal"
+
+        # Phase 2: chain finishes, source files appear (Director wrote them)
+        (ws / "src").mkdir()
+        (ws / "src" / "render.ts").write_text("export const render = () => {};\n", encoding="utf-8")
+        (ws / "src" / "simulation.ts").write_text("export class Sim {}\n", encoding="utf-8")
+        (ws / "index.html").write_text("<html></html>\n", encoding="utf-8")
+
+        final_record = build_factory_audit_record(
+            project={"id": "L1-01", "level": 1, "checks": []},
+            workspace=str(ws),
+            chain_terminal=True,
+            chain_status="clean",
+            chain_phase="completed",
+        )
+
+        assert final_record["source_file_count"] == 2
+        assert "src/render.ts" in final_record["source_files"]
+        assert "src/simulation.ts" in final_record["source_files"]
+        assert final_record["audit_snapshot_kind"] == "terminal"
+        assert final_record["audit_terminal"] is True
+
+    def test_non_terminal_record_must_not_be_confused_with_final_verdict(self, tmp_path: Path) -> None:
+        """A non-terminal snapshot must carry metadata that prevents it from
+        being treated as a final project verdict."""
+        ws = _project_workspace(tmp_path)
+        record = build_factory_audit_record(
+            project={"id": "L1-01", "level": 1, "checks": ["py_compile"]},
+            workspace=str(ws),
+            chain_terminal=False,
+            chain_status="",
+            chain_phase="runner_exception",
+        )
+
+        # Even though checks pass, the snapshot is non-terminal
+        assert record["all_checks_passed"] is True
+        assert record["audit_terminal"] is False
+        assert record["audit_snapshot_kind"] == "non_terminal"
+        # A consumer must check audit_terminal before treating this as final
+        assert record["terminal_phase"] == "runner_exception"
+
+    def test_timeout_chain_is_terminal_interrupted(self, tmp_path: Path) -> None:
+        """A chain that timed out and was cancelled is a terminal state."""
+        ws = _project_workspace(tmp_path)
+        record = build_factory_audit_record(
+            project={"id": "L1-01", "level": 1, "checks": ["py_compile"]},
+            workspace=str(ws),
+            chain_terminal=True,
+            chain_status="",
+            chain_phase="event_wait_timeout",
+        )
+
+        assert record["audit_snapshot_kind"] == "terminal"
+        assert record["audit_terminal"] is True
+        assert record["terminal_phase"] == "event_wait_timeout"

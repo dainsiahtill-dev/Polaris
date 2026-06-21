@@ -131,7 +131,7 @@ class QualityChecker:
 
         # 根据角色类型选择验证方式
         if role in ["pm", "chief_engineer", "qa"]:
-            data, parse_errors = self._extract_json(content)
+            data, parse_errors = self._extract_json(content, role=role)
             if data is None:
                 errors.extend(parse_errors)
                 score, quality_suggestions = self._check_quality(role, content, None)
@@ -334,11 +334,113 @@ class QualityChecker:
 
         return max(0, score), suggestions
 
-    def _extract_json(self, text: str) -> tuple[dict | None, list[str]]:
+    @staticmethod
+    def _json_required_keys_for_role(role: str | None) -> tuple[str, ...]:
+        normalized = str(role or "").strip().lower()
+        if normalized == "chief_engineer":
+            return ("construction_plan", "scope_for_apply", "risk_flags")
+        if normalized == "pm":
+            return ("tasks",)
+        if normalized == "qa":
+            return ("verdict",)
+        return ()
+
+    @staticmethod
+    def _extract_all_balanced_json_objects(text: str) -> list[dict[str, Any]]:
+        """Extract all balanced top-level JSON objects embedded in text."""
+        import json
+
+        results: list[dict[str, Any]] = []
+        if not text:
+            return results
+
+        length = len(text)
+        index = 0
+        while index < length:
+            if text[index] != "{":
+                index += 1
+                continue
+
+            start = index
+            depth = 0
+            in_string = False
+            escaped = False
+            cursor = index
+            while cursor < length:
+                char = text[cursor]
+                if in_string:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\":
+                        escaped = True
+                    elif char == '"':
+                        in_string = False
+                else:
+                    if char == '"':
+                        in_string = True
+                    elif char == "{":
+                        depth += 1
+                    elif char == "}":
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                parsed = json.loads(text[start : cursor + 1])
+                            except json.JSONDecodeError:
+                                break
+                            if isinstance(parsed, dict):
+                                results.append(parsed)
+                            index = cursor
+                            break
+                cursor += 1
+            index += 1
+
+        return results
+
+    def _select_json_candidate(
+        self,
+        candidates: list[dict[str, Any]],
+        *,
+        role: str | None,
+    ) -> tuple[dict | None, list[str]]:
+        if not candidates:
+            return None, []
+
+        normalized = str(role or "").strip().lower()
+        required_keys = self._json_required_keys_for_role(normalized)
+        if not required_keys:
+            return candidates[0], []
+
+        for candidate in candidates:
+            if all(key in candidate for key in required_keys):
+                return candidate, []
+
+        if normalized == "chief_engineer":
+            return (
+                None,
+                ["No JSON object matched chief_engineer blueprint keys: " + ", ".join(required_keys)],
+            )
+
+        return candidates[0], []
+
+    def _extract_json(self, text: str, *, role: str | None = None) -> tuple[dict | None, list[str]]:
         """提取JSON内容"""
         import json
 
-        errors = []
+        errors: list[str] = []
+        candidates: list[dict[str, Any]] = []
+        seen: set[str] = set()
+
+        def add_candidate(value: Any) -> None:
+            if not isinstance(value, dict):
+                return
+            try:
+                key = json.dumps(value, sort_keys=True, ensure_ascii=False)
+            except (TypeError, ValueError):
+                key = repr(value)
+            if key in seen:
+                return
+            seen.add(key)
+            candidates.append(value)
 
         if not text or not text.strip():
             return None, ["Empty text"]
@@ -349,10 +451,34 @@ class QualityChecker:
 
         for match in matches:
             try:
-                return json.loads(match.strip()), []
+                add_candidate(json.loads(match.strip()))
             except json.JSONDecodeError as e:
                 errors.append(f"JSON解析错误: {e}")
 
+        stripped = text.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            try:
+                add_candidate(json.loads(stripped))
+            except json.JSONDecodeError as e:
+                errors.append(f"JSON解析错误: {e}")
+        elif stripped.startswith("[") and stripped.endswith("]"):
+            try:
+                parsed = json.loads(stripped)
+                if not isinstance(parsed, dict):
+                    errors.append("JSON解析错误: top-level JSON value is not an object")
+            except json.JSONDecodeError as e:
+                errors.append(f"JSON解析错误: {e}")
+
+        for candidate in self._extract_all_balanced_json_objects(text):
+            add_candidate(candidate)
+
+        selected, selection_errors = self._select_json_candidate(candidates, role=role)
+        if selected is not None:
+            return selected, []
+
+        errors.extend(selection_errors)
+        if not errors:
+            errors.append("JSON解析错误: no JSON object found")
         return None, errors
 
     def _validate_director_output(self, content: str) -> tuple[dict | None, list[str]]:
@@ -360,7 +486,7 @@ class QualityChecker:
         errors = []
 
         # 尝试提取JSON
-        data, _json_errors = self._extract_json(content)
+        data, _json_errors = self._extract_json(content, role="director")
 
         # 检查补丁
         patches = self._extract_director_patches(content)

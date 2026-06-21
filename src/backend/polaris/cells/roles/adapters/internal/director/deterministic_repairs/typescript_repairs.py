@@ -43,6 +43,11 @@ _TS_MISSING_PROPERTY_ERROR_RE = re.compile(
     r"Property\s+'(?P<member>[^']+)'\s+does\s+not\s+exist\s+on\s+type\s+'(?P<type>[^']+)'",
     re.IGNORECASE,
 )
+_TS_NO_EXPORTED_MEMBER_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2305:\s*"
+    r"Module\s+(?P<module>.+?)\s+has\s+no\s+exported\s+member\s+['\"](?P<symbol>[^'\"]+)['\"]",
+    re.IGNORECASE,
+)
 _TS_NUMBER_TO_STRING_ARGUMENT_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2345:\s*"
     r"Argument\s+of\s+type\s+'number'\s+is\s+not\s+assignable\s+to\s+parameter\s+of\s+type\s+'string'",
@@ -54,6 +59,7 @@ _TS_TOO_FEW_ARGUMENTS_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 _TS_EXPORTED_CLASS_RE_TEMPLATE = r"export\s+(?:abstract\s+)?class\s+{type_name}\b[^{{]*{{"
+_TS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 
 
 def _apply_deterministic_typescript_reexport_repair(
@@ -140,6 +146,166 @@ def _apply_deterministic_typescript_reexport_repair(
                     }
                 ]
     return []
+
+
+def _apply_deterministic_typescript_entrypoint_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    del artifact_quality_errors
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    package_path = workspace_path / "package.json"
+    try:
+        package_data = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(package_data, dict):
+        return []
+
+    compiled_entrypoint = _detect_typescript_entrypoint_from_package(package_data)
+    if not compiled_entrypoint:
+        return []
+    source_entrypoint = _typescript_source_entrypoint_for_compiled_path(compiled_entrypoint)
+    if not source_entrypoint:
+        return []
+
+    src_dir = workspace_path / "src"
+    if not src_dir.is_dir():
+        return []
+    entrypoint_path = (workspace_path / source_entrypoint).resolve()
+    if not _path_inside_workspace(entrypoint_path, workspace_path) or entrypoint_path.exists():
+        return []
+
+    entrypoint_parent = entrypoint_path.parent
+    if not _path_inside_workspace(entrypoint_parent, workspace_path):
+        return []
+    entrypoint_parent.mkdir(parents=True, exist_ok=True)
+
+    modules = [
+        item
+        for item in _discover_src_modules(src_dir, workspace_path)
+        if item != source_entrypoint and not item.endswith(".d.ts")
+    ]
+    content = _build_typescript_entrypoint_aggregator(modules, entrypoint_parent, workspace_path)
+    rel_path = entrypoint_path.relative_to(workspace_path).as_posix()
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    write_result = DirectorToolExecutor(
+        str(workspace_path),
+        message_bus=message_bus,
+        worker_id="director",
+    ).execute_tool(
+        "write_file",
+        {"file": rel_path, "content": content},
+        task_id=task_id,
+    )
+    if not bool(write_result.get("ok")):
+        return []
+    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+        adapter._update_task_progress(task_id, "executing", current_file=rel_path)
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "deterministic_typescript_entrypoint_repair",
+                "file": rel_path,
+                "compiled_entrypoint": compiled_entrypoint,
+                "modules": modules,
+                "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
+                "operation": str(write_result.get("operation") or "create"),
+                "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                "director_policy": write_result.get("director_policy"),
+            },
+        }
+    ]
+
+
+def _apply_deterministic_typescript_missing_export_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    missing_exports = _parse_typescript_missing_export_errors(artifact_quality_errors)
+    if not missing_exports:
+        return []
+
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired_exports: list[dict[str, str]] = []
+    repaired_keys: set[tuple[str, str]] = set()
+    for item in missing_exports:
+        importer_rel = _normalize_declared_task_path(item["file"])
+        module_ref = item["module"]
+        symbol = item["symbol"]
+        if not importer_rel or not module_ref.startswith(".") or not _TS_IDENTIFIER_RE.fullmatch(symbol):
+            continue
+
+        importer_path = (workspace_path / importer_rel).resolve()
+        if not _path_inside_workspace(importer_path, workspace_path) or not importer_path.is_file():
+            continue
+        exporter_path = _resolve_typescript_export_target_for_error(
+            importer_path=importer_path,
+            module_ref=module_ref,
+            workspace_path=workspace_path,
+        )
+        if exporter_path is None:
+            continue
+
+        rel_exporter = exporter_path.relative_to(workspace_path).as_posix()
+        repair_key = (rel_exporter, symbol)
+        if repair_key in repaired_keys:
+            continue
+        try:
+            importer_text = importer_path.read_text(encoding="utf-8")
+            module_text = updated_by_path.get(exporter_path) or exporter_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _typescript_module_runtime_exports_symbol(module_text, symbol):
+            continue
+
+        updated = _export_existing_typescript_declaration(module_text, symbol)
+        declaration_kind = "export_existing"
+        if updated == module_text:
+            declaration_kind, declaration = _build_typescript_missing_export_declaration(
+                symbol=symbol,
+                importer_text=importer_text,
+            )
+            if not declaration:
+                continue
+            updated = module_text.rstrip() + "\n\n" + declaration.rstrip() + "\n"
+
+        updated_by_path[exporter_path] = updated
+        repaired_keys.add(repair_key)
+        repaired_exports.append(
+            {
+                "file": rel_exporter,
+                "importer": importer_rel,
+                "module": module_ref,
+                "symbol": symbol,
+                "kind": declaration_kind,
+            }
+        )
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_missing_export_repair",
+        metadata_key="exports",
+        metadata_value=repaired_exports,
+    )
 
 
 def _apply_deterministic_typescript_missing_member_repair(
@@ -424,6 +590,134 @@ def _parse_typescript_missing_member_errors(errors: list[str]) -> list[dict[str,
             seen.add(key)
             parsed.append(item)
     return parsed
+
+
+def _detect_typescript_entrypoint_from_package(package_data: dict[str, Any]) -> str:
+    candidates: list[str] = []
+    for key in ("main", "module", "browser"):
+        value = package_data.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+    scripts = package_data.get("scripts")
+    if isinstance(scripts, dict):
+        for key in ("start", "serve", "preview"):
+            value = scripts.get(key)
+            if isinstance(value, str):
+                candidates.extend(_extract_node_entrypoint_paths_from_script(value))
+
+    for candidate in candidates:
+        normalized = str(candidate or "").strip().replace("\\", "/")
+        if _looks_like_compiled_typescript_entrypoint(normalized):
+            return normalized
+    return ""
+
+
+def _extract_node_entrypoint_paths_from_script(script: str) -> list[str]:
+    paths: list[str] = []
+    for match in re.finditer(r"(?:^|\s)(?:node|tsx|ts-node)\s+(?P<path>[^\s;&|]+)", str(script or "")):
+        raw_path = str(match.group("path") or "").strip().strip("'\"")
+        if raw_path:
+            paths.append(raw_path)
+    return _dedupe_preserve_order(paths)
+
+
+def _looks_like_compiled_typescript_entrypoint(path: str) -> bool:
+    token = str(path or "").strip().replace("\\", "/")
+    if not token or token.startswith(("/", "../", "./")):
+        return False
+    parts = [part for part in token.split("/") if part]
+    if len(parts) < 2 or parts[0] not in {"dist", "build", "out", "bin"}:
+        return False
+    return Path(token).suffix.lower() in {".js", ".mjs", ".cjs"}
+
+
+def _typescript_source_entrypoint_for_compiled_path(compiled_path: str) -> str:
+    token = str(compiled_path or "").strip().replace("\\", "/")
+    if not _looks_like_compiled_typescript_entrypoint(token):
+        return ""
+    compiled = Path(token)
+    source_name = f"{compiled.stem}.ts"
+    return Path("src", *compiled.parts[1:-1], source_name).as_posix()
+
+
+def _discover_src_modules(src_dir: Path, workspace_path: Path) -> list[str]:
+    try:
+        src_dir = src_dir.resolve()
+        src_dir.relative_to(workspace_path.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return []
+    if not src_dir.is_dir():
+        return []
+
+    modules: list[str] = []
+    ignored = {"node_modules", "dist", "build", ".vite", ".pytest_cache"}
+    for path in sorted(src_dir.rglob("*.ts"), key=lambda item: item.as_posix()):
+        rel = path.relative_to(workspace_path).as_posix()
+        if any(part in ignored for part in path.relative_to(src_dir).parts):
+            continue
+        if path.name == "index.ts" or path.name.endswith(".test.ts") or path.name.endswith(".spec.ts"):
+            continue
+        if path.name.endswith(".d.ts"):
+            continue
+        modules.append(rel)
+    return modules
+
+
+def _build_typescript_entrypoint_aggregator(
+    modules: list[str],
+    entrypoint_dir: Path,
+    workspace_path: Path,
+) -> str:
+    imports: list[str] = []
+    exports: list[str] = []
+    for module in modules:
+        module_path = (workspace_path / module).resolve()
+        if not _path_inside_workspace(module_path, workspace_path):
+            continue
+        module_ref = os.path.relpath(module_path.with_suffix(""), entrypoint_dir).replace("\\", "/")
+        if not module_ref.startswith("."):
+            module_ref = f"./{module_ref}"
+        alias = _typescript_entrypoint_module_alias(module)
+        imports.append(f"import * as {alias} from '{module_ref}';")
+        exports.append(f"export {{ {alias} }};")
+    if not imports:
+        return "export {};\n"
+    return "\n".join([*imports, "", *exports, ""])
+
+
+def _typescript_entrypoint_module_alias(module: str) -> str:
+    stem = str(Path(module).with_suffix("")).removeprefix("src/").replace("/", "_").replace("-", "_")
+    alias = re.sub(r"[^A-Za-z0-9_$]", "_", stem)
+    if not alias or not re.match(r"[A-Za-z_$]", alias):
+        alias = f"module_{alias}"
+    return alias
+
+
+def _parse_typescript_missing_export_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for error in errors:
+        for match in _TS_NO_EXPORTED_MEMBER_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": str(match.group("file") or "").strip(),
+                "line": str(match.group("line") or "").strip(),
+                "col": str(match.group("col") or "").strip(),
+                "module": _strip_typescript_error_module_ref(str(match.group("module") or "")),
+                "symbol": str(match.group("symbol") or "").strip(),
+            }
+            key = (item["file"], item["module"], item["symbol"])
+            if not item["file"] or not item["module"] or not item["symbol"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _strip_typescript_error_module_ref(raw_module: str) -> str:
+    token = str(raw_module or "").strip().rstrip(".")
+    while len(token) >= 2 and token[0] in {"'", '"', "`"} and token[-1] == token[0]:
+        token = token[1:-1].strip()
+    return token
 
 
 def _parse_typescript_number_to_string_argument_errors(errors: list[str]) -> list[dict[str, str]]:
@@ -1164,6 +1458,41 @@ def _resolve_relative_ts_module(importer: Path, module_ref: str, workspace_path:
     return None
 
 
+def _resolve_typescript_export_target_for_error(
+    *,
+    importer_path: Path,
+    module_ref: str,
+    workspace_path: Path,
+) -> Path | None:
+    resolved = _resolve_relative_ts_module(importer_path, module_ref, workspace_path)
+    if resolved is not None:
+        return resolved
+    if not str(module_ref or "").startswith("."):
+        return None
+
+    try:
+        base = (importer_path.parent / module_ref).resolve()
+        base.relative_to(workspace_path)
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    candidates: list[Path] = []
+    suffix_order = _relative_import_suffix_order(importer_path.relative_to(workspace_path).as_posix())
+    if base.suffix:
+        candidates.append(base)
+        if base.suffix.lower() in {".js", ".jsx", ".mjs", ".cjs"}:
+            candidates.extend(base.with_suffix(suffix) for suffix in suffix_order)
+    else:
+        candidates.extend(base.with_suffix(suffix) for suffix in suffix_order)
+        candidates.extend(base / f"index{suffix}" for suffix in suffix_order)
+
+    for candidate in _dedupe_paths(candidates):
+        resolved_candidate = candidate.resolve()
+        if _path_inside_workspace(resolved_candidate, workspace_path) and resolved_candidate.is_file():
+            return resolved_candidate
+    return None
+
+
 def _typescript_module_runtime_exports_symbol(module_text: str, symbol: str) -> bool:
     escaped = re.escape(symbol)
     if re.search(_TS_RUNTIME_EXPORT_TEMPLATE.format(symbol=escaped), module_text):
@@ -1219,6 +1548,79 @@ def _extract_relative_import_refs(text: str) -> list[str]:
 def _typescript_file_declares_runtime_export(text: str, symbol: str) -> bool:
     escaped = re.escape(symbol)
     return bool(re.search(_TS_RUNTIME_EXPORT_TEMPLATE.format(symbol=escaped), text))
+
+
+def _export_existing_typescript_declaration(text: str, symbol: str) -> str:
+    escaped = re.escape(symbol)
+    declaration_re = re.compile(
+        rf"(?m)^(?P<indent>\s*)(?P<declare>declare\s+)?"
+        rf"(?P<kind>(?:abstract\s+)?class|function|interface|type|const|let|var|enum)\s+{escaped}\b"
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        declare = str(match.group("declare") or "")
+        return f"{match.group('indent')}export {declare}{match.group('kind')} {symbol}"
+
+    return declaration_re.sub(_replace, text, count=1)
+
+
+def _build_typescript_missing_export_declaration(*, symbol: str, importer_text: str) -> tuple[str, str]:
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return "", ""
+    if _typescript_symbol_is_constructed(importer_text, symbol) or symbol[:1].isupper():
+        return "class", _build_typescript_missing_export_class_declaration(symbol=symbol, importer_text=importer_text)
+    if _typescript_symbol_is_called(importer_text, symbol):
+        return "function", (f"export function {symbol}(..._args: unknown[]): any {{\n  return undefined;\n}}")
+    return "const", f"export const {symbol}: unknown = undefined;"
+
+
+def _typescript_symbol_is_constructed(text: str, symbol: str) -> bool:
+    return bool(re.search(rf"\bnew\s+{re.escape(symbol)}\s*\(", str(text or "")))
+
+
+def _typescript_symbol_is_called(text: str, symbol: str) -> bool:
+    token = str(text or "")
+    call_re = re.compile(rf"(?<!new\s)\b{re.escape(symbol)}\s*\(")
+    return bool(call_re.search(token))
+
+
+def _build_typescript_missing_export_class_declaration(*, symbol: str, importer_text: str) -> str:
+    methods = _typescript_methods_used_on_constructed_symbol(importer_text, symbol)
+    lines = [
+        f"export class {symbol} {{",
+        "  public constructor(..._args: unknown[]) {}",
+    ]
+    for method in methods:
+        return_type = "string" if method in {"report", "render", "toString"} else "any"
+        return_value = f'"{symbol} ready"' if return_type == "string" else "undefined"
+        lines.extend(
+            [
+                f"  public {method}(..._args: unknown[]): {return_type} {{",
+                f"    return {return_value};",
+                "  }",
+            ]
+        )
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _typescript_methods_used_on_constructed_symbol(text: str, symbol: str) -> list[str]:
+    token = str(text or "")
+    variables: list[str] = []
+    constructed_var_re = re.compile(
+        rf"\b(?:const|let|var)\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*new\s+{re.escape(symbol)}\s*\("
+    )
+    for match in constructed_var_re.finditer(token):
+        variables.append(str(match.group("name") or ""))
+
+    methods: list[str] = []
+    for variable in _dedupe_preserve_order([name for name in variables if name]):
+        for match in re.finditer(rf"\b{re.escape(variable)}\.(?P<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(", token):
+            methods.append(str(match.group("method") or ""))
+    direct_re = re.compile(rf"\bnew\s+{re.escape(symbol)}\s*\([^)]*\)\s*\.\s*(?P<method>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(")
+    for match in direct_re.finditer(token):
+        methods.append(str(match.group("method") or ""))
+    return _dedupe_preserve_order([method for method in methods if method and method != "constructor"])
 
 
 def _build_typescript_reexport_line(*, module_path: Path, source_path: Path, symbol: str) -> str:

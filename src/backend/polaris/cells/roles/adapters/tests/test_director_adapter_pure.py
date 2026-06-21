@@ -333,9 +333,7 @@ def test_deterministic_typescript_missing_member_repair_adds_method_parameters_f
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "firefly.ts").write_text("export class Firefly {}\n", encoding="utf-8")
     (tmp_path / "src" / "garden.ts").write_text(
-        "import { Firefly } from './firefly.js';\n"
-        "const firefly = new Firefly();\n"
-        "firefly.update(0.5, 0.8);\n",
+        "import { Firefly } from './firefly.js';\nconst firefly = new Firefly();\nfirefly.update(0.5, 0.8);\n",
         encoding="utf-8",
     )
     errors = [
@@ -352,6 +350,86 @@ def test_deterministic_typescript_missing_member_repair_adds_method_parameters_f
     assert results
     repaired = (tmp_path / "src" / "firefly.ts").read_text(encoding="utf-8")
     assert "public update(_arg0: unknown, _arg1: unknown): number" in repaired
+
+
+def test_deterministic_typescript_missing_export_repair_adds_constructed_class(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_export_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text(
+        "import { GardenSimulator } from './product';\nconst garden = new GardenSimulator();\ngarden.report();\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "product.ts").write_text(
+        "export interface GardenState {\n"
+        "  flowers: number;\n"
+        "}\n"
+        "\n"
+        "export function createGardenState(): GardenState {\n"
+        "  return { flowers: 3 };\n"
+        "}\n"
+        "\n"
+        "export function gardenReport(state: GardenState): string {\n"
+        "  return `flowers=${state.flowers}`;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/main.ts(1,10): error TS2305: Module '\"./product\"' has no exported member 'GardenSimulator'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_export_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    assert results[0]["result"]["source_tool"] == "deterministic_typescript_missing_export_repair"
+    repaired = (tmp_path / "src" / "product.ts").read_text(encoding="utf-8")
+    assert "export class GardenSimulator" in repaired
+    assert "public constructor(..._args: unknown[]) {}" in repaired
+    assert "public report(..._args: unknown[]): string" in repaired
+
+
+def test_deterministic_materialization_repair_routes_typescript_missing_export(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text(
+        "import { GardenSimulator } from './product';\nnew GardenSimulator().report();\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "product.ts").write_text(
+        "export function gardenReport(): string {\n  return 'ok';\n}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/main.ts(1,10): error TS2305: Module '\"./product\"' has no exported member 'GardenSimulator'."
+    ]
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        _make_adapter(tmp_path),
+        task={"metadata": {"target_files": ["src/main.ts", "src/product.ts"]}},
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    assert "deterministic_typescript_missing_export_repair" in summary["source_tools"]
+    repaired = (tmp_path / "src" / "product.ts").read_text(encoding="utf-8")
+    assert "export class GardenSimulator" in repaired
+    assert "public report(..._args: unknown[]): string" in repaired
 
 
 def test_deterministic_typescript_number_to_string_argument_repair_wraps_argument(
@@ -392,15 +470,11 @@ def test_deterministic_typescript_too_few_arguments_repair_adds_trailing_default
 
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "firefly.ts").write_text(
-        "export class Firefly {\n"
-        "  update(deltaTime: number, moonPhase: number, temperature: number): void {}\n"
-        "}\n",
+        "export class Firefly {\n  update(deltaTime: number, moonPhase: number, temperature: number): void {}\n}\n",
         encoding="utf-8",
     )
     (tmp_path / "src" / "garden.ts").write_text(
-        "import { Firefly } from './firefly.js';\n"
-        "const firefly = new Firefly();\n"
-        "firefly.update(0.5, 0.8);\n",
+        "import { Firefly } from './firefly.js';\nconst firefly = new Firefly();\nfirefly.update(0.5, 0.8);\n",
         encoding="utf-8",
     )
     errors = [

@@ -17,6 +17,9 @@ from pathlib import Path
 import pytest
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
+    FactoryConfig,
+    FactoryRun,
+    FactoryRunStatus,
     OrchestrationStageExecutor,
 )
 from polaris.kernelone.storage import resolve_logical_path
@@ -410,6 +413,265 @@ class TestDirectorEvidenceStatics:
         assert OrchestrationStageExecutor._qa_report_has_warning({"warnings": ["w1", "w2"]}, "w2") is True
         assert OrchestrationStageExecutor._qa_report_has_warning({"warnings": "w1,w2"}, "w2") is True
         assert OrchestrationStageExecutor._qa_report_has_warning({"warnings": ["w1"]}, "w2") is False
+
+
+class _PartialFailureProgressExecutor(OrchestrationStageExecutor):
+    def __init__(self, workspace: Path) -> None:
+        super().__init__(workspace)
+        self.results = [
+            CommandResult(
+                run_id="director-round-1",
+                status="failed",
+                message="Director binding fanout: 2 bindings, 1 succeeded, 1 failed",
+                metadata={
+                    "binding_fanout": True,
+                    "per_binding": [
+                        {"provider_id": "p1", "model": "m1", "run_id": "r1", "status": "completed"},
+                        {"provider_id": "p2", "model": "m2", "run_id": "r2", "status": "timeout"},
+                    ],
+                },
+            ),
+            CommandResult(
+                run_id="director-round-2",
+                status="completed",
+                message="Run status: completed",
+                metadata={
+                    "binding_fanout": True,
+                    "per_binding": [
+                        {"provider_id": "p1", "model": "m1", "run_id": "r3", "status": "completed"},
+                        {"provider_id": "p2", "model": "m2", "run_id": "r4", "status": "completed"},
+                    ],
+                },
+            ),
+        ]
+        self.stats = [
+            {"total": 2, "pending": 2, "ready": 2, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
+            {"total": 2, "pending": 2, "ready": 2, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
+            {"total": 2, "pending": 1, "ready": 1, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 0},
+            {"total": 2, "pending": 1, "ready": 1, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 0},
+            {"total": 2, "pending": 0, "ready": 0, "in_progress": 0, "completed": 2, "failed": 0, "blocked": 0},
+            {"total": 2, "pending": 0, "ready": 0, "in_progress": 0, "completed": 2, "failed": 0, "blocked": 0},
+        ]
+
+    def _build_orchestration_service(self, context: dict) -> object:
+        del context
+        return object()
+
+    def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+        return [
+            {"provider_id": "p1", "model": "m1"},
+            {"provider_id": "p2", "model": "m2"},
+        ]
+
+    def _read_taskboard_stats(self) -> dict[str, int]:
+        if len(self.stats) > 1:
+            return dict(self.stats.pop(0))
+        return dict(self.stats[0])
+
+    async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
+        del kwargs
+        return self.results.pop(0)
+
+    def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+        del additional_events
+        return True, []
+
+
+class TestDirectorDispatchLoop:
+    @pytest.mark.asyncio
+    async def test_continues_after_partial_fanout_failure_when_taskboard_progresses(self, tmp_path: Path) -> None:
+        executor = _PartialFailureProgressExecutor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {"id": "TASK-1", "target_files": ["package.json"]},
+                    {"id": "TASK-2", "target_files": ["src/index.ts"]},
+                ]
+            },
+        )
+        run = FactoryRun(
+            id="factory-progress",
+            config=FactoryConfig(name="progress"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 3, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
+        )
+
+        assert result.status == "success"
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        assert len(payload["attempts"]) == 2
+        assert payload["taskboard"]["converged"] is True
+        codes = [item.get("code") for item in payload["signals"]]
+        assert "director.partial_failure_progress_continued" in codes
+        assert "director.run_status_non_success" not in codes
+
+    @pytest.mark.asyncio
+    async def test_fails_when_taskboard_not_converged_after_max_rounds(self, tmp_path: Path) -> None:
+        """第一轮有进展但最终未收敛仍失败。"""
+
+        class _NoConvergenceProgressExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.results = [
+                    CommandResult(
+                        run_id="director-round-1",
+                        status="completed",
+                        message="Run status: completed",
+                        metadata={
+                            "binding_fanout": True,
+                            "per_binding": [
+                                {"provider_id": "p1", "model": "m1", "run_id": "r1", "status": "completed"},
+                                {"provider_id": "p2", "model": "m2", "run_id": "r2", "status": "completed"},
+                            ],
+                        },
+                    ),
+                    CommandResult(
+                        run_id="director-round-2",
+                        status="completed",
+                        message="Run status: completed",
+                        metadata={
+                            "binding_fanout": True,
+                            "per_binding": [
+                                {"provider_id": "p1", "model": "m1", "run_id": "r3", "status": "completed"},
+                                {"provider_id": "p2", "model": "m2", "run_id": "r4", "status": "completed"},
+                            ],
+                        },
+                    ),
+                ]
+                # 第一轮后 pending 从 2 降到 1，第二轮后保持不变
+                self.stats = [
+                    {"total": 2, "pending": 2, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
+                    {"total": 2, "pending": 2, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
+                    {"total": 2, "pending": 1, "ready": 0, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 0},
+                    {"total": 2, "pending": 1, "ready": 0, "in_progress": 0, "completed": 1, "failed": 0, "blocked": 0},
+                ]
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                return object()
+
+            def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+                return [
+                    {"provider_id": "p1", "model": "m1"},
+                    {"provider_id": "p2", "model": "m2"},
+                ]
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return self.results.pop(0)
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        executor = _NoConvergenceProgressExecutor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {"id": "TASK-1", "target_files": ["package.json"]},
+                    {"id": "TASK-2", "target_files": ["src/index.ts"]},
+                ]
+            },
+        )
+        run = FactoryRun(
+            id="factory-no-convergence",
+            config=FactoryConfig(name="no-convergence"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 2, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
+        )
+
+        assert result.status == "failed"
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        assert len(payload["attempts"]) == 2
+        assert payload["taskboard"]["converged"] is False
+        codes = [item.get("code") for item in payload["signals"]]
+        assert "director.taskboard_not_converged" in codes
+        assert "director.run_status_non_success" not in codes
+
+    @pytest.mark.asyncio
+    async def test_timeout_produces_terminal_status_with_diagnostic(self, tmp_path: Path) -> None:
+        """超时应产生终端失败状态和明确的超时诊断信号。"""
+
+        class _MockService:
+            async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(run_id="run-1", status="timeout", message="Run timed out after 1 seconds")
+
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                del run_id
+                return CommandResult(run_id="run-1", status="timeout", message="Run timed out after 1 seconds")
+
+        class _TimeoutExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.stats = [
+                    {"total": 1, "pending": 1, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
+                    {"total": 1, "pending": 1, "ready": 0, "in_progress": 0, "completed": 0, "failed": 0, "blocked": 0},
+                ]
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                return _MockService()
+
+            def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+                return []
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(run_id="run-1", status="timeout", message="Run timed out after 1 seconds")
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        executor = _TimeoutExecutor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {"id": "TASK-1", "target_files": ["src/index.ts"]},
+                ]
+            },
+        )
+        run = FactoryRun(
+            id="factory-timeout",
+            config=FactoryConfig(name="timeout"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1},
+        )
+
+        assert result.status == "failed"
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        codes = [item.get("code") for item in payload["signals"]]
+        assert "director.dispatch_timeout" in codes
+        assert payload.get("error_code") == "director.dispatch_timeout"
+        assert "timed out" in (payload.get("root_cause_hint") or "").lower()
 
 
 class TestPmMetaDiagnostic:

@@ -39,6 +39,7 @@ from .javascript_repairs import (
 from .npm_repairs import (
     _apply_deterministic_npm_test_script_repair,
     _apply_deterministic_runtime_dependency_repair,
+    _apply_deterministic_typescript_scaffold_repair,
 )
 from .python_repairs import (
     _apply_deterministic_python_unittest_runtime_failure_repair,
@@ -48,7 +49,9 @@ from .typeorm_repairs import (
     _apply_deterministic_typeorm_model_normalization_repair,
 )
 from .typescript_repairs import (
+    _apply_deterministic_typescript_entrypoint_repair,
     _apply_deterministic_typescript_escaped_newline_repair,
+    _apply_deterministic_typescript_missing_export_repair,
     _apply_deterministic_typescript_missing_member_repair,
     _apply_deterministic_typescript_number_to_string_argument_repair,
     _apply_deterministic_typescript_relative_import_case_repair,
@@ -342,6 +345,13 @@ def _apply_deterministic_materialization_quality_repairs(
         )
     )
     results.extend(
+        _apply_deterministic_typescript_scaffold_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
         _apply_deterministic_typeorm_model_normalization_repair(
             adapter,
             task_id=task_id,
@@ -377,7 +387,21 @@ def _apply_deterministic_materialization_quality_repairs(
         )
     )
     results.extend(
+        _apply_deterministic_typescript_entrypoint_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
         _apply_deterministic_typescript_tsconfig_lib_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_typescript_missing_export_repair(
             adapter,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,

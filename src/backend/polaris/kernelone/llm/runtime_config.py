@@ -160,6 +160,7 @@ def set_role_binding_override(
     provider_id: str,
     model: str,
     binding_id: str | None = None,
+    fanout_locked: bool = False,
 ) -> None:
     """Bind ``role_id`` to a specific provider/model for this execution context."""
     role = _normalize_runtime_role_id(role_id)
@@ -171,6 +172,8 @@ def set_role_binding_override(
         bid = str(binding_id or "").strip()
         if bid:
             payload["binding_id"] = bid
+        if fanout_locked:
+            payload["_fanout_locked"] = "true"
         updated[role] = payload
     else:
         updated.pop(role, None)

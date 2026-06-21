@@ -1,0 +1,1646 @@
+"""Tests for Director multi-binding fanout execution.
+
+Verifies that all reachable Director bindings produce real LLM evidence
+through per-binding dispatch fanout.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+
+class TestResolveDirectorBindingFanout:
+    """Tests for _resolve_director_binding_fanout."""
+
+    def _make_executor(self, workspace: Any = None) -> Any:
+        from pathlib import Path
+
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
+        executor.workspace = Path(workspace) if workspace else Path(".")
+        return executor
+
+    def test_returns_empty_when_single_binding(self) -> None:
+        executor = self._make_executor()
+        slot = MagicMock()
+        slot.provider_id = "openai"
+        slot.model = "gpt-4"
+        slot.binding_id = "director:0:openai:gpt-4"
+        with patch(
+            "polaris.kernelone.llm.runtime_config.get_role_binding_slots",
+            return_value=[slot],
+        ):
+            result = executor._resolve_director_binding_fanout()
+        assert result == []
+
+    def test_returns_empty_when_slots_unavailable(self) -> None:
+        executor = self._make_executor()
+        with patch(
+            "polaris.kernelone.llm.runtime_config.get_role_binding_slots",
+            side_effect=RuntimeError("unavailable"),
+        ):
+            result = executor._resolve_director_binding_fanout()
+        assert result == []
+
+    def test_returns_bindings_for_multiple_reachable_providers(self) -> None:
+        executor = self._make_executor()
+        slots = []
+        for i, (pid, model) in enumerate([("openai", "gpt-4"), ("anthropic", "claude-3"), ("gemini", "gemini-pro")]):
+            slot = MagicMock()
+            slot.provider_id = pid
+            slot.model = model
+            slot.binding_id = f"director:{i}:{pid}:{model}"
+            slots.append(slot)
+
+        with (
+            patch(
+                "polaris.kernelone.llm.runtime_config.get_role_binding_slots",
+                return_value=slots,
+            ),
+            patch(
+                "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._reachable_provider_pool",
+                return_value=["openai", "anthropic", "gemini"],
+            ),
+        ):
+            result = executor._resolve_director_binding_fanout()
+
+        assert len(result) == 3
+        provider_ids = [b["provider_id"] for b in result]
+        assert "openai" in provider_ids
+        assert "anthropic" in provider_ids
+        assert "gemini" in provider_ids
+
+    def test_filters_unreachable_providers(self) -> None:
+        executor = self._make_executor()
+        slots = []
+        for i, (pid, model) in enumerate([("openai", "gpt-4"), ("anthropic", "claude-3"), ("offline", "local-7b")]):
+            slot = MagicMock()
+            slot.provider_id = pid
+            slot.model = model
+            slot.binding_id = f"director:{i}:{pid}:{model}"
+            slots.append(slot)
+
+        with (
+            patch(
+                "polaris.kernelone.llm.runtime_config.get_role_binding_slots",
+                return_value=slots,
+            ),
+            patch(
+                "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._reachable_provider_pool",
+                return_value=["openai", "anthropic"],
+            ),
+        ):
+            result = executor._resolve_director_binding_fanout()
+
+        assert len(result) == 2
+        provider_ids = [b["provider_id"] for b in result]
+        assert "offline" not in provider_ids
+
+    def test_deduplicates_same_provider_model(self) -> None:
+        executor = self._make_executor()
+        slots = []
+        for i in range(3):
+            slot = MagicMock()
+            slot.provider_id = "openai"
+            slot.model = "gpt-4"
+            slot.binding_id = f"director:{i}:openai:gpt-4"
+            slots.append(slot)
+
+        with (
+            patch(
+                "polaris.kernelone.llm.runtime_config.get_role_binding_slots",
+                return_value=slots,
+            ),
+            patch(
+                "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._reachable_provider_pool",
+                return_value=["openai"],
+            ),
+        ):
+            result = executor._resolve_director_binding_fanout()
+
+        assert result == []
+
+
+class TestExecuteDirectorBindingFanout:
+    """Tests for _execute_director_binding_fanout."""
+
+    def _make_executor(self) -> Any:
+        from pathlib import Path
+
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
+        executor.workspace = Path(".")
+        executor._binding_timeout_counts = {}
+        executor._quarantined_bindings = set()
+        return executor
+
+    @pytest.mark.asyncio
+    async def test_creates_per_binding_runs(self) -> None:
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+            {"provider_id": "gemini", "model": "gemini-pro", "binding_id": "b2"},
+        ]
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        call_count = 0
+        captured_options: list[dict[str, Any]] = []
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_count
+            call_count += 1
+            captured_options.append(dict(options))
+            return CommandResult(
+                run_id=f"run-{call_count}",
+                status="completed",
+                message="ok",
+            )
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=["task-1"],
+            base_options={"execution_mode": "parallel"},
+            bindings=bindings,
+        )
+
+        assert call_count == 3
+        assert result.status == "completed"
+        assert result.metadata is not None
+        assert result.metadata["binding_fanout"] is True
+        assert result.metadata["binding_count"] == 3
+        assert len(result.metadata["per_binding"]) == 3
+
+        for opts in captured_options:
+            assert "binding_override" in opts.get("metadata", {})
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_returns_failed_status(self) -> None:
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        call_idx = 0
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_idx
+            call_idx += 1
+            if call_idx == 1:
+                return CommandResult(run_id="run-1", status="completed", message="ok")
+            return CommandResult(run_id="run-2", status="failed", message="error")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "failed"
+
+    @pytest.mark.asyncio
+    async def test_all_failures_returns_failed(self) -> None:
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            return CommandResult(run_id="run-x", status="failed", message="error")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "failed"
+
+
+class TestBindingOverrideInWorkerThread:
+    """Tests for binding override application in _run_role_adapter_in_worker."""
+
+    def test_applies_binding_override(self) -> None:
+        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+            UnifiedOrchestrationService,
+        )
+
+        mock_adapter = MagicMock()
+        mock_adapter.execute = AsyncMock(return_value={"success": True})
+        binding_override = {
+            "provider_id": "test-provider",
+            "model": "test-model",
+            "binding_id": "test-binding",
+        }
+
+        with (
+            patch("polaris.kernelone.llm.runtime_config.set_role_binding_override") as mock_set,
+            patch("polaris.kernelone.llm.runtime_config.clear_role_provider_override") as mock_clear,
+        ):
+            UnifiedOrchestrationService._run_role_adapter_in_worker(
+                mock_adapter, "task-1", {"input": "test"}, {}, binding_override
+            )
+
+        mock_set.assert_called_once_with(
+            "director",
+            provider_id="test-provider",
+            model="test-model",
+            binding_id="test-binding",
+            fanout_locked=True,
+        )
+        mock_clear.assert_called_once_with("director")
+
+    def test_no_override_when_binding_is_none(self) -> None:
+        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+            UnifiedOrchestrationService,
+        )
+
+        mock_adapter = MagicMock()
+        mock_adapter.execute = AsyncMock(return_value={"success": True})
+
+        with patch("polaris.kernelone.llm.runtime_config.set_role_binding_override") as mock_set:
+            UnifiedOrchestrationService._run_role_adapter_in_worker(mock_adapter, "task-1", {"input": "test"}, {}, None)
+
+        mock_set.assert_not_called()
+
+
+class TestThreeReachableBindingsAllExecuted:
+    """Integration-style test: three reachable bindings all produce evidence."""
+
+    @pytest.mark.asyncio
+    async def test_three_bindings_three_runs(self) -> None:
+        from pathlib import Path
+
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
+        executor.workspace = Path(".")
+        executor._binding_timeout_counts = {}
+        executor._quarantined_bindings = set()
+
+        bindings = [{"provider_id": f"provider-{i}", "model": f"model-{i}", "binding_id": f"b{i}"} for i in range(3)]
+
+        run_counter = 0
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal run_counter
+            run_counter += 1
+            return CommandResult(
+                run_id=f"run-{run_counter}",
+                status="completed",
+                message="ok",
+            )
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=["task-1"],
+            base_options={"execution_mode": "parallel"},
+            bindings=bindings,
+        )
+
+        assert run_counter == 3
+        assert result.status == "completed"
+        assert result.metadata is not None
+        per_binding = result.metadata["per_binding"]
+        assert len(per_binding) == 3
+        for entry in per_binding:
+            assert entry["status"] == "completed"
+            assert entry["run_id"].startswith("run-")
+
+
+class TestOneExecutedTwoNotExecutedFails:
+    """Test that 1 executed + 2 not executed must FAIL."""
+
+    @pytest.mark.asyncio
+    async def test_partial_execution_is_failure(self) -> None:
+        from pathlib import Path
+
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
+        executor.workspace = Path(".")
+        executor._binding_timeout_counts = {}
+        executor._quarantined_bindings = set()
+
+        bindings = [{"provider_id": f"provider-{i}", "model": f"model-{i}", "binding_id": f"b{i}"} for i in range(3)]
+
+        call_count = 0
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return CommandResult(run_id="run-1", status="completed", message="ok")
+            return CommandResult(run_id=f"run-{call_count}", status="failed", message="timeout")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=["task-1"],
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert call_count == 3
+        assert result.status == "failed"
+        assert result.metadata is not None
+        failed_count = sum(1 for pb in result.metadata["per_binding"] if pb["status"] == "failed")
+        assert failed_count == 2
+
+
+class TestUnreachableProviderFailClosed:
+    """Test that unreachable providers are filtered out before fanout."""
+
+    def test_unreachable_provider_excluded_from_fanout(self) -> None:
+        from pathlib import Path
+
+        executor_any = MagicMock()
+        executor_any.workspace = Path(".")
+
+        slots = []
+        for pid, model in [("openai", "gpt-4"), ("dead-end", "local-7b")]:
+            slot = MagicMock()
+            slot.provider_id = pid
+            slot.model = model
+            slot.binding_id = f"director:0:{pid}:{model}"
+            slots.append(slot)
+
+        with (
+            patch(
+                "polaris.kernelone.llm.runtime_config.get_role_binding_slots",
+                return_value=slots,
+            ),
+            patch(
+                "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._reachable_provider_pool",
+                return_value=["openai"],
+            ),
+        ):
+            from polaris.cells.factory.pipeline.internal.factory_run_service import (
+                OrchestrationStageExecutor,
+            )
+
+            executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
+            executor.workspace = Path(".")
+            executor._binding_timeout_counts = {}
+            executor._quarantined_bindings = set()
+            result = executor._resolve_director_binding_fanout()
+
+        assert len(result) == 0
+        for b in result:
+            assert b["provider_id"] != "dead-end"
+
+
+class TestFanoutWaitForAllRuns:
+    """Verify fanout waits for every submitted run before returning."""
+
+    def _make_executor(self) -> Any:
+        from pathlib import Path
+
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
+        executor.workspace = Path(".")
+        executor._binding_timeout_counts = {}
+        executor._quarantined_bindings = set()
+        return executor
+
+    @pytest.mark.asyncio
+    async def test_all_terminal_submissions_skip_wait(self) -> None:
+        """Runs already terminal at submission time should not block."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            return CommandResult(run_id="run-1", status="completed", message="ok")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        with patch.object(executor, "_wait_run_completion", new_callable=AsyncMock) as mock_wait:
+            result = await executor._execute_director_binding_fanout(
+                service=mock_service,
+                workspace=".",
+                tasks=None,
+                base_options={},
+                bindings=bindings,
+            )
+            mock_wait.assert_not_called()
+
+        assert result.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_non_terminal_runs_waited_individually(self) -> None:
+        """Non-terminal runs should be waited via _wait_run_completion."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+            {"provider_id": "gemini", "model": "gemini-pro", "binding_id": "b2"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        call_count = 0
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_count
+            call_count += 1
+            return CommandResult(run_id=f"run-{call_count}", status="pending", message="submitted")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        wait_count = 0
+
+        async def mock_wait(
+            service: Any,
+            initial: Any,
+            timeout_seconds: int = 300,
+            *,
+            cancel_event: Any = None,
+            abort_checker: Any = None,
+        ) -> CommandResult:
+            nonlocal wait_count
+            wait_count += 1
+            return CommandResult(
+                run_id=initial.run_id,
+                status="completed",
+                message="done",
+            )
+
+        executor._wait_run_completion = mock_wait  # type: ignore[assignment]
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert wait_count == 3
+        assert result.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_one_cancelled_rest_completed_yields_failed(self) -> None:
+        """If any run is cancelled, merged status must be failed."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        call_count = 0
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_count
+            call_count += 1
+            return CommandResult(run_id=f"run-{call_count}", status="pending", message="submitted")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        async def mock_wait(
+            service: Any,
+            initial: Any,
+            timeout_seconds: int = 300,
+            *,
+            cancel_event: Any = None,
+            abort_checker: Any = None,
+        ) -> CommandResult:
+            if initial.run_id == "run-1":
+                return CommandResult(run_id="run-1", status="completed", message="ok")
+            return CommandResult(run_id="run-2", status="cancelled", message="factory_cancelled")
+
+        executor._wait_run_completion = mock_wait  # type: ignore[assignment]
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "failed"
+
+
+class TestFanoutBindingMetadata:
+    """Verify per_binding metadata includes all required fields."""
+
+    def _make_executor(self) -> Any:
+        from pathlib import Path
+
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
+        executor.workspace = Path(".")
+        executor._binding_timeout_counts = {}
+        executor._quarantined_bindings = set()
+        return executor
+
+    @pytest.mark.asyncio
+    async def test_per_binding_has_all_required_fields(self) -> None:
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+            {"provider_id": "gemini", "model": "gemini-pro", "binding_id": "b2"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        call_count = 0
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_count
+            call_count += 1
+            return CommandResult(
+                run_id=f"run-{call_count}",
+                status="completed",
+                message=f"ok-{call_count}",
+            )
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=["task-1"],
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.metadata is not None
+        per_binding = result.metadata["per_binding"]
+        assert len(per_binding) == 3
+
+        required_keys = {"provider_id", "model", "binding_id", "run_id", "status", "message"}
+        for idx, entry in enumerate(per_binding):
+            assert required_keys.issubset(entry.keys()), f"Missing keys in per_binding[{idx}]"
+            assert entry["provider_id"] == bindings[idx]["provider_id"]
+            assert entry["model"] == bindings[idx]["model"]
+            assert entry["binding_id"] == bindings[idx]["binding_id"]
+            assert entry["run_id"] == f"run-{idx + 1}"
+            assert entry["status"] == "completed"
+            assert entry["message"] == f"ok-{idx + 1}"
+
+    @pytest.mark.asyncio
+    async def test_per_binding_records_failure_details(self) -> None:
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        call_idx = 0
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_idx
+            call_idx += 1
+            if call_idx == 1:
+                return CommandResult(run_id="run-1", status="completed", message="ok")
+            return CommandResult(run_id="run-2", status="failed", message="provider_timeout")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "failed"
+        assert result.metadata is not None
+        per_binding = result.metadata["per_binding"]
+        assert per_binding[0]["status"] == "completed"
+        assert per_binding[1]["status"] == "failed"
+        assert per_binding[1]["message"] == "provider_timeout"
+
+
+class TestBindingCoverageValidation:
+    """Tests for _validate_director_binding_coverage gate."""
+
+    def _make_executor(self) -> Any:
+        from pathlib import Path
+
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
+        executor.workspace = Path(".")
+        return executor
+
+    def test_all_bindings_covered_returns_ok(self) -> None:
+        executor = self._make_executor()
+
+        with (
+            patch(
+                "polaris.cells.factory.pipeline.internal.bench_gates.resolve_expected_llm_bindings",
+                return_value={"director": ["openai:gpt-4", "anthropic:claude-3"]},
+            ),
+            patch(
+                "polaris.cells.factory.pipeline.internal.bench_gates.collect_llm_events",
+                return_value=[
+                    MagicMock(provider="openai", model="gpt-4"),
+                    MagicMock(provider="anthropic", model="claude-3"),
+                ],
+            ),
+            patch(
+                "polaris.cells.factory.pipeline.internal.bench_gates.build_llm_route_audit",
+                return_value={"ok": True},
+            ),
+        ):
+            ok, signals = executor._validate_director_binding_coverage()
+
+        assert ok is True
+        assert signals == []
+
+    def test_missing_binding_returns_failure(self) -> None:
+        executor = self._make_executor()
+
+        with (
+            patch(
+                "polaris.cells.factory.pipeline.internal.bench_gates.resolve_expected_llm_bindings",
+                return_value={"director": ["openai:gpt-4", "anthropic:claude-3", "gemini:gemini-pro"]},
+            ),
+            patch(
+                "polaris.cells.factory.pipeline.internal.bench_gates.collect_llm_events",
+                return_value=[MagicMock(provider="openai", model="gpt-4")],
+            ),
+            patch(
+                "polaris.cells.factory.pipeline.internal.bench_gates.build_llm_route_audit",
+                return_value={
+                    "ok": False,
+                    "roles": {
+                        "director": {
+                            "missing_bindings": ["anthropic:claude-3", "gemini:gemini-pro"],
+                            "observed_count": 1,
+                            "fail_closed_count": 0,
+                        }
+                    },
+                },
+            ),
+        ):
+            ok, signals = executor._validate_director_binding_coverage()
+
+        assert ok is False
+        assert len(signals) == 1
+        assert signals[0]["code"] == "director.binding_coverage_incomplete"
+        assert "anthropic:claude-3" in signals[0]["missing_bindings"]
+        assert "gemini:gemini-pro" in signals[0]["missing_bindings"]
+
+    def test_no_evidence_at_all_returns_failure(self) -> None:
+        executor = self._make_executor()
+
+        with (
+            patch(
+                "polaris.cells.factory.pipeline.internal.bench_gates.resolve_expected_llm_bindings",
+                return_value={"director": ["openai:gpt-4"]},
+            ),
+            patch(
+                "polaris.cells.factory.pipeline.internal.bench_gates.collect_llm_events",
+                return_value=[],
+            ),
+            patch(
+                "polaris.cells.factory.pipeline.internal.bench_gates.build_llm_route_audit",
+                return_value={
+                    "ok": False,
+                    "roles": {"director": {"missing_bindings": [], "observed_count": 0, "fail_closed_count": 0}},
+                },
+            ),
+        ):
+            ok, signals = executor._validate_director_binding_coverage()
+
+        assert ok is False
+        assert signals[0]["code"] == "director.no_real_llm_evidence"
+
+    def test_no_configured_bindings_skips_gate(self) -> None:
+        executor = self._make_executor()
+
+        with patch(
+            "polaris.cells.factory.pipeline.internal.bench_gates.resolve_expected_llm_bindings",
+            return_value={"director": []},
+        ):
+            ok, signals = executor._validate_director_binding_coverage()
+
+        assert ok is True
+        assert signals == []
+
+
+class TestFanoutPartialFailureNotCompleted:
+    """Behavioral test: fanout with partial/failed child must NOT be overall completed."""
+
+    def _make_executor(self) -> Any:
+        from pathlib import Path
+
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
+        executor.workspace = Path(".")
+        executor._binding_timeout_counts = {}
+        executor._quarantined_bindings = set()
+        return executor
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_must_not_be_completed(self) -> None:
+        """When 1 of 3 bindings fails, merged status must be 'failed', not 'completed'."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+            {"provider_id": "gemini", "model": "gemini-pro", "binding_id": "b2"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        call_count = 0
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                return CommandResult(run_id=f"run-{call_count}", status="completed", message="ok")
+            return CommandResult(run_id="run-3", status="failed", message="provider_timeout")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=["task-1"],
+            base_options={"execution_mode": "parallel"},
+            bindings=bindings,
+        )
+
+        # Critical: partial failure must NOT yield 'completed'
+        assert result.status == "failed"
+        assert result.status != "completed"
+
+        # Verify per-binding metadata
+        assert result.metadata is not None
+        per_binding = result.metadata["per_binding"]
+        assert len(per_binding) == 3
+
+        # Count successes and failures
+        success_count = sum(1 for pb in per_binding if pb["status"] in {"completed", "success"})
+        fail_count = sum(1 for pb in per_binding if pb["status"] not in {"completed", "success"})
+        assert success_count == 2
+        assert fail_count == 1
+
+    @pytest.mark.asyncio
+    async def test_single_failure_must_not_be_completed(self) -> None:
+        """When 1 of 2 bindings fails, merged status must be 'failed'."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            return CommandResult(run_id="run-1", status="completed", message="ok")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        # Override one binding to fail
+        call_count = 0
+
+        async def failing_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return CommandResult(run_id="run-1", status="completed", message="ok")
+            return CommandResult(run_id="run-2", status="failed", message="error")
+
+        mock_service.execute_director_run = AsyncMock(side_effect=failing_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        # Must be failed, not completed
+        assert result.status == "failed"
+        assert result.status != "completed"
+
+    @pytest.mark.asyncio
+    async def test_all_success_yields_completed(self) -> None:
+        """When all bindings succeed, merged status must be 'completed'."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            return CommandResult(run_id="run-1", status="completed", message="ok")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        # All success must yield completed
+        assert result.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_exception_in_binding_must_not_be_completed(self) -> None:
+        """When one binding raises exception, merged status must be 'failed'."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        call_count = 0
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return CommandResult(run_id="run-1", status="completed", message="ok")
+            raise RuntimeError("Connection timeout")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        # Exception must yield failed
+        assert result.status == "failed"
+        assert result.status != "completed"
+
+
+class TestRunRoleAdapterInWorkerFanoutLock:
+    """Tests that _run_role_adapter_in_worker sets _fanout_locked marker."""
+
+    @pytest.mark.asyncio
+    async def test_binding_override_sets_fanout_locked_marker(self) -> None:
+        """When binding_override is provided, _fanout_locked must be True."""
+
+        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+            UnifiedOrchestrationService,
+        )
+        from polaris.kernelone.llm.runtime_config import (
+            get_role_binding_override,
+        )
+
+        captured_overrides: dict[str, Any] = {}
+
+        class _StubAdapter:
+            async def execute(self, task_id: str, input_data: Any, context: Any) -> dict[str, Any]:
+                # Capture the binding override state inside the worker
+                binding = get_role_binding_override("director")
+                captured_overrides["binding"] = dict(binding) if binding else None
+                captured_overrides["fanout_locked"] = (binding or {}).get("_fanout_locked", "")
+                return {"status": "ok"}
+
+        adapter = _StubAdapter()
+        binding_override = {
+            "provider_id": "openai",
+            "model": "gpt-4",
+            "binding_id": "director:0:openai:gpt-4",
+        }
+
+        # _run_role_adapter_in_worker uses asyncio.run() internally,
+        # which cannot be called from a running event loop. Run in a thread.
+        def _run_in_thread() -> dict[str, Any]:
+            return UnifiedOrchestrationService._run_role_adapter_in_worker(
+                adapter=adapter,
+                task_id="test-task",
+                input_data={},
+                context={},
+                binding_override=binding_override,
+            )
+
+        result = await asyncio.to_thread(_run_in_thread)
+        assert result == {"status": "ok"}
+        assert captured_overrides["fanout_locked"] == "true"
+        assert captured_overrides["binding"]["provider_id"] == "openai"
+        assert captured_overrides["binding"]["model"] == "gpt-4"
+
+    @pytest.mark.asyncio
+    async def test_no_binding_override_no_fanout_locked(self) -> None:
+        """When binding_override is None, no _fanout_locked marker should be set."""
+        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+            UnifiedOrchestrationService,
+        )
+        from polaris.kernelone.llm.runtime_config import (
+            get_role_binding_override,
+        )
+
+        captured_overrides: dict[str, Any] = {}
+
+        class _StubAdapter:
+            async def execute(self, task_id: str, input_data: Any, context: Any) -> dict[str, Any]:
+                binding = get_role_binding_override("director")
+                captured_overrides["binding"] = dict(binding) if binding else None
+                return {"status": "ok"}
+
+        adapter = _StubAdapter()
+
+        def _run_in_thread() -> dict[str, Any]:
+            return UnifiedOrchestrationService._run_role_adapter_in_worker(
+                adapter=adapter,
+                task_id="test-task",
+                input_data={},
+                context={},
+                binding_override=None,
+            )
+
+        result = await asyncio.to_thread(_run_in_thread)
+        assert result == {"status": "ok"}
+        assert captured_overrides["binding"] is None
+
+
+class TestThreeWayMockBindingPropagation:
+    """Verify that each Director fanout binding produces its own terminal LLM evidence.
+
+    Tests the full propagation chain: factory fanout -> worker thread -> contextvar
+    -> LLMInvoker -> profile provider/model application.
+    """
+
+    @pytest.mark.asyncio
+    async def test_three_bindings_invoke_three_distinct_provider_models(self) -> None:
+        """Each binding must result in a distinct provider/model being passed to the LLM invoker."""
+        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+            UnifiedOrchestrationService,
+        )
+        from polaris.kernelone.llm.runtime_config import (
+            get_role_binding_override,
+        )
+
+        bindings = [
+            {"provider_id": "openai_compat-1781448928833", "model": "qwen3.6-27b-gpu1", "binding_id": "b-gpu1"},
+            {"provider_id": "openai_compat-1781448928834", "model": "qwen3.6-27b-gpu0", "binding_id": "b-gpu0"},
+            {"provider_id": "openai_compat-1781448928835", "model": "qwen3.6-27b-int4", "binding_id": "b-int4"},
+        ]
+
+        captured_invocations: list[dict[str, str]] = []
+
+        class _RecordingAdapter:
+            async def execute(self, task_id: str, input_data: Any, context: Any) -> dict[str, Any]:
+                binding = get_role_binding_override("director")
+                if binding:
+                    captured_invocations.append(
+                        {
+                            "provider_id": binding.get("provider_id", ""),
+                            "model": binding.get("model", ""),
+                            "binding_id": binding.get("binding_id", ""),
+                            "fanout_locked": binding.get("_fanout_locked", ""),
+                        }
+                    )
+                return {"success": True, "provider": binding.get("provider_id") if binding else None}
+
+        for binding in bindings:
+
+            def _run_in_thread(b: dict[str, str] = binding) -> dict[str, Any]:
+                return UnifiedOrchestrationService._run_role_adapter_in_worker(
+                    adapter=_RecordingAdapter(),
+                    task_id=f"task-{b['binding_id']}",
+                    input_data={},
+                    context={},
+                    binding_override=b,
+                )
+
+            await asyncio.to_thread(_run_in_thread)
+
+        # All 3 bindings must have been captured
+        assert len(captured_invocations) == 3
+
+        # Each invocation must have distinct provider_id
+        provider_ids = [inv["provider_id"] for inv in captured_invocations]
+        assert len(set(provider_ids)) == 3, f"Expected 3 distinct providers, got: {provider_ids}"
+
+        # Each invocation must have distinct model
+        models = [inv["model"] for inv in captured_invocations]
+        assert len(set(models)) == 3, f"Expected 3 distinct models, got: {models}"
+
+        # Each invocation must be fanout_locked
+        for inv in captured_invocations:
+            assert inv["fanout_locked"] == "true", f"Expected fanout_locked=true, got: {inv['fanout_locked']}"
+
+        # Verify specific bindings
+        assert captured_invocations[0]["provider_id"] == "openai_compat-1781448928833"
+        assert captured_invocations[0]["model"] == "qwen3.6-27b-gpu1"
+        assert captured_invocations[1]["provider_id"] == "openai_compat-1781448928834"
+        assert captured_invocations[1]["model"] == "qwen3.6-27b-gpu0"
+        assert captured_invocations[2]["provider_id"] == "openai_compat-1781448928835"
+        assert captured_invocations[2]["model"] == "qwen3.6-27b-int4"
+
+    def test_profile_for_healthy_binding_applies_override(self) -> None:
+        """_profile_for_healthy_binding must apply binding override provider/model to profile."""
+        from types import SimpleNamespace
+
+        from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+        from polaris.kernelone.llm.runtime_config import set_role_binding_override
+
+        profile = SimpleNamespace(
+            role_id="director",
+            provider_id="original_provider",
+            model="original_model",
+        )
+
+        # Set binding override
+        set_role_binding_override(
+            "director",
+            provider_id="openai_compat-1781448928833",
+            model="qwen3.6-27b-gpu1",
+            binding_id="b-gpu1",
+            fanout_locked=True,
+        )
+
+        result = LLMInvoker._profile_for_healthy_binding("director", profile)
+
+        # Profile must have the overridden provider/model
+        assert result.provider_id == "openai_compat-1781448928833"
+        assert result.model == "qwen3.6-27b-gpu1"
+
+    def test_profile_for_healthy_binding_applies_all_three_bindings(self) -> None:
+        """Each of the 3 bindings must be correctly applied to the profile."""
+        from types import SimpleNamespace
+
+        from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+        from polaris.kernelone.llm.runtime_config import set_role_binding_override
+
+        bindings = [
+            ("openai_compat-1781448928833", "qwen3.6-27b-gpu1", "b-gpu1"),
+            ("openai_compat-1781448928834", "qwen3.6-27b-gpu0", "b-gpu0"),
+            ("openai_compat-1781448928835", "qwen3.6-27b-int4", "b-int4"),
+        ]
+
+        for provider_id, model, binding_id in bindings:
+            profile = SimpleNamespace(
+                role_id="director",
+                provider_id="original_provider",
+                model="original_model",
+            )
+
+            set_role_binding_override(
+                "director",
+                provider_id=provider_id,
+                model=model,
+                binding_id=binding_id,
+                fanout_locked=True,
+            )
+
+            result = LLMInvoker._profile_for_healthy_binding("director", profile)
+
+            assert result.provider_id == provider_id, f"Expected {provider_id}, got {result.provider_id}"
+            assert result.model == model, f"Expected {model}, got {result.model}"
+
+    def test_missing_binding_fails_closed(self) -> None:
+        """When a binding is missing/unreachable, the call must fail-closed."""
+        from types import SimpleNamespace
+
+        from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
+        from polaris.kernelone.llm.runtime_config import mark_role_binding_unhealthy, set_role_binding_override
+
+        profile = SimpleNamespace(
+            role_id="director",
+            provider_id="original_provider",
+            model="original_model",
+        )
+
+        # Set binding override for gpu0
+        set_role_binding_override(
+            "director",
+            provider_id="openai_compat-1781448928834",
+            model="qwen3.6-27b-gpu0",
+            binding_id="b-gpu0",
+            fanout_locked=True,
+        )
+
+        # Mark gpu0 as unhealthy
+        mark_role_binding_unhealthy(
+            "director",
+            provider_id="openai_compat-1781448928834",
+            model="qwen3.6-27b-gpu0",
+            binding_id="b-gpu0",
+        )
+
+        # _profile_for_healthy_binding should still return the override profile
+        # (fail-closed, not fallback to another binding)
+        result = LLMInvoker._profile_for_healthy_binding("director", profile)
+        assert result.provider_id == "openai_compat-1781448928834"
+        assert result.model == "qwen3.6-27b-gpu0"
+
+    @pytest.mark.asyncio
+    async def test_three_bindings_route_audit_passes(self) -> None:
+        """Route audit must pass when all 3 bindings produce terminal evidence."""
+        from polaris.cells.factory.pipeline.internal.bench_gates import build_llm_route_audit
+
+        # Simulate 3 terminal LLM events, one per binding
+        events = [
+            {
+                "event": "llm_call_end",
+                "role": "director",
+                "provider_id": "openai_compat-1781448928833",
+                "model": "qwen3.6-27b-gpu1",
+                "binding_id": "b-gpu1",
+                "terminal": True,
+                "invocation": True,
+                "source": "llm",
+            },
+            {
+                "event": "llm_call_end",
+                "role": "director",
+                "provider_id": "openai_compat-1781448928834",
+                "model": "qwen3.6-27b-gpu0",
+                "binding_id": "b-gpu0",
+                "terminal": True,
+                "invocation": True,
+                "source": "llm",
+            },
+            {
+                "event": "llm_call_end",
+                "role": "director",
+                "provider_id": "openai_compat-1781448928835",
+                "model": "qwen3.6-27b-int4",
+                "binding_id": "b-int4",
+                "terminal": True,
+                "invocation": True,
+                "source": "llm",
+            },
+        ]
+
+        expected_bindings = {
+            "director": [
+                {"provider_id": "openai_compat-1781448928833", "model": "qwen3.6-27b-gpu1", "binding_id": "b-gpu1"},
+                {"provider_id": "openai_compat-1781448928834", "model": "qwen3.6-27b-gpu0", "binding_id": "b-gpu0"},
+                {"provider_id": "openai_compat-1781448928835", "model": "qwen3.6-27b-int4", "binding_id": "b-int4"},
+            ]
+        }
+
+        # Only check director role (other roles have no events)
+        audit = build_llm_route_audit(
+            events,
+            expected_bindings=expected_bindings,
+            required_roles=("director",),
+        )
+
+        assert audit["ok"] is True, f"Route audit failed: {audit.get('summary')}"
+        director_result = audit["roles"]["director"]
+        assert director_result["ok"] is True
+        assert director_result["observed_count"] == 3
+        assert len(director_result["missing_bindings"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_missing_one_binding_route_audit_fails(self) -> None:
+        """Route audit must fail when one binding is missing."""
+        from polaris.cells.factory.pipeline.internal.bench_gates import build_llm_route_audit
+
+        # Only 2 events (missing int4)
+        events = [
+            {
+                "event": "llm_call_end",
+                "role": "director",
+                "provider_id": "openai_compat-1781448928833",
+                "model": "qwen3.6-27b-gpu1",
+                "binding_id": "b-gpu1",
+                "terminal": True,
+                "invocation": True,
+                "source": "llm",
+            },
+            {
+                "event": "llm_call_end",
+                "role": "director",
+                "provider_id": "openai_compat-1781448928834",
+                "model": "qwen3.6-27b-gpu0",
+                "binding_id": "b-gpu0",
+                "terminal": True,
+                "invocation": True,
+                "source": "llm",
+            },
+        ]
+
+        expected_bindings = {
+            "director": [
+                {"provider_id": "openai_compat-1781448928833", "model": "qwen3.6-27b-gpu1", "binding_id": "b-gpu1"},
+                {"provider_id": "openai_compat-1781448928834", "model": "qwen3.6-27b-gpu0", "binding_id": "b-gpu0"},
+                {"provider_id": "openai_compat-1781448928835", "model": "qwen3.6-27b-int4", "binding_id": "b-int4"},
+            ]
+        }
+
+        # Only check director role
+        audit = build_llm_route_audit(
+            events,
+            expected_bindings=expected_bindings,
+            required_roles=("director",),
+        )
+
+        assert audit["ok"] is False, "Route audit should fail when int4 binding is missing"
+        director_result = audit["roles"]["director"]
+        assert director_result["ok"] is False
+        assert len(director_result["missing_bindings"]) > 0
+
+
+class TestBindingTimeoutQuarantine:
+    """Tests for timeout binding quarantine strategy."""
+
+    def _make_executor(self) -> Any:
+        from pathlib import Path
+
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        executor = OrchestrationStageExecutor.__new__(OrchestrationStageExecutor)
+        executor.workspace = Path(".")
+        executor._binding_timeout_counts = {}
+        executor._quarantined_bindings = set()
+        return executor
+
+    @pytest.mark.asyncio
+    async def test_first_timeout_does_not_quarantine(self) -> None:
+        """First timeout should not quarantine the binding."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        call_count = 0
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return CommandResult(run_id="run-1", status="timeout", message="timed out")
+            return CommandResult(run_id="run-2", status="completed", message="ok")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "failed"
+        assert "openai:gpt-4:b0" not in executor._quarantined_bindings
+        assert executor._binding_timeout_counts.get("openai:gpt-4:b0", 0) == 1
+
+    @pytest.mark.asyncio
+    async def test_second_timeout_quarantines_binding(self) -> None:
+        """Second consecutive timeout should quarantine the binding."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        executor._binding_timeout_counts["openai:gpt-4:b0"] = 1
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            return CommandResult(run_id="run-1", status="timeout", message="timed out")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "failed"
+        assert "openai:gpt-4:b0" in executor._quarantined_bindings
+
+    @pytest.mark.asyncio
+    async def test_quarantined_binding_skipped_in_subsequent_rounds(self) -> None:
+        """Quarantined bindings should be skipped in subsequent rounds."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        executor._quarantined_bindings.add("openai:gpt-4:b0")
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            return CommandResult(run_id="run-1", status="completed", message="ok")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "completed"
+        assert mock_service.execute_director_run.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_all_quarantined_bindings_fail_closed(self) -> None:
+        """Fanout must not report completion when every binding is quarantined."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        for binding in bindings:
+            key = f"{binding['provider_id']}:{binding['model']}:{binding['binding_id']}"
+            executor._quarantined_bindings.add(key)
+            executor._binding_timeout_counts[key] = 2
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock()
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "failed"
+        assert mock_service.execute_director_run.call_count == 0
+        assert result.metadata is not None
+        assert result.metadata["active_binding_count"] == 0
+        assert result.metadata["quarantined_binding_count"] == 2
+        assert len(result.metadata["per_binding"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_quarantined_binding_appears_in_per_binding_metadata(self) -> None:
+        """Quarantined bindings should appear in per_binding metadata with quarantine status."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        executor._quarantined_bindings.add("openai:gpt-4:b0")
+        executor._binding_timeout_counts["openai:gpt-4:b0"] = 2
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            return CommandResult(run_id="run-1", status="completed", message="ok")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.metadata is not None
+        per_binding = result.metadata["per_binding"]
+        assert len(per_binding) == 2
+
+        quarantined_entry = next(e for e in per_binding if e["status"] == "quarantined")
+        assert quarantined_entry["provider_id"] == "openai"
+        assert quarantined_entry["model"] == "gpt-4"
+        assert quarantined_entry["quarantined"] is True
+        assert quarantined_entry["quarantine_reason"] == "consecutive_timeout"
+        assert quarantined_entry["timeout_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_timeout_count_resets_on_success(self) -> None:
+        """Timeout count should reset when binding succeeds."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        executor._binding_timeout_counts["openai:gpt-4:b0"] = 1
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            return CommandResult(run_id="run-1", status="completed", message="ok")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "completed"
+        assert executor._binding_timeout_counts.get("openai:gpt-4:b0", 0) == 0
+        assert "openai:gpt-4:b0" not in executor._quarantined_bindings
+
+    @pytest.mark.asyncio
+    async def test_route_events_include_timeout_signal(self) -> None:
+        """Route events should include timeout count for timed-out bindings."""
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        per_binding = [
+            {
+                "provider_id": "openai",
+                "model": "gpt-4",
+                "binding_id": "b0",
+                "run_id": "run-1",
+                "status": "timeout",
+                "message": "timed out",
+                "timeout_count": 1,
+            },
+            {
+                "provider_id": "anthropic",
+                "model": "claude-3",
+                "binding_id": "b1",
+                "run_id": "run-2",
+                "status": "completed",
+                "message": "ok",
+            },
+        ]
+
+        events = OrchestrationStageExecutor._build_per_binding_route_events(per_binding)
+
+        assert len(events) == 2
+        timeout_event = events[0]
+        assert timeout_event["status"] == "timeout"
+        assert timeout_event["timeout_count"] == 1
+        assert "quarantined" not in timeout_event
+
+        completed_event = events[1]
+        assert completed_event["status"] == "completed"
+        assert "timeout_count" not in completed_event
+
+    @pytest.mark.asyncio
+    async def test_route_events_include_quarantine_signal(self) -> None:
+        """Route events should include quarantine signal for quarantined bindings."""
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        per_binding = [
+            {
+                "provider_id": "openai",
+                "model": "gpt-4",
+                "binding_id": "b0",
+                "run_id": "",
+                "status": "quarantined",
+                "message": "Skipped due to consecutive timeouts",
+                "quarantined": True,
+                "quarantine_reason": "consecutive_timeout",
+                "timeout_count": 2,
+            },
+        ]
+
+        events = OrchestrationStageExecutor._build_per_binding_route_events(per_binding)
+
+        assert len(events) == 1
+        event = events[0]
+        assert event["status"] == "quarantined"
+        assert event["quarantined"] is True
+        assert event["quarantine_reason"] == "consecutive_timeout"
+        assert event["timeout_count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_consecutive_timeouts_do_not_block_other_bindings(self) -> None:
+        """Consecutive timeouts on one binding should not block other bindings."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+            {"provider_id": "gemini", "model": "gemini-pro", "binding_id": "b2"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        call_count = 0
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return CommandResult(run_id="run-1", status="timeout", message="timed out")
+            return CommandResult(run_id=f"run-{call_count}", status="completed", message="ok")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "failed"
+        assert call_count == 3
+
+        assert result.metadata is not None
+        per_binding = result.metadata["per_binding"]
+        assert len(per_binding) == 3
+
+        statuses = [e["status"] for e in per_binding]
+        assert "timeout" in statuses
+        assert statuses.count("completed") == 2

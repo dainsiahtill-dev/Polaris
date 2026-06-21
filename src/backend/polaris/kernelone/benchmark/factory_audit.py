@@ -44,6 +44,22 @@ _CODE_EXTENSIONS = {
     ".sql",
     ".sh",
 }
+_SOURCE_EXTENSIONS = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".c",
+    ".h",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".rs",
+    ".go",
+    ".java",
+}
+_SCAFFOLD_EXTENSIONS = {".json", ".html", ".css", ".sh", ".sql"}
 _DOC_EXTENSIONS = {".md", ".rst", ".txt"}
 # "runtime" excluded: the chain mirrors traceability json INTO the workspace,
 # which inflated code_file_count (L1-02 min_files passed on a matrix json).
@@ -52,16 +68,24 @@ _MAX_SCAN_FILES = 20000
 _SCRIPT_INTERPRETERS = {"node", "python", "python3", "bash", "sh"}
 _SCRIPT_PATH_EXTENSIONS = {".cjs", ".js", ".mjs", ".py", ".sh", ".ts", ".tsx"}
 _SHELL_OPERATORS = {"&&", "||", ";", "|"}
+_BUILD_OUTPUT_DIR_NAMES = {"dist", "build", "out", "bin"}
 _PLACEHOLDER_SCRIPT_COMMANDS = {"echo", "printf"}
 _SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE = re.compile(
-    r"(?:npm\s+run\s+(?:build|compile)|pnpm\s+(?:build|compile)|yarn\s+(?:build|compile))",
+    r"(?:npm\s+run\s+(?:build|compile)|pnpm\s+(?:build|compile)|yarn\s+(?:build|compile)|\btsc\b)",
     re.IGNORECASE,
 )
 
 
 def collect_workspace_inventory(workspace: str) -> dict[str, Any]:
-    """Enumerate generated code/doc files (workspace-relative, sorted)."""
+    """Enumerate generated code/doc files (workspace-relative, sorted).
+
+    Returns dict with keys:
+    - ``code_files``: all files matching _CODE_EXTENSIONS (backward compatible)
+    - ``source_files``: subset of code_files that are real source code (not scaffold)
+    - ``doc_files``: documentation files
+    """
     code_files: list[str] = []
+    source_files: list[str] = []
     doc_files: list[str] = []
     scanned = 0
     for current_root, dirnames, filenames in os.walk(workspace):
@@ -73,11 +97,18 @@ def collect_workspace_inventory(workspace: str) -> dict[str, Any]:
                 break
             rel = os.path.relpath(os.path.join(current_root, filename), workspace).replace("\\", "/")
             _, ext = os.path.splitext(filename)
-            if ext.lower() in _CODE_EXTENSIONS:
+            ext_lower = ext.lower()
+            if ext_lower in _CODE_EXTENSIONS:
                 code_files.append(rel)
-            elif ext.lower() in _DOC_EXTENSIONS:
+                if ext_lower in _SOURCE_EXTENSIONS:
+                    source_files.append(rel)
+            elif ext_lower in _DOC_EXTENSIONS:
                 doc_files.append(rel)
-    return {"code_files": sorted(code_files), "doc_files": sorted(doc_files)}
+    return {
+        "code_files": sorted(code_files),
+        "source_files": sorted(source_files),
+        "doc_files": sorted(doc_files),
+    }
 
 
 def _iter_files(workspace: str, suffix: str) -> list[str]:
@@ -336,11 +367,34 @@ def _script_builds_before_interpreter(tokens: list[str], interpreter_index: int)
     return bool(_SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE.search(" ".join(tokens[:interpreter_index])))
 
 
-def _missing_package_script_entrypoints(workspace: str, script_name: str, command: str) -> list[str]:
+def _is_build_output_reference(candidate: str) -> bool:
+    normalized = candidate.replace("\\", "/").lstrip("./")
+    first_segment = normalized.split("/", 1)[0]
+    return first_segment in _BUILD_OUTPUT_DIR_NAMES
+
+
+def _script_lifecycle_can_build_output(scripts: dict[str, Any], script_name: str, tokens: list[str]) -> bool:
+    pre_script = scripts.get(f"pre{script_name}")
+    command = " ".join(tokens)
+    if isinstance(pre_script, str) and _SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE.search(pre_script):
+        return True
+    if _SCRIPT_BUILDS_BEFORE_ENTRYPOINT_RE.search(command):
+        return True
+    return script_name in {"start", "serve", "preview"} and isinstance(scripts.get("build"), str)
+
+
+def _missing_package_script_entrypoints(
+    workspace: str,
+    script_name: str,
+    command: str,
+    *,
+    scripts: dict[str, Any] | None = None,
+) -> list[str]:
     try:
         tokens = shlex.split(command)
     except ValueError as exc:
         return [f"script {script_name!r} has invalid shell syntax: {exc}"]
+    all_scripts = scripts or {}
     missing: list[str] = []
     index = 0
     while index < len(tokens):
@@ -371,6 +425,12 @@ def _missing_package_script_entrypoints(workspace: str, script_name: str, comman
                 continue
             if _is_local_script_reference(candidate) and not _script_reference_exists(workspace, candidate):
                 if _script_builds_before_interpreter(tokens, interpreter_index):
+                    break
+                if _is_build_output_reference(candidate) and _script_lifecycle_can_build_output(
+                    all_scripts,
+                    script_name,
+                    tokens,
+                ):
                     break
                 missing.append(f"script {script_name!r} references missing local entrypoint: {candidate}")
             break
@@ -417,7 +477,7 @@ def _check_package_scripts(workspace: str) -> tuple[bool, str]:
         if placeholder_reason:
             failures.append(placeholder_reason)
             continue
-        failures.extend(_missing_package_script_entrypoints(workspace, str(script_name), command))
+        failures.extend(_missing_package_script_entrypoints(workspace, str(script_name), command, scripts=scripts))
     if failures:
         return False, "; ".join(failures[:3])
     return True, f"{len(scripts)} package scripts have valid local entrypoint references"
@@ -466,10 +526,10 @@ def run_checks(workspace: str, checks: list[str]) -> list[dict[str, Any]]:
                     ok = False
                     detail = f"no runnable shape: py({py_detail}); web({html_detail}; {js_detail})"
         elif kind.startswith("content_any:"):
-            # Feature probe: at least one code file must mention the pattern.
-            # Catches hollow-scaffold deliveries that are syntactically perfect
-            # but feature-free (live L2-12 r1: a 43-line empty game loop passed
-            # html/js_syntax/min_files while containing zero paddle/ball/brick).
+            # Feature probe: at least one SOURCE file must mention the pattern.
+            # Scaffold files (package.json, tsconfig.json, etc.) are excluded
+            # to prevent hollow-scaffold deliveries from passing on metadata
+            # keywords alone (e.g. "firefly" in package.json description).
             pattern_text = kind.split(":", 1)[1]
             try:
                 probe = re.compile(pattern_text, re.IGNORECASE)
@@ -477,7 +537,7 @@ def run_checks(workspace: str, checks: list[str]) -> list[dict[str, Any]]:
                 results.append({"check": kind, "ok": False, "detail": f"bad pattern: {exc}"})
                 continue
             matched_file = ""
-            for rel in inventory["code_files"]:
+            for rel in inventory["source_files"]:
                 try:
                     with open(os.path.join(workspace, rel), encoding="utf-8", errors="replace") as fh:
                         if probe.search(fh.read()):
@@ -489,16 +549,41 @@ def run_checks(workspace: str, checks: list[str]) -> list[dict[str, Any]]:
             detail = (
                 f"feature pattern {pattern_text!r} found in {matched_file}"
                 if ok
-                else f"feature pattern {pattern_text!r} not found in any code file"
+                else f"feature pattern {pattern_text!r} not found in any source file"
+            )
+        elif kind.startswith("source_target_coverage:"):
+            # Source target coverage gate: verifies that source files exist under
+            # expected directories (e.g. src/**/*.ts). Prevents projects from
+            # passing with only scaffold files (package.json, tsconfig.json, README).
+            # Format: source_target_coverage:<glob_pattern>
+            # Example: source_target_coverage:src/**/*.ts
+            target_pattern = kind.split(":", 1)[1].strip()
+            if not target_pattern:
+                results.append({"check": kind, "ok": False, "detail": "empty source target pattern"})
+                continue
+            import glob as globmod
+
+            abs_pattern = os.path.join(workspace, target_pattern)
+            matched_paths = sorted(globmod.glob(abs_pattern, recursive=True))
+            # Filter to actual source files only
+            matched_source = [
+                os.path.relpath(p, workspace).replace("\\", "/") for p in matched_paths if os.path.isfile(p)
+            ]
+            ok = bool(matched_source)
+            detail = (
+                f"source target {target_pattern!r}: {len(matched_source)} file(s) found"
+                if ok
+                else f"source target {target_pattern!r}: no source files found — "
+                "Director only produced scaffold files, not core source code"
             )
         elif kind.startswith("min_files:"):
             try:
                 minimum = int(kind.split(":", 1)[1])
             except ValueError:
                 minimum = 1
-            count = len(inventory["code_files"])
+            count = len(inventory["source_files"])
             ok = count >= minimum
-            detail = f"{count} code files (need >= {minimum})"
+            detail = f"{count} source files (need >= {minimum})"
         else:
             detail = f"unknown check kind: {kind}"
         results.append({"check": kind, "ok": ok, "detail": detail})
@@ -510,12 +595,22 @@ def build_factory_audit_record(
     project: dict[str, Any],
     workspace: str,
     artifact_globs: dict[str, list[str]] | None = None,
+    chain_terminal: bool = True,
+    chain_status: str = "",
+    chain_phase: str = "",
 ) -> dict[str, Any]:
     """Assemble the full per-project audit record.
 
     ``artifact_globs`` maps artifact kinds (plan/blueprint/verdict) to lists of
     workspace-relative paths discovered by the runner (the chain's artifact
     layout is runner-configured, not hardcoded here).
+
+    ``chain_terminal`` indicates whether the chain reached a terminal state
+    (completed/failed/cancelled) before this audit was taken.  When *False* the
+    snapshot is provisional and must NOT be treated as a final project verdict.
+
+    ``chain_status`` and ``chain_phase`` capture the terminal status/phase for
+    traceability.
     """
     inventory = collect_workspace_inventory(workspace)
     configured_checks = list(project.get("checks") or [])
@@ -524,6 +619,16 @@ def build_factory_audit_record(
         supplemental_checks.append("package_scripts")
     checks = run_checks(workspace, configured_checks + supplemental_checks)
     artifacts = artifact_globs or {}
+
+    # Read PM plan and extract declared source targets
+    plan = _read_plan_json(workspace)
+    declared_source_targets = _extract_declared_source_targets(workspace, plan)
+    _, missing_targets = compute_declared_source_target_coverage(workspace, declared_source_targets)
+
+    # Snapshot kind: "terminal" when chain reached a final state, "non_terminal"
+    # when the chain was still running / errored before a definitive outcome.
+    snapshot_kind = "terminal" if chain_terminal else "non_terminal"
+
     return {
         "schema_version": FACTORY_AUDIT_SCHEMA_VERSION,
         "project_id": str(project.get("id") or ""),
@@ -531,7 +636,9 @@ def build_factory_audit_record(
         "domain": str(project.get("domain") or ""),
         "title": str(project.get("title") or ""),
         "code_file_count": len(inventory["code_files"]),
+        "source_file_count": len(inventory["source_files"]),
         "code_files": inventory["code_files"][:60],
+        "source_files": inventory["source_files"][:60],
         "doc_files": inventory["doc_files"][:30],
         "artifacts": {kind: paths[:10] for kind, paths in artifacts.items()},
         "has_plan_doc": bool(artifacts.get("plan")),
@@ -539,7 +646,101 @@ def build_factory_audit_record(
         "has_qa_verdict": bool(artifacts.get("verdict")),
         "checks": checks,
         "all_checks_passed": bool(configured_checks) and all(c["ok"] for c in checks),
+        "declared_source_targets": declared_source_targets,
+        "declared_source_target_count": len(declared_source_targets),
+        "missing_declared_source_targets": missing_targets,
+        "missing_declared_source_target_count": len(missing_targets),
+        "pm_plan_missing_source_targets": plan is not None and not declared_source_targets,
+        "audit_snapshot_kind": snapshot_kind,
+        "audit_terminal": bool(chain_terminal),
+        "terminal_status": chain_status,
+        "terminal_phase": chain_phase,
     }
+
+
+def _read_plan_json(workspace: str) -> dict[str, Any] | None:
+    """Read plan.json from workspace, trying multiple candidate paths.
+
+    Returns the parsed JSON dict or None if not found/invalid.
+    """
+    candidates = [
+        os.path.join(workspace, ".polaris", "docs", "product", "plan.json"),
+        os.path.join(workspace, ".polaris", "runtime", "tasks", "plan.json"),
+        os.path.join(workspace, "tasks", "plan.json"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    payload = json.load(f)
+                if isinstance(payload, dict):
+                    return payload
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                continue
+    return None
+
+
+def _extract_declared_source_targets(workspace: str, plan: dict[str, Any] | None) -> list[str]:
+    """Extract declared source file targets from PM plan.
+
+    Scans tasks[].target_files for entries that look like source code paths
+    (containing src/ or having a source file extension).
+    """
+    if not plan:
+        return []
+
+    source_extensions = {".py", ".js", ".jsx", ".ts", ".tsx", ".c", ".h", ".cpp", ".rs", ".go", ".java"}
+    declared: list[str] = []
+
+    tasks = plan.get("tasks")
+    if not isinstance(tasks, list):
+        return []
+
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        target_files = task.get("target_files") or task.get("files") or task.get("paths") or []
+        if not isinstance(target_files, list):
+            continue
+        for tf in target_files:
+            if not isinstance(tf, str) or not tf.strip():
+                continue
+            tf_clean = tf.strip().replace("\\", "/")
+            _, ext = os.path.splitext(tf_clean)
+            ext_lower = ext.lower()
+            # Include if it has a source extension or is under src/ directory
+            if (
+                ext_lower in source_extensions or "/src/" in tf_clean or tf_clean.startswith("src/")
+            ) and tf_clean not in declared:
+                declared.append(tf_clean)
+
+    return sorted(declared)
+
+
+def compute_declared_source_target_coverage(
+    workspace: str,
+    declared_targets: list[str],
+) -> tuple[list[str], list[str]]:
+    """Check which declared source targets exist in workspace.
+
+    Returns (present_targets, missing_targets).
+    """
+    if not declared_targets:
+        return [], []
+
+    present: list[str] = []
+    missing: list[str] = []
+
+    for target in declared_targets:
+        # Normalize path separators
+        normalized = target.replace("\\", "/")
+        full_path = os.path.join(workspace, normalized)
+        if os.path.isfile(full_path):
+            present.append(normalized)
+        else:
+            missing.append(normalized)
+
+    return present, missing
 
 
 def aggregate_factory_audits(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -558,5 +759,7 @@ def aggregate_factory_audits(records: list[dict[str, Any]]) -> dict[str, Any]:
         "with_plan_doc": sum(1 for r in records if r.get("has_plan_doc")),
         "with_blueprint_doc": sum(1 for r in records if r.get("has_blueprint_doc")),
         "with_qa_verdict": sum(1 for r in records if r.get("has_qa_verdict")),
+        "with_source_files": sum(1 for r in records if r.get("source_file_count", 0) > 0),
+        "zero_source_files": sum(1 for r in records if r.get("source_file_count", 0) == 0),
         "by_level": dict(sorted(by_level.items())),
     }

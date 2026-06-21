@@ -530,6 +530,9 @@ class UnifiedOrchestrationService(OrchestrationService):
 
         try:
             role_metadata = dict(task.role_entry.metadata) if isinstance(task.role_entry.metadata, dict) else {}
+            binding_override = role_metadata.get("binding_override")
+            if not isinstance(binding_override, dict):
+                binding_override = None
             # 角色执行隔离到独立工作线程，避免阻塞控制面事件循环。
             result = await asyncio.to_thread(
                 self._run_role_adapter_in_worker,
@@ -540,6 +543,7 @@ class UnifiedOrchestrationService(OrchestrationService):
                     "metadata": role_metadata,
                 },
                 context,
+                binding_override,
             )
 
             # 获取文件变更
@@ -575,15 +579,34 @@ class UnifiedOrchestrationService(OrchestrationService):
         task_id: str,
         input_data: dict[str, Any],
         context: dict[str, Any],
+        binding_override: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run adapter execution in an isolated event loop on a worker thread."""
-        return asyncio.run(
-            adapter.execute(  # type: ignore[misc]
-                task_id=task_id,
-                input_data=input_data,
-                context=context,
+        override_role = "director"
+        if binding_override:
+            from polaris.kernelone.llm import runtime_config
+
+            override_role = str(binding_override.get("role") or "director").strip() or "director"
+            runtime_config.set_role_binding_override(
+                override_role,
+                provider_id=str(binding_override.get("provider_id") or binding_override.get("provider") or ""),
+                model=str(binding_override.get("model") or binding_override.get("model_id") or ""),
+                binding_id=str(binding_override.get("binding_id") or ""),
+                fanout_locked=True,
             )
-        )
+        try:
+            return asyncio.run(
+                adapter.execute(  # type: ignore[misc]
+                    task_id=task_id,
+                    input_data=input_data,
+                    context=context,
+                )
+            )
+        finally:
+            if binding_override:
+                from polaris.kernelone.llm import runtime_config
+
+                runtime_config.clear_role_provider_override(override_role)
 
     def _find_ready_tasks(
         self,

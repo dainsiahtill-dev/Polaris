@@ -157,6 +157,82 @@ def _has_package_dependencies(package: dict[str, Any]) -> bool:
     return False
 
 
+def _script_tokens(command: object) -> list[str]:
+    if not isinstance(command, str) or not command.strip():
+        return []
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return []
+
+
+def _has_shell_chaining(command: str) -> bool:
+    return any(token in command for token in ("&&", "||", "|", ";"))
+
+
+def _inline_eval_code(tokens: list[str]) -> str:
+    for index, token in enumerate(tokens):
+        if token in {"-e", "--eval"} and index + 1 < len(tokens):
+            return tokens[index + 1]
+    return ""
+
+
+def _is_fake_npm_lifecycle_script(command: object) -> bool:
+    """Return True for npm lifecycle scripts that only print success text."""
+    if not isinstance(command, str) or not command.strip() or _has_shell_chaining(command):
+        return False
+    tokens = _script_tokens(command)
+    if not tokens:
+        return False
+    executable = Path(tokens[0]).name.lower()
+    if executable == "echo":
+        return len(tokens) > 1
+    code = _inline_eval_code(tokens)
+    if not code:
+        return False
+    lowered = code.lower()
+    runner_tokens = {Path(token).name.lower() for token in tokens}
+    inline_runner = bool(runner_tokens & {"node", "bun", "tsx"})
+    prints_only = ("console.log" in lowered or "print(" in lowered) and "require(" not in lowered
+    return inline_runner and prints_only
+
+
+def _is_npm_test_script_manifest_only(command: object) -> bool:
+    """Return True when a test script only validates manifests or build folders."""
+    tokens = _script_tokens(command)
+    if not tokens:
+        return False
+    code = _inline_eval_code(tokens)
+    if not code:
+        return False
+    lowered = code.lower()
+    manifest_markers = (
+        "manifest check passed",
+        "package.json",
+        "tsconfig.json",
+        "existssync('dist",
+        'existssync("dist',
+    )
+    return any(marker in lowered for marker in manifest_markers)
+
+
+def _is_npm_test_script_placeholder(command: object) -> bool:
+    """Return True for npm test scripts that only announce missing/fake tests."""
+    if not isinstance(command, str) or not command.strip() or _has_shell_chaining(command):
+        return False
+    tokens = _script_tokens(command)
+    if not tokens or Path(tokens[0]).name.lower() != "echo":
+        return False
+    lowered = " ".join(tokens[1:]).lower()
+    placeholders = (
+        "no tests specified",
+        "all tests passed",
+        "tests not implemented",
+        "no tests yet",
+    )
+    return any(marker in lowered for marker in placeholders)
+
+
 class _QuietStaticHandler(SimpleHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
@@ -240,8 +316,9 @@ def _smoke_static_web_playwright(workspace: Path, html_rel: str, *, timeout_s: i
             console_errors: list[str] = []
             page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
 
-            page.goto(url, timeout=max(1, min(10, int(timeout_s))) * 1000)
+            response = page.goto(url, timeout=max(1, min(10, int(timeout_s))) * 1000)
             page.wait_for_load_state("networkidle", timeout=5000)
+            http_status = int(response.status) if response is not None else 0
 
             # Check for canvas elements
             canvas = page.query_selector("canvas")
@@ -250,16 +327,24 @@ def _smoke_static_web_playwright(workspace: Path, html_rel: str, *, timeout_s: i
 
         # Filter out resource loading errors (CSS, JS, images)
         critical_errors = [err for err in console_errors if "Failed to load resource" not in err]
-        ok = len(critical_errors) == 0
+        status_ok = 200 <= http_status < 400
+        ok = status_ok and len(critical_errors) == 0
+        if not status_ok:
+            detail = f"HTTP status {http_status} for static web entrypoint"
+        elif critical_errors:
+            detail = f"Console errors: {'; '.join(critical_errors[:3])}"
+        else:
+            detail = "Playwright verification passed"
         return {
             "kind": "web_playwright",
             "ok": ok,
             "url": url,
             "entrypoint": html_rel,
             "duration_s": round(time.time() - started, 3),
+            "http_status": http_status,
             "console_errors": console_errors,
             "has_canvas": canvas is not None,
-            "detail": "Playwright verification passed" if ok else f"Console errors: {'; '.join(critical_errors[:3])}",
+            "detail": detail,
         }
     finally:
         if server is not None:
@@ -270,9 +355,12 @@ def _smoke_static_web_playwright(workspace: Path, html_rel: str, *, timeout_s: i
 def _find_html_entrypoint(workspace: Path, code_files: list[str]) -> str:
     candidates = [rel for rel in code_files if rel.lower().endswith(".html")]
     for preferred in ("index.html", "public/index.html", "src/index.html"):
-        if preferred in candidates:
+        if preferred in candidates and (workspace / preferred).is_file():
             return preferred
-    return candidates[0] if candidates else ""
+    for candidate in candidates:
+        if (workspace / candidate).is_file():
+            return candidate
+    return ""
 
 
 def _find_python_entrypoint(workspace: Path, code_files: list[str]) -> str:
@@ -677,6 +765,25 @@ def _first_ok_command(commands: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 _BUILD_OUTPUT_DIR_NAMES = frozenset({"dist", "build", "out", "bin"})
 
+_SOURCE_FILE_EXTENSIONS = frozenset(
+    {
+        ".py",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".c",
+        ".h",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".rs",
+        ".go",
+        ".java",
+    }
+)
+_SCAFFOLD_FILE_EXTENSIONS = frozenset({".json", ".html", ".css", ".sh", ".sql"})
+
 
 def _is_build_output_path(path: str) -> bool:
     """Check if a path starts with a build output directory as its first segment."""
@@ -750,9 +857,98 @@ def _any_script_references_build_output(scripts: dict[str, Any], script_names: t
     return any(_script_depends_on_build_output(scripts, name) for name in script_names if name in scripts)
 
 
+def _build_declared_source_targets_requirement(record: dict[str, Any], workspace: Path) -> dict[str, Any]:
+    """Build the declared_source_targets_present requirement.
+
+    Checks if PM plan declared source targets and whether they all exist.
+    """
+    missing_targets = record.get("missing_declared_source_targets") or []
+    declared_count = record.get("declared_source_target_count", 0)
+    missing_count = record.get("missing_declared_source_target_count", 0)
+
+    # If no declared targets, this is a risk signal but not a hard failure
+    if declared_count == 0:
+        pm_plan_missing = record.get("pm_plan_missing_source_targets", False)
+        if pm_plan_missing:
+            return {
+                "ok": False,
+                "detail": "PM plan has no declared source targets (pm_plan_missing_source_targets)",
+            }
+        return {
+            "ok": True,
+            "detail": "no declared source targets in PM plan",
+        }
+
+    # If declared targets exist but some are missing, fail
+    if missing_count > 0:
+        return {
+            "ok": False,
+            "detail": f"{missing_count} declared source target(s) missing: {', '.join(missing_targets[:5])}",
+        }
+
+    return {
+        "ok": True,
+        "detail": f"all {declared_count} declared source target(s) present",
+    }
+
+
+def _build_scaffolding_requirement(workspace: Path, code_files: list[str]) -> dict[str, Any]:
+    """Check that TypeScript/Web projects have required scaffolding files.
+
+    TypeScript projects must have package.json and tsconfig.json.
+    Node.js/JS-only projects (no HTML) must have package.json.
+    Static web projects (HTML + JS) don't require package.json.
+    """
+    has_ts = _files_with_suffix(code_files, (".ts", ".tsx"))
+    has_js = _files_with_suffix(code_files, (".js", ".jsx", ".mjs", ".cjs"))
+    has_html = [rel for rel in code_files if rel.lower().endswith(".html")]
+    # TypeScript always needs npm scaffolding; JS-only (no HTML) needs it too;
+    # JS + HTML is a static web project that doesn't need package.json.
+    needs_package = bool(has_ts) or (bool(has_js) and not bool(has_html))
+    missing: list[str] = []
+
+    if needs_package:
+        package_json = workspace / "package.json"
+        if not package_json.is_file():
+            missing.append("package.json")
+
+    if has_ts:
+        tsconfig_json = workspace / "tsconfig.json"
+        if not tsconfig_json.is_file():
+            missing.append("tsconfig.json")
+
+    if has_html:
+        html_entry = _find_html_entrypoint(workspace, code_files)
+        if not html_entry:
+            missing.append("index.html")
+
+    if missing:
+        return {
+            "ok": False,
+            "detail": f"missing required scaffolding: {', '.join(missing)}",
+        }
+    parts: list[str] = []
+    if needs_package:
+        parts.append("package.json present")
+    if has_ts:
+        parts.append("tsconfig.json present")
+    if has_html:
+        parts.append("HTML entrypoint present")
+    if not parts:
+        parts.append("no scaffolding required for this project type")
+    return {
+        "ok": True,
+        "detail": "; ".join(parts),
+    }
+
+
 def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: int = 60) -> dict[str, Any]:
     """Run the platform's real-runnability gate for one generated project."""
     code_files = [str(item) for item in record.get("code_files") or []]
+    source_files = [rel for rel in code_files if Path(rel).suffix.lower() in _SOURCE_FILE_EXTENSIONS]
+    html_css_only = code_files and all(Path(rel).suffix.lower() in {".html", ".css"} for rel in code_files)
+    scaffold_only = code_files and not source_files and not html_css_only
+    source_files_ok = bool(source_files) or bool(html_css_only)
     commands: list[dict[str, Any]] = []
     package = _load_package_json(workspace)
     scripts = _as_dict(package.get("scripts"))
@@ -956,6 +1152,21 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
             "ok": bool(code_files),
             "detail": f"{len(code_files)} generated code file(s)",
         },
+        "source_files_present": {
+            "ok": source_files_ok,
+            "detail": (
+                f"{len(source_files)} source file(s)"
+                if source_files
+                else (
+                    "pure HTML/CSS web project (no business-logic source files)"
+                    if html_css_only
+                    else f"scaffold-only delivery: {len(code_files)} code file(s) but zero source files "
+                    "(only config/metadata like package.json, tsconfig.json)"
+                )
+            ),
+        },
+        "declared_source_targets_present": _build_declared_source_targets_requirement(record, workspace),
+        "scaffolding_present": _build_scaffolding_requirement(workspace, code_files),
         "environment_prepared": {"ok": environment_ok, "detail": environment_detail},
         "build_test_lint_ran": {"ok": build_command_ok, "detail": build_detail},
         "entrypoint_smoke": {
@@ -966,13 +1177,22 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
     }
     ok = all(bool(item.get("ok")) for item in requirements.values())
     failing = [name for name, item in requirements.items() if not item.get("ok")]
-    return {
+    result: dict[str, Any] = {
         "ok": ok,
         "requirements": requirements,
         "commands": commands[-12:],
         "entrypoint": entrypoint,
         "summary": "real run gate passed" if ok else "real run gate failed: " + ", ".join(failing),
     }
+    if scaffold_only:
+        result["missing_source_targets"] = {
+            "code_file_count": len(code_files),
+            "source_file_count": 0,
+            "scaffold_files": code_files[:10],
+            "detail": "Director produced only scaffold files (package.json, tsconfig.json, etc.) "
+            "with zero source code files",
+        }
+    return result
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -1029,8 +1249,11 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
         data.get("provider_id"),
         data.get("provider"),
         metadata.get("provider_id"),
+        metadata.get("provider"),
         data_metadata.get("provider_id"),
+        data_metadata.get("provider"),
         extra_fields.get("provider_id"),
+        extra_fields.get("provider"),
     )
     model = _first_string(
         raw.get("model"),
@@ -1054,7 +1277,7 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
         source = "llm"
     elif "llm" not in lowered_source:
         metadata_source = _norm_text(data_metadata.get("source"))
-        if metadata_source.lower() == "llm":
+        if metadata_source.lower() == "llm" or "llm" in event_name.lower():
             source = "llm"
             lowered_source = "llm"
     cache_hit = bool(
@@ -1081,7 +1304,15 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
     if not role:
         role = "unknown"
     lowered_event = event_name.lower()
-    terminal = lowered_event in {"llm_call_end", "llm_error", "call_end", "call_error", "invoke_end", "error"}
+    terminal = lowered_event in {
+        "llm_call_end",
+        "llm_error",
+        "call_end",
+        "call_error",
+        "invoke_end",
+        "error",
+        "llm_route_terminal",
+    }
     invocation = terminal or "llm" in lowered_event or lowered_event.startswith("invoke")
     return {
         "event": event_name,
@@ -1101,6 +1332,42 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
     }
 
 
+def _resolve_polaris_roots_runtime_dir(workspace: Path) -> Path | None:
+    """Resolve the canonical runtime_root via resolve_polaris_roots if available."""
+    try:
+        from polaris.cells.storage.layout import resolve_polaris_roots
+
+        roots = resolve_polaris_roots(str(workspace))
+        runtime_root = roots.runtime_root
+        if runtime_root:
+            return Path(runtime_root)
+    except (ImportError, RuntimeError, ValueError, OSError):
+        pass
+    return None
+
+
+def _append_dispatch_route_events(
+    normalized: list[dict[str, Any]],
+    dispatch_data: dict[str, Any],
+    *,
+    source_path: str,
+) -> None:
+    """Append normalized LLM route events embedded in a Director dispatch log."""
+    for raw in dispatch_data.get("fail_closed_route_events") or []:
+        if not isinstance(raw, dict):
+            continue
+        item = _normalize_llm_event(raw, source_path=source_path)
+        if item is not None:
+            item["fail_closed"] = True
+            normalized.append(item)
+    for raw in dispatch_data.get("per_binding_route_events") or []:
+        if not isinstance(raw, dict):
+            continue
+        item = _normalize_llm_event(raw, source_path=source_path)
+        if item is not None:
+            normalized.append(item)
+
+
 def collect_llm_events(
     workspace: Path,
     runtime_dir: Path | Iterable[Path] | None,
@@ -1114,7 +1381,14 @@ def collect_llm_events(
         runtime_dirs = [runtime_dir]
     else:
         runtime_dirs = [path for path in runtime_dir if isinstance(path, Path)]
-    for base in (*runtime_dirs, workspace / ".polaris" / "runtime", workspace / ".polaris"):
+    extra_bases: list[Path] = [
+        workspace / ".polaris" / "runtime",
+        workspace / ".polaris",
+    ]
+    polaris_roots_runtime = _resolve_polaris_roots_runtime_dir(workspace)
+    if polaris_roots_runtime is not None:
+        extra_bases.insert(0, polaris_roots_runtime)
+    for base in (*runtime_dirs, *extra_bases):
         if base is None:
             continue
         candidates.update(base.glob("events/*.llm.events.jsonl"))
@@ -1153,6 +1427,30 @@ def collect_llm_events(
         item = _normalize_llm_event(raw, source_path="audit_bundle.events_tail")
         if item is not None:
             normalized.append(item)
+        result_payload = _as_dict(raw.get("result"))
+        if result_payload:
+            _append_dispatch_route_events(
+                normalized,
+                result_payload,
+                source_path="audit_bundle.events_tail.result",
+            )
+
+    for base in (*runtime_dirs, *extra_bases):
+        if base is None:
+            continue
+        dispatch_dir = base / "dispatch"
+        if not dispatch_dir.is_dir():
+            continue
+        dispatch_logs = {dispatch_dir / "log.json"}
+        dispatch_logs.update(dispatch_dir.glob("*.log.json"))
+        for dispatch_log in sorted(path for path in dispatch_logs if path.exists()):
+            try:
+                dispatch_data = json.loads(dispatch_log.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(dispatch_data, dict):
+                continue
+            _append_dispatch_route_events(normalized, dispatch_data, source_path=str(dispatch_log))
     return normalized
 
 

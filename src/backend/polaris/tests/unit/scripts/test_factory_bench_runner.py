@@ -12,6 +12,8 @@ from typing import Any
 from scripts.factory_bench import run_factory_bench as bench
 from scripts.factory_bench.run_factory_bench import (
     _desktop_backend_info_path,
+    _extract_feature_keywords,
+    _fallback_audit_bundle_from_workspace,
     _is_local_backend_url,
     _next_immutable_json_path,
     _read_desktop_backend_info,
@@ -21,6 +23,7 @@ from scripts.factory_bench.run_factory_bench import (
     _sanitize_run_id,
     _write_immutable_json,
     apply_factory_bench_gates,
+    build_requirements_doc,
     discover_artifacts,
     map_factory_run_to_chain_results,
     read_chain_results_from_runtime_dirs,
@@ -40,6 +43,7 @@ def _record(**overrides: Any) -> dict[str, Any]:
         "chain_state": "clean",
         "chain_results": {"qa_ran": True, "qa_passed": True},
         "wrong_product_suspect": False,
+        "backend_freshness": {"ok": True, "detail": "backend fresh"},
     }
     record.update(overrides)
     return record
@@ -216,6 +220,61 @@ def test_real_run_and_llm_route_gates_are_fail_closed_when_missing() -> None:
     assert gates["real_run_gate"]["ok"] is False
     assert gates["llm_route_audit"]["ok"] is False
     assert record["all_checks_passed"] is False
+
+
+def test_backend_freshness_gate_is_fail_closed_when_missing() -> None:
+    record = _record(
+        real_run_gate={"ok": True, "summary": "real run gate passed"},
+        llm_route_audit={"ok": True, "summary": "LLM route audit passed"},
+    )
+    record.pop("backend_freshness")
+
+    apply_factory_bench_gates(record, chain={"exit_code": 0})
+
+    gates = {gate["gate"]: gate for gate in record["factory_gates"]}
+    assert gates["stale_backend_or_unknown"]["ok"] is False
+    assert "backend freshness gate missing" in gates["stale_backend_or_unknown"]["detail"]
+    assert record["all_checks_passed"] is False
+
+
+def test_build_bench_backend_audit_context_writes_record_fields(monkeypatch: Any, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    def _fake_check_backend_freshness(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return {
+            "gate": "stale_backend_or_unknown",
+            "ok": True,
+            "detail": "backend fresh",
+            "backend_url": "http://127.0.0.1:49977",
+            "expected_fingerprint": "expected-fp",
+            "actual_fingerprint": "actual-fp",
+            "backend_info": {
+                "pid": 123,
+                "startup_time": "2026-06-21T00:00:00Z",
+                "source": "runtime_fingerprint",
+            },
+        }
+
+    monkeypatch.setattr(bench, "check_backend_freshness", _fake_check_backend_freshness)
+
+    context = bench.build_bench_backend_audit_context(
+        "http://127.0.0.1:49977",
+        backend_token="token",
+        workspace=str(tmp_path),
+    )
+
+    assert captured["args"] == ("http://127.0.0.1:49977",)
+    assert captured["kwargs"]["token"] == "token"
+    assert captured["kwargs"]["backend_root"] == bench._BACKEND_ROOT
+    assert context["backend_freshness"]["ok"] is True
+    assert context["backend_metadata"]["backend_base_url"] == "http://127.0.0.1:49977"
+    assert context["backend_metadata"]["token_source"] == "configured"
+    assert context["backend_metadata"]["workspace"] == str(tmp_path)
+    assert context["backend_metadata"]["expected_source_fingerprint"] == "expected-fp"
+    assert context["backend_metadata"]["actual_backend_fingerprint"] == "actual-fp"
+    assert context["backend_metadata"]["backend_pid"] == 123
 
 
 # --- map_factory_run_to_chain_results ---
@@ -422,6 +481,10 @@ def test_load_projects_v2_is_standalone_creative_catalog_covering_l1_to_l12() ->
         "creative_hook" in str(project.get("brief") or "") or "创意钩子" in str(project.get("brief") or "")
         for project in projects
     )
+    # R17-C: every project must have source_target_coverage check
+    assert all(
+        any(check.startswith("source_target_coverage:") for check in project.get("checks", [])) for project in projects
+    ), "Every project must have a source_target_coverage check"
 
 
 def test_load_projects_rejects_duplicate_ids_in_extended_catalog(tmp_path: Path) -> None:
@@ -700,6 +763,14 @@ def test_main_default_max_failed_zero_does_not_early_stop(monkeypatch: Any, tmp_
     monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
     monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        bench,
+        "build_bench_backend_audit_context",
+        lambda *_args, **_kwargs: {
+            "backend_freshness": {"ok": True, "detail": "backend fresh"},
+            "backend_metadata": {"backend_base_url": ""},
+        },
+    )
     monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
     monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
     monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
@@ -1083,6 +1154,14 @@ def test_main_run_id_shared_across_projects(monkeypatch: Any, tmp_path: Path) ->
     monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
     monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        bench,
+        "build_bench_backend_audit_context",
+        lambda *_args, **_kwargs: {
+            "backend_freshness": {"ok": True, "detail": "backend fresh"},
+            "backend_metadata": {"backend_base_url": ""},
+        },
+    )
     monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
     monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
     monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
@@ -1160,6 +1239,14 @@ def test_main_audit_path_points_to_conflict_when_same_id_reused(monkeypatch: Any
     monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
     monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
     monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        bench,
+        "build_bench_backend_audit_context",
+        lambda *_args, **_kwargs: {
+            "backend_freshness": {"ok": True, "detail": "backend fresh"},
+            "backend_metadata": {"backend_base_url": ""},
+        },
+    )
     monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
     monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
     monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
@@ -1434,3 +1521,638 @@ def test_resolve_backend_token_missing_remote_token_returns_empty(monkeypatch: A
     monkeypatch.setattr(bench, "_read_desktop_backend_info", lambda env=None: {})
     result = _resolve_backend_token()
     assert result == ""
+
+
+# --- L1-01 regression: contract chain must propagate to Director ---
+
+
+def test_extract_feature_keywords_from_content_any_checks() -> None:
+    """_extract_feature_keywords must extract keywords from content_any checks."""
+    project = {
+        "checks": [
+            "ts_syntax",
+            "package_scripts",
+            "min_files:3",
+            "content_any:firefly|flower|moon|humidity",
+        ],
+    }
+    keywords = _extract_feature_keywords(project)
+    assert keywords == ["firefly", "flower", "moon", "humidity"]
+
+
+def test_extract_feature_keywords_no_content_any_returns_empty() -> None:
+    """_extract_feature_keywords returns empty list when no content_any checks."""
+    project = {"checks": ["ts_syntax", "package_scripts", "min_files:3"]}
+    assert _extract_feature_keywords(project) == []
+
+
+def test_extract_feature_keywords_deduplicates_case_insensitive() -> None:
+    """_extract_feature_keywords deduplicates keywords case-insensitively."""
+    project = {
+        "checks": [
+            "content_any:Fire|fire|FLOWER|flower",
+        ],
+    }
+    keywords = _extract_feature_keywords(project)
+    assert keywords == ["Fire", "FLOWER"]
+
+
+def test_l1_01_requirements_doc_contains_source_tree_contract() -> None:
+    """L1-01 requirements doc must contain source tree contract requiring src/."""
+    project = {
+        "id": "L1-01",
+        "level": 1,
+        "domain": "science_creative",
+        "project_type": "simulation_toy",
+        "primary_language": "typescript",
+        "title": "发光昆虫花园模拟器",
+        "creative_hook": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈",
+        "brief": "用 TypeScript 实现发光昆虫花园模拟器",
+        "test_focus": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈",
+        "checks": [
+            "ts_syntax",
+            "package_scripts",
+            "min_files:3",
+            "content_any:firefly|flower|moon|humidity",
+        ],
+    }
+    doc = build_requirements_doc(project)
+    assert "Source Tree Structure Contract" in doc
+    assert "src/" in doc
+    assert "src/models/" in doc
+    assert "src/engine/" in doc or "src/core/" in doc
+    assert "Feature Keywords Contract" in doc
+    assert "firefly" in doc
+    assert "flower" in doc
+    assert "moon" in doc
+    assert "humidity" in doc
+    assert "Project Metadata" in doc
+    assert "science_creative" in doc
+    assert "simulation_toy" in doc
+    assert "萤火虫根据花朵情绪和月相组成实时灯光舞蹈" in doc
+
+
+def test_l1_01_requirements_doc_director_target_files_mandate() -> None:
+    """L1-01 requirements doc must mandate Director target_files cover src/."""
+    project = {
+        "id": "L1-01",
+        "level": 1,
+        "domain": "science_creative",
+        "project_type": "simulation_toy",
+        "primary_language": "typescript",
+        "title": "发光昆虫花园模拟器",
+        "creative_hook": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈",
+        "brief": "用 TypeScript 实现发光昆虫花园模拟器",
+        "test_focus": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈",
+        "checks": [
+            "ts_syntax",
+            "package_scripts",
+            "min_files:3",
+            "content_any:firefly|flower|moon|humidity",
+        ],
+    }
+    doc = build_requirements_doc(project)
+    assert "target_files 必须覆盖 src/" in doc
+    assert "不能只包含 package.json" in doc
+
+
+def test_l1_01_requirements_doc_has_ts_strict_and_features() -> None:
+    """L1-01 requirements doc must include TS-specific contract + feature keywords."""
+    project = {
+        "id": "L1-01",
+        "level": 1,
+        "domain": "science_creative",
+        "project_type": "simulation_toy",
+        "primary_language": "typescript",
+        "title": "发光昆虫花园模拟器",
+        "creative_hook": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈",
+        "brief": "用 TypeScript 实现发光昆虫花园模拟器",
+        "test_focus": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈",
+        "checks": [
+            "ts_syntax",
+            "package_scripts",
+            "min_files:3",
+            "content_any:firefly|flower|moon|humidity",
+        ],
+    }
+    doc = build_requirements_doc(project)
+    assert "Language-Specific Runnable Contract (TypeScript)" in doc
+    assert "tsc --noEmit" in doc
+    assert "Feature Keywords Contract" in doc
+    assert "firefly" in doc
+
+
+def test_build_requirements_doc_python_includes_source_tree() -> None:
+    """Python projects must also get source tree contract."""
+    project = {
+        "id": "L1-03",
+        "level": 1,
+        "domain": "creative",
+        "project_type": "interactive_visual",
+        "primary_language": "python",
+        "title": "迷你行星天气球",
+        "creative_hook": "口袋行星会随云层、风向和昼夜循环改变地表",
+        "brief": "用 Python 实现迷你行星天气球",
+        "test_focus": "cloud, weather simulation",
+        "checks": ["py_compile", "content_any:planet|weather|cloud|wind"],
+    }
+    doc = build_requirements_doc(project)
+    assert "Source Tree Structure Contract" in doc
+    assert "src/" in doc
+    assert "tests/" in doc
+    assert "Feature Keywords Contract" in doc
+    assert "planet" in doc
+
+
+def test_factory_chain_catalog_contract_writes_metadata(tmp_path: Path) -> None:
+    """Catalog contract JSON must include project metadata for PM/CE/Director."""
+    project = {
+        "id": "L1-01",
+        "level": 1,
+        "domain": "science_creative",
+        "project_type": "simulation_toy",
+        "primary_language": "typescript",
+        "title": "发光昆虫花园模拟器",
+        "creative_hook": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈",
+        "brief": "用 TypeScript 实现发光昆虫花园模拟器",
+        "test_focus": "萤火虫灯光舞蹈",
+        "checks": [
+            "ts_syntax",
+            "content_any:firefly|flower|moon|humidity",
+        ],
+    }
+    workspace = tmp_path / "L1-01"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    feature_keywords = _extract_feature_keywords(project)
+    catalog_contract = {
+        "project_id": str(project.get("id") or "").strip(),
+        "domain": str(project.get("domain") or "").strip(),
+        "project_type": str(project.get("project_type") or "").strip(),
+        "primary_language": str(project.get("primary_language") or "").strip(),
+        "creative_hook": str(project.get("creative_hook") or "").strip(),
+        "feature_keywords": feature_keywords,
+        "checks": list(project.get("checks") or []),  # type: ignore[call-overload]
+        "test_focus": str(project.get("test_focus") or "").strip(),
+        "source_tree_mandate": "PM/CE/Director must create src/ with core source files, not just scaffolding",
+    }
+    catalog_path = workspace / ".polaris" / "catalog_contract.json"
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    catalog_path.write_text(json.dumps(catalog_contract, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    assert catalog_path.is_file()
+    written = json.loads(catalog_path.read_text(encoding="utf-8"))
+    assert written["project_id"] == "L1-01"
+    assert written["domain"] == "science_creative"
+    assert written["project_type"] == "simulation_toy"
+    assert written["primary_language"] == "typescript"
+    assert written["creative_hook"] == "萤火虫根据花朵情绪和月相组成实时灯光舞蹈"
+    assert written["feature_keywords"] == ["firefly", "flower", "moon", "humidity"]
+    assert written["source_tree_mandate"] != ""
+
+
+def test_director_contract_requires_ts_target_and_feature_keywords() -> None:
+    """The generated Director contract for L1-01 must include .ts targets and feature keywords.
+
+    This is the core regression: the Director must not only produce package.json/tsconfig.json
+    scaffolding — it must target src/ .ts files and embed firefly|flower|moon|humidity.
+    """
+    project = {
+        "id": "L1-01",
+        "level": 1,
+        "domain": "science_creative",
+        "project_type": "simulation_toy",
+        "primary_language": "typescript",
+        "title": "发光昆虫花园模拟器",
+        "creative_hook": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈",
+        "brief": "用 TypeScript 实现发光昆虫花园模拟器",
+        "test_focus": "萤火虫根据花朵情绪和月相组成实时灯光舞蹈",
+        "checks": [
+            "ts_syntax",
+            "package_scripts",
+            "min_files:3",
+            "content_any:firefly|flower|moon|humidity",
+        ],
+    }
+    doc = build_requirements_doc(project)
+    assert "src/" in doc
+    assert ".ts" in doc
+    assert "firefly" in doc
+    assert "flower" in doc
+    assert "moon" in doc
+    assert "humidity" in doc
+    assert "tests/" in doc
+    assert "不能只包含 package.json" in doc
+
+
+# --- _fallback_audit_bundle_from_workspace ---
+
+
+def test_fallback_audit_bundle_from_workspace_reads_dispatch_logs(tmp_path: Path) -> None:
+    """Fallback must read .polaris/dispatch/*.log.json and build events/artifacts."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    polaris_dir = workspace / ".polaris"
+    dispatch_dir = polaris_dir / "dispatch"
+    dispatch_dir.mkdir(parents=True)
+
+    dispatch_log = dispatch_dir / "latest.log.json"
+    dispatch_log.write_text(
+        json.dumps({"tasks": [{"id": "T1", "status": "done"}]}),
+        encoding="utf-8",
+    )
+
+    bundle = _fallback_audit_bundle_from_workspace(workspace)
+
+    assert len(bundle["artifacts"]) >= 1
+    assert any(a["name"] == "latest.log.json" for a in bundle["artifacts"])
+    assert len(bundle["events_tail"]) >= 1
+    assert bundle["events_tail"][0]["stage"] == "director_dispatch"
+    assert bundle["artifacts"][0]["source"] == "workspace_fallback"
+
+
+def test_fallback_audit_bundle_from_workspace_reads_roles_director(tmp_path: Path) -> None:
+    """Fallback must read .polaris/roles/director/**/*.log.json."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    polaris_dir = workspace / ".polaris"
+    roles_dir = polaris_dir / "roles" / "director" / "run_001"
+    roles_dir.mkdir(parents=True)
+
+    role_log = roles_dir / "dispatch.log.json"
+    role_log.write_text(
+        json.dumps({"dispatch": {"status": "ok"}}),
+        encoding="utf-8",
+    )
+
+    bundle = _fallback_audit_bundle_from_workspace(workspace)
+
+    assert len(bundle["artifacts"]) >= 1
+    assert any(a["name"] == "dispatch.log.json" for a in bundle["artifacts"])
+    assert len(bundle["events_tail"]) >= 1
+
+
+def test_fallback_audit_bundle_from_workspace_reads_plan(tmp_path: Path) -> None:
+    """Fallback must read .polaris/docs/product/plan.json into summary_json."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    polaris_dir = workspace / ".polaris"
+    docs_dir = polaris_dir / "docs" / "product"
+    docs_dir.mkdir(parents=True)
+
+    plan = docs_dir / "plan.json"
+    plan.write_text(
+        json.dumps({"overall_goal": "Build a calculator app"}),
+        encoding="utf-8",
+    )
+
+    bundle = _fallback_audit_bundle_from_workspace(workspace)
+
+    assert bundle["summary_json"] is not None
+    assert bundle["summary_json"]["plan"]["overall_goal"] == "Build a calculator app"
+    assert any(a["name"] == "plan.json" for a in bundle["artifacts"])
+
+
+def test_fallback_audit_bundle_from_workspace_missing_polaris_dir(tmp_path: Path) -> None:
+    """Fallback must return empty bundle when .polaris directory is missing."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    bundle = _fallback_audit_bundle_from_workspace(workspace)
+
+    assert bundle["gates"] == []
+    assert bundle["events_tail"] == []
+    assert bundle["artifacts"] == []
+    assert bundle["summary_json"] is None
+
+
+def test_run_factory_chain_fallback_on_audit_bundle_timeout(monkeypatch: Any, tmp_path: Path) -> None:
+    """run_factory_chain must use workspace fallback when audit-bundle returns None."""
+    workspace = tmp_path / "L2-fallback"
+    workspace.mkdir()
+    _LAST_FACTORY_START_PAYLOAD.clear()
+
+    # Seed workspace .polaris artifacts for fallback
+    polaris_dir = workspace / ".polaris"
+    dispatch_dir = polaris_dir / "dispatch"
+    dispatch_dir.mkdir(parents=True)
+    (dispatch_dir / "latest.log.json").write_text(
+        json.dumps({"tasks": [{"id": "T1", "status": "done"}]}),
+        encoding="utf-8",
+    )
+
+    def _fake_start_factory_run(_backend_url: str, _payload: dict[str, Any], token: str = "") -> dict[str, Any] | None:
+        _LAST_FACTORY_START_PAYLOAD.update(_payload)
+        return {"run_id": "run-fb-123"}
+
+    def _fake_wait_run_until_terminal(
+        _backend_url: str,
+        run_id: str,
+        token: str = "",
+        workspace: str = "",
+        on_status: Any = None,
+        **_kwargs: Any,
+    ) -> dict[str, Any] | None:
+        if on_status is not None:
+            on_status({"status": "failed", "phase": "director_dispatch"})
+        return {"status": "failed", "phase": "director_dispatch"}
+
+    def _fake_get_audit_bundle(
+        _backend_url: str,
+        _run_id: str,
+        token: str = "",
+        workspace: str = "",
+    ) -> dict[str, Any] | None:
+        # Simulate timeout: return None
+        return None
+
+    def _fake_cancel_factory_run(
+        _backend_url: str,
+        _run_id: str,
+        *,
+        reason: str = "",
+        token: str = "",
+        workspace: str = "",
+    ) -> dict[str, Any]:
+        return {"status": "cancelled"}
+
+    monkeypatch.setattr(bench, "start_factory_run", _fake_start_factory_run)
+    monkeypatch.setattr(bench, "wait_run_until_terminal", _fake_wait_run_until_terminal)
+    monkeypatch.setattr(bench, "get_audit_bundle", _fake_get_audit_bundle)
+    monkeypatch.setattr(bench, "cancel_factory_run", _fake_cancel_factory_run)
+
+    result = run_factory_chain(
+        {"id": "L2-fb", "title": "Fallback Test", "brief": "Test fallback", "test_focus": "runtime"},
+        workspace,
+        backend_url="http://localhost:49977",
+        backend_token="",
+        timeout_s=30,
+        log_path=tmp_path / "L2-fb.chain.log",
+    )
+
+    assert result["exit_code"] == 1
+    assert result["run_id"] == "run-fb-123"
+    assert "audit_bundle" in result
+    assert len(result["audit_bundle"]["artifacts"]) >= 1
+    assert result["audit_bundle"]["artifacts"][0]["source"] == "workspace_fallback"
+    assert result["audit_bundle"]["events_tail"][0]["stage"] == "director_dispatch"
+
+
+def test_map_director_partial_includes_blocking_phase_for_convergence() -> None:
+    """Regression: director_partial chain_results must carry phase and director stats for convergence diagnostics."""
+    run_status = {"status": "failed", "phase": "director_dispatch"}
+    audit_bundle: dict[str, Any] = {
+        "gates": [],
+        "current_stage": "director_dispatch",
+        "summary_json": {"director": {"total": 5, "successes": 2, "failures": 3, "blocked": 0}},
+        "director_convergence": {
+            "qa_ran": False,
+            "blocking_phase": "director_dispatch",
+            "missing_delivery_targets": ["quality_gate"],
+            "taskboard_final": {"total": 5, "completed": 2, "failed": 3},
+            "per_binding_task_status": [
+                {"task_id": "T1", "status": "completed"},
+                {"task_id": "T2", "status": "completed"},
+                {"task_id": "T3", "status": "failed"},
+                {"task_id": "T4", "status": "failed"},
+                {"task_id": "T5", "status": "failed"},
+            ],
+        },
+    }
+    result = map_factory_run_to_chain_results(run_status, audit_bundle)
+    assert result["exit_class"] == "director_partial"
+    assert result["qa_ran"] is False
+    assert result["director"]["total"] == 5
+    assert result["director"]["failures"] == 3
+
+    # Verify convergence data is present in the bundle for downstream propagation
+    convergence = audit_bundle.get("director_convergence")
+    assert convergence is not None
+    assert convergence["blocking_phase"] == "director_dispatch"
+    assert convergence["missing_delivery_targets"] == ["quality_gate"]
+    assert len(convergence["per_binding_task_status"]) == 5
+
+
+# --- R18-B: audit snapshot terminal/non-terminal ---
+
+
+def test_main_start_failed_chain_marks_audit_as_non_terminal(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    """When run_factory_chain returns start_failed, the audit record must be
+    marked as non_terminal so it cannot be confused with a final verdict."""
+    captured_records: list[dict[str, Any]] = []
+
+    def _capture_build(**kwargs: Any) -> dict[str, Any]:
+        captured_records.append(kwargs)
+        return {
+            "all_checks_passed": False,
+            "static_checks_passed": False,
+            "has_plan_doc": False,
+            "has_blueprint_doc": False,
+            "has_qa_verdict": False,
+            "code_file_count": 0,
+            "source_file_count": 0,
+            "checks": [],
+            "audit_snapshot_kind": "non_terminal" if not kwargs.get("chain_terminal", True) else "terminal",
+            "audit_terminal": kwargs.get("chain_terminal", True),
+        }
+
+    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--project-ids", "L1-01", "--work-dir", str(tmp_path)])
+    monkeypatch.setattr(
+        bench,
+        "load_projects",
+        lambda: [{"id": "L1-01", "level": 1, "title": "Test", "brief": "Build something", "checks": []}],
+    )
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "token")
+    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-non-terminal")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        bench,
+        "build_bench_backend_audit_context",
+        lambda *_args, **_kwargs: {
+            "backend_freshness": {"ok": True, "detail": "backend fresh"},
+            "backend_metadata": {"backend_base_url": ""},
+        },
+    )
+    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
+    monkeypatch.setattr(
+        bench,
+        "build_real_run_gate",
+        lambda *_args, **_kwargs: {"ok": False, "summary": "real run failed"},
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_llm_route_audit",
+        lambda *_args, **_kwargs: {"ok": False, "summary": "LLM route audit failed"},
+    )
+
+    def _start_failed_chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"exit_code": -1, "duration_s": 0.0, "error": "start_failed"}
+
+    monkeypatch.setattr(bench, "run_factory_chain", _start_failed_chain)
+
+    result = bench.main()
+
+    assert result == 1
+    assert len(captured_records) == 1
+    assert captured_records[0]["chain_terminal"] is False
+
+
+def test_main_runner_exception_marks_audit_as_non_terminal(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    """When the runner raises an exception, the audit record must be
+    marked as non_terminal."""
+    captured_records: list[dict[str, Any]] = []
+
+    def _capture_build(**kwargs: Any) -> dict[str, Any]:
+        captured_records.append(kwargs)
+        return {
+            "all_checks_passed": False,
+            "static_checks_passed": False,
+            "has_plan_doc": False,
+            "has_blueprint_doc": False,
+            "has_qa_verdict": False,
+            "code_file_count": 0,
+            "source_file_count": 0,
+            "checks": [],
+            "audit_snapshot_kind": "non_terminal" if not kwargs.get("chain_terminal", True) else "terminal",
+            "audit_terminal": kwargs.get("chain_terminal", True),
+        }
+
+    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--project-ids", "L1-01", "--work-dir", str(tmp_path)])
+    monkeypatch.setattr(
+        bench,
+        "load_projects",
+        lambda: [{"id": "L1-01", "level": 1, "title": "Test", "brief": "Build something", "checks": []}],
+    )
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "token")
+    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-runner-exc")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        bench,
+        "build_bench_backend_audit_context",
+        lambda *_args, **_kwargs: {
+            "backend_freshness": {"ok": True, "detail": "backend fresh"},
+            "backend_metadata": {"backend_base_url": ""},
+        },
+    )
+    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
+    monkeypatch.setattr(
+        bench,
+        "build_real_run_gate",
+        lambda *_args, **_kwargs: {"ok": False, "summary": "real run failed"},
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_llm_route_audit",
+        lambda *_args, **_kwargs: {"ok": False, "summary": "LLM route audit failed"},
+    )
+
+    def _runner_exception(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("simulated runner crash")
+
+    monkeypatch.setattr(bench, "run_factory_chain", _runner_exception)
+
+    result = bench.main()
+
+    assert result == 1
+    assert len(captured_records) == 1
+    assert captured_records[0]["chain_terminal"] is False
+
+
+def test_main_completed_chain_marks_audit_as_terminal(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    """When run_factory_chain returns normally, the audit record must be
+    marked as terminal."""
+    captured_records: list[dict[str, Any]] = []
+
+    def _capture_build(**kwargs: Any) -> dict[str, Any]:
+        captured_records.append(kwargs)
+        return {
+            "all_checks_passed": True,
+            "static_checks_passed": True,
+            "has_plan_doc": True,
+            "has_blueprint_doc": True,
+            "has_qa_verdict": True,
+            "code_file_count": 1,
+            "source_file_count": 1,
+            "checks": [],
+            "audit_snapshot_kind": "terminal" if kwargs.get("chain_terminal", True) else "non_terminal",
+            "audit_terminal": kwargs.get("chain_terminal", True),
+        }
+
+    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--project-ids", "L1-01", "--work-dir", str(tmp_path)])
+    monkeypatch.setattr(
+        bench,
+        "load_projects",
+        lambda: [{"id": "L1-01", "level": 1, "title": "Test", "brief": "Build something", "checks": []}],
+    )
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "")
+    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-terminal")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        bench,
+        "build_bench_backend_audit_context",
+        lambda *_args, **_kwargs: {
+            "backend_freshness": {"ok": True, "detail": "backend fresh"},
+            "backend_metadata": {"backend_base_url": ""},
+        },
+    )
+    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
+    monkeypatch.setattr(
+        bench,
+        "build_real_run_gate",
+        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_llm_route_audit",
+        lambda *_args, **_kwargs: {"ok": True, "summary": "ok"},
+    )
+
+    def _completed_chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "exit_code": 0,
+            "duration_s": 0.01,
+            "chain_results": {
+                "contract_goal": "Build something",
+                "qa_ran": True,
+                "qa_passed": True,
+                "director": {"total": 1, "successes": 1, "failures": 0},
+            },
+        }
+
+    monkeypatch.setattr(bench, "run_factory_chain", _completed_chain)
+
+    result = bench.main()
+
+    assert result == 0
+    assert len(captured_records) == 1
+    assert captured_records[0]["chain_terminal"] is True

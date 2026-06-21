@@ -13,6 +13,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 
 from polaris.cells.chief_engineer.blueprint.public import GenerateTaskBlueprintCommandV1, generate_task_blueprint
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleTaskCommandV1
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
@@ -45,6 +47,17 @@ from .factory_workspace_quality import WorkspaceQualityRunner
 
 logger = logging.getLogger(__name__)
 
+_CE_BLUEPRINT_OUTPUT_CONTRACT = """
+
+Chief Engineer output contract:
+- Return exactly one JSON object, with no Markdown fence and no surrounding prose.
+- Required top-level keys: construction_plan, scope_for_apply, risk_flags.
+- construction_plan must be an object that describes concrete implementation phases.
+- scope_for_apply must be an array of repository-relative paths or modules.
+- risk_flags must be an array, even when empty.
+- Do not emit tool calls, code patches, <SESSION_PATCH>, or file edit instructions.
+"""
+
 
 class OrchestrationStageExecutor:
     """Production executor backed by OrchestrationCommandService."""
@@ -55,6 +68,8 @@ class OrchestrationStageExecutor:
         self._artifact_store = ArtifactStore(self.workspace, self._fs)
         self._workspace_quality = WorkspaceQualityRunner(self.workspace)
         self._run_completion_waiter = RunCompletionWaiter(self.workspace)
+        self._binding_timeout_counts: dict[str, int] = {}
+        self._quarantined_bindings: set[str] = set()
 
     async def execute(self, stage: str, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         handlers = {
@@ -426,6 +441,458 @@ class OrchestrationStageExecutor:
     def _metadata_indicates_execution(metadata: dict[str, Any]) -> bool:
         return helpers.metadata_indicates_execution(metadata)
 
+    # ── Director binding fanout ────────────────────────────────────────────
+
+    def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+        try:
+            from polaris.kernelone.llm.runtime_config import get_role_binding_slots
+        except (ImportError, RuntimeError) as exc:
+            logger.debug("Director binding fanout resolution unavailable: %s", exc)
+            return []
+        try:
+            slots = get_role_binding_slots("director")
+        except (RuntimeError, ValueError, TypeError) as exc:
+            logger.debug("Director binding slots unavailable: %s", exc)
+            return []
+        if len(slots) <= 1:
+            return []
+        try:
+            from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import _reachable_provider_pool
+
+            provider_ids = tuple(dict.fromkeys(str(slot.provider_id) for slot in slots if slot.provider_id))
+            live_providers = set(_reachable_provider_pool(provider_ids))
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Director provider reachability probe failed: %s", exc)
+            live_providers = {str(slot.provider_id) for slot in slots if slot.provider_id}
+        bindings: list[dict[str, str]] = []
+        seen_keys: set[str] = set()
+        for slot in slots:
+            pid = str(slot.provider_id or "").strip()
+            if not pid or pid not in live_providers:
+                continue
+            key = f"{pid}|{slot.model}"
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            bindings.append(
+                {
+                    "provider_id": pid,
+                    "model": str(slot.model or "").strip(),
+                    "binding_id": str(slot.binding_id or "").strip(),
+                }
+            )
+        if len(bindings) <= 1:
+            return []
+        logger.info("Director binding fanout: %d reachable binding(s)", len(bindings))
+        return bindings
+
+    async def _execute_director_binding_fanout(
+        self,
+        *,
+        service: Any,
+        workspace: str,
+        tasks: list[str] | None,
+        base_options: dict[str, Any],
+        bindings: list[dict[str, str]],
+        timeout_seconds: int = 600,
+        cancel_event: asyncio.Event | None = None,
+        abort_checker: Any = None,
+    ) -> CommandResult:
+        terminal_statuses = {"completed", "success", "failed", "cancelled", "timeout", "partial"}
+        submitted: list[tuple[dict[str, str], CommandResult]] = []
+
+        def _binding_key(binding: dict[str, str]) -> str:
+            return f"{binding['provider_id']}:{binding['model']}:{binding.get('binding_id', '')}"
+
+        active_bindings = []
+        quarantined_skipped = []
+        for binding in bindings:
+            key = _binding_key(binding)
+            if key in self._quarantined_bindings:
+                quarantined_skipped.append(binding)
+                logger.info("Skipping quarantined binding: %s", key)
+            else:
+                active_bindings.append(binding)
+
+        async def _run_binding(binding: dict[str, str]) -> CommandResult:
+            binding_opts = dict(base_options)
+            binding_opts["metadata"] = {
+                "binding_override": {
+                    "provider_id": binding["provider_id"],
+                    "model": binding["model"],
+                    "binding_id": binding.get("binding_id", ""),
+                },
+            }
+            return await service.execute_director_run(workspace=workspace, tasks=tasks, options=binding_opts)
+
+        gathered = await asyncio.gather(*[_run_binding(b) for b in active_bindings], return_exceptions=True)
+        for idx, item in enumerate(gathered):
+            if isinstance(item, Exception):
+                logger.warning("Director binding fanout[%d] raised: %s", idx, item)
+                submitted.append(
+                    (
+                        active_bindings[idx],
+                        CommandResult(
+                            run_id="", status="failed", message=str(item), reason_code="BINDING_FANOUT_ERROR"
+                        ),
+                    )
+                )
+            elif isinstance(item, CommandResult):
+                submitted.append((active_bindings[idx], item))
+
+        final_results: list[tuple[dict[str, str], CommandResult]] = []
+        for binding, sub_result in submitted:
+            if sub_result.status in terminal_statuses or not str(sub_result.run_id or "").strip():
+                final_results.append((binding, sub_result))
+                continue
+            try:
+                waited = await self._wait_run_completion(
+                    service,
+                    sub_result,
+                    timeout_seconds=timeout_seconds,
+                    cancel_event=cancel_event,
+                    abort_checker=abort_checker,
+                )
+                final_results.append((binding, waited))
+            except (RuntimeError, OSError, ValueError, TypeError) as exc:
+                logger.warning("Director binding fanout wait failed for run %s: %s", sub_result.run_id, exc)
+                final_results.append(
+                    (binding, CommandResult(run_id=sub_result.run_id, status="failed", message=f"Wait failed: {exc}"))
+                )
+
+        for binding, result in final_results:
+            key = _binding_key(binding)
+            if str(result.status or "").strip().lower() == "timeout":
+                self._binding_timeout_counts[key] = self._binding_timeout_counts.get(key, 0) + 1
+                if self._binding_timeout_counts[key] >= 2:
+                    self._quarantined_bindings.add(key)
+                    logger.warning(
+                        "Quarantining binding %s after %d consecutive timeouts", key, self._binding_timeout_counts[key]
+                    )
+            else:
+                self._binding_timeout_counts[key] = 0
+
+        per_binding: list[dict[str, Any]] = []
+        success_count = 0
+        fail_count = 0
+        first_run_id = ""
+        for binding, result in final_results:
+            if not first_run_id and result.run_id:
+                first_run_id = result.run_id
+            status = str(result.status or "").strip().lower()
+            if status in {"completed", "success"}:
+                success_count += 1
+            else:
+                fail_count += 1
+            key = _binding_key(binding)
+            entry: dict[str, Any] = {
+                "provider_id": binding["provider_id"],
+                "model": binding["model"],
+                "binding_id": binding.get("binding_id", ""),
+                "run_id": result.run_id or "",
+                "status": result.status or "unknown",
+                "message": result.message or "",
+            }
+            if status == "timeout":
+                entry["timeout_count"] = self._binding_timeout_counts.get(key, 0)
+                if key in self._quarantined_bindings:
+                    entry["quarantined"] = True
+                    entry["quarantine_reason"] = "consecutive_timeout"
+            per_binding.append(entry)
+
+        for binding in quarantined_skipped:
+            key = _binding_key(binding)
+            per_binding.append(
+                {
+                    "provider_id": binding["provider_id"],
+                    "model": binding["model"],
+                    "binding_id": binding.get("binding_id", ""),
+                    "run_id": "",
+                    "status": "quarantined",
+                    "message": "Skipped due to consecutive timeouts",
+                    "quarantined": True,
+                    "quarantine_reason": "consecutive_timeout",
+                    "timeout_count": self._binding_timeout_counts.get(key, 0),
+                }
+            )
+
+        skipped_count = len(quarantined_skipped)
+        if success_count <= 0:
+            fail_count += skipped_count
+        merged_status = "completed" if success_count > 0 and fail_count == 0 else "failed"
+        return CommandResult(
+            run_id=first_run_id,
+            status=merged_status,
+            message=(
+                f"Director binding fanout: {len(bindings)} bindings, {success_count} succeeded, "
+                f"{fail_count} failed, {skipped_count} quarantined"
+            ),
+            metadata={
+                "binding_fanout": True,
+                "binding_count": len(bindings),
+                "active_binding_count": len(active_bindings),
+                "quarantined_binding_count": skipped_count,
+                "per_binding": per_binding,
+            },
+        )
+
+    @staticmethod
+    def _build_per_binding_route_events(per_binding: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        events: list[dict[str, Any]] = []
+        for entry in per_binding:
+            if not isinstance(entry, dict):
+                continue
+            provider_id = str(entry.get("provider_id") or "").strip()
+            model = str(entry.get("model") or "").strip()
+            binding_id = str(entry.get("binding_id") or "").strip()
+            run_id = str(entry.get("run_id") or "").strip()
+            status = str(entry.get("status") or "").strip().lower()
+            if not provider_id or not model:
+                continue
+            event: dict[str, Any] = {
+                "event": "llm_route_terminal",
+                "role": "director",
+                "provider_id": provider_id,
+                "model": model,
+                "binding_id": binding_id,
+                "run_id": run_id,
+                "status": status,
+                "source": "llm",
+                "cache_hit": False,
+                "invocation": True,
+                "terminal": True,
+                "fail_closed": False,
+                "timestamp": now_iso,
+            }
+            if status == "timeout" or entry.get("quarantined"):
+                event["timeout_count"] = entry.get("timeout_count", 0)
+            if entry.get("quarantined"):
+                event["quarantined"] = True
+                event["quarantine_reason"] = entry.get("quarantine_reason", "")
+            events.append(event)
+        return events
+
+    @staticmethod
+    def _build_fail_closed_director_route_events(
+        *,
+        attempts: list[dict[str, Any]],
+        stage_signals: list[dict[str, Any]],
+        per_binding_route_events: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            from polaris.cells.factory.pipeline.internal.bench_gates import _norm_text, resolve_expected_llm_bindings
+        except (ImportError, RuntimeError):
+            return []
+        expected = resolve_expected_llm_bindings(("director",))
+        configured = expected.get("director") or []
+        if not configured:
+            return []
+        observed_providers: set[str] = set()
+        for event in per_binding_route_events or []:
+            if not isinstance(event, dict):
+                continue
+            provider = _norm_text(event.get("provider_id") or event.get("provider"))
+            model = _norm_text(event.get("model"))
+            if provider and model:
+                observed_providers.add(f"{provider}|{model}")
+        for attempt in attempts:
+            metadata = attempt.get("metadata") if isinstance(attempt, dict) else {}
+            if not isinstance(metadata, dict):
+                continue
+            provider = _norm_text(metadata.get("provider_id") or metadata.get("provider"))
+            model = _norm_text(metadata.get("model"))
+            if provider and model:
+                observed_providers.add(f"{provider}|{model}")
+        for signal in stage_signals:
+            if not isinstance(signal, dict):
+                continue
+            detail = str(signal.get("detail") or "")
+            for binding in configured:
+                provider = _norm_text(binding.get("provider_id") or binding.get("provider"))
+                model = _norm_text(binding.get("model"))
+                if provider and model and provider in detail and model in detail:
+                    observed_providers.add(f"{provider}|{model}")
+        now_iso = datetime.now(timezone.utc).isoformat()
+        fail_closed_events: list[dict[str, Any]] = []
+        for binding in configured:
+            provider = _norm_text(binding.get("provider_id") or binding.get("provider"))
+            model = _norm_text(binding.get("model"))
+            binding_id = _norm_text(binding.get("binding_id"))
+            key = f"{provider}|{model}"
+            if not provider or not model or key in observed_providers:
+                continue
+            fail_closed_events.append(
+                {
+                    "event": "llm_route_fail_closed",
+                    "role": "director",
+                    "provider_id": provider,
+                    "model": model,
+                    "binding_id": binding_id,
+                    "source": "diagnostic",
+                    "cache_hit": False,
+                    "invocation": True,
+                    "terminal": False,
+                    "fail_closed": True,
+                    "fail_closed_reason": "no_dispatch_evidence_for_binding",
+                    "timestamp": now_iso,
+                }
+            )
+        return fail_closed_events
+
+    @staticmethod
+    def _reclassify_binding_coverage_signals(
+        stage_signals: list[dict[str, Any]],
+        per_binding_route_events: list[dict[str, Any]],
+    ) -> None:
+        if not per_binding_route_events:
+            return
+        try:
+            from polaris.cells.factory.pipeline.internal.bench_gates import _norm_text, resolve_expected_llm_bindings
+        except (ImportError, RuntimeError):
+            return
+        expected = resolve_expected_llm_bindings(("director",))
+        configured = expected.get("director") or []
+        if not configured:
+            return
+        observed_loose: set[str] = set()
+        for event in per_binding_route_events:
+            if not isinstance(event, dict):
+                continue
+            provider = _norm_text(event.get("provider_id") or event.get("provider"))
+            model = _norm_text(event.get("model"))
+            if provider and model:
+                observed_loose.add(f"{provider}|{model}")
+        configured_loose: set[str] = set()
+        for binding in configured:
+            provider = _norm_text(binding.get("provider_id") or binding.get("provider"))
+            model = _norm_text(binding.get("model"))
+            if provider and model:
+                configured_loose.add(f"{provider}|{model}")
+        if not configured_loose or configured_loose != observed_loose:
+            return
+        has_timeout = any(
+            str(ev.get("status") or "").strip().lower() == "timeout"
+            for ev in per_binding_route_events
+            if isinstance(ev, dict)
+        )
+        if not has_timeout:
+            return
+        for i, signal in enumerate(stage_signals):
+            if not isinstance(signal, dict):
+                continue
+            if signal.get("code") != "director.binding_coverage_incomplete":
+                continue
+            timeout_bindings = [
+                str(ev.get("binding_id") or f"{ev.get('provider_id')}|{ev.get('model')}")
+                for ev in per_binding_route_events
+                if isinstance(ev, dict) and str(ev.get("status") or "").strip().lower() == "timeout"
+            ]
+            stage_signals[i] = {
+                "code": "director.binding_timeout",
+                "severity": "error",
+                "detail": f"All director bindings have terminal evidence but {len(timeout_bindings)} timed out: {', '.join(timeout_bindings[:8])}",
+                "timeout_bindings": timeout_bindings,
+                "observed_count": len(per_binding_route_events),
+                "multi_route_required": True,
+            }
+            break
+
+    def _validate_director_binding_coverage(
+        self,
+        additional_events: list[dict[str, Any]] | None = None,
+    ) -> tuple[bool, list[dict[str, Any]]]:
+        try:
+            from polaris.cells.factory.pipeline.internal.bench_gates import (
+                build_llm_route_audit,
+                collect_llm_events,
+                resolve_expected_llm_bindings,
+            )
+        except (ImportError, RuntimeError) as exc:
+            return False, [
+                {
+                    "code": "director.binding_coverage_audit_unavailable",
+                    "severity": "error",
+                    "detail": f"Director binding coverage audit is unavailable: {exc}",
+                }
+            ]
+        expected = resolve_expected_llm_bindings(("director",))
+        configured = expected.get("director") or []
+        if not configured:
+            return True, []
+        try:
+            events = collect_llm_events(self.workspace, None)
+        except (RuntimeError, OSError, ValueError, TypeError):
+            events = []
+        if additional_events:
+            seen_keys: set[tuple[str, ...]] = set()
+            for ev in events:
+                key = (
+                    str(ev.get("event") or ""),
+                    str(ev.get("provider_id") or ""),
+                    str(ev.get("model") or ""),
+                    str(ev.get("binding_id") or ""),
+                    str(ev.get("run_id") or ""),
+                )
+                seen_keys.add(key)
+            for ev in additional_events:
+                if not isinstance(ev, dict):
+                    continue
+                key = (
+                    str(ev.get("event") or ""),
+                    str(ev.get("provider_id") or ""),
+                    str(ev.get("model") or ""),
+                    str(ev.get("binding_id") or ""),
+                    str(ev.get("run_id") or ""),
+                )
+                if key not in seen_keys:
+                    events.append(ev)
+                    seen_keys.add(key)
+        audit = build_llm_route_audit(
+            events, expected_bindings=expected, required_roles=("director",), require_all_director_routes=True
+        )
+        if audit.get("ok"):
+            return True, []
+        director_result = audit.get("roles", {}).get("director", {})
+        missing = list(director_result.get("missing_bindings") or [])
+        observed_count = int(director_result.get("observed_count") or 0)
+        fail_closed_count = int(director_result.get("fail_closed_count") or 0)
+        signals: list[dict[str, Any]] = []
+        if missing:
+            signals.append(
+                {
+                    "code": "director.binding_coverage_incomplete",
+                    "severity": "error",
+                    "detail": f"Not all configured director bindings produced real LLM evidence. Observed={observed_count}, missing={len(missing)}, fail_closed(diagnostic)={fail_closed_count}. Missing: {', '.join(missing[:8])}",
+                    "missing_bindings": missing,
+                    "observed_count": observed_count,
+                    "fail_closed_count": fail_closed_count,
+                    "multi_route_required": True,
+                }
+            )
+        elif observed_count == 0:
+            signals.append(
+                {
+                    "code": "director.no_real_llm_evidence",
+                    "severity": "error",
+                    "detail": "No real LLM terminal evidence found for any configured director binding.",
+                    "observed_count": 0,
+                    "fail_closed_count": fail_closed_count,
+                }
+            )
+        else:
+            signals.append(
+                {
+                    "code": "director.binding_coverage_failed",
+                    "severity": "error",
+                    "detail": str(audit.get("summary") or "Director binding coverage audit failed"),
+                    "observed_count": observed_count,
+                    "fail_closed_count": fail_closed_count,
+                    "multi_route_required": True,
+                }
+            )
+        return False, signals
+
     async def _execute_docs_generation(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing docs generation for run %s", run.id)
         abort_checker = self._resolve_abort_checker(context)
@@ -650,6 +1117,68 @@ class OrchestrationStageExecutor:
             abort_checker=abort_checker,
         )
 
+    @staticmethod
+    def _ce_extract_llm_evidence(ce_result: Any, *, task_id: str, run_id: str) -> dict[str, Any]:
+        def _walk_values(root: Any, keys: set[str]) -> Any:
+            stack: list[Any] = [root]
+            seen_ids: set[int] = set()
+            while stack:
+                item = stack.pop()
+                item_id = id(item)
+                if item_id in seen_ids:
+                    continue
+                seen_ids.add(item_id)
+                if isinstance(item, dict):
+                    for key, value in item.items():
+                        normalized_key = str(key or "").strip().lower()
+                        if normalized_key in keys and str(value or "").strip():
+                            return value
+                    stack.extend(item.values())
+                elif isinstance(item, (list, tuple)):
+                    stack.extend(item)
+            return None
+
+        metadata = dict(getattr(ce_result, "metadata", {}) or {})
+        usage = dict(getattr(ce_result, "usage", {}) or {})
+        roots: list[Any] = [metadata, usage, ce_result]
+        provider = ""
+        model = ""
+        cache_hit = False
+        for root in roots:
+            if not provider:
+                provider = str(_walk_values(root, {"provider_id", "provider", "providerid"}) or "").strip()
+            if not model:
+                model = str(_walk_values(root, {"model", "model_id", "modelid"}) or "").strip()
+            cache_value = _walk_values(root, {"cache_hit", "cached", "cachehit"})
+            if cache_value is not None:
+                cache_hit = bool(cache_value)
+        if not provider:
+            provider = "unknown"
+        if not model:
+            model = "unknown"
+
+        evidence: dict[str, Any] = {
+            "provider": provider,
+            "model": model,
+            "cache_hit": cache_hit,
+            "role": "chief_engineer",
+            "task_id": task_id,
+            "run_id": run_id,
+        }
+        if provider == "unknown" or model == "unknown":
+            missing_parts: list[str] = []
+            if provider == "unknown":
+                missing_parts.append("provider_id/provider")
+            if model == "unknown":
+                missing_parts.append("model/model_id")
+            evidence["provider_model_unknown"] = True
+            evidence["provider_model_unknown_reason"] = (
+                "Runtime result did not contain "
+                + " and ".join(missing_parts)
+                + "; check RoleExecutionKernel and RoleRuntimeService metadata propagation"
+            )
+        return evidence
+
     async def _execute_chief_engineer_review(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing Chief Engineer review for run %s", run.id)
         del context
@@ -674,51 +1203,115 @@ class OrchestrationStageExecutor:
             task_id = self._task_id(task, index)
             objective = self._task_objective(task)
             try:
+                task_context = self._task_blueprint_context(task, run_id=run.id, index=index)
+                task_context.update(
+                    {
+                        "suppress_working_memory_contract": True,
+                        "suppress_tool_policy_prompt": True,
+                        "disable_internal_tool_rounds": True,
+                        "_transaction_kernel_forced_tool_definitions": [],
+                        "_transaction_kernel_forced_tool_choice": "none",
+                    }
+                )
+                ce_objective = f"{objective.strip()}{_CE_BLUEPRINT_OUTPUT_CONTRACT}"
+
                 # Build command for RoleRuntimeService
                 command = ExecuteRoleTaskCommandV1(
                     role="chief_engineer",
                     task_id=task_id,
                     workspace=str(self.workspace),
-                    objective=objective,
+                    objective=ce_objective,
                     run_id=run.id,
-                    context=self._task_blueprint_context(task, run_id=run.id, index=index),
+                    context=task_context,
                     metadata={
                         "constraints": self._task_blueprint_constraints(task),
                         "source": "factory_stage_executor.chief_engineer_review",
+                        "validate_output": True,
+                        "max_retries": 1,
                     },
                 )
 
                 # Execute via RoleRuntimeService (real LLM call)
                 ce_result = await ce_service.execute_role_task(command)
+                ce_evidence = self._ce_extract_llm_evidence(ce_result, task_id=task_id, run_id=run.id)
+                ce_provider = str(ce_evidence.get("provider") or "unknown")
+                ce_model = str(ce_evidence.get("model") or "unknown")
 
                 # Check if CE LLM call succeeded (fail-closed)
                 if not ce_result.ok:
-                    stage_signals.append(
-                        {
-                            "code": "chief_engineer.llm_review_failed",
-                            "severity": "error",
-                            "detail": ce_result.error_message or ce_result.error_code or "CE LLM call failed",
-                            "task_id": task_id,
-                            "provider": getattr(ce_result, "provider", "unknown"),
-                            "model": getattr(ce_result, "model", "unknown"),
-                        }
-                    )
+                    error_signal: dict[str, Any] = {
+                        "code": "chief_engineer.llm_review_failed",
+                        "severity": "error",
+                        "detail": ce_result.error_message or ce_result.error_code or "CE LLM call failed",
+                        "task_id": task_id,
+                        "provider": ce_provider,
+                        "model": ce_model,
+                    }
+                    if ce_evidence.get("provider_model_unknown"):
+                        error_signal["provider_model_unknown"] = True
+                        error_signal["provider_model_unknown_reason"] = str(
+                            ce_evidence.get("provider_model_unknown_reason") or ""
+                        )
+                    stage_signals.append(error_signal)
                     continue
 
-                # Extract LLM evidence from ce_result
-                ce_provider = getattr(ce_result, "provider", "unknown")
-                ce_model = getattr(ce_result, "model", "unknown")
-                ce_cache_hit = getattr(ce_result, "cache_hit", False)
+                task_error_count_before = len(stage_signals)
+                if ce_evidence.get("provider_model_unknown"):
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.llm_evidence_missing",
+                            "severity": "error",
+                            "detail": str(ce_evidence.get("provider_model_unknown_reason") or ""),
+                            "task_id": task_id,
+                            "provider": ce_provider,
+                            "model": ce_model,
+                            "provider_model_unknown": True,
+                        }
+                    )
+                else:
+                    # Emit audit event for LLM call once real provider/model evidence exists.
+                    self._emit_audit_event(
+                        "chief_engineer.llm_call",
+                        provider=ce_provider,
+                        model=ce_model,
+                        cache_hit=bool(ce_evidence.get("cache_hit")),
+                        task_id=task_id,
+                        run_id=run.id,
+                    )
 
-                # Emit audit event for LLM call
-                self._emit_audit_event(
-                    "chief_engineer.llm_call",
-                    provider=ce_provider,
-                    model=ce_model,
-                    cache_hit=ce_cache_hit,
-                    task_id=task_id,
-                    run_id=run.id,
+                raw_output = str(getattr(ce_result, "output", "") or "")
+                if "<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.session_patch_output_rejected",
+                            "severity": "error",
+                            "detail": "CE returned SESSION_PATCH content instead of the required blueprint JSON object",
+                            "task_id": task_id,
+                            "provider": ce_provider,
+                            "model": ce_model,
+                        }
+                    )
+                quality_result = QualityChecker(str(self.workspace)).validate_output(
+                    raw_output,
+                    cast(Any, SimpleNamespace(role_id="chief_engineer")),
                 )
+                if not quality_result.success:
+                    stage_signals.append(
+                        {
+                            "code": "chief_engineer.output_schema_invalid",
+                            "severity": "error",
+                            "detail": "; ".join(str(item) for item in quality_result.errors)
+                            or "CE output failed schema validation",
+                            "task_id": task_id,
+                            "provider": ce_provider,
+                            "model": ce_model,
+                            "quality_score": float(quality_result.quality_score),
+                            "suggestions": list(quality_result.suggestions),
+                        }
+                    )
+
+                if len(stage_signals) > task_error_count_before:
+                    continue
 
                 # Convert to blueprint result format (deterministic structure generator)
                 result = generate_task_blueprint(
@@ -728,7 +1321,7 @@ class OrchestrationStageExecutor:
                         objective=objective,
                         run_id=run.id,
                         constraints=self._task_blueprint_constraints(task),
-                        context=self._task_blueprint_context(task, run_id=run.id, index=index),
+                        context=task_context,
                     )
                 )
 
@@ -763,14 +1356,7 @@ class OrchestrationStageExecutor:
                     "summary": result.summary,
                     "recommendations": list(result.recommendations),
                     "risks": list(result.risks),
-                    "llm_evidence": {
-                        "provider": ce_provider,
-                        "model": ce_model,
-                        "cache_hit": ce_cache_hit,
-                        "role": "chief_engineer",
-                        "task_id": task_id,
-                        "run_id": run.id,
-                    },
+                    "llm_evidence": ce_evidence,
                 }
             )
 
@@ -905,6 +1491,8 @@ class OrchestrationStageExecutor:
             )
 
         if not stage_signals:
+            director_binding_fanout = self._resolve_director_binding_fanout()
+
             for round_index in range(1, max_rounds + 1):
                 before_stats = self._read_taskboard_stats()
                 if self._is_taskboard_converged(before_stats):
@@ -924,24 +1512,39 @@ class OrchestrationStageExecutor:
                     )
                     break
 
-                command_result = await service.execute_director_run(
-                    workspace=str(self.workspace),
-                    tasks=context.get("tasks"),
-                    options={
-                        "task_filter": effective_task_filter,
-                        "max_workers": max_workers,
-                        "execution_mode": execution_mode,
-                        "dispatch_mode": "mainline-full",  # Enforce mainline-full, no fallback
-                    },
-                )
-                last_command_result = command_result
-                director_result = await self._wait_run_completion(
-                    service,
-                    command_result,
-                    timeout_seconds=int(context.get("timeout", 600)),
-                    cancel_event=self._resolve_cancel_event(context),
-                    abort_checker=abort_checker,
-                )
+                base_options: dict[str, Any] = {
+                    "task_filter": effective_task_filter,
+                    "max_workers": max_workers,
+                    "execution_mode": execution_mode,
+                    "dispatch_mode": "mainline-full",
+                }
+                if len(director_binding_fanout) > 1:
+                    command_result = await self._execute_director_binding_fanout(
+                        service=service,
+                        workspace=str(self.workspace),
+                        tasks=context.get("tasks"),
+                        base_options=base_options,
+                        bindings=director_binding_fanout,
+                        timeout_seconds=int(context.get("timeout", 600)),
+                        cancel_event=self._resolve_cancel_event(context),
+                        abort_checker=abort_checker,
+                    )
+                    last_command_result = command_result
+                    director_result = command_result
+                else:
+                    command_result = await service.execute_director_run(
+                        workspace=str(self.workspace),
+                        tasks=context.get("tasks"),
+                        options=base_options,
+                    )
+                    last_command_result = command_result
+                    director_result = await self._wait_run_completion(
+                        service,
+                        command_result,
+                        timeout_seconds=int(context.get("timeout", 600)),
+                        cancel_event=self._resolve_cancel_event(context),
+                        abort_checker=abort_checker,
+                    )
                 final_result = director_result
                 if str(director_result.status or "").strip().lower() == "cancelled":
                     break
@@ -963,7 +1566,34 @@ class OrchestrationStageExecutor:
                 }
                 attempts.append(attempt_entry)
 
-                if director_result.status not in {"completed", "success"}:
+                director_status = str(director_result.status or "").strip().lower()
+                if director_status not in {"completed", "success"}:
+                    if progress_made:
+                        idle_rounds = 0
+                        stage_signals.append(
+                            {
+                                "code": "director.partial_failure_progress_continued",
+                                "severity": "warning",
+                                "detail": (
+                                    "Director run returned a non-success status after material progress; "
+                                    "continuing remaining dispatch rounds until TaskBoard convergence"
+                                ),
+                                "upstream_status": director_status,
+                                "round": round_index,
+                            }
+                        )
+                        if self._is_taskboard_converged(after_stats):
+                            stage_signals.append(
+                                {
+                                    "code": "director.dispatch_converged_after_partial_failure",
+                                    "severity": "info",
+                                    "detail": f"Director dispatch converged after partial failure in round {round_index}",
+                                    "round": round_index,
+                                    "upstream_status": director_status,
+                                }
+                            )
+                            break
+                        continue
                     prior_successful_progress = any(
                         str(item.get("status") or "").strip().lower() in {"completed", "success"}
                         and bool(item.get("progress_made"))
@@ -1012,16 +1642,31 @@ class OrchestrationStageExecutor:
                             metadata=metadata_payload,
                         )
                         break
-                    stage_signals.append(
-                        {
-                            "code": "director.run_status_non_success",
-                            "severity": "error",
-                            "detail": str(director_result.message or "").strip()
-                            or str(director_result.status or "unknown"),
-                            "upstream_status": str(director_result.status or "").strip(),
-                            "round": round_index,
-                        }
-                    )
+                    if director_status == "timeout":
+                        stage_signals.append(
+                            {
+                                "code": "director.dispatch_timeout",
+                                "severity": "error",
+                                "detail": (
+                                    f"Director dispatch timed out after {int(context.get('timeout', 600))} seconds; "
+                                    "no further progress possible"
+                                ),
+                                "upstream_status": director_status,
+                                "round": round_index,
+                                "timeout_seconds": int(context.get("timeout", 600)),
+                            }
+                        )
+                    else:
+                        stage_signals.append(
+                            {
+                                "code": "director.run_status_non_success",
+                                "severity": "error",
+                                "detail": str(director_result.message or "").strip()
+                                or str(director_result.status or "unknown"),
+                                "upstream_status": str(director_result.status or "").strip(),
+                                "round": round_index,
+                            }
+                        )
                     break
 
                 if progress_made:
@@ -1122,6 +1767,24 @@ class OrchestrationStageExecutor:
                 }
             )
 
+        # Generate per-binding terminal route events from fanout results
+        per_binding_route_events: list[dict[str, Any]] = []
+        for attempt in attempts:
+            metadata = attempt.get("metadata") if isinstance(attempt, dict) else {}
+            if not isinstance(metadata, dict):
+                continue
+            per_binding = metadata.get("per_binding")
+            if isinstance(per_binding, list):
+                per_binding_route_events.extend(self._build_per_binding_route_events(per_binding))
+
+        if stage_status != "cancelled":
+            binding_ok, binding_signals = self._validate_director_binding_coverage(
+                additional_events=per_binding_route_events,
+            )
+            stage_signals.extend(binding_signals)
+            if not binding_ok:
+                stage_status = "failed"
+
         error_code = ""
         root_cause_hint = ""
         for signal in stage_signals:
@@ -1133,6 +1796,37 @@ class OrchestrationStageExecutor:
             root_cause_hint = str(signal.get("detail") or "").strip()
             if error_code:
                 break
+
+        if per_binding_route_events:
+            self._reclassify_binding_coverage_signals(
+                stage_signals,
+                per_binding_route_events,
+            )
+
+        for signal in stage_signals:
+            if not isinstance(signal, dict):
+                continue
+            if str(signal.get("severity") or "").strip().lower() != "error":
+                continue
+            error_code = str(signal.get("code") or "").strip()
+            root_cause_hint = str(signal.get("detail") or "").strip()
+            if error_code:
+                break
+
+        fail_closed_events = self._build_fail_closed_director_route_events(
+            attempts=attempts,
+            stage_signals=stage_signals,
+            per_binding_route_events=per_binding_route_events,
+        )
+        if fail_closed_events:
+            stage_signals.append(
+                {
+                    "code": "director.fail_closed_route_evidence",
+                    "severity": "info",
+                    "detail": f"Recorded fail-closed diagnostics for {len(fail_closed_events)} missing director route(s)",
+                    "count": len(fail_closed_events),
+                }
+            )
 
         stage_signal_path = ""
         if stage_signals:
@@ -1158,6 +1852,8 @@ class OrchestrationStageExecutor:
             },
             "attempts": attempts,
             "signals": stage_signals,
+            "fail_closed_route_events": fail_closed_events,
+            "per_binding_route_events": per_binding_route_events,
             "failure_stage": "director_dispatch" if stage_status == "failed" else "",
             "error_code": error_code or None,
             "root_cause_hint": root_cause_hint or None,

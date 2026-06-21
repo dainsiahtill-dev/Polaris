@@ -65,6 +65,38 @@ def _is_package_manifest_path(rel_path: str) -> bool:
     return normalized == "package.json" or normalized.endswith("/package.json")
 
 
+def _is_json_config_path(rel_path: str) -> bool:
+    normalized = str(rel_path or "").replace("\\", "/").strip("/").lower()
+    return normalized.endswith(".json")
+
+
+def _validate_or_repair_json_config_content(
+    *,
+    rel_path: str,
+    content: str,
+) -> dict[str, Any]:
+    if not _is_json_config_path(rel_path):
+        return {"ok": True, "content": content, "repaired": False}
+
+    from .deterministic_repairs.json_config_repairs import validate_json_config_file
+
+    result = validate_json_config_file(content, rel_path, allow_repair=True)
+    if result.get("ok"):
+        return {
+            "ok": True,
+            "content": str(result.get("content") if result.get("content") is not None else content),
+            "repaired": bool(result.get("repaired")),
+        }
+
+    return {
+        "ok": False,
+        "blocked": True,
+        "error_type": "invalid_json_content",
+        "error": str(result.get("error") or f"Invalid JSON content for {rel_path}"),
+        "file": rel_path,
+    }
+
+
 def _read_workspace_agents_policy_text(workspace: Path, rel_path: str) -> str:
     """Read root and nested AGENTS.md files that apply to a workspace-relative path."""
     normalized_rel = str(rel_path or "").replace("\\", "/").strip("/")
@@ -237,6 +269,10 @@ class DirectorToolExecutor:
             if normalized.error:
                 return {"ok": False, "error": normalized.error}
             text = str(normalized.content or "")
+            json_config_result = _validate_or_repair_json_config_content(rel_path=rel_path, content=text)
+            if not json_config_result.get("ok"):
+                return json_config_result
+            text = str(json_config_result.get("content") if json_config_result.get("content") is not None else text)
 
             policy_result = self._validate_director_policy_for_write(
                 workspace=workspace,
@@ -273,6 +309,8 @@ class DirectorToolExecutor:
             }
             if normalized.normalized_patch_like:
                 result["normalized_patch_like_write"] = True
+            if json_config_result.get("repaired"):
+                result["json_config_repaired"] = True
             return result
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
@@ -332,40 +370,59 @@ class DirectorToolExecutor:
 
             rel_path = target.relative_to(workspace).as_posix()
             new_content = content.replace(search, replace, 1)
+            json_config_result = _validate_or_repair_json_config_content(rel_path=rel_path, content=new_content)
+            if not json_config_result.get("ok"):
+                return json_config_result
+            final_content = str(
+                json_config_result.get("content") if json_config_result.get("content") is not None else new_content
+            )
             policy_result = self._validate_director_policy_for_write(
                 workspace=workspace,
                 rel_path=rel_path,
                 old_content=content,
-                new_content=new_content,
+                new_content=final_content,
                 operation="edit_file",
                 tool_kwargs=args,
             )
             if not policy_result.get("ok"):
                 return policy_result
 
-            replace_result = replace_in_file_with_broadcast(
-                workspace=str(workspace),
-                file_path=rel_path,
-                old_text=search,
-                new_text=replace,
-                count=1,
-                message_bus=self._message_bus,
-                worker_id=self._worker_id,
-                task_id=task_id,
-            )
+            if json_config_result.get("repaired"):
+                replace_result = write_file_with_broadcast(
+                    workspace=str(workspace),
+                    file_path=rel_path,
+                    content=final_content,
+                    message_bus=self._message_bus,
+                    worker_id=self._worker_id,
+                    task_id=task_id,
+                )
+            else:
+                replace_result = replace_in_file_with_broadcast(
+                    workspace=str(workspace),
+                    file_path=rel_path,
+                    old_text=search,
+                    new_text=replace,
+                    count=1,
+                    message_bus=self._message_bus,
+                    worker_id=self._worker_id,
+                    task_id=task_id,
+                )
             if not bool(replace_result.get("ok")):
                 return {
                     "ok": False,
                     "error": str(replace_result.get("error") or "edit_file failed"),
                     "file": rel_path,
                 }
-            return {
+            result = {
                 "ok": True,
                 "file": rel_path,
                 "replacements": int(replace_result.get("replacements") or 1),
                 "broadcast_ok": bool(replace_result.get("broadcast_ok")),
                 "director_policy": policy_result.get("director_policy"),
             }
+            if json_config_result.get("repaired"):
+                result["json_config_repaired"] = True
+            return result
         except (OSError, RuntimeError, TypeError, UnicodeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
 

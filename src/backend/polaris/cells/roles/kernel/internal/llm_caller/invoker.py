@@ -235,6 +235,29 @@ class LLMInvoker:
 
     @staticmethod
     def _profile_for_healthy_binding(role_id: str, profile: RoleProfile) -> RoleProfile:
+        binding = get_role_binding_override(role_id)
+        if binding:
+            provider_id = str(binding.get("provider_id") or "").strip()
+            model = str(binding.get("model") or "").strip()
+            binding_id = str(binding.get("binding_id") or "").strip()
+            fanout_locked = str(binding.get("_fanout_locked") or "").strip().lower() == "true"
+            if provider_id and model:
+                slot = RoleBindingSlot(
+                    role_id=role_id,
+                    provider_id=provider_id,
+                    model=model,
+                    binding_id=binding_id,
+                )
+                if fanout_locked:
+                    return LLMInvoker._profile_for_binding(profile, slot)
+                if is_role_binding_healthy(
+                    role_id,
+                    provider_id=provider_id,
+                    model=model,
+                    binding_id=binding_id,
+                ):
+                    return LLMInvoker._profile_for_binding(profile, slot)
+
         if LLMInvoker._profile_uses_healthy_binding(role_id, profile):
             return profile
         for slot in get_role_binding_slots(role_id):

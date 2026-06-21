@@ -772,16 +772,18 @@ async def _claim_task_with_retry(
     requested_task_id: str,
     run_id: str,
 ) -> tuple[dict[str, Any], str, str, bool, dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
-    """任务声明重试逻辑"""
-    max_attempts = 3
-    retry_delay_seconds = 0.20
+    """任务声明重试逻辑
+
+    Uses the atomic ``claim_next_execution`` API to eliminate the race window
+    between task selection and claim. When a specific task is requested, tries
+    that task first; otherwise lets ``claim_next_execution`` enumerate candidates.
+    """
     active_task = task
     active_task_id = str(target_task_id or "").strip()
     active_source = str(selection_source or "").strip() or "task_id_lookup"
-    attempts: list[dict[str, Any]] = []
-    last_claim_result: dict[str, Any] = {}
 
-    for attempt in range(1, max_attempts + 1):
+    # If a specific task was requested, try to claim it first
+    if active_task_id:
         claim_external_task_id = _resolve_claim_external_task_id(active_task, requested_task_id)
         claim_result = adapter.task_runtime.claim_execution(
             active_task_id,
@@ -802,9 +804,10 @@ async def _claim_task_with_retry(
         )
         active_task = claimed_task
         active_task_id = str(claimed_task.get("id") or "").strip() or active_task_id
-        attempts.append(
+
+        attempts = [
             {
-                "attempt": attempt,
+                "attempt": 1,
                 "task_id": active_task_id,
                 "selection_source": active_source,
                 "claimed": claimed,
@@ -816,27 +819,72 @@ async def _claim_task_with_retry(
                     else ""
                 ).strip(),
             }
-        )
+        ]
+
         if claimed:
             snapshot = adapter._state_tracker.build_taskboard_observation_snapshot(adapter.task_runtime)
             return active_task, active_task_id, active_source, True, snapshot, attempts, last_claim_result
 
-        fallback_task = adapter._select_pending_board_task()
-        fallback_id = str((fallback_task or {}).get("id") or "").strip()
-        if fallback_task and fallback_id and fallback_id != active_task_id:
-            active_task = fallback_task
-            active_task_id = fallback_id
-            fallback_resume_state = str(fallback_task.get("resume_state") or "").strip().lower()
-            active_source = (
-                "claim_retry_resumable_queue_fallback"
-                if fallback_resume_state == "resumable"
-                else "claim_retry_ready_queue_fallback"
-            )
-            continue
+        # If lease_conflict or other failure, fall through to atomic claim_next_execution
+        # to try other candidates deterministically
+        reason = str(last_claim_result.get("reason") or "").strip()
+        if reason not in ("lease_conflict", "task_terminal", "task_blocked"):
+            # For non-retriable failures, return immediately
+            snapshot = adapter._state_tracker.build_taskboard_observation_snapshot(adapter.task_runtime)
+            return active_task, active_task_id, active_source, False, snapshot, attempts, last_claim_result
 
-        if attempt < max_attempts:
-            await asyncio.sleep(retry_delay_seconds * attempt)
+    # Use atomic claim_next_execution for deterministic candidate enumeration
+    claim_next_result = adapter.task_runtime.claim_next_execution(
+        worker_id=adapter.role_id,
+        role_id=adapter.role_id,
+        run_id=run_id,
+        lease_ttl_seconds=_DEFAULT_TASK_LEASE_TTL_SECONDS,
+        selection_source=active_source,
+        prefer_resumable=True,
+    )
 
+    success = bool(claim_next_result.get("success"))
+    task_data = claim_next_result.get("task")
+    claimed_task = task_data if isinstance(task_data, dict) else {}
+    session_data = claim_next_result.get("session")
+    claim_attempts = claim_next_result.get("attempts", [])
+
+    # Convert claim_next_execution attempts to legacy format
+    attempts = []
+    for i, attempt in enumerate(claim_attempts, 1):
+        attempts.append(
+            {
+                "attempt": i,
+                "task_id": attempt.get("task_id"),
+                "selection_source": active_source,
+                "claimed": attempt.get("success", False),
+                "reason": attempt.get("reason", ""),
+                "resumed": False,
+                "session_id": str(
+                    session_data.get("session_id", "")
+                    if isinstance(session_data, dict) and success and i == len(claim_attempts)
+                    else ""
+                ).strip(),
+            }
+        )
+
+    if success and claimed_task:
+        active_task = claimed_task
+        active_task_id = str(claimed_task.get("id") or "").strip()
+        last_claim_result = {
+            "success": True,
+            "reason": "claimed",
+            "task": claimed_task,
+            "session": session_data,
+        }
+        snapshot = adapter._state_tracker.build_taskboard_observation_snapshot(adapter.task_runtime)
+        return active_task, active_task_id, active_source, True, snapshot, attempts, last_claim_result
+
+    # All candidates exhausted
+    last_claim_result = {
+        "success": False,
+        "reason": claim_next_result.get("reason", "all_candidates_unavailable"),
+    }
     snapshot = adapter._state_tracker.build_taskboard_observation_snapshot(adapter.task_runtime)
     return active_task, active_task_id, active_source, False, snapshot, attempts, last_claim_result
 

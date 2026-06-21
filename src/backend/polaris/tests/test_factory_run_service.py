@@ -851,6 +851,12 @@ class _TestStageExecutor(OrchestrationStageExecutor):
     def _build_orchestration_service(self, context: dict):
         return self._command_service
 
+    def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+        return []
+
+    def _validate_director_binding_coverage(self, additional_events=None):
+        return True, []
+
 
 class _WorkspaceValidationStageExecutor(_TestStageExecutor):
     def __init__(self, workspace: Path, command_service: object, exit_codes: list[int]) -> None:
@@ -1270,7 +1276,14 @@ class TestOrchestrationStageExecutor:
                     workspace=str(temp_workspace),
                     task_id=command.task_id,
                     run_id=command.run_id,
-                    output="CE review completed",
+                    output=json.dumps(
+                        {
+                            "construction_plan": {"steps": ["implement account entity", "add tests"]},
+                            "scope_for_apply": ["src/account"],
+                            "risk_flags": [],
+                        },
+                        ensure_ascii=False,
+                    ),
                     metadata={
                         "provider": "test-provider",
                         "model": "test-model",
@@ -2012,3 +2025,491 @@ class TestFactoryRunStatus:
     def test_status_from_string(self):
         assert FactoryRunStatus("pending") == FactoryRunStatus.PENDING
         assert FactoryRunStatus("running") == FactoryRunStatus.RUNNING
+
+
+class TestDirectorFanoutRouteAuditR15B:
+    """R15-B regression tests: Director fanout per_binding terminal route evidence
+    and timeout attribution.
+
+    Reproduces R14 live dispatch scenario: 3 bindings, 2 completed, 1 timeout.
+    """
+
+    def test_build_per_binding_route_events_generates_terminal_events(self):
+        per_binding = [
+            {"provider_id": "p0", "model": "m0", "binding_id": "d0", "run_id": "r0", "status": "completed"},
+            {"provider_id": "p1", "model": "m1", "binding_id": "d1", "run_id": "r1", "status": "timeout"},
+            {"provider_id": "p2", "model": "m2", "binding_id": "d2", "run_id": "r2", "status": "completed"},
+        ]
+        events = OrchestrationStageExecutor._build_per_binding_route_events(per_binding)
+        assert len(events) == 3
+        assert all(e["event"] == "llm_route_terminal" for e in events)
+        assert all(e["terminal"] is True for e in events)
+        assert all(e["source"] == "llm" for e in events)
+        statuses = {e["provider_id"]: e["status"] for e in events}
+        assert statuses["p0"] == "completed"
+        assert statuses["p1"] == "timeout"
+        assert statuses["p2"] == "completed"
+
+    def test_build_per_binding_route_events_skips_invalid(self):
+        per_binding = [
+            {"provider_id": "", "model": "m1", "binding_id": "b1", "run_id": "r1", "status": "completed"},
+            {"provider_id": "p1", "model": "", "binding_id": "b2", "run_id": "r2", "status": "completed"},
+            {"provider_id": "p3", "model": "m3", "binding_id": "b3", "run_id": "r3", "status": "timeout"},
+        ]
+        events = OrchestrationStageExecutor._build_per_binding_route_events(per_binding)
+        assert len(events) == 1
+        assert events[0]["provider_id"] == "p3"
+
+    def test_fail_closed_excludes_per_binding_evidence(self):
+        from unittest.mock import patch
+
+        configured = [
+            {"role": "director", "provider_id": "p0", "model": "m0", "binding_id": "d0"},
+            {"role": "director", "provider_id": "p1", "model": "m1", "binding_id": "d1"},
+        ]
+        route_events = [
+            {
+                "provider_id": "p0",
+                "model": "m0",
+                "binding_id": "d0",
+                "status": "completed",
+                "terminal": True,
+                "invocation": True,
+            },
+            {
+                "provider_id": "p1",
+                "model": "m1",
+                "binding_id": "d1",
+                "status": "timeout",
+                "terminal": True,
+                "invocation": True,
+            },
+        ]
+        with patch(
+            "polaris.cells.factory.pipeline.internal.bench_gates.resolve_expected_llm_bindings",
+            return_value={"director": configured},
+        ):
+            events = OrchestrationStageExecutor._build_fail_closed_director_route_events(
+                attempts=[],
+                stage_signals=[],
+                per_binding_route_events=route_events,
+            )
+        assert len(events) == 0
+
+    def test_fail_closed_only_for_truly_missing(self):
+        from unittest.mock import patch
+
+        configured = [
+            {"role": "director", "provider_id": "p0", "model": "m0", "binding_id": "d0"},
+            {"role": "director", "provider_id": "p1", "model": "m1", "binding_id": "d1"},
+            {"role": "director", "provider_id": "p2", "model": "m2", "binding_id": "d2"},
+        ]
+        route_events = [
+            {
+                "provider_id": "p0",
+                "model": "m0",
+                "binding_id": "d0",
+                "status": "completed",
+                "terminal": True,
+                "invocation": True,
+            },
+            {
+                "provider_id": "p1",
+                "model": "m1",
+                "binding_id": "d1",
+                "status": "timeout",
+                "terminal": True,
+                "invocation": True,
+            },
+        ]
+        with patch(
+            "polaris.cells.factory.pipeline.internal.bench_gates.resolve_expected_llm_bindings",
+            return_value={"director": configured},
+        ):
+            events = OrchestrationStageExecutor._build_fail_closed_director_route_events(
+                attempts=[],
+                stage_signals=[],
+                per_binding_route_events=route_events,
+            )
+        assert len(events) == 1
+        assert events[0]["provider_id"] == "p2"
+        assert events[0]["fail_closed"] is True
+
+    def test_reclassify_converts_to_timeout(self):
+        from unittest.mock import patch
+
+        configured = [
+            {"role": "director", "provider_id": "p0", "model": "m0", "binding_id": "d0"},
+            {"role": "director", "provider_id": "p1", "model": "m1", "binding_id": "d1"},
+            {"role": "director", "provider_id": "p2", "model": "m2", "binding_id": "d2"},
+        ]
+        route_events = [
+            {"provider_id": "p0", "model": "m0", "binding_id": "d0", "status": "completed"},
+            {"provider_id": "p1", "model": "m1", "binding_id": "d1", "status": "timeout"},
+            {"provider_id": "p2", "model": "m2", "binding_id": "d2", "status": "completed"},
+        ]
+        signals = [{"code": "director.binding_coverage_incomplete", "severity": "error", "detail": "..."}]
+        with patch(
+            "polaris.cells.factory.pipeline.internal.bench_gates.resolve_expected_llm_bindings",
+            return_value={"director": configured},
+        ):
+            OrchestrationStageExecutor._reclassify_binding_coverage_signals(signals, route_events)
+        assert signals[0]["code"] == "director.binding_timeout"
+        assert "timed out" in signals[0]["detail"].lower()
+
+    def test_reclassify_noop_when_missing_bindings(self):
+        from unittest.mock import patch
+
+        configured = [
+            {"role": "director", "provider_id": "p0", "model": "m0", "binding_id": "d0"},
+            {"role": "director", "provider_id": "p1", "model": "m1", "binding_id": "d1"},
+            {"role": "director", "provider_id": "p2", "model": "m2", "binding_id": "d2"},
+        ]
+        route_events = [
+            {"provider_id": "p0", "model": "m0", "binding_id": "d0", "status": "completed"},
+            {"provider_id": "p1", "model": "m1", "binding_id": "d1", "status": "timeout"},
+        ]
+        signals = [{"code": "director.binding_coverage_incomplete", "severity": "error", "detail": "..."}]
+        with patch(
+            "polaris.cells.factory.pipeline.internal.bench_gates.resolve_expected_llm_bindings",
+            return_value={"director": configured},
+        ):
+            OrchestrationStageExecutor._reclassify_binding_coverage_signals(signals, route_events)
+        assert signals[0]["code"] == "director.binding_coverage_incomplete"
+
+    def test_reclassify_noop_when_no_timeout(self):
+        from unittest.mock import patch
+
+        configured = [
+            {"role": "director", "provider_id": "p0", "model": "m0", "binding_id": "d0"},
+            {"role": "director", "provider_id": "p1", "model": "m1", "binding_id": "d1"},
+        ]
+        route_events = [
+            {"provider_id": "p0", "model": "m0", "binding_id": "d0", "status": "completed"},
+            {"provider_id": "p1", "model": "m1", "binding_id": "d1", "status": "completed"},
+        ]
+        signals = [{"code": "director.binding_coverage_incomplete", "severity": "error", "detail": "..."}]
+        with patch(
+            "polaris.cells.factory.pipeline.internal.bench_gates.resolve_expected_llm_bindings",
+            return_value={"director": configured},
+        ):
+            OrchestrationStageExecutor._reclassify_binding_coverage_signals(signals, route_events)
+        assert signals[0]["code"] == "director.binding_coverage_incomplete"
+
+    def test_r14_route_audit_missing_empty(self):
+        from polaris.cells.factory.pipeline.internal.bench_gates import build_llm_route_audit
+
+        configured = [
+            {"role": "director", "provider_id": "p0", "model": "m0", "binding_id": "d0"},
+            {"role": "director", "provider_id": "p1", "model": "m1", "binding_id": "d1"},
+            {"role": "director", "provider_id": "p2", "model": "m2", "binding_id": "d2"},
+        ]
+        per_binding = [
+            {"provider_id": "p0", "model": "m0", "binding_id": "d0", "run_id": "r0", "status": "completed"},
+            {"provider_id": "p1", "model": "m1", "binding_id": "d1", "run_id": "r1", "status": "timeout"},
+            {"provider_id": "p2", "model": "m2", "binding_id": "d2", "run_id": "r2", "status": "completed"},
+        ]
+        events = OrchestrationStageExecutor._build_per_binding_route_events(per_binding)
+        audit = build_llm_route_audit(
+            events,
+            expected_bindings={"director": configured},
+            required_roles=("director",),
+            require_all_director_routes=True,
+        )
+        director_result = audit["roles"]["director"]
+        assert director_result["missing_bindings"] == []
+        assert director_result["observed_count"] == 3
+
+    def test_r14_fail_closed_not_hit_completed(self):
+        from unittest.mock import patch
+
+        configured = [
+            {"role": "director", "provider_id": "p0", "model": "m0", "binding_id": "d0"},
+            {"role": "director", "provider_id": "p1", "model": "m1", "binding_id": "d1"},
+            {"role": "director", "provider_id": "p2", "model": "m2", "binding_id": "d2"},
+        ]
+        route_events = [
+            {
+                "provider_id": "p0",
+                "model": "m0",
+                "binding_id": "d0",
+                "status": "completed",
+                "terminal": True,
+                "invocation": True,
+            },
+            {
+                "provider_id": "p1",
+                "model": "m1",
+                "binding_id": "d1",
+                "status": "timeout",
+                "terminal": True,
+                "invocation": True,
+            },
+            {
+                "provider_id": "p2",
+                "model": "m2",
+                "binding_id": "d2",
+                "status": "completed",
+                "terminal": True,
+                "invocation": True,
+            },
+        ]
+        with patch(
+            "polaris.cells.factory.pipeline.internal.bench_gates.resolve_expected_llm_bindings",
+            return_value={"director": configured},
+        ):
+            events = OrchestrationStageExecutor._build_fail_closed_director_route_events(
+                attempts=[],
+                stage_signals=[],
+                per_binding_route_events=route_events,
+            )
+        assert len(events) == 0
+        fail_closed_providers = {e.get("provider_id") for e in events}
+        assert "p0" not in fail_closed_providers
+        assert "p2" not in fail_closed_providers
+
+    def test_r14_root_cause_is_timeout(self):
+        from unittest.mock import patch
+
+        configured = [
+            {"role": "director", "provider_id": "p0", "model": "m0", "binding_id": "d0"},
+            {"role": "director", "provider_id": "p1", "model": "m1", "binding_id": "d1"},
+            {"role": "director", "provider_id": "p2", "model": "m2", "binding_id": "d2"},
+        ]
+        route_events = [
+            {"provider_id": "p0", "model": "m0", "binding_id": "d0", "status": "completed"},
+            {"provider_id": "p1", "model": "m1", "binding_id": "d1", "status": "timeout"},
+            {"provider_id": "p2", "model": "m2", "binding_id": "d2", "status": "completed"},
+        ]
+        signals = [{"code": "director.binding_coverage_incomplete", "severity": "error", "detail": "..."}]
+        with patch(
+            "polaris.cells.factory.pipeline.internal.bench_gates.resolve_expected_llm_bindings",
+            return_value={"director": configured},
+        ):
+            OrchestrationStageExecutor._reclassify_binding_coverage_signals(signals, route_events)
+        error_code = ""
+        for s in signals:
+            if isinstance(s, dict) and s.get("severity") == "error":
+                error_code = str(s.get("code") or "")
+                break
+        assert error_code == "director.binding_timeout"
+
+
+class TestCEProviderModelPropagationR15A:
+    """R15-A regression tests: provider/model must propagate from
+    RoleExecutionKernel metadata into CE evidence and audit artifacts."""
+
+    @staticmethod
+    def _write_plan(temp_workspace: Path, task_id: str = "TASK-1") -> None:
+        plan_path = Path(resolve_runtime_path(str(temp_workspace), "runtime/tasks/plan.json"))
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        plan_path.write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": task_id,
+                            "title": "Implement feature",
+                            "goal": "Complete the feature",
+                            "scope": "src/feature",
+                            "steps": ["implement", "test"],
+                            "acceptance": ["tests pass"],
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    @pytest.mark.asyncio
+    async def test_ce_evidence_success_result_extracts_kimi_provider_model(self, temp_workspace: Path) -> None:
+        """R15-A: A successful CE result carrying provider_id/model in metadata
+        must extract real Kimi provider/model -- not 'unknown unknown'."""
+        from polaris.cells.roles.runtime.public.contracts._execution_contracts import (
+            RoleExecutionResultV1,
+        )
+
+        self._write_plan(temp_workspace)
+        executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        run = FactoryRun(
+            id="factory_test_r15a_kimi_success",
+            config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        class _KimiSuccessRuntimeService:
+            async def execute_role_task(self, command: object) -> RoleExecutionResultV1:
+                return RoleExecutionResultV1(
+                    ok=True,
+                    status="ok",
+                    role="chief_engineer",
+                    workspace=str(temp_workspace),
+                    task_id="TASK-1",
+                    run_id="factory_test_r15a_kimi_success",
+                    output=json.dumps(
+                        {
+                            "construction_plan": {"steps": ["implement feature"]},
+                            "scope_for_apply": ["src/account"],
+                            "risk_flags": [],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    usage={},
+                    metadata={
+                        "provider_id": "kimi",
+                        "model": "kimi-k2-thinking-turbo",
+                    },
+                )
+
+        original_service = factory_stage_module.RoleRuntimeService
+        factory_stage_module.RoleRuntimeService = _KimiSuccessRuntimeService  # type: ignore
+        try:
+            result = await executor._execute_chief_engineer_review(run, context={})
+        finally:
+            factory_stage_module.RoleRuntimeService = original_service  # type: ignore
+
+        assert result.status == "success"
+
+        review_path = Path(
+            resolve_runtime_path(
+                str(temp_workspace),
+                f"runtime/state/blueprints/{run.id}.review.json",
+            )
+        )
+        assert review_path.is_file()
+        review_payload = json.loads(review_path.read_text(encoding="utf-8"))
+        assert review_payload["generated_blueprints"] == 1
+
+        blueprint_rows = review_payload.get("blueprints", [])
+        assert len(blueprint_rows) == 1
+        evidence = blueprint_rows[0].get("llm_evidence", {})
+        assert evidence.get("provider") == "kimi", f"Expected provider='kimi', got '{evidence.get('provider')}'"
+        assert evidence.get("model") == "kimi-k2-thinking-turbo", (
+            f"Expected model='kimi-k2-thinking-turbo', got '{evidence.get('model')}'"
+        )
+        assert evidence.get("provider_model_unknown") is not True
+
+    @pytest.mark.asyncio
+    async def test_ce_evidence_failed_result_preserves_provider_model(self, temp_workspace: Path) -> None:
+        """R15-A: A failed CE result must still carry provider/model from
+        metadata so the audit trail is complete."""
+        from polaris.cells.roles.runtime.public.contracts._execution_contracts import (
+            RoleExecutionResultV1,
+        )
+
+        self._write_plan(temp_workspace)
+        executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        run = FactoryRun(
+            id="factory_test_r15a_failed_preserves",
+            config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        class _FailedKimiRuntimeService:
+            async def execute_role_task(self, command: object) -> RoleExecutionResultV1:
+                return RoleExecutionResultV1(
+                    ok=False,
+                    status="failed",
+                    role="chief_engineer",
+                    workspace=str(temp_workspace),
+                    task_id="TASK-1",
+                    run_id="factory_test_r15a_failed_preserves",
+                    output="Partial analysis",
+                    error_code="provider_timeout",
+                    error_message="LLM call timed out",
+                    usage={},
+                    metadata={
+                        "provider_id": "kimi",
+                        "model": "kimi-v1",
+                    },
+                )
+
+        original_service = factory_stage_module.RoleRuntimeService
+        factory_stage_module.RoleRuntimeService = _FailedKimiRuntimeService  # type: ignore
+        try:
+            result = await executor._execute_chief_engineer_review(run, context={})
+        finally:
+            factory_stage_module.RoleRuntimeService = original_service  # type: ignore
+
+        assert result.status == "failed"
+
+        signal_path = Path(
+            resolve_runtime_path(
+                str(temp_workspace),
+                "runtime/signals/chief_engineer_review.signals.json",
+            )
+        )
+        payload = json.loads(signal_path.read_text(encoding="utf-8"))
+        signals = (payload.get("signals") or []) if isinstance(payload, dict) else []
+        llm_signal = next(
+            (s for s in signals if isinstance(s, dict) and s.get("code") == "chief_engineer.llm_review_failed"),
+            None,
+        )
+        assert llm_signal is not None, "missing chief_engineer.llm_review_failed signal"
+        assert llm_signal.get("provider") == "kimi"
+        assert llm_signal.get("model") == "kimi-v1"
+
+    @pytest.mark.asyncio
+    async def test_ce_evidence_unknown_provider_model_marks_unknown_flag(self, temp_workspace: Path) -> None:
+        """R15-A: When provider/model are genuinely unknown (metadata has no
+        provider_id/model keys), the CE evidence must set
+        provider_model_unknown=True with a clear root cause description."""
+        from polaris.cells.roles.runtime.public.contracts._execution_contracts import (
+            RoleExecutionResultV1,
+        )
+
+        self._write_plan(temp_workspace)
+        executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        run = FactoryRun(
+            id="factory_test_r15a_unknown_flag",
+            config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        class _UnknownProviderRuntimeService:
+            async def execute_role_task(self, command: object) -> RoleExecutionResultV1:
+                return RoleExecutionResultV1(
+                    ok=False,
+                    status="failed",
+                    role="chief_engineer",
+                    workspace=str(temp_workspace),
+                    task_id="TASK-1",
+                    run_id="factory_test_r15a_unknown_flag",
+                    output="analysis",
+                    error_code="some_error",
+                    error_message="some error",
+                    usage={},
+                    metadata={},  # no provider_id/model
+                )
+
+        original_service = factory_stage_module.RoleRuntimeService
+        factory_stage_module.RoleRuntimeService = _UnknownProviderRuntimeService  # type: ignore
+        try:
+            result = await executor._execute_chief_engineer_review(run, context={})
+        finally:
+            factory_stage_module.RoleRuntimeService = original_service  # type: ignore
+
+        assert result.status == "failed"
+
+        signal_path = Path(
+            resolve_runtime_path(
+                str(temp_workspace),
+                "runtime/signals/chief_engineer_review.signals.json",
+            )
+        )
+        payload = json.loads(signal_path.read_text(encoding="utf-8"))
+        signals = (payload.get("signals") or []) if isinstance(payload, dict) else []
+        llm_signal = next(
+            (s for s in signals if isinstance(s, dict) and s.get("code") == "chief_engineer.llm_review_failed"),
+            None,
+        )
+        assert llm_signal is not None
+        assert llm_signal.get("provider") == "unknown"
+        assert llm_signal.get("model") == "unknown"
+        assert llm_signal.get("provider_model_unknown") is True
+        assert isinstance(llm_signal.get("provider_model_unknown_reason"), str)
+        assert len(llm_signal["provider_model_unknown_reason"]) > 0

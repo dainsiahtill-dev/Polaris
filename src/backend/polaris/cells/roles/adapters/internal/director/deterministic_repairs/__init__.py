@@ -93,6 +93,7 @@ from .javascript_repairs import (
 from .npm_repairs import (
     _apply_deterministic_npm_test_script_repair as _apply_deterministic_npm_test_script_repair,
     _apply_deterministic_runtime_dependency_repair as _apply_deterministic_runtime_dependency_repair,
+    _apply_deterministic_typescript_scaffold_repair as _apply_deterministic_typescript_scaffold_repair,
     _is_repairable_npm_test_script_error as _is_repairable_npm_test_script_error,
 )
 from .python_repairs import (
@@ -114,7 +115,9 @@ from .typeorm_repairs import (
     _normalize_undeclared_typeorm_model_source as _normalize_undeclared_typeorm_model_source,
 )
 from .typescript_repairs import (
+    _apply_deterministic_typescript_entrypoint_repair as _apply_deterministic_typescript_entrypoint_repair,
     _apply_deterministic_typescript_escaped_newline_repair as _apply_deterministic_typescript_escaped_newline_repair,
+    _apply_deterministic_typescript_missing_export_repair as _apply_deterministic_typescript_missing_export_repair,
     _apply_deterministic_typescript_reexport_repair as _apply_deterministic_typescript_reexport_repair,
     _apply_deterministic_typescript_relative_import_case_repair as _apply_deterministic_typescript_relative_import_case_repair,
     _apply_deterministic_typescript_return_object_semicolon_repair as _apply_deterministic_typescript_return_object_semicolon_repair,
@@ -182,10 +185,13 @@ __all__ = [
     "_apply_deterministic_runtime_dependency_repair",
     "_apply_deterministic_scaffold_marker_cleanup",
     "_apply_deterministic_typeorm_model_normalization_repair",
+    "_apply_deterministic_typescript_entrypoint_repair",
     "_apply_deterministic_typescript_escaped_newline_repair",
+    "_apply_deterministic_typescript_missing_export_repair",
     "_apply_deterministic_typescript_reexport_repair",
     "_apply_deterministic_typescript_relative_import_case_repair",
     "_apply_deterministic_typescript_return_object_semicolon_repair",
+    "_apply_deterministic_typescript_scaffold_repair",
     "_apply_deterministic_typescript_zod_type_class_collision_repair",
     "_apply_deterministic_unresolved_import_symbol_repair",
     "_build_javascript_frontend_smoke_test_content",

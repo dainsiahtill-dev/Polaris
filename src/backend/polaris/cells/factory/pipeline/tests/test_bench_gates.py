@@ -7,6 +7,7 @@ from typing import Any
 from polaris.cells.factory.pipeline.internal import bench_gates
 from polaris.cells.factory.pipeline.internal.bench_gates import (
     _command_serves_build_output,
+    _resolve_polaris_roots_runtime_dir,
     _script_depends_on_build_output,
     aggregate_goal_audit,
     build_llm_route_audit,
@@ -223,6 +224,14 @@ def test_real_run_gate_starts_static_web_entrypoint(tmp_path: Path) -> None:
     assert gate["requirements"]["build_test_lint_ran"]["detail"] == "node --check passed"
     # Accept either web_static or web_playwright (Playwright is preferred when available)
     assert gate["entrypoint"]["kind"] in ("web_static", "web_playwright")
+
+
+def test_static_web_smoke_fails_missing_html_entrypoint(tmp_path: Path) -> None:
+    smoke = bench_gates._smoke_static_web(tmp_path, "missing.html", timeout_s=10)
+
+    assert smoke["ok"] is False
+    detail = str(smoke.get("detail") or "")
+    assert "404" in detail or "HTTP status" in detail
 
 
 def test_real_run_gate_does_not_fallback_after_failed_npm_script(monkeypatch: Any, tmp_path: Path) -> None:
@@ -1005,6 +1014,49 @@ def test_collect_llm_events_reads_multiple_runtime_candidates(tmp_path: Path) ->
     }
 
 
+def test_collect_llm_events_reads_route_events_from_audit_bundle_result(tmp_path: Path) -> None:
+    bundle = {
+        "events_tail": [
+            {
+                "type": "stage_completed",
+                "stage": "director_dispatch",
+                "result": {
+                    "per_binding_route_events": [_real_llm_event("director", "qwen-gpu0", "qwen3.6-27b", "d0")],
+                },
+            }
+        ],
+    }
+
+    events = collect_llm_events(tmp_path, None, bundle)
+
+    assert [(event["role"], event["provider_id"], event["binding_id"]) for event in events] == [
+        ("director", "qwen-gpu0", "d0")
+    ]
+    assert events[0]["source_path"] == "audit_bundle.events_tail.result"
+
+
+def test_collect_llm_events_reads_factory_dispatch_log_glob(tmp_path: Path) -> None:
+    dispatch_dir = tmp_path / ".polaris" / "dispatch"
+    dispatch_dir.mkdir(parents=True)
+    dispatch_log = dispatch_dir / "factory_abc123.log.json"
+    dispatch_log.write_text(
+        json.dumps(
+            {
+                "per_binding_route_events": [_real_llm_event("director", "qwen-gpu1", "qwen3.6-27b", "d1")],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    events = collect_llm_events(tmp_path, None)
+
+    assert [(event["role"], event["provider_id"], event["binding_id"]) for event in events] == [
+        ("director", "qwen-gpu1", "d1")
+    ]
+    assert events[0]["source_path"].endswith("factory_abc123.log.json")
+
+
 def test_llm_route_audit_requires_actual_bound_families_and_all_director_routes() -> None:
     expected = {
         "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": ""}],
@@ -1364,3 +1416,437 @@ def test_director_multi_binding_all_pass() -> None:
     assert audit["ok"] is True
     assert audit["roles"]["director"]["multi_route_ok"] is True
     assert audit["roles"]["director"]["observed_count"] == 2
+
+
+def test_real_run_gate_source_files_present_with_real_source(tmp_path: Path) -> None:
+    (tmp_path / "main.py").write_text(
+        "from __future__ import annotations\n"
+        "import sys\n"
+        "if __name__ == '__main__':\n"
+        "    print('usage' if '--help' in sys.argv else 'ok')\n",
+        encoding="utf-8",
+    )
+    record = {"code_files": ["main.py"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is True
+    assert gate["requirements"]["source_files_present"]["ok"] is True
+    assert "1 source file" in gate["requirements"]["source_files_present"]["detail"]
+    assert "missing_source_targets" not in gate
+
+
+def test_real_run_gate_source_files_present_fails_for_scaffold_only(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name": "test"}', encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+    record = {"code_files": ["package.json", "tsconfig.json"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    assert gate["requirements"]["source_files_present"]["ok"] is False
+    assert "scaffold-only" in gate["requirements"]["source_files_present"]["detail"]
+    assert "missing_source_targets" in gate
+    assert gate["missing_source_targets"]["source_file_count"] == 0
+    assert gate["missing_source_targets"]["code_file_count"] == 2
+
+
+def test_real_run_gate_source_files_present_with_ts_source(tmp_path: Path) -> None:
+    (tmp_path / "index.ts").write_text("export const hello = () => 'world';\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"name": "test"}', encoding="utf-8")
+    record = {"code_files": ["index.ts", "package.json"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["requirements"]["source_files_present"]["ok"] is True
+    assert "1 source file" in gate["requirements"]["source_files_present"]["detail"]
+    assert "missing_source_targets" not in gate
+
+
+def test_real_run_gate_source_files_present_with_mixed_scaffold(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name": "test"}', encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text("{}", encoding="utf-8")
+    (tmp_path / ".catalog_meta.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Test", encoding="utf-8")
+    record = {"code_files": ["package.json", "tsconfig.json", ".catalog_meta.json"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    assert gate["requirements"]["source_files_present"]["ok"] is False
+    assert "missing_source_targets" in gate
+    assert gate["missing_source_targets"]["code_file_count"] == 3
+    assert gate["missing_source_targets"]["source_file_count"] == 0
+
+
+def test_real_run_gate_declared_source_targets_missing_fails(tmp_path: Path) -> None:
+    """plan declares src/index.ts but workspace only has package.json -> gate fail."""
+    (tmp_path / "package.json").write_text('{"name": "test"}', encoding="utf-8")
+    record = {
+        "code_files": ["package.json"],
+        "declared_source_targets": ["src/index.ts", "src/utils.ts"],
+        "declared_source_target_count": 2,
+        "missing_declared_source_targets": ["src/index.ts", "src/utils.ts"],
+        "missing_declared_source_target_count": 2,
+    }
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    assert gate["requirements"]["declared_source_targets_present"]["ok"] is False
+    assert "2 declared source target(s) missing" in gate["requirements"]["declared_source_targets_present"]["detail"]
+
+
+def test_real_run_gate_declared_source_targets_all_present_passes(tmp_path: Path) -> None:
+    """All declared source targets exist -> gate ok."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    record = {
+        "code_files": ["src/index.ts"],
+        "declared_source_targets": ["src/index.ts"],
+        "declared_source_target_count": 1,
+        "missing_declared_source_targets": [],
+        "missing_declared_source_target_count": 0,
+    }
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["requirements"]["declared_source_targets_present"]["ok"] is True
+    assert (
+        "all 1 declared source target(s) present" in gate["requirements"]["declared_source_targets_present"]["detail"]
+    )
+
+
+def test_real_run_gate_pm_plan_missing_source_targets_fails(tmp_path: Path) -> None:
+    """PM plan with no source targets -> pm_plan_missing_source_targets signal."""
+    (tmp_path / "README.md").write_text("# Test\n", encoding="utf-8")
+    record = {
+        "code_files": ["README.md"],
+        "declared_source_targets": [],
+        "declared_source_target_count": 0,
+        "missing_declared_source_targets": [],
+        "missing_declared_source_target_count": 0,
+        "pm_plan_missing_source_targets": True,
+    }
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["requirements"]["declared_source_targets_present"]["ok"] is False
+    assert "pm_plan_missing_source_targets" in gate["requirements"]["declared_source_targets_present"]["detail"]
+
+
+def test_real_run_gate_no_declared_targets_no_plan(tmp_path: Path) -> None:
+    """No plan.json -> no declared targets, requirement passes."""
+    (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    record = {
+        "code_files": ["main.py"],
+    }
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["requirements"]["declared_source_targets_present"]["ok"] is True
+    assert "no declared source targets" in gate["requirements"]["declared_source_targets_present"]["detail"]
+
+
+def _disk_llm_event(
+    role: str,
+    provider: str,
+    model: str,
+    *,
+    event: str = "llm_call_end",
+    source: str = "roles.kernel.events",
+    run_id: str = "test-run-001",
+) -> dict[str, Any]:
+    """Create an event matching _emit_llm_event_to_disk schema."""
+    return {
+        "schema_version": 1,
+        "ts": "2026-06-21T00:00:00",
+        "ts_epoch": 1750464000.0,
+        "seq": 1,
+        "event_id": "abcd1234",
+        "run_id": run_id,
+        "iteration": 1,
+        "role": role,
+        "source": source,
+        "event": event,
+        "data": {
+            "event_type": event,
+            "role": role,
+            "model": model,
+            "provider": provider,
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "metadata": {"call_id": "c0", "workspace": "/tmp/test"},
+        },
+    }
+
+
+def test_collect_llm_events_reads_from_resolve_polaris_roots_path(tmp_path: Path) -> None:
+    """Events written by _emit_llm_event_to_disk to resolve_polaris_roots path are found."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    polaris_dir = workspace / ".polaris"
+    polaris_dir.mkdir()
+    runtime = polaris_dir / "runtime"
+    runtime.mkdir()
+    events_dir = runtime / "events"
+    events_dir.mkdir()
+    (events_dir / "pm.llm.events.jsonl").write_text(
+        json.dumps(_disk_llm_event("pm", "kimi-cloud", "kimi-k2")) + "\n",
+        encoding="utf-8",
+    )
+
+    events = collect_llm_events(workspace, None)
+
+    assert len(events) == 1
+    assert events[0]["role"] == "pm"
+    assert events[0]["provider_id"] == "kimi-cloud"
+    assert events[0]["model"] == "kimi-k2"
+    assert events[0]["terminal"] is True
+    assert events[0]["invocation"] is True
+
+
+def test_collect_llm_events_reads_disk_schema_from_polaris_roots(tmp_path: Path) -> None:
+    """Events in _emit_llm_event_to_disk schema are normalized with correct source=llm."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    events_dir = workspace / ".polaris" / "runtime" / "events"
+    events_dir.mkdir(parents=True)
+    (events_dir / "director.llm.events.jsonl").write_text(
+        json.dumps(_disk_llm_event("director", "qwen-gpu0", "qwen3.6-27b")) + "\n",
+        encoding="utf-8",
+    )
+
+    events = collect_llm_events(workspace, None)
+
+    assert len(events) == 1
+    assert events[0]["source"] == "llm"
+    assert events[0]["terminal"] is True
+    assert events[0]["invocation"] is True
+
+
+def test_build_llm_route_audit_observes_configured_bindings_from_disk_events(
+    tmp_path: Path,
+) -> None:
+    """build_llm_route_audit observes PM and Director bindings from disk-format events."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    events_dir = workspace / ".polaris" / "runtime" / "events"
+    events_dir.mkdir(parents=True)
+    (events_dir / "pm.llm.events.jsonl").write_text(
+        json.dumps(_disk_llm_event("pm", "kimi-cloud", "kimi-k2")) + "\n",
+        encoding="utf-8",
+    )
+    (events_dir / "director.llm.events.jsonl").write_text(
+        json.dumps(_disk_llm_event("director", "qwen-gpu0", "qwen3.6-27b")) + "\n",
+        encoding="utf-8",
+    )
+
+    expected = {
+        "pm": [{"role": "pm", "provider_id": "kimi-cloud", "model": "kimi-k2", "binding_id": ""}],
+        "director": [
+            {"role": "director", "provider_id": "qwen-gpu0", "model": "qwen3.6-27b", "binding_id": "d0"},
+        ],
+    }
+    events = collect_llm_events(workspace, None)
+    audit = build_llm_route_audit(
+        events,
+        expected_bindings=expected,
+        required_roles=("pm", "director"),
+        require_all_director_routes=False,
+    )
+
+    assert audit["ok"] is True
+    assert audit["events_observed"] == 2
+    assert audit["roles"]["pm"]["observed_count"] == 1
+    assert audit["roles"]["director"]["observed_count"] == 1
+
+
+def test_llm_route_audit_missing_director_evidence_fails_closed(tmp_path: Path) -> None:
+    """Missing Director route evidence remains fail-closed (events_observed=0)."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    events_dir = workspace / ".polaris" / "runtime" / "events"
+    events_dir.mkdir(parents=True)
+    (events_dir / "pm.llm.events.jsonl").write_text(
+        json.dumps(_disk_llm_event("pm", "kimi-cloud", "kimi-k2")) + "\n",
+        encoding="utf-8",
+    )
+
+    expected = {
+        "pm": [{"role": "pm", "provider_id": "kimi-cloud", "model": "kimi-k2", "binding_id": ""}],
+        "director": [
+            {"role": "director", "provider_id": "qwen-gpu0", "model": "qwen3.6-27b", "binding_id": "d0"},
+            {"role": "director", "provider_id": "qwen-gpu1", "model": "qwen3.6-27b", "binding_id": "d1"},
+        ],
+    }
+    events = collect_llm_events(workspace, None)
+    audit = build_llm_route_audit(
+        events,
+        expected_bindings=expected,
+        required_roles=("pm", "director"),
+    )
+
+    assert audit["ok"] is False
+    assert audit["roles"]["director"]["ok"] is False
+    assert audit["roles"]["director"]["observed_count"] == 0
+    assert audit["roles"]["pm"]["ok"] is True
+
+
+def test_llm_route_audit_zero_events_with_all_required_roles_fails(tmp_path: Path) -> None:
+    """Zero events with all required roles -> all roles fail."""
+    expected = {
+        "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": ""}],
+        "director": [
+            {"role": "director", "provider_id": "qwen-gpu0", "model": "qwen3.6-27b", "binding_id": "d0"},
+        ],
+    }
+
+    audit = build_llm_route_audit([], expected_bindings=expected, required_roles=("pm", "director"))
+
+    assert audit["ok"] is False
+    assert audit["events_observed"] == 0
+    assert audit["roles"]["pm"]["ok"] is False
+    assert audit["roles"]["director"]["ok"] is False
+
+
+def test_resolve_polaris_roots_runtime_dir_returns_path(tmp_path: Path) -> None:
+    """_resolve_polaris_roots_runtime_dir returns a Path for a valid workspace."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+
+    result = _resolve_polaris_roots_runtime_dir(workspace)
+
+    assert result is not None
+    assert isinstance(result, Path)
+    assert "runtime" in str(result)
+
+
+def test_resolve_polaris_roots_runtime_dir_returns_none_for_invalid() -> None:
+    """_resolve_polaris_roots_runtime_dir returns None gracefully."""
+    result = _resolve_polaris_roots_runtime_dir(Path("/nonexistent/path/that/does/not/exist"))
+    # Should not raise; may return a path or None depending on cache availability
+    assert result is None or isinstance(result, Path)
+
+
+# ---------------------------------------------------------------------------
+# Scaffolding requirement tests (R18-C)
+# ---------------------------------------------------------------------------
+
+
+def test_real_run_gate_ts_project_without_package_json_fails(tmp_path: Path) -> None:
+    """TypeScript project with source files but no package.json must fail."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.ts").write_text(
+        "export const hello = () => 'world';\n",
+        encoding="utf-8",
+    )
+    record = {"code_files": ["src/index.ts"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    scaffolding = gate["requirements"]["scaffolding_present"]
+    assert scaffolding["ok"] is False
+    assert "package.json" in scaffolding["detail"]
+    assert "tsconfig.json" in scaffolding["detail"]
+
+
+def test_real_run_gate_ts_project_with_package_but_no_tsconfig_fails(tmp_path: Path) -> None:
+    """TypeScript project with package.json but no tsconfig.json must fail."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.ts").write_text(
+        "export const hello = () => 'world';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "test", "scripts": {"build": "tsc"}}),
+        encoding="utf-8",
+    )
+    record = {"code_files": ["src/index.ts", "package.json"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    scaffolding = gate["requirements"]["scaffolding_present"]
+    assert scaffolding["ok"] is False
+    assert "tsconfig.json" in scaffolding["detail"]
+
+
+def test_real_run_gate_ts_project_with_scaffolding_passes(tmp_path: Path) -> None:
+    """TypeScript project with package.json and tsconfig.json passes scaffolding."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.ts").write_text(
+        "export const hello = () => 'world';\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "test", "scripts": {"build": "tsc"}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"outDir": "dist"}}),
+        encoding="utf-8",
+    )
+    record = {"code_files": ["src/index.ts", "package.json", "tsconfig.json"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    scaffolding = gate["requirements"]["scaffolding_present"]
+    assert scaffolding["ok"] is True
+    assert "package.json present" in scaffolding["detail"]
+    assert "tsconfig.json present" in scaffolding["detail"]
+
+
+def test_real_run_gate_html_project_without_index_fails(tmp_path: Path) -> None:
+    """HTML project with code_files claiming .html but no real file must fail closed."""
+    record = {"code_files": ["index.html"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    assert gate["requirements"]["scaffolding_present"]["ok"] is False
+    assert "index.html" in gate["requirements"]["scaffolding_present"]["detail"]
+    assert gate["requirements"]["entrypoint_smoke"]["ok"] is False
+
+
+def test_real_run_gate_js_project_without_package_json_fails(tmp_path: Path) -> None:
+    """JavaScript project with source files but no package.json must fail."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.js").write_text("console.log('hello');\n", encoding="utf-8")
+    record = {"code_files": ["src/app.js"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    scaffolding = gate["requirements"]["scaffolding_present"]
+    assert scaffolding["ok"] is False
+    assert "package.json" in scaffolding["detail"]
+
+
+def test_real_run_gate_python_project_no_scaffolding_required(tmp_path: Path) -> None:
+    """Python project does not require npm scaffolding."""
+    (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    record = {"code_files": ["main.py"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    scaffolding = gate["requirements"]["scaffolding_present"]
+    assert scaffolding["ok"] is True
+    assert "no scaffolding required" in scaffolding["detail"]
+
+
+def test_real_run_gate_ts_source_only_no_scaffold_comprehensive(tmp_path: Path) -> None:
+    """Comprehensive: TS project with src/**/*.ts but zero scaffolding fails on scaffolding."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "render.ts").write_text("export function render() { return 'ok'; }\n", encoding="utf-8")
+    (src / "simulation.ts").write_text("export function simulate() { return 42; }\n", encoding="utf-8")
+    record = {"code_files": ["src/render.ts", "src/simulation.ts"]}
+
+    gate = build_real_run_gate(tmp_path, record, timeout_s=10)
+
+    assert gate["ok"] is False
+    scaffolding = gate["requirements"]["scaffolding_present"]
+    assert scaffolding["ok"] is False
+    assert "package.json" in scaffolding["detail"]
+    assert "tsconfig.json" in scaffolding["detail"]

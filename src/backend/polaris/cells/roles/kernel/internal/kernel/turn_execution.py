@@ -242,6 +242,13 @@ async def execute_transaction_kernel_turn(
     }
 
     metadata: dict[str, Any] = {}
+    # Propagate provider/model identity from the role profile so downstream
+    # evidence extractors (e.g. factory CE _ce_extract_llm_evidence) can
+    # resolve the real provider and model instead of defaulting to "unknown".
+    if profile.provider_id:
+        metadata["provider_id"] = str(profile.provider_id).strip()
+    if profile.model:
+        metadata["model"] = str(profile.model).strip()
     context_os_audit_summary = summarize_context_os_audit_from_ledger(ledger)
     if context_os_audit_summary:
         metadata["context_os_audit"] = context_os_audit_summary
@@ -517,6 +524,12 @@ async def execute_transaction_kernel_stream(
             if event.monitoring:
                 event_dict["monitoring"] = dict(event.monitoring)
             result_metadata: dict[str, Any] = {}
+            # Propagate provider/model identity from the role profile for
+            # downstream evidence extractors.
+            if profile.provider_id:
+                result_metadata["provider_id"] = str(profile.provider_id).strip()
+            if profile.model:
+                result_metadata["model"] = str(profile.model).strip()
             monitoring_payload = event.monitoring if isinstance(event.monitoring, dict) else {}
             context_os_audit = monitoring_payload.get("context_os_audit")
             if isinstance(context_os_audit, dict):

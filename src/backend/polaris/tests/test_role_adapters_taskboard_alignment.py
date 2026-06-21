@@ -1731,3 +1731,270 @@ async def test_qa_adapter_recovers_fail_verdict_from_commented_json_findings(tmp
     assert "缺少本地持久化关键验证" in major
     assert isinstance(warnings, list)
     assert "qa_llm_judgement_unavailable" not in warnings
+
+
+class TestConcurrentDirectorBindingClaimDifferentTasks:
+    """Verify that concurrent Director bindings claim distinct ready tasks."""
+
+    def test_select_next_task_is_deterministic_preview(self, tmp_path: Path) -> None:
+        """select_next_task is a deterministic preview; claim fanout uses claim_next_execution."""
+        from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
+
+        service = TaskRuntimeService(workspace=str(tmp_path))
+        service.create(subject="任务A", description="A", priority=1)
+        service.create(subject="任务B", description="B", priority=1)
+        service.create(subject="任务C", description="C", priority=1)
+
+        selected_ids: list[str] = []
+        for _ in range(5):
+            task = service.select_next_task()
+            assert task is not None
+            selected_ids.append(str(task.get("id") or ""))
+
+        assert selected_ids == [selected_ids[0]] * len(selected_ids)
+
+    def test_two_concurrent_directors_claim_different_tasks(self, tmp_path: Path) -> None:
+        """Two concurrent Director adapters must claim different ready tasks."""
+        from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
+
+        adapter1 = DirectorAdapter(workspace=str(tmp_path))
+        adapter2 = DirectorAdapter(workspace=str(tmp_path))
+
+        adapter1.task_board.create(subject="任务A", description="A", priority=1)
+        adapter1.task_board.create(subject="任务B", description="B", priority=1)
+
+        selected1 = adapter1._select_pending_board_task()
+        assert selected1 is not None
+        selected1_id = str(selected1.get("id") or "")
+
+        claim1 = adapter1.task_runtime.claim_execution(
+            selected1_id,
+            worker_id="director-1",
+            role_id="director",
+            run_id="run-1",
+            selection_source="test",
+        )
+        assert claim1["success"] is True
+
+        selected2 = adapter2._select_pending_board_task()
+        assert selected2 is not None
+        selected2_id = str(selected2.get("id") or "")
+
+        assert selected2_id != selected1_id, (
+            f"Second director should select a different task, but both got task_id={selected1_id}"
+        )
+
+        claim2 = adapter2.task_runtime.claim_execution(
+            selected2_id,
+            worker_id="director-2",
+            role_id="director",
+            run_id="run-2",
+            selection_source="test",
+        )
+        assert claim2["success"] is True
+        assert claim1["task"]["id"] != claim2["task"]["id"]
+
+    def test_two_directors_never_double_count_same_task_success(self, tmp_path: Path) -> None:
+        """When two directors claim the same task concurrently, only one succeeds
+        and the result must not count as two successes."""
+        from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
+
+        adapter = DirectorAdapter(workspace=str(tmp_path))
+        task = adapter.task_board.create(subject="独占任务", description="only one should claim", priority=1)
+
+        claim1 = adapter.task_runtime.claim_execution(
+            task.id,
+            worker_id="director-1",
+            role_id="director",
+            run_id="run-1",
+            selection_source="test",
+        )
+        assert claim1["success"] is True
+
+        claim2 = adapter.task_runtime.claim_execution(
+            task.id,
+            worker_id="director-2",
+            role_id="director",
+            run_id="run-2",
+            selection_source="test",
+        )
+        assert claim2["success"] is False
+        assert claim2["reason"] == "lease_conflict"
+
+    def test_select_next_task_skips_claimed_tasks(self, tmp_path: Path) -> None:
+        """select_next_task must skip tasks that are already claimed/in_progress."""
+        from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
+
+        service = TaskRuntimeService(workspace=str(tmp_path))
+        task_a = service.create(subject="任务A", description="A", priority=1)
+        task_b = service.create(subject="任务B", description="B", priority=1)
+
+        service.claim_execution(
+            task_a.id,
+            worker_id="director-1",
+            role_id="director",
+            run_id="run-1",
+            selection_source="test",
+        )
+
+        selected = service.select_next_task()
+        assert selected is not None
+        assert str(selected.get("id") or "") == str(task_b.id)
+
+
+class TestAtomicClaimNextExecution:
+    """Tests for the atomic claim_next_execution API."""
+
+    def test_two_directors_claim_different_tasks_deterministically(self, tmp_path: Path) -> None:
+        """Two concurrent Directors must claim different tasks without relying on randomness."""
+        from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
+
+        service = TaskRuntimeService(workspace=str(tmp_path))
+        service.create(subject="任务A", description="A", priority=1)
+        service.create(subject="任务B", description="B", priority=1)
+
+        # Director 1 claims first task
+        result1 = service.claim_next_execution(
+            worker_id="director-1",
+            role_id="director",
+            run_id="run-1",
+            selection_source="test",
+        )
+        assert result1["success"] is True
+        task1_id = result1["task"]["id"]
+
+        # Director 2 claims second task
+        result2 = service.claim_next_execution(
+            worker_id="director-2",
+            role_id="director",
+            run_id="run-2",
+            selection_source="test",
+        )
+        assert result2["success"] is True
+        task2_id = result2["task"]["id"]
+
+        # Must be different tasks
+        assert task1_id != task2_id
+
+    def test_lease_conflict_tries_next_candidate(self, tmp_path: Path) -> None:
+        """When first candidate has lease_conflict, must try next candidate."""
+        from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
+
+        service = TaskRuntimeService(workspace=str(tmp_path))
+        task_a = service.create(subject="任务A", description="A", priority=1)
+        task_b = service.create(subject="任务B", description="B", priority=1)
+
+        # Pre-claim task A with director-1 (this changes status to in_progress)
+        claim_result = service.claim_execution(
+            task_a.id,
+            worker_id="director-1",
+            role_id="director",
+            run_id="run-1",
+            selection_source="test",
+        )
+        assert claim_result["success"] is True
+
+        # Director 2 should get task B via claim_next_execution
+        # task_a is now in_progress (not claimable), so only task_b is candidate
+        result = service.claim_next_execution(
+            worker_id="director-2",
+            role_id="director",
+            run_id="run-2",
+            selection_source="test",
+        )
+        assert result["success"] is True
+        assert result["task"]["id"] == task_b.id
+        assert len(result["attempts"]) == 1
+        assert result["attempts"][0]["success"] is True
+
+    def test_all_candidates_unavailable_returns_fail_closed(self, tmp_path: Path) -> None:
+        """When no candidates are claimable, must return fail-closed with reason."""
+        from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
+
+        service = TaskRuntimeService(workspace=str(tmp_path))
+        # No tasks created
+
+        result = service.claim_next_execution(
+            worker_id="director-1",
+            role_id="director",
+            run_id="run-1",
+            selection_source="test",
+        )
+        assert result["success"] is False
+        assert result["reason"] == "no_claimable_tasks"
+        assert result["task"] is None
+        assert result["session"] is None
+        assert result["attempts"] == []
+
+    def test_all_tasks_claimed_returns_fail_closed(self, tmp_path: Path) -> None:
+        """When all tasks are already claimed, must return fail-closed."""
+        from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
+
+        service = TaskRuntimeService(workspace=str(tmp_path))
+        task_a = service.create(subject="任务A", description="A", priority=1)
+        task_b = service.create(subject="任务B", description="B", priority=1)
+
+        # Claim all tasks with director-1 (changes status to in_progress)
+        service.claim_execution(
+            task_a.id,
+            worker_id="director-1",
+            role_id="director",
+            run_id="run-1",
+            selection_source="test",
+        )
+        service.claim_execution(
+            task_b.id,
+            worker_id="director-1",
+            role_id="director",
+            run_id="run-1",
+            selection_source="test",
+        )
+
+        # Director 2 should fail - no claimable tasks (all are in_progress)
+        result = service.claim_next_execution(
+            worker_id="director-2",
+            role_id="director",
+            run_id="run-2",
+            selection_source="test",
+        )
+        assert result["success"] is False
+        assert result["reason"] == "no_claimable_tasks"
+        assert result["attempts"] == []
+
+    def test_resumable_tasks_prioritized(self, tmp_path: Path) -> None:
+        """Resumable tasks should be claimed before regular pending tasks."""
+        from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
+
+        service = TaskRuntimeService(workspace=str(tmp_path))
+        service.create(subject="普通任务", description="A", priority=1)
+
+        # Create a resumable task by claiming and suspending
+        task_b = service.create(subject="可恢复任务", description="B", priority=1)
+        claim_result = service.claim_execution(
+            task_b.id,
+            worker_id="director-1",
+            role_id="director",
+            run_id="run-1",
+            selection_source="test",
+        )
+        assert claim_result["success"] is True
+        session_id = claim_result["session"]["session_id"]
+
+        # Suspend the task to make it resumable
+        suspend_result = service.suspend_execution(
+            task_b.id,
+            session_id=session_id,
+            reason="test_suspend",
+        )
+        assert suspend_result["success"] is True
+
+        # Claim next should prefer resumable task B
+        result = service.claim_next_execution(
+            worker_id="director-2",
+            role_id="director",
+            run_id="run-2",
+            selection_source="test",
+            prefer_resumable=True,
+        )
+        assert result["success"] is True
+        assert result["task"]["id"] == task_b.id
