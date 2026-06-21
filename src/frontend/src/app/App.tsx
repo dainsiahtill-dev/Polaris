@@ -253,14 +253,17 @@ function AppContent() {
     (nextWorkspace: string) => {
       const normalized = resolveBenchObservedWorkspace(nextWorkspace, settingsWorkspace);
       if (!normalized || normalized === workspace) return;
+      setProgressSnapshot(null);
+      setBenchObservedWorkspace(normalized);
       if (pendingBenchWorkspaceRef.current === normalized) return;
       pendingBenchWorkspaceRef.current = normalized;
       void (async () => {
         try {
           const updated = await updateSettings({ workspace: normalized });
           const appliedWorkspace = String(updated?.workspace || normalized).trim();
-          setProgressSnapshot(null);
-          setBenchObservedWorkspace(appliedWorkspace || normalized);
+          if (appliedWorkspace && appliedWorkspace !== normalized) {
+            setBenchObservedWorkspace(appliedWorkspace);
+          }
         } catch (error) {
           notifyError(error instanceof Error ? error.message : 'Factory Bench 工作区切换失败');
         } finally {

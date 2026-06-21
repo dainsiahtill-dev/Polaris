@@ -380,6 +380,8 @@ class TestContractsValidationIntegration:
         # Unknown tools preserved when keep_unknown=True (default)
         assert canonicalize_tool_name("unknown_tool") == "unknown_tool"
         assert canonicalize_tool_name("fs.delete_everything") == "fs.delete_everything"
+        assert canonicalize_tool_name("unknown_tool", keep_unknown=False) == ""
+        assert canonicalize_tool_name("search", keep_unknown=False) == "repo_rg"
 
     def test_normalize_with_none_args(self) -> None:
         """None 参数规范化测试。

@@ -127,6 +127,32 @@ class TestTrimCommandOutput:
         assert OrchestrationStageExecutor._trim_command_output("abcdef", limit=3) == "def"
 
 
+class TestWorkspaceQualityRepairEvidence:
+    def test_compacts_write_hash_and_diff_evidence(self) -> None:
+        evidence = OrchestrationStageExecutor._workspace_quality_repair_evidence(
+            [
+                {
+                    "tool": "write_file",
+                    "success": True,
+                    "result": {
+                        "source_tool": "deterministic_typescript_missing_export_repair",
+                        "file": "src/simulation.ts",
+                        "operation": "modify",
+                        "before_sha256": "a" * 64,
+                        "after_sha256": "b" * 64,
+                        "diff_excerpt": "--- a/src/simulation.ts\n+++ b/src/simulation.ts\n+export type GardenConfig = any;",
+                    },
+                }
+            ]
+        )
+
+        assert any(
+            item.startswith("repair_write:tool=deterministic_typescript_missing_export_repair") for item in evidence
+        )
+        assert "repair_hash:file=src/simulation.ts;before=aaaaaaaaaaaaaaaa;after=bbbbbbbbbbbbbbbb" in evidence
+        assert any("export type GardenConfig" in item for item in evidence)
+
+
 # ---------------------------------------------------------------------------
 # Artifact path / read / write / audit
 # ---------------------------------------------------------------------------

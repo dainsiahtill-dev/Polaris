@@ -232,6 +232,15 @@ describe('buildTelemetryFromStream', () => {
         metadata: {
           elapsed_ms: 19177.76,
           context_snapshot_ref: 'e3db3551d74e5741fd664b7b',
+          final_request_context_audit: {
+            final_request_token_estimate: 4096,
+            tool_schema_token_estimate: 1200,
+            coverage: {
+              has_pm_contract: true,
+              has_chief_engineer_blueprint: true,
+              has_target_files: true,
+            },
+          },
         },
       },
     });
@@ -247,6 +256,11 @@ describe('buildTelemetryFromStream', () => {
     expect(telemetryRoleHasUsageChannel(t, 'pm')).toBe(true);
     expect(t.events[0].contextSnapshotRef).toBe('e3db3551d74e5741fd664b7b');
     expect(t.events[0].callId).toBe('call-pm-1');
+    expect(t.events[0].finalRequestContextAudit).toMatchObject({
+      final_request_token_estimate: 4096,
+      tool_schema_token_estimate: 1200,
+      coverage: { has_chief_engineer_blueprint: true },
+    });
   });
 
   it('recovers provider-native usage aliases from nested usage payloads', () => {

@@ -709,6 +709,53 @@ async def test_argument_shape_void_batch_decrements_tool_batch_count() -> None:
     assert ledger.tool_batch_count == before
 
 
+@pytest.mark.asyncio
+async def test_argument_shape_escalates_before_failure_circuit_breaker() -> None:
+    """Malformed write args should enter the normalization/retry ladder before breaker accounting."""
+
+    async def _runtime(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        del tool_name, arguments
+        return {
+            "success": False,
+            "error": "Parameter validation failed: edit_blocks: missing required argument: blocks or start",
+        }
+
+    class _BreakerMustNotRun:
+        def evaluate_batch(self, **_kwargs: Any) -> Any:
+            raise AssertionError("argument-shape guard must run before the failure circuit breaker")
+
+    executor = _make_executor(tool_runtime=AsyncMock(side_effect=_runtime))
+    executor._tool_failure_circuit_breaker = _BreakerMustNotRun()
+    turn_id = "turn_argshape_before_breaker"
+    decision = _decision(
+        turn_id,
+        "b1",
+        [
+            {
+                "call_id": "w",
+                "tool_name": "edit_blocks",
+                "arguments": {"file": "main.py"},
+                "execution_mode": "write_serial",
+                "effect_type": "write",
+            }
+        ],
+    )
+    ledger = TurnLedger(turn_id=turn_id)
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+
+    with pytest.raises(
+        RuntimeError,
+        match="single_batch_contract_violation: mutation write batch failed on argument shape",
+    ):
+        await executor.execute_tool_batch(
+            decision,
+            _build_decoded_state_machine(turn_id),
+            ledger,
+            [{"role": "user", "content": "edit main.py to add a function"}],
+            stream=False,
+        )
+
+
 # ---------------------------------------------------------------------------
 # tool_batch_count + guard ordering (1082-1088)
 # ---------------------------------------------------------------------------

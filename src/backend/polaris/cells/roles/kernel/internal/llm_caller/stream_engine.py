@@ -11,6 +11,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from .context_audit import build_final_request_context_audit_for_request
 from .error_handling import (
     ERROR_CATEGORY_CANCELLED,
     build_native_tool_unavailable_error,
@@ -91,6 +92,16 @@ def _normalize_provider_usage(raw_usage: Any) -> dict[str, Any] | None:
         "prompt_chars": _usage_int(maybe_payload, "prompt_chars", "promptChars"),
         "completion_chars": _usage_int(maybe_payload, "completion_chars", "completionChars"),
     }
+
+
+def _final_request_context_tokens(audit: dict[str, Any], fallback: int = 0) -> int:
+    raw = audit.get("final_request_token_estimate")
+    if raw is None:
+        return max(0, int(fallback))
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return max(0, int(fallback))
 
 
 def _context_snapshot_degraded_payload(exc: BaseException) -> dict[str, str]:
@@ -186,16 +197,35 @@ class StreamEngine:
         emitted_content = ""
         reconnect_prefix = ""
         emitted_tool_signatures: set[str] = set()
-        active_native_tool_mode = "disabled"
-        active_tool_protocol = "none"
+        active_request = prepared.ai_request
+        active_native_tool_mode = prepared.native_tool_mode
+        active_tool_protocol = (
+            "structured_native_tools" if active_native_tool_mode == "native_tools_streaming" else "none"
+        )
+        fallback_stream_completed = False
         prepared_context_os_audit = getattr(prepared, "context_os_audit", None)
         context_os_audit = dict(prepared_context_os_audit) if isinstance(prepared_context_os_audit, dict) else {}
         provider_usage: dict[str, Any] | None = None
+        context_result = prepared.context_result
+        prompt_tokens = context_result.token_estimate if context_result else 0
 
         def _with_context_os_audit(payload: dict[str, Any]) -> dict[str, Any]:
             result = dict(payload)
             if context_os_audit:
                 result["context_os_audit"] = dict(context_os_audit)
+            return result
+
+        def _with_final_request_context_audit(payload: dict[str, Any], request: Any) -> dict[str, Any]:
+            audit = build_final_request_context_audit_for_request(
+                ai_request=request,
+                prepared=prepared,
+                profile=profile,
+            )
+            final_tokens = _final_request_context_tokens(audit, prompt_tokens)
+            result = dict(payload)
+            result["final_request_context_audit"] = audit
+            result["context_tokens_after"] = final_tokens
+            result["contextTokens"] = final_tokens
             return result
 
         def _extract_context_snapshot_ref(request: Any) -> str | None:
@@ -248,10 +278,13 @@ class StreamEngine:
             payload.update(_current_slo(elapsed_ms))
             if error_type:
                 payload["error_type"] = error_type
-            return _with_context_os_audit(payload)
-
-        context_result = prepared.context_result
-        prompt_tokens = context_result.token_estimate if context_result else 0
+            return _with_context_os_audit(_with_final_request_context_audit(payload, active_request))
+        final_context_audit = build_final_request_context_audit_for_request(
+            ai_request=active_request,
+            prepared=prepared,
+            profile=profile,
+        )
+        final_context_tokens = _final_request_context_tokens(final_context_audit, prompt_tokens)
 
         # Phase 1 critical fix (CRITICAL FIX_SCHEMA): stream path was never
         # persisting context snapshots, so the per-LLM context viewer in
@@ -299,7 +332,7 @@ class StreamEngine:
             model=model,
             prompt_tokens=prompt_tokens,
             call_id=call_id,
-            context_tokens_before=context_result.token_estimate if context_result else None,
+            context_tokens_before=final_context_tokens,
             compression_strategy=context_result.compression_strategy if context_result else None,
             messages=prepared.messages,
             metadata=_with_context_os_audit(
@@ -316,6 +349,9 @@ class StreamEngine:
                         "compression_applied": context_result.compression_applied if context_result else False,
                         "turn_round": turn_round,
                         "context_snapshot_ref": _extract_context_snapshot_ref(prepared.ai_request),
+                        "context_tokens_after": final_context_tokens,
+                        "contextTokens": final_context_tokens,
+                        "final_request_context_audit": final_context_audit,
                     },
                     prepared.ai_request,
                 )
@@ -336,6 +372,38 @@ class StreamEngine:
                 fallback_request = caller._build_native_tool_fallback_request(
                     prepared=prepared, profile=profile, mode="chat"
                 )
+                active_request = fallback_request
+                active_native_tool_mode = "native_tools_text_fallback"
+                active_tool_protocol = "none"
+                fallback_audit_metadata = _with_context_os_audit(
+                    _with_context_snapshot_diagnostics(
+                        _with_final_request_context_audit(
+                            {
+                                "stream": True,
+                                "fallback_request": True,
+                                "retry_decision": "native_tool_stream_text_fallback_request",
+                                "native_tool_calling_fallback": True,
+                                "native_tool_mode": active_native_tool_mode,
+                                "tool_protocol": active_tool_protocol,
+                                "context_snapshot_ref": _extract_context_snapshot_ref(fallback_request),
+                            },
+                            fallback_request,
+                        ),
+                        fallback_request,
+                    )
+                )
+                self._emit_call_retry(
+                    event_emitter=event_emitter,
+                    role=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    model=model,
+                    call_id=call_id,
+                    retry_decision="native_tool_stream_text_fallback_request",
+                    backoff_seconds=0.0,
+                    metadata=fallback_audit_metadata,
+                )
                 executor = self._get_executor()
                 try:
                     async for chunk in executor.invoke_stream(fallback_request):
@@ -350,6 +418,27 @@ class StreamEngine:
                         metadata = dict(normalized.metadata)
                         metadata.setdefault("stream_event_index", stream_event_count)
                         metadata.setdefault("native_tool_fallback", True)
+                        metadata.setdefault("native_tool_calling_fallback", True)
+                        metadata.setdefault("native_tool_mode", active_native_tool_mode)
+                        metadata.setdefault("tool_protocol", active_tool_protocol)
+                        if event_type == "chunk" and content:
+                            total_content += content
+                            emitted_content += content
+                        if event_type == "tool_call":
+                            raw_tool_call_count += 1
+                            signature = tool_call_signature_from_normalized(normalized)
+                            emitted_tool_signatures.add(signature)
+                        if event_type == "complete":
+                            elapsed_ms = (time.perf_counter() - start_time) * 1000
+                            usage_from_metadata = _normalize_provider_usage(
+                                metadata.get("usage")
+                            ) or _normalize_provider_usage(metadata)
+                            if usage_from_metadata is not None:
+                                provider_usage = usage_from_metadata
+                                metadata.setdefault("usage", usage_from_metadata)
+                                metadata.setdefault("usage_source", "provider")
+                            metadata.update(_current_slo(elapsed_ms))
+                            metadata.update(_with_final_request_context_audit({}, fallback_request))
                         yield {
                             "type": event_type,
                             "content": content,
@@ -357,42 +446,39 @@ class StreamEngine:
                             "iteration": turn_round,
                         }
                         if event_type == "complete":
-                            return
+                            fallback_stream_completed = True
+                            break
                 except (RuntimeError, ValueError):
-                    pass
+                    fallback_stream_completed = False
 
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
-            tool_error = build_native_tool_unavailable_error(profile)
-            self._emit_call_error(
-                event_emitter=event_emitter,
-                role=role_id,
-                run_id=run_id,
-                task_id=task_id,
-                attempt=attempt,
-                model=model,
-                error_category="provider",
-                error_message=tool_error,
-                call_id=call_id,
-                elapsed_ms=elapsed_ms,
-                metadata=_build_stream_error_metadata(elapsed_ms=elapsed_ms),
-            )
-            yield {
-                "type": "error",
-                "error": tool_error,
-                "metadata": _build_stream_error_metadata(elapsed_ms=elapsed_ms),
-                "iteration": turn_round,
-            }
-            return
+            if not fallback_stream_completed:
+                elapsed_ms = (time.perf_counter() - start_time) * 1000
+                tool_error = build_native_tool_unavailable_error(profile)
+                self._emit_call_error(
+                    event_emitter=event_emitter,
+                    role=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    model=model,
+                    error_category="provider",
+                    error_message=tool_error,
+                    call_id=call_id,
+                    elapsed_ms=elapsed_ms,
+                    metadata=_build_stream_error_metadata(elapsed_ms=elapsed_ms),
+                )
+                yield {
+                    "type": "error",
+                    "error": tool_error,
+                    "metadata": _build_stream_error_metadata(elapsed_ms=elapsed_ms),
+                    "iteration": turn_round,
+                }
+                return
 
         executor = self._get_executor()
         total_content = ""
-        active_request = prepared.ai_request
-        active_native_tool_mode = prepared.native_tool_mode
-        active_tool_protocol = (
-            "structured_native_tools" if active_native_tool_mode == "native_tools_streaming" else "none"
-        )
 
-        while True:
+        while not fallback_stream_completed:
             if _is_stream_cancel_requested(context):
                 raise asyncio.CancelledError("stream_cancelled_by_context")
 
@@ -642,11 +728,18 @@ class StreamEngine:
             "completion_tokens": completion_tokens,
             "total_tokens": total_tokens,
         }
+        final_context_audit = build_final_request_context_audit_for_request(
+            ai_request=active_request,
+            prepared=prepared,
+            profile=profile,
+        )
+        final_context_tokens = _final_request_context_tokens(final_context_audit, prompt_tokens_val)
         yield {
             "type": "context_metadata",
-            "context_tokens": prompt_tokens_val,
-            "model_context_window": int(context_result.token_estimate) if context_result else 0,
+            "context_tokens": final_context_tokens,
+            "model_context_window": int(final_context_audit.get("context_window_tokens") or 0),
             "context_os_audit": dict(context_os_audit),
+            "final_request_context_audit": final_context_audit,
             "usage": usage_payload,
             "usage_source": "provider" if provider_usage is not None else "estimate",
         }
@@ -659,6 +752,9 @@ class StreamEngine:
             "compression_applied": context_result.compression_applied if context_result else False,
             "turn_round": turn_round,
             "context_snapshot_ref": _extract_context_snapshot_ref(active_request),
+            "context_tokens_after": final_context_tokens,
+            "contextTokens": final_context_tokens,
+            "final_request_context_audit": final_context_audit,
             **_current_slo(elapsed_ms),
         }
         call_end_metadata = _with_context_snapshot_diagnostics(call_end_metadata, active_request)
@@ -676,7 +772,7 @@ class StreamEngine:
             call_id=call_id,
             completion_tokens=completion_tokens,
             prompt_tokens=prompt_tokens_val,
-            context_tokens_after=context_result.token_estimate if context_result else None,
+            context_tokens_after=final_context_tokens,
             compression_strategy=context_result.compression_strategy if context_result else None,
             response_content=_effective_content,
             tool_calls_count=len(emitted_tool_signatures),

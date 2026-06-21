@@ -254,6 +254,7 @@ function RoleInternalStat({ label, value, unit, sub, highlight = false }: { labe
 function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
   const tone: PipelineState = event.category === 'error' ? 'blocked' : event.isProjection || event.hasReceipt ? 'active' : 'idle';
   const summaryText = safeText(event.summary) || safeText(event.kind) || '事件';
+  const auditTitle = formatFinalRequestAuditTitle(event.finalRequestContextAudit);
   return (
     <div
       className="grid grid-cols-[68px_1fr] items-start gap-2 rounded-md px-2 py-1.5 text-[11px] hover:bg-white/[0.03]"
@@ -266,11 +267,21 @@ function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-dim">{safeText(event.kind)}</span>
-          {(event.hasUsage || event.durationMs !== null || event.hasReceipt || event.contextSnapshotDegraded) && (
+          {(event.hasUsage || event.durationMs !== null || event.contextTokens !== null || event.hasReceipt || event.contextSnapshotDegraded || auditTitle) && (
             <div className="flex flex-wrap items-center gap-1">
               {event.hasUsage && event.totalTokens > 0 && (
                 <span className="rounded bg-accent-secondary/10 px-1 font-mono text-[9px] text-accent-secondary">
                   {contextOSFormat.tokens(event.totalTokens)} tok
+                </span>
+              )}
+              {event.contextTokens !== null && event.contextTokens > 0 && (
+                <span className="rounded bg-accent-secondary/10 px-1 font-mono text-[9px] text-accent-secondary">
+                  ctx {contextOSFormat.tokens(event.contextTokens)}
+                </span>
+              )}
+              {auditTitle && (
+                <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-dim" title={auditTitle}>
+                  audit
                 </span>
               )}
               {event.durationMs !== null && event.durationMs > 0 && (
@@ -294,6 +305,23 @@ function RoleInternalEventRow({ event }: { event: ContextOSEvent }) {
       </div>
     </div>
   );
+}
+
+function formatFinalRequestAuditTitle(audit: Record<string, unknown> | null): string {
+  if (!audit) return '';
+  const coverage = typeof audit['coverage'] === 'object' && audit['coverage'] !== null
+    ? audit['coverage'] as Record<string, unknown>
+    : {};
+  const parts = [
+    ['final', audit['final_request_token_estimate']],
+    ['msg', audit['message_token_estimate']],
+    ['tools', audit['tool_schema_token_estimate']],
+    ['pm', coverage['has_pm_contract']],
+    ['ce', coverage['has_chief_engineer_blueprint']],
+    ['files', coverage['has_target_files']],
+    ['feedback', coverage['has_failure_feedback']],
+  ].map(([key, value]) => `${key}=${String(value ?? 'n/a')}`);
+  return parts.join(' ');
 }
 
 function StructureMetric({

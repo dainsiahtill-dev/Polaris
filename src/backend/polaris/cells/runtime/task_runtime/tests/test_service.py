@@ -306,3 +306,47 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     content = event_path.read_text(encoding="utf-8")
     assert '"stream":"task_runtime.execution"' in content
     assert '"event_type":"completed"' in content
+
+
+def test_task_runtime_factory_event_normalizes_payload_run_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+    published: dict[str, object] = {}
+
+    class Publisher:
+        def publish(self, *, subject: str, payload: dict[str, object]) -> bool:
+            published["subject"] = subject
+            published["payload"] = payload
+            return True
+
+    import polaris.infrastructure.log_pipeline.jetstream_publisher as publisher_module
+
+    monkeypatch.setattr(
+        publisher_module,
+        "get_log_jetstream_publisher",
+        lambda: Publisher(),
+    )
+
+    ok = service._publish_factory_execution_event(
+        {
+            "run_id": "director-123456789abc",
+            "factory_run_id": "factory_123456789abc",
+            "task_id": "task-1",
+            "event_type": "completed",
+            "status": "completed",
+        }
+    )
+
+    assert ok is True
+    envelope = published["payload"]
+    assert isinstance(envelope, dict)
+    assert envelope["run_id"] == "factory_123456789abc"
+    assert envelope["channel"] == "event.factory:factory_123456789abc"
+    payload = envelope["payload"]
+    assert isinstance(payload, dict)
+    assert payload["run_id"] == "factory_123456789abc"
+    assert payload["director_run_id"] == "director-123456789abc"

@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import shlex
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,18 @@ _DIRECT_TOOL_NAMES: tuple[str, ...] = (
     "write_file",
     "read_file",
     "execute_command",
+    "repo_tree",
+    "repo_rg",
+    "repo_read_around",
+    "repo_read_slice",
+    "repo_read_head",
+    "repo_read_tail",
+    "repo_diff",
+    "repo_map",
+    "repo_symbols_index",
+    "repo_apply_diff",
+    "apply_patch",
+    "precision_edit",
     "search_code",
     "glob",
     "list_directory",
@@ -458,15 +470,29 @@ class BackendToolRuntime:
 
     _EXECUTOR_CACHE_MAX: int = 4
 
-    def __init__(self, workspace: str) -> None:
+    def __init__(self, workspace: str, allowed_tools: Iterable[str] | None = None) -> None:
         self.workspace = str(workspace or ".")
         self._handlers: dict[str, ToolFn] | None = None
         self._executor_cache: dict[str, Any] = {}
+        self._allowed_tools = self._normalize_allowed_tools(allowed_tools)
 
         self._path_resolver = WorkspacePathResolver(self.workspace)
         self._argument_normalizer = ToolArgumentNormalizer()
         self._cli_builder = ToolCliBuilder()
         self._budget_guard = ReadBudgetGuard()
+
+    @staticmethod
+    def _normalize_allowed_tools(allowed_tools: Iterable[str] | None) -> frozenset[str] | None:
+        if allowed_tools is None:
+            return None
+        from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name
+
+        normalized: set[str] = set()
+        for item in allowed_tools:
+            canonical = canonicalize_tool_name(str(item or ""), keep_unknown=False)
+            if canonical:
+                normalized.add(canonical)
+        return frozenset(normalized)
 
     def list_tools(self) -> dict[str, ToolFn]:
         """Return all available backend tool handlers."""
@@ -492,16 +518,25 @@ class BackendToolRuntime:
         Raises:
             ToolExecutionError: If tool execution fails.
         """
-        tool = str(tool_name or "").strip().lower()
-        if not tool:
+        raw_tool = str(tool_name or "").strip().lower()
+        if not raw_tool:
             raise ToolExecutionError(
                 "missing tool name",
                 tool_name=str(tool_name),
                 retryable=False,
             )
+        try:
+            from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name
+
+            tool = canonicalize_tool_name(raw_tool, keep_unknown=True).strip().lower()
+        except (RuntimeError, ValueError):
+            tool = raw_tool
 
         handlers = self.list_tools()
         handler = handlers.get(tool)
+        if not callable(handler) and raw_tool != tool:
+            handler = handlers.get(raw_tool)
+            tool = raw_tool if callable(handler) else tool
         if not callable(handler):
             raise ToolExecutionError(
                 f"unknown tool: {tool}",
@@ -529,15 +564,15 @@ class BackendToolRuntime:
             ) from exc
 
         timeout_sec = self._argument_normalizer.normalize_timeout(timeout_value)
-        normalized = self._argument_normalizer.normalize_repo_tool_arguments(tool, payload, resolved_cwd)
         if tool in _DIRECT_TOOL_NAMES:
             return self._invoke_with_direct_executor(
                 tool_name=tool,
-                arguments=normalized,
+                arguments=payload,
                 cwd=resolved_cwd,
                 timeout_sec=timeout_sec,
             )
 
+        normalized = self._argument_normalizer.normalize_repo_tool_arguments(tool, payload, resolved_cwd)
         cli_args = self._cli_builder.build_backend_tool_args(tool, normalized)
         try:
             result = handler(cli_args, resolved_cwd, timeout_sec)
@@ -606,7 +641,7 @@ class BackendToolRuntime:
                 with contextlib.suppress(Exception):
                     close_sync()
 
-        executor = AgentAccelToolExecutor(workspace=cwd)
+        executor = AgentAccelToolExecutor(workspace=cwd, allowed_tools=self._allowed_tools)
         self._executor_cache[cwd] = executor
         return executor
 

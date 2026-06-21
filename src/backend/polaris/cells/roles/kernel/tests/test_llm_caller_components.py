@@ -18,6 +18,10 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+    build_final_request_context_audit,
+    build_final_request_context_audit_for_request,
+)
 from polaris.cells.roles.kernel.internal.llm_caller.decision_caller import DecisionCaller
 from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
     ERROR_CATEGORY_AUTH,
@@ -41,6 +45,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.provider_formatter import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     LLMResponse,
+    PreparedLLMRequest,
     StructuredLLMResponse,
 )
 from polaris.cells.roles.kernel.internal.llm_caller.stream_engine import StreamEngine
@@ -51,6 +56,108 @@ from polaris.kernelone.audit.omniscient.dedup import LLMEventDeduplicator, set_g
 def reset_llm_event_dedup() -> None:
     """Keep global LLM event dedup state from leaking across component tests."""
     set_global_llm_dedup(LLMEventDeduplicator())
+
+
+def test_final_request_context_audit_counts_tools_and_coverage() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+            },
+        },
+    }
+    messages = [
+        {
+            "role": "system",
+            "content": "Chief Engineer blueprint with construction_plan and scope_for_apply.",
+        },
+        {
+            "role": "user",
+            "content": "TASK-1 target_files src/index.ts tests/verify.test.ts retry after stderr exit_code failure",
+        },
+    ]
+    ai_request = Mock()
+    ai_request.context = {"chat_messages": messages}
+    ai_request.options = {"tools": [tool_schema]}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": [tool_schema]},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["schema_version"] == "llm.final_request_context_audit.v1"
+    assert audit["message_count"] == 2
+    assert audit["tool_schema_count"] == 1
+    assert audit["tool_schema_token_estimate"] > 0
+    assert audit["final_request_token_estimate"] > audit["message_token_estimate"]
+    assert audit["context_window_tokens"] == 32768
+    assert audit["context_underutilized"] is True
+    assert audit["coverage"]["has_chief_engineer_blueprint"] is True
+    assert audit["coverage"]["has_pm_contract"] is True
+    assert audit["coverage"]["has_target_files"] is True
+    assert audit["coverage"]["has_failure_feedback"] is True
+
+
+def test_final_request_context_audit_uses_active_fallback_request_options() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "user",
+                "content": "TASK-1 target_files src/index.ts Chief Engineer blueprint",
+            },
+        ],
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={
+            "tools": [{"type": "function", "function": {"name": "write_file"}}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": "Plan"}},
+        },
+        ai_request=Mock(),
+        native_tool_schemas=[{"type": "function", "function": {"name": "write_file"}}],
+        native_response_format={"type": "json_schema", "json_schema": {"name": "Plan"}},
+    )
+    fallback_request = Mock()
+    fallback_request.options = {}
+    fallback_request.context = {
+        "chat_messages": [
+            {
+                "role": "user",
+                "content": "Fallback plain text request with TASK-1 target_files src/index.ts",
+            }
+        ]
+    }
+    fallback_request.input = ""
+
+    audit = build_final_request_context_audit_for_request(
+        ai_request=fallback_request,
+        prepared=prepared,
+        profile=profile,
+    )
+
+    assert audit["message_count"] == 1
+    assert audit["tool_schema_count"] == 0
+    assert audit["tool_schema_token_estimate"] == 0
+    assert audit["response_format_token_estimate"] == 0
+    assert audit["final_request_token_estimate"] == audit["message_token_estimate"]
+    assert audit["coverage"]["has_pm_contract"] is True
 
 
 # ============ DecisionCaller Tests ============

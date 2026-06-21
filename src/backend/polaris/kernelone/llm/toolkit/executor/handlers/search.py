@@ -140,8 +140,25 @@ def _python_search_fallback(
         root = workspace
         if search_path and search_path != ".":
             candidate = (workspace / search_path).resolve()
-            if candidate.exists():
-                root = candidate
+            try:
+                candidate.relative_to(workspace)
+            except ValueError:
+                return {
+                    "ok": False,
+                    "error": f"Invalid search path outside workspace: {search_path}",
+                    "tool": "repo_rg",
+                    "error_type": "invalid_path",
+                    "retryable": False,
+                }
+            if not candidate.exists():
+                return {
+                    "ok": False,
+                    "error": f"Search path not found: {search_path}",
+                    "tool": "repo_rg",
+                    "error_type": "invalid_path",
+                    "retryable": False,
+                }
+            root = candidate
 
         results: list[dict[str, Any]] = []
         files_scanned = 0
@@ -267,11 +284,24 @@ def _run_rg_search(
             from polaris.kernelone.llm.toolkit.executor.utils import resolve_workspace_path
 
             resolved = resolve_workspace_path(self._kernel_fs, path)
-            if resolved.exists():
-                rel_path = resolved.relative_to(Path(self.workspace).resolve())
-                search_path = str(rel_path).replace("\\", "/")
-        except (ValueError, OSError):
-            pass
+            if not resolved.exists():
+                return {
+                    "ok": False,
+                    "error": f"Search path not found: {path}",
+                    "tool": "repo_rg",
+                    "error_type": "invalid_path",
+                    "retryable": False,
+                }
+            rel_path = resolved.relative_to(Path(self.workspace).resolve())
+            search_path = str(rel_path).replace("\\", "/") or "."
+        except (ValueError, OSError) as exc:
+            return {
+                "ok": False,
+                "error": f"Invalid search path '{path}': {exc}",
+                "tool": "repo_rg",
+                "error_type": "invalid_path",
+                "retryable": False,
+            }
 
     # Use -- to prevent query injection (query starting with - treated as flag)
     command.extend(["--", query, search_path])

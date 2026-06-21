@@ -40,6 +40,7 @@ from polaris.kernelone.llm.runtime_config import (
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 
 from ..llm_cache import get_global_llm_cache
+from .context_audit import build_final_request_context_audit_for_request
 from .error_handling import (
     ERROR_CATEGORY_CANCELLED,
     build_native_tool_unavailable_error,
@@ -77,6 +78,39 @@ def _with_context_os_audit(metadata: dict[str, Any], prepared: PreparedLLMReques
     if isinstance(audit, dict):
         payload["context_os_audit"] = dict(audit)
     return payload
+
+
+def _with_final_request_context_audit(
+    metadata: dict[str, Any],
+    *,
+    prepared: PreparedLLMRequest,
+    active_request: Any,
+    profile: Any,
+) -> dict[str, Any]:
+    payload = dict(metadata)
+    audit = build_final_request_context_audit_for_request(
+        ai_request=active_request,
+        prepared=prepared,
+        profile=profile,
+    )
+    final_tokens = int(
+        audit.get("final_request_token_estimate")
+        or (prepared.context_result.token_estimate if prepared.context_result else 0)
+    )
+    payload["final_request_context_audit"] = audit
+    payload["context_tokens_after"] = final_tokens
+    payload["contextTokens"] = final_tokens
+    return payload
+
+
+def _final_request_context_tokens(metadata: dict[str, Any], fallback: int | None = None) -> int | None:
+    raw = metadata.get("contextTokens") or metadata.get("context_tokens_after") or fallback
+    if isinstance(raw, bool) or raw is None:
+        return fallback
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return fallback
 
 
 def _with_context_snapshot_diagnostics(metadata: dict[str, Any], request: Any) -> dict[str, Any]:
@@ -435,6 +469,34 @@ class LLMInvoker:
                     response_model=response_model,
                     platform_retry_max=platform_retry_max,
                 )
+                fallback_audit_metadata = _with_final_request_context_audit(
+                    {
+                        "fallback_request": True,
+                        "retry_decision": "role_binding_fallback_request",
+                        "from_provider": str(getattr(profile, "provider_id", "") or ""),
+                        "from_model": str(getattr(profile, "model", "") or ""),
+                        "to_provider": slot.provider_id,
+                        "to_model": slot.model,
+                        "binding_id": slot.binding_id,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(fallback_prepared.ai_request),
+                    },
+                    prepared=fallback_prepared,
+                    active_request=fallback_prepared.ai_request,
+                    profile=fallback_profile,
+                )
+                self._emit_call_retry_event(
+                    event_emitter=event_emitter,
+                    role=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    model=slot.model,
+                    provider=slot.provider_id,
+                    call_id=call_id,
+                    retry_decision="role_binding_fallback_request",
+                    backoff_seconds=0.0,
+                    metadata=fallback_audit_metadata,
+                )
                 fallback_response = await executor.invoke(fallback_prepared.ai_request)
             except (RuntimeError, TypeError, ValueError) as exc:
                 fallback_error = str(exc)
@@ -552,6 +614,7 @@ class LLMInvoker:
         prepared: PreparedLLMRequest,
         active_request: Any,
         response_error: str,
+        profile: RoleProfile,
         native_tool_fallback: bool,
         native_response_fallback: bool,
         allow_native_tool_text_fallback: bool,
@@ -568,6 +631,21 @@ class LLMInvoker:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         classified = classify_error(response_error)
         active_context = active_request.context if isinstance(active_request.context, dict) else {}
+        event_metadata = _with_final_request_context_audit(
+            {
+                "native_tool_calling_fallback": native_tool_fallback,
+                "native_response_format_fallback": native_response_fallback,
+                "native_tool_mode": str(active_context.get("native_tool_mode") or prepared.native_tool_mode),
+                "response_format_mode": str(
+                    active_context.get("response_format_mode") or prepared.response_format_mode
+                ),
+                "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
+                "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+            },
+            prepared=prepared,
+            active_request=active_request,
+            profile=profile,
+        )
         self._emit_call_error_event(
             event_emitter=event_emitter,
             role=role_id,
@@ -579,36 +657,29 @@ class LLMInvoker:
             error_message=response_error or "LLM call failed",
             call_id=call_id,
             elapsed_ms=elapsed_ms,
-            metadata=_with_context_os_audit(
-                {
-                    "native_tool_calling_fallback": native_tool_fallback,
-                    "native_response_format_fallback": native_response_fallback,
-                    "native_tool_mode": str(active_context.get("native_tool_mode") or prepared.native_tool_mode),
-                    "response_format_mode": str(
-                        active_context.get("response_format_mode") or prepared.response_format_mode
-                    ),
-                    "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
-                    "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
-                },
-                prepared,
-            ),
+            metadata=_with_context_os_audit(event_metadata, prepared),
         )
         return LLMResponse(
             content="",
             error=response_error or "LLM call failed",
             error_category=classified,
             metadata=_with_context_os_audit(
-                {
-                    "model": model,
-                    "elapsed_ms": round(elapsed_ms, 2),
-                    "native_tool_calling_fallback": native_tool_fallback,
-                    "native_response_format_fallback": native_response_fallback,
-                    "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
-                    "run_id": run_id,
-                    "workspace": self.workspace,
-                    "attempt": attempt,
-                    "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
-                },
+                _with_final_request_context_audit(
+                    {
+                        "model": model,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "native_tool_calling_fallback": native_tool_fallback,
+                        "native_response_format_fallback": native_response_fallback,
+                        "native_tool_text_fallback_allowed": allow_native_tool_text_fallback,
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+                    },
+                    prepared=prepared,
+                    active_request=active_request,
+                    profile=profile,
+                ),
                 prepared,
             ),
         )
@@ -624,6 +695,7 @@ class LLMInvoker:
         prompt_fingerprint: str | None,
         temperature: float,
         model: str,
+        profile: RoleProfile,
         prompt_tokens: int,
         turn_round: int,
         role_id: str,
@@ -712,6 +784,16 @@ class LLMInvoker:
         if provider_usage is not None:
             event_metadata["usage"] = provider_usage
             event_metadata["usage_source"] = "provider"
+        event_metadata = _with_final_request_context_audit(
+            event_metadata,
+            prepared=prepared,
+            active_request=active_request,
+            profile=profile,
+        )
+        final_context_tokens = _final_request_context_tokens(
+            event_metadata,
+            prepared.context_result.token_estimate if prepared.context_result else None,
+        )
 
         self._emit_call_end_event(
             event_emitter=event_emitter,
@@ -724,7 +806,7 @@ class LLMInvoker:
             prompt_tokens=event_prompt_tokens,
             completion_tokens=completion_tokens,
             call_id=call_id,
-            context_tokens_after=prepared.context_result.token_estimate if prepared.context_result else None,
+            context_tokens_after=final_context_tokens,
             compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
             response_content=response_text,
             tool_calls_count=len(native_tool_calls),
@@ -741,13 +823,19 @@ class LLMInvoker:
             "attempt": attempt,
             "turn_round": turn_round,
             # SSOT Fix: Pass context token count for context panel display
-            "context_tokens": int(prepared.context_result.token_estimate) if prepared.context_result else 0,
+            "context_tokens": int(final_context_tokens or 0),
             "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
         }
         response_metadata = _with_context_snapshot_diagnostics(response_metadata, active_request)
         if provider_usage is not None:
             response_metadata["usage"] = provider_usage
             response_metadata["usage_source"] = "provider"
+        response_metadata = _with_final_request_context_audit(
+            response_metadata,
+            prepared=prepared,
+            active_request=active_request,
+            profile=profile,
+        )
 
         return LLMResponse(
             content=response_text,
@@ -795,6 +883,32 @@ class LLMInvoker:
         a :class:`FallbackLadderResult` carrying the mutated state so the
         orchestrator can repoint its locals.
         """
+
+        def emit_fallback_request_audit(retry_decision: str, request: Any, request_profile: RoleProfile) -> None:
+            audit_metadata = _with_final_request_context_audit(
+                {
+                    "fallback_request": True,
+                    "retry_decision": retry_decision,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(request),
+                },
+                prepared=prepared,
+                active_request=request,
+                profile=request_profile,
+            )
+            self._emit_call_retry_event(
+                event_emitter=event_emitter,
+                role=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                model=model,
+                provider=str(getattr(request_profile, "provider_id", "") or ""),
+                call_id=call_id,
+                retry_decision=retry_decision,
+                backoff_seconds=0.0,
+                metadata=audit_metadata,
+            )
+
         if (
             not is_response_ok
             and prepared.native_tool_schemas
@@ -802,6 +916,7 @@ class LLMInvoker:
             and is_native_tool_calling_unsupported(response_error)
         ):
             active_request = caller._build_native_tool_fallback_request(prepared=prepared, profile=profile, mode="chat")
+            emit_fallback_request_audit("native_tool_text_fallback", active_request, profile)
             response = await executor.invoke(active_request)
             native_tool_fallback = True
             is_response_ok, response_error = read_response_status(response)
@@ -810,6 +925,7 @@ class LLMInvoker:
             active_request = caller._build_structured_fallback_request(
                 prepared=prepared, profile=profile, response_model=response_model or dict, mode="chat"
             )
+            emit_fallback_request_audit("response_format_text_fallback", active_request, profile)
             response = await executor.invoke(active_request)
             native_response_fallback = True
             is_response_ok, response_error = read_response_status(response)
@@ -823,6 +939,7 @@ class LLMInvoker:
         )
         if not is_response_ok and _is_reasoning_truncation:
             active_request = caller._build_reasoning_truncation_retry_request(prepared=prepared, profile=profile)
+            emit_fallback_request_audit("reasoning_truncation_retry", active_request, profile)
             response = await executor.invoke(active_request)
             logger.warning(
                 "[invoker] reasoning-truncation re-ask: reserved output budget + minimal-reasoning directive"
@@ -880,6 +997,7 @@ class LLMInvoker:
         prompt_fingerprint: str | None,
         temperature: float,
         model: str,
+        profile: RoleProfile,
         role_id: str,
         run_id: str,
         task_id: str | None,
@@ -911,6 +1029,23 @@ class LLMInvoker:
             model,
             len(cached),
         )
+        cache_metadata = _with_final_request_context_audit(
+            {
+                "elapsed_ms": round(elapsed_ms, 2),
+                "cached": True,
+                "source": "cache",
+                "compression_applied": context_result.compression_applied if context_result else False,
+                "turn_round": turn_round,
+                "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+            },
+            prepared=prepared,
+            active_request=prepared.ai_request,
+            profile=profile,
+        )
+        final_context_tokens = _final_request_context_tokens(
+            cache_metadata,
+            context_result.token_estimate if context_result else None,
+        )
         self._emit_call_end_event(
             event_emitter=event_emitter,
             role=role_id,
@@ -920,20 +1055,10 @@ class LLMInvoker:
             model=model,
             call_id=call_id,
             completion_tokens=len(cached) // 2,
-            context_tokens_after=context_result.token_estimate if context_result else None,
+            context_tokens_after=final_context_tokens,
             compression_strategy=context_result.compression_strategy if context_result else None,
             response_content=cached,
-            metadata=_with_context_os_audit(
-                {
-                    "elapsed_ms": round(elapsed_ms, 2),
-                    "cached": True,
-                    "source": "cache",
-                    "compression_applied": context_result.compression_applied if context_result else False,
-                    "turn_round": turn_round,
-                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                },
-                prepared,
-            ),
+            metadata=_with_context_os_audit(cache_metadata, prepared),
         )
         return LLMResponse(
             content=cached,
@@ -1137,6 +1262,12 @@ class LLMInvoker:
             )
             context_result = prepared.context_result
             prompt_tokens = context_result.token_estimate if context_result else len(system_prompt) // 4
+            final_context_audit = build_final_request_context_audit_for_request(
+                ai_request=prepared.ai_request,
+                prepared=prepared,
+                profile=profile,
+            )
+            final_context_tokens = int(final_context_audit.get("final_request_token_estimate") or prompt_tokens)
 
             self._emit_call_start_event(
                 event_emitter=event_emitter,
@@ -1148,7 +1279,7 @@ class LLMInvoker:
                 provider=str(getattr(profile, "provider_id", "") or ""),
                 prompt_tokens=prompt_tokens,
                 call_id=call_id,
-                context_tokens_before=context_result.token_estimate if context_result else None,
+                context_tokens_before=final_context_tokens,
                 compression_strategy=context_result.compression_strategy if context_result else None,
                 messages=prepared.messages,
                 metadata=_with_context_os_audit(
@@ -1161,6 +1292,9 @@ class LLMInvoker:
                         "compression_applied": context_result.compression_applied if context_result else False,
                         "turn_round": turn_round,
                         "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                        "context_tokens_after": final_context_tokens,
+                        "contextTokens": final_context_tokens,
+                        "final_request_context_audit": final_context_audit,
                     },
                     prepared,
                 ),
@@ -1193,6 +1327,7 @@ class LLMInvoker:
                 prompt_fingerprint=prompt_fingerprint,
                 temperature=temperature,
                 model=model,
+                profile=profile,
                 role_id=role_id,
                 run_id=run_id,
                 task_id=task_id,
@@ -1255,6 +1390,7 @@ class LLMInvoker:
                     prepared=prepared,
                     active_request=active_request,
                     response_error=response_error,
+                    profile=profile,
                     native_tool_fallback=native_tool_fallback,
                     native_response_fallback=native_response_fallback,
                     allow_native_tool_text_fallback=allow_native_tool_text_fallback,
@@ -1277,6 +1413,7 @@ class LLMInvoker:
                 prompt_fingerprint=prompt_fingerprint,
                 temperature=temperature,
                 model=model,
+                profile=profile,
                 prompt_tokens=prompt_tokens,
                 turn_round=turn_round,
                 role_id=role_id,
@@ -1409,6 +1546,7 @@ class LLMInvoker:
         self,
         *,
         prepared: PreparedLLMRequest,
+        profile: RoleProfile,
         response_model: type,
         model: str,
         prompt_tokens: int,
@@ -1440,6 +1578,25 @@ class LLMInvoker:
                 data = extract_json_from_text(content)
                 validated = response_model(**data)
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
+                event_metadata = _with_final_request_context_audit(
+                    {
+                        "structured": True,
+                        "native_response_format": True,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "compression_applied": prepared.context_result.compression_applied
+                        if prepared.context_result
+                        else False,
+                        "turn_round": turn_round,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                    },
+                    prepared=prepared,
+                    active_request=prepared.ai_request,
+                    profile=profile,
+                )
+                final_context_tokens = _final_request_context_tokens(
+                    event_metadata,
+                    prepared.context_result.token_estimate if prepared.context_result else None,
+                )
                 self._emit_call_end_event(
                     event_emitter=event_emitter,
                     role=role_id,
@@ -1450,24 +1607,12 @@ class LLMInvoker:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=len(content) // 2,
                     call_id=call_id,
-                    context_tokens_after=prepared.context_result.token_estimate if prepared.context_result else None,
+                    context_tokens_after=final_context_tokens,
                     compression_strategy=prepared.context_result.compression_strategy
                     if prepared.context_result
                     else None,
                     response_content=content,
-                    metadata=_with_context_os_audit(
-                        {
-                            "structured": True,
-                            "native_response_format": True,
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "compression_applied": prepared.context_result.compression_applied
-                            if prepared.context_result
-                            else False,
-                            "turn_round": turn_round,
-                            "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                        },
-                        prepared,
-                    ),
+                    metadata=_with_context_os_audit(event_metadata, prepared),
                 )
                 return StructuredLLMResponse(
                     data=validated.model_dump(),
@@ -1476,18 +1621,49 @@ class LLMInvoker:
                     if prepared.context_result
                     else len(content) // 2,
                     metadata=_with_context_os_audit(
-                        {
-                            "native_response_format": True,
-                            "response_format_mode": prepared.response_format_mode,
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "turn_round": turn_round,
-                        },
+                        _with_final_request_context_audit(
+                            {
+                                "native_response_format": True,
+                                "response_format_mode": prepared.response_format_mode,
+                                "elapsed_ms": round(elapsed_ms, 2),
+                                "turn_round": turn_round,
+                            },
+                            prepared=prepared,
+                            active_request=prepared.ai_request,
+                            profile=profile,
+                        ),
                         prepared,
                     ),
                 )
             response_error = str(getattr(response, "error", "") or "").strip()
-            if not is_response_format_unsupported(response_error):
-                raise RuntimeError(response_error or "structured_llm_call_failed")
+            normalized_error = response_error or "structured_llm_call_failed"
+            retry_metadata = _with_final_request_context_audit(
+                {
+                    "structured": True,
+                    "native_response_format": True,
+                    "retry_decision": "structured_response_format_fallback",
+                    "error_category": classify_error(normalized_error),
+                    "error_message": normalized_error,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                },
+                prepared=prepared,
+                active_request=prepared.ai_request,
+                profile=profile,
+            )
+            self._emit_call_retry_event(
+                event_emitter=event_emitter,
+                role=role_id,
+                run_id=run_id,
+                task_id=task_id,
+                attempt=attempt,
+                model=model,
+                call_id=call_id,
+                retry_decision="structured_response_format_fallback",
+                backoff_seconds=0.0,
+                metadata=_with_context_os_audit(retry_metadata, prepared),
+            )
+            if not is_response_format_unsupported(normalized_error):
+                raise RuntimeError(normalized_error)
         except RuntimeError as e:
             logger.warning("Native structured response_format call failed: %s", e)
         return None
@@ -1532,6 +1708,25 @@ class LLMInvoker:
                 max_retries=max_retries,
             )
             elapsed_ms = (time.perf_counter() - start_time) * 1000
+            event_metadata = _with_final_request_context_audit(
+                {
+                    "structured": True,
+                    "instructor_used": True,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "compression_applied": prepared.context_result.compression_applied
+                    if prepared.context_result
+                    else False,
+                    "turn_round": turn_round,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                },
+                prepared=prepared,
+                active_request=prepared.ai_request,
+                profile=profile,
+            )
+            final_context_tokens = _final_request_context_tokens(
+                event_metadata,
+                prepared.context_result.token_estimate if prepared.context_result else None,
+            )
             self._emit_call_end_event(
                 event_emitter=event_emitter,
                 role=role_id,
@@ -1541,37 +1736,30 @@ class LLMInvoker:
                 model=model,
                 call_id=call_id,
                 completion_tokens=len(result.model_dump_json()) // 2,
-                context_tokens_after=prepared.context_result.token_estimate if prepared.context_result else None,
+                context_tokens_after=final_context_tokens,
                 compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
                 response_content=result.model_dump_json(),
-                metadata=_with_context_os_audit(
-                    {
-                        "structured": True,
-                        "instructor_used": True,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "compression_applied": prepared.context_result.compression_applied
-                        if prepared.context_result
-                        else False,
-                        "turn_round": turn_round,
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                    },
-                    prepared,
-                ),
+                metadata=_with_context_os_audit(event_metadata, prepared),
             )
             return StructuredLLMResponse(
                 data=result.model_dump(),
                 raw_content=result.model_dump_json(),
                 token_estimate=prompt_tokens + len(result.model_dump_json()) // 2,
                 metadata=_with_context_os_audit(
-                    {
-                        "model": model,
-                        "instructor_used": True,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                        "turn_round": turn_round,
-                    },
+                    _with_final_request_context_audit(
+                        {
+                            "model": model,
+                            "instructor_used": True,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "run_id": run_id,
+                            "workspace": self.workspace,
+                            "attempt": attempt,
+                            "turn_round": turn_round,
+                        },
+                        prepared=prepared,
+                        active_request=prepared.ai_request,
+                        profile=profile,
+                    ),
                     prepared,
                 ),
             )
@@ -1616,6 +1804,16 @@ class LLMInvoker:
             elapsed_ms = (time.perf_counter() - start_time) * 1000
             classified = classify_error(response_error)
             normalized_error = response_error or "structured_llm_call_failed"
+            error_metadata = _with_final_request_context_audit(
+                {
+                    "structured": True,
+                    "response_format_mode": response_format_mode,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
+                },
+                prepared=prepared,
+                active_request=ai_request,
+                profile=profile,
+            )
             self._emit_call_error_event(
                 event_emitter=event_emitter,
                 role=role_id,
@@ -1627,14 +1825,7 @@ class LLMInvoker:
                 error_message=normalized_error,
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
-                metadata=_with_context_os_audit(
-                    {
-                        "structured": True,
-                        "response_format_mode": response_format_mode,
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
-                    },
-                    prepared,
-                ),
+                metadata=_with_context_os_audit(error_metadata, prepared),
             )
             return StructuredLLMResponse(
                 data={},
@@ -1642,14 +1833,19 @@ class LLMInvoker:
                 error=normalized_error,
                 error_category=classified,
                 metadata=_with_context_os_audit(
-                    {
-                        "model": model,
-                        "response_format_mode": response_format_mode,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                    },
+                    _with_final_request_context_audit(
+                        {
+                            "model": model,
+                            "response_format_mode": response_format_mode,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "run_id": run_id,
+                            "workspace": self.workspace,
+                            "attempt": attempt,
+                        },
+                        prepared=prepared,
+                        active_request=ai_request,
+                        profile=profile,
+                    ),
                     prepared,
                 ),
             )
@@ -1666,6 +1862,25 @@ class LLMInvoker:
             validated = response_model(**data)
             validated_data = validated.model_dump() if hasattr(validated, "model_dump") else dict(validated)
             elapsed_ms = (time.perf_counter() - start_time) * 1000
+            event_metadata = _with_final_request_context_audit(
+                {
+                    "structured": True,
+                    "instructor_used": False,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "compression_applied": prepared.context_result.compression_applied
+                    if prepared.context_result
+                    else False,
+                    "turn_round": turn_round,
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
+                },
+                prepared=prepared,
+                active_request=ai_request,
+                profile=profile,
+            )
+            final_context_tokens = _final_request_context_tokens(
+                event_metadata,
+                prepared.context_result.token_estimate if prepared.context_result else None,
+            )
             self._emit_call_end_event(
                 event_emitter=event_emitter,
                 role=role_id,
@@ -1675,37 +1890,31 @@ class LLMInvoker:
                 model=model,
                 call_id=call_id,
                 completion_tokens=len(content) // 2,
-                context_tokens_after=prepared.context_result.token_estimate if prepared.context_result else None,
+                context_tokens_after=final_context_tokens,
                 compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
                 response_content=content,
-                metadata=_with_context_os_audit(
-                    {
-                        "structured": True,
-                        "instructor_used": False,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "compression_applied": prepared.context_result.compression_applied
-                        if prepared.context_result
-                        else False,
-                        "turn_round": turn_round,
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
-                    },
-                    prepared,
-                ),
+                metadata=_with_context_os_audit(event_metadata, prepared),
             )
             return StructuredLLMResponse(
                 data=validated_data,
                 raw_content=content,
                 token_estimate=prompt_tokens + len(content) // 2,
                 metadata=_with_context_os_audit(
-                    {
-                        "model": model,
-                        "instructor_used": False,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                        "turn_round": turn_round,
-                    },
+                    _with_final_request_context_audit(
+                        {
+                            "model": model,
+                            "instructor_used": False,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "run_id": run_id,
+                            "workspace": self.workspace,
+                            "attempt": attempt,
+                            "turn_round": turn_round,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
+                        },
+                        prepared=prepared,
+                        active_request=ai_request,
+                        profile=profile,
+                    ),
                     prepared,
                 ),
             )
@@ -1724,7 +1933,16 @@ class LLMInvoker:
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
                 metadata=_with_context_os_audit(
-                    {"structured": True, "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request)},
+                    _with_final_request_context_audit(
+                        {
+                            "structured": True,
+                            "response_format_mode": response_format_mode,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
+                        },
+                        prepared=prepared,
+                        active_request=ai_request,
+                        profile=profile,
+                    ),
                     prepared,
                 ),
             )
@@ -1735,13 +1953,20 @@ class LLMInvoker:
                 error_category="validation_fail",
                 validation_errors=[str(parse_error)],
                 metadata=_with_context_os_audit(
-                    {
-                        "model": model,
-                        "elapsed_ms": round(elapsed_ms, 2),
-                        "run_id": run_id,
-                        "workspace": self.workspace,
-                        "attempt": attempt,
-                    },
+                    _with_final_request_context_audit(
+                        {
+                            "model": model,
+                            "elapsed_ms": round(elapsed_ms, 2),
+                            "run_id": run_id,
+                            "workspace": self.workspace,
+                            "attempt": attempt,
+                            "response_format_mode": response_format_mode,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(ai_request),
+                        },
+                        prepared=prepared,
+                        active_request=ai_request,
+                        profile=profile,
+                    ),
                     prepared,
                 ),
             )
@@ -1798,6 +2023,12 @@ class LLMInvoker:
             messages = prepared.messages
             context_result = prepared.context_result
             prompt_tokens = context_result.token_estimate if context_result else len(system_prompt) // 4
+            final_context_audit = build_final_request_context_audit_for_request(
+                ai_request=prepared.ai_request,
+                prepared=prepared,
+                profile=profile,
+            )
+            final_context_tokens = int(final_context_audit.get("final_request_token_estimate") or prompt_tokens)
 
             self._emit_call_start_event(
                 event_emitter=event_emitter,
@@ -1809,7 +2040,7 @@ class LLMInvoker:
                 provider=str(getattr(profile, "provider_id", "") or ""),
                 prompt_tokens=prompt_tokens,
                 call_id=call_id,
-                context_tokens_before=context_result.token_estimate if context_result else None,
+                context_tokens_before=final_context_tokens,
                 compression_strategy=context_result.compression_strategy if context_result else None,
                 messages=messages,
                 metadata=_with_context_os_audit(
@@ -1822,6 +2053,9 @@ class LLMInvoker:
                         "compression_applied": context_result.compression_applied if context_result else False,
                         "turn_round": turn_round,
                         "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                        "context_tokens_after": final_context_tokens,
+                        "contextTokens": final_context_tokens,
+                        "final_request_context_audit": final_context_audit,
                     },
                     prepared,
                 ),
@@ -1830,6 +2064,7 @@ class LLMInvoker:
             # Try native response_format
             native_result = await self._try_native_response_format_structured(
                 prepared=prepared,
+                profile=profile,
                 response_model=response_model,
                 model=model,
                 prompt_tokens=prompt_tokens,

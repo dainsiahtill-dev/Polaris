@@ -2042,6 +2042,38 @@ class OrchestrationStageExecutor:
             artifact_quality_errors=artifact_quality_errors,
         )
 
+    @staticmethod
+    def _workspace_quality_repair_evidence(repair_results: list[dict[str, Any]]) -> list[str]:
+        evidence: list[str] = []
+        for item in repair_results:
+            if not isinstance(item, dict) or not bool(item.get("success")):
+                continue
+            raw_result = item.get("result")
+            result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
+            source_tool = str(result.get("source_tool") or item.get("source_tool") or "").strip()
+            file_name = str(result.get("file") or result.get("path") or "").strip()
+            operation = str(result.get("operation") or "").strip()
+            if source_tool or file_name:
+                evidence.append(
+                    "repair_write:"
+                    f"tool={source_tool or str(item.get('tool') or item.get('tool_name') or 'unknown')};"
+                    f"file={file_name or 'unknown'};"
+                    f"operation={operation or 'unknown'}"
+                )
+            before_hash = str(result.get("before_sha256") or "").strip()
+            after_hash = str(result.get("after_sha256") or "").strip()
+            if before_hash or after_hash:
+                evidence.append(
+                    f"repair_hash:file={file_name or 'unknown'};before={before_hash[:16]};after={after_hash[:16]}"
+                )
+            diff_excerpt = str(result.get("diff_excerpt") or "").strip()
+            if diff_excerpt:
+                compact_diff = " ".join(diff_excerpt.split())
+                evidence.append(f"repair_diff:file={file_name or 'unknown'};excerpt={compact_diff[:360]}")
+            if len(evidence) >= 12:
+                break
+        return evidence
+
     async def _run_workspace_quality_checks(self, run: FactoryRun, context: dict[str, Any]) -> tuple[bool, str]:
         commands = self._workspace_quality_commands(context)
         if not commands:
@@ -2104,6 +2136,7 @@ class OrchestrationStageExecutor:
                     bool(item.get("success")) and str(item.get("tool") or item.get("tool_name") or "") == "write_file"
                     for item in repair_results
                 )
+                repair_summary["evidence"] = self._workspace_quality_repair_evidence(repair_results)
                 if repair_results:
                     for command in run_commands:
                         result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)

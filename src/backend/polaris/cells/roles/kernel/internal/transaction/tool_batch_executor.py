@@ -1363,25 +1363,6 @@ class ToolBatchExecutor:
                 "single_batch_contract_violation: stale_edit blocked write invocation; requires_bootstrap_read"
             )
 
-        breaker_snapshot = self._tool_failure_circuit_breaker.evaluate_batch(
-            turn_id=turn_id,
-            receipts=receipts_as_dicts,
-            invocations=invocations,
-        )
-        if breaker_snapshot.triggered:
-            batch_cancel_token.cancel("tool_failure_circuit_breaker_triggered")
-            raise RuntimeError(
-                "single_batch_contract_violation: tool_failure_circuit_breaker_triggered "
-                f"turn_id={breaker_snapshot.turn_id} "
-                f"batch_failures={breaker_snapshot.batch_failures} "
-                f"consecutive_failures={breaker_snapshot.consecutive_failures} "
-                f"total_failures={breaker_snapshot.total_failures} "
-                f"consecutive_threshold={breaker_snapshot.consecutive_threshold} "
-                f"total_threshold={breaker_snapshot.total_threshold} "
-                f"trigger_reason={breaker_snapshot.trigger_reason} "
-                f"triggered_dimension={breaker_snapshot.triggered_dimension or 'none'}"
-            )
-
         # Phase-1 A8a (2026-06-11, phase1smoke4): when a mutation-required batch
         # contains write invocations that ALL failed on argument shape (prose in
         # blocks / SEARCH==REPLACE no-op / missing args), escalate through the
@@ -1405,6 +1386,25 @@ class ToolBatchExecutor:
                     "single_batch_contract_violation: mutation write batch failed on argument shape "
                     "(prose/no-op/missing-args in write tool arguments) — escalating to forced-write retry"
                 )
+
+        breaker_snapshot = self._tool_failure_circuit_breaker.evaluate_batch(
+            turn_id=turn_id,
+            receipts=receipts_as_dicts,
+            invocations=invocations,
+        )
+        if breaker_snapshot.triggered:
+            batch_cancel_token.cancel("tool_failure_circuit_breaker_triggered")
+            raise RuntimeError(
+                "single_batch_contract_violation: tool_failure_circuit_breaker_triggered "
+                f"turn_id={breaker_snapshot.turn_id} "
+                f"batch_failures={breaker_snapshot.batch_failures} "
+                f"consecutive_failures={breaker_snapshot.consecutive_failures} "
+                f"total_failures={breaker_snapshot.total_failures} "
+                f"consecutive_threshold={breaker_snapshot.consecutive_threshold} "
+                f"total_threshold={breaker_snapshot.total_threshold} "
+                f"trigger_reason={breaker_snapshot.trigger_reason} "
+                f"triggered_dimension={breaker_snapshot.triggered_dimension or 'none'}"
+            )
 
         # === Phase 4b: 执行完成 ===
         state_machine.transition_to(TurnState.TOOL_BATCH_EXECUTED)

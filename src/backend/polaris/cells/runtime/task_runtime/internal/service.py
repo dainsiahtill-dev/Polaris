@@ -942,6 +942,10 @@ class TaskRuntimeService:
             )
 
             event_payload = dict(payload)
+            director_run_id = str(event_payload.get("run_id") or "").strip()
+            event_payload["run_id"] = factory_run_id
+            if director_run_id and director_run_id != factory_run_id:
+                event_payload["director_run_id"] = director_run_id
             event_payload["type"] = "task_runtime_execution"
             event_payload["stage"] = "director_dispatch"
             event_payload["message"] = (

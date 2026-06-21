@@ -213,6 +213,35 @@ describe('useFactory', () => {
     });
   });
 
+  it('uses the factory envelope run id when runtime payload carries a Director run id', async () => {
+    const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
+    await act(async () => {
+      await result.current.startRun({ workspace: 'ws' });
+    });
+    getFactoryRunArtifactsMock.mockClear();
+
+    await act(async () => {
+      lastMessageHandler?.(
+        envelope(
+          {
+            ...baseRun,
+            run_id: 'director-123456789abc',
+            status: 'completed',
+            phase: 'completed',
+            progress: 100,
+          },
+          'task_runtime_execution',
+        ),
+      );
+    });
+
+    await waitFor(() => {
+      expect(getFactoryRunArtifactsMock).toHaveBeenCalledWith('run-1');
+    });
+    expect(getFactoryRunArtifactsMock).not.toHaveBeenCalledWith('director-123456789abc');
+    expect(result.current.currentRun?.run_id).toBe('run-1');
+  });
+
   it('uses stop response as the terminal snapshot', async () => {
     const { result } = renderHook(() => useFactory(), { wrapper: createWrapper() });
     await act(async () => {

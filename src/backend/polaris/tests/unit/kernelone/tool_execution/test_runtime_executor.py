@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-
 from polaris.kernelone.tool_execution.runtime_executor import (
     BackendToolRuntime,
     ReadBudgetGuard,
@@ -158,9 +157,7 @@ class TestToolArgumentNormalizer:
 
     def test_workspace_to_repo_relative(self) -> None:
         normalizer = ToolArgumentNormalizer()
-        with patch.object(
-            ToolArgumentNormalizer, "find_repo_root_path", return_value="/repo"
-        ):
+        with patch.object(ToolArgumentNormalizer, "find_repo_root_path", return_value="/repo"):
             result = normalizer.workspace_to_repo_relative("src/main.py", "/repo")
             assert result == "src/main.py"
 
@@ -210,8 +207,8 @@ class TestBackendToolRuntime:
         os.makedirs(cwd2, exist_ok=True)
         os.makedirs(cwd3, exist_ok=True)
 
-        e1 = runtime._get_executor(cwd1)
-        e2 = runtime._get_executor(cwd2)
+        runtime._get_executor(cwd1)
+        runtime._get_executor(cwd2)
         # Add third should evict first
         e3 = runtime._get_executor(cwd3)
 
@@ -222,7 +219,7 @@ class TestBackendToolRuntime:
 
     def test_close_clears_cache(self, tmp_path: Path) -> None:
         runtime = BackendToolRuntime(str(tmp_path))
-        executor = runtime._get_executor(str(tmp_path))
+        runtime._get_executor(str(tmp_path))
         assert len(runtime._executor_cache) > 0
         runtime.close()
         assert len(runtime._executor_cache) == 0
@@ -240,6 +237,48 @@ class TestBackendToolRuntime:
         runtime = BackendToolRuntime(str(tmp_path))
         with pytest.raises(ToolExecutionError, match="missing tool name"):
             runtime.invoke("")
+
+    def test_invoke_accepts_llm_natural_write_file_aliases(self, tmp_path: Path) -> None:
+        runtime = BackendToolRuntime(str(tmp_path))
+
+        result = runtime.invoke(
+            "create_file",
+            {"filename": "src/app.txt", "text": "hello needle\n"},
+            cwd=str(tmp_path),
+        )
+
+        assert result["ok"] is True
+        assert result["tool"] == "write_file"
+        assert (tmp_path / "src/app.txt").read_text(encoding="utf-8") == "hello needle\n"
+
+    def test_invoke_accepts_llm_natural_command_aliases(self, tmp_path: Path) -> None:
+        runtime = BackendToolRuntime(str(tmp_path))
+
+        result = runtime.invoke("run_command", {"cmd": "pwd"}, cwd=str(tmp_path))
+
+        assert result["ok"] is True
+        assert result["tool"] == "execute_command"
+        assert result["result"]["exit_code"] == 0
+
+    def test_invoke_accepts_llm_natural_search_aliases(self, tmp_path: Path) -> None:
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.txt").write_text("hello needle\n", encoding="utf-8")
+        runtime = BackendToolRuntime(str(tmp_path))
+
+        result = runtime.invoke("search", {"query": "needle", "path": "."}, cwd=str(tmp_path))
+
+        assert result["ok"] is True
+        assert result["tool"] == "repo_rg"
+        assert result["result"]["returned_count"] == 1
+
+    def test_invoke_aliases_cannot_bypass_allowed_tools(self, tmp_path: Path) -> None:
+        runtime = BackendToolRuntime(str(tmp_path), allowed_tools={"read_file"})
+
+        result = runtime.invoke("create_file", {"filename": "src/app.txt", "text": "hello\n"}, cwd=str(tmp_path))
+
+        assert result["ok"] is False
+        assert "not allowed" in result["error"]
+        assert not (tmp_path / "src" / "app.txt").exists()
 
     def test_list_tools_caches_result(self, tmp_path: Path) -> None:
         runtime = BackendToolRuntime(str(tmp_path))

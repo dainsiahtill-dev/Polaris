@@ -8,6 +8,8 @@ module.
 from __future__ import annotations
 
 import contextlib
+import difflib
+import hashlib
 import json
 import os
 import re
@@ -1038,6 +1040,13 @@ def _write_typescript_repair_results(
     writes: list[dict[str, Any]] = []
     for path, content in updated_by_path.items():
         rel_path = path.relative_to(workspace_path).as_posix()
+        try:
+            before_content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            before_content = ""
+        before_hash = hashlib.sha256(before_content.encode("utf-8")).hexdigest()
+        after_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        diff_excerpt = _typescript_repair_diff_excerpt(rel_path, before_content, content)
         write_result = executor.execute_tool(
             "write_file",
             {"file": rel_path, "content": content},
@@ -1059,12 +1068,29 @@ def _write_typescript_repair_results(
                     metadata_key: [item for item in metadata_value if item.get("file") == rel_path],
                     "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
                     "operation": str(write_result.get("operation") or "modify"),
+                    "before_sha256": before_hash,
+                    "after_sha256": after_hash,
+                    "diff_excerpt": diff_excerpt,
                     "broadcast_ok": bool(write_result.get("broadcast_ok")),
                     "director_policy": write_result.get("director_policy"),
                 },
             }
         )
     return writes
+
+
+def _typescript_repair_diff_excerpt(rel_path: str, before: str, after: str, *, max_chars: int = 1600) -> str:
+    if before == after:
+        return ""
+    diff = difflib.unified_diff(
+        before.splitlines(),
+        after.splitlines(),
+        fromfile=f"a/{rel_path}",
+        tofile=f"b/{rel_path}",
+        lineterm="",
+        n=3,
+    )
+    return "\n".join(diff)[:max_chars]
 
 
 def _find_typescript_class_declaration(

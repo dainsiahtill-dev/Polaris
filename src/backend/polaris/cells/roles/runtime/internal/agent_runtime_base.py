@@ -923,11 +923,32 @@ class RoleAgent(ABC):
                 logger.debug("[%s] BackendToolRuntime not available (import failed): %s", self.agent_name, exc)
                 return None
             try:
-                self._backend_tool_runtime = BackendToolRuntime(self.workspace)  # type: ignore[assignment]
+                self._backend_tool_runtime = BackendToolRuntime(  # type: ignore[assignment]
+                    self.workspace,
+                    allowed_tools=self._backend_allowed_tools_from_profile(),
+                )
             except (RuntimeError, ValueError) as exc:
                 logger.warning("[%s] Failed to initialize BackendToolRuntime: %s", self.agent_name, exc)
                 return None
             return self._backend_tool_runtime
+
+    def _backend_allowed_tools_from_profile(self) -> frozenset[str] | None:
+        """Return canonical role whitelist for backend tools when a profile is attached."""
+        profile = getattr(self, "profile", None)
+        tool_policy = getattr(profile, "tool_policy", None) if profile is not None else None
+        whitelist = getattr(tool_policy, "whitelist", None) if tool_policy is not None else None
+        if not whitelist:
+            return None
+        try:
+            from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name
+        except (RuntimeError, ValueError):
+            return frozenset(str(item or "").strip() for item in whitelist if str(item or "").strip())
+        allowed: set[str] = set()
+        for item in whitelist:
+            canonical = canonicalize_tool_name(str(item or ""), keep_unknown=False)
+            if canonical:
+                allowed.add(canonical)
+        return frozenset(allowed)
 
     def _register_backend_tools(self, tb: Toolbox) -> None:
         """Register shared backend tools for all role agents."""
@@ -942,7 +963,23 @@ class RoleAgent(ABC):
         if not handlers:
             return
 
+        allowed_tools = self._backend_allowed_tools_from_profile()
+        canonicalize_tool_name = None
+        if allowed_tools is not None:
+            try:
+                from polaris.kernelone.tool_execution.contracts import canonicalize_tool_name as _canonicalize_tool_name
+
+                canonicalize_tool_name = _canonicalize_tool_name
+            except (RuntimeError, ValueError):
+                canonicalize_tool_name = None
         for tool_name in sorted(handlers.keys()):
+            canonical_tool_name = (
+                canonicalize_tool_name(tool_name, keep_unknown=False)
+                if canonicalize_tool_name is not None
+                else tool_name
+            )
+            if allowed_tools is not None and canonical_tool_name not in allowed_tools:
+                continue
             if tb.has_tool(tool_name):
                 continue
 

@@ -1,6 +1,8 @@
 # 三层任务分解架构蓝图（PM→CE→Director）
 
-日期: 2026-06-12 ｜ 状态: 设计待实施 ｜ 来源: 用户架构指令 + factory-bench L1/L2 全量取证
+日期: 2026-06-12 ｜ 状态: 历史设计输入；当前强约束为 `PM → Chief Engineer → Director` 唯一链路 ｜ 来源: 用户架构指令 + factory-bench L1/L2 全量取证
+
+> 2026-06-21 强制修订：本文早期“兼容期回退 PM→Director 直连”的设想已废弃。当前运行态缺少 CE 蓝图/交接证据时必须 fail-closed，并在前端/事件/日志中显示等待或阻塞 CE；禁止恢复 PM→Director 直连、feature flag 回退或快照兜底。
 
 ## 1. 问题与动机（实证）
 
@@ -69,7 +71,7 @@ QA —— 终态 workspace_check + 验收
 
 - CE 拆解本身的质量需要门（步长超限/缺 verify 的蓝图任务要被质量门拦截——复用 PM 门模式）。
 - 双层任务簿状态机（PM 任务聚合状态 = 其 CE 子任务状态归并）需明确归并规则。
-- 兼容期：无 CE 拆解产物时回退现行 PM→Director 直连（feature flag）。
+- 兼容期策略已废弃：无 CE 拆解产物时阻塞 Director 派发并记录缺失的 CE 蓝图/交接证据，禁止通过 feature flag 回退到 PM→Director 直连。
 
 ## 8. 修订（2026-06-12 深夜）：与 TaskMarket 原始设计合流（最优方案）
 

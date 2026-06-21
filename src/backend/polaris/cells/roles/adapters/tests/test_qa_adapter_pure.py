@@ -184,6 +184,33 @@ class TestRuntimeStageSignals:
 
 
 class TestStaticReview:
+    def test_workspace_quality_evidence_marks_factory_runtime_hard_gate(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        src = tmp_path / "src"
+        src.mkdir(parents=True)
+        (src / "app.ts").write_text("export const value = 1;\n", encoding="utf-8")
+        target = "\n".join(
+            [
+                "Workspace quality evidence collected before QA judgement:",
+                "{",
+                '  "schema_version": "factory.workspace_quality_checks.v1",',
+                '  "source": "factory_stage_executor",',
+                '  "passed": true,',
+                '  "commands": [',
+                '    {"command": ["npm", "install"], "phase": "prepare", "passed": true},',
+                '    {"command": ["npm", "run", "build"], "phase": "check_after_repair", "passed": true}',
+                "  ],",
+                '  "repair": {"attempted": true, "success": true, "source_tools": ["deterministic_ts"]}',
+                "}",
+            ]
+        )
+
+        review = adapter._run_static_review(target)
+
+        assert "factory_workspace_quality_passed=True" in review["evidence"]
+        assert "factory_runtime_hard_gate_passed=True" in review["evidence"]
+        assert "factory_workspace_repair_source_tools=deterministic_ts" in review["evidence"]
+
     def test_jsx_placeholder_attribute_is_not_unfinished_content(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         src = tmp_path / "src"
@@ -558,6 +585,68 @@ class TestMergeReviewResult:
         llm = {"parsed_json": True, "verdict": "PASS", "critical_issues": ["a", "b"]}
         merged = adapter._merge_review_result(base, llm)
         assert merged["critical_issues"] == ["a", "b"]
+
+    def test_factory_runtime_hard_gate_demotes_quality_only_llm_criticals(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        base = {
+            "verdict": "PASS",
+            "score": 100,
+            "critical_issues": [],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": ["factory_runtime_hard_gate_passed=True"],
+            "suggestions": [],
+        }
+        llm = {
+            "parsed_json": True,
+            "verdict": "FAIL",
+            "score": 55,
+            "critical_issues": [
+                "No evidence of behavioral test execution: npm test invokes tsc --noEmit",
+                "The deterministic repair added a missing export but no before/after diff is included",
+            ],
+            "major_issues": ["No coverage gate is evidenced"],
+            "warnings": [],
+            "evidence": ["After repair: npm run build exit_code=0"],
+            "suggestions": [],
+        }
+
+        merged = adapter._merge_review_result(base, llm)
+        finalized = adapter._finalize_review_result(merged)
+
+        assert merged["verdict"] == "PASS"
+        assert merged["critical_issues"] == []
+        assert "No evidence of behavioral test execution: npm test invokes tsc --noEmit" in merged["major_issues"]
+        assert "qa_llm_quality_risk_not_runtime_blocker" in merged["warnings"]
+        assert "qa_llm_verdict_downgraded=FAIL:factory_runtime_hard_gate_passed" in merged["evidence"]
+        assert finalized["passed"] is True
+
+    def test_factory_runtime_hard_gate_keeps_llm_runtime_blocker_critical(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        base = {
+            "verdict": "PASS",
+            "score": 100,
+            "critical_issues": [],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": ["factory_runtime_hard_gate_passed=True"],
+            "suggestions": [],
+        }
+        llm = {
+            "parsed_json": True,
+            "verdict": "FAIL",
+            "score": 40,
+            "critical_issues": ["Runtime failed: CLI entry cannot start"],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": [],
+            "suggestions": [],
+        }
+
+        finalized = adapter._finalize_review_result(adapter._merge_review_result(base, llm))
+
+        assert finalized["passed"] is False
+        assert "Runtime failed: CLI entry cannot start" in finalized["critical_issues"]
 
 
 # ---------------------------------------------------------------------------

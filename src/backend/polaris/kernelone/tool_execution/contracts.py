@@ -166,7 +166,10 @@ def canonicalize_tool_name(name: str, *, keep_unknown: bool = True) -> str:
     cleaned = str(name or "").strip()
     if not cleaned:
         return ""
-    return ToolSpecRegistry.get_canonical(cleaned)
+    canonical = ToolSpecRegistry.get_canonical(cleaned)
+    if keep_unknown:
+        return canonical
+    return canonical if ToolSpecRegistry.is_registered(canonical) else ""
 
 
 @_deprecated(

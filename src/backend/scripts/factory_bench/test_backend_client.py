@@ -160,16 +160,19 @@ class TestBenchBackendClient(_BenchBackendClientTestBase):
         self.assertEqual(body["summary"]["passed"], 1)
 
     def test_workspace_switch_posts_to_settings_before_project_observation(self) -> None:
-        ok = _push_bench_workspace_to_backend(
-            backend_url=self.backend_url,
-            workspace="/tmp/project",
-        )
-        self.assertTrue(ok)
-        self.assertEqual(len(_MockBackend.received), 1)
-        kind, path, body = _MockBackend.received[0]
-        self.assertEqual(kind, "settings")
-        self.assertEqual(path, "/settings")
-        self.assertEqual(body["workspace"], "/tmp/project")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir) / "project"
+            ok = _push_bench_workspace_to_backend(
+                backend_url=self.backend_url,
+                workspace=str(workspace),
+            )
+            self.assertTrue(ok)
+            self.assertTrue(workspace.is_dir())
+            self.assertEqual(len(_MockBackend.received), 1)
+            kind, path, body = _MockBackend.received[0]
+            self.assertEqual(kind, "settings")
+            self.assertEqual(path, "/settings")
+            self.assertEqual(body["workspace"], str(workspace.resolve()))
 
     def test_workspace_switch_retries_transient_settings_failure(self) -> None:
         calls: list[dict[str, Any]] = []

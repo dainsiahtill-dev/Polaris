@@ -63,6 +63,8 @@ export interface ContextOSEvent {
   contextItems: number | null;
   /** 上下文 token 规模（context.build total_tokens 或 llm context_tokens_after）；缺失 null。 */
   contextTokens: number | null;
+  /** Final provider request audit: token estimate, tool schema size, and coverage flags. */
+  finalRequestContextAudit: Record<string, unknown> | null;
   /** SHA-256 reference to the stored full context (post-compression messages). */
   contextSnapshotRef: string | null;
   /** Structured evidence when the snapshot could not be stored. */
@@ -433,6 +435,11 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     : toFiniteOrNull(meta['contextTokens']) ??
       toFiniteOrNull(meta['context_tokens_after']) ??
       toFiniteOrNull(meta['context_tokens_before']);
+  const finalRequestContextAudit = isRecord(meta['final_request_context_audit'])
+    ? meta['final_request_context_audit']
+    : isRecord(meta['finalRequestContextAudit'])
+      ? meta['finalRequestContextAudit']
+      : null;
   const snapshotHash = nonEmptyString(meta['snapshot_hash']);
   const requestHash = nonEmptyString(meta['request_hash']);
   const contextHash = nonEmptyString(meta['context_hash']) || requestHash || null;
@@ -552,6 +559,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     contextHash,
     contextItems,
     contextTokens,
+    finalRequestContextAudit,
     contextSnapshotRef: contextSnapshotRef || null,
     contextSnapshotDegraded,
     promptHash: promptHash || null,

@@ -387,43 +387,43 @@ describe('useProcessOperations', () => {
 
 ---
 
-### T5: WebSocket 降级策略完善 [MEDIUM]
+### T5: WebSocket 断线策略完善 [MEDIUM]
 
 **问题描述**:
-- WebSocket 断开后降级轮询实现不完整
+- WebSocket 断开后必须显示断线/重连状态，不得自动降级到 HTTP 轮询或快照兜底
 
 **重构方案**:
 
 ```typescript
-// src/frontend/src/app/hooks/useWebSocketWithFallback.ts
+// src/frontend/src/app/hooks/useRuntimeWebSocket.ts
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 type ConnectionState = 'connected' | 'connecting' | 'disconnected';
 
-interface UseWebSocketOptions {
+interface UseRuntimeWebSocketOptions {
   url: string;
   channels: string[];
   onMessage: (data: unknown) => void;
   onError?: (error: Error) => void;
-  fallbackEndpoint?: string;
-  fallbackInterval?: number;
 }
 
-export function useWebSocketWithFallback({
+export function useRuntimeWebSocket({
   url,
   channels,
   onMessage,
   onError,
-  fallbackEndpoint,
-  fallbackInterval = 5000,
-}: UseWebSocketOptions) {
+}: UseRuntimeWebSocketOptions) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const wsRef = useRef<WebSocket | null>(null);
-  const fallbackTimerRef = useRef<number | null>(null);
   const reconnectAttempts = useRef(0);
+  const reconnectTimerRef = useRef<number | null>(null);
 
   const connect = useCallback(() => {
     setConnectionState('connecting');
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
 
     try {
       const ws = new WebSocket(url);
@@ -456,35 +456,23 @@ export function useWebSocketWithFallback({
       ws.onclose = () => {
         setConnectionState('disconnected');
         wsRef.current = null;
-        startFallbackPolling();
+        const delay = Math.min(30000, 1000 * 2 ** reconnectAttempts.current);
+        reconnectAttempts.current += 1;
+        reconnectTimerRef.current = window.setTimeout(connect, delay);
       };
     } catch (error) {
       setConnectionState('disconnected');
-      startFallbackPolling();
+      onError?.(error instanceof Error ? error : new Error('WebSocket connection failed'));
     }
   }, [url, channels, onMessage, onError]);
-
-  const startFallbackPolling = useCallback(() => {
-    if (!fallbackEndpoint || fallbackTimerRef.current) return;
-
-    fallbackTimerRef.current = window.setInterval(async () => {
-      try {
-        const response = await fetch(fallbackEndpoint);
-        const data = await response.json();
-        onMessage({ type: 'fallback', data });
-      } catch {
-        // 静默失败，继续轮询
-      }
-    }, fallbackInterval);
-  }, [fallbackEndpoint, fallbackInterval, onMessage]);
 
   const disconnect = useCallback(() => {
     wsRef.current?.close();
     wsRef.current = null;
 
-    if (fallbackTimerRef.current) {
-      clearInterval(fallbackTimerRef.current);
-      fallbackTimerRef.current = null;
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
     }
 
     setConnectionState('disconnected');
@@ -507,11 +495,11 @@ export function useWebSocketWithFallback({
 1. useCallback 避免不必要的重渲染
 2. useRef 存储 WebSocket 实例，避免闭包问题
 3. useEffect cleanup 防止内存泄漏
-4. 指数退避重连策略
+4. 指数退避重连策略；连接失败时 fail-closed，不用 HTTP 轮询伪造实时
 
 **验收标准**:
 - [ ] WebSocket 断开自动重连
-- [ ] 重连失败自动降级轮询
+- [ ] 重连失败显示断线/等待重连状态，不发起 HTTP 轮询或快照兜底
 - [ ] 状态 UI 正确显示
 
 ---

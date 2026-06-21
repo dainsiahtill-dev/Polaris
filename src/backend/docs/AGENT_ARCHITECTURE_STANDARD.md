@@ -153,6 +153,22 @@
 4. Factory Bench、首页主战场、PM/ChiefEngineer/Director 工作区必须订阅同一 runtime.v2 事件事实，并展示 `PM → Chief Engineer → Director` 三段状态；任一阶段状态不得通过 HTTP 轮询或旧 PM→Director 快照推断补齐。
 5. 审计时必须 grep `PM → Director`、`PM->Director`、`PM -> Director`、`PM 规划 → Director`；命中产品代码或规范即 P0，除非文件明确标注为历史归档。
 
+## 8.2 工具调用归一化标准
+
+1. 平台必须适配不同 LLM 的自然工具调用习惯，不得要求模型死记 Polaris 内部工具名或单一参数字段。
+2. 工具入口必须先按 `ToolSpecRegistry` 的 tool aliases 与 `arg_aliases` 归一到 canonical 工具/参数，再进入授权、路径、命令、读写门禁。
+3. 归一化只能处理同义、同意图、可安全推断的字段，例如 `create_file -> write_file`、`run_command -> execute_command`、`filename/path -> file`、`text/body/source -> content`、`query/search/q -> pattern`。
+4. 不可安全推断的调用必须 fail-closed，并把原始工具名、参数、归一化结果与拒绝原因写入工具/LLM/runtime 证据；禁止吞异常、硬编码成功或把危险命令改写成看似成功的安全命令。
+5. 弱模型 Director 产生的格式变体应优先通过统一归一化层吸收；不得在 Factory、Director prompt 或业务流程里堆叠特殊分支。
+
+## 8.3 LLM 最终请求上下文审计标准
+
+1. 每次真实 LLM 调用都必须审计最终 provider request，而不只统计 ContextOS messages 投影。
+2. 审计字段至少包含：message 数量/字符/token 估算、native tool schema 数量/字符/token 估算、response_format token 估算、最终请求 token 估算、上下文窗口大小与利用率。
+3. Factory/角色链路调用必须同时记录覆盖度 flags：是否包含 PM 合同、Chief Engineer 蓝图/交接、目标文件/目标项目上下文、失败反馈、workspace quality evidence。
+4. ContextOS 实时视图必须优先展示最终请求上下文 token（含工具 schema 和 response format），不得继续用 messages-only 或 prompt usage 冒充最终上下文占用。
+5. 最终请求上下文明显低于预期时，先归因为上下文装配/覆盖度/预算策略问题并留下 runtime event 证据；禁止通过扩大 max_tokens 或伪造 token 数掩盖缺失上下文。
+
 ---
 
 ## 9. 文档与治理同步标准

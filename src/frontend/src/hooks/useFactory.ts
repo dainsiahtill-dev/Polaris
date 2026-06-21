@@ -454,14 +454,17 @@ export function useFactory(options: UseFactoryOptions = {}) {
       setEvents((previous) => [...previous, factoryEvent].slice(-200));
 
       if (payload.run_id && (payload.status || typeof payload.progress === 'number')) {
-        const run = payload as unknown as FactoryRunStatus;
-        latestRunIdRef.current = run.run_id;
+        const run = {
+          ...payload,
+          run_id: eventRunId,
+        } as unknown as FactoryRunStatus;
+        latestRunIdRef.current = eventRunId;
         setCurrentRun((previous) => mergeRunEvidenceFields(run, previous));
-        queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(run.run_id), run);
+        queryClient.setQueryData<FactoryRunStatus>(factoryRunKey(eventRunId), run);
         if (isTerminalRun(run)) {
           setIsStreaming(false);
           queryClient.invalidateQueries({ queryKey: factoryRunsKey });
-          void fetchRunArtifacts(run.run_id);
+          void fetchRunArtifacts(eventRunId);
         }
         return;
       }

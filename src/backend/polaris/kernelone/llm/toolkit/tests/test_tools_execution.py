@@ -719,9 +719,19 @@ class TestEdgeCases:
         executor = AgentAccelToolExecutor(workspace=temp_workspace)
         result = executor.execute("repo_rg", {"pattern": "test", "path": "/nonexistent/path"})
 
-        # Implementation returns ok=True with empty results for nonexistent path
-        assert result["ok"] is True
-        assert _repo_rg_payload(result)["total_results"] == 0
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_path"
+
+    def test_rejects_workspace_escape_path(self, temp_workspace, tmp_path) -> None:
+        """Explicit search path outside workspace must fail closed."""
+        outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
+        outside.write_text("needle\n", encoding="utf-8")
+        executor = AgentAccelToolExecutor(workspace=temp_workspace)
+
+        result = executor.execute("repo_rg", {"pattern": "needle", "path": str(outside)})
+
+        assert result["ok"] is False
+        assert result["error_type"] == "invalid_path"
 
     def test_handles_binary_files(self, temp_workspace) -> None:
         """Should handle binary files without crashing."""

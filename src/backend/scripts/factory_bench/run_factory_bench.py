@@ -1013,11 +1013,18 @@ def _push_bench_workspace_to_backend(
     """Switch the desktop backend to the project workspace before observation starts."""
     if not backend_url or not workspace:
         return False
+    workspace_path = Path(workspace).expanduser()
+    try:
+        workspace_path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _logger.warning("factory bench workspace switch skipped; cannot prepare workspace %s: %s", workspace, exc)
+        return False
+    workspace_payload = str(workspace_path.resolve())
     max_attempts = max(1, int(attempts))
     for attempt in range(max_attempts):
         response = _http_post_json(
             f"{backend_url}/settings",
-            {"workspace": str(workspace)},
+            {"workspace": workspace_payload},
             token=token,
         )
         if isinstance(response, dict):

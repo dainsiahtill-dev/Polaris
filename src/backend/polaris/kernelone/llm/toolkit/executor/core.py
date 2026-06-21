@@ -100,7 +100,7 @@ def _copy_handler_failure_evidence(payload: dict[str, Any], handler_result: dict
     handler_error_type = str(handler_result.get("error_type") or "").strip()
     if handler_error_type:
         payload["handler_error_type"] = handler_error_type
-        if handler_error_type == "director_write_policy_denied":
+        if handler_error_type in {"director_write_policy_denied", "invalid_path"}:
             payload["error_type"] = handler_error_type
 
 

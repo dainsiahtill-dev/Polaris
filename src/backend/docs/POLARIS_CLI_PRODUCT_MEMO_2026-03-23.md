@@ -1,13 +1,13 @@
 # Polaris CLI Product Memo
 
-状态: Draft  
+状态: Historical Draft; current runtime chain is `PM → Chief Engineer → Director → QA`
 日期: 2026-03-23
 
 ## 1. 结论
 
 Polaris 的真正主线仍然是客户端产品本身。
 
-- Polaris Client（当前实现为 Electron）负责启动、承载、观察 `PM -> Director -> QA` 的无人值守治理式自动化开发工厂。
+- Polaris Client（当前实现为 Electron）负责启动、承载、观察 `PM → Chief Engineer → Director → QA` 的无人值守治理式自动化开发工厂；旧 `PM -> Director` 直连只属于历史归档，禁止作为当前产品链路或兜底路径恢复。
 - `polaris-cli` 负责成为开发者侧的统一宿主，定位类似 Claude / Codex 的终端入口。
 - 角色专属 TUI 不再作为产品主线，只保留为测试窗口与调试窗口。
 

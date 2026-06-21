@@ -834,7 +834,12 @@ def test_deterministic_typescript_missing_export_repair_adds_constructed_class(
     )
 
     assert results
-    assert results[0]["result"]["source_tool"] == "deterministic_typescript_missing_export_repair"
+    result_payload = results[0]["result"]
+    assert result_payload["source_tool"] == "deterministic_typescript_missing_export_repair"
+    assert result_payload["before_sha256"]
+    assert result_payload["after_sha256"]
+    assert result_payload["before_sha256"] != result_payload["after_sha256"]
+    assert "export class GardenSimulator" in result_payload["diff_excerpt"]
     repaired = (tmp_path / "src" / "product.ts").read_text(encoding="utf-8")
     assert "export class GardenSimulator" in repaired
     assert "public constructor(..._args: unknown[]) {}" in repaired

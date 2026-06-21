@@ -74,6 +74,28 @@ _FEATURE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 _DOMAIN_STOPWORDS = {"project", "quality", "gate", "feature", "module", "system", "task", "tasks"}
 _DEFAULT_DIRECTOR_TASK_REWORK_MAX_RETRIES = 3
 _QA_LLM_JUDGEMENT_UNAVAILABLE_WARNING = "qa_llm_judgement_unavailable"
+_FACTORY_RUNTIME_HARD_GATE_EVIDENCE = "factory_runtime_hard_gate_passed=True"
+_FACTORY_WORKSPACE_QUALITY_EVIDENCE = "factory_workspace_quality_passed=True"
+
+_FACTORY_HARD_GATE_BLOCKER_RE = re.compile(
+    r"\b("
+    r"build\s+fail|test\s+fail|lint\s+fail|install\s+fail|dependency\s+fail|"
+    r"runtime\s+fail|entry\s+(?:failed|missing)|missing\s+(?:code|source|artifact)|"
+    r"no\s+(?:code|source|artifact|workspace\s+validation)|placeholder|"
+    r"command\s+(?:failed|exit(?:ed)?\s+[1-9])|exit[_\s-]?code\s*[:=]\s*[1-9]|"
+    r"cannot\s+(?:run|start|execute)|not\s+(?:runnable|executable)"
+    r")\b",
+    re.IGNORECASE,
+)
+_FACTORY_QUALITY_RISK_RE = re.compile(
+    r"\b("
+    r"coverage|assertion|behavioral\s+test|unit\s+test|test\s+coverage|"
+    r"lint|format|ci|empty\s+stdout|semantic\s+correctness|surface-level|"
+    r"deterministic\s+repair|repair\s+diff|before/after|no\s+diff|"
+    r"type\s+checker,\s+not\s+a\s+unit\s+test|quality\s+gate\s+erodes"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def _is_nonfatal_qa_llm_runtime_exception(error_text: str) -> bool:
@@ -89,6 +111,85 @@ def _format_qa_evidence_block(review_result: dict[str, Any] | None) -> str:
             if token:
                 evidence_lines.append(f"- {token}")
     return "\n".join(evidence_lines) if evidence_lines else "- no deterministic evidence"
+
+
+def _iter_json_objects_from_text(text: str) -> list[dict[str, Any]]:
+    decoder = json.JSONDecoder()
+    objects: list[dict[str, Any]] = []
+    source = str(text or "")
+    for match in re.finditer(r"\{", source):
+        try:
+            payload, _end = decoder.raw_decode(source[match.start() :])
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+        if isinstance(payload, dict):
+            objects.append(payload)
+    return objects
+
+
+def _extract_workspace_quality_summary(target: str) -> dict[str, Any] | None:
+    for payload in _iter_json_objects_from_text(target):
+        commands = payload.get("commands")
+        if not isinstance(commands, list):
+            continue
+        schema = str(payload.get("schema_version") or "")
+        source = str(payload.get("source") or "")
+        if schema != "factory.workspace_quality_checks.v1" and source != "factory_stage_executor":
+            continue
+        prepare_commands = [
+            item for item in commands if isinstance(item, dict) and str(item.get("phase") or "") == "prepare"
+        ]
+        check_commands = [
+            item for item in commands if isinstance(item, dict) and str(item.get("phase") or "").startswith("check")
+        ]
+        passed_checks = [item for item in check_commands if bool(item.get("passed"))]
+        repair = payload.get("repair") if isinstance(payload.get("repair"), dict) else {}
+        return {
+            "passed": bool(payload.get("passed")),
+            "command_count": len(commands),
+            "prepare_passed_count": sum(1 for item in prepare_commands if bool(item.get("passed"))),
+            "check_passed_count": len(passed_checks),
+            "check_command_count": len(check_commands),
+            "repair_attempted": bool(repair.get("attempted")) if isinstance(repair, dict) else False,
+            "repair_success": bool(repair.get("success")) if isinstance(repair, dict) else False,
+            "repair_source_tools": list(repair.get("source_tools") or [])[:6] if isinstance(repair, dict) else [],
+            "repair_evidence": list(repair.get("evidence") or [])[:6] if isinstance(repair, dict) else [],
+        }
+    return None
+
+
+def _workspace_quality_evidence_lines(summary: dict[str, Any]) -> list[str]:
+    lines = [
+        f"factory_workspace_quality_passed={bool(summary.get('passed'))}",
+        f"factory_workspace_command_count={int(summary.get('command_count') or 0)}",
+        f"factory_workspace_prepare_passed_count={int(summary.get('prepare_passed_count') or 0)}",
+        f"factory_workspace_check_passed_count={int(summary.get('check_passed_count') or 0)}",
+    ]
+    hard_gate_passed = bool(summary.get("passed")) and int(summary.get("check_passed_count") or 0) > 0
+    lines.append(f"factory_runtime_hard_gate_passed={hard_gate_passed}")
+    if bool(summary.get("repair_attempted")):
+        lines.append(f"factory_workspace_repair_success={bool(summary.get('repair_success'))}")
+    source_tools = [str(item) for item in list(summary.get("repair_source_tools") or []) if str(item).strip()]
+    if source_tools:
+        lines.append(f"factory_workspace_repair_source_tools={','.join(source_tools[:6])}")
+    for item in list(summary.get("repair_evidence") or [])[:6]:
+        text = str(item or "").strip()
+        if text:
+            lines.append(f"factory_workspace_repair_evidence={text[:220]}")
+    return lines
+
+
+def _review_has_factory_runtime_hard_gate(review: dict[str, Any]) -> bool:
+    evidence = review.get("evidence") if isinstance(review, dict) else None
+    return isinstance(evidence, list) and _FACTORY_RUNTIME_HARD_GATE_EVIDENCE in {str(item) for item in evidence}
+
+
+def _issue_blocks_factory_hard_gate(issue: str) -> bool:
+    return _FACTORY_HARD_GATE_BLOCKER_RE.search(str(issue or "")) is not None
+
+
+def _issue_is_factory_quality_risk(issue: str) -> bool:
+    return _FACTORY_QUALITY_RISK_RE.search(str(issue or "")) is not None
 
 
 class QAAdapter(BaseRoleAdapter):
@@ -533,6 +634,11 @@ class QAAdapter(BaseRoleAdapter):
             f"code_line_count={total_lines}",
             f"test_file_count={test_file_count}",
         ]
+        workspace_quality = _extract_workspace_quality_summary(target)
+        if workspace_quality is not None:
+            evidence.extend(_workspace_quality_evidence_lines(workspace_quality))
+            if not bool(workspace_quality.get("passed")):
+                critical_issues.append("workspace_quality_gate_failed")
 
         if placeholder_hits:
             critical_issues.append("placeholder_content_detected")
@@ -608,6 +714,9 @@ class QAAdapter(BaseRoleAdapter):
                 "Do not inspect the workspace. Do not call tools. Do not narrate the QA process.",
                 "Judge semantic task completion quality; do not rely only on file count or line count.",
                 "Small but complete utility classes are acceptable if requirements are met.",
+                "For Factory Bench, the runtime hard gate is: code artifacts landed, dependency/env prepare ran when needed, at least one real build/test/lint gate passed, and at least one CLI/Web/API entry executed or started.",
+                "If deterministic evidence includes factory_runtime_hard_gate_passed=True, report coverage/lint/deeper behavioral-test gaps as major_issues or warnings unless you can cite evidence that the runtime hard gate is false.",
+                "Use critical_issues only for defects that block the explicit runtime hard gate or prove the generated project is not runnable.",
                 "Use this schema:",
                 "{",
                 '  "verdict": "PASS|FAIL",',
@@ -708,14 +817,31 @@ class QAAdapter(BaseRoleAdapter):
         }
 
         if bool(llm.get("parsed_json")):
+            factory_runtime_hard_gate_passed = _review_has_factory_runtime_hard_gate(merged)
             llm_verdict = str(llm.get("verdict") or "").strip().upper()
-            if llm_verdict in {"PASS", "CONDITIONAL", "FAIL", "BLOCKED"}:
+            llm_critical_issues = self._dedupe_list(llm.get("critical_issues"))
+            retained_llm_critical: list[str] = []
+            quality_risk_critical: list[str] = []
+            if factory_runtime_hard_gate_passed:
+                for issue in llm_critical_issues:
+                    if _issue_blocks_factory_hard_gate(issue):
+                        retained_llm_critical.append(issue)
+                    elif _issue_is_factory_quality_risk(issue) or issue:
+                        quality_risk_critical.append(issue)
+            else:
+                retained_llm_critical = llm_critical_issues
+
+            if llm_verdict in {"PASS", "CONDITIONAL", "FAIL", "BLOCKED"} and (
+                not factory_runtime_hard_gate_passed or retained_llm_critical or llm_verdict == "PASS"
+            ):
                 merged["verdict"] = llm_verdict
             merged["critical_issues"] = self._dedupe_list(
-                list(cast("list", merged["critical_issues"])) + self._dedupe_list(llm.get("critical_issues"))
+                list(cast("list", merged["critical_issues"])) + retained_llm_critical
             )
             merged["major_issues"] = self._dedupe_list(
-                list(cast("list", merged["major_issues"])) + self._dedupe_list(llm.get("major_issues"))
+                list(cast("list", merged["major_issues"]))
+                + quality_risk_critical
+                + self._dedupe_list(llm.get("major_issues"))
             )
             merged["warnings"] = self._dedupe_list(
                 list(cast("list", merged["warnings"])) + self._dedupe_list(llm.get("warnings"))
@@ -731,6 +857,20 @@ class QAAdapter(BaseRoleAdapter):
                 _current_score = merged.get("score")
                 merged["score"] = min(
                     int(_current_score) if isinstance(_current_score, (int, float, str)) else 100, llm_score
+                )
+            if (
+                factory_runtime_hard_gate_passed
+                and llm_verdict in {"FAIL", "BLOCKED", "CONDITIONAL"}
+                and not retained_llm_critical
+            ):
+                merged["warnings"] = self._dedupe_list(
+                    [*list(cast("list", merged["warnings"])), "qa_llm_quality_risk_not_runtime_blocker"]
+                )
+                merged["evidence"] = self._dedupe_list(
+                    [
+                        *list(cast("list", merged["evidence"])),
+                        f"qa_llm_verdict_downgraded={llm_verdict}:factory_runtime_hard_gate_passed",
+                    ]
                 )
         else:
             # LLM 审查输出是增强信息，不应成为单点致死条件。
@@ -792,6 +932,7 @@ class QAAdapter(BaseRoleAdapter):
             "source": "qa_adapter_v3",
             "review_type": review_type,
             "target": target,
+            "runtime_hard_gate_passed": _review_has_factory_runtime_hard_gate(review_result),
             "verdict": review_result.get("verdict"),
             "passed": bool(review_result.get("passed")),
             "score": int(review_result.get("score") or 0),
