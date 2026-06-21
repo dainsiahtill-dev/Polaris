@@ -141,6 +141,14 @@ def _ctx(override: dict[str, Any] | None = None) -> Any:
     return cast(Any, SimpleNamespace(task_id=None, context_override=override))
 
 
+def _assert_final_request_audit(metadata: dict[str, Any]) -> None:
+    audit = metadata["final_request_context_audit"]
+    assert audit["schema_version"] == "llm.final_request_context_audit.v1"
+    assert "coverage" in audit
+    assert metadata["contextTokens"] == audit["final_request_token_estimate"]
+    assert metadata["context_tokens_after"] == audit["final_request_token_estimate"]
+
+
 # ---------------------------------------------------------------------------
 # call: native_tools_unavailable
 # ---------------------------------------------------------------------------
@@ -168,18 +176,18 @@ async def test_native_tools_unavailable_text_fallback_success(monkeypatch: pytes
     )
 
     assert resp.error is None
-    # CURRENT behavior: this early-return path reads ``response.content`` (NOT
-    # ``response.output``); AIResponse has no ``content`` attr, so content == "".
-    assert resp.content == ""
+    assert resp.content == "fallback content"
     assert resp.metadata["native_tool_mode"] == "native_tools_text_fallback"
     assert resp.metadata["native_tool_calling_fallback"] is True
     assert resp.metadata["model"] == "model-x"
     assert resp.metadata["run_id"] == "run1"
     assert resp.metadata["workspace"] == "ws"
     assert "elapsed_ms" in resp.metadata
-    # No error/end events emitted on this early-return path.
+    _assert_final_request_audit(resp.metadata)
     assert rec.error == []
-    assert rec.end == []
+    assert len(rec.end) == 1
+    assert rec.end[0]["metadata"]["native_tool_calling_fallback"] is True
+    _assert_final_request_audit(rec.end[0]["metadata"])
     # Only one start event.
     assert len(rec.start) == 1
 
@@ -213,6 +221,8 @@ async def test_native_tools_unavailable_fallback_disallowed_returns_error(monkey
     # An error event was emitted.
     assert len(rec.error) == 1
     assert rec.error[0]["error_category"] == "provider"
+    _assert_final_request_audit(rec.error[0]["metadata"])
+    _assert_final_request_audit(resp.metadata)
     assert rec.end == []
 
 
@@ -586,6 +596,7 @@ async def test_call_cancelled_reraises(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(rec.error) == 1
     assert rec.error[0]["error_message"] == "call_cancelled"
     assert rec.error[0]["metadata"]["error_type"] == "CancelledError"
+    _assert_final_request_audit(rec.error[0]["metadata"])
 
 
 @pytest.mark.asyncio
@@ -612,6 +623,8 @@ async def test_call_value_error_arm_returns_response(monkeypatch: pytest.MonkeyP
     assert resp.error == "LLM call failed: boom"
     assert len(rec.error) == 1
     assert rec.error[0]["metadata"]["error_type"] == "ValueError"
+    _assert_final_request_audit(rec.error[0]["metadata"])
+    _assert_final_request_audit(resp.metadata)
 
 
 @pytest.mark.asyncio
@@ -638,6 +651,8 @@ async def test_call_runtime_error_arm_returns_response(monkeypatch: pytest.Monke
     assert resp.error == "LLM call failed: rt-boom"
     assert len(rec.error) == 1
     assert rec.error[0]["metadata"]["error_type"] == "RuntimeError"
+    _assert_final_request_audit(rec.error[0]["metadata"])
+    _assert_final_request_audit(resp.metadata)
 
 
 # ---------------------------------------------------------------------------
@@ -827,6 +842,7 @@ async def test_structured_cancelled_reraises(monkeypatch: pytest.MonkeyPatch) ->
     assert len(rec.error) == 1
     assert rec.error[0]["error_message"] == "structured_call_cancelled"
     assert rec.error[0]["metadata"]["structured"] is True
+    _assert_final_request_audit(rec.error[0]["metadata"])
 
 
 @pytest.mark.asyncio
@@ -858,3 +874,5 @@ async def test_structured_runtime_error_arm_returns_response(monkeypatch: pytest
     assert resp.error == "Structured LLM call failed: struct-boom"
     assert len(rec.error) == 1
     assert rec.error[0]["metadata"]["structured"] is True
+    _assert_final_request_audit(rec.error[0]["metadata"])
+    _assert_final_request_audit(resp.metadata)

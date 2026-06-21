@@ -1019,7 +1019,8 @@ def _push_bench_workspace_to_backend(
     except OSError as exc:
         _logger.warning("factory bench workspace switch skipped; cannot prepare workspace %s: %s", workspace, exc)
         return False
-    workspace_payload = str(workspace_path.resolve())
+    target_workspace = workspace_path.resolve()
+    workspace_payload = str(target_workspace)
     max_attempts = max(1, int(attempts))
     for attempt in range(max_attempts):
         response = _http_post_json(
@@ -1030,7 +1031,22 @@ def _push_bench_workspace_to_backend(
         if isinstance(response, dict):
             returned_workspace = str(response.get("workspace") or response.get("workspace_path") or "").strip()
             if returned_workspace:
-                return True
+                try:
+                    returned_path = Path(returned_workspace).expanduser().resolve()
+                except (OSError, RuntimeError, ValueError) as exc:
+                    _logger.warning(
+                        "factory bench workspace switch rejected malformed response workspace=%r: %s",
+                        returned_workspace,
+                        exc,
+                    )
+                else:
+                    if returned_path == target_workspace:
+                        return True
+                    _logger.warning(
+                        "factory bench workspace switch mismatch: requested=%s returned=%s",
+                        target_workspace,
+                        returned_path,
+                    )
         if attempt < max_attempts - 1 and retry_delay_seconds > 0:
             time.sleep(retry_delay_seconds)
     return False
@@ -2151,69 +2167,103 @@ def main() -> int:
                 phase_payload=status_payload,
             )
 
-        try:
-            if use_legacy_chain:
-                chain = run_chain(
-                    project,
-                    workspace,
-                    timeout_s=args.timeout,
-                    log_path=log_path,
-                    director_workflow_execution_mode=args.director_workflow_execution_mode,
-                    director_dispatch_driver=args.director_dispatch_driver,
-                )
-            else:
-                chain = run_factory_chain(
-                    project,
-                    workspace,
-                    backend_url=backend_url,
-                    backend_token=backend_token,
-                    timeout_s=args.timeout,
-                    log_path=log_path,
-                    director_workflow_execution_mode=args.director_workflow_execution_mode,
-                    director_dispatch_driver=args.director_dispatch_driver,
-                    bench_session_id=bench_session_id,
-                    on_stage_change=_on_factory_stage_change,
-                )
-        except subprocess.TimeoutExpired:
-            chain = {"exit_code": -1, "duration_s": float(args.timeout), "timeout": True}
-        except KeyboardInterrupt as exc:
-            reason = "interrupted"
-            interrupted_counts = _bench_record_counts(records, total=len(selected))
-            _emit_bench_event(
-                workspace=base,
-                project_id="-",
-                level=0,
-                name="run.cancelled",
-                summary=f"factory-bench cancelled: {reason}",
-                meta={
-                    "session_id": bench_session_id,
-                    **interrupted_counts,
-                    "error": reason,
-                },
-            )
-            if backend_url and bench_session_id:
-                _push_bench_complete_to_backend(
-                    backend_url=backend_url,
-                    session_id=bench_session_id,
-                    success=False,
-                    summary={
-                        **interrupted_counts,
-                        "error": reason,
-                        "exception": type(exc).__name__,
-                    },
-                    token=backend_token,
-                )
-            return 130
-        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
-            error = str(exc) or type(exc).__name__
+        if backend_url and not workspace_switch_ok:
+            error = "workspace_switch_failed"
             run_errors.append(error)
             chain = {
                 "exit_code": -1,
                 "duration_s": 0.0,
                 "error": error,
-                "exception": type(exc).__name__,
-                "_runner_exception": True,
+                "failure_category": "runtime_environment",
+                "root_cause_signature": "runtime_environment:workspace_switch_failed",
+                "workspace_switch": {
+                    "attempted": True,
+                    "ok": False,
+                    "endpoint": "/settings",
+                    "workspace": project_workspace,
+                },
             }
+            _emit_bench_event(
+                workspace=base,
+                project_id=pid,
+                level=project_level,
+                name="project.failed",
+                summary=f"{pid} workspace switch failed before observation",
+                meta={
+                    "session_id": bench_session_id,
+                    "error": error,
+                    "failure_category": "runtime_environment",
+                    "root_cause_signature": "runtime_environment:workspace_switch_failed",
+                    "workspace": project_workspace,
+                    "workspace_path": project_workspace,
+                    "project_workspace": project_workspace,
+                    "workspace_switch": chain["workspace_switch"],
+                },
+            )
+        else:
+            try:
+                if use_legacy_chain:
+                    chain = run_chain(
+                        project,
+                        workspace,
+                        timeout_s=args.timeout,
+                        log_path=log_path,
+                        director_workflow_execution_mode=args.director_workflow_execution_mode,
+                        director_dispatch_driver=args.director_dispatch_driver,
+                    )
+                else:
+                    chain = run_factory_chain(
+                        project,
+                        workspace,
+                        backend_url=backend_url,
+                        backend_token=backend_token,
+                        timeout_s=args.timeout,
+                        log_path=log_path,
+                        director_workflow_execution_mode=args.director_workflow_execution_mode,
+                        director_dispatch_driver=args.director_dispatch_driver,
+                        bench_session_id=bench_session_id,
+                        on_stage_change=_on_factory_stage_change,
+                    )
+            except subprocess.TimeoutExpired:
+                chain = {"exit_code": -1, "duration_s": float(args.timeout), "timeout": True}
+            except KeyboardInterrupt as exc:
+                reason = "interrupted"
+                interrupted_counts = _bench_record_counts(records, total=len(selected))
+                _emit_bench_event(
+                    workspace=base,
+                    project_id="-",
+                    level=0,
+                    name="run.cancelled",
+                    summary=f"factory-bench cancelled: {reason}",
+                    meta={
+                        "session_id": bench_session_id,
+                        **interrupted_counts,
+                        "error": reason,
+                    },
+                )
+                if backend_url and bench_session_id:
+                    _push_bench_complete_to_backend(
+                        backend_url=backend_url,
+                        session_id=bench_session_id,
+                        success=False,
+                        summary={
+                            **interrupted_counts,
+                            "error": reason,
+                            "exception": type(exc).__name__,
+                        },
+                        token=backend_token,
+                    )
+                return 130
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+                error = str(exc) or type(exc).__name__
+                run_errors.append(error)
+                chain = {
+                    "exit_code": -1,
+                    "duration_s": 0.0,
+                    "error": error,
+                    "exception": type(exc).__name__,
+                    "_runner_exception": True,
+                }
         _emit_bench_event(
             workspace=base,
             project_id=pid,
@@ -2241,10 +2291,12 @@ def main() -> int:
         # - Otherwise: wait_run_until_terminal returned a terminal status
         #   dict → terminal.
         chain_error = str(chain.get("error") or "")
-        chain_is_terminal = chain_error not in ("start_failed",) and not chain.get("_runner_exception")
-        chain_status_raw = str(
-            chain.get("chain_results", {}).get("exit_class", "") if isinstance(chain.get("chain_results"), dict) else ""
+        chain_is_terminal = chain_error not in ("start_failed", "workspace_switch_failed") and not chain.get(
+            "_runner_exception"
         )
+        chain_results_raw = chain.get("chain_results")
+        chain_results_for_status: dict[str, Any] = chain_results_raw if isinstance(chain_results_raw, dict) else {}
+        chain_status_raw = str(chain_results_for_status.get("exit_class", ""))
         chain_phase_raw = chain_error or ("timeout" if chain.get("timeout") else "")
         record = build_factory_audit_record(
             project=project,

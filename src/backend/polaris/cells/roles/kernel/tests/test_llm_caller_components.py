@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import time
 import warnings
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -1260,6 +1261,88 @@ class TestStreamEngineRunStream:
         assert context_metadata["context_os_audit"] == audit
         assert emit_start.call_args.kwargs["metadata"]["context_os_audit"] == audit
         assert emit_end.call_args.kwargs["metadata"]["context_os_audit"] == audit
+
+    async def test_native_tool_stream_fallback_emits_final_request_audit(self) -> None:
+        emit_retry = Mock()
+        emit_end = Mock()
+        engine = StreamEngine(
+            workspace="/ws",
+            get_executor=Mock(),
+            allow_native_tool_text_fallback_fn=Mock(return_value=True),
+            emit_call_start_event=Mock(),
+            emit_call_error_event=Mock(),
+            emit_call_end_event=emit_end,
+            emit_call_retry_event=emit_retry,
+        )
+
+        context = Mock()
+        context.context_override = {}
+        context.stream_cancelled = False
+        context.temperature = 0.2
+        context.max_tokens = 256
+
+        context_result = Mock()
+        context_result.token_estimate = 24
+        context_result.compression_strategy = "none"
+        context_result.compression_applied = False
+
+        tool_schema = {"type": "function", "function": {"name": "write_file"}}
+        ai_request = Mock()
+        ai_request.context = {"chat_messages": [{"role": "user", "content": "TASK-1 target_files src/app.ts"}]}
+        ai_request.options = {"tools": [tool_schema]}
+        ai_request.input = ""
+        prepared = PreparedLLMRequest(
+            messages=[{"role": "user", "content": "TASK-1 target_files src/app.ts"}],
+            input_text="TASK-1 target_files src/app.ts",
+            context_result=context_result,
+            context_summary="summary",
+            request_options={"tools": [tool_schema], "tool_choice": "auto"},
+            ai_request=ai_request,
+            native_tool_schemas=[tool_schema],
+            native_tool_mode="native_tools_unavailable",
+            response_format_mode="plain_text",
+        )
+
+        mock_executor = Mock()
+
+        async def _fallback_stream(_request):
+            yield {"type": "chunk", "content": "fallback ok"}
+            yield {"type": "complete", "content": ""}
+
+        mock_executor.invoke_stream = _fallback_stream
+        engine._get_executor = lambda: mock_executor
+
+        profile = Mock()
+        profile.role_id = "director"
+        profile.max_context_tokens = 32768
+
+        events = []
+        async for event in engine.run_stream(
+            profile=profile,
+            prepared=prepared,
+            context=context,
+            start_time=time.monotonic(),
+            role_id="director",
+            run_id="run_1",
+            task_id="task_1",
+            attempt=0,
+            model="claude",
+            call_id="call_1",
+            event_emitter=None,
+            turn_round=0,
+        ):
+            events.append(event)
+
+        complete_event = next(event for event in events if event["type"] == "complete")
+        context_metadata = next(event for event in events if event["type"] == "context_metadata")
+        fallback_audit = context_metadata["final_request_context_audit"]
+        assert emit_retry.call_args.kwargs["metadata"]["final_request_context_audit"]["tool_schema_count"] == 0
+        assert complete_event["metadata"]["final_request_context_audit"]["tool_schema_count"] == 0
+        assert fallback_audit["tool_schema_count"] == 0
+        assert context_metadata["context_tokens"] == fallback_audit["final_request_token_estimate"]
+        end_metadata = emit_end.call_args.kwargs["metadata"]
+        assert end_metadata["native_tool_calling_fallback"] is True
+        assert end_metadata["final_request_context_audit"]["tool_schema_count"] == 0
 
 
 async def async_empty_generator() -> Any:

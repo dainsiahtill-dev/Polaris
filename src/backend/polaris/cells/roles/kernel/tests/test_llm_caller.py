@@ -1469,6 +1469,82 @@ class TestLifecycleAndCacheGuards:
         assert captured["metadata"]["usage"]["total_tokens"] == 366
 
     @pytest.mark.asyncio
+    async def test_structured_fallback_parse_error_includes_final_request_audit(self, monkeypatch) -> None:
+        invoker = LLMInvoker(workspace="C:/workspace")
+        profile = MockProfile(role_id="director", model="gpt-5", provider_id="openai")
+        captured_error: dict[str, Any] = {}
+        fallback_request = SimpleNamespace(
+            context={
+                "chat_messages": [
+                    {
+                        "role": "user",
+                        "content": "TASK-1 target_files src/app.ts Chief Engineer blueprint",
+                    }
+                ],
+                "response_format_mode": "text_json_fallback",
+            },
+            options={},
+            input="",
+        )
+        prepared = PreparedLLMRequest(
+            messages=[{"role": "user", "content": "TASK-1 target_files src/app.ts"}],
+            input_text="TASK-1 target_files src/app.ts",
+            context_result=SimpleNamespace(
+                token_estimate=42,
+                compression_strategy="none",
+                compression_applied=False,
+            ),
+            context_summary="summary",
+            request_options={"response_format": {"type": "json_schema"}},
+            ai_request=SimpleNamespace(context={}, options={"response_format": {"type": "json_schema"}}, input=""),
+            native_response_format={"type": "json_schema"},
+        )
+
+        class _FakeCaller:
+            def _build_structured_fallback_request(self, **_kwargs: Any) -> Any:
+                return fallback_request
+
+        class _FakeExecutor:
+            async def invoke(self, _request: Any) -> Any:
+                return SimpleNamespace(ok=True, output="not json", raw={}, error=None)
+
+        monkeypatch.setattr(LLMInvoker, "_get_executor", lambda _self: _FakeExecutor())
+        monkeypatch.setattr(
+            LLMInvoker,
+            "_emit_call_error_event",
+            lambda _self, **kwargs: captured_error.update(kwargs),
+        )
+
+        result = await invoker._run_structured_fallback(
+            caller=_FakeCaller(),
+            prepared=prepared,
+            profile=cast("RoleProfile", profile),
+            response_model=dict,
+            model="gpt-5",
+            prompt_tokens=42,
+            turn_round=0,
+            role_id="director",
+            run_id="run_structured",
+            task_id="task_structured",
+            attempt=0,
+            call_id="call_structured",
+            event_emitter=None,
+            start_time=0.0,
+        )
+
+        assert result.error_category == "validation_fail"
+        assert result.metadata["final_request_context_audit"]["response_format_token_estimate"] == 0
+        assert (
+            result.metadata["contextTokens"]
+            == result.metadata["final_request_context_audit"]["final_request_token_estimate"]
+        )
+        assert captured_error["metadata"]["final_request_context_audit"]["response_format_token_estimate"] == 0
+        assert (
+            captured_error["metadata"]["contextTokens"]
+            == captured_error["metadata"]["final_request_context_audit"]["final_request_token_estimate"]
+        )
+
+    @pytest.mark.asyncio
     async def test_invoker_stream_debug_event_uses_prepared_request_payload(self, monkeypatch) -> None:
         invoker = LLMInvoker(workspace="C:/workspace")
         profile = MockProfile(role_id="director", model="gpt-5", provider_id="openai")

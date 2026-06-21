@@ -1290,6 +1290,35 @@ def test_failure_taxonomy_classifies_missing_toolchain_check_as_runtime_environm
     assert taxonomy["root_cause_signature"] == "runtime_environment:go_compile"
 
 
+def test_failure_taxonomy_classifies_workspace_switch_before_real_run_gate() -> None:
+    record = {
+        "all_checks_passed": False,
+        "factory_gates": [
+            {"gate": "real_run_gate", "ok": False, "detail": "real run gate failed: artifact_landed"},
+        ],
+        "chain": {
+            "error": "workspace_switch_failed",
+            "workspace_switch": {"workspace": "/tmp/factory-bench/L1-01"},
+        },
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: artifact_landed",
+            "requirements": {"artifact_landed": {"ok": False, "detail": "no generated source files"}},
+        },
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain_state": "fail",
+        "checks": [],
+        "has_plan_doc": False,
+        "wrong_product_suspect": False,
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:workspace_switch_failed"
+    assert taxonomy["evidence"] == ["/tmp/factory-bench/L1-01"]
+
+
 def test_failure_taxonomy_classifies_generated_typescript_syntax_failure_as_llm_output() -> None:
     record = {
         "all_checks_passed": False,

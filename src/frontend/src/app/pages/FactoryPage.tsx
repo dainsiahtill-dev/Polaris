@@ -62,6 +62,8 @@ export interface FactoryPageProps {
   isLoading: boolean;
   /** Factory Bench 实时会话状态 */
   bench?: UseFactoryBenchResult;
+  /** Factory Bench 观测到项目 workspace 后同步到全局 workspace。 */
+  onBenchWorkspaceChange?: (workspace: string) => void;
   /** WebSocket 连接状态 */
   websocketLive: boolean;
   /** WebSocket 重连状态 */
@@ -114,6 +116,7 @@ export function FactoryPage({
   onRetryCheckpoint,
   isLoading,
   bench,
+  onBenchWorkspaceChange,
   websocketLive,
   websocketReconnecting,
   websocketAttemptCount,
@@ -157,7 +160,7 @@ export function FactoryPage({
         isLoading={isLoading}
         bench={bench}
       />
-      <BenchPanel className="border-t border-white/10" />
+      <BenchPanel className="border-t border-white/10" onWorkspaceChange={onBenchWorkspaceChange} />
       <LlmRuntimeOverlay
         activeView="factory"
         websocketLive={websocketLive}

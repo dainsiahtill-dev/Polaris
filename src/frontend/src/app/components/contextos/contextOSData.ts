@@ -16,6 +16,7 @@ import type { LlmRuntimeGateState, LlmRuntimeRoleBinding, LlmRuntimeRoleDetail }
 import type { SnapshotPayload } from '@/app/types/appContracts';
 import {
   EMPTY_TELEMETRY,
+  contextOSObservedTokens,
   filterEventsForRole,
   telemetryRoleEvents,
   telemetryRoleHasUsageChannel,
@@ -95,7 +96,7 @@ export interface RoleInternalContext {
   contextWindowProvider: string | null;
   /** 绑定的 model 名称（如 "kimi-for-coding"），无绑定时 null。 */
   contextWindowModel: string | null;
-  /** 当前窗口占用的角色级分子。优先真实 context token，其次该角色平均 prompt token；无数据为 null。 */
+  /** 当前窗口占用的角色级分子。优先最终 provider request token，其次 context token，再退回平均 prompt。 */
   windowOccupancyTokens: number | null;
   windowOccupancyLabel: string;
   windowOccupancyDetail: string;
@@ -622,7 +623,7 @@ export function buildContextOSModel(input: {
     : 'LLM status 未提供窗口字段，显示未知';
 
   const contextTokensLatest = telemetryActive ? telemetry.contextTokensLatest : null;
-  // 窗口压力分子：优先真实 context.build/context_tokens_after；缺失时才退回平均 prompt 估算。
+  // 窗口压力分子：优先最终 provider request token；缺失时才退回平均 prompt 估算。
   const avgPromptPerCall = calls > 0 ? promptTokens / calls : 0;
   const totalContextTokens = contextTokensLatest ?? promptTokens;  // 当前可观测上下文 token
   const windowOccupancyTokens = contextTokensLatest !== null && contextTokensLatest > 0
@@ -685,7 +686,7 @@ export function buildContextOSModel(input: {
     { id: 'projection', label: 'ProjectionEngine', component: 'ProjectionEngine', hint: '自适应排序投影 · 含预算规划', state: stateFor('projection'), metric: telemetryActive ? `${projectionCount} 投影` : `~${calls} 次 (估算)` },
     { id: 'role_signal', label: 'RoleSignalPlane', component: 'allocate_role_signals', hint: '角色信号注入', state: stateFor('role_signal'), metric: `${Math.max(0, ROLE_COUNT - blockedRoles.size)}/${ROLE_COUNT} 角色` },
     { id: 'prompt', label: 'Projection.project', component: 'project() → messages', hint: '消息装配', state: stateFor('prompt'), metric: `${formatTokens(promptTokens)} 提示` },
-    { id: 'budget', label: 'CompressionEngine', component: 'CompressionEngine', hint: '装配后预算压缩兜底', state: stateFor('budget'), metric: contextTokensLatest !== null ? `${formatTokens(contextTokensLatest)} 上下文` : `${formatTokens(avgPerCall)} tok/次` },
+    { id: 'budget', label: 'CompressionEngine', component: 'CompressionEngine', hint: '装配后预算压缩兜底', state: stateFor('budget'), metric: contextTokensLatest !== null ? `${formatTokens(contextTokensLatest)} 最终请求` : `${formatTokens(avgPerCall)} tok/次` },
     { id: 'llm', label: 'LLM Invoke', component: 'AIExecutor', hint: '模型调用', state: stateFor('llm'), metric: lastLatencyMs !== null ? `${formatTokens(completionTokens)} · ${lastLatencyMs}ms` : `${formatTokens(completionTokens)} 输出` },
   ];
 
@@ -831,7 +832,7 @@ export function buildContextOSModel(input: {
       if (event.isProjection) projectionCount += 1;
       if (event.hasReceipt) receiptCount += 1;
       if (event.category === 'error') errorCount += 1;
-      totalTokens += event.totalTokens;
+      totalTokens += contextOSObservedTokens(event);
       promptTokens += event.promptTokens;
       completionTokens += event.completionTokens;
       if (event.durationMs !== null) {
@@ -846,11 +847,15 @@ export function buildContextOSModel(input: {
     promptTokens = roleAggregate?.promptTokens ?? promptTokens;
     completionTokens = roleAggregate?.completionTokens ?? completionTokens;
 
-    // 最近一次 context.build 的 items_count / total_tokens 来自该角色自身的事件子集。
+    // 最近一次 context.build 的 items_count 和最终请求 token 来自该角色自身的事件子集。
     const lastContextBuild = roleEvents.find((event) => event.contextItems !== null);
-    const lastContextSize = roleEvents.find((event) => event.contextTokens !== null);
+    const lastContextSize = roleEvents.find(
+      (event) => event.finalRequestTokenEstimate !== null || event.contextTokens !== null,
+    );
     const contextItemsCount = lastContextBuild ? lastContextBuild.contextItems : null;
-    const contextTokensLatest = lastContextSize ? lastContextSize.contextTokens : null;
+    const contextTokensLatest = lastContextSize
+      ? (lastContextSize.finalRequestTokenEstimate ?? lastContextSize.contextTokens)
+      : null;
     const workingMemoryItems = contextItemsCount ?? (roleEvents.length > 0 ? roleEvents.length : null);
     const roleWindow = roleWindowByKey[role.key] ?? { tokens: null, label: '窗口未知', detail: 'LLM status 未提供角色绑定窗口', source: 'unknown' as const, provider: null, model: null };
     const usageCallCount = roleAggregate?.usageCalls ?? roleEvents.filter((event) => event.hasUsage).length;
@@ -859,12 +864,12 @@ export function buildContextOSModel(input: {
       ? contextTokensLatest
       : promptAverage;
     const windowOccupancyLabel = contextTokensLatest !== null && contextTokensLatest > 0
-      ? '最新上下文 (实测)'
+      ? '最新最终请求 (实测)'
       : promptAverage !== null
         ? '平均提示 (估算)'
         : '无 usage';
     const windowOccupancyDetail = contextTokensLatest !== null && contextTokensLatest > 0
-      ? '来自该角色最近一次 context.build/context_tokens_after (真实上下文 token)'
+      ? '来自该角色最近一次 final_request_context_audit/context_tokens_after (含 tools/response_format)'
       : promptAverage !== null
         ? '来自该角色 usage 事件的 prompt_tokens 平均值 (非窗口实测)'
         : '该角色尚无带 usage 的实时观测事件';

@@ -60,14 +60,11 @@ def _request_messages(ai_request: Any, fallback: list[dict[str, Any]]) -> list[d
 
 
 def _context_window_tokens(prepared: PreparedLLMRequest, profile: Any) -> int:
+    capability_profile = getattr(prepared, "capability_profile", None)
     raw_candidates = [
         getattr(profile, "max_context_tokens", None),
-        prepared.capability_profile.get("max_context_tokens")
-        if isinstance(prepared.capability_profile, dict)
-        else None,
-        prepared.capability_profile.get("context_window_tokens")
-        if isinstance(prepared.capability_profile, dict)
-        else None,
+        capability_profile.get("max_context_tokens") if isinstance(capability_profile, dict) else None,
+        capability_profile.get("context_window_tokens") if isinstance(capability_profile, dict) else None,
     ]
     for raw in raw_candidates:
         if isinstance(raw, bool):
@@ -177,9 +174,12 @@ def build_final_request_context_audit_for_request(
         tool_schema_payload = request_options.get("tools") if "tools" in request_options else []
         response_format_payload = request_options.get("response_format")
     else:
-        prepared_options = prepared.request_options if isinstance(prepared.request_options, dict) else {}
-        tool_schema_payload = prepared_options.get("tools", prepared.native_tool_schemas)
-        response_format_payload = prepared_options.get("response_format", prepared.native_response_format)
+        raw_prepared_options = getattr(prepared, "request_options", {})
+        prepared_options = raw_prepared_options if isinstance(raw_prepared_options, dict) else {}
+        tool_schema_payload = prepared_options.get("tools", getattr(prepared, "native_tool_schemas", []))
+        response_format_payload = prepared_options.get(
+            "response_format", getattr(prepared, "native_response_format", None)
+        )
     tool_schema_chars = _json_chars(tool_schema_payload)
     tool_schema_token_estimate = _estimate_tokens_from_chars(tool_schema_chars)
     tool_schema_count = len(tool_schema_payload) if isinstance(tool_schema_payload, list) else 0

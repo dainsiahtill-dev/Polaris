@@ -413,7 +413,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(model.windowOccupancyTokens).toBe(4096);
     expect(model.windowOccupancy).toBeCloseTo(4096 / 32_768, 5);
     expect(pm?.internalContext.windowOccupancyTokens).toBe(4096);
-    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新上下文 (实测)');
+    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新最终请求 (实测)');
   });
 
   it('flags windowed when a WS stream reaches its ring-buffer cap', () => {
@@ -602,7 +602,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(pm?.internalContext.workingMemoryEstimated).toBe(false);
     expect(pm?.internalContext.contextTokensLatest).toBe(3200);
     expect(pm?.internalContext.windowOccupancyTokens).toBe(3200);
-    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新上下文 (实测)');
+    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新最终请求 (实测)');
   });
 
   it('keeps per-role context occupancy isolated when multiple roles publish context.build events', () => {

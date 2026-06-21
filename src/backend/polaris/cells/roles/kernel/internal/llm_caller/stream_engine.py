@@ -194,6 +194,7 @@ class StreamEngine:
         raw_tool_call_count = 0
         total_backpressure_wait_ms = 0.0
         first_event_latency_ms: float | None = None
+        total_content = ""
         emitted_content = ""
         reconnect_prefix = ""
         emitted_tool_signatures: set[str] = set()
@@ -271,7 +272,7 @@ class StreamEngine:
                 "stream": True,
                 "native_tool_mode": active_native_tool_mode,
                 "tool_protocol": active_tool_protocol,
-                "native_tool_calling_fallback": False,
+                "native_tool_calling_fallback": active_native_tool_mode == "native_tools_text_fallback",
                 "context_snapshot_ref": _extract_context_snapshot_ref(active_request),
             }
             payload = _with_context_snapshot_diagnostics(payload, active_request)
@@ -279,6 +280,7 @@ class StreamEngine:
             if error_type:
                 payload["error_type"] = error_type
             return _with_context_os_audit(_with_final_request_context_audit(payload, active_request))
+
         final_context_audit = build_final_request_context_audit_for_request(
             ai_request=active_request,
             prepared=prepared,
@@ -438,7 +440,12 @@ class StreamEngine:
                                 metadata.setdefault("usage", usage_from_metadata)
                                 metadata.setdefault("usage_source", "provider")
                             metadata.update(_current_slo(elapsed_ms))
-                            metadata.update(_with_final_request_context_audit({}, fallback_request))
+                            metadata = _with_context_os_audit(
+                                _with_context_snapshot_diagnostics(
+                                    _with_final_request_context_audit(metadata, fallback_request),
+                                    fallback_request,
+                                )
+                            )
                         yield {
                             "type": event_type,
                             "content": content,
@@ -476,7 +483,6 @@ class StreamEngine:
                 return
 
         executor = self._get_executor()
-        total_content = ""
 
         while not fallback_stream_completed:
             if _is_stream_cancel_requested(context):
@@ -606,6 +612,12 @@ class StreamEngine:
                             metadata.setdefault("usage", usage_from_metadata)
                             metadata.setdefault("usage_source", "provider")
                         metadata.update(_current_slo(elapsed_ms))
+                        metadata = _with_context_os_audit(
+                            _with_context_snapshot_diagnostics(
+                                _with_final_request_context_audit(metadata, active_request),
+                                active_request,
+                            )
+                        )
                         yield_started_at = time.perf_counter()
                         yield {"type": "complete", "content": content, "metadata": metadata, "iteration": turn_round}
                         total_backpressure_wait_ms += (time.perf_counter() - yield_started_at) * 1000
@@ -671,6 +683,21 @@ class StreamEngine:
                 reconnect_count += 1
                 reconnect_prefix = emitted_content if dedupe_reconnect_replay else ""
                 backoff_seconds = max(0.0, retry_backoff_seconds * reconnect_count)
+                retry_metadata = _with_context_os_audit(
+                    _with_context_snapshot_diagnostics(
+                        _with_final_request_context_audit(
+                            {
+                                "stream": True,
+                                "error_category": retry_error_category,
+                                "error_message": retry_error_message,
+                                "stream_event_count": stream_event_count,
+                                "stream_reconnect_count": reconnect_count,
+                            },
+                            active_request,
+                        ),
+                        active_request,
+                    )
+                )
                 self._emit_call_retry(
                     event_emitter=event_emitter,
                     role=role_id,
@@ -681,13 +708,7 @@ class StreamEngine:
                     call_id=call_id,
                     retry_decision=f"stream_reconnect_{reconnect_count}",
                     backoff_seconds=backoff_seconds,
-                    metadata={
-                        "stream": True,
-                        "error_category": retry_error_category,
-                        "error_message": retry_error_message,
-                        "stream_event_count": stream_event_count,
-                        "stream_reconnect_count": reconnect_count,
-                    },
+                    metadata=retry_metadata,
                 )
                 if backoff_seconds > 0:
                     await asyncio.sleep(backoff_seconds)
@@ -748,7 +769,7 @@ class StreamEngine:
             "stream": True,
             "native_tool_mode": active_native_tool_mode,
             "tool_protocol": active_tool_protocol,
-            "native_tool_calling_fallback": False,
+            "native_tool_calling_fallback": active_native_tool_mode == "native_tools_text_fallback",
             "compression_applied": context_result.compression_applied if context_result else False,
             "turn_round": turn_round,
             "context_snapshot_ref": _extract_context_snapshot_ref(active_request),

@@ -93,9 +93,11 @@ def _with_final_request_context_audit(
         prepared=prepared,
         profile=profile,
     )
+    raw_final_tokens = audit.get("final_request_token_estimate")
     final_tokens = int(
-        audit.get("final_request_token_estimate")
-        or (prepared.context_result.token_estimate if prepared.context_result else 0)
+        raw_final_tokens
+        if raw_final_tokens is not None
+        else (prepared.context_result.token_estimate if prepared.context_result else 0)
     )
     payload["final_request_context_audit"] = audit
     payload["context_tokens_after"] = final_tokens
@@ -104,13 +106,34 @@ def _with_final_request_context_audit(
 
 
 def _final_request_context_tokens(metadata: dict[str, Any], fallback: int | None = None) -> int | None:
-    raw = metadata.get("contextTokens") or metadata.get("context_tokens_after") or fallback
+    raw = metadata.get("contextTokens")
+    if raw is None:
+        raw = metadata.get("context_tokens_after")
+    if raw is None:
+        raw = fallback
     if isinstance(raw, bool) or raw is None:
         return fallback
     try:
         return max(0, int(raw))
     except (TypeError, ValueError):
         return fallback
+
+
+def _with_optional_final_request_context_audit(
+    metadata: dict[str, Any],
+    *,
+    prepared: PreparedLLMRequest | None,
+    active_request: Any,
+    profile: Any,
+) -> dict[str, Any]:
+    if prepared is None or active_request is None:
+        return dict(metadata)
+    return _with_final_request_context_audit(
+        metadata,
+        prepared=prepared,
+        active_request=active_request,
+        profile=profile,
+    )
 
 
 def _with_context_snapshot_diagnostics(metadata: dict[str, Any], request: Any) -> dict[str, Any]:
@@ -1141,32 +1164,103 @@ class LLMInvoker:
             native_tool_fallback = True
             response_ok = getattr(response, "ok", True)
             if response_ok:
-                # Fallback succeeded, return the response
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
+                response_text = str(getattr(response, "content", None) or getattr(response, "output", "") or "")
+                raw_payload = getattr(response, "raw", None)
+                raw_payload = raw_payload if isinstance(raw_payload, dict) else {}
+                provider_usage = _normalize_provider_usage(
+                    getattr(response, "usage", None)
+                ) or _normalize_provider_usage(raw_payload.get("usage"))
+                completion_tokens = (
+                    int(provider_usage["completion_tokens"])
+                    if provider_usage and int(provider_usage["completion_tokens"]) > 0
+                    else len(response_text) // 2
+                )
+                prompt_tokens = (
+                    int(provider_usage["prompt_tokens"])
+                    if provider_usage and int(provider_usage["prompt_tokens"]) > 0
+                    else (prepared.context_result.token_estimate if prepared.context_result else 0)
+                )
+                event_metadata: dict[str, Any] = {
+                    "native_tool_mode": "native_tools_text_fallback",
+                    "response_format_mode": prepared.response_format_mode,
+                    "native_tool_calling_fallback": native_tool_fallback,
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(fallback_request),
+                }
+                event_metadata = _with_context_snapshot_diagnostics(event_metadata, fallback_request)
+                if provider_usage is not None:
+                    event_metadata["usage"] = provider_usage
+                    event_metadata["usage_source"] = "provider"
+                event_metadata = _with_final_request_context_audit(
+                    event_metadata,
+                    prepared=prepared,
+                    active_request=fallback_request,
+                    profile=profile,
+                )
+                final_context_tokens = _final_request_context_tokens(
+                    event_metadata,
+                    prepared.context_result.token_estimate if prepared.context_result else None,
+                )
+                self._emit_call_end_event(
+                    event_emitter=event_emitter,
+                    role=role_id,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    model=str(getattr(response, "model", "") or model),
+                    provider=str(getattr(response, "provider_id", "") or raw_payload.get("provider") or ""),
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    call_id=call_id,
+                    context_tokens_after=final_context_tokens,
+                    compression_strategy=prepared.context_result.compression_strategy
+                    if prepared.context_result
+                    else None,
+                    response_content=response_text,
+                    metadata=_with_context_os_audit(event_metadata, prepared),
+                )
+                response_metadata = _with_final_request_context_audit(
+                    {
+                        "model": model,
+                        "native_tool_mode": "native_tools_text_fallback",
+                        "response_format_mode": prepared.response_format_mode,
+                        "native_tool_calling_fallback": native_tool_fallback,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(fallback_request),
+                    },
+                    prepared=prepared,
+                    active_request=fallback_request,
+                    profile=profile,
+                )
+                response_metadata = _with_context_snapshot_diagnostics(response_metadata, fallback_request)
+                if provider_usage is not None:
+                    response_metadata["usage"] = provider_usage
+                    response_metadata["usage_source"] = "provider"
                 return LLMResponse(
-                    content=getattr(response, "content", "") or "",
+                    content=response_text,
                     error=None,
                     error_category=None,
-                    metadata=_with_context_os_audit(
-                        {
-                            "model": model,
-                            "native_tool_mode": "native_tools_text_fallback",
-                            "response_format_mode": prepared.response_format_mode,
-                            "native_tool_calling_fallback": native_tool_fallback,
-                            "elapsed_ms": round(elapsed_ms, 2),
-                            "run_id": run_id,
-                            "workspace": self.workspace,
-                            "attempt": attempt,
-                            "context_snapshot_ref": self._extract_context_snapshot_ref(fallback_request),
-                        },
-                        prepared,
-                    ),
+                    metadata=_with_context_os_audit(response_metadata, prepared),
                 )
             # Fallback failed, proceed to return error
 
         # Fallback not allowed or failed - return error
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         tool_error = build_native_tool_unavailable_error(profile)
+        error_metadata = _with_final_request_context_audit(
+            {
+                "native_tool_mode": prepared.native_tool_mode,
+                "response_format_mode": prepared.response_format_mode,
+                "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+            },
+            prepared=prepared,
+            active_request=prepared.ai_request,
+            profile=profile,
+        )
         self._emit_call_error_event(
             event_emitter=event_emitter,
             role=role_id,
@@ -1178,31 +1272,27 @@ class LLMInvoker:
             error_message=tool_error,
             call_id=call_id,
             elapsed_ms=elapsed_ms,
-            metadata=_with_context_os_audit(
-                {
-                    "native_tool_mode": prepared.native_tool_mode,
-                    "response_format_mode": prepared.response_format_mode,
-                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                },
-                prepared,
-            ),
+            metadata=_with_context_os_audit(error_metadata, prepared),
+        )
+        response_metadata = _with_final_request_context_audit(
+            {
+                "model": model,
+                "native_tool_mode": prepared.native_tool_mode,
+                "response_format_mode": prepared.response_format_mode,
+                "run_id": run_id,
+                "workspace": self.workspace,
+                "attempt": attempt,
+                "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+            },
+            prepared=prepared,
+            active_request=prepared.ai_request,
+            profile=profile,
         )
         return LLMResponse(
             content="",
             error=tool_error,
             error_category="provider",
-            metadata=_with_context_os_audit(
-                {
-                    "model": model,
-                    "native_tool_mode": prepared.native_tool_mode,
-                    "response_format_mode": prepared.response_format_mode,
-                    "run_id": run_id,
-                    "workspace": self.workspace,
-                    "attempt": attempt,
-                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                },
-                prepared,
-            ),
+            metadata=_with_context_os_audit(response_metadata, prepared),
         )
 
     async def call(
@@ -1234,6 +1324,7 @@ class LLMInvoker:
 
         start_time = time.perf_counter()
         prepared: PreparedLLMRequest | None = None
+        active_request: Any | None = None
 
         try:
             # Import here to avoid circular dependency
@@ -1260,6 +1351,7 @@ class LLMInvoker:
                 response_model=response_model,
                 platform_retry_max=platform_retry_max,
             )
+            active_request = prepared.ai_request
             context_result = prepared.context_result
             prompt_tokens = context_result.token_estimate if context_result else len(system_prompt) // 4
             final_context_audit = build_final_request_context_audit_for_request(
@@ -1267,7 +1359,10 @@ class LLMInvoker:
                 prepared=prepared,
                 profile=profile,
             )
-            final_context_tokens = int(final_context_audit.get("final_request_token_estimate") or prompt_tokens)
+            raw_final_context_tokens = final_context_audit.get("final_request_token_estimate")
+            final_context_tokens = int(
+                raw_final_context_tokens if raw_final_context_tokens is not None else prompt_tokens
+            )
 
             self._emit_call_start_event(
                 event_emitter=event_emitter,
@@ -1341,7 +1436,6 @@ class LLMInvoker:
                 return cache_hit
 
             executor = self._get_executor()
-            active_request = prepared.ai_request
             native_tool_fallback = False
             allow_native_tool_text_fallback = self._allow_native_tool_text_fallback(context)
             response = await executor.invoke(active_request)
@@ -1439,12 +1533,17 @@ class LLMInvoker:
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
                 metadata=_with_context_os_audit(
-                    {
-                        "error_type": "CancelledError",
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
-                        if prepared
-                        else None,
-                    },
+                    _with_optional_final_request_context_audit(
+                        {
+                            "error_type": "CancelledError",
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
+                            if prepared
+                            else None,
+                        },
+                        prepared=prepared,
+                        active_request=active_request or (prepared.ai_request if prepared else None),
+                        profile=profile,
+                    ),
                     prepared,
                 ),
             )
@@ -1455,6 +1554,8 @@ class LLMInvoker:
             return self._call_exception_response(
                 e,
                 prepared=prepared,
+                active_request=active_request or (prepared.ai_request if prepared else None),
+                profile=profile,
                 model=model,
                 role_id=role_id,
                 run_id=run_id,
@@ -1470,6 +1571,8 @@ class LLMInvoker:
             return self._call_exception_response(
                 e,
                 prepared=prepared,
+                active_request=active_request or (prepared.ai_request if prepared else None),
+                profile=profile,
                 model=model,
                 role_id=role_id,
                 run_id=run_id,
@@ -1485,6 +1588,8 @@ class LLMInvoker:
         exc: BaseException,
         *,
         prepared: PreparedLLMRequest | None,
+        active_request: Any,
+        profile: RoleProfile,
         model: str,
         role_id: str,
         run_id: str,
@@ -1514,12 +1619,17 @@ class LLMInvoker:
             call_id=call_id,
             elapsed_ms=elapsed_ms,
             metadata=_with_context_os_audit(
-                {
-                    "error_type": type(exc).__name__,
-                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
-                    if prepared
-                    else None,
-                },
+                _with_optional_final_request_context_audit(
+                    {
+                        "error_type": type(exc).__name__,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
+                        if prepared
+                        else None,
+                    },
+                    prepared=prepared,
+                    active_request=active_request,
+                    profile=profile,
+                ),
                 prepared,
             ),
         )
@@ -1528,12 +1638,17 @@ class LLMInvoker:
             error=f"LLM call failed: {exc}",
             error_category=error_category,
             metadata=_with_context_os_audit(
-                {
-                    "run_id": run_id,
-                    "workspace": self.workspace,
-                    "attempt": attempt,
-                    "elapsed_ms": round(elapsed_ms, 2),
-                },
+                _with_optional_final_request_context_audit(
+                    {
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                    },
+                    prepared=prepared,
+                    active_request=active_request,
+                    profile=profile,
+                ),
                 prepared,
             ),
         )
@@ -1545,6 +1660,7 @@ class LLMInvoker:
     async def _try_native_response_format_structured(
         self,
         *,
+        caller: Any,
         prepared: PreparedLLMRequest,
         profile: RoleProfile,
         response_model: type,
@@ -1637,6 +1753,11 @@ class LLMInvoker:
                 )
             response_error = str(getattr(response, "error", "") or "").strip()
             normalized_error = response_error or "structured_llm_call_failed"
+            fallback_request = caller._build_structured_fallback_request(
+                prepared=prepared,
+                profile=profile,
+                response_model=response_model,
+            )
             retry_metadata = _with_final_request_context_audit(
                 {
                     "structured": True,
@@ -1644,10 +1765,10 @@ class LLMInvoker:
                     "retry_decision": "structured_response_format_fallback",
                     "error_category": classify_error(normalized_error),
                     "error_message": normalized_error,
-                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                    "context_snapshot_ref": self._extract_context_snapshot_ref(fallback_request),
                 },
                 prepared=prepared,
-                active_request=prepared.ai_request,
+                active_request=fallback_request,
                 profile=profile,
             )
             self._emit_call_retry_event(
@@ -2028,7 +2149,10 @@ class LLMInvoker:
                 prepared=prepared,
                 profile=profile,
             )
-            final_context_tokens = int(final_context_audit.get("final_request_token_estimate") or prompt_tokens)
+            raw_final_context_tokens = final_context_audit.get("final_request_token_estimate")
+            final_context_tokens = int(
+                raw_final_context_tokens if raw_final_context_tokens is not None else prompt_tokens
+            )
 
             self._emit_call_start_event(
                 event_emitter=event_emitter,
@@ -2063,6 +2187,7 @@ class LLMInvoker:
 
             # Try native response_format
             native_result = await self._try_native_response_format_structured(
+                caller=caller,
                 prepared=prepared,
                 profile=profile,
                 response_model=response_model,
@@ -2136,13 +2261,18 @@ class LLMInvoker:
                 call_id=call_id,
                 elapsed_ms=elapsed_ms,
                 metadata=_with_context_os_audit(
-                    {
-                        "structured": True,
-                        "error_type": "CancelledError",
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
-                        if prepared
-                        else None,
-                    },
+                    _with_optional_final_request_context_audit(
+                        {
+                            "structured": True,
+                            "error_type": "CancelledError",
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
+                            if prepared
+                            else None,
+                        },
+                        prepared=prepared,
+                        active_request=prepared.ai_request if prepared else None,
+                        profile=profile,
+                    ),
                     prepared,
                 ),
             )
@@ -2152,6 +2282,8 @@ class LLMInvoker:
             return self._structured_exception_response(
                 e,
                 prepared=prepared,
+                active_request=prepared.ai_request if prepared else None,
+                profile=profile,
                 model=model,
                 role_id=role_id,
                 run_id=run_id,
@@ -2167,6 +2299,8 @@ class LLMInvoker:
         exc: BaseException,
         *,
         prepared: PreparedLLMRequest | None,
+        active_request: Any,
+        profile: RoleProfile,
         model: str,
         role_id: str,
         run_id: str,
@@ -2195,12 +2329,17 @@ class LLMInvoker:
             call_id=call_id,
             elapsed_ms=elapsed_ms,
             metadata=_with_context_os_audit(
-                {
-                    "structured": True,
-                    "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
-                    if prepared
-                    else None,
-                },
+                _with_optional_final_request_context_audit(
+                    {
+                        "structured": True,
+                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request)
+                        if prepared
+                        else None,
+                    },
+                    prepared=prepared,
+                    active_request=active_request,
+                    profile=profile,
+                ),
                 prepared,
             ),
         )
@@ -2209,13 +2348,18 @@ class LLMInvoker:
             error=f"Structured LLM call failed: {exc}",
             error_category=error_category,
             metadata=_with_context_os_audit(
-                {
-                    "model": model,
-                    "elapsed_ms": round(elapsed_ms, 2),
-                    "run_id": run_id,
-                    "workspace": self.workspace,
-                    "attempt": attempt,
-                },
+                _with_optional_final_request_context_audit(
+                    {
+                        "model": model,
+                        "elapsed_ms": round(elapsed_ms, 2),
+                        "run_id": run_id,
+                        "workspace": self.workspace,
+                        "attempt": attempt,
+                    },
+                    prepared=prepared,
+                    active_request=active_request,
+                    profile=profile,
+                ),
                 prepared,
             ),
         )

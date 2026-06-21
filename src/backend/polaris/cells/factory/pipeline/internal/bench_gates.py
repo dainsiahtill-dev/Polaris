@@ -1802,6 +1802,11 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(record.get("llm_route_audit"), dict) and not record["llm_route_audit"].get("ok"):
         category, reason = "llm_output", "llm_route_audit"
         evidence.append(str(record["llm_route_audit"].get("summary") or ""))
+    elif isinstance(record.get("chain"), dict) and str(record["chain"].get("error") or "") == "workspace_switch_failed":
+        category, reason = "runtime_environment", "workspace_switch_failed"
+        workspace_switch = record["chain"].get("workspace_switch")
+        if isinstance(workspace_switch, dict):
+            evidence.append(str(workspace_switch.get("workspace") or workspace_switch.get("detail") or ""))
     elif isinstance(record.get("real_run_gate"), dict) and not record["real_run_gate"].get("ok"):
         failed_requirement = _first_real_run_failure(record["real_run_gate"])
         reason = f"real_run_gate.{failed_requirement or 'unknown'}"

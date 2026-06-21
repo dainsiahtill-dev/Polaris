@@ -21,12 +21,14 @@ import { StatusBadge } from '@/app/components/ui/badge';
 import { cn } from '@/app/components/ui/utils';
 import {
   useFactoryBench,
+  type UseFactoryBenchOptions,
   type UseFactoryBenchResult,
 } from '@/hooks/useFactoryBench';
 import type { FactoryBenchEvent, FactoryBenchSessionSummary } from '@/services/benchService';
 
 interface BenchPanelProps {
   className?: string;
+  onWorkspaceChange?: UseFactoryBenchOptions['onWorkspaceChange'];
 }
 
 const STATUS_LABELS: Record<string, { label: string; color: 'info' | 'success' | 'error' }> = {
@@ -67,8 +69,8 @@ function summarizeSession(session: FactoryBenchSessionSummary): string {
   return `${completed}/${total} 已完成${failed > 0 ? ` · ${failed} 失败` : ''}`;
 }
 
-export function BenchPanel({ className }: BenchPanelProps): JSX.Element {
-  const bench: UseFactoryBenchResult = useFactoryBench({ autoSelect: 'newest' });
+export function BenchPanel({ className, onWorkspaceChange }: BenchPanelProps): JSX.Element {
+  const bench: UseFactoryBenchResult = useFactoryBench({ autoSelect: 'newest', onWorkspaceChange });
   const { sessions, currentSession, events, isStreaming, isLoading, error, refresh, select } = bench;
 
   const progress = useMemo(() => {

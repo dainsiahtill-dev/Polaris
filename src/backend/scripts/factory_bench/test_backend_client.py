@@ -162,6 +162,7 @@ class TestBenchBackendClient(_BenchBackendClientTestBase):
     def test_workspace_switch_posts_to_settings_before_project_observation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             workspace = Path(tmp_dir) / "project"
+            self.set_response(status=200, body={"workspace": str(workspace.resolve())}, path_suffix="/settings")
             ok = _push_bench_workspace_to_backend(
                 backend_url=self.backend_url,
                 workspace=str(workspace),
@@ -196,6 +197,19 @@ class TestBenchBackendClient(_BenchBackendClientTestBase):
 
         self.assertTrue(ok)
         self.assertEqual(calls, [{"workspace": "/tmp/project"}, {"workspace": "/tmp/project"}])
+
+    def test_workspace_switch_rejects_mismatched_settings_response(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir) / "project"
+            self.set_response(status=200, body={"workspace": str(Path(tmp_dir) / "other")}, path_suffix="/settings")
+            ok = _push_bench_workspace_to_backend(
+                backend_url=self.backend_url,
+                workspace=str(workspace),
+                attempts=1,
+                retry_delay_seconds=0,
+            )
+
+        self.assertFalse(ok)
 
     def test_relative_work_dir_resolves_from_repo_root_not_process_cwd(self) -> None:
         previous_cwd = os.getcwd()

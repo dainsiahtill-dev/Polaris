@@ -65,6 +65,8 @@ export interface ContextOSEvent {
   contextTokens: number | null;
   /** Final provider request audit: token estimate, tool schema size, and coverage flags. */
   finalRequestContextAudit: Record<string, unknown> | null;
+  /** Final provider request token estimate, including messages, tools, and response_format. */
+  finalRequestTokenEstimate: number | null;
   /** SHA-256 reference to the stored full context (post-compression messages). */
   contextSnapshotRef: string | null;
   /** Structured evidence when the snapshot could not be stored. */
@@ -243,6 +245,11 @@ function readContextSnapshotDegraded(meta: Record<string, unknown>): ContextSnap
       nonEmptyString(degraded?.['exception_type']) ||
       nonEmptyString(degraded?.['exceptionType']),
   };
+}
+
+function readFinalRequestTokenEstimate(audit: Record<string, unknown> | null): number | null {
+  if (!audit) return null;
+  return toFiniteOrNull(audit['final_request_token_estimate']);
 }
 
 function toFiniteOrNull(value: unknown): number | null {
@@ -440,6 +447,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     : isRecord(meta['finalRequestContextAudit'])
       ? meta['finalRequestContextAudit']
       : null;
+  const finalRequestTokenEstimate = readFinalRequestTokenEstimate(finalRequestContextAudit);
   const snapshotHash = nonEmptyString(meta['snapshot_hash']);
   const requestHash = nonEmptyString(meta['request_hash']);
   const contextHash = nonEmptyString(meta['context_hash']) || requestHash || null;
@@ -560,6 +568,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     contextItems,
     contextTokens,
     finalRequestContextAudit,
+    finalRequestTokenEstimate,
     contextSnapshotRef: contextSnapshotRef || null,
     contextSnapshotDegraded,
     promptHash: promptHash || null,
@@ -583,6 +592,7 @@ function eventDedupeKey(event: ContextOSEvent): string {
       String(event.promptTokens),
       String(event.completionTokens),
       String(event.totalTokens),
+      String(event.finalRequestTokenEstimate ?? ''),
       event.error ?? '',
     ].join('\u001f');
   }
@@ -598,6 +608,7 @@ function eventDedupeKey(event: ContextOSEvent): string {
     String(event.promptTokens),
     String(event.completionTokens),
     String(event.totalTokens),
+    String(event.finalRequestTokenEstimate ?? ''),
     String(event.durationMs ?? ''),
     String(event.contextItems ?? ''),
     String(event.contextTokens ?? ''),
@@ -616,6 +627,12 @@ function dedupeEvents(events: ContextOSEvent[]): ContextOSEvent[] {
     deduped.push(event);
   }
   return deduped;
+}
+
+export function contextOSObservedTokens(event: ContextOSEvent): number {
+  if (event.finalRequestTokenEstimate !== null) return event.finalRequestTokenEstimate;
+  if (event.isCall || event.hasUsage) return event.contextTokens ?? event.totalTokens;
+  return 0;
 }
 
 function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOSTelemetry {
@@ -647,8 +664,9 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
       latencyCount += 1;
     }
 
-    // 真实 token 聚合（journal `llm` 通道携带 prompt/completion usage）。
-    totalTokens += event.totalTokens;
+    // ContextOS 主 token 聚合优先展示最终 provider request token（含 tools/response_format）。
+    const observedTokens = contextOSObservedTokens(event);
+    totalTokens += observedTokens;
     promptTokens += event.promptTokens;
     completionTokens += event.completionTokens;
     if (event.estimatedTokens) estimatedCalls += 1;
@@ -656,14 +674,14 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
     const actorKey = event.actor;
     const actorAgg = byActor[actorKey] ?? { totalTokens: 0, calls: 0, events: 0 };
     actorAgg.events += 1;
-    actorAgg.totalTokens += event.totalTokens;
+    actorAgg.totalTokens += observedTokens;
 
     if (event.isCall || event.hasUsage) {
       totalCalls += 1;
       const modeKey = event.mode || 'unknown';
       const modeAgg = byMode[modeKey] ?? { totalTokens: 0, calls: 0 };
       modeAgg.calls += 1;
-      modeAgg.totalTokens += event.totalTokens;
+      modeAgg.totalTokens += observedTokens;
       byMode[modeKey] = modeAgg;
       actorAgg.calls += 1;
     }
@@ -680,7 +698,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
         events: 0,
       };
       roleAgg.events += 1;
-      roleAgg.totalTokens += event.totalTokens;
+      roleAgg.totalTokens += observedTokens;
       roleAgg.promptTokens += event.promptTokens;
       roleAgg.completionTokens += event.completionTokens;
       if (event.isCall || event.hasUsage) roleAgg.calls += 1;
@@ -701,7 +719,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
         lastLatencyMs: null,
       };
       workerAgg.events += 1;
-      workerAgg.totalTokens += event.totalTokens;
+      workerAgg.totalTokens += observedTokens;
       if (event.isCall || event.hasUsage) workerAgg.calls += 1;
       if (event.epoch > 0 && (workerAgg.lastEpoch === null || event.epoch > workerAgg.lastEpoch)) {
         workerAgg.lastEpoch = event.epoch;
@@ -728,7 +746,9 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
   // 最近一次装配（context.build）的真实在窗项数（items_count），经 runtime_events meta 送达。
   const lastContextBuild = sorted.find((event) => event.contextItems !== null);
   // 最近一次上下文规模（context.build total_tokens 或 llm 通道 context_tokens_after）。
-  const lastContextSize = sorted.find((event) => event.contextTokens !== null);
+  const lastContextSize = sorted.find(
+    (event) => event.finalRequestTokenEstimate !== null || event.contextTokens !== null,
+  );
 
   return {
     hasData: true,
@@ -743,7 +763,9 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
     projectionCount,
     receiptCount,
     contextItemsCount: lastContextBuild ? lastContextBuild.contextItems : null,
-    contextTokensLatest: lastContextSize ? lastContextSize.contextTokens : null,
+    contextTokensLatest: lastContextSize
+      ? (lastContextSize.finalRequestTokenEstimate ?? lastContextSize.contextTokens)
+      : null,
     errorCount,
     avgLatencyMs: latencyCount > 0 ? Math.round(latencySum / latencyCount) : null,
     lastLatencyMs: lastWithLatency ? lastWithLatency.durationMs : null,
@@ -814,7 +836,7 @@ export function telemetryRoleTokens(telemetry: ContextOSTelemetry, roleId: strin
   const aggregate = telemetry.byRole[roleId];
   if (aggregate) return aggregate.totalTokens;
   return filterEventsForRole(telemetry.events, roleId)
-    .reduce((total, event) => total + event.totalTokens, 0);
+    .reduce((total, event) => total + contextOSObservedTokens(event), 0);
 }
 
 /** 汇总某角色在真实遥测里的事件数（按 actor 别名匹配）。 */
