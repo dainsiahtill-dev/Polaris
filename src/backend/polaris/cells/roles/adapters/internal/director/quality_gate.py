@@ -122,10 +122,55 @@ def _relative_import_specifier_safe_for_repair_prompt(specifier: str) -> bool:
     return bool(parts) and all(part not in {".", ".."} for part in parts[1:])
 
 
+_TSC_PROJECT_DIAGNOSTIC_RE = re.compile(
+    r"TypeScript project typecheck failed:\s*"
+    r"(?P<path>[^\s:()]+(?:\.d\.ts|\.tsx?))"
+    r"(?P<loc>\(\d+,\d+\)|:\d+:\d+)?"
+    r":\s*error\s+(?P<code>TS\d+):\s*(?P<detail>.*)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _quality_error_path_safe_for_repair_prompt(path: str) -> bool:
+    token = str(path or "").strip().replace("\\", "/")
+    if not token or token.startswith(("/", "./", "../", "~")):
+        return False
+    if re.match(r"^[A-Za-z]:", token):
+        return False
+    if ".." in token.split("/"):
+        return False
+    if "node_modules" in token.split("/"):
+        return False
+    return bool(_normalize_declared_task_path(token))
+
+
+def _format_typescript_project_typecheck_error_for_repair_prompt(error: Any) -> str:
+    text = str(error or "")
+    match = _TSC_PROJECT_DIAGNOSTIC_RE.search(text)
+    if not match:
+        return ""
+    path = str(match.group("path") or "").strip()
+    if _quality_error_path_safe_for_repair_prompt(path):
+        return text
+    code = str(match.group("code") or "TS").strip()
+    detail = re.sub(r"\s+", " ", str(match.group("detail") or "")).strip()
+    if len(detail) > 180:
+        detail = detail[:180].rstrip() + " ..."
+    suffix = f" {code}: {detail}" if detail else f" {code}"
+    return (
+        "Artifact quality scan failed: TypeScript project typecheck failed:"
+        f" external dependency diagnostic{suffix}. Path omitted for workspace safety."
+    )
+
+
 def _format_quality_error_for_repair_prompt(error: Any) -> str:
     """Format quality errors for repair prompts without unsafe path tokens."""
 
-    return _format_unresolved_relative_import_error_for_repair_prompt(error) or str(error)
+    return (
+        _format_unresolved_relative_import_error_for_repair_prompt(error)
+        or _format_typescript_project_typecheck_error_for_repair_prompt(error)
+        or str(error)
+    )
 
 
 def _stage_summary_has_recoverable_no_write_mutation_contract_exception(
@@ -754,6 +799,9 @@ async def _run_materialization_quality_repair_retry(
     missing_target_set = set(missing_target_files)
     missing_repair_target_files = [path for path in repair_target_files if path in missing_target_set]
     existing_repair_target_files = [path for path in repair_target_files if path not in missing_target_set]
+    prompt_safe_artifact_quality_errors = [
+        _format_quality_error_for_repair_prompt(error) for error in artifact_quality_errors[:20]
+    ]
     repair_message = _build_materialization_quality_repair_message(
         original_message=original_message,
         artifact_quality_errors=artifact_quality_errors,
@@ -765,7 +813,7 @@ async def _run_materialization_quality_repair_retry(
         **dict(context or {}),
         "run_id": run_id,
         "director_quality_repair": {
-            "artifact_quality_errors": artifact_quality_errors[:20],
+            "artifact_quality_errors": prompt_safe_artifact_quality_errors,
             "changed_files": changed_files[:40],
             "missing_target_files": missing_target_files[:20],
             "runtime_smoke_target_files": runtime_smoke_target_files[:20],
@@ -812,7 +860,7 @@ async def _run_materialization_quality_repair_retry(
         result = await adapter._invoke_role_dialogue_with_timeout(
             repair_message,
             context=repair_context,
-            timeout_seconds=llm_call_timeout,
+            timeout_seconds=_resolve_quality_repair_timeout_seconds(llm_call_timeout),
             stage_label="quality_repair" if repair_attempt <= 1 else f"quality_repair_{repair_attempt}",
         )
     except Exception as exc:  # noqa: BLE001 - quality repair is a structured fallback boundary.
@@ -861,6 +909,29 @@ _QUALITY_REPAIR_ATTEMPT_HARD_CAP = 5
 
 
 _QUALITY_REPAIR_TARGET_BATCH_LIMIT = 12
+
+
+_DEFAULT_QUALITY_REPAIR_TIMEOUT_SECONDS = 180.0
+
+
+def _resolve_quality_repair_timeout_seconds(primary_timeout_seconds: float) -> float:
+    raw_timeout = os.environ.get("KERNELONE_DIRECTOR_QUALITY_REPAIR_TIMEOUT_SECONDS")
+    configured = _DEFAULT_QUALITY_REPAIR_TIMEOUT_SECONDS
+    if raw_timeout is not None:
+        try:
+            parsed = float(raw_timeout)
+        except (TypeError, ValueError):
+            parsed = configured
+        if parsed > 0:
+            configured = parsed
+    configured = max(30.0, min(configured, 300.0))
+    try:
+        primary = float(primary_timeout_seconds)
+    except (TypeError, ValueError):
+        primary = configured
+    if primary <= 0:
+        primary = configured
+    return max(0.1, min(primary, configured))
 
 
 def _select_materialization_quality_repair_target_batch(

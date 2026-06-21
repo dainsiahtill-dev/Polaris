@@ -7,16 +7,21 @@ import {
 } from '../runtimeParsing';
 
 describe('runtimeParsing display string normalization', () => {
-  it('serializes object payloads instead of leaking [object Object]', () => {
-    expect(toDisplayString({ message: 'Director ready', ok: true })).toBe('{"message":"Director ready","ok":true}');
-    expect(firstDisplayString(null, { summary: 'usable' })).toBe('{"summary":"usable"}');
+  it('prefers object payload display scalars instead of leaking [object Object]', () => {
+    expect(toDisplayString({ message: 'Director ready', ok: true })).toBe('Director ready');
+    expect(firstDisplayString(null, { summary: 'usable' })).toBe('usable');
+    expect(firstDisplayString(null, { message: { text: 'nested text', ok: true } })).toBe('nested text');
   });
 
   it('handles circular object payloads without throwing', () => {
     const circular: Record<string, unknown> = { summary: 'loop' };
     circular.self = circular;
 
-    expect(toDisplayString(circular)).toBe('{"summary":"loop","self":"[Circular]"}');
+    expect(toDisplayString(circular)).toBe('loop');
+  });
+
+  it('serializes objects with no display scalar as compact JSON', () => {
+    expect(toDisplayString({ phase: 'director_dispatch', status: 'running' })).toBe('{"phase":"director_dispatch","status":"running"}');
   });
 });
 

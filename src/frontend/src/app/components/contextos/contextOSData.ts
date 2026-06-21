@@ -599,10 +599,13 @@ export function buildContextOSModel(input: {
     ? '按当前角色绑定中的最小 max_context_tokens 估算'
     : 'LLM status 未提供窗口字段，显示未知';
 
-  // 估算单次上下文窗口占用：以「平均单次提示 token」近似当前窗口压力。
+  const contextTokensLatest = telemetryActive ? telemetry.contextTokensLatest : null;
+  // 窗口压力分子：优先真实 context.build/context_tokens_after；缺失时才退回平均 prompt 估算。
   const avgPromptPerCall = calls > 0 ? promptTokens / calls : 0;
-  const totalContextTokens = promptTokens;  // 真实上下文 token
-  const windowOccupancyTokens = Math.round(avgPromptPerCall);  // 平均 prompt 估算
+  const totalContextTokens = contextTokensLatest ?? promptTokens;  // 当前可观测上下文 token
+  const windowOccupancyTokens = contextTokensLatest !== null && contextTokensLatest > 0
+    ? contextTokensLatest
+    : Math.round(avgPromptPerCall);
   const windowOccupancy = contextWindowTokens !== null ? Math.max(0, Math.min(1, windowOccupancyTokens / contextWindowTokens)) : 0;
 
   const blockedRoles = new Set(llmRuntimeState.blockedRoles.map((role) => role.toLowerCase()));
@@ -649,7 +652,6 @@ export function buildContextOSModel(input: {
   const dataIdle = !observed && totalTokens === 0 && eventCount === 0 && logCount === 0;
 
   const turfEventTotal = Math.max(eventCount + logCount, telemetryEventCount);
-  const contextTokensLatest = telemetryActive ? telemetry.contextTokensLatest : null;
   // 管线顺序忠实于后端真实装配流（gateway.py + ProjectionEngine 内部 7 段）：
   //   投影(ProjectionEngine.project，内部含 BudgetPlanner 预算「规划」) → 角色信号(supplemental_turns)
   //   → 装配(project()→messages) → CompressionEngine 预算「压缩兜底」(装配后最后一步) → LLM。
@@ -816,7 +818,11 @@ export function buildContextOSModel(input: {
       }
     }
 
-    const calls = roleEvents.filter((event) => event.isCall || event.hasUsage).length;
+    const roleAggregate = telemetryActive ? telemetry.byRole[role.key] : undefined;
+    const calls = roleAggregate?.calls ?? roleEvents.filter((event) => event.isCall || event.hasUsage).length;
+    totalTokens = roleAggregate?.totalTokens ?? totalTokens;
+    promptTokens = roleAggregate?.promptTokens ?? promptTokens;
+    completionTokens = roleAggregate?.completionTokens ?? completionTokens;
 
     // 最近一次 context.build 的 items_count / total_tokens 来自该角色自身的事件子集。
     const lastContextBuild = roleEvents.find((event) => event.contextItems !== null);
@@ -825,7 +831,7 @@ export function buildContextOSModel(input: {
     const contextTokensLatest = lastContextSize ? lastContextSize.contextTokens : null;
     const workingMemoryItems = contextItemsCount ?? (roleEvents.length > 0 ? roleEvents.length : null);
     const roleWindow = roleWindowByKey[role.key] ?? { tokens: null, label: '窗口未知', detail: 'LLM status 未提供角色绑定窗口', source: 'unknown' as const, provider: null, model: null };
-    const usageCallCount = roleEvents.filter((event) => event.hasUsage).length;
+    const usageCallCount = roleAggregate?.usageCalls ?? roleEvents.filter((event) => event.hasUsage).length;
     const promptAverage = usageCallCount > 0 && promptTokens > 0 ? Math.round(promptTokens / usageCallCount) : null;
     const windowOccupancyTokens = contextTokensLatest !== null && contextTokensLatest > 0
       ? contextTokensLatest
@@ -858,7 +864,7 @@ export function buildContextOSModel(input: {
     // Find the most recent call with a context snapshot ref
     const lastCallWithSnapshot = roleEvents.find((event) => event.contextSnapshotRef);
     const latestContextSnapshotRef = lastCallWithSnapshot ? lastCallWithSnapshot.contextSnapshotRef : null;
-    const latestCallId = lastCallWithSnapshot ? (lastCallWithSnapshot as any).callId || null : null;
+    const latestCallId = lastCallWithSnapshot ? lastCallWithSnapshot.callId : null;
     const latestTurnId = lastCallWithSnapshot ? lastCallWithSnapshot.turnId : null;
 
     return {

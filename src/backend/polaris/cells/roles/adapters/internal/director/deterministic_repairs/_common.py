@@ -112,6 +112,11 @@ _TS_NODE_BUILTIN_TYPES_ERROR_RE = re.compile(
     re.IGNORECASE,
 )
 
+_TS_TYPESCRIPT_DEV_DEPENDENCY_ERROR_RE = re.compile(
+    r"TypeScript project requires ['\"]typescript['\"] devDependency",
+    re.IGNORECASE,
+)
+
 _NODE_TEST_RUNNER_WITHOUT_TEST_FILES_ERROR_RE = re.compile(
     r"npm package manifest has test runner script but no test/spec files exist in (?P<path>\S+)",
     re.IGNORECASE,
@@ -170,6 +175,7 @@ _KNOWN_RUNTIME_DEPENDENCY_VERSIONS = {
 
 _KNOWN_DEV_DEPENDENCY_VERSIONS = {
     "@types/node": "^22.10.0",
+    "typescript": "^5.6.0",
 }
 
 _PYTHON_MAIN_BLOCK_RE = re.compile(
@@ -217,9 +223,11 @@ def _parse_undeclared_runtime_import_packages(artifact_quality_errors: list[str]
 def _parse_required_dev_dependency_packages(artifact_quality_errors: list[str]) -> list[str]:
     packages: list[str] = []
     for error in artifact_quality_errors:
-        if not _TS_NODE_BUILTIN_TYPES_ERROR_RE.search(str(error or "")):
-            continue
-        packages.append("@types/node")
+        text = str(error or "")
+        if _TS_NODE_BUILTIN_TYPES_ERROR_RE.search(text):
+            packages.append("@types/node")
+        if _TS_TYPESCRIPT_DEV_DEPENDENCY_ERROR_RE.search(text):
+            packages.append("typescript")
     return _dedupe_preserve_order(packages)
 
 

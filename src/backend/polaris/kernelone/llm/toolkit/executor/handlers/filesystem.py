@@ -365,10 +365,9 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
                 "loop_break": False,
                 "error": f"Code syntax validation failed:\n{error_msg}",
                 "suggestion": (
-                    "Use read_file() to inspect the exact file, then call edit_blocks "
-                    "with line-range arguments: file, start, end, replace. "
-                    "Change only the syntax-error lines; keep surrounding code intact. "
-                    "Do not append new code for syntax repair."
+                    "Retry with write_file using the complete corrected UTF-8 file body for the same path. "
+                    "If a later retry is allowed to use edit_blocks, use line-range arguments: "
+                    "file, start, end, replace. Do not append new code for syntax repair."
                 ),
                 "validation_errors": [
                     {"line": e.line, "column": e.column, "message": e.message} for e in (validation_result.errors or [])

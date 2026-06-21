@@ -79,6 +79,60 @@ def _with_context_os_audit(metadata: dict[str, Any], prepared: PreparedLLMReques
     return payload
 
 
+def _usage_int(payload: dict[str, Any], *keys: str) -> int:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return max(0, value)
+        if isinstance(value, float) and value.is_integer():
+            return max(0, int(value))
+        if isinstance(value, str) and value.strip():
+            try:
+                return max(0, int(float(value.strip())))
+            except ValueError:
+                continue
+    return 0
+
+
+def _normalize_provider_usage(raw_usage: Any) -> dict[str, Any] | None:
+    if raw_usage is None:
+        return None
+    if hasattr(raw_usage, "to_dict"):
+        maybe_payload = raw_usage.to_dict()
+    elif isinstance(raw_usage, dict):
+        maybe_payload = dict(raw_usage)
+    else:
+        return None
+    if not isinstance(maybe_payload, dict):
+        return None
+
+    prompt_tokens = _usage_int(maybe_payload, "prompt_tokens", "promptTokens", "input_tokens", "inputTokens")
+    completion_tokens = _usage_int(
+        maybe_payload,
+        "completion_tokens",
+        "completionTokens",
+        "output_tokens",
+        "outputTokens",
+    )
+    total_tokens = _usage_int(maybe_payload, "total_tokens", "totalTokens")
+    if total_tokens <= 0:
+        total_tokens = prompt_tokens + completion_tokens
+    if prompt_tokens <= 0 and completion_tokens <= 0 and total_tokens <= 0:
+        return None
+
+    return {
+        "cached_tokens": _usage_int(maybe_payload, "cached_tokens", "cachedTokens"),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "estimated": bool(maybe_payload.get("estimated", False)),
+        "prompt_chars": _usage_int(maybe_payload, "prompt_chars", "promptChars"),
+        "completion_chars": _usage_int(maybe_payload, "completion_chars", "completionChars"),
+    }
+
+
 def _get_cognitive_runtime_receipt_deps() -> tuple[Any, Any]:
     from polaris.cells.factory.cognitive_runtime.public import (
         RecordRuntimeReceiptCommandV1,
@@ -603,7 +657,25 @@ class LLMInvoker:
         )
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
-        completion_tokens = len(response_text) // 2
+        provider_usage = _normalize_provider_usage(getattr(response, "usage", None)) or _normalize_provider_usage(
+            raw_payload.get("usage")
+        )
+        estimated_completion_tokens = len(response_text) // 2
+        event_prompt_tokens = int(provider_usage["prompt_tokens"]) if provider_usage else prompt_tokens
+        completion_tokens = (
+            int(provider_usage["completion_tokens"])
+            if provider_usage and int(provider_usage["completion_tokens"]) > 0
+            else estimated_completion_tokens
+        )
+        total_token_estimate = (
+            int(provider_usage["total_tokens"])
+            if provider_usage and int(provider_usage["total_tokens"]) > 0
+            else (
+                prepared.context_result.token_estimate + completion_tokens
+                if prepared.context_result
+                else completion_tokens
+            )
+        )
 
         self._store_cache(
             cache=cache,
@@ -616,6 +688,18 @@ class LLMInvoker:
             completion_tokens=completion_tokens,
         )
 
+        event_metadata: dict[str, Any] = {
+            "elapsed_ms": round(elapsed_ms, 2),
+            "cached": False,
+            "source": "llm",
+            "compression_applied": prepared.context_result.compression_applied if prepared.context_result else False,
+            "turn_round": turn_round,
+            "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+        }
+        if provider_usage is not None:
+            event_metadata["usage"] = provider_usage
+            event_metadata["usage_source"] = "provider"
+
         self._emit_call_end_event(
             event_emitter=event_emitter,
             role=role_id,
@@ -624,49 +708,40 @@ class LLMInvoker:
             attempt=attempt,
             model=response_model_name,
             provider=response_provider,
-            prompt_tokens=prompt_tokens,
+            prompt_tokens=event_prompt_tokens,
             completion_tokens=completion_tokens,
             call_id=call_id,
             context_tokens_after=prepared.context_result.token_estimate if prepared.context_result else None,
             compression_strategy=prepared.context_result.compression_strategy if prepared.context_result else None,
             response_content=response_text,
             tool_calls_count=len(native_tool_calls),
-            metadata=_with_context_os_audit(
-                {
-                    "elapsed_ms": round(elapsed_ms, 2),
-                    "cached": False,
-                    "source": "llm",
-                    "compression_applied": prepared.context_result.compression_applied
-                    if prepared.context_result
-                    else False,
-                    "turn_round": turn_round,
-                    "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
-                },
-                prepared,
-            ),
+            metadata=_with_context_os_audit(event_metadata, prepared),
         )
+
+        response_metadata: dict[str, Any] = {
+            "model": response_model_name,
+            "provider": response_provider,
+            "native_tool_calls_count": len(native_tool_calls),
+            "elapsed_ms": round(elapsed_ms, 2),
+            "run_id": run_id,
+            "workspace": self.workspace,
+            "attempt": attempt,
+            "turn_round": turn_round,
+            # SSOT Fix: Pass context token count for context panel display
+            "context_tokens": int(prepared.context_result.token_estimate) if prepared.context_result else 0,
+            "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
+        }
+        if provider_usage is not None:
+            response_metadata["usage"] = provider_usage
+            response_metadata["usage_source"] = "provider"
 
         return LLMResponse(
             content=response_text,
-            token_estimate=prepared.context_result.token_estimate + completion_tokens
-            if prepared.context_result
-            else completion_tokens,
+            token_estimate=total_token_estimate,
             tool_calls=native_tool_calls,
             tool_call_provider=native_tool_provider,
             metadata=_with_context_os_audit(
-                {
-                    "model": response_model_name,
-                    "provider": response_provider,
-                    "native_tool_calls_count": len(native_tool_calls),
-                    "elapsed_ms": round(elapsed_ms, 2),
-                    "run_id": run_id,
-                    "workspace": self.workspace,
-                    "attempt": attempt,
-                    "turn_round": turn_round,
-                    # SSOT Fix: Pass context token count for context panel display
-                    "context_tokens": int(prepared.context_result.token_estimate) if prepared.context_result else 0,
-                    "context_snapshot_ref": self._extract_context_snapshot_ref(active_request),
-                },
+                response_metadata,
                 prepared,
             ),
         )

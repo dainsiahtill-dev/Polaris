@@ -737,6 +737,34 @@ def test_scan_skips_global_tsc_when_package_declares_uninstalled_typescript(tmp_
     assert errors == []
 
 
+def test_scan_skips_global_tsc_when_node_resolution_project_declares_uninstalled_typescript(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from polaris.kernelone.quality import artifact_quality as aq
+
+    (tmp_path / "package.json").write_text(
+        '{"devDependencies":{"typescript":"^5.4.0"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        '{"compilerOptions":{"moduleResolution":"node","skipLibCheck":true},"include":["src/**/*.ts"]}\n',
+        encoding="utf-8",
+    )
+    target = tmp_path / "src" / "main.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("export const ok = true;\n", encoding="utf-8")
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("global tsc must not run when project declares an uninstalled TypeScript dependency")
+
+    monkeypatch.setattr(aq.shutil, "which", lambda name: "tsc" if name == "tsc" else None)
+    monkeypatch.setattr(aq.subprocess, "run", fail_if_called)
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/main.ts"])
+
+    assert errors == []
+
+
 def test_scan_detects_html_typescript_module_script(tmp_path: Path) -> None:
     target = tmp_path / "index.html"
     target.write_text(

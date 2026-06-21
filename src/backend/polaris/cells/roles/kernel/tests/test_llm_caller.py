@@ -19,8 +19,8 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 if TYPE_CHECKING:
-    from polaris.cells.roles.profile.public.contracts import RoleProfile
-    from polaris.kernelone.context.contracts import ContextRequest
+    from polaris.cells.roles.profile.public.service import RoleProfile
+    from polaris.kernelone.context.contracts import TurnEngineContextRequest as ContextRequest
 
 import pytest
 from polaris.cells.roles.kernel.internal.llm_caller import (
@@ -1386,6 +1386,87 @@ class TestLifecycleAndCacheGuards:
 
         assert any(event["type"] == "complete" for event in events)
         assert captured["prompt_tokens"] == 123
+
+    @pytest.mark.asyncio
+    async def test_invoker_stream_call_end_prefers_provider_usage(self, monkeypatch) -> None:
+        invoker = LLMInvoker(workspace="C:/workspace")
+        profile = MockProfile(role_id="director", model="gpt-5", provider_id="openai")
+        captured: dict[str, Any] = {}
+
+        async def _prepare_llm_request(self, **_kwargs):
+            return SimpleNamespace(
+                context_result=SimpleNamespace(
+                    token_estimate=123,
+                    compression_strategy="none",
+                    compression_applied=False,
+                ),
+                messages=[{"role": "user", "content": "hello"}],
+                native_tool_mode="disabled",
+                response_format_mode="plain_text",
+                native_tool_schemas=[],
+                ai_request=SimpleNamespace(),
+            )
+
+        class _FakeExecutor:
+            async def invoke_stream(self, _request):
+                yield {"type": "chunk", "content": "hello"}
+                yield {
+                    "type": "complete",
+                    "content": "",
+                    "metadata": {
+                        "usage": {
+                            "input_tokens": 321,
+                            "output_tokens": 45,
+                            "total_tokens": 366,
+                        }
+                    },
+                }
+
+        def _normalize_stream_chunk(chunk, **_kwargs):
+            return SimpleNamespace(
+                event_type=chunk["type"],
+                content=chunk.get("content", ""),
+                metadata=dict(chunk.get("metadata", {})),
+                error="",
+                tool_name="",
+                tool_args={},
+                tool_call_id="",
+                tool_result={},
+            )
+
+        def _capture_call_end(**kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.llm_caller.caller.LLMCaller._prepare_llm_request",
+            _prepare_llm_request,
+        )
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.llm_caller.stream_engine.normalize_stream_chunk",
+            _normalize_stream_chunk,
+        )
+        monkeypatch.setattr(LLMInvoker, "_get_executor", lambda _self: _FakeExecutor())
+        monkeypatch.setattr(LLMInvoker, "_emit_call_end_event", lambda _self, **kwargs: _capture_call_end(**kwargs))
+
+        events = []
+        async for event in invoker.call_stream(
+            profile=cast("RoleProfile", profile),
+            system_prompt="system prompt",
+            context=cast("ContextRequest", SimpleNamespace(task_id=None)),
+            temperature=0.2,
+            max_tokens=64,
+        ):
+            events.append(event)
+
+        context_metadata = next(event for event in events if event["type"] == "context_metadata")
+        assert context_metadata["usage_source"] == "provider"
+        assert context_metadata["usage"]["prompt_tokens"] == 321
+        assert context_metadata["usage"]["completion_tokens"] == 45
+        assert context_metadata["usage"]["total_tokens"] == 366
+        assert captured["prompt_tokens"] == 321
+        assert captured["completion_tokens"] == 45
+        assert captured["metadata"]["usage_source"] == "provider"
+        assert captured["metadata"]["usage"]["total_tokens"] == 366
 
     @pytest.mark.asyncio
     async def test_invoker_stream_debug_event_uses_prepared_request_payload(self, monkeypatch) -> None:

@@ -69,6 +69,8 @@ export interface ContextOSEvent {
   promptHash: string | null;
   /** Correlates with the turn transaction this call belongs to. */
   turnId: string | null;
+  /** Correlates start/end/preview events that belong to the same provider call. */
+  callId: string | null;
   /** 是否为上下文装配 / 投影事件（按事件名/消息识别 context.build / prompt_context / projection）。 */
   isProjection: boolean;
   /** 是否为一次离散 LLM 调用（llm_completed / llm_failed 或旧版 invoke_done / invoke_error）。 */
@@ -90,6 +92,15 @@ export interface ModeAggregate {
 export interface ActorAggregate {
   totalTokens: number;
   calls: number;
+  events: number;
+}
+
+export interface RoleAggregate {
+  totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  calls: number;
+  usageCalls: number;
   events: number;
 }
 
@@ -143,6 +154,8 @@ export interface ContextOSTelemetry {
   lastEventEpoch: number | null;
   byMode: Record<string, ModeAggregate>;
   byActor: Record<string, ActorAggregate>;
+  /** Full-stream per-role aggregate. Unlike `events`, this is not truncated to MAX_EVENTS. */
+  byRole: Record<string, RoleAggregate>;
   /**
    * Phase 3+：按 worker_id 聚合的实时统计。
    * 无任何事件携带 worker_id 时为空对象（hasWorkers=false），UI 据实降级。
@@ -173,6 +186,7 @@ export const EMPTY_TELEMETRY: ContextOSTelemetry = {
   lastEventEpoch: null,
   byMode: {},
   byActor: {},
+  byRole: {},
   byWorker: {},
   hasWorkers: false,
 };
@@ -182,6 +196,15 @@ const MAX_EVENTS = 120;
 
 /** WS 各流的环形缓冲上限（与 useRuntime store 保持一致，用于判定 windowed）。 */
 const STREAM_CAPS = { llm: 180, execution: 100, process: 240 } as const;
+
+/** 角色 id → 观测 actor 的匹配别名（用于把真实事件归并到 5 个角色卡）。 */
+export const ACTOR_ROLE_ALIASES: Record<string, string[]> = {
+  pm: ['pm'],
+  architect: ['architect'],
+  chief_engineer: ['chief', 'engineer'],
+  director: ['director'],
+  qa: ['qa', 'reviewer'],
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -387,14 +410,34 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const contextSnapshotRef = nonEmptyString(meta['contextSnapshotRef']) || nonEmptyString(meta['context_snapshot_ref']);
   const promptHash = nonEmptyString(meta['promptHash']) || nonEmptyString(meta['prompt_hash']);
   const turnId = nonEmptyString(meta['turnId']) || nonEmptyString(meta['turn_id']);
+  const callId = nonEmptyString(meta['callId']) || nonEmptyString(meta['call_id']);
   // Phase 3+：多 worker Director / 并发 LLM 调用的 worker 归属（meta.worker_id / meta.workerId）。
   // 后端未发时一律 null，绝不冒充。
   const workerId = nonEmptyString(meta['worker_id']) || nonEmptyString(meta['workerId']) || null;
 
   // 真实 per-call 用量（来自 journal `llm` 通道 raw.data，经 parseLlmStreamLine 注入 meta）。
   // 兼容 snake_case（runtime_events 通道可能用 prompt_tokens/completion_tokens/total_tokens）。
-  const usagePromptTokens = toFiniteOrNull(meta['promptTokens']) ?? toFiniteOrNull(meta['prompt_tokens']) ?? 0;
-  const usageCompletionTokens = toFiniteOrNull(meta['completionTokens']) ?? toFiniteOrNull(meta['completion_tokens']) ?? 0;
+  const nestedUsage = isRecord(meta['usage']) ? meta['usage'] : {};
+  const usagePromptTokens =
+    toFiniteOrNull(meta['promptTokens']) ??
+    toFiniteOrNull(meta['prompt_tokens']) ??
+    toFiniteOrNull(meta['inputTokens']) ??
+    toFiniteOrNull(meta['input_tokens']) ??
+    toFiniteOrNull(nestedUsage['promptTokens']) ??
+    toFiniteOrNull(nestedUsage['prompt_tokens']) ??
+    toFiniteOrNull(nestedUsage['inputTokens']) ??
+    toFiniteOrNull(nestedUsage['input_tokens']) ??
+    0;
+  const usageCompletionTokens =
+    toFiniteOrNull(meta['completionTokens']) ??
+    toFiniteOrNull(meta['completion_tokens']) ??
+    toFiniteOrNull(meta['outputTokens']) ??
+    toFiniteOrNull(meta['output_tokens']) ??
+    toFiniteOrNull(nestedUsage['completionTokens']) ??
+    toFiniteOrNull(nestedUsage['completion_tokens']) ??
+    toFiniteOrNull(nestedUsage['outputTokens']) ??
+    toFiniteOrNull(nestedUsage['output_tokens']) ??
+    0;
   const usageEvent = streamEvent === 'invoke_done' ||
     streamEvent === 'invoke_error' ||
     streamEvent === 'llm_completed' ||
@@ -410,7 +453,13 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     streamEvent === 'llm_call_start' ||
     streamEvent === 'call_start' ||
     streamEvent === 'llm_waiting';
-  const usageAliasTotal = toFiniteOrNull(meta['totalTokens']) ?? (usageEvent ? toFiniteOrNull(meta['total_tokens']) : null);
+  const usageAliasTotal =
+    toFiniteOrNull(meta['totalTokens']) ??
+    (usageEvent
+      ? toFiniteOrNull(meta['total_tokens']) ??
+        toFiniteOrNull(nestedUsage['totalTokens']) ??
+        toFiniteOrNull(nestedUsage['total_tokens'])
+      : null);
   const usageTotalTokens = usageAliasTotal ?? (usagePromptTokens + usageCompletionTokens);
   const hasUsage = usageTotalTokens > 0 && !nonFinalUsageEvent && (usageEvent || usagePromptTokens > 0 || usageAliasTotal !== null);
   const accountedPromptTokens = hasUsage ? usagePromptTokens : 0;
@@ -476,6 +525,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     contextSnapshotRef: contextSnapshotRef || null,
     promptHash: promptHash || null,
     turnId: turnId || null,
+    callId: callId || null,
     workerId,
     isProjection,
     isCall,
@@ -484,7 +534,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
 }
 
 function eventDedupeKey(event: ContextOSEvent): string {
-  const stableRef = event.contextSnapshotRef || event.promptHash || event.turnId || '';
+  const stableRef = event.callId || event.contextSnapshotRef || event.promptHash || event.turnId || '';
   if (stableRef && (event.isCall || event.hasUsage)) {
     return [
       'llm-call',
@@ -545,6 +595,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
   let latencyCount = 0;
   const byMode: Record<string, ModeAggregate> = {};
   const byActor: Record<string, ActorAggregate> = {};
+  const byRole: Record<string, RoleAggregate> = {};
   const byWorker: Record<string, WorkerAggregate> = {};
   let hasWorkers = false;
 
@@ -578,6 +629,25 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
       actorAgg.calls += 1;
     }
     byActor[actorKey] = actorAgg;
+
+    for (const roleId of Object.keys(ACTOR_ROLE_ALIASES)) {
+      if (!eventMatchesRole(event, roleId)) continue;
+      const roleAgg = byRole[roleId] ?? {
+        totalTokens: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        calls: 0,
+        usageCalls: 0,
+        events: 0,
+      };
+      roleAgg.events += 1;
+      roleAgg.totalTokens += event.totalTokens;
+      roleAgg.promptTokens += event.promptTokens;
+      roleAgg.completionTokens += event.completionTokens;
+      if (event.isCall || event.hasUsage) roleAgg.calls += 1;
+      if (event.hasUsage) roleAgg.usageCalls += 1;
+      byRole[roleId] = roleAgg;
+    }
 
     // Phase 3 多 worker 聚合：仅对携带 worker_id 的事件计入；后端未发时整字段为空（hasWorkers=false）。
     if (event.workerId) {
@@ -641,6 +711,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
     lastEventEpoch: lastEventEpoch && lastEventEpoch > 0 ? lastEventEpoch : null,
     byMode,
     byActor,
+    byRole,
     byWorker,
     hasWorkers,
   };
@@ -692,15 +763,6 @@ export function buildTelemetryFromStream(
   return aggregateEvents(events, windowed);
 }
 
-/** 角色 id → 观测 actor 的匹配别名（用于把真实事件归并到 5 个角色卡）。 */
-export const ACTOR_ROLE_ALIASES: Record<string, string[]> = {
-  pm: ['pm'],
-  architect: ['architect'],
-  chief_engineer: ['chief', 'engineer'],
-  director: ['director'],
-  qa: ['qa', 'reviewer'],
-};
-
 function eventMatchesRole(event: ContextOSEvent, roleId: string): boolean {
   const aliases = ACTOR_ROLE_ALIASES[roleId] ?? [roleId];
   const lowered = event.actor.toLowerCase();
@@ -710,17 +772,23 @@ function eventMatchesRole(event: ContextOSEvent, roleId: string): boolean {
 
 /** 汇总某角色在真实遥测里的 token（按 actor 别名匹配，来自 journal `llm` 通道的真实 usage）。 */
 export function telemetryRoleTokens(telemetry: ContextOSTelemetry, roleId: string): number {
+  const aggregate = telemetry.byRole[roleId];
+  if (aggregate) return aggregate.totalTokens;
   return filterEventsForRole(telemetry.events, roleId)
     .reduce((total, event) => total + event.totalTokens, 0);
 }
 
 /** 汇总某角色在真实遥测里的事件数（按 actor 别名匹配）。 */
 export function telemetryRoleEvents(telemetry: ContextOSTelemetry, roleId: string): number {
+  const aggregate = telemetry.byRole[roleId];
+  if (aggregate) return aggregate.events;
   return filterEventsForRole(telemetry.events, roleId).length;
 }
 
 /** 汇总某角色在真实遥测里的离散 LLM 调用次数（按 actor 别名匹配）。 */
 export function telemetryRoleCalls(telemetry: ContextOSTelemetry, roleId: string): number {
+  const aggregate = telemetry.byRole[roleId];
+  if (aggregate) return aggregate.calls;
   return filterEventsForRole(telemetry.events, roleId)
     .filter((event) => event.isCall || event.hasUsage)
     .length;

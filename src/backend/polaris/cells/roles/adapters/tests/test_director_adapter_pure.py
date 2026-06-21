@@ -6130,6 +6130,63 @@ class TestQualityRepairMissingTargetContract:
         }
 
     @pytest.mark.asyncio
+    async def test_quality_repair_timeout_is_bounded_below_director_call_timeout(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self.timeout_seconds = 0.0
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, stage_label
+                self.timeout_seconds = timeout_seconds
+                return {"content": ""}
+
+        adapter = _Adapter()
+
+        await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["package.json"]},
+            target_task_id="PM-0001-1",
+            run_id="run-quality-repair-timeout",
+            context={},
+            original_message="Repair package manifest.",
+            llm_call_timeout=900,
+            artifact_quality_errors=["Artifact quality scan failed: npm placeholder test script in package.json"],
+            changed_files=["package.json"],
+        )
+
+        assert adapter.timeout_seconds == 180.0
+
+    @pytest.mark.asyncio
     async def test_existing_python_runtime_smoke_failure_repair_forces_write_context(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
@@ -6707,6 +6764,28 @@ class TestQualityRepairMissingTargetContract:
         assert "src/data/seeddata.ts" in message
         assert "src/engine/gardenengine.ts" in message
         assert "Raw relative specifier omitted for path safety" in message
+
+    def test_typecheck_repair_prompt_omits_external_dependency_parent_paths(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="Create TypeScript simulation modules.",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: TypeScript project typecheck failed: "
+                "../../../../node_modules/@types/three/src/nodes/accessors/ReferenceNode.d.ts(31,26): "
+                "error TS1139: Type parameter declaration expected."
+            ],
+            changed_files=["package.json", "src/engine/simulation.ts"],
+            missing_target_files=[],
+            repair_target_files=["package.json"],
+        )
+
+        assert "../" not in message
+        assert "node_modules" not in message
+        assert "external dependency diagnostic TS1139" in message
+        assert "Path omitted for workspace safety" in message
 
     def test_repair_message_without_missing_block_when_none(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

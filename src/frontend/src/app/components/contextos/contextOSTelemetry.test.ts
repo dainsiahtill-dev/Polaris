@@ -6,6 +6,7 @@ import {
   filterEventsForRole,
   telemetryRoleTokens,
   telemetryRoleEvents,
+  telemetryRoleCalls,
   telemetryRoleHasUsageChannel,
   EMPTY_TELEMETRY,
 } from './contextOSTelemetry';
@@ -227,6 +228,7 @@ describe('buildTelemetryFromStream', () => {
         prompt_tokens: 2732,
         completion_tokens: 1954,
         context_tokens_after: 2732,
+        call_id: 'call-pm-1',
         metadata: {
           elapsed_ms: 19177.76,
           context_snapshot_ref: 'e3db3551d74e5741fd664b7b',
@@ -244,6 +246,36 @@ describe('buildTelemetryFromStream', () => {
     expect(telemetryRoleTokens(t, 'pm')).toBe(4686);
     expect(telemetryRoleHasUsageChannel(t, 'pm')).toBe(true);
     expect(t.events[0].contextSnapshotRef).toBe('e3db3551d74e5741fd664b7b');
+    expect(t.events[0].callId).toBe('call-pm-1');
+  });
+
+  it('recovers provider-native usage aliases from nested usage payloads', () => {
+    const directorCall = logEntry({
+      id: 'rt-director-usage-alias',
+      timestamp: '2026-06-21T22:18:12Z',
+      level: 'success',
+      source: 'director',
+      message: 'llm_call_end',
+      meta: {
+        channel: 'runtime_events',
+        event_type: 'llm_call_end',
+        role: 'director',
+        usage: {
+          input_tokens: 3210,
+          output_tokens: 456,
+          total_tokens: 3666,
+        },
+        context_tokens_after: 3210,
+      },
+    });
+    const t = buildTelemetryFromStream([], [directorCall], []);
+
+    expect(t.totalCalls).toBe(1);
+    expect(t.promptTokens).toBe(3210);
+    expect(t.completionTokens).toBe(456);
+    expect(t.totalTokens).toBe(3666);
+    expect(telemetryRoleTokens(t, 'director')).toBe(3666);
+    expect(telemetryRoleHasUsageChannel(t, 'director')).toBe(true);
   });
 
   it('does not count content_preview completion tokens as final provider usage', () => {
@@ -285,6 +317,33 @@ describe('buildTelemetryFromStream', () => {
     expect(t.completionTokens).toBe(1954);
     expect(t.totalTokens).toBe(4686);
     expect(telemetryRoleTokens(t, 'pm')).toBe(4686);
+  });
+
+  it('does not count llm_call_start prompt tokens as final provider usage while preserving context size', () => {
+    const start = logEntry({
+      id: 'rt-pm-start',
+      timestamp: '2026-06-21T22:16:10Z',
+      level: 'info',
+      source: 'pm',
+      message: 'llm_call_start',
+      meta: {
+        channel: 'runtime_events',
+        event_type: 'llm_call_start',
+        role: 'pm',
+        prompt_tokens: 2732,
+        context_tokens_before: 2732,
+        call_id: 'call-start-1',
+      },
+    });
+    const t = buildTelemetryFromStream([], [start], []);
+
+    expect(t.totalCalls).toBe(0);
+    expect(t.promptTokens).toBe(0);
+    expect(t.completionTokens).toBe(0);
+    expect(t.totalTokens).toBe(0);
+    expect(t.contextTokensLatest).toBe(2732);
+    expect(t.events[0].hasUsage).toBe(false);
+    expect(t.events[0].callId).toBe('call-start-1');
   });
 
   it('recovers structured signals (items_count / snapshot) from runtime_events meta', () => {
@@ -349,6 +408,7 @@ describe('buildTelemetryFromStream', () => {
         contextSnapshotRef: 'a1b2c3d4e5f6a7b8c9d0e1f2',
         promptHash: 'f2e1d0c9b8a7',
         turnId: 'turn-42',
+        callId: 'call-42',
       },
     });
     const t = buildTelemetryFromStream([entry], [], []);
@@ -357,9 +417,10 @@ describe('buildTelemetryFromStream', () => {
     expect(event.contextSnapshotRef).toBe('a1b2c3d4e5f6a7b8c9d0e1f2');
     expect(event.promptHash).toBe('f2e1d0c9b8a7');
     expect(event.turnId).toBe('turn-42');
+    expect(event.callId).toBe('call-42');
   });
 
-  it('accepts snake_case meta aliases for context snapshot fields', () => {
+  it('accepts snake_case meta aliases for context snapshot fields and call id', () => {
     const entry = logEntry({
       id: 'llm-ctx-2',
       timestamp: '2026-06-19T10:00:01Z',
@@ -373,6 +434,7 @@ describe('buildTelemetryFromStream', () => {
         context_snapshot_ref: 'abc123def456',
         prompt_hash: 'hash789',
         turn_id: 'turn-99',
+        call_id: 'call-99',
       },
     });
     const t = buildTelemetryFromStream([entry], [], []);
@@ -380,9 +442,10 @@ describe('buildTelemetryFromStream', () => {
     expect(event.contextSnapshotRef).toBe('abc123def456');
     expect(event.promptHash).toBe('hash789');
     expect(event.turnId).toBe('turn-99');
+    expect(event.callId).toBe('call-99');
   });
 
-  it('defaults contextSnapshotRef, promptHash, and turnId to null when absent', () => {
+  it('defaults contextSnapshotRef, promptHash, turnId, and callId to null when absent', () => {
     const entry = logEntry({
       id: 'llm-plain',
       timestamp: '2026-06-19T10:00:02Z',
@@ -402,6 +465,35 @@ describe('buildTelemetryFromStream', () => {
     expect(event.contextSnapshotRef).toBeNull();
     expect(event.promptHash).toBeNull();
     expect(event.turnId).toBeNull();
+    expect(event.callId).toBeNull();
+  });
+
+  it('uses callId as the strongest dedupe key for repeated completion envelopes', () => {
+    const repeatedA = logEntry({
+      id: 'rt-call-a',
+      timestamp: '2026-06-21T22:17:00Z',
+      level: 'success',
+      source: 'pm',
+      message: 'llm_call_end',
+      meta: {
+        channel: 'runtime_events',
+        event_type: 'llm_call_end',
+        role: 'pm',
+        call_id: 'stable-call-1',
+        prompt_tokens: 1000,
+        completion_tokens: 250,
+      },
+    });
+    const repeatedB = logEntry({
+      ...repeatedA,
+      id: 'rt-call-b',
+      timestamp: '2026-06-21T22:17:01Z',
+    });
+    const t = buildTelemetryFromStream([], [repeatedA, repeatedB], []);
+
+    expect(t.events).toHaveLength(1);
+    expect(t.totalCalls).toBe(1);
+    expect(t.totalTokens).toBe(1250);
   });
 
   it('classifies each event into the right category', () => {
@@ -506,6 +598,34 @@ describe('telemetry role helpers', () => {
   it('reports REAL per-role tokens from the journal llm usage channel', () => {
     expect(telemetryRoleTokens(t, 'pm')).toBe(3386);
     expect(telemetryRoleTokens(t, 'director')).toBe(0); // its call failed, no usage
+  });
+
+  it('keeps per-role usage aggregates complete even when display events are truncated', () => {
+    const manyCalls: LogEntry[] = Array.from({ length: 130 }, (_, index) =>
+      logEntry({
+        id: `pm-usage-${index}`,
+        timestamp: `2026-06-15T10:${String(Math.floor(index / 60)).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}Z`,
+        level: 'success',
+        source: 'PM',
+        message: 'llm response completed',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'PM',
+          callId: `pm-call-${index}`,
+          promptTokens: 10,
+          completionTokens: 1,
+          totalTokens: 11,
+        },
+      }),
+    );
+    const t = buildTelemetryFromStream(manyCalls, [], []);
+
+    expect(t.events).toHaveLength(120);
+    expect(t.parsedLines).toBe(130);
+    expect(telemetryRoleEvents(t, 'pm')).toBe(130);
+    expect(telemetryRoleCalls(t, 'pm')).toBe(130);
+    expect(telemetryRoleTokens(t, 'pm')).toBe(1430);
   });
 
   it('reports a usage channel for roles that produced token-bearing calls', () => {

@@ -664,6 +664,8 @@ def test_write_file_plain_js_error_keeps_narrow_edit_suggestion(tmp_path: Path) 
     assert result.get("retryable") is True
     assert result.get("loop_break") is False
     assert "Code syntax validation failed" in result.get("error", "")
+    assert "write_file" in result.get("suggestion", "")
+    assert "complete corrected UTF-8 file body" in result.get("suggestion", "")
     assert "edit_blocks" in result.get("suggestion", "")
     assert "append_to_file" not in result.get("suggestion", "")
 

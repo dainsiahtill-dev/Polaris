@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import { useRuntime } from '../useRuntime';
 import { useRuntimeStore } from '../useRuntimeStore';
 import { TaskStatus } from '@/types/task';
+import { buildTelemetryFromStream, telemetryRoleTokens } from '@/app/components/contextos/contextOSTelemetry';
 
 type RuntimeMessageHandler = (message: unknown) => void;
 
@@ -424,6 +425,56 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(entry?.meta?.durationMs).toBe(71431);
     expect(entry?.details).toContain('71431ms');
     expect(entry?.details).toContain('completion=1454');
+  });
+
+  it('preserves provider-native usage aliases through useRuntime into ContextOS telemetry', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'line',
+      channel: 'llm',
+      text: JSON.stringify({
+        schema_version: 2,
+        channel: 'llm',
+        domain: 'llm',
+        kind: 'state',
+        actor: 'director',
+        raw: {
+          stream_event: 'llm_completed',
+          event_type: 'llm_call_end',
+          role: 'director',
+          data: {
+            model: 'qwen3.6-27b',
+            usage: {
+              input_tokens: 3210,
+              output_tokens: 456,
+              total_tokens: 3666,
+            },
+            context_tokens_after: 4096,
+            call_id: 'provider-usage-1',
+            metadata: {
+              elapsed_ms: 2500,
+              context_snapshot_ref: 'ctx-provider-usage',
+            },
+          },
+        },
+      }),
+    });
+
+    expect(result.current.llmStreamEvents).toHaveLength(1);
+    const entry = result.current.llmStreamEvents[0];
+    expect(entry?.meta?.promptTokens).toBe(3210);
+    expect(entry?.meta?.completionTokens).toBe(456);
+    expect(entry?.meta?.totalTokens).toBe(3666);
+    expect(entry?.meta?.contextTokens).toBe(4096);
+    expect(entry?.meta?.callId).toBe('provider-usage-1');
+
+    const telemetry = buildTelemetryFromStream(result.current.llmStreamEvents, [], []);
+    expect(telemetry.totalTokens).toBe(3666);
+    expect(telemetry.contextTokensLatest).toBe(4096);
+    expect(telemetryRoleTokens(telemetry, 'director')).toBe(3666);
   });
 
   it('uses llm_completed response_content when no separate content preview is emitted', () => {

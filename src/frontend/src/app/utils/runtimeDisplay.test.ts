@@ -13,6 +13,8 @@ describe('runtimeDisplay', () => {
     expect(cleanRuntimeDisplayText('}')).toBeNull();
     expect(cleanRuntimeDisplayText('"updated_at": "2026-05-07T07:16:25Z",')).toBeNull();
     expect(cleanRuntimeDisplayText('[object Object]')).toBeNull();
+    expect(cleanRuntimeDisplayText('args=[object Object]')).toBeNull();
+    expect(cleanRuntimeDisplayText('error: [object Object]')).toBeNull();
   });
 
   it('keeps human-readable runtime labels', () => {

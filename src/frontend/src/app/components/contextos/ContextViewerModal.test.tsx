@@ -267,6 +267,70 @@ describe('ContextViewerModal', () => {
     expect(screen.queryByTestId('contextos-viewer-error')).toBeNull();
     expect(screen.queryByText(/HTTP 404/)).toBeNull();
   });
+
+  it('renders a context-missing empty state for error.code CONTEXT_NOT_FOUND 404', async () => {
+    mockedApiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      text: async () =>
+        JSON.stringify({
+          error: {
+            code: 'CONTEXT_NOT_FOUND',
+            message: 'Context snapshot not found for hash abc',
+          },
+        }),
+      json: async () => ({
+        error: {
+          code: 'CONTEXT_NOT_FOUND',
+          message: 'Context snapshot not found for hash abc',
+        },
+      }),
+    });
+
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+
+    const missing = await waitFor(() => screen.getByTestId('contextos-viewer-context-missing'));
+    expect(missing.textContent).toContain('完整上下文快照不可用');
+    expect(screen.queryByTestId('contextos-viewer-error')).toBeNull();
+    expect(screen.queryByText(/HTTP 404/)).toBeNull();
+  });
+
+  it('renders ErrorState on 403 non-workspace error', async () => {
+    mockedApiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      text: async () =>
+        JSON.stringify({
+          detail: { code: 'PERMISSION_DENIED', message: 'Forbidden' },
+        }),
+      json: async () => ({
+        detail: { code: 'PERMISSION_DENIED', message: 'Forbidden' },
+      }),
+    });
+
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+
+    await waitFor(() => screen.getByTestId('contextos-viewer-error'));
+    expect(screen.getByText(/HTTP 403/)).toBeTruthy();
+    expect(screen.queryByTestId('contextos-viewer-context-missing')).toBeNull();
+  });
+
+  it('renders ErrorState on 500 error', async () => {
+    mockedApiFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: async () => 'internal error',
+      json: async () => {
+        throw new Error('not json');
+      },
+    });
+
+    render(<ContextViewerModal contextSnapshotRef="abc" roleId="pm" onClose={vi.fn()} />);
+
+    await waitFor(() => screen.getByTestId('contextos-viewer-error'));
+    expect(screen.getByText(/HTTP 500/)).toBeTruthy();
+    expect(screen.queryByTestId('contextos-viewer-context-missing')).toBeNull();
+  });
 });
 
 describe('ContextViewerModal accessibility (Phase 3 hardening)', () => {

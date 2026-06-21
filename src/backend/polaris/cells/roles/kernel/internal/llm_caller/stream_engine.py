@@ -39,6 +39,60 @@ def _is_stream_cancel_requested(context: Any) -> bool:
     return bool(getattr(context, "stream_cancelled", False))
 
 
+def _usage_int(payload: dict[str, Any], *keys: str) -> int:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            return max(0, value)
+        if isinstance(value, float) and value.is_integer():
+            return max(0, int(value))
+        if isinstance(value, str) and value.strip():
+            try:
+                return max(0, int(float(value.strip())))
+            except ValueError:
+                continue
+    return 0
+
+
+def _normalize_provider_usage(raw_usage: Any) -> dict[str, Any] | None:
+    if raw_usage is None:
+        return None
+    if hasattr(raw_usage, "to_dict"):
+        maybe_payload = raw_usage.to_dict()
+    elif isinstance(raw_usage, dict):
+        maybe_payload = dict(raw_usage)
+    else:
+        return None
+    if not isinstance(maybe_payload, dict):
+        return None
+
+    prompt_tokens = _usage_int(maybe_payload, "prompt_tokens", "promptTokens", "input_tokens", "inputTokens")
+    completion_tokens = _usage_int(
+        maybe_payload,
+        "completion_tokens",
+        "completionTokens",
+        "output_tokens",
+        "outputTokens",
+    )
+    total_tokens = _usage_int(maybe_payload, "total_tokens", "totalTokens")
+    if total_tokens <= 0:
+        total_tokens = prompt_tokens + completion_tokens
+    if prompt_tokens <= 0 and completion_tokens <= 0 and total_tokens <= 0:
+        return None
+
+    return {
+        "cached_tokens": _usage_int(maybe_payload, "cached_tokens", "cachedTokens"),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "estimated": bool(maybe_payload.get("estimated", False)),
+        "prompt_chars": _usage_int(maybe_payload, "prompt_chars", "promptChars"),
+        "completion_chars": _usage_int(maybe_payload, "completion_chars", "completionChars"),
+    }
+
+
 class StreamEngine:
     """Executes LLM streaming calls with retry, dedupe, and SLO tracking."""
 
@@ -126,6 +180,7 @@ class StreamEngine:
         active_tool_protocol = "none"
         prepared_context_os_audit = getattr(prepared, "context_os_audit", None)
         context_os_audit = dict(prepared_context_os_audit) if isinstance(prepared_context_os_audit, dict) else {}
+        provider_usage: dict[str, Any] | None = None
 
         def _with_context_os_audit(payload: dict[str, Any]) -> dict[str, Any]:
             result = dict(payload)
@@ -423,6 +478,13 @@ class StreamEngine:
 
                     if event_type == "complete":
                         elapsed_ms = (time.perf_counter() - start_time) * 1000
+                        usage_from_metadata = _normalize_provider_usage(
+                            metadata.get("usage")
+                        ) or _normalize_provider_usage(metadata)
+                        if usage_from_metadata is not None:
+                            provider_usage = usage_from_metadata
+                            metadata.setdefault("usage", usage_from_metadata)
+                            metadata.setdefault("usage_source", "provider")
                         metadata.update(_current_slo(elapsed_ms))
                         yield_started_at = time.perf_counter()
                         yield {"type": "complete", "content": content, "metadata": metadata, "iteration": turn_round}
@@ -521,27 +583,53 @@ class StreamEngine:
         # and normalize response_content to "" for tool-only responses.
         _has_tool_calls = len(emitted_tool_signatures) > 0
         _effective_content = total_content if total_content.strip() else ""
+        estimated_completion_tokens = 0
         if _effective_content:
-            completion_tokens = len(_effective_content) // 2
+            estimated_completion_tokens = len(_effective_content) // 2
         elif _has_tool_calls:
             # Each tool call consumes ~50 tokens on average (name + args).
             # This is an estimate for telemetry purposes only.
-            completion_tokens = len(emitted_tool_signatures) * 50
-        else:
-            completion_tokens = 0
+            estimated_completion_tokens = len(emitted_tool_signatures) * 50
         prompt_tokens_val = int(context_result.token_estimate) if context_result else 0
-        total_tokens = prompt_tokens_val + completion_tokens
+        if provider_usage is not None:
+            provider_prompt_tokens = int(provider_usage["prompt_tokens"])
+            provider_completion_tokens = int(provider_usage["completion_tokens"])
+            provider_total_tokens = int(provider_usage["total_tokens"])
+            prompt_tokens_val = provider_prompt_tokens if provider_prompt_tokens > 0 else prompt_tokens_val
+            completion_tokens = (
+                provider_completion_tokens if provider_completion_tokens > 0 else estimated_completion_tokens
+            )
+            total_tokens = provider_total_tokens if provider_total_tokens > 0 else prompt_tokens_val + completion_tokens
+        else:
+            completion_tokens = estimated_completion_tokens
+            total_tokens = prompt_tokens_val + completion_tokens
+        usage_payload = provider_usage or {
+            "prompt_tokens": prompt_tokens_val,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+        }
         yield {
             "type": "context_metadata",
             "context_tokens": prompt_tokens_val,
             "model_context_window": int(context_result.token_estimate) if context_result else 0,
             "context_os_audit": dict(context_os_audit),
-            "usage": {
-                "prompt_tokens": prompt_tokens_val,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-            },
+            "usage": usage_payload,
+            "usage_source": "provider" if provider_usage is not None else "estimate",
         }
+
+        call_end_metadata: dict[str, Any] = {
+            "stream": True,
+            "native_tool_mode": active_native_tool_mode,
+            "tool_protocol": active_tool_protocol,
+            "native_tool_calling_fallback": False,
+            "compression_applied": context_result.compression_applied if context_result else False,
+            "turn_round": turn_round,
+            "context_snapshot_ref": _extract_context_snapshot_ref(active_request),
+            **_current_slo(elapsed_ms),
+        }
+        if provider_usage is not None:
+            call_end_metadata["usage"] = provider_usage
+            call_end_metadata["usage_source"] = "provider"
 
         self._emit_call_end(
             event_emitter=event_emitter,
@@ -557,18 +645,7 @@ class StreamEngine:
             compression_strategy=context_result.compression_strategy if context_result else None,
             response_content=_effective_content,
             tool_calls_count=len(emitted_tool_signatures),
-            metadata=_with_context_os_audit(
-                {
-                    "stream": True,
-                    "native_tool_mode": active_native_tool_mode,
-                    "tool_protocol": active_tool_protocol,
-                    "native_tool_calling_fallback": False,
-                    "compression_applied": context_result.compression_applied if context_result else False,
-                    "turn_round": turn_round,
-                    "context_snapshot_ref": _extract_context_snapshot_ref(active_request),
-                    **_current_slo(elapsed_ms),
-                }
-            ),
+            metadata=_with_context_os_audit(call_end_metadata),
         )
 
 

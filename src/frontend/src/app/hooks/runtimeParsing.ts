@@ -40,6 +40,34 @@ function safeJsonStringify(value: unknown): string {
   return typeof encoded === 'string' ? encoded : '';
 }
 
+const DISPLAY_TEXT_KEYS = [
+  'text',
+  'message',
+  'summary',
+  'title',
+  'detail',
+  'description',
+  'error_message',
+  'error',
+] as const;
+
+function displayScalarFromRecord(value: Record<string, unknown>, depth = 0): string {
+  for (const key of DISPLAY_TEXT_KEYS) {
+    const candidate = value[key];
+    if (typeof candidate === 'string') {
+      const text = candidate.trim();
+      if (text) return text;
+    }
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) return String(candidate);
+    if (typeof candidate === 'boolean' || typeof candidate === 'bigint') return String(candidate);
+    if (depth < 1 && isRecord(candidate)) {
+      const nested = displayScalarFromRecord(candidate, depth + 1);
+      if (nested) return nested;
+    }
+  }
+  return '';
+}
+
 export function toDisplayString(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value.trim();
@@ -47,6 +75,8 @@ export function toDisplayString(value: unknown): string {
   if (typeof value === 'boolean' || typeof value === 'bigint') return String(value);
   if (value instanceof Error) return (value.message || value.name || '').trim();
   if (typeof value === 'object') {
+    const scalar = displayScalarFromRecord(value as Record<string, unknown>);
+    if (scalar) return scalar;
     try {
       return safeJsonStringify(value).trim();
     } catch {

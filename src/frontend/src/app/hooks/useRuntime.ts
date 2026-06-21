@@ -615,6 +615,18 @@ function firstRecord(...candidates: unknown[]): Record<string, unknown> | null {
   return null;
 }
 
+function positiveNumber(...candidates: unknown[]): number {
+  for (const candidate of candidates) {
+    const value = typeof candidate === 'number'
+      ? candidate
+      : typeof candidate === 'string' && candidate.trim()
+        ? Number(candidate)
+        : NaN;
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return 0;
+}
+
 function extractToolPayload(
   rawObj: Record<string, unknown> | null,
   eventData: Record<string, unknown> | null,
@@ -737,12 +749,55 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     // 真实 per-call 用量与时延：journal `llm` 通道在 raw.data 携带 prompt/completion tokens、
     // context_tokens_after，以及 raw.data.metadata.elapsed_ms（真实时延）。这些是实时遥测的核心信号。
     const dataMetadata = firstRecord(eventData?.metadata, rawObj?.metadata, parsed.metadata);
-    const dataPromptTokens = Number(eventData?.prompt_tokens ?? dataMetadata?.prompt_tokens ?? 0);
-    const dataCompletionTokens = Number(eventData?.completion_tokens ?? dataMetadata?.completion_tokens ?? 0);
-    const dataContextTokens = Number(eventData?.context_tokens_after ?? dataMetadata?.context_tokens_after ?? 0);
+    const dataUsage = firstRecord(eventData?.usage, dataMetadata?.usage, rawObj?.usage, parsed.usage);
+    const dataPromptTokens = positiveNumber(
+      eventData?.prompt_tokens,
+      eventData?.promptTokens,
+      eventData?.input_tokens,
+      eventData?.inputTokens,
+      dataUsage?.prompt_tokens,
+      dataUsage?.promptTokens,
+      dataUsage?.input_tokens,
+      dataUsage?.inputTokens,
+      dataMetadata?.prompt_tokens,
+      dataMetadata?.promptTokens,
+      dataMetadata?.input_tokens,
+      dataMetadata?.inputTokens,
+    );
+    const dataCompletionTokens = positiveNumber(
+      eventData?.completion_tokens,
+      eventData?.completionTokens,
+      eventData?.output_tokens,
+      eventData?.outputTokens,
+      dataUsage?.completion_tokens,
+      dataUsage?.completionTokens,
+      dataUsage?.output_tokens,
+      dataUsage?.outputTokens,
+      dataMetadata?.completion_tokens,
+      dataMetadata?.completionTokens,
+      dataMetadata?.output_tokens,
+      dataMetadata?.outputTokens,
+    );
+    const dataTotalTokens = positiveNumber(
+      eventData?.total_tokens,
+      eventData?.totalTokens,
+      dataUsage?.total_tokens,
+      dataUsage?.totalTokens,
+      dataMetadata?.total_tokens,
+      dataMetadata?.totalTokens,
+    );
+    const dataContextTokens = positiveNumber(
+      eventData?.context_tokens_after,
+      eventData?.contextTokens,
+      eventData?.context_tokens_before,
+      dataMetadata?.context_tokens_after,
+      dataMetadata?.contextTokens,
+      dataMetadata?.context_tokens_before,
+    );
     const dataContextSnapshotRef = Parsing.firstDisplayString(eventData?.context_snapshot_ref, dataMetadata?.context_snapshot_ref);
     const dataPromptHash = Parsing.firstDisplayString(eventData?.prompt_hash, dataMetadata?.prompt_hash);
     const dataTurnId = Parsing.firstDisplayString(eventData?.turn_id, dataMetadata?.turn_id);
+    const dataCallId = Parsing.firstDisplayString(eventData?.call_id, eventData?.callId, dataMetadata?.call_id, dataMetadata?.callId);
     const dataElapsedMs = dataMetadata ? Number(dataMetadata.elapsed_ms ?? 0) : 0;
     const dataDurationMs = dataDuration && Number.isFinite(Number(dataDuration)) && Number(dataDuration) > 0
       ? Number(dataDuration)
@@ -750,7 +805,7 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     const safePromptTokens = Number.isFinite(dataPromptTokens) && dataPromptTokens > 0 ? dataPromptTokens : 0;
     const safeCompletionTokens = Number.isFinite(dataCompletionTokens) && dataCompletionTokens > 0 ? dataCompletionTokens : 0;
     const safeContextTokens = Number.isFinite(dataContextTokens) && dataContextTokens > 0 ? dataContextTokens : 0;
-    const usageTotalTokens = safePromptTokens + safeCompletionTokens;
+    const usageTotalTokens = dataTotalTokens > 0 ? dataTotalTokens : safePromptTokens + safeCompletionTokens;
 
     const normalizedEvent = streamEvent || eventToken;
     const toolPayload = extractToolPayload(rawObj, eventData, parsed);
@@ -899,6 +954,7 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       contextSnapshotRef: dataContextSnapshotRef || undefined,
       promptHash: dataPromptHash || undefined,
       turnId: dataTurnId || undefined,
+      callId: dataCallId || undefined,
     };
 
     const compact = message.replace(/\s+/g, ' ').trim();

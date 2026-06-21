@@ -206,6 +206,54 @@ def _extract_task_id(data: dict[str, Any]) -> str:
     )
 
 
+def _extract_call_id(data: dict[str, Any]) -> str:
+    metadata, extra_fields = _metadata_maps(data)
+    return _coalesce_text(
+        data.get("call_id"),
+        metadata.get("call_id"),
+        extra_fields.get("call_id"),
+    )
+
+
+def _extract_turn_id(data: dict[str, Any]) -> str:
+    metadata, extra_fields = _metadata_maps(data)
+    return _coalesce_text(
+        data.get("turn_id"),
+        metadata.get("turn_id"),
+        extra_fields.get("turn_id"),
+    )
+
+
+def _extract_context_snapshot_ref(data: dict[str, Any]) -> str:
+    metadata, extra_fields = _metadata_maps(data)
+    return _coalesce_text(
+        data.get("context_snapshot_ref"),
+        metadata.get("context_snapshot_ref"),
+        extra_fields.get("context_snapshot_ref"),
+    )
+
+
+def _extract_model(data: dict[str, Any]) -> str:
+    metadata, extra_fields = _metadata_maps(data)
+    return _coalesce_text(
+        data.get("model"),
+        metadata.get("model"),
+        extra_fields.get("model"),
+    )
+
+
+def _extract_provider(data: dict[str, Any]) -> str:
+    metadata, extra_fields = _metadata_maps(data)
+    return _coalesce_text(
+        data.get("provider_id"),
+        data.get("provider"),
+        metadata.get("provider_id"),
+        metadata.get("provider"),
+        extra_fields.get("provider_id"),
+        extra_fields.get("provider"),
+    )
+
+
 def _build_projection_event_type(raw_event_type: str, data: dict[str, Any]) -> str:
     """Build projection event type from raw event type and data.
 
@@ -348,6 +396,21 @@ def _build_refs(event: LLMRealtimeEvent) -> dict[str, Any]:
     iteration = _extract_iteration(event)
     if iteration > 0:
         refs["iteration"] = iteration
+    call_id = _extract_call_id(data)
+    if call_id:
+        refs["call_id"] = call_id
+    turn_id = _extract_turn_id(data)
+    if turn_id:
+        refs["turn_id"] = turn_id
+    context_snapshot_ref = _extract_context_snapshot_ref(data)
+    if context_snapshot_ref:
+        refs["context_snapshot_ref"] = context_snapshot_ref
+    model = _extract_model(data)
+    if model:
+        refs["model"] = model
+    provider = _extract_provider(data)
+    if provider:
+        refs["provider"] = provider
     return refs
 
 

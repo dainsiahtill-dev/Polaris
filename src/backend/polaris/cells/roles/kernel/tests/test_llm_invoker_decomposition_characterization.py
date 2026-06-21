@@ -26,7 +26,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     StructuredLLMResponse,
 )
 from polaris.cells.roles.profile.public.service import RoleProfile
-from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, TaskType
+from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, TaskType, Usage
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -301,6 +301,56 @@ async def test_cache_put_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(rec.end) == 1
     assert rec.end[0]["metadata"]["cached"] is False
     assert rec.end[0]["metadata"]["source"] == "llm"
+
+
+@pytest.mark.asyncio
+async def test_call_end_event_prefers_provider_usage_over_text_estimate(monkeypatch: pytest.MonkeyPatch) -> None:
+    rec = _EventRecorder()
+    rec.install(monkeypatch)
+    profile = _profile()
+    prepared = _prepared(profile)
+    _patch_prepare(monkeypatch, prepared)
+    executor = _ScriptedExecutor(
+        [
+            AIResponse.success(
+                output="short",
+                usage=Usage(
+                    prompt_tokens=123,
+                    completion_tokens=45,
+                    total_tokens=168,
+                    estimated=False,
+                ),
+                model="provider-model",
+                provider_id="provider-a",
+                raw={"model": "provider-model", "provider": "provider-a"},
+            )
+        ]
+    )
+    invoker = LLMInvoker(workspace="ws", enable_cache=False, executor=executor)
+
+    resp = await invoker.call(
+        profile=profile,
+        system_prompt="sys",
+        context=_ctx(None),
+        run_id="run-provider-usage",
+    )
+
+    assert resp.error is None
+    assert resp.token_estimate == 168
+    assert resp.metadata["usage"] == {
+        "cached_tokens": 0,
+        "prompt_tokens": 123,
+        "completion_tokens": 45,
+        "total_tokens": 168,
+        "estimated": False,
+        "prompt_chars": 0,
+        "completion_chars": 0,
+    }
+    assert len(rec.end) == 1
+    assert rec.end[0]["prompt_tokens"] == 123
+    assert rec.end[0]["completion_tokens"] == 45
+    assert rec.end[0]["metadata"]["usage"]["estimated"] is False
+    assert rec.end[0]["metadata"]["usage"]["total_tokens"] == 168
 
 
 # ---------------------------------------------------------------------------

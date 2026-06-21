@@ -386,6 +386,35 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(director?.internalContext.windowOccupancyLabel).toBe('平均提示 (估算)');
   });
 
+  it('uses real context_tokens_after for global window occupancy before falling back to prompt averages', () => {
+    const roleCall = wsLog({
+      id: 'rt-pm-call',
+      timestamp: '2026-06-21T22:16:12Z',
+      level: 'success',
+      source: 'PM',
+      message: 'llm_call_end',
+      meta: {
+        channel: 'runtime_events',
+        event_type: 'llm_call_end',
+        role: 'pm',
+        prompt_tokens: 1000,
+        completion_tokens: 200,
+        context_tokens_after: 4096,
+        call_id: 'call-context-1',
+      },
+    });
+    const model = buildContextOSModel(baseInput({
+      llmRuntimeState: READY_LLM_WITH_WINDOWS,
+      telemetry: telemetryOf([], [roleCall]),
+    }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+
+    expect(model.windowOccupancyTokens).toBe(4096);
+    expect(model.windowOccupancy).toBeCloseTo(4096 / 32_768, 5);
+    expect(pm?.internalContext.windowOccupancyTokens).toBe(4096);
+    expect(pm?.internalContext.windowOccupancyLabel).toBe('最新上下文 (实测)');
+  });
+
   it('flags windowed when a WS stream reaches its ring-buffer cap', () => {
     expect(buildContextOSModel(baseInput({ telemetry: telemetryOf() })).telemetryWindowed).toBe(false);
     const bigExec = Array.from({ length: 100 }, (_, i) =>
@@ -411,6 +440,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
           contextSnapshotRef: 'a1b2c3d4e5f6a7b8c9d0e1f2',
           promptHash: 'f2e1d0c9b8a7',
           turnId: 'turn-42',
+          callId: 'call-42',
         },
       }),
     ];
@@ -419,6 +449,7 @@ describe('buildContextOSModel with real WS telemetry', () => {
     const pm = model.roles.find((r) => r.id === 'pm');
 
     expect(pm?.internalContext.latestContextSnapshotRef).toBe('a1b2c3d4e5f6a7b8c9d0e1f2');
+    expect(pm?.internalContext.latestCallId).toBe('call-42');
     expect(pm?.internalContext.latestTurnId).toBe('turn-42');
   });
 
@@ -571,6 +602,33 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(pm?.internalContext.contextTokensLatest).toBe(3200);
     expect(pm?.internalContext.windowOccupancyTokens).toBe(3200);
     expect(pm?.internalContext.windowOccupancyLabel).toBe('最新上下文 (实测)');
+  });
+
+  it('keeps per-role context occupancy isolated when multiple roles publish context.build events', () => {
+    const pmBuild = wsLog({
+      id: 'pm-build',
+      timestamp: '2026-06-15T10:00:00Z',
+      source: 'PM',
+      message: 'ContextPack built',
+      meta: { channel: 'runtime_events', items_count: 5, total_tokens: 3200 },
+    });
+    const directorBuild = wsLog({
+      id: 'director-build',
+      timestamp: '2026-06-15T10:00:01Z',
+      source: 'Director',
+      message: 'ContextPack built',
+      meta: { channel: 'runtime_events', items_count: 2, total_tokens: 900 },
+    });
+    const telemetry = telemetryOf([], [pmBuild, directorBuild]);
+    const model = buildContextOSModel(baseInput({ telemetry }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+    const director = model.roles.find((r) => r.id === 'director');
+
+    expect(model.windowOccupancyTokens).toBe(900);
+    expect(pm?.internalContext.contextTokensLatest).toBe(3200);
+    expect(pm?.internalContext.windowOccupancyTokens).toBe(3200);
+    expect(director?.internalContext.contextTokensLatest).toBe(900);
+    expect(director?.internalContext.windowOccupancyTokens).toBe(900);
   });
 
   it('truncates RoleInternalContext.events to MAX_ROLE_EVENTS while preserving newest-first order', () => {

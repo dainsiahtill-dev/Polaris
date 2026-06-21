@@ -158,6 +158,45 @@ def _has_package_dependencies(package: dict[str, Any]) -> bool:
     return False
 
 
+def _package_declares_dependency(package: dict[str, Any], dependency_name: str) -> bool:
+    target = str(dependency_name or "").strip()
+    if not target:
+        return False
+    for key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        section = package.get(key)
+        if isinstance(section, dict) and target in {str(name).strip() for name in section}:
+            return True
+    return False
+
+
+def _package_has_local_tsc(workspace: Path) -> bool:
+    local_name = "tsc.cmd" if sys.platform.startswith("win") else "tsc"
+    return (workspace / "node_modules" / ".bin" / local_name).is_file()
+
+
+def _script_uses_tsc(command: Any) -> bool:
+    text = str(command or "")
+    if not text.strip():
+        return False
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        return "tsc" in text
+    return any(Path(token).name.lower() == "tsc" for token in tokens)
+
+
+def _package_requires_project_typescript(
+    workspace: Path,
+    package: dict[str, Any],
+    scripts: dict[str, Any],
+    code_files: list[str],
+) -> bool:
+    has_ts_files = bool(_files_with_suffix(code_files, (".ts", ".tsx")))
+    if not has_ts_files and not (workspace / "tsconfig.json").is_file():
+        return False
+    return any(_script_uses_tsc(value) for value in scripts.values()) or (workspace / "tsconfig.json").is_file()
+
+
 def _script_tokens(command: object) -> list[str]:
     if not isinstance(command, str) or not command.strip():
         return []
@@ -972,7 +1011,14 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
     environment_detail = "no environment preparation ran"
     if package:
         npm = shutil.which("npm")
-        if npm and _has_package_dependencies(package) and not (workspace / "node_modules").exists():
+        if (
+            npm
+            and _package_requires_project_typescript(workspace, package, scripts, code_files)
+            and not _package_declares_dependency(package, "typescript")
+            and not _package_has_local_tsc(workspace)
+        ):
+            environment_detail = "package.json missing devDependency 'typescript' for TypeScript build"
+        elif npm and _has_package_dependencies(package) and not (workspace / "node_modules").exists():
             install = _run_command(
                 [npm, "install", "--ignore-scripts", "--no-audit", "--no-fund"],
                 workspace,
@@ -1012,7 +1058,7 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
     build_command_ok = False
     build_detail = "no build/test/lint command was discovered"
     package_script_failed = False
-    if package and shutil.which("npm"):
+    if package and shutil.which("npm") and environment_ok:
         has_build_script = "build" in scripts
         has_ts_files = _files_with_suffix(code_files, (".ts", ".tsx"))
 
@@ -1726,7 +1772,11 @@ def _record_has_generated_artifact_failure(record: dict[str, Any]) -> bool:
     return bool(
         re.search(
             r"syntax check failed|syntaxerror|unexpected keyword|"
-            r"\bTS\d{3,5}\b|compile failed|build failed|lint failed|invalid source content",
+            r"\bTS\d{3,5}\b|compile failed|build failed|test failed|lint failed|"
+            r"npm run (?:build|test|lint|check) failed|"
+            r"package\.json missing devDependency 'typescript'|"
+            r"shell command substitution|package manifest script|"
+            r"sh:\s*\d+:\s*[A-Za-z0-9_.-]+:\s*not found|invalid source content",
             text,
             re.IGNORECASE,
         )
@@ -1757,6 +1807,8 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
         reason = f"real_run_gate.{failed_requirement or 'unknown'}"
         if failed_requirement == "artifact_landed":
             category = "director_tool_execution"
+        elif failed_requirement == "environment_prepared" and _record_has_generated_artifact_failure(record):
+            category = "llm_output"
         elif failed_requirement == "environment_prepared":
             category = "runtime_environment"
         elif _record_has_generated_artifact_failure(record):

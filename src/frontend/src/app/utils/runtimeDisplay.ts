@@ -3,7 +3,7 @@ const MIN_REASONABLE_EPOCH_SECONDS = 946684800; // 2000-01-01T00:00:00Z
 export function isStructuredRuntimeFragmentText(value?: string | null): boolean {
   const message = String(value || '').trim();
   if (!message) return true;
-  if (/^\[object(?:\s+object)?\]$/i.test(message)) return true;
+  if (/\[object(?:\s+object)?\]/i.test(message)) return true;
   if (/^[{}\[\],]+$/.test(message)) return true;
   if (/^["']?[}\]],?$/.test(message)) return true;
   if (/^:\d{2}(?:\.\d+)?z["']?,?$/i.test(message)) return true;

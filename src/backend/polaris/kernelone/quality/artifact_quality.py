@@ -83,6 +83,8 @@ _PATCH_RESIDUE_RE = re.compile(
     r"(?m)^\s*(?:<{4,7}\s*SEARCH\b|>{4,7}\s*REPLACE\b|END\s+PATCH_FILE\b|PATCH_FILE(?::|\s+))",
     re.IGNORECASE,
 )
+_NPM_SCRIPT_SHELL_SUBSTITUTION_RE = re.compile(r"`|\$\(")
+_NPM_SCRIPT_TSC_RE = re.compile(r"(?:^|[&|;\s])(?:npx\s+)?tsc(?:\s|$)", re.IGNORECASE)
 _TS_RETURN_OBJECT_BLOCK_RE = re.compile(r"return\s*\{(?P<body>.*?)^\s*\};", re.DOTALL | re.MULTILINE)
 _TS_OBJECT_PROPERTY_SEMICOLON_RE = re.compile(
     r"(?m)^\s*(?:[A-Za-z_$][\w$]*\s*|(?:\[[^\]]+\]|[A-Za-z_$][\w$]*|['\"][^'\"]+['\"])\s*:\s*[^;{}]+);\s*$"
@@ -571,6 +573,12 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
                     f"{str(script_name)!r} has invalid shell syntax in {relative_path}: {exc}"
                 )
                 continue
+            if _NPM_SCRIPT_SHELL_SUBSTITUTION_RE.search(script_text):
+                errors.append(
+                    "Artifact quality scan failed: npm package manifest script "
+                    f"{str(script_name)!r} uses shell command substitution in {relative_path}"
+                )
+                continue
             if _PYTHON_COMMAND_IN_NPM_SCRIPT_RE.search(script_text):
                 errors.append(
                     "Artifact quality scan failed: npm package manifest contains "
@@ -579,6 +587,13 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
                 break
             errors.extend(
                 _scan_npm_script_missing_local_entrypoints(root_full, script_text, str(script_name), relative_path)
+            )
+        if _package_manifest_requires_typescript(root_full, payload) and not _package_declares_dependency(
+            payload, "typescript"
+        ):
+            errors.append(
+                "Artifact quality scan failed: TypeScript project requires 'typescript' "
+                f"devDependency in {relative_path}"
             )
     main_entry = str(payload.get("main") or "").strip().replace("\\", "/").lower()
     if main_entry.endswith(".py"):
@@ -598,6 +613,31 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
                 )
                 return errors
     return errors
+
+
+def _package_declares_dependency(payload: dict[str, Any], package_name: str) -> bool:
+    target = str(package_name or "").strip()
+    if not target:
+        return False
+    for section_name in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        section = payload.get(section_name)
+        if isinstance(section, dict) and target in {str(name).strip() for name in section}:
+            return True
+    return False
+
+
+def _package_manifest_requires_typescript(root_full: Path, payload: dict[str, Any]) -> bool:
+    if not (root_full / "tsconfig.json").is_file():
+        return False
+    scripts = payload.get("scripts")
+    if isinstance(scripts, dict):
+        for script_value in scripts.values():
+            if _NPM_SCRIPT_TSC_RE.search(str(script_value or "")):
+                return True
+    for relative_path in _iter_workspace_relative_files(root_full):
+        if Path(relative_path).suffix.lower() in _TS_SOURCE_EXTS:
+            return True
+    return False
 
 
 def _workspace_has_node_source_files(root_full: Path) -> bool:
@@ -707,7 +747,7 @@ def _typescript_project_typecheck_command(root_full: Path) -> str:
     local_tsc = root_full / "node_modules" / ".bin" / local_name
     if local_tsc.is_file():
         return str(local_tsc)
-    if "typescript" in _declared_package_dependencies(root_full) and _typescript_project_requires_local_tsc(root_full):
+    if (root_full / "package.json").is_file():
         return ""
     return shutil.which("tsc") or ""
 

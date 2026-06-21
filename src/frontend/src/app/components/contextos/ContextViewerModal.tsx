@@ -91,6 +91,10 @@ interface ContextViewerErrorBody {
     code?: string;
     message?: string;
   };
+  error?: {
+    code?: string;
+    message?: string;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -635,7 +639,9 @@ export function ContextViewerModal({ contextSnapshotRef, roleId, onClose, worker
         let isContextMissing = false;
         try {
           const body = (await res.json()) as ContextViewerErrorBody;
-          isContextMissing = body?.detail?.code === 'CONTEXT_NOT_FOUND';
+          isContextMissing =
+            body?.detail?.code === 'CONTEXT_NOT_FOUND' ||
+            body?.error?.code === 'CONTEXT_NOT_FOUND';
         } catch {
           isContextMissing = false;
         }
