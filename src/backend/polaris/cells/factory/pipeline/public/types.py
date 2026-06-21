@@ -114,6 +114,7 @@ class FactoryStartRequest(BaseModel):
         default=True,
         description="是否把本次运行 workspace 持久化为全局 active workspace；bench/e2e 隔离运行应设为 false",
     )
+    metadata: dict[str, Any] = Field(default_factory=dict, description="运行级审计与观测元数据")
 
 
 class FactoryControlRequest(BaseModel):

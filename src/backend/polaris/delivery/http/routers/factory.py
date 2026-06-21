@@ -506,9 +506,17 @@ def _ensure_factory_runtime_ready(state: AppState, stages: list[str]) -> None:
     )
 
 
-def _build_stage_context(stage: str, payload: FactoryStartRequest, state: AppState) -> dict[str, Any]:
+def _build_stage_context(
+    stage: str,
+    payload: FactoryStartRequest,
+    state: AppState,
+    *,
+    run_id: str = "",
+) -> dict[str, Any]:
     context: dict[str, Any] = {
         "settings": getattr(state, "settings", None),
+        "factory_run_id": str(run_id or "").strip(),
+        "metadata": dict(payload.metadata or {}),
     }
     if stage in {"docs_generation", "pm_planning"}:
         context["directive"] = payload.directive
@@ -1129,7 +1137,7 @@ async def _execute_run_with_service(
             result = await service.execute_stage(
                 run_id,
                 active_stage,
-                _build_stage_context(active_stage, payload, state),
+                _build_stage_context(active_stage, payload, state, run_id=run_id),
             )
             status_normalized = str(result.status or "").strip().lower()
             if status_normalized == "cancelled":

@@ -541,7 +541,12 @@ class OrchestrationStageExecutor:
 
         async def _run_binding(binding: dict[str, str]) -> CommandResult:
             binding_opts = dict(base_options)
+            raw_binding_metadata = base_options.get("metadata")
+            binding_metadata: dict[str, Any] = (
+                dict(raw_binding_metadata) if isinstance(raw_binding_metadata, dict) else {}
+            )
             binding_opts["metadata"] = {
+                **binding_metadata,
                 "binding_override": {
                     "provider_id": binding["provider_id"],
                     "model": binding["model"],
@@ -1543,11 +1548,20 @@ class OrchestrationStageExecutor:
                     )
                     break
 
+                raw_context_metadata = context.get("metadata")
+                context_metadata: dict[str, Any] = (
+                    dict(raw_context_metadata) if isinstance(raw_context_metadata, dict) else {}
+                )
                 base_options: dict[str, Any] = {
                     "task_filter": effective_task_filter,
                     "max_workers": max_workers,
                     "execution_mode": execution_mode,
                     "dispatch_mode": "mainline-full",
+                    "metadata": {
+                        **context_metadata,
+                        "factory_run_id": str(context.get("factory_run_id") or run.id or "").strip(),
+                        "factory_stage": "director_dispatch",
+                    },
                 }
                 if len(director_binding_fanout) > 1:
                     command_result = await self._execute_director_binding_fanout(

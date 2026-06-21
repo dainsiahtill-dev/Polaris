@@ -107,6 +107,14 @@ class TestFactoryStartRequest:
         req = FactoryStartRequest(workspace="/tmp/ws", directive="Build a thing")
         assert req.directive == "Build a thing"
 
+    def test_metadata_field_preserves_observability_correlation(self) -> None:
+        req = FactoryStartRequest(
+            workspace="/tmp/ws",
+            metadata={"factory_bench_session_id": "bench-1", "factory_bench_project_id": "L1-01"},
+        )
+        assert req.metadata["factory_bench_session_id"] == "bench-1"
+        assert req.metadata["factory_bench_project_id"] == "L1-01"
+
     def test_director_iterations_bounds(self) -> None:
         req = FactoryStartRequest(workspace="/tmp/ws", director_iterations=0)
         assert req.director_iterations == 0

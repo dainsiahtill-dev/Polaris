@@ -94,6 +94,8 @@ def _status_from_factory_event(
     status: dict[str, Any] = dict(previous or {})
     status["run_id"] = run_id
     event_type = str(payload.get("type") or payload.get("kind") or "").strip().lower()
+    status["event_type"] = event_type
+    status["event_payload"] = dict(payload)
     stage = str(payload.get("stage") or payload.get("phase") or "").strip()
     if stage:
         status["phase"] = stage

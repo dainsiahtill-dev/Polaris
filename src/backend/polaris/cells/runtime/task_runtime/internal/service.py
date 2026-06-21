@@ -4,6 +4,7 @@ import logging
 import re
 import shutil
 import threading
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -12,7 +13,7 @@ from polaris.cells.events.fact_stream.public.service import append_fact_event
 from polaris.cells.runtime.task_runtime.internal.task_board import Task, TaskBoard, TaskStatus
 from polaris.kernelone.fs import KernelFileSystem
 from polaris.kernelone.fs.registry import get_default_adapter
-from polaris.kernelone.storage import resolve_runtime_path
+from polaris.kernelone.storage import resolve_runtime_path, resolve_storage_roots
 
 from .execution_session import (
     TaskExecutionSession,
@@ -348,6 +349,7 @@ class TaskRuntimeService:
         lease_ttl_seconds: int = 120,
         selection_source: str = "",
         prefer_resumable: bool = True,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Atomically select and claim the next executable task.
 
@@ -402,6 +404,7 @@ class TaskRuntimeService:
                 run_id=run_id,
                 lease_ttl_seconds=lease_ttl_seconds,
                 selection_source=selection_source,
+                metadata=metadata,
             )
 
             attempt_info = {
@@ -898,6 +901,17 @@ class TaskRuntimeService:
             "details": dict(details or {}),
             "timestamp": utc_now_iso(),
         }
+        task_metadata_raw = task_row.get("metadata")
+        task_metadata: dict[str, Any] = task_metadata_raw if isinstance(task_metadata_raw, dict) else {}
+        factory_run_id = str(task_metadata.get("factory_run_id") or "").strip()
+        if factory_run_id:
+            payload["factory_run_id"] = factory_run_id
+        bench_session_id = str(task_metadata.get("factory_bench_session_id") or "").strip()
+        if bench_session_id:
+            payload["factory_bench_session_id"] = bench_session_id
+        factory_project_id = str(task_metadata.get("factory_bench_project_id") or "").strip()
+        if factory_project_id:
+            payload["factory_bench_project_id"] = factory_project_id
         try:
             command = AppendFactEventCommandV1(
                 workspace=self.workspace,
@@ -910,8 +924,50 @@ class TaskRuntimeService:
                 correlation_id=str(payload.get("session_id") or "").strip() or None,
             )
             append_fact_event(command)
+            self._publish_factory_execution_event(payload)
         except (RuntimeError, ValueError) as exc:
             logger.debug("Failed to append task runtime execution event: %s", exc)
+
+    def _publish_factory_execution_event(self, payload: dict[str, Any]) -> bool:
+        factory_run_id = str(payload.get("factory_run_id") or "").strip()
+        if not factory_run_id:
+            return False
+        try:
+            roots = resolve_storage_roots(self.workspace)
+            workspace_key = str(getattr(roots, "workspace_key", "") or "").strip()
+            if not workspace_key:
+                return False
+            from polaris.infrastructure.log_pipeline.jetstream_publisher import (
+                get_log_jetstream_publisher,
+            )
+
+            event_payload = dict(payload)
+            event_payload["type"] = "task_runtime_execution"
+            event_payload["stage"] = "director_dispatch"
+            event_payload["message"] = (
+                f"Director task {event_payload.get('task_id') or '<unknown>'} "
+                f"{event_payload.get('event_type') or 'updated'}"
+            )
+            envelope = {
+                "schema_version": "runtime.v2",
+                "event_id": f"task-runtime-{uuid.uuid4().hex[:12]}",
+                "workspace_key": workspace_key,
+                "run_id": factory_run_id,
+                "channel": f"event.factory:{factory_run_id}",
+                "kind": "task_runtime_execution",
+                "ts": event_payload.get("timestamp") or utc_now_iso(),
+                "cursor": 0,
+                "trace_id": None,
+                "payload": event_payload,
+                "meta": {"source": "runtime.task_runtime"},
+            }
+            return get_log_jetstream_publisher().publish(
+                subject=f"hp.runtime.{workspace_key}.event.factory.{factory_run_id}",
+                payload=envelope,
+            )
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Task runtime factory progress publish failed: %s", exc)
+            return False
 
     def _augment_task_row(self, row: dict[str, Any]) -> dict[str, Any]:
         task_id = self.normalize_task_id(row.get("id"))

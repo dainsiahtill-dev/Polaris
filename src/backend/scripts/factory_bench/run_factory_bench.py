@@ -606,7 +606,7 @@ def _emit_factory_phase_event(
     if run_status:
         summary_parts.append(f"status={run_status}")
     project_workspace_full = str(project_workspace.resolve())
-    meta = {
+    meta: dict[str, Any] = {
         "project_id": project_id,
         "level": int(level),
         "title": title,
@@ -626,6 +626,59 @@ def _emit_factory_phase_event(
         name="project.phase",
         summary=" ".join(part for part in summary_parts if part),
         meta=meta,
+        cache_root=cache_root,
+    )
+
+
+def _emit_factory_task_runtime_event(
+    *,
+    bench_workspace: Path,
+    project_workspace: Path,
+    project_id: str,
+    level: int,
+    title: str,
+    phase_payload: dict[str, Any],
+    event_payload: dict[str, Any],
+    cache_root: str | None = None,
+) -> bool:
+    project_workspace_full = str(project_workspace.resolve())
+    task_id = str(event_payload.get("task_id") or "").strip()
+    task_status = str(event_payload.get("status") or "").strip()
+    event_type = str(event_payload.get("event_type") or "").strip()
+    director_run_id = str(event_payload.get("run_id") or "").strip()
+    factory_run_id = str(phase_payload.get("run_id") or event_payload.get("factory_run_id") or "").strip()
+    summary_parts = [project_id, "director"]
+    if task_id:
+        summary_parts.append(f"task={task_id}")
+    if event_type:
+        summary_parts.append(event_type)
+    if task_status:
+        summary_parts.append(f"status={task_status}")
+    meta: dict[str, Any] = {
+        "project_id": project_id,
+        "level": int(level),
+        "title": title,
+        "workspace": project_workspace_full,
+        "workspace_path": project_workspace_full,
+        "project_workspace": project_workspace_full,
+        "phase": "director_dispatch",
+        "status": task_status or str(phase_payload.get("status") or "running"),
+        "role": "director",
+        "task_id": task_id,
+        "task_status": task_status,
+        "task_runtime_event_type": event_type,
+        "director_run_id": director_run_id,
+        "run_id": factory_run_id,
+        "session_id": str(event_payload.get("session_id") or "").strip(),
+        "details": event_payload.get("details") if isinstance(event_payload.get("details"), dict) else {},
+    }
+    return _emit_bench_event(
+        workspace=bench_workspace,
+        project_id=project_id,
+        level=level,
+        name="project.task_runtime",
+        summary=" ".join(part for part in summary_parts if part),
+        meta={k: v for k, v in meta.items() if v not in (None, "")},
         cache_root=cache_root,
     )
 
@@ -1474,6 +1527,7 @@ def run_factory_chain(
     log_path: Path,
     director_workflow_execution_mode: str = "parallel",
     director_dispatch_driver: str = "task-market",
+    bench_session_id: str = "",
     on_stage_change: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Start a /v2/factory/runs for the project workspace and wait for completion."""
@@ -1532,6 +1586,13 @@ def run_factory_chain(
         "loop": False,
         "input_source": "directive",
         "persist_workspace": False,
+        "metadata": {
+            "factory_bench_session_id": str(bench_session_id or "").strip(),
+            "factory_bench_project_id": str(project.get("id") or "").strip(),
+            "factory_bench_level": int(project.get("level") or 0),
+            "factory_bench_title": str(project.get("title") or "").strip(),
+            "factory_bench_project_workspace": str(workspace.resolve()),
+        },
     }
 
     started = time.time()
@@ -1990,6 +2051,33 @@ def main() -> int:
             phase = str(status_payload.get("phase") or "").strip()
             run_status = str(status_payload.get("status") or stage_status or "").strip()
             run_ref = str(status_payload.get("run_id") or "").strip()
+            event_payload_raw = status_payload.get("event_payload")
+            event_payload: dict[str, Any] = event_payload_raw if isinstance(event_payload_raw, dict) else {}
+            factory_event_type = str(event_payload.get("type") or status_payload.get("event_type") or "").strip()
+            if factory_event_type == "task_runtime_execution":
+                event_key = ":".join(
+                    [
+                        run_ref,
+                        factory_event_type,
+                        str(event_payload.get("session_id") or ""),
+                        str(event_payload.get("task_id") or ""),
+                        str(event_payload.get("event_type") or ""),
+                        str(event_payload.get("timestamp") or ""),
+                    ]
+                )
+                if event_key == last_stage_event_key:
+                    return
+                last_stage_event_key = event_key
+                _emit_factory_task_runtime_event(
+                    bench_workspace=base,
+                    project_workspace=_project_workspace,
+                    project_id=_project_id,
+                    level=_project_level,
+                    title=_project_title,
+                    phase_payload=status_payload,
+                    event_payload=event_payload,
+                )
+                return
             event_key = f"{run_ref}:{run_status}:{phase}"
             if not event_key.strip(":") or event_key == last_stage_event_key:
                 return
@@ -2024,6 +2112,7 @@ def main() -> int:
                     log_path=log_path,
                     director_workflow_execution_mode=args.director_workflow_execution_mode,
                     director_dispatch_driver=args.director_dispatch_driver,
+                    bench_session_id=bench_session_id,
                     on_stage_change=_on_factory_stage_change,
                 )
         except subprocess.TimeoutExpired:

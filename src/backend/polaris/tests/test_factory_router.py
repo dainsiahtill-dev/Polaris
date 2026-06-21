@@ -303,7 +303,10 @@ def test_start_from_pm_builds_pm_chief_engineer_director_chain(
 
 
 def test_factory_director_context_defaults_to_auto_rounds() -> None:
-    payload = FactoryStartRequest(workspace="C:/tmp/workspace")
+    payload = FactoryStartRequest(
+        workspace="C:/tmp/workspace",
+        metadata={"factory_bench_session_id": "bench-1"},
+    )
     state = SimpleNamespace(
         settings=SimpleNamespace(
             director_execution_mode="parallel",
@@ -311,9 +314,11 @@ def test_factory_director_context_defaults_to_auto_rounds() -> None:
         )
     )
 
-    context = factory_router_module._build_stage_context("director_dispatch", payload, state)
+    context = factory_router_module._build_stage_context("director_dispatch", payload, state, run_id="factory-1")
 
     assert "director_max_rounds" not in context
+    assert context["factory_run_id"] == "factory-1"
+    assert context["metadata"]["factory_bench_session_id"] == "bench-1"
 
 
 def test_factory_director_context_honors_explicit_round_cap() -> None:

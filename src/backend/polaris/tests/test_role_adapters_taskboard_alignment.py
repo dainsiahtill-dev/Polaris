@@ -15,6 +15,7 @@ from polaris.cells.roles.adapters.internal import director_execution_backend as 
 from polaris.cells.roles.adapters.internal.director_adapter import DirectorAdapter
 from polaris.cells.roles.adapters.internal.pm_adapter import PMAdapter
 from polaris.cells.roles.adapters.internal.qa_adapter import QAAdapter
+from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
 from polaris.kernelone.storage import resolve_runtime_path
 from polaris.kernelone.storage.paths import resolve_signal_path
 
@@ -71,6 +72,52 @@ def test_director_ephemeral_task_includes_pending_taskboard_contract(tmp_path: P
 
     assert "TaskBoard" in str(task.get("description") or "")
     assert "实现expense账单实体" in str(task.get("description") or "")
+
+
+def test_task_runtime_execution_event_publishes_factory_progress_channel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    published: list[dict[str, Any]] = []
+
+    class _Publisher:
+        def publish(self, *, subject: str, payload: dict[str, Any]) -> bool:
+            published.append({"subject": subject, "payload": payload})
+            return True
+
+    monkeypatch.setattr(
+        "polaris.infrastructure.log_pipeline.jetstream_publisher.get_log_jetstream_publisher",
+        lambda: _Publisher(),
+    )
+
+    service = TaskRuntimeService(str(tmp_path))
+    task = service.create(
+        subject="实现发光昆虫模拟器",
+        metadata={
+            "factory_run_id": "factory-1",
+            "factory_bench_session_id": "bench-1",
+            "factory_bench_project_id": "L1-01",
+        },
+    )
+
+    result = service.claim_execution(
+        task.id,
+        worker_id="director",
+        role_id="director",
+        run_id="director-1",
+        metadata={"adapter_phase": "claimed", "factory_run_id": "factory-1"},
+    )
+
+    assert result["success"] is True
+    assert published
+    assert published[-1]["subject"].endswith(".event.factory.factory-1")
+    envelope = published[-1]["payload"]
+    assert envelope["channel"] == "event.factory:factory-1"
+    assert envelope["run_id"] == "factory-1"
+    assert envelope["kind"] == "task_runtime_execution"
+    assert envelope["payload"]["type"] == "task_runtime_execution"
+    assert envelope["payload"]["run_id"] == "director-1"
+    assert envelope["payload"]["factory_bench_session_id"] == "bench-1"
 
 
 def test_director_snapshot_uses_nanosecond_mtime(tmp_path: Path) -> None:

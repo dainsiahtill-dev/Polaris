@@ -575,7 +575,15 @@ async def execute_director_task(
         board_snapshot_after_claim,
         claim_attempts,
         task_claim_result,
-    ) = await _claim_task_with_retry(adapter, task, target_task_id, selection_source, requested_task_id, run_id)
+    ) = await _claim_task_with_retry(
+        adapter,
+        task,
+        target_task_id,
+        selection_source,
+        requested_task_id,
+        run_id,
+        input_metadata,
+    )
 
     selected_subject = str(task.get("subject") or task.get("title") or "").strip()
     session_raw = task_claim_result.get("session")
@@ -770,6 +778,7 @@ async def _claim_task_with_retry(
     selection_source: str,
     requested_task_id: str,
     run_id: str,
+    input_metadata: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, str, bool, dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     """任务声明重试逻辑
 
@@ -780,6 +789,8 @@ async def _claim_task_with_retry(
     active_task = task
     active_task_id = str(target_task_id or "").strip()
     active_source = str(selection_source or "").strip() or "task_id_lookup"
+    claim_metadata = dict(input_metadata or {})
+    claim_metadata["adapter_phase"] = "claimed"
 
     # If a specific task was requested, try to claim it first
     if active_task_id:
@@ -793,7 +804,7 @@ async def _claim_task_with_retry(
             selection_source=active_source,
             external_task_id=claim_external_task_id,
             context_summary=str(active_task.get("subject") or active_task.get("title") or "").strip(),
-            metadata={"adapter_phase": "claimed"},
+            metadata=claim_metadata,
         )
         last_claim_result = claim_result if isinstance(claim_result, dict) else {}
         claimed = bool(last_claim_result.get("success"))
@@ -840,6 +851,7 @@ async def _claim_task_with_retry(
         lease_ttl_seconds=_DEFAULT_TASK_LEASE_TTL_SECONDS,
         selection_source=active_source,
         prefer_resumable=True,
+        metadata=claim_metadata,
     )
 
     success = bool(claim_next_result.get("success"))

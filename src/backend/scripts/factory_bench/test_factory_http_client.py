@@ -333,6 +333,20 @@ class TestEventWaitUntilTerminal(unittest.TestCase):
         completed = _status_from_factory_event("run-42", {"type": "completed"}, status)
         self.assertEqual(completed["status"], "completed")
 
+    def test_status_from_factory_event_exposes_raw_event_payload(self) -> None:
+        payload = {
+            "type": "task_runtime_execution",
+            "stage": "director_dispatch",
+            "task_id": "TASK-1",
+            "status": "in_progress",
+        }
+
+        status = _status_from_factory_event("run-42", payload, {})
+
+        self.assertEqual(status["status"], "running")
+        self.assertEqual(status["event_type"], "task_runtime_execution")
+        self.assertEqual(status["event_payload"], payload)
+
     def test_wait_run_until_terminal_delegates_to_runtime_v2_waiter(self) -> None:
         async def _fake_wait(
             backend_url: str,
