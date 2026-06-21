@@ -231,7 +231,20 @@ function AppContent() {
   const [clearingDialogueLogs, setClearingDialogueLogs] = useState(false);
   const { settings, load: loadSettings, update: updateSettings } = useSettings();
   const { notifications, remove: removeNotification, error: notifyError } = useNotifications();
-  const workspace = settings?.workspace || '';
+  const settingsWorkspace = settings?.workspace || '';
+  const [benchObservedWorkspace, setBenchObservedWorkspace] = useState('');
+  const workspace = benchObservedWorkspace || settingsWorkspace;
+  const [progressSnapshot, setProgressSnapshot] = useState<SnapshotPayload | null>(null);
+
+  const handleBenchWorkspaceChange = useCallback(
+    (nextWorkspace: string) => {
+      const normalized = nextWorkspace.trim();
+      if (!normalized || normalized === workspace) return;
+      setProgressSnapshot(null);
+      setBenchObservedWorkspace(normalized);
+    },
+    [workspace],
+  );
 
   const {
     pmStatus,
@@ -287,7 +300,10 @@ function AppContent() {
     resumeLatestRun: resumeLatestFactoryRun,
     isLoading: factoryIsLoading,
   } = useFactory({ workspace });
-  const factoryBench = useFactoryBench({ autoSelect: 'newest' });
+  const factoryBench = useFactoryBench({
+    autoSelect: 'newest',
+    onWorkspaceChange: handleBenchWorkspaceChange,
+  });
   const { currentSession: factoryBenchSession, events: factoryBenchEvents } = factoryBench;
   const factoryRuntimeActive = factoryIsLoading || isFactoryRunActive(factoryCurrentRun);
   const combinedProcessStreamEvents = useMemo(
@@ -305,7 +321,6 @@ function AppContent() {
     () => getLatestExecutionActivityLog(combinedProcessStreamEvents),
     [combinedProcessStreamEvents],
   );
-  const [progressSnapshot, setProgressSnapshot] = useState<SnapshotPayload | null>(null);
   const {
     llmRuntimeState,
     getLlmRoleBlockedReason,
@@ -722,6 +737,8 @@ function AppContent() {
       if (picked) {
         const updated = await updateSettings({ workspace: picked });
         if (updated) {
+          setBenchObservedWorkspace('');
+          setProgressSnapshot(null);
           // WebSocket will auto-reconnect via useRuntime workspace effect
           toast.success('Workspace updated');
         } else {
@@ -748,6 +765,10 @@ function AppContent() {
   const handleSaveSettings = async (payload: Record<string, unknown>) => {
     const updated = await updateSettings(payload);
     if (updated) {
+      if (typeof payload.workspace === 'string' && payload.workspace.trim()) {
+        setBenchObservedWorkspace('');
+        setProgressSnapshot(null);
+      }
       toast.success('Settings saved');
       return;
     }
@@ -768,7 +789,7 @@ function AppContent() {
   };
 
   const handleEnterFactoryMode = () => {
-    // Factory 模式：先 PM 规划，再 Director 执行
+    // Factory 模式：PM -> Chief Engineer -> Director 全链路。
     setActiveRoleView('factory');
   };
 

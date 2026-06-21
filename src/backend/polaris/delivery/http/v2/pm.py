@@ -62,7 +62,7 @@ class PMRunOrchestrationRequest(BaseModel):
     workspace: str = Field(default=".", description="工作区路径")
     directive: str = Field(default="", description="需求指令")
     stage: str = Field(default="pm", description="阶段: architect 或 pm")
-    run_director: bool = Field(default=False, description="是否自动运行 Director")
+    run_director: bool = Field(default=False, description="旧兼容字段；启用 PM -> Chief Engineer -> Director 全链路")
     director_iterations: int = Field(default=2, description="Director 迭代次数")
     metadata: dict[str, object] = Field(default_factory=dict, description="可选运行时元数据")
 

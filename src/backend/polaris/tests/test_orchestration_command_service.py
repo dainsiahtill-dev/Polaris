@@ -6,7 +6,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import OrchestrationCommandService
+from polaris.cells.orchestration.pm_dispatch.internal.orchestration_command_service import (
+    OrchestrationCommandService,
+    _canonical_factory_stage_sequence,
+)
 from polaris.cells.orchestration.workflow_runtime.internal.runtime_contracts import (
     OrchestrationSnapshot,
     RunStatus,
@@ -165,6 +168,22 @@ async def test_execute_pm_run_propagates_metadata_to_role_entry_and_request(
     assert stub.request.role_entries[0].metadata["execution_backend"] == "projection_generate"
     assert stub.request.metadata["execution_backend"] == "projection_generate"
     assert stub.request.metadata["projection"]["scenario_id"] == "scenario_alpha"
+
+
+def test_factory_stage_sequence_forces_unique_full_chain() -> None:
+    assert _canonical_factory_stage_sequence(["pm_planning"]) == [
+        "pm_planning",
+        "chief_engineer_review",
+        "director_dispatch",
+        "quality_gate",
+    ]
+    assert _canonical_factory_stage_sequence(["docs", "pm", "director"]) == [
+        "docs_generation",
+        "pm_planning",
+        "chief_engineer_review",
+        "director_dispatch",
+        "quality_gate",
+    ]
 
 
 @pytest.mark.asyncio

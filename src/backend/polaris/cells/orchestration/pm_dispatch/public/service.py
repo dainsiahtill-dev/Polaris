@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
+    _reachable_provider_pool as reachable_provider_pool,
     resolve_director_dispatch_tasks,
     run_dispatch_pipeline,
     run_post_dispatch_integration_qa,
@@ -38,6 +39,7 @@ __all__ = [
     "PmIterationAdvancedEventV1",
     "PmTaskDispatchedEventV1",
     "ResumePmIterationCommandV1",
+    "reachable_provider_pool",
     "clear_manual_intervention",
     "finalize_iteration",
     "handle_spin_guard",

@@ -312,7 +312,7 @@
         "tests/electron/ - 不存在"
       ],
       "impact": "无法确保完整功能正常工作",
-      "recommendation": "增加关键用户旅程的 E2E 测试：政事堂→PM→Director→QA 完整流程"
+      "recommendation": "增加关键用户旅程的 E2E 测试：政事堂→PM→Chief Engineer→Director→QA 完整流程"
     },
     {
       "id": "CRIT-003",

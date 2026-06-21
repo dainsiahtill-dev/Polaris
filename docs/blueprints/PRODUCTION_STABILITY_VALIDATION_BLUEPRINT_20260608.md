@@ -328,7 +328,7 @@ TransactionKernel.execute()
 
 | 风险 | 影响 | 缓解 |
 |------|------|------|
-| `full_chain` gate 持续失败（credentials 问题） | 无法验证真实 PM→Director→QA 链路 | Phase 1 优先解决；提供 mock 模式降级 |
+| `full_chain` gate 持续失败（credentials 问题） | 无法验证真实 PM→Chief Engineer→Director→QA 链路 | Phase 1 优先解决；提供 mock 模式降级 |
 | 故障注入测试 flakiness | 误报率高 | 使用确定性故障注入（env vars），避免 timing race |
 | RollbackGuard 在非 git repo 工作区失败 | 回滚失败 | 检测 `.git` 存在性，降级到 `GitStashRollbackGuard` |
 | ProjectionEngine 自适应权重导致非确定性排序 | 难以复现问题 | `ENABLE_PROJECTION_ADAPTIVE_ORDERING=0` 退回纯时序 |

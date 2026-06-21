@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 from polaris.cells.chief_engineer.blueprint.public import GenerateTaskBlueprintCommandV1, generate_task_blueprint
 from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
-from polaris.cells.roles.kernel.internal.quality_checker import QualityChecker
+from polaris.cells.roles.kernel.public.service import QualityChecker
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleTaskCommandV1
 from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
@@ -457,10 +457,10 @@ class OrchestrationStageExecutor:
         if len(slots) <= 1:
             return []
         try:
-            from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import _reachable_provider_pool
+            from polaris.cells.orchestration.pm_dispatch.public.service import reachable_provider_pool
 
             provider_ids = tuple(dict.fromkeys(str(slot.provider_id) for slot in slots if slot.provider_id))
-            live_providers = set(_reachable_provider_pool(provider_ids))
+            live_providers = set(reachable_provider_pool(provider_ids))
         except (ImportError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("Director provider reachability probe failed: %s", exc)
             live_providers = {str(slot.provider_id) for slot in slots if slot.provider_id}

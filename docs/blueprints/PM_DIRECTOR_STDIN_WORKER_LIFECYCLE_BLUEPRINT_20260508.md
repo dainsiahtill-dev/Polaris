@@ -4,7 +4,7 @@
 
 Polaris is the meta application under test. Target workspaces must stay outside the repository, with global persistence under `~/.polaris` and project persistence under `<workspace>/.polaris`.
 
-The failing Electron real-flow run reaches PM planning successfully. PM produces a valid `pm_tasks.contract.json` and marks the engine as dispatching Director tasks, but the UI remains in PM RUN/Planning for more than 20 minutes.
+Historical failure context: the failing Electron real-flow run reached PM planning successfully. PM produced a valid `pm_tasks.contract.json` and the engine entered the old dispatch wording, but the UI remained in PM RUN/Planning for more than 20 minutes. Current runtime wording and execution must be `PM -> Chief Engineer -> Director`.
 
 ## Evidence
 

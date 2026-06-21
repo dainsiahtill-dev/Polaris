@@ -25,6 +25,7 @@ import { useRuntimeTransport } from '@/runtime/transport';
 
 export interface UseFactoryBenchOptions {
   autoSelect?: 'newest' | 'none';
+  onWorkspaceChange?: (workspace: string, event: FactoryBenchEvent) => void;
 }
 
 export interface UseFactoryBenchResult {
@@ -120,6 +121,17 @@ function benchEventFromEnvelope(
   };
 }
 
+function workspaceFromBenchEvent(event: FactoryBenchEvent): string | null {
+  if (!event.type.startsWith('factory_bench.project.')) return null;
+  const meta = event.meta || {};
+  return (
+    readString(meta.workspace) ||
+    readString(meta.workspace_path) ||
+    readString(meta.project_workspace) ||
+    readString(meta.projectWorkspace)
+  );
+}
+
 function mergeSessionSummary(
   existing: FactoryBenchSessionSummary | undefined,
   event: FactoryBenchEvent,
@@ -174,7 +186,7 @@ function mergeBenchEvents(
 export function useFactoryBench(
   options: UseFactoryBenchOptions = {},
 ): UseFactoryBenchResult {
-  const { autoSelect = 'newest' } = options;
+  const { autoSelect = 'newest', onWorkspaceChange } = options;
   const [sessions, setSessions] = useState<FactoryBenchSessionSummary[]>([]);
   const [currentSession, setCurrentSession] = useState<FactoryBenchSessionDetail | null>(null);
   const [events, setEvents] = useState<FactoryBenchEvent[]>([]);
@@ -186,6 +198,7 @@ export function useFactoryBench(
   const currentSessionRef = useRef<FactoryBenchSessionDetail | null>(null);
   const sessionsRef = useRef<FactoryBenchSessionSummary[]>([]);
   const autoSelectRef = useRef(autoSelect);
+  const onWorkspaceChangeRef = useRef(onWorkspaceChange);
   const loadingSessionRef = useRef<string | null>(null);
   const manualSelectionRef = useRef(false);
 
@@ -202,6 +215,16 @@ export function useFactoryBench(
   useEffect(() => {
     autoSelectRef.current = autoSelect;
   }, [autoSelect]);
+
+  useEffect(() => {
+    onWorkspaceChangeRef.current = onWorkspaceChange;
+  }, [onWorkspaceChange]);
+
+  const notifyWorkspaceChange = useCallback((event: FactoryBenchEvent) => {
+    const workspace = workspaceFromBenchEvent(event);
+    if (!workspace) return;
+    onWorkspaceChangeRef.current?.(workspace, event);
+  }, []);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -254,9 +277,13 @@ export function useFactoryBench(
         if (selectedSessionRef.current !== sessionId) return;
         if (detailResult.ok && detailResult.data) {
           const detail = detailResult.data;
+          const detailEvents = (detail.events || []).slice(-MAX_EVENTS);
+          const latestWorkspaceEvent = [...detailEvents].reverse().find((item) => workspaceFromBenchEvent(item));
+          if (latestWorkspaceEvent) {
+            notifyWorkspaceChange(latestWorkspaceEvent);
+          }
           setCurrentSession(detail);
           setEvents((prev) => {
-            const detailEvents = (detail.events || []).slice(-MAX_EVENTS);
             if (resetBeforeLoad || detailEvents.length > 0) return mergeBenchEvents(detailEvents, prev);
             return prev;
           });
@@ -272,7 +299,7 @@ export function useFactoryBench(
         }
       }
     },
-    [],
+    [notifyWorkspaceChange],
   );
 
   const select = useCallback(
@@ -298,6 +325,7 @@ export function useFactoryBench(
         : m);
       const event = benchEventFromEnvelope(envelope);
       if (!event || !event.session_id) return;
+      notifyWorkspaceChange(event);
 
       let shouldAutoSelect = false;
       setSessions((prev) => {
@@ -365,7 +393,7 @@ export function useFactoryBench(
       unsubscribe();
       disconnectRef.current();
     };
-  }, [refresh, registerMessageHandler, subscribeChannels]);
+  }, [notifyWorkspaceChange, refresh, registerMessageHandler, subscribeChannels]);
 
   useEffect(() => {
     if (autoSelect !== 'newest') return;

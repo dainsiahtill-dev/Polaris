@@ -84,7 +84,7 @@ class TestQAPathArchitecture:
     Decision: path-1 (dispatch_pipeline.py) is the surviving QA path.
     QAWorkflow is DEPRECATED — it remains in the codebase for backward
     compatibility with existing workflow definitions but is not called by
-    any active PM→Director→QA chain.
+    any active PM→Chief Engineer→Director→QA chain.
 
     The evidence chain is the same regardless of path: both emit events via
     ``emit_event`` / ``emit_dialogue`` and both call

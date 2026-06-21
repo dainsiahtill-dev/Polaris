@@ -155,7 +155,7 @@ test("stale in-flight engine status is recovered without a user-facing failure c
           PM: {
             status: "dispatching",
             running: true,
-            detail: "PM contract persisted; dispatching Director tasks",
+            detail: "PM contract persisted; dispatching Chief Engineer handoff and Director execution",
             updated_at: "2026-05-31T10:53:57Z",
           },
           Director: {

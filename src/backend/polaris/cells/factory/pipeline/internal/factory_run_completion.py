@@ -78,7 +78,7 @@ class RunCompletionWaiter:
                     message=f"Run cancelled: {abort_reason}",
                 )
 
-        from polaris.cells.orchestration.workflow_runtime.internal.unified_orchestration_service import (
+        from polaris.cells.orchestration.workflow_runtime.public import (
             get_orchestration_service,
         )
 

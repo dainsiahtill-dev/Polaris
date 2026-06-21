@@ -1484,11 +1484,11 @@ def resolve_expected_llm_bindings(roles: tuple[str, ...] = _REQUIRED_LLM_ROLES) 
                 slots = resolve_role_worker_plan(normalized)
                 provider_ids = tuple(dict.fromkeys(str(slot.provider_id) for slot in slots if slot.provider_id))
                 try:
-                    from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (
-                        _reachable_provider_pool,
+                    from polaris.cells.orchestration.pm_dispatch.public.service import (
+                        reachable_provider_pool,
                     )
 
-                    live_provider_ids = set(_reachable_provider_pool(provider_ids))
+                    live_provider_ids = set(reachable_provider_pool(provider_ids))
                 except (ImportError, RuntimeError, ValueError, TypeError, OSError):
                     live_provider_ids = set()
                 if live_provider_ids:

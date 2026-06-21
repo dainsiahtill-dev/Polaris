@@ -124,6 +124,15 @@ Cell 是最小自治边界。
 5. 测试 harness 可以轮询状态端点等待异步流程完成，但测试轮询不得被产品代码复用或包装成运行时机制。
 6. 涉及首页、Factory、PM、ChiefEngineer、Director、ContextOS 的实时显示变更，必须附带 Playwright 证据证明页面从 WebSocket 推送更新，无刷新、无轮询。
 
+### 4.13 Full-Chain Task Flow Only（PM -> Chief Engineer -> Director）
+
+1. Polaris 运行态任务链路唯一为 `PM -> Chief Engineer -> Director`。
+2. PM 只能产出任务合同；Chief Engineer 必须产出蓝图/交接证据；Director 只能消费 CE 交接后的任务。
+3. 禁止新增或保留 `PM -> Director`、`PM->Director`、`PM → Director` 旧链路作为产品执行路径、UI 文案、实时投影、脚本兜底或恢复策略。
+4. `start_from=director`、`run_director=false` 等历史字段只能作为兼容输入被规范化到完整链路，不得改变执行链路。
+5. 缺少 CE 蓝图、handoff 或实时投影时必须 fail-closed：展示等待/阻塞 CE，不得把 PM 合同直接送入 Director。
+6. Factory Bench、首页主战场、PM/ChiefEngineer/Director 工作区必须展示同一条 `PM -> Chief Engineer -> Director` 三段状态事实。
+
 ## 5. 根目录与归属裁决
 
 规范根目录继续解释为：

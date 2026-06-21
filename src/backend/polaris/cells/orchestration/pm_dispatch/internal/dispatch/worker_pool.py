@@ -155,7 +155,7 @@ def _drive_role_workers(
     work_event: threading.Event | None = None
     if workspace_token:
         try:
-            from polaris.cells.runtime.task_market.internal.wake_bus import get_task_market_work_event
+            from polaris.cells.runtime.task_market.public.service import get_task_market_work_event
 
             work_event = get_task_market_work_event(workspace_token, role_id)
         except (ImportError, RuntimeError, TypeError, ValueError) as exc:

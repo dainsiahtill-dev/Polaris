@@ -544,9 +544,9 @@ def run_once_impl(args: argparse.Namespace, iteration: int = 1) -> int:
             status="dispatching" if bool(getattr(args, "run_director", False)) else "completed",
             running=bool(getattr(args, "run_director", False)),
             detail=(
-                "PM contract persisted; dispatching Director tasks"
+                "PM contract persisted; dispatching Chief Engineer handoff and Director execution"
                 if bool(getattr(args, "run_director", False))
-                else "PM contract persisted; Director dispatch disabled"
+                else "PM contract persisted; full-chain dispatch disabled"
             ),
         )
         engine.set_phase(
@@ -575,7 +575,7 @@ def run_once_impl(args: argparse.Namespace, iteration: int = 1) -> int:
     orchestration_runtime = _oe._resolve_orchestration_runtime(args)
     workflow_pipeline_error = ""
 
-    # Run dispatch pipeline if enabled and planning succeeded
+    # Run PM -> Chief Engineer -> Director dispatch pipeline if enabled and planning succeeded
     if run_director_enabled and exit_code == 0:
         workflow_pipeline_result = _oe._run_dispatch_pipeline_with_workflow(
             args=args,
@@ -725,14 +725,14 @@ def run_once_impl(args: argparse.Namespace, iteration: int = 1) -> int:
                 detail="QA blocked because workflow dispatch failed",
             )
     elif exit_code == 0 and not run_director_enabled:
-        # Director dispatch disabled
+        # Full-chain dispatch disabled
         engine.update_role_status(
             "ChiefEngineer",
             status="idle",
             running=False,
             task_id="",
             task_title="",
-            detail="ChiefEngineer skipped (Director dispatch disabled)",
+            detail="ChiefEngineer skipped (full-chain dispatch disabled)",
         )
         engine.update_role_status(
             "Director",
@@ -740,7 +740,7 @@ def run_once_impl(args: argparse.Namespace, iteration: int = 1) -> int:
             running=False,
             task_id="",
             task_title="",
-            detail="Director dispatch is disabled",
+            detail="Director waiting because full-chain dispatch is disabled",
         )
         engine.update_role_status(
             "QA",
@@ -748,7 +748,7 @@ def run_once_impl(args: argparse.Namespace, iteration: int = 1) -> int:
             running=False,
             task_id="",
             task_title="",
-            detail="QA waiting (Director dispatch disabled)",
+            detail="QA waiting because full-chain dispatch is disabled",
         )
 
     # --- Post-Dispatch: Status normalization, counter update, blocked policy ---

@@ -352,7 +352,7 @@ observe → propose → assist → bounded_auto → lab_only
 4. **硬门禁**: LLM summary 未接通时必须 fail-closed，不允许写假摘要
 
 **验收标准**:
-- [ ] 一次完整 PM→Director→QA 运行，关键决策覆盖率 >= 90%
+- [ ] 一次完整 PM→Chief Engineer→Director→QA 运行，关键决策覆盖率 >= 90%
 - [ ] workspace/brain 中 Resident 相关记忆 evidence refs 覆盖率 >= 95%
 - [ ] 不再出现 placeholder summary 落盘
 
@@ -649,7 +649,7 @@ POST   /v2/resident/experiments/{id}/rollback
 1. **创建目录结构**: `src/backend/app/resident/`
 2. **实现 Phase 0**: `models.py`, `storage.py`, `decision_trace.py`
 3. **技术债清理**: 清掉 4 个 placeholder
-4. **集成验证**: PM→Director→QA 决策覆盖率 >= 90%
+4. **集成验证**: PM→Chief Engineer→Director→QA 决策覆盖率 >= 90%
 
 **需要决策的问题**:
 

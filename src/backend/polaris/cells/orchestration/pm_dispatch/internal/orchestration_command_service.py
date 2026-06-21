@@ -40,6 +40,31 @@ _DEFAULT_MAX_WORKERS = DEFAULT_MAX_WORKERS
 
 logger = logging.getLogger(__name__)
 
+_CANONICAL_FACTORY_TASK_CHAIN = (
+    "pm_planning",
+    "chief_engineer_review",
+    "director_dispatch",
+    "quality_gate",
+)
+_FACTORY_STAGE_ALIASES = {
+    "architect": "docs_generation",
+    "architecture": "docs_generation",
+    "docs": "docs_generation",
+    "documents": "docs_generation",
+    "pm": "pm_planning",
+    "planning": "pm_planning",
+    "chief": "chief_engineer_review",
+    "ce": "chief_engineer_review",
+    "chief_engineer": "chief_engineer_review",
+    "chief-engineer": "chief_engineer_review",
+    "blueprint": "chief_engineer_review",
+    "director": "director_dispatch",
+    "dispatch": "director_dispatch",
+    "qa": "quality_gate",
+    "verification": "quality_gate",
+    "quality": "quality_gate",
+}
+
 
 def _coerce_metadata_overrides(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
@@ -51,6 +76,26 @@ def _coerce_metadata_overrides(value: Any) -> dict[str, Any]:
             continue
         overrides[token] = item
     return overrides
+
+
+def _canonical_factory_stage_sequence(requested_stages: Any) -> list[str]:
+    """Return the unique PM -> Chief Engineer -> Director factory task chain."""
+
+    raw_stages = requested_stages if isinstance(requested_stages, (list, tuple)) else []
+    normalized: list[str] = []
+    for item in raw_stages:
+        token = str(item or "").strip()
+        if not token:
+            continue
+        stage = _FACTORY_STAGE_ALIASES.get(token.lower(), token)
+        if stage not in normalized:
+            normalized.append(stage)
+
+    stages: list[str] = []
+    if "docs_generation" in normalized:
+        stages.append("docs_generation")
+    stages.extend(_CANONICAL_FACTORY_TASK_CHAIN)
+    return stages
 
 
 def _has_chief_engineer_handoff(payload: dict[str, Any]) -> bool:
@@ -217,7 +262,7 @@ class PMRunOptions:
     Attributes:
         run_type: Type of PM run ("full", "architect", "pm")
         directive: Optional directive/requirement text
-        run_director: Whether to auto-run Director after PM
+        run_director: Legacy flag that enables the PM -> Chief Engineer -> Director chain
         director_iterations: Number of Director iterations
     """
 
@@ -680,22 +725,15 @@ class OrchestrationCommandService:
 
         # Use FactoryRunService for actual execution
         try:
-            from .factory_run_service import FactoryConfig, FactoryRunService
+            from polaris.cells.factory.pipeline.public.service import FactoryConfig, FactoryRunService
 
-            factory_service = FactoryRunService(workspace=Path(opts.get("workspace", ".")))
+            factory_service = FactoryRunService(workspace=Path(workspace))
 
             requested_stages = opts.get(
                 "stages",
-                ["docs_generation", "pm_planning", "chief_engineer_review", "director_dispatch"],
+                ["docs_generation", *_CANONICAL_FACTORY_TASK_CHAIN],
             )
-            stages = [str(stage).strip() for stage in requested_stages if str(stage).strip()]
-            if "director_dispatch" in stages:
-                director_index = stages.index("director_dispatch")
-                if "pm_planning" not in stages:
-                    stages.insert(0, "pm_planning")
-                    director_index = stages.index("director_dispatch")
-                if "chief_engineer_review" not in stages[:director_index]:
-                    stages.insert(director_index, "chief_engineer_review")
+            stages = _canonical_factory_stage_sequence(requested_stages)
             config = FactoryConfig(
                 name=f"orch_factory_{run_id}",
                 description="Factory run from orchestration command",
