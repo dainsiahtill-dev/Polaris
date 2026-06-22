@@ -29,6 +29,37 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
 )
 
 
+def _is_materialization_quality_repair(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return (
+        "materialization quality repair mode" in lowered
+        or "[director_quality_repair:" in lowered
+        or ("artifact quality scan failed" in lowered and "do not read files first" in lowered)
+    )
+
+
+def _line_conflicts_with_quality_repair(line: str) -> bool:
+    lowered = str(line or "").lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "positive tool sequence templates",
+            "tool failure recovery protocol",
+            "template [",
+            "step 1:",
+            "read_file",
+            "repo_rg",
+            "ripgrep",
+            "glob/",
+            "search-then",
+            "immediately call",
+            "use ordered groups",
+            "any tool failure",
+            "partial completion",
+        )
+    )
+
+
 def build_decision_messages(
     context: list[dict[str, Any]],
     tool_definitions: list[dict[str, Any]],
@@ -54,6 +85,7 @@ def build_decision_messages(
     _is_benchmark_single_batch = "[Benchmark Tool Contract]" in _latest_user_for_guard
     _is_super_readonly_stage = "[SUPER_MODE_READONLY_STAGE]" in _latest_user_for_guard
     _latest_user_for_guard_lower = _latest_user_for_guard.lower()
+    _is_quality_repair = _is_materialization_quality_repair(_latest_user_for_guard)
     _is_toolless_proposal_stage = (
         "[mode:propose]" in _latest_user_for_guard_lower and "do not call tools" in _latest_user_for_guard_lower
     )
@@ -82,16 +114,28 @@ def build_decision_messages(
             "只允许使用当前角色暴露的读取/探索工具，禁止尝试写入，禁止把本阶段当成代码落地阶段。"
         )
     elif _is_benchmark_single_batch or _is_materialize_single_batch:
-        single_batch_guard = (
-            "SYSTEM CONSTRAINT (Execution): This is a SINGLE-BATCH execution. "
-            "ALL required tool calls MUST be emitted in this single turn. "
-            "Do NOT defer any tool call (especially write/edit tools) to a subsequent turn — "
-            "there is no subsequent turn in this execution path.\\n"
-            "Complete the entire workflow (search → read → write if required) in one batch. "
-            "Proceed immediately with tool calls; do not ask for confirmation.\\n"
-            "系统约束 (单批次): 本次执行为单轮单批次。所有工具调用必须在本轮一次性完成，"
-            "严禁将写入工具推迟到下一轮——当前执行路径不存在下一轮。"
-        )
+        if _is_quality_repair:
+            single_batch_guard = (
+                "SYSTEM CONSTRAINT (Execution): This is a SINGLE-BATCH materialization quality repair. "
+                "ALL required repair tool calls MUST be emitted in this single turn. "
+                "Do NOT defer write/edit tools to a subsequent turn — there is no subsequent turn in this path.\\n"
+                "Complete only the targeted repair requested by the latest quality-gate feedback. "
+                "If that feedback forbids read/list/explore steps, do not add them. "
+                "Proceed immediately with the requested repair tool calls; do not ask for confirmation.\\n"
+                "系统约束 (单批次质量修复): 本轮只执行最新质量门禁反馈要求的定向修复。"
+                "如反馈禁止读取、列目录或探索，不得添加这些步骤；直接调用所需写/改工具。"
+            )
+        else:
+            single_batch_guard = (
+                "SYSTEM CONSTRAINT (Execution): This is a SINGLE-BATCH execution. "
+                "ALL required tool calls MUST be emitted in this single turn. "
+                "Do NOT defer any tool call (especially write/edit tools) to a subsequent turn — "
+                "there is no subsequent turn in this execution path.\\n"
+                "Complete the entire workflow (search → read → write if required) in one batch. "
+                "Proceed immediately with tool calls; do not ask for confirmation.\\n"
+                "系统约束 (单批次): 本次执行为单轮单批次。所有工具调用必须在本轮一次性完成，"
+                "严禁将写入工具推迟到下一轮——当前执行路径不存在下一轮。"
+            )
     else:
         single_batch_guard = (
             "SYSTEM CONSTRAINT (Execution): This turn supports multi-turn workflow. "
@@ -107,6 +151,21 @@ def build_decision_messages(
             "严禁请求用户确认或等待批准——用户已授权执行，请立即调用工具实施修改。"
         )
     messages.append({"role": "system", "content": single_batch_guard, "metadata": {"plane": "control"}})
+    if _is_quality_repair:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "<OVERRIDE_PRIORITY: CRITICAL>\n"
+                    "MATERIALIZATION QUALITY REPAIR OVERRIDE:\n"
+                    "The latest user quality-repair instruction overrides generic tool sequence templates. "
+                    "When it says not to read files first, list directories, explore, or explain, emit only "
+                    "the minimal write/edit tool calls needed for the named repair targets, then stop.\n"
+                    "</OVERRIDE_PRIORITY>"
+                ),
+                "metadata": {"plane": "control", "kind": "quality_repair_override"},
+            }
+        )
 
     # FIX-20250421: 在 MATERIALIZE_CHANGES 模式下也注入 Task Contract 的正例模板和恢复协议。
     # 根因：CLI 模式下 MATERIALIZE_CHANGES 跳过 Task Contract，导致模型缺乏正例指导。
@@ -149,6 +208,8 @@ def build_decision_messages(
                         "valid pattern",
                     )
                 ):
+                    continue
+                if _is_quality_repair and _line_conflicts_with_quality_repair(line):
                     continue
                 positive_lines.append(line)
             if positive_lines:

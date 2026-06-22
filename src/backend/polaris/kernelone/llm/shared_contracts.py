@@ -148,6 +148,8 @@ class ModelSpec:
     supports_tools: bool = False
     supports_json_schema: bool = False
     supports_vision: bool = False
+    execution_profile: str | None = None
+    tool_schema_profile: str | None = None
     cost_hint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:

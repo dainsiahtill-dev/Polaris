@@ -231,20 +231,28 @@ async def test_v2_health_lancedb_failure(client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_v2_runtime_fingerprint_reports_backend_source(client: AsyncClient) -> None:
     """Runtime fingerprint endpoint should expose bench-comparable backend metadata."""
-    with patch(
-        "scripts.factory_bench.backend_fingerprint.compute_source_fingerprint",
-        return_value="fixed-source-fp",
+    with (
+        patch(
+            "polaris.delivery.http.routers.system._SERVER_STARTUP_SOURCE_FINGERPRINT",
+            "startup-source-fp",
+        ),
+        patch(
+            "polaris.delivery.http.routers.system._compute_backend_source_fingerprint",
+            return_value="current-source-fp",
+        ),
     ):
         response = await client.get("/v2/runtime/fingerprint")
 
     assert response.status_code == 200
     data = response.json()
     assert data["ok"] is True
-    assert data["fingerprint"] == "fixed-source-fp"
+    assert data["fingerprint"] == "startup-source-fp"
+    assert data["current_source_fingerprint"] == "current-source-fp"
+    assert data["stale_since_startup"] is True
     assert isinstance(data["pid"], int)
     assert data["startup_time"]
     assert data["workspace"] == "."
-    assert data["source"] == "runtime/fingerprint"
+    assert data["source"] == "runtime/fingerprint:process_startup"
 
 
 # ---------------------------------------------------------------------------

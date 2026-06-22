@@ -90,6 +90,41 @@ def test_apply_factory_bench_failure_taxonomy_exposes_top_level_fields() -> None
     }
 
 
+def test_start_failure_runtime_roles_not_ready_is_runtime_environment() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "chain": {
+            "exit_code": -1,
+            "error": "start_failed",
+            "start_error": {
+                "status": 409,
+                "json": {
+                    "error": {
+                        "code": "RUNTIME_ROLES_NOT_READY",
+                        "details": {
+                            "role_issues": {
+                                "director": (
+                                    "director binding (openai_compat-1/qwen3.6-27b-code-gpu0) "
+                                    "LLM not ready; run tests first"
+                                )
+                            }
+                        },
+                    }
+                },
+            },
+        },
+        "factory_gates": [
+            {"gate": "chain_clean", "ok": False, "detail": "chain_state=fail exit_code=-1"},
+        ],
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:runtime_roles_not_ready"
+    assert "openai_compat-1/qwen3.6-27b-code-gpu0" in taxonomy["evidence"][0]
+
+
 def test_factory_bench_taxonomy_prioritizes_pm_runtime_environment_over_missing_ce_blueprint() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,

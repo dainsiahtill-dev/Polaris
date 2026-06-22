@@ -63,6 +63,41 @@ def _provider_role_compatible(role: str, provider_status: dict[str, Any] | None)
     return not tested_role or tested_role == "connectivity" or tested_role == _role_key(role)
 
 
+def _director_binding_skip_reason(
+    *,
+    role: str,
+    provider_id: str,
+    model: str,
+    provider_status: dict[str, Any] | None,
+) -> str:
+    """Return a reason when a Director binding may be explicitly skipped."""
+    if _role_key(role) != "director":
+        return ""
+    if not isinstance(provider_status, dict) or bool(provider_status.get("ready")):
+        return ""
+    if not _provider_role_compatible(role, provider_status):
+        return ""
+    tested_model = str(provider_status.get("model") or "").strip()
+    tested_timestamp = provider_status.get("timestamp")
+    issue = _readiness_candidate_issue(
+        provider_id=provider_id,
+        model=model,
+        tested_provider_id=provider_id,
+        tested_model=tested_model,
+        tested_timestamp=tested_timestamp,
+    )
+    if issue:
+        return ""
+    suites = provider_status.get("suites")
+    connectivity = suites.get("connectivity") if isinstance(suites, dict) else None
+    if isinstance(connectivity, dict) and connectivity.get("ok") is False:
+        return "provider_connectivity_unavailable"
+    grade = str(provider_status.get("grade") or "").strip().upper()
+    if grade == "FAIL":
+        return "provider_readiness_failed"
+    return ""
+
+
 def _dedupe_index_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
     seen: set[int] = set()
@@ -319,6 +354,8 @@ def _ensure_llm_ready(state: AppState, role: str) -> None:
 
     # If bindings exist, check each binding's readiness
     if bindings:
+        ready_binding_count = 0
+        skipped_bindings: list[str] = []
         for binding in bindings:
             binding_provider_id = str(binding.get("provider_id") or "").strip()
             binding_model = str(binding.get("model") or "").strip()
@@ -368,7 +405,10 @@ def _ensure_llm_ready(state: AppState, role: str) -> None:
                     )
                 )
 
-            first_issue = f"{role_key} binding {binding_id} LLM not ready; run tests first"
+            binding_name = f" {binding_id}" if binding_id else ""
+            binding_label = f"{role_key} binding{binding_name} ({binding_provider_id}/{binding_model})"
+            first_issue = f"{binding_label} LLM not ready; run tests first"
+            binding_ready = False
             for tested_provider_id, tested_model, tested_timestamp in binding_candidates:
                 issue = _readiness_candidate_issue(
                     provider_id=binding_provider_id,
@@ -378,10 +418,27 @@ def _ensure_llm_ready(state: AppState, role: str) -> None:
                     tested_timestamp=tested_timestamp,
                 )
                 if not issue:
+                    binding_ready = True
                     break
-                first_issue = f"{role_key} binding {binding_id} ({binding_provider_id}/{binding_model}) {issue}"
-            else:
-                raise HTTPException(status_code=409, detail=first_issue)
+                first_issue = f"{binding_label} {issue}"
+            if binding_ready:
+                ready_binding_count += 1
+                continue
+            skip_reason = _director_binding_skip_reason(
+                role=role_key,
+                provider_id=binding_provider_id,
+                model=binding_model,
+                provider_status=provider_status,
+            )
+            if skip_reason:
+                skipped_bindings.append(f"{binding_provider_id}/{binding_model}:{skip_reason}")
+                continue
+            raise HTTPException(status_code=409, detail=first_issue)
+        if ready_binding_count <= 0 and skipped_bindings:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{role_key} all bindings unavailable; skipped={', '.join(skipped_bindings)}",
+            )
     else:
         # No bindings - check single provider/model
         role_status, provider_status = _select_binding_status(

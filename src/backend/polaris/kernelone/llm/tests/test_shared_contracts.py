@@ -90,6 +90,8 @@ class TestModelSpec:
         assert spec.supports_tools is False
         assert spec.supports_json_schema is False
         assert spec.supports_vision is False
+        assert spec.execution_profile is None
+        assert spec.tool_schema_profile is None
         assert spec.cost_hint is None
 
     def test_custom_initialization(self) -> None:
@@ -102,6 +104,8 @@ class TestModelSpec:
             max_output_tokens=8192,
             supports_tools=True,
             supports_json_schema=True,
+            execution_profile="full",
+            tool_schema_profile="full",
             cost_hint="$0.015/1K tokens",
         )
 
@@ -109,6 +113,8 @@ class TestModelSpec:
         assert spec.max_output_tokens == 8192
         assert spec.supports_tools is True
         assert spec.supports_json_schema is True
+        assert spec.execution_profile == "full"
+        assert spec.tool_schema_profile == "full"
         assert spec.cost_hint == "$0.015/1K tokens"
 
     def test_to_dict(self) -> None:

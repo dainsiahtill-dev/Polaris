@@ -163,10 +163,12 @@ def resolve_backend_fingerprint(
         return {
             "reachable": True,
             "fingerprint": str(data.get("fingerprint") or ""),
+            "current_source_fingerprint": str(data.get("current_source_fingerprint") or ""),
+            "stale_since_startup": bool(data.get("stale_since_startup", False)),
             "pid": data.get("pid"),
             "startup_time": str(data.get("startup_time") or ""),
             "workspace": str(data.get("workspace") or ""),
-            "source": "runtime/fingerprint",
+            "source": str(data.get("source") or "runtime/fingerprint"),
         }
 
     # Fallback: /v2/health may carry fingerprint info in the future
@@ -224,6 +226,7 @@ def check_backend_freshness(
 
     actual_fp = backend_info.get("fingerprint", "")
     reachable = bool(backend_info.get("reachable"))
+    source = str(backend_info.get("source") or "")
 
     if not reachable:
         ok = False
@@ -231,6 +234,18 @@ def check_backend_freshness(
     elif not actual_fp:
         ok = False
         detail = "backend reachable but fingerprint missing (pre-R11 backend?)"
+    elif source != "runtime/fingerprint:process_startup":
+        ok = False
+        detail = (
+            "backend fingerprint endpoint uses legacy request-time semantics; "
+            f"restart backend to load process-startup fingerprint support (source={source or 'unknown'})"
+        )
+    elif bool(backend_info.get("stale_since_startup")):
+        ok = False
+        detail = (
+            "STALE backend: source changed after backend startup "
+            f"startup={actual_fp} current={backend_info.get('current_source_fingerprint') or ''}"
+        )
     elif not expected_fingerprint:
         ok = False
         detail = "local source fingerprint unavailable; cannot verify freshness"

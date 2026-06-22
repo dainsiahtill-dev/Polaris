@@ -178,6 +178,14 @@
 5. OpenCode 审计默认只读；若需要修复，主 Agent 必须先拆成互不重叠的授权范围，并在回收后零信任复核 diff、测试与证据链。
 6. Factory Bench 每条角色工具失败记录必须写出机器可读 `opencode_audit` 字段，至少包含 `required`、`recommended_agent_count`、`must_review`、`forbidden`、`root_cause_signature` 与自包含 `prompt`；缺少该字段视为审计包不完整。
 
+## 8.5 Director 多绑定降级执行标准
+
+1. Director 多绑定 fanout 允许对已证实不可连通或 readiness/connectivity 失败的单个 binding 做显式跳过，只调度仍可用的 Director binding。
+2. 降级执行只适用于 Director 多绑定；PM、Chief Engineer、QA、单绑定 Director 不允许借此绕过 readiness。
+3. 降级状态必须可观测：`/v2/llm/status` 输出 `DEGRADED`、`degraded_roles`、`factory_degraded_roles`、`skipped_bindings`、`skip_reason`；Factory/bench/runtime 证据必须记录被跳过的 provider/model/binding_id 和原因。
+4. 所有 Director bindings 都不可用时必须 BLOCKED，不得继续运行。
+5. 审计口径必须以实际可用 binding 为准；已跳过的 binding 不要求 LLM 调用证据，但必须有跳过证据，禁止把 degraded run 报告成全路成功。
+
 ---
 
 ## 9. 文档与治理同步标准

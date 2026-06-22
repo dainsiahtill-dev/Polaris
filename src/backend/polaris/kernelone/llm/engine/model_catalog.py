@@ -79,6 +79,14 @@ def _to_int(value: Any) -> int | None:
         return None
 
 
+def _first_non_empty_string(*values: Any) -> str | None:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return None
+
+
 def _normalize_model_key(model: str) -> str:
     return str(model or "").strip().lower()
 
@@ -193,6 +201,18 @@ class ModelCatalog:
                 model_specific.get("supports_vision")
                 if "supports_vision" in model_specific
                 else cfg.get("supports_vision", known_model_cfg.get("supports_vision", False))
+            ),
+            execution_profile=_first_non_empty_string(
+                model_specific.get("execution_profile"),
+                model_limit_cfg.get("execution_profile"),
+                cfg.get("execution_profile"),
+                known_model_cfg.get("execution_profile"),
+            ),
+            tool_schema_profile=_first_non_empty_string(
+                model_specific.get("tool_schema_profile"),
+                model_limit_cfg.get("tool_schema_profile"),
+                cfg.get("tool_schema_profile"),
+                known_model_cfg.get("tool_schema_profile"),
             ),
             cost_hint=str(model_specific.get("cost_hint") or cfg.get("cost_hint") or "") or None,
         )

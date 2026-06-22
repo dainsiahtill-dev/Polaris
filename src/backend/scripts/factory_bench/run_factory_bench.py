@@ -2357,10 +2357,22 @@ def run_factory_chain(
         start_response = start_factory_run(backend_url, payload, token=backend_token)
         if not isinstance(start_response, dict):
             return {"exit_code": -1, "duration_s": 0, "error": "start_failed"}
+        if isinstance(start_response.get("_http_error"), dict):
+            return {
+                "exit_code": -1,
+                "duration_s": round(time.time() - started, 1),
+                "error": "start_failed",
+                "start_error": start_response["_http_error"],
+            }
 
         run_id = str(start_response.get("run_id") or "").strip()
         if not run_id:
-            return {"exit_code": -1, "duration_s": 0, "error": "start_failed"}
+            return {
+                "exit_code": -1,
+                "duration_s": round(time.time() - started, 1),
+                "error": "start_failed",
+                "start_response": start_response,
+            }
 
         terminal_status = wait_run_until_terminal(
             backend_url,

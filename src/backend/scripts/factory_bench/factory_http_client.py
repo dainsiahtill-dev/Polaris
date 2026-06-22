@@ -34,6 +34,25 @@ def _retry_after_seconds(exc: urllib.error.HTTPError) -> float | None:
     return min(max(delay, 0.0), MAX_RETRY_AFTER_S)
 
 
+def _http_error_payload(exc: urllib.error.HTTPError) -> dict[str, Any]:
+    try:
+        raw = exc.read().decode("utf-8", errors="replace")
+    except (AttributeError, OSError, ValueError):
+        raw = ""
+    parsed: Any = None
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            parsed = None
+    return {
+        "status": int(getattr(exc, "code", 0) or 0),
+        "reason": str(getattr(exc, "reason", "") or ""),
+        "body": raw,
+        "json": parsed if isinstance(parsed, dict) else None,
+    }
+
+
 def _append_query_params(url: str, params: Mapping[str, str]) -> str:
     clean_params = [(key, value) for key, value in params.items() if value]
     if not clean_params:
@@ -174,6 +193,7 @@ def _http_post_json(
     timeout_s: float = DEFAULT_TIMEOUT_S,
     token: str = "",
     max_retries: int = DEFAULT_MAX_RETRIES,
+    return_errors: bool = False,
 ) -> dict[str, Any] | None:
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -196,7 +216,14 @@ def _http_post_json(
                 )
                 time.sleep(delay)
                 continue
-            print(f"[factory-bench] backend POST failed: {url}: {exc}", file=sys.stderr, flush=True)
+            error_payload = _http_error_payload(exc)
+            print(
+                f"[factory-bench] backend POST failed: {url}: {exc}; body={error_payload.get('body') or ''}",
+                file=sys.stderr,
+                flush=True,
+            )
+            if return_errors:
+                return {"_http_error": error_payload}
             return None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             print(f"[factory-bench] backend POST failed: {url}: {exc}", file=sys.stderr, flush=True)
@@ -254,7 +281,7 @@ def start_factory_run(
     payload: dict[str, Any],
     token: str = "",
 ) -> dict[str, Any] | None:
-    return _http_post_json(f"{backend_url}/v2/factory/runs", payload, token=token)
+    return _http_post_json(f"{backend_url}/v2/factory/runs", payload, token=token, return_errors=True)
 
 
 def get_run_status(

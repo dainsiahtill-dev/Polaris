@@ -54,6 +54,7 @@ import pytest  # noqa: E402
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (  # noqa: E402
     resolve_from_scratch_write_target,
     restrict_tool_definitions_to_write,
+    should_use_weak_director_slim_tool_schema,
 )
 
 
@@ -105,6 +106,114 @@ class TestRestrictToolDefinitionsToWrite:
     def test_returns_original_when_no_write_tool_survives(self) -> None:
         original = _tools("read_file", "repo_rg")
         assert restrict_tool_definitions_to_write(original) is original
+
+
+class TestWeakDirectorSlimToolSchema:
+    def test_qwen_director_materialize_uses_slim_tools(self) -> None:
+        profile = type("Profile", (), {"provider_id": "openai_compat", "model": "qwen3.6-27b-code-gpu0"})()
+
+        assert should_use_weak_director_slim_tool_schema(
+            role="director",
+            profile=profile,
+            context_override={"delivery_mode": "materialize_changes"},
+        )
+
+    def test_strong_director_materialize_keeps_full_tools(self) -> None:
+        profile = type("Profile", (), {"provider_id": "openai", "model": "gpt-5.3-codex"})()
+
+        assert not should_use_weak_director_slim_tool_schema(
+            role="director",
+            profile=profile,
+            context_override={"delivery_mode": "materialize_changes"},
+        )
+
+    def test_configured_full_profile_overrides_model_name_hint(self) -> None:
+        profile = type(
+            "Profile",
+            (),
+            {
+                "provider_id": "openai_compat",
+                "model": "qwen3.6-27b-code-gpu0",
+                "tool_schema_profile": "full",
+            },
+        )()
+
+        assert not should_use_weak_director_slim_tool_schema(
+            role="director",
+            profile=profile,
+            context_override={"delivery_mode": "materialize_changes"},
+        )
+
+    def test_configured_slim_profile_enables_unknown_model(self) -> None:
+        profile = type(
+            "Profile",
+            (),
+            {
+                "provider_id": "openai_compat",
+                "model": "custom-local-model",
+                "tool_schema_profile": "slim",
+            },
+        )()
+
+        assert should_use_weak_director_slim_tool_schema(
+            role="director",
+            profile=profile,
+            context_override={"delivery_mode": "materialize_changes"},
+        )
+
+    def test_explicit_context_flag_enables_unknown_director_model(self) -> None:
+        profile = type("Profile", (), {"provider_id": "local", "model": "custom-model"})()
+
+        assert should_use_weak_director_slim_tool_schema(
+            role="director",
+            profile=profile,
+            context_override={
+                "delivery_mode": "materialize_changes",
+                "director_slim_tool_schema": True,
+            },
+        )
+
+    def test_forced_tool_definitions_are_not_overridden(self) -> None:
+        profile = type("Profile", (), {"provider_id": "openai_compat", "model": "qwen3.6-27b-code-gpu0"})()
+
+        assert not should_use_weak_director_slim_tool_schema(
+            role="director",
+            profile=profile,
+            context_override={
+                "delivery_mode": "materialize_changes",
+                "_transaction_kernel_forced_tool_definitions": [
+                    {"type": "function", "function": {"name": "write_file"}}
+                ],
+            },
+        )
+
+    def test_non_execution_turn_keeps_full_tools(self) -> None:
+        profile = type("Profile", (), {"provider_id": "openai_compat", "model": "qwen3.6-27b-code-gpu0"})()
+
+        assert not should_use_weak_director_slim_tool_schema(
+            role="director",
+            profile=profile,
+            context_override={"context_os_snapshot": {}},
+        )
+
+    def test_tool_schema_pressure_enables_unknown_model_without_name_hint(self) -> None:
+        profile = type("Profile", (), {"provider_id": "local", "model": "custom-model"})()
+
+        assert should_use_weak_director_slim_tool_schema(
+            role="director",
+            profile=profile,
+            context_override={"delivery_mode": "materialize_changes"},
+            tool_definitions=_tools(
+                "read_file",
+                "repo_rg",
+                "glob",
+                "scout",
+                "write_file",
+                "edit_file",
+                "append_to_file",
+                "execute_command",
+            ),
+        )
 
 
 # ============ R7: repair-preserving edit restriction (I3-r28) ============

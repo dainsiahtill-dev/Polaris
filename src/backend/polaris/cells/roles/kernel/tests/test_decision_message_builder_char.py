@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Characterization tests for ``_build_decision_messages`` branches.
 
 These pin the CURRENT behavior of the decision-message synthesis before the
@@ -103,6 +102,36 @@ def test_build_decision_messages_materialize_strips_negative_task_contract_lines
         assert "hard gate" not in lowered
         assert "rejected" not in lowered
         assert "read-only" not in lowered
+
+
+def test_build_decision_messages_quality_repair_removes_read_first_templates() -> None:
+    controller = _make_controller()
+    user_content = (
+        "[Benchmark Tool Contract]\n"
+        "Required tools: write_file\n"
+        "MATERIALIZATION QUALITY REPAIR MODE:\n"
+        "Artifact quality scan failed: npm package manifest script references missing local entrypoint.\n"
+        "Do not read files first. Do not list directories. Do not explore. Do not explain.\n"
+        "Emit exactly one write_file tool call for package.json."
+    )
+    context = [{"role": "user", "content": user_content}]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+    ]
+    ledger = TurnLedger(turn_id="turn_quality_repair_conflict_filter")
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+
+    messages = controller._build_decision_messages(context, tool_definitions, ledger)
+
+    system_messages = [str(m.get("content") or "") for m in messages if m.get("role") == "system"]
+    assert any("MATERIALIZATION QUALITY REPAIR OVERRIDE" in text for text in system_messages)
+    assert any("SINGLE-BATCH materialization quality repair" in text for text in system_messages)
+    control_text = "\n".join(system_messages)
+    assert "search → read → write" not in control_text
+    assert "Step 1: read_file" not in control_text
+    assert "TOOL FAILURE RECOVERY PROTOCOL" not in control_text
+    assert "Immediately call read_file" not in control_text
 
 
 def test_build_decision_messages_excludes_control_plane_from_data_plane() -> None:

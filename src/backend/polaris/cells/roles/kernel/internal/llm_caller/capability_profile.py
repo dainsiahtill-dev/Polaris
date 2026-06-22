@@ -38,6 +38,8 @@ class ResolvedActorCapabilityProfile:
     supports_native_tools: bool
     supports_json_schema: bool
     supports_stream_native_tools: bool
+    execution_profile: str
+    tool_schema_profile: str
     tool_whitelist: tuple[str, ...]
     tool_count: int
     native_tool_mode: str
@@ -62,6 +64,8 @@ class ResolvedActorCapabilityProfile:
             "supports_native_tools": self.supports_native_tools,
             "supports_json_schema": self.supports_json_schema,
             "supports_stream_native_tools": self.supports_stream_native_tools,
+            "execution_profile": self.execution_profile,
+            "tool_schema_profile": self.tool_schema_profile,
             "tool_whitelist": self.tool_whitelist,
             "tool_count": self.tool_count,
             "native_tool_mode": self.native_tool_mode,
@@ -119,6 +123,8 @@ def resolve_actor_capability_profile(
             getattr(provider_capabilities, "supports_stream_native_tools", False)
             or getattr(spec, "supports_tools", False)
         ),
+        execution_profile=str(getattr(spec, "execution_profile", "") or "").strip(),
+        tool_schema_profile=str(getattr(spec, "tool_schema_profile", "") or "").strip(),
         tool_whitelist=tool_whitelist,
         tool_count=len(tools) if isinstance(tools, list) else 0,
         native_tool_mode=str(native_tool_mode or "").strip(),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import sys
 import unittest
@@ -42,13 +43,13 @@ class FakeHTTPResponse:
         pass
 
 
-def _http_error(url: str, code: int, msg: str, retry_after: str | None = None):
+def _http_error(url: str, code: int, msg: str, retry_after: str | None = None, body: bytes | None = None):
     from urllib.error import HTTPError
 
     headers = Message()
     if retry_after is not None:
         headers["Retry-After"] = retry_after
-    return HTTPError(url, code, msg, headers, None)
+    return HTTPError(url, code, msg, headers, io.BytesIO(body or b""))
 
 
 class TestHTTPPostJson(unittest.TestCase):
@@ -208,6 +209,33 @@ class TestHelpers(unittest.TestCase):
         req = mock_urlopen.call_args[0][0]
         self.assertEqual(req.full_url, "http://localhost:49977/v2/factory/runs")
         self.assertEqual(req.get_header("Authorization"), "Bearer t")
+
+    def test_start_factory_run_preserves_http_error_body(self) -> None:
+        payload = {"project_id": "abc"}
+        error_body = {
+            "error": {
+                "code": "RUNTIME_ROLES_NOT_READY",
+                "details": {
+                    "role_issues": {
+                        "director": "director binding (qwen-a/qwen3.6-27b-gpu0) LLM not ready; run tests first"
+                    }
+                },
+            }
+        }
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=_http_error(
+                "http://localhost:49977/v2/factory/runs",
+                409,
+                "Conflict",
+                body=json.dumps(error_body).encode("utf-8"),
+            ),
+        ):
+            result = start_factory_run("http://localhost:49977", payload, token="t")
+
+        assert isinstance(result, dict)
+        assert result["_http_error"]["status"] == 409
+        assert result["_http_error"]["json"] == error_body
 
     def test_get_run_status(self) -> None:
         fake_resp = FakeHTTPResponse(json.dumps({"status": "running"}).encode("utf-8"))

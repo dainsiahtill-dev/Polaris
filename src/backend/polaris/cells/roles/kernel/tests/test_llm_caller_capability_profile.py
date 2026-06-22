@@ -31,6 +31,8 @@ class _ModelCatalog:
             tokenizer="qwen_chatml",
             supports_tools=True,
             supports_json_schema=True,
+            execution_profile="compact",
+            tool_schema_profile="slim",
         )
 
 
@@ -105,6 +107,8 @@ async def test_prepare_request_includes_resolved_actor_capability_profile(tmp_pa
     assert capability_profile["supports_native_tools"] is True
     assert capability_profile["supports_json_schema"] is True
     assert capability_profile["supports_stream_native_tools"] is True
+    assert capability_profile["execution_profile"] == "compact"
+    assert capability_profile["tool_schema_profile"] == "slim"
     assert capability_profile["tool_count"] == 1
     assert capability_profile["native_tool_mode"] == "native_tools"
     assert capability_profile["response_format_mode"] == "plain_text"

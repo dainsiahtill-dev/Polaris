@@ -147,6 +147,8 @@ class TestResolveBackendFingerprint(unittest.TestCase):
             {
                 "/v2/runtime/fingerprint": {
                     "fingerprint": "abc123def456",
+                    "current_source_fingerprint": "abc123def456",
+                    "source": "runtime/fingerprint:process_startup",
                     "pid": 12345,
                     "startup_time": "2026-06-21T00:00:00Z",
                     "workspace": "/tmp/test",
@@ -158,7 +160,7 @@ class TestResolveBackendFingerprint(unittest.TestCase):
             self.assertTrue(result["reachable"])
             self.assertEqual(result["fingerprint"], "abc123def456")
             self.assertEqual(result["pid"], 12345)
-            self.assertEqual(result["source"], "runtime/fingerprint")
+            self.assertEqual(result["source"], "runtime/fingerprint:process_startup")
         finally:
             _stop_mock_backend(server)
 
@@ -209,6 +211,8 @@ class TestCheckBackendFreshness(unittest.TestCase):
             {
                 "/v2/runtime/fingerprint": {
                     "fingerprint": "match_me",
+                    "current_source_fingerprint": "match_me",
+                    "source": "runtime/fingerprint:process_startup",
                     "pid": 100,
                     "startup_time": "2026-06-21T00:00:00Z",
                 },
@@ -231,6 +235,8 @@ class TestCheckBackendFreshness(unittest.TestCase):
             {
                 "/v2/runtime/fingerprint": {
                     "fingerprint": "old_process",
+                    "current_source_fingerprint": "old_process",
+                    "source": "runtime/fingerprint:process_startup",
                     "pid": 99,
                     "startup_time": "2026-06-20T00:00:00Z",
                 },
@@ -281,6 +287,7 @@ class TestCheckBackendFreshness(unittest.TestCase):
             {
                 "/v2/runtime/fingerprint": {
                     "fingerprint": "backend_has_fp",
+                    "source": "runtime/fingerprint:process_startup",
                     "pid": 1,
                     "startup_time": "",
                 },
@@ -294,6 +301,52 @@ class TestCheckBackendFreshness(unittest.TestCase):
             )
             # Empty local fingerprint => fail closed (STALE or unavailable)
             self.assertFalse(result["ok"])
+        finally:
+            _stop_mock_backend(server)
+
+    def test_fail_closed_for_legacy_request_time_fingerprint_endpoint(self) -> None:
+        server, url, _ = _start_mock_backend(
+            {
+                "/v2/runtime/fingerprint": {
+                    "fingerprint": "match_me",
+                    "pid": 100,
+                    "startup_time": "2026-06-21T00:00:00Z",
+                    "source": "runtime/fingerprint",
+                },
+            }
+        )
+        try:
+            result = check_backend_freshness(
+                url,
+                expected_fingerprint="match_me",
+                timeout_s=2.0,
+            )
+            self.assertFalse(result["ok"])
+            self.assertIn("legacy request-time semantics", result["detail"])
+        finally:
+            _stop_mock_backend(server)
+
+    def test_fail_closed_when_backend_source_changed_after_startup(self) -> None:
+        server, url, _ = _start_mock_backend(
+            {
+                "/v2/runtime/fingerprint": {
+                    "fingerprint": "startup_fp",
+                    "current_source_fingerprint": "current_fp",
+                    "stale_since_startup": True,
+                    "pid": 100,
+                    "startup_time": "2026-06-21T00:00:00Z",
+                    "source": "runtime/fingerprint:process_startup",
+                },
+            }
+        )
+        try:
+            result = check_backend_freshness(
+                url,
+                expected_fingerprint="current_fp",
+                timeout_s=2.0,
+            )
+            self.assertFalse(result["ok"])
+            self.assertIn("source changed after backend startup", result["detail"])
         finally:
             _stop_mock_backend(server)
 

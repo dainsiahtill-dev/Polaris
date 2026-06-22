@@ -1904,6 +1904,8 @@ def _record_has_runtime_environment_failure(record: dict[str, Any]) -> bool:
     ).lower()
     if "workspace_switch_failed" in text:
         return True
+    if "runtime_roles_not_ready" in text:
+        return True
     if "cognitive_runtime_mainline_unavailable" in text:
         return True
     return "filenotfounderror" in text and (
@@ -1915,6 +1917,8 @@ def _runtime_environment_failure_reason(record: dict[str, Any]) -> str:
     text = json.dumps(record, ensure_ascii=False, default=str).lower()
     if "workspace_switch_failed" in text:
         return "workspace_switch_failed"
+    if "runtime_roles_not_ready" in text:
+        return "runtime_roles_not_ready"
     if "cognitive_runtime_mainline_unavailable" in text:
         return "cognitive_runtime_mainline_unavailable"
     if "filenotfounderror" in text:
@@ -1930,6 +1934,16 @@ def _runtime_environment_failure_evidence(record: dict[str, Any]) -> str:
             detail = str(workspace_switch.get("workspace") or workspace_switch.get("detail") or "").strip()
             if detail:
                 return detail
+    start_error = chain.get("start_error") if isinstance(chain, dict) else {}
+    if isinstance(start_error, dict):
+        payload = start_error.get("json")
+        if isinstance(payload, dict):
+            detail = json.dumps(payload, ensure_ascii=False, default=str)
+            if detail:
+                return detail
+        detail = str(start_error.get("body") or "").strip()
+        if detail:
+            return detail
     audit_bundle = chain.get("audit_bundle") if isinstance(chain, dict) else {}
     failure = audit_bundle.get("failure") if isinstance(audit_bundle, dict) else {}
     if isinstance(failure, dict):

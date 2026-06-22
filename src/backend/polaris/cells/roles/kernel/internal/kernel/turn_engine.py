@@ -412,14 +412,10 @@ class TurnEngineExecutor:
             )
             existing_forced_defs = override.get("_transaction_kernel_forced_tool_definitions")
             existing_forced_choice = override.get("_transaction_kernel_forced_tool_choice")
-            existing_forced_scope = (
-                (isinstance(existing_forced_defs, list) and bool(existing_forced_defs))
-                or (
-                    existing_forced_choice is not None
-                    and not (
-                        isinstance(existing_forced_choice, str)
-                        and existing_forced_choice.strip().lower() in {"", "auto"}
-                    )
+            existing_forced_scope = (isinstance(existing_forced_defs, list) and bool(existing_forced_defs)) or (
+                existing_forced_choice is not None
+                and not (
+                    isinstance(existing_forced_choice, str) and existing_forced_choice.strip().lower() in {"", "auto"}
                 )
             )
             incoming_choice_is_default = tool_choice is None or (
@@ -429,11 +425,7 @@ class TurnEngineExecutor:
             override["_transaction_kernel_prebuilt_messages"] = [
                 dict(item) for item in prebuilt_messages if isinstance(item, dict)
             ]
-            if (
-                isinstance(tool_definitions, list)
-                and not explicit_tool_disable
-                and not preserve_existing_forced_scope
-            ):
+            if isinstance(tool_definitions, list) and not explicit_tool_disable and not preserve_existing_forced_scope:
                 override["_transaction_kernel_forced_tool_definitions"] = [
                     dict(item) for item in tool_definitions if isinstance(item, dict)
                 ]
@@ -686,6 +678,7 @@ class TurnEngineExecutor:
             resolve_repair_edit_target,
             restrict_tool_definitions_to_edit,
             restrict_tool_definitions_to_write,
+            should_use_weak_director_slim_tool_schema,
         )
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
         from polaris.cells.roles.profile.public.service import RoleTurnResult
@@ -737,6 +730,22 @@ class TurnEngineExecutor:
                 logger.info(
                     "repair-turn edit-only for existing target: target=%s",
                     _repair_target,
+                )
+            elif should_use_weak_director_slim_tool_schema(
+                role=role,
+                profile=profile,
+                context_override=getattr(request, "context_override", None),
+                workspace=str(self._kernel.workspace or "."),
+                tool_definitions=tool_definitions,
+            ):
+                tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+                logger.info(
+                    "weak-director slim tool schema enabled: role=%s model=%s delivery_mode=%s",
+                    role,
+                    getattr(profile, "model", ""),
+                    (getattr(request, "context_override", {}) or {}).get("delivery_mode")
+                    if isinstance(getattr(request, "context_override", None), dict)
+                    else None,
                 )
         tool_definitions = _apply_forced_transaction_tool_definitions(
             tool_definitions,
@@ -900,6 +909,7 @@ class TurnEngineExecutor:
             resolve_repair_edit_target,
             restrict_tool_definitions_to_edit,
             restrict_tool_definitions_to_write,
+            should_use_weak_director_slim_tool_schema,
         )
         from polaris.cells.roles.kernel.public.service import RoleContextGateway
         from polaris.cells.roles.kernel.public.turn_events import (
@@ -958,6 +968,22 @@ class TurnEngineExecutor:
                 logger.info(
                     "repair-turn edit-only for existing target: target=%s",
                     _repair_target,
+                )
+            elif should_use_weak_director_slim_tool_schema(
+                role=role,
+                profile=profile,
+                context_override=getattr(request, "context_override", None),
+                workspace=str(self._kernel.workspace or "."),
+                tool_definitions=tool_definitions,
+            ):
+                tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+                logger.info(
+                    "weak-director slim tool schema enabled: role=%s model=%s delivery_mode=%s",
+                    role,
+                    getattr(profile, "model", ""),
+                    (getattr(request, "context_override", {}) or {}).get("delivery_mode")
+                    if isinstance(getattr(request, "context_override", None), dict)
+                    else None,
                 )
         tool_definitions = _apply_forced_transaction_tool_definitions(
             tool_definitions,

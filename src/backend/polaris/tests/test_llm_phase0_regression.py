@@ -374,6 +374,182 @@ class TestLLMStatusLastUpdated:
         assert [item["max_context_tokens"] for item in director_status["bindings"]] == [32_768, 65_536]
         assert response["providers"]["qwen-b"]["max_context_tokens"] == 65_536
 
+    def test_llm_status_degrades_multi_bound_director_when_one_binding_is_unready(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = True
+
+        now = datetime.now(timezone.utc).isoformat()
+        config_payload = {
+            "schema_version": 2,
+            "providers": {
+                "qwen-a": {"type": "openai_compat", "model": "qwen3.6-27b-gpu0"},
+                "qwen-b": {"type": "openai_compat", "model": "qwen3.6-27b-gpu1"},
+            },
+            "roles": {
+                "architect": {"provider_id": "qwen-a", "model": "qwen3.6-27b-gpu0"},
+                "pm": {"provider_id": "qwen-a", "model": "qwen3.6-27b-gpu0"},
+                "director": {
+                    "provider_id": "qwen-a",
+                    "model": "qwen3.6-27b-gpu0",
+                    "bindings": [
+                        {"provider_id": "qwen-a", "model": "qwen3.6-27b-gpu0"},
+                        {"provider_id": "qwen-b", "model": "qwen3.6-27b-gpu1"},
+                    ],
+                },
+                "qa": {"provider_id": "qwen-a", "model": "qwen3.6-27b-gpu0"},
+            },
+            "policies": {"required_ready_roles": ["architect", "pm", "director", "qa"]},
+        }
+        index_payload = {
+            "roles": {
+                role: {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "qwen-a",
+                    "model": "qwen3.6-27b-gpu0",
+                    "timestamp": now,
+                }
+                for role in ("architect", "pm", "director", "qa")
+            },
+            "providers": {
+                "qwen-b": {
+                    "ready": False,
+                    "grade": "FAIL",
+                    "role": "connectivity",
+                    "model": "qwen3.6-27b-gpu1",
+                    "timestamp": now,
+                },
+            },
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index_candidates",
+                return_value=[],
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={"lastUpdated": None},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        director_status = response["roles"]["director"]
+        assert director_status["ready"] is True
+        assert director_status["degraded"] is True
+        assert response["state"] == "DEGRADED"
+        assert response["factory_state"] == "DEGRADED"
+        assert response["blocked_roles"] == []
+        assert response["factory_blocked_roles"] == []
+        assert response["degraded_roles"] == ["director"]
+        assert response["factory_degraded_roles"] == ["director"]
+        assert director_status["bindings"][0]["ready"] is True
+        assert director_status["bindings"][1]["ready"] is False
+        assert director_status["bindings"][1]["skip_allowed"] is True
+        assert director_status["bindings"][1]["skip_reason"] == "provider_readiness_failed"
+        assert director_status["bindings"][1]["readiness_issue"] == "readiness_failed"
+        assert director_status["skipped_bindings"] == [
+            {
+                "provider_id": "qwen-b",
+                "model": "qwen3.6-27b-gpu1",
+                "binding_id": "",
+                "reason": "provider_readiness_failed",
+            }
+        ]
+        assert director_status["readiness_issue"] == "degraded: skipped unavailable Director binding(s)"
+
+    def test_llm_status_blocks_multi_bound_director_when_all_bindings_are_unready(self):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = False
+
+        now = datetime.now(timezone.utc).isoformat()
+        config_payload = {
+            "schema_version": 2,
+            "providers": {
+                "qwen-a": {"type": "openai_compat", "model": "qwen3.6-27b-gpu0"},
+                "qwen-b": {"type": "openai_compat", "model": "qwen3.6-27b-gpu1"},
+            },
+            "roles": {
+                "director": {
+                    "provider_id": "qwen-a",
+                    "model": "qwen3.6-27b-gpu0",
+                    "bindings": [
+                        {"provider_id": "qwen-a", "model": "qwen3.6-27b-gpu0"},
+                        {"provider_id": "qwen-b", "model": "qwen3.6-27b-gpu1"},
+                    ],
+                },
+            },
+            "policies": {"required_ready_roles": ["director"]},
+        }
+        index_payload = {
+            "roles": {},
+            "providers": {
+                provider_id: {
+                    "ready": False,
+                    "grade": "FAIL",
+                    "role": "connectivity",
+                    "model": model,
+                    "timestamp": now,
+                    "suites": {"connectivity": {"ok": False}},
+                }
+                for provider_id, model in {
+                    "qwen-a": "qwen3.6-27b-gpu0",
+                    "qwen-b": "qwen3.6-27b-gpu1",
+                }.items()
+            },
+        }
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index_candidates",
+                return_value=[],
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={"lastUpdated": None},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value="/tmp/test_cache",
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        director_status = response["roles"]["director"]
+        assert director_status["ready"] is False
+        assert director_status["degraded"] is False
+        assert response["state"] == "BLOCKED"
+        assert response["blocked_roles"] == ["director"]
+        assert len(director_status["skipped_bindings"]) == 2
+
 
 class TestRoleRuntimeSupportConsistency:
     """Keep llm/status and director runtime gate aligned on provider support."""
@@ -1958,6 +2134,121 @@ class TestRoleRuntimeSupportConsistency:
 
         assert exc.value.status_code == 409
         assert "pm" in exc.value.detail["details"]["missing_roles"]
+
+    def test_director_start_skips_unavailable_multi_binding_when_another_binding_is_ready(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import ensure_required_roles_ready
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = False
+        mock_state = AppState(settings=mock_settings)
+
+        now = datetime.now(timezone.utc).isoformat()
+        config_payload = {
+            "providers": {
+                "qwen-a": {"type": "openai_compat"},
+                "qwen-b": {"type": "openai_compat"},
+            },
+            "roles": {
+                "director": {
+                    "provider_id": "qwen-a",
+                    "model": "qwen3.6-27b-gpu1",
+                    "bindings": [
+                        {"provider_id": "qwen-a", "model": "qwen3.6-27b-gpu1"},
+                        {"provider_id": "qwen-b", "model": "qwen3.6-27b-gpu0"},
+                    ],
+                },
+            },
+            "policies": {"required_ready_roles": ["director"]},
+        }
+        index_payload = {
+            "roles": {
+                "director": {
+                    "ready": True,
+                    "provider_id": "qwen-a",
+                    "model": "qwen3.6-27b-gpu1",
+                    "timestamp": now,
+                },
+            },
+            "providers": {
+                "qwen-b": {
+                    "ready": False,
+                    "grade": "FAIL",
+                    "role": "connectivity",
+                    "model": "qwen3.6-27b-gpu0",
+                    "timestamp": now,
+                    "suites": {"connectivity": {"ok": False}},
+                }
+            },
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index_candidates", return_value=[]),
+        ):
+            ensure_required_roles_ready(mock_state, default_roles=["director"], force_roles=["director"])
+
+    def test_director_start_blocks_when_all_multi_bindings_are_unavailable(self):
+        from polaris.cells.runtime.state_owner.internal.state import AppState
+        from polaris.delivery.http.routers._shared import ensure_required_roles_ready
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = "/tmp/test_workspace"
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = False
+        mock_state = AppState(settings=mock_settings)
+
+        now = datetime.now(timezone.utc).isoformat()
+        config_payload = {
+            "providers": {
+                "qwen-a": {"type": "openai_compat"},
+                "qwen-b": {"type": "openai_compat"},
+            },
+            "roles": {
+                "director": {
+                    "provider_id": "qwen-a",
+                    "model": "qwen3.6-27b-gpu1",
+                    "bindings": [
+                        {"provider_id": "qwen-a", "model": "qwen3.6-27b-gpu1"},
+                        {"provider_id": "qwen-b", "model": "qwen3.6-27b-gpu0"},
+                    ],
+                },
+            },
+            "policies": {"required_ready_roles": ["director"]},
+        }
+        index_payload = {
+            "roles": {},
+            "providers": {
+                provider_id: {
+                    "ready": False,
+                    "grade": "FAIL",
+                    "role": "connectivity",
+                    "model": model,
+                    "timestamp": now,
+                    "suites": {"connectivity": {"ok": False}},
+                }
+                for provider_id, model in {
+                    "qwen-a": "qwen3.6-27b-gpu1",
+                    "qwen-b": "qwen3.6-27b-gpu0",
+                }.items()
+            },
+        }
+
+        with (
+            patch("polaris.delivery.http.routers._shared.build_cache_root", return_value="/tmp/test_cache"),
+            patch("polaris.delivery.http.routers._shared.llm_config.load_llm_config", return_value=config_payload),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index", return_value=index_payload),
+            patch("polaris.delivery.http.routers._shared.load_llm_test_index_candidates", return_value=[]),
+            pytest.raises(HTTPException) as exc,
+        ):
+            ensure_required_roles_ready(mock_state, default_roles=["director"], force_roles=["director"])
+
+        assert exc.value.status_code == 409
+        assert "all bindings unavailable" in exc.value.detail["details"]["role_issues"]["director"]
 
     def test_pm_start_requires_all_required_roles(self):
         from polaris.cells.runtime.state_owner.internal.state import AppState

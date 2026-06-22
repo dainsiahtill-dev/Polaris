@@ -118,6 +118,18 @@ def _backend_source_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
+def _compute_backend_source_fingerprint() -> str:
+    try:
+        from scripts.factory_bench.backend_fingerprint import compute_source_fingerprint
+
+        return compute_source_fingerprint(_backend_source_root())
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return ""
+
+
+_SERVER_STARTUP_SOURCE_FINGERPRINT = _compute_backend_source_fingerprint()
+
+
 def _active_workspace_from_request(request: Request | None) -> str:
     if request is None:
         return ""
@@ -133,21 +145,24 @@ def _active_workspace_from_request(request: Request | None) -> str:
 
 
 def _build_runtime_fingerprint_response(request: Request | None = None) -> dict[str, Any]:
-    """Expose the live backend source fingerprint used by factory-bench freshness gates."""
-
-    from scripts.factory_bench.backend_fingerprint import compute_source_fingerprint
+    """Expose the process-startup backend source fingerprint for freshness gates."""
 
     backend_root = _backend_source_root()
-    fingerprint = compute_source_fingerprint(backend_root)
+    fingerprint = _SERVER_STARTUP_SOURCE_FINGERPRINT
+    current_source_fingerprint = _compute_backend_source_fingerprint()
     return {
         "ok": bool(fingerprint),
         "fingerprint": fingerprint,
+        "current_source_fingerprint": current_source_fingerprint,
+        "stale_since_startup": bool(
+            fingerprint and current_source_fingerprint and fingerprint != current_source_fingerprint
+        ),
         "pid": os.getpid(),
         "startup_time": _SERVER_STARTUP_TIME,
         "uptime_seconds": round(max(0.0, time.monotonic() - _SERVER_START_MONOTONIC), 3),
         "workspace": _active_workspace_from_request(request),
         "backend_root": str(backend_root),
-        "source": "runtime/fingerprint",
+        "source": "runtime/fingerprint:process_startup",
     }
 
 

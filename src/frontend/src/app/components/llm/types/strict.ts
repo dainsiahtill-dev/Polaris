@@ -3,7 +3,13 @@
  * 移除所有 any/unknown，使用具体的类型定义
  */
 
-import type { ProviderKind, ProviderStatus, CostClass, InterviewStatus, CLIMode } from '../types';
+import type {
+  ProviderKind,
+  ProviderStatus,
+  CostClass,
+  InterviewStatus,
+  CLIMode,
+} from "../types";
 
 // ============================================================================
 // Provider Configuration Types
@@ -26,6 +32,10 @@ export interface ModelSpecificConfig {
   maxTokens?: number;
   frequencyPenalty?: number;
   presencePenalty?: number;
+  executionProfile?: string;
+  toolSchemaProfile?: string;
+  execution_profile?: string;
+  tool_schema_profile?: string;
 }
 
 /** 请求覆盖配置 */
@@ -59,11 +69,15 @@ interface BaseProviderConfig {
   model?: string;
   defaultModel?: string;
   cliMode?: CLIMode;
+  executionProfile?: string;
+  toolSchemaProfile?: string;
+  execution_profile?: string;
+  tool_schema_profile?: string;
 }
 
 /** Codex SDK Provider */
 export interface CodexSDKProviderConfig extends BaseProviderConfig {
-  type: 'codex_sdk';
+  type: "codex_sdk";
   baseUrl: string;
   apiKey?: string;
   apiKeyRef?: string;
@@ -73,7 +87,7 @@ export interface CodexSDKProviderConfig extends BaseProviderConfig {
 
 /** Codex CLI Provider */
 export interface CodexCLIProviderConfig extends BaseProviderConfig {
-  type: 'codex_cli';
+  type: "codex_cli";
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -88,7 +102,7 @@ export interface CodexCLIProviderConfig extends BaseProviderConfig {
 
 /** Gemini CLI Provider */
 export interface GeminiCLIProviderConfig extends BaseProviderConfig {
-  type: 'gemini_cli';
+  type: "gemini_cli";
   command?: string;
   args?: string[];
   env?: Record<string, string>;
@@ -98,7 +112,7 @@ export interface GeminiCLIProviderConfig extends BaseProviderConfig {
 
 /** OpenAI Compatible Provider */
 export interface OpenAICompatProviderConfig extends BaseProviderConfig {
-  type: 'openai_compat';
+  type: "openai_compat";
   baseUrl: string;
   apiKey?: string;
   apiKeyRef?: string;
@@ -113,7 +127,7 @@ export interface OpenAICompatProviderConfig extends BaseProviderConfig {
 
 /** Anthropic Compatible Provider */
 export interface AnthropicCompatProviderConfig extends BaseProviderConfig {
-  type: 'anthropic_compat';
+  type: "anthropic_compat";
   baseUrl: string;
   apiKey?: string;
   apiKeyRef?: string;
@@ -124,7 +138,7 @@ export interface AnthropicCompatProviderConfig extends BaseProviderConfig {
 
 /** Gemini API Provider */
 export interface GeminiAPIProviderConfig extends BaseProviderConfig {
-  type: 'gemini_api';
+  type: "gemini_api";
   apiKey?: string;
   apiKeyRef?: string;
   model?: string;
@@ -134,7 +148,7 @@ export interface GeminiAPIProviderConfig extends BaseProviderConfig {
 
 /** Ollama Provider */
 export interface OllamaProviderConfig extends BaseProviderConfig {
-  type: 'ollama';
+  type: "ollama";
   baseUrl: string;
   model?: string;
   temperature?: number;
@@ -144,7 +158,7 @@ export interface OllamaProviderConfig extends BaseProviderConfig {
 
 /** MiniMax Provider */
 export interface MiniMaxProviderConfig extends BaseProviderConfig {
-  type: 'minimax';
+  type: "minimax";
   baseUrl: string;
   apiKey?: string;
   apiKeyRef?: string;
@@ -153,7 +167,7 @@ export interface MiniMaxProviderConfig extends BaseProviderConfig {
 
 /** Kimi Provider */
 export interface KimiProviderConfig extends BaseProviderConfig {
-  type: 'kimi';
+  type: "kimi";
   baseUrl: string;
   apiKey?: string;
   apiKeyRef?: string;
@@ -164,7 +178,7 @@ export interface KimiProviderConfig extends BaseProviderConfig {
 
 /** Custom HTTPS Provider */
 export interface CustomHTTPSProviderConfig extends BaseProviderConfig {
-  type: 'custom_https';
+  type: "custom_https";
   baseUrl: string;
   apiKey?: string;
   headers?: Record<string, string>;
@@ -203,8 +217,15 @@ export interface ProviderConfigLoose extends Record<string, unknown> {
 
 /** 视觉角色节点数据 */
 export interface VisualRoleNodeDataStrict {
-  kind: 'role';
-  roleId: 'pm' | 'director' | 'chief_engineer' | 'qa' | 'architect' | 'cfo' | 'hr';
+  kind: "role";
+  roleId:
+    | "pm"
+    | "director"
+    | "chief_engineer"
+    | "qa"
+    | "architect"
+    | "cfo"
+    | "hr";
   label: string;
   description?: string;
   requiresThinking?: boolean;
@@ -217,7 +238,7 @@ export interface VisualRoleNodeDataStrict {
 
 /** 视觉 Provider 节点数据 */
 export interface VisualProviderNodeDataStrict {
-  kind: 'provider';
+  kind: "provider";
   providerId: string;
   label: string;
   providerType?: string;
@@ -228,11 +249,13 @@ export interface VisualProviderNodeDataStrict {
 
 /** 视觉模型节点数据 */
 export interface VisualModelNodeDataStrict {
-  kind: 'model';
+  kind: "model";
   providerId: string;
   model: string;
   label: string;
-  assignedRoles?: Array<'pm' | 'director' | 'chief_engineer' | 'qa' | 'architect' | 'cfo' | 'hr'>;
+  assignedRoles?: Array<
+    "pm" | "director" | "chief_engineer" | "qa" | "architect" | "cfo" | "hr"
+  >;
 }
 
 /** 视觉节点数据 Union */
@@ -242,7 +265,7 @@ export type VisualNodeDataStrict =
   | VisualModelNodeDataStrict;
 
 /** 视觉边类型 */
-export type VisualEdgeKindStrict = 'provider-to-model' | 'model-to-role';
+export type VisualEdgeKindStrict = "provider-to-model" | "model-to-role";
 
 /** 视觉边数据 */
 export interface VisualEdgeDataStrict {
@@ -263,12 +286,12 @@ export interface VisualNodeStateStrict {
   hidden?: boolean;
   data?: {
     roleData?: {
-      lastInterviewStatus?: 'passed' | 'failed' | 'none';
+      lastInterviewStatus?: "passed" | "failed" | "none";
       lastInterviewTimestamp?: string;
       readinessScore?: number;
     };
     providerData?: {
-      connectivityStatus?: 'success' | 'failed' | 'unknown';
+      connectivityStatus?: "success" | "failed" | "unknown";
       lastTestTimestamp?: string;
       enabledModels?: string[];
     };
@@ -291,11 +314,14 @@ export interface VisualProviderConfig {
 /** 视觉图形配置 */
 export interface VisualGraphConfigStrict {
   providers: Record<string, VisualProviderConfig>;
-  roles: Record<string, {
-    provider_id?: string;
-    model?: string;
-    profile?: string;
-  }>;
+  roles: Record<
+    string,
+    {
+      provider_id?: string;
+      model?: string;
+      profile?: string;
+    }
+  >;
   visual_layout?: Record<string, VisualNodePosition>;
   visual_node_states?: Record<string, VisualNodeStateStrict>;
   visual_viewport?: {
@@ -304,20 +330,26 @@ export interface VisualGraphConfigStrict {
     zoom: number;
   };
   policies?: {
-    role_requirements?: Record<string, {
-      requires_thinking?: boolean;
-      min_confidence?: number;
-      error_message?: string;
-    }>;
+    role_requirements?: Record<
+      string,
+      {
+        requires_thinking?: boolean;
+        min_confidence?: number;
+        error_message?: string;
+      }
+    >;
   };
 }
 
 /** 视觉图形状态 */
 export interface VisualGraphStatusStrict {
-  roles?: Record<string, {
-    ready?: boolean;
-    grade?: string;
-  }>;
+  roles?: Record<
+    string,
+    {
+      ready?: boolean;
+      grade?: string;
+    }
+  >;
 }
 
 // ============================================================================
@@ -325,7 +357,13 @@ export interface VisualGraphStatusStrict {
 // ============================================================================
 
 /** 测试事件类型 */
-export type TestEventType = 'stdout' | 'stderr' | 'error' | 'result' | 'command' | 'info';
+export type TestEventType =
+  | "stdout"
+  | "stderr"
+  | "error"
+  | "result"
+  | "command"
+  | "info";
 
 /** 测试事件 */
 export interface TestEventStrict {
@@ -380,7 +418,10 @@ export interface InterviewSuiteReportStrict {
 }
 
 /** 实时思考事件 */
-export type RealtimeThinkingKind = 'reasoning' | 'command_execution' | 'agent_message';
+export type RealtimeThinkingKind =
+  | "reasoning"
+  | "command_execution"
+  | "agent_message";
 
 export interface RealtimeThinkingEventStrict {
   id: string;
@@ -402,7 +443,7 @@ export interface RealtimeThinkingEventStrict {
 
 /** CLI 连接 */
 export interface CLIConnectionStrict {
-  kind: 'codex_cli' | 'gemini_cli';
+  kind: "codex_cli" | "gemini_cli";
   command: string;
   args?: string[];
   env?: Record<string, string>;
@@ -410,13 +451,15 @@ export interface CLIConnectionStrict {
 
 /** HTTP 连接 */
 export interface HTTPConnectionStrict {
-  kind: 'http';
+  kind: "http";
   baseUrl: string;
   apiKey?: string;
 }
 
 /** Provider 连接 Union */
-export type ProviderConnectionStrict = CLIConnectionStrict | HTTPConnectionStrict;
+export type ProviderConnectionStrict =
+  | CLIConnectionStrict
+  | HTTPConnectionStrict;
 
 /** Simple Provider（UI 用） */
 export interface SimpleProviderStrict {
@@ -453,7 +496,14 @@ export interface SimpleProviderStrict {
 // ============================================================================
 
 /** 角色 ID */
-export type RoleIdStrict = 'pm' | 'director' | 'chief_engineer' | 'qa' | 'architect' | 'cfo' | 'hr';
+export type RoleIdStrict =
+  | "pm"
+  | "director"
+  | "chief_engineer"
+  | "qa"
+  | "architect"
+  | "cfo"
+  | "hr";
 
 /** 角色配置 */
 export interface RoleConfigStrict {
@@ -481,7 +531,7 @@ export interface RoleMetaStrict {
 // ============================================================================
 
 /** 验证错误级别 */
-export type ValidationSeverity = 'error' | 'warning' | 'info';
+export type ValidationSeverity = "error" | "warning" | "info";
 
 /** 验证问题 */
 export interface ValidationIssue {
@@ -506,25 +556,31 @@ export interface ValidationResultStrict {
 /**
  * 类型守卫：检查是否为有效的 ProviderConfig
  */
-export function isValidProviderConfig(config: unknown): config is ProviderConfigStrict {
-  if (!config || typeof config !== 'object') return false;
+export function isValidProviderConfig(
+  config: unknown,
+): config is ProviderConfigStrict {
+  if (!config || typeof config !== "object") return false;
   const c = config as Record<string, unknown>;
-  return typeof c.type === 'string' && c.type.length > 0;
+  return typeof c.type === "string" && c.type.length > 0;
 }
 
 /**
  * 类型守卫：检查是否为 CLI Provider
  */
-export function isCLIProviderConfig(config: ProviderConfigStrict): config is CodexCLIProviderConfig | GeminiCLIProviderConfig {
-  return config.type === 'codex_cli' || config.type === 'gemini_cli';
+export function isCLIProviderConfig(
+  config: ProviderConfigStrict,
+): config is CodexCLIProviderConfig | GeminiCLIProviderConfig {
+  return config.type === "codex_cli" || config.type === "gemini_cli";
 }
 
 /**
  * 类型守卫：检查是否为 HTTP Provider
  */
-export function isHTTPProviderConfig(config: ProviderConfigStrict): config is 
-  | CodexSDKProviderConfig 
-  | OpenAICompatProviderConfig 
+export function isHTTPProviderConfig(
+  config: ProviderConfigStrict,
+): config is
+  | CodexSDKProviderConfig
+  | OpenAICompatProviderConfig
   | AnthropicCompatProviderConfig
   | GeminiAPIProviderConfig
   | OllamaProviderConfig
@@ -544,6 +600,8 @@ export function getProviderDisplayName(config: ProviderConfigStrict): string {
 /**
  * 获取 Provider 的模型
  */
-export function getProviderModel(config: ProviderConfigStrict): string | undefined {
+export function getProviderModel(
+  config: ProviderConfigStrict,
+): string | undefined {
   return config.model || config.defaultModel;
 }

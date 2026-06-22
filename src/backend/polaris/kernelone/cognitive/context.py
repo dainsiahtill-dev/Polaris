@@ -9,7 +9,7 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -33,6 +33,83 @@ class ConversationTurn:
     timestamp: str
     blocked: bool = False
     block_reason: str | None = None
+
+
+_CONTROL_PROMPT_REDACTION_PREFIX = "[redacted:cognitive_control_prompt"
+_CONTROL_PROMPT_RESPONSE_REDACTION_PREFIX = "[redacted:cognitive_control_prompt_echo"
+
+
+def classify_cognitive_control_prompt(text: str | None) -> str | None:
+    """Classify role-control prompts that must not be persisted as memory."""
+    if not text:
+        return None
+    value = str(text)
+    if (
+        value.startswith("上一版")
+        and "未通过质量门禁" in value
+        and ("请重写" in value or "上一版输出片段" in value or "TOOL_CALL" in value or "只输出 JSON" in value)
+    ):
+        return "quality_gate_retry"
+    if (
+        "你是 Polaris " in value
+        and ("请仅输出 JSON" in value or "仅返回一个 JSON 对象" in value or "只输出 JSON" in value)
+        and ("禁止输出" in value or "禁止返回 Markdown" in value or "绝对禁止输出" in value)
+    ):
+        return "role_adapter_generation_prompt"
+    if (
+        "当前阶段没有读取/检查工具" in value
+        and ("请仅输出 JSON" in value or "只输出 JSON" in value)
+        and ("TOOL_CALL" in value or "工具" in value)
+    ):
+        return "role_adapter_generation_prompt"
+    if "禁止输出 [TOOL_CALL]" in value and "当前分数:" in value and "强制要求：" in value and "上一版输出片段" in value:
+        return "quality_gate_retry"
+    return None
+
+
+def _redacted_control_prompt_text(*, role_id: str, reason: str) -> str:
+    return f"{_CONTROL_PROMPT_REDACTION_PREFIX} role={role_id} reason={reason}]"
+
+
+def _redacted_control_prompt_echo_text(*, role_id: str, reason: str) -> str:
+    return f"{_CONTROL_PROMPT_RESPONSE_REDACTION_PREFIX} role={role_id} reason={reason}]"
+
+
+def sanitize_conversation_turn_for_persistence(turn: ConversationTurn) -> ConversationTurn:
+    """
+    Remove role-control prompts from persisted cognitive memory.
+
+    Adapter retry/generation prompts are valid one-shot provider inputs, but they
+    are not user intent and must not be replayed as durable ContextOS memory.
+    """
+    message_reason = classify_cognitive_control_prompt(turn.message)
+    response_reason = classify_cognitive_control_prompt(turn.response)
+    if message_reason is None and response_reason is None:
+        return turn
+
+    reason = message_reason or response_reason or "control_prompt"
+    message = turn.message
+    response = turn.response
+    if message_reason is not None:
+        message = _redacted_control_prompt_text(role_id=turn.role_id, reason=message_reason)
+    if response is not None and (message_reason is not None or response_reason is not None):
+        response = _redacted_control_prompt_echo_text(role_id=turn.role_id, reason=reason)
+
+    return replace(turn, message=message, response=response)
+
+
+def _serialized_context_contains_control_prompt(data: dict[str, Any]) -> bool:
+    history = data.get("conversation_history", [])
+    if not isinstance(history, list):
+        return False
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        if classify_cognitive_control_prompt(item.get("message")) is not None:
+            return True
+        if classify_cognitive_control_prompt(item.get("response")) is not None:
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -104,9 +181,12 @@ class CognitiveSessionManager:
         for session_file in self._sessions_dir.glob("*.json"):
             try:
                 data = json.loads(session_file.read_text(encoding="utf-8"))
+                should_rewrite = _serialized_context_contains_control_prompt(data) if isinstance(data, dict) else False
                 ctx = self._reconstruct_context(data)
                 if ctx:
                     self._sessions[ctx.session_id] = (ctx, current_time)
+                    if should_rewrite:
+                        self._persist_session(ctx.session_id, ctx)
             except (RuntimeError, ValueError):
                 _logger.exception("Failed to load session file: %s", session_file)
 
@@ -166,7 +246,7 @@ class CognitiveSessionManager:
                     blocked=turn_data.get("blocked", False),
                     block_reason=turn_data.get("block_reason"),
                 )
-                history.append(turn)
+                history.append(sanitize_conversation_turn_for_persistence(turn))
 
             from polaris.kernelone.cognitive.personality.traits import get_trait_profile_for_role
 
@@ -195,6 +275,7 @@ class CognitiveSessionManager:
             return
         _logger = logging.getLogger(__name__)
         try:
+            history = [sanitize_conversation_turn_for_persistence(t) for t in ctx.conversation_history]
             data = {
                 "session_id": ctx.session_id,
                 "role_id": ctx.role_id,
@@ -213,7 +294,7 @@ class CognitiveSessionManager:
                         "blocked": t.blocked,
                         "block_reason": t.block_reason,
                     }
-                    for t in ctx.conversation_history
+                    for t in history
                 ],
             }
             content = json.dumps(data, ensure_ascii=False)
@@ -315,6 +396,7 @@ class CognitiveSessionManager:
                 return
 
             ctx, _ = self._sessions[session_id]
+            turn = sanitize_conversation_turn_for_persistence(turn)
             updated_history = (*ctx.conversation_history, turn)
             if len(updated_history) > self._max_history_size:
                 updated_history = updated_history[-self._max_history_size :]

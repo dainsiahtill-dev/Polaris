@@ -70,6 +70,7 @@ async def execute_transaction_kernel_turn(
         resolve_repair_edit_target,
         restrict_tool_definitions_to_edit,
         restrict_tool_definitions_to_write,
+        should_use_weak_director_slim_tool_schema,
     )
     from polaris.cells.roles.kernel.public.service import RoleContextGateway
 
@@ -153,6 +154,19 @@ async def execute_transaction_kernel_turn(
             logger.info(
                 "repair-turn edit-only for existing target: target=%s",
                 _repair_target,
+            )
+        elif should_use_weak_director_slim_tool_schema(
+            role=role,
+            profile=profile,
+            context_override=getattr(request, "context_override", None),
+            workspace=str(request.workspace or kernel.workspace or "."),
+            tool_definitions=tool_definitions,
+        ):
+            tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+            logger.info(
+                "weak-director slim tool schema enabled: role=%s model=%s",
+                role,
+                getattr(profile, "model", ""),
             )
     tool_definitions = _apply_forced_transaction_tool_definitions(
         tool_definitions,
@@ -350,6 +364,7 @@ async def execute_transaction_kernel_stream(
         resolve_repair_edit_target,
         restrict_tool_definitions_to_edit,
         restrict_tool_definitions_to_write,
+        should_use_weak_director_slim_tool_schema,
     )
     from polaris.cells.roles.kernel.public.service import RoleContextGateway
     from polaris.cells.roles.kernel.public.turn_events import (
@@ -416,6 +431,19 @@ async def execute_transaction_kernel_stream(
             logger.info(
                 "repair-turn edit-only for existing target: target=%s",
                 _repair_target,
+            )
+        elif should_use_weak_director_slim_tool_schema(
+            role=role,
+            profile=profile,
+            context_override=getattr(request, "context_override", None),
+            workspace=str(request.workspace or kernel.workspace or "."),
+            tool_definitions=tool_definitions,
+        ):
+            tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
+            logger.info(
+                "weak-director slim tool schema enabled: role=%s model=%s",
+                role,
+                getattr(profile, "model", ""),
             )
     tool_definitions = _apply_forced_transaction_tool_definitions(
         tool_definitions,

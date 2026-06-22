@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
 
-from polaris.kernelone.cognitive.context import CognitiveContext, ConversationTurn
+from polaris.kernelone.cognitive.context import (
+    CognitiveContext,
+    ConversationTurn,
+    sanitize_conversation_turn_for_persistence,
+)
 from polaris.kernelone.cognitive.evolution.engine import EvolutionEngine
 from polaris.kernelone.cognitive.evolution.models import TriggerType
 from polaris.kernelone.cognitive.execution.cautious_policy import CautiousExecutionPolicy
@@ -581,6 +585,7 @@ class CognitivePipelineCoordinator:
             response=response_content,
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
+        turn = sanitize_conversation_turn_for_persistence(turn)
 
         self._telemetry.record_event(
             "cognitive.response_generated",
@@ -634,17 +639,19 @@ class CognitivePipelineCoordinator:
         block_reason: str,
     ) -> ConversationTurn:
         """Build a blocked conversation turn."""
-        return ConversationTurn(
-            turn_id=f"turn_{len(ctx.ctx.conversation_history) + 1}",
-            role_id=ctx.role_id,
-            message=ctx.message,
-            intent_type=intent_type,
-            confidence=confidence,
-            execution_path=ExecutionPath.BYPASS.value,
-            response=response,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            blocked=True,
-            block_reason=block_reason,
+        return sanitize_conversation_turn_for_persistence(
+            ConversationTurn(
+                turn_id=f"turn_{len(ctx.ctx.conversation_history) + 1}",
+                role_id=ctx.role_id,
+                message=ctx.message,
+                intent_type=intent_type,
+                confidence=confidence,
+                execution_path=ExecutionPath.BYPASS.value,
+                response=response,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                blocked=True,
+                block_reason=block_reason,
+            )
         )
 
     def _build_response(

@@ -245,6 +245,42 @@ class TestModelCatalogResolve:
         spec = catalog.resolve("openai", "gpt-4", provider_cfg=provider_cfg)
         assert spec.cost_hint == "expensive"
 
+    def test_resolve_execution_and_tool_schema_profiles(self) -> None:
+        catalog = ModelCatalog("/tmp/ws")
+        provider_cfg = {
+            "type": "openai_compat",
+            "max_context_tokens": 32768,
+            "max_output_tokens": 4096,
+            "execution_profile": "compact",
+            "tool_schema_profile": "slim",
+        }
+
+        spec = catalog.resolve("local", "gemma4", provider_cfg=provider_cfg)
+
+        assert spec.execution_profile == "compact"
+        assert spec.tool_schema_profile == "slim"
+
+    def test_model_specific_profiles_override_provider_profiles(self) -> None:
+        catalog = ModelCatalog("/tmp/ws")
+        provider_cfg = {
+            "type": "openai_compat",
+            "max_context_tokens": 32768,
+            "max_output_tokens": 4096,
+            "execution_profile": "compact",
+            "tool_schema_profile": "slim",
+            "model_specific": {
+                "gpt-strong": {
+                    "execution_profile": "full",
+                    "tool_schema_profile": "full",
+                }
+            },
+        }
+
+        spec = catalog.resolve("local", "gpt-strong", provider_cfg=provider_cfg)
+
+        assert spec.execution_profile == "full"
+        assert spec.tool_schema_profile == "full"
+
     def test_resolve_prefix_match(self) -> None:
         catalog = ModelCatalog("/tmp/ws")
         provider_cfg = {

@@ -5,43 +5,44 @@ import type {
   SDKParams,
   RequestOverrides,
   ModelSpecificConfig,
-} from './types/strict';
+} from "./types/strict";
 
 // Provider Categories
 export const PROVIDER_CATEGORIES = {
-  AGENT: 'AGENT' as const,
-  LLM: 'LLM' as const
+  AGENT: "AGENT" as const,
+  LLM: "LLM" as const,
 } as const;
 
-export type ProviderCategory = typeof PROVIDER_CATEGORIES[keyof typeof PROVIDER_CATEGORIES];
+export type ProviderCategory =
+  (typeof PROVIDER_CATEGORIES)[keyof typeof PROVIDER_CATEGORIES];
 
 // Provider Kinds (specific provider types)
 export const PROVIDER_KINDS = {
-  CODEX_CLI: 'codex_cli' as const,
-  CODEX_SDK: 'codex_sdk' as const,
-  GEMINI_CLI: 'gemini_cli' as const,
-  OLLAMA: 'ollama' as const,
-  OPENAI_COMPAT: 'openai_compat' as const,
-  ANTHROPIC_COMPAT: 'anthropic_compat' as const,
-  CUSTOM_HTTPS: 'custom_https' as const,
-  MINIMAX: 'minimax' as const,
-  GEMINI_API: 'gemini_api' as const,
-  KIMI: 'kimi' as const
+  CODEX_CLI: "codex_cli" as const,
+  CODEX_SDK: "codex_sdk" as const,
+  GEMINI_CLI: "gemini_cli" as const,
+  OLLAMA: "ollama" as const,
+  OPENAI_COMPAT: "openai_compat" as const,
+  ANTHROPIC_COMPAT: "anthropic_compat" as const,
+  CUSTOM_HTTPS: "custom_https" as const,
+  MINIMAX: "minimax" as const,
+  GEMINI_API: "gemini_api" as const,
+  KIMI: "kimi" as const,
 } as const;
 
-export type ProviderKind = typeof PROVIDER_KINDS[keyof typeof PROVIDER_KINDS];
+export type ProviderKind = (typeof PROVIDER_KINDS)[keyof typeof PROVIDER_KINDS];
 
 // Connection Types
-export type CLIConnectionKind = 'codex_cli' | 'gemini_cli';
-export type HTTPConnectionKind = 'http';
+export type CLIConnectionKind = "codex_cli" | "gemini_cli";
+export type HTTPConnectionKind = "http";
 
 // CLI Modes
 export const CLI_MODES = {
-  TUI: 'tui' as const,
-  HEADLESS: 'headless' as const
+  TUI: "tui" as const,
+  HEADLESS: "headless" as const,
 } as const;
 
-export type CLIMode = typeof CLI_MODES[keyof typeof CLI_MODES];
+export type CLIMode = (typeof CLI_MODES)[keyof typeof CLI_MODES];
 
 export type CLIConnection = {
   kind: CLIConnectionKind;
@@ -60,40 +61,43 @@ export type ProviderConnection = CLIConnection | HTTPConnection;
 
 // Provider Status
 export const PROVIDER_STATUS = {
-  UNTESTED: 'untested' as const,
-  TESTING: 'testing' as const,
-  READY: 'ready' as const,
-  FAILED: 'failed' as const
+  UNTESTED: "untested" as const,
+  TESTING: "testing" as const,
+  READY: "ready" as const,
+  FAILED: "failed" as const,
 } as const;
 
-export type ProviderStatus = typeof PROVIDER_STATUS[keyof typeof PROVIDER_STATUS];
+export type ProviderStatus =
+  (typeof PROVIDER_STATUS)[keyof typeof PROVIDER_STATUS];
 
 // Cost Classes
 export const COST_CLASSES = {
-  LOCAL: 'LOCAL' as const,
-  FIXED: 'FIXED' as const,
-  METERED: 'METERED' as const
+  LOCAL: "LOCAL" as const,
+  FIXED: "FIXED" as const,
+  METERED: "METERED" as const,
 } as const;
 
-export type CostClass = typeof COST_CLASSES[keyof typeof COST_CLASSES];
+export type CostClass = (typeof COST_CLASSES)[keyof typeof COST_CLASSES];
 
 // Interview Status
 export const INTERVIEW_STATUS = {
-  NOT_TESTED: 'not_tested' as const,
-  PASSED: 'passed' as const,
-  FAILED: 'failed' as const
+  NOT_TESTED: "not_tested" as const,
+  PASSED: "passed" as const,
+  FAILED: "failed" as const,
 } as const;
 
-export type InterviewStatus = typeof INTERVIEW_STATUS[keyof typeof INTERVIEW_STATUS];
+export type InterviewStatus =
+  (typeof INTERVIEW_STATUS)[keyof typeof INTERVIEW_STATUS];
 
 // Model Listing Methods
 export const MODEL_LISTING_METHODS = {
-  API: 'API' as const,
-  TUI: 'TUI' as const,
-  NONE: 'NONE' as const
+  API: "API" as const,
+  TUI: "TUI" as const,
+  NONE: "NONE" as const,
 } as const;
 
-export type ModelListingMethod = typeof MODEL_LISTING_METHODS[keyof typeof MODEL_LISTING_METHODS];
+export type ModelListingMethod =
+  (typeof MODEL_LISTING_METHODS)[keyof typeof MODEL_LISTING_METHODS];
 
 // Provider Info (from backend)
 export interface ProviderInfo {
@@ -137,6 +141,8 @@ export interface ProviderConfig {
   max_concurrency?: number;
   max_context_tokens?: number;
   max_output_tokens?: number;
+  execution_profile?: string;
+  tool_schema_profile?: string;
   model?: string;
   default_model?: string;
   thinking_mode?: boolean;
@@ -227,7 +233,6 @@ export interface LLMConfig {
 
 // LLM Status
 
-
 // LLM Status Role (Rich)
 export interface LLMStatusRole {
   provider_id?: string;
@@ -291,7 +296,7 @@ export interface LLMStatus {
 }
 
 export interface LLMStatusSuite {
-  status: 'pass' | 'fail' | 'skip';
+  status: "pass" | "fail" | "skip";
   note?: string;
   latency_ms?: number;
   usage?: {
@@ -341,11 +346,18 @@ export interface StatusBadges {
 
 // Helper Functions
 export const isCLIProvider = (kind: ProviderKind): boolean => {
-  return kind === PROVIDER_KINDS.CODEX_CLI || kind === PROVIDER_KINDS.GEMINI_CLI;
+  return (
+    kind === PROVIDER_KINDS.CODEX_CLI || kind === PROVIDER_KINDS.GEMINI_CLI
+  );
 };
 
-export const isCLIProviderType = (providerType?: string): providerType is CLIConnectionKind => {
-  return providerType === PROVIDER_KINDS.CODEX_CLI || providerType === PROVIDER_KINDS.GEMINI_CLI;
+export const isCLIProviderType = (
+  providerType?: string,
+): providerType is CLIConnectionKind => {
+  return (
+    providerType === PROVIDER_KINDS.CODEX_CLI ||
+    providerType === PROVIDER_KINDS.GEMINI_CLI
+  );
 };
 
 export const requiresApiKeyForType = (providerType?: string): boolean => {
@@ -371,21 +383,33 @@ export const isAPIProvider = (kind: ProviderKind): boolean => {
   return !isCLIProvider(kind);
 };
 
-export const isCodexCLIProvider = (kind: ProviderKind, conn?: ProviderConnection): boolean => {
+export const isCodexCLIProvider = (
+  kind: ProviderKind,
+  conn?: ProviderConnection,
+): boolean => {
   if (kind === PROVIDER_KINDS.CODEX_CLI) return true;
-  if (kind === PROVIDER_KINDS.GEMINI_CLI && conn && 
-      (conn.kind === 'gemini_cli' || conn.kind === 'codex_cli') &&
-      conn.command.toLowerCase().includes('codex')) {
+  if (
+    kind === PROVIDER_KINDS.GEMINI_CLI &&
+    conn &&
+    (conn.kind === "gemini_cli" || conn.kind === "codex_cli") &&
+    conn.command.toLowerCase().includes("codex")
+  ) {
     return true;
   }
   return false;
 };
 
-export const isGeminiCLIProvider = (kind: ProviderKind, conn?: ProviderConnection): boolean => {
+export const isGeminiCLIProvider = (
+  kind: ProviderKind,
+  conn?: ProviderConnection,
+): boolean => {
   if (kind === PROVIDER_KINDS.GEMINI_CLI) return true;
-  if (kind === PROVIDER_KINDS.CODEX_CLI && conn && 
-      (conn.kind === 'codex_cli' || conn.kind === 'gemini_cli') &&
-      conn.command.toLowerCase().includes('gemini')) {
+  if (
+    kind === PROVIDER_KINDS.CODEX_CLI &&
+    conn &&
+    (conn.kind === "codex_cli" || conn.kind === "gemini_cli") &&
+    conn.command.toLowerCase().includes("gemini")
+  ) {
     return true;
   }
   return false;
@@ -412,46 +436,54 @@ export const supportsAPIListing = (kind: ProviderKind): boolean => {
 };
 
 // Connection type helpers
-export const isCLIConnection = (conn: ProviderConnection): conn is CLIConnection => {
-  return conn.kind === 'codex_cli' || conn.kind === 'gemini_cli';
+export const isCLIConnection = (
+  conn: ProviderConnection,
+): conn is CLIConnection => {
+  return conn.kind === "codex_cli" || conn.kind === "gemini_cli";
 };
 
-export const isHTTPConnection = (conn: ProviderConnection): conn is HTTPConnection => {
-  return conn.kind === 'http';
+export const isHTTPConnection = (
+  conn: ProviderConnection,
+): conn is HTTPConnection => {
+  return conn.kind === "http";
 };
 
 // Provider Classification Constants
 export const PROVIDER_LABELS: ProviderLabels = {
-  [PROVIDER_KINDS.CODEX_CLI]: 'Codex CLI',
-  [PROVIDER_KINDS.CODEX_SDK]: 'Codex SDK',
-  [PROVIDER_KINDS.GEMINI_CLI]: 'Gemini CLI',
-  [PROVIDER_KINDS.OLLAMA]: 'Ollama',
-  [PROVIDER_KINDS.OPENAI_COMPAT]: 'OpenAI',
-  [PROVIDER_KINDS.ANTHROPIC_COMPAT]: 'Anthropic-compatible',
-  [PROVIDER_KINDS.CUSTOM_HTTPS]: 'Custom HTTPS',
-  [PROVIDER_KINDS.MINIMAX]: 'MiniMax',
-  [PROVIDER_KINDS.GEMINI_API]: 'Gemini API',
-  [PROVIDER_KINDS.KIMI]: 'Kimi'
+  [PROVIDER_KINDS.CODEX_CLI]: "Codex CLI",
+  [PROVIDER_KINDS.CODEX_SDK]: "Codex SDK",
+  [PROVIDER_KINDS.GEMINI_CLI]: "Gemini CLI",
+  [PROVIDER_KINDS.OLLAMA]: "Ollama",
+  [PROVIDER_KINDS.OPENAI_COMPAT]: "OpenAI",
+  [PROVIDER_KINDS.ANTHROPIC_COMPAT]: "Anthropic-compatible",
+  [PROVIDER_KINDS.CUSTOM_HTTPS]: "Custom HTTPS",
+  [PROVIDER_KINDS.MINIMAX]: "MiniMax",
+  [PROVIDER_KINDS.GEMINI_API]: "Gemini API",
+  [PROVIDER_KINDS.KIMI]: "Kimi",
 };
 
 export const STATUS_COLORS: StatusColors = {
-  [PROVIDER_STATUS.UNTESTED]: 'text-gray-400',
-  [PROVIDER_STATUS.TESTING]: 'text-blue-400',
-  [PROVIDER_STATUS.READY]: 'text-emerald-400',
-  [PROVIDER_STATUS.FAILED]: 'text-red-400'
+  [PROVIDER_STATUS.UNTESTED]: "text-gray-400",
+  [PROVIDER_STATUS.TESTING]: "text-blue-400",
+  [PROVIDER_STATUS.READY]: "text-emerald-400",
+  [PROVIDER_STATUS.FAILED]: "text-red-400",
 };
 
 export const STATUS_BADGES: StatusBadges = {
-  [PROVIDER_STATUS.UNTESTED]: 'bg-gray-500/20 text-gray-300 border-gray-500/30',
-  [PROVIDER_STATUS.TESTING]: 'bg-blue-500/20 text-blue-200 border-blue-500/30 animate-pulse',
-  [PROVIDER_STATUS.READY]: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30',
-  [PROVIDER_STATUS.FAILED]: 'bg-red-500/20 text-red-200 border-red-500/30'
+  [PROVIDER_STATUS.UNTESTED]: "bg-gray-500/20 text-gray-300 border-gray-500/30",
+  [PROVIDER_STATUS.TESTING]:
+    "bg-blue-500/20 text-blue-200 border-blue-500/30 animate-pulse",
+  [PROVIDER_STATUS.READY]:
+    "bg-emerald-500/20 text-emerald-200 border-emerald-500/30",
+  [PROVIDER_STATUS.FAILED]: "bg-red-500/20 text-red-200 border-red-500/30",
 };
 
 export const INTERVIEW_BADGES: StatusBadges = {
-  [INTERVIEW_STATUS.NOT_TESTED]: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
-  [INTERVIEW_STATUS.PASSED]: 'bg-green-500/20 text-green-300 border-green-500/30',
-  [INTERVIEW_STATUS.FAILED]: 'bg-red-500/20 text-red-300 border-red-500/30'
+  [INTERVIEW_STATUS.NOT_TESTED]:
+    "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  [INTERVIEW_STATUS.PASSED]:
+    "bg-green-500/20 text-green-300 border-green-500/30",
+  [INTERVIEW_STATUS.FAILED]: "bg-red-500/20 text-red-300 border-red-500/30",
 };
 
 // ============================================================================
@@ -468,12 +500,12 @@ export interface Position {
 export interface NodeStyle {
   color?: string;
   icon?: string;
-  size?: 'small' | 'medium' | 'large';
-  shape?: 'circle' | 'rectangle';
+  size?: "small" | "medium" | "large";
+  shape?: "circle" | "rectangle";
 }
 
 export interface EdgeMetadata {
-  style?: 'straight' | 'curved' | 'step';
+  style?: "straight" | "curved" | "step";
   label?: string;
   color?: string;
 }
@@ -487,7 +519,7 @@ export interface ViewportState {
 export interface InterviewReference {
   id: string;
   timestamp: string;
-  status: 'passed' | 'failed';
+  status: "passed" | "failed";
   score?: number;
 }
 
@@ -510,11 +542,11 @@ export interface UnifiedProviderAttributes {
   // Core
   cost_class: CostClass;
   provider_category: ProviderCategory;
-  
+
   // Status
-  connectivity_status: 'unknown' | 'success' | 'failed' | 'testing';
+  connectivity_status: "unknown" | "success" | "failed" | "testing";
   last_test_timestamp?: string;
-  
+
   // Capabilities
   supported_features: string[];
   thinking_capability?: {
@@ -522,7 +554,7 @@ export interface UnifiedProviderAttributes {
     confidence?: number;
     format?: string;
   };
-  
+
   // Visual Extension
   visual?: {
     position?: Position;
@@ -530,7 +562,7 @@ export interface UnifiedProviderAttributes {
     icon?: string;
     color?: string;
   };
-  
+
   // Testing Extension
   testing?: {
     last_interview?: InterviewReference;
@@ -549,16 +581,16 @@ export interface UnifiedProvider {
 
 export interface UnifiedRoleAttributes {
   // Status
-  readiness_status: 'unknown' | 'ready' | 'not_ready';
+  readiness_status: "unknown" | "ready" | "not_ready";
   last_interview?: InterviewReference;
-  
+
   // Visual Extension
   visual?: {
     position?: Position;
     style?: NodeStyle;
     color?: string;
   };
-  
+
   // Testing Extension
   testing?: {
     interview_history?: InterviewReference[];
@@ -570,20 +602,20 @@ export interface UnifiedRole {
   id: string;
   name: string;
   description: string;
-  
+
   requirements: {
     requires_thinking: boolean;
     min_confidence: number;
     preferred_capabilities: string[];
   };
-  
+
   assignment?: {
     provider_id: string;
     model: string;
     assigned_at: string;
     confidence: number;
   };
-  
+
   attributes: UnifiedRoleAttributes;
 }
 
@@ -591,16 +623,22 @@ export interface UnifiedRole {
 
 export interface UnifiedRelationships {
   provider_to_models: Record<string, string[]>;
-  role_to_provider_model: Record<string, {
-    provider_id: string;
-    model: string;
-    confidence?: number;
-  }>;
-  model_connectivity: Record<string, {
-    status: 'success' | 'failed' | 'unknown';
-    last_checked: string;
-    latency_ms?: number;
-  }>;
+  role_to_provider_model: Record<
+    string,
+    {
+      provider_id: string;
+      model: string;
+      confidence?: number;
+    }
+  >;
+  model_connectivity: Record<
+    string,
+    {
+      status: "success" | "failed" | "unknown";
+      last_checked: string;
+      latency_ms?: number;
+    }
+  >;
 }
 
 export interface InterviewResult {
@@ -608,8 +646,8 @@ export interface InterviewResult {
   role_id: string;
   provider_id: string;
   model: string;
-  session_type: 'interactive' | 'auto';
-  status: 'passed' | 'failed' | 'running' | 'cancelled';
+  session_type: "interactive" | "auto";
+  status: "passed" | "failed" | "running" | "cancelled";
   start_time: string;
   end_time?: string;
   overall_score?: number;
@@ -625,7 +663,7 @@ export interface ConnectivityTest {
   provider_id: string;
   model: string;
   timestamp: string;
-  status: 'success' | 'failed' | 'running';
+  status: "success" | "failed" | "running";
   latency_ms?: number;
   error?: string;
 }
@@ -650,7 +688,7 @@ export interface UnifiedExtensions {
     edge_metadata: Record<string, EdgeMetadata>;
     viewport_state: ViewportState;
   };
-  
+
   // Testing View Data
   testing?: {
     interview_results: Record<string, InterviewResult>;
@@ -658,7 +696,7 @@ export interface UnifiedExtensions {
     capability_scores: Record<string, CapabilityScore>;
     test_preferences: TestPreferences;
   };
-  
+
   // UI State
   ui?: {
     expanded_nodes: string[];
@@ -666,7 +704,7 @@ export interface UnifiedExtensions {
     view_preferences: {
       show_minimap: boolean;
       show_grid: boolean;
-      theme: 'dark' | 'light' | 'cyberpunk';
+      theme: "dark" | "light" | "cyberpunk";
     };
   };
 }
@@ -682,17 +720,17 @@ export interface UnifiedMetadata {
 
 export interface UnifiedLlmConfig {
   schema_version: number;
-  
+
   // Entities
   providers: Record<string, UnifiedProvider>;
   roles: Record<string, UnifiedRole>;
-  
+
   // Relations
   relationships: UnifiedRelationships;
-  
+
   // Extensions (View-specific data)
   extensions: UnifiedExtensions;
-  
+
   // Metadata
   metadata: UnifiedMetadata;
 }

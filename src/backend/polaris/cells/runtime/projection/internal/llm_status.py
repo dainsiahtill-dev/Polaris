@@ -241,6 +241,40 @@ def _provider_role_compatible(role: str, provider_test_info: dict[str, Any] | No
     return not tested_role or tested_role == "connectivity" or tested_role == _role_key(role)
 
 
+def _director_binding_skip_reason(
+    *,
+    role: str,
+    provider_id: str,
+    model: str,
+    provider_test_info: dict[str, Any] | None,
+) -> str:
+    if _role_key(role) != "director":
+        return ""
+    if not isinstance(provider_test_info, dict) or bool(provider_test_info.get("ready")):
+        return ""
+    if not _provider_role_compatible(role, provider_test_info):
+        return ""
+    tested_model = str(provider_test_info.get("model") or "").strip()
+    tested_timestamp = provider_test_info.get("timestamp")
+    issue = _readiness_candidate_issue(
+        provider_id=provider_id,
+        model=model,
+        tested_provider_id=provider_id,
+        tested_model=tested_model,
+        tested_timestamp=tested_timestamp,
+    )
+    if issue:
+        return ""
+    suites = provider_test_info.get("suites")
+    connectivity = suites.get("connectivity") if isinstance(suites, dict) else None
+    if isinstance(connectivity, dict) and connectivity.get("ok") is False:
+        return "provider_connectivity_unavailable"
+    grade = str(provider_test_info.get("grade") or "").strip().upper()
+    if grade == "FAIL":
+        return "provider_readiness_failed"
+    return ""
+
+
 def _dedupe_index_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
     seen: set[int] = set()
@@ -403,6 +437,37 @@ def _select_binding_status(
     return first_role_status, first_provider_status
 
 
+def _binding_readiness_payload(
+    *,
+    indexes: list[dict[str, Any]],
+    role: str,
+    provider_id: str,
+    model: str,
+) -> dict[str, Any]:
+    test_info, provider_test_info = _select_binding_status(
+        indexes=indexes,
+        role=role,
+        provider_id=provider_id,
+        model=model,
+    )
+    return _binding_readiness(
+        role=role,
+        provider_id=provider_id,
+        model=model,
+        test_info=test_info if isinstance(test_info, dict) else None,
+        provider_test_info=provider_test_info if isinstance(provider_test_info, dict) else None,
+    )
+
+
+def _binding_status_issue(binding: dict[str, Any], readiness: dict[str, Any]) -> str:
+    provider_id = str(binding.get("provider_id") or "").strip()
+    model = str(binding.get("model") or "").strip()
+    issue = str(readiness.get("issue") or "role_readiness_missing").strip() or "role_readiness_missing"
+    if provider_id or model:
+        return f"{provider_id}/{model}: {issue}"
+    return issue
+
+
 def _active_workspace(settings: Settings) -> str:
     for attr in ("workspace_path", "workspace"):
         text = _workspace_text(getattr(settings, attr, ""))
@@ -511,22 +576,78 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
             provider_id=provider_id,
             model=model,
         )
+        binding_readiness_items: list[dict[str, Any]] = []
+        for binding in bindings:
+            binding_provider_id = str(binding.get("provider_id") or "").strip()
+            binding_model = str(binding.get("model") or "").strip()
+            readiness = _binding_readiness_payload(
+                indexes=index_candidates,
+                role=role_key,
+                provider_id=binding_provider_id,
+                model=binding_model,
+            )
+            binding.update(
+                {
+                    "ready": readiness["ready"],
+                    "readiness_issue": readiness["issue"],
+                    "readiness_source": readiness["source"],
+                    "tested_provider_id": readiness["tested_provider_id"],
+                    "tested_model": readiness["tested_model"],
+                    "tested_timestamp": readiness["tested_timestamp"],
+                    "skip_allowed": bool(readiness.get("skip_allowed")),
+                    "skip_reason": str(readiness.get("skip_reason") or ""),
+                },
+            )
+            binding_readiness_items.append(readiness)
         primary_binding = bindings[0] if bindings else {}
-        test_info, provider_test_info = _select_binding_status(
+        primary_test_info, _primary_provider_test_info = _select_binding_status(
             indexes=index_candidates,
             role=role_key,
-            provider_id=provider_id,
-            model=model,
+            provider_id=str(primary_binding.get("provider_id") or provider_id or "").strip(),
+            model=str(primary_binding.get("model") or model or "").strip(),
+        )
+        primary_readiness = (
+            binding_readiness_items[0]
+            if binding_readiness_items
+            else _binding_readiness_payload(
+                indexes=index_candidates,
+                role=role_key,
+                provider_id=provider_id,
+                model=model,
+            )
         )
         runtime_issue = _runtime_issue(role, provider_id, provider_cfg)
         runtime_supported = not runtime_issue
-        binding_readiness = _binding_readiness(
-            role=role_key,
-            provider_id=provider_id,
-            model=model,
-            test_info=test_info if isinstance(test_info, dict) else None,
-            provider_test_info=provider_test_info if isinstance(provider_test_info, dict) else None,
+        failed_binding_issue = ""
+        skipped_bindings: list[dict[str, Any]] = []
+        blocking_binding_count = 0
+        for binding, readiness in zip(bindings, binding_readiness_items, strict=False):
+            if not bool(readiness.get("ready")):
+                if bool(readiness.get("skip_allowed")):
+                    skipped_bindings.append(
+                        {
+                            "provider_id": str(binding.get("provider_id") or "").strip(),
+                            "model": str(binding.get("model") or "").strip(),
+                            "binding_id": str(binding.get("binding_id") or "").strip(),
+                            "reason": str(readiness.get("skip_reason") or readiness.get("issue") or "").strip(),
+                        }
+                    )
+                    continue
+                blocking_binding_count += 1
+                if not failed_binding_issue:
+                    failed_binding_issue = _binding_status_issue(binding, readiness)
+        all_bindings_ready = all(bool(item.get("ready")) for item in binding_readiness_items)
+        any_binding_ready = any(bool(item.get("ready")) for item in binding_readiness_items)
+        role_degraded = bool(
+            role_key == "director"
+            and any_binding_ready
+            and not all_bindings_ready
+            and blocking_binding_count == 0
+            and skipped_bindings
         )
+        if role_degraded and not failed_binding_issue:
+            failed_binding_issue = "degraded: skipped unavailable Director binding(s)"
+        role_ready = bool((all_bindings_ready and binding_readiness_items) or role_degraded)
         roles_status[role_key] = {
             "provider_id": provider_id,
             "provider_name": primary_binding.get("provider_name") or _provider_name(provider_id, provider_cfg),
@@ -536,18 +657,20 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
             "max_context_tokens": primary_binding.get("max_context_tokens"),
             "max_output_tokens": primary_binding.get("max_output_tokens"),
             "bindings": bindings,
-            "ready": binding_readiness["ready"],
-            "grade": test_info.get("grade") if isinstance(test_info, dict) else "UNKNOWN",
-            "last_run_id": test_info.get("last_run_id") if isinstance(test_info, dict) else None,
-            "timestamp": test_info.get("timestamp") if isinstance(test_info, dict) else None,
-            "suites": test_info.get("suites") if isinstance(test_info, dict) else None,
+            "ready": role_ready,
+            "grade": primary_test_info.get("grade") if isinstance(primary_test_info, dict) else "UNKNOWN",
+            "last_run_id": primary_test_info.get("last_run_id") if isinstance(primary_test_info, dict) else None,
+            "timestamp": primary_readiness["tested_timestamp"],
+            "suites": primary_test_info.get("suites") if isinstance(primary_test_info, dict) else None,
             "runtime_supported": runtime_supported,
             "runtime_issue": runtime_issue,
-            "readiness_issue": binding_readiness["issue"],
-            "readiness_source": binding_readiness["source"],
-            "tested_provider_id": binding_readiness["tested_provider_id"],
-            "tested_model": binding_readiness["tested_model"],
-            "tested_timestamp": binding_readiness["tested_timestamp"],
+            "readiness_issue": failed_binding_issue,
+            "readiness_source": primary_readiness["source"],
+            "tested_provider_id": primary_readiness["tested_provider_id"],
+            "tested_model": primary_readiness["tested_model"],
+            "tested_timestamp": primary_readiness["tested_timestamp"],
+            "degraded": role_degraded,
+            "skipped_bindings": skipped_bindings,
         }
 
     for provider_id, provider_cfg in providers_cfg.items():
@@ -577,16 +700,22 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
 
     blocked = [r for r in required if not roles_status.get(r, {}).get("ready")]
     unsupported = [r for r in required if not roles_status.get(r, {}).get("runtime_supported")]
+    degraded = [r for r in required if roles_status.get(r, {}).get("degraded")]
     factory_required = [role for role in FACTORY_REQUIRED_ROLE_ORDER if role != "qa" or _qa_enabled(settings)]
     factory_blocked = [r for r in factory_required if not roles_status.get(r, {}).get("ready")]
     factory_unsupported = [r for r in factory_required if not roles_status.get(r, {}).get("runtime_supported")]
+    factory_degraded = [r for r in factory_required if roles_status.get(r, {}).get("degraded")]
 
     global_state = "READY"
     if blocked or unsupported:
         global_state = "BLOCKED"
+    elif degraded:
+        global_state = "DEGRADED"
     factory_state = "READY"
     if factory_blocked or factory_unsupported:
         factory_state = "BLOCKED"
+    elif factory_degraded:
+        factory_state = "DEGRADED"
 
     interview_summary = load_interview_history_summary(settings)
 
@@ -603,9 +732,11 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
         "required_ready_roles": required,
         "blocked_roles": blocked,
         "unsupported_roles": unsupported,
+        "degraded_roles": degraded,
         "factory_required_roles": factory_required,
         "factory_blocked_roles": factory_blocked,
         "factory_unsupported_roles": factory_unsupported,
+        "factory_degraded_roles": factory_degraded,
         "factory_state": factory_state,
         "state": global_state,
         "interviews": interview_summary,
@@ -697,6 +828,12 @@ def _binding_readiness(
         )
         if issue == "":
             issue = "readiness_failed"
+        skip_reason = _director_binding_skip_reason(
+            role=role,
+            provider_id=provider_id,
+            model=model,
+            provider_test_info=provider_test_info,
+        )
         return {
             "ready": False,
             "issue": issue,
@@ -704,6 +841,8 @@ def _binding_readiness(
             "tested_provider_id": provider_id,
             "tested_model": tested_model,
             "tested_timestamp": tested_timestamp,
+            "skip_allowed": bool(skip_reason),
+            "skip_reason": skip_reason,
         }
 
     if isinstance(provider_test_info, dict):

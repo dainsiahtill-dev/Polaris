@@ -24,6 +24,26 @@ _FIRST_TURN_WRITE_DISABLED = {"off", "none", "disabled", "false", "0"}
 _REPAIR_PRESERVE_EDIT_ENV = "KERNELONE_REPAIR_PRESERVE_EDIT"
 _REPAIR_PRESERVE_EDIT_DISABLED = {"off", "none", "disabled", "false", "0"}
 
+_WEAK_DIRECTOR_SLIM_TOOL_SCHEMA_ENV = "KERNELONE_WEAK_DIRECTOR_SLIM_TOOL_SCHEMA"
+_WEAK_DIRECTOR_SLIM_TOOL_SCHEMA_DISABLED = {"off", "none", "disabled", "false", "0"}
+_WEAK_DIRECTOR_MODEL_MARKERS = (
+    "gemma",
+    "glm",
+    "ministral",
+    "qwen3.6",
+    "qwen3",
+    "qwen-3",
+    "int4",
+    "27b-code",
+)
+_WEAK_DIRECTOR_SLIM_DELIVERY_MODES = {"materialize_changes", "propose_patch"}
+_SLIM_PROFILE_VALUES = {"slim", "compact", "minimal", "small", "weak", "local", "edge", "quantized"}
+_FULL_PROFILE_VALUES = {"full", "rich", "complete", "standard", "strong", "frontier"}
+_SMALL_EXECUTION_CONTEXT_WINDOW_TOKENS = 32_768
+_TOOL_SCHEMA_PRESSURE_MIN_TOKENS = 1_500
+_TOOL_SCHEMA_PRESSURE_MIN_COUNT = 8
+_TOOL_SCHEMA_PRESSURE_RATIO = 0.18
+
 
 def resolve_tool_call_provider(*, provider_id: str, model: str) -> str:
     """Resolve tool call format provider hint.
@@ -44,6 +64,157 @@ def resolve_tool_call_provider(*, provider_id: str, model: str) -> str:
         return "openai"
 
     return "auto"
+
+
+def _coerce_bool_flag(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    token = str(value).strip().lower()
+    if token in {"1", "true", "yes", "on", "enabled", "force"}:
+        return True
+    if token in _WEAK_DIRECTOR_SLIM_TOOL_SCHEMA_DISABLED:
+        return False
+    return None
+
+
+def _profile_model_text(profile: Any) -> str:
+    parts = [
+        getattr(profile, "provider_id", ""),
+        getattr(profile, "provider", ""),
+        getattr(profile, "model", ""),
+        getattr(profile, "model_id", ""),
+        getattr(profile, "model_name", ""),
+    ]
+    return " ".join(str(part or "").strip().lower() for part in parts if str(part or "").strip())
+
+
+def _model_catalog_spec(
+    *,
+    profile: Any,
+    workspace: str | None,
+) -> Any | None:
+    provider_id = str(getattr(profile, "provider_id", "") or "").strip()
+    model = str(getattr(profile, "model", "") or "").strip()
+    if not model:
+        return None
+    try:
+        from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
+
+        return ModelCatalog(workspace=str(workspace or ".") or ".").resolve(provider_id, model)
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        return None
+
+
+def _configured_profile_value(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip().lower()
+        if text:
+            return text
+    return ""
+
+
+def _tool_schema_pressure(
+    tool_definitions: list[dict[str, Any]] | None,
+    *,
+    context_window_tokens: int,
+) -> bool:
+    if not isinstance(tool_definitions, list) or not tool_definitions:
+        return False
+    tool_count = len([item for item in tool_definitions if isinstance(item, dict)])
+    schema_tokens = _estimate_tokens_from_chars(_json_chars(tool_definitions))
+    if schema_tokens < _TOOL_SCHEMA_PRESSURE_MIN_TOKENS and tool_count < _TOOL_SCHEMA_PRESSURE_MIN_COUNT:
+        return False
+    if context_window_tokens <= 0:
+        return tool_count >= _TOOL_SCHEMA_PRESSURE_MIN_COUNT
+    return (
+        context_window_tokens <= _SMALL_EXECUTION_CONTEXT_WINDOW_TOKENS
+        or schema_tokens / max(1, context_window_tokens) >= _TOOL_SCHEMA_PRESSURE_RATIO
+    )
+
+
+def _json_chars(value: Any) -> int:
+    try:
+        return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+    except (TypeError, ValueError):
+        return len(str(value))
+
+
+def _estimate_tokens_from_chars(char_count: int) -> int:
+    return max(0, int(char_count) // 4)
+
+
+def should_use_weak_director_slim_tool_schema(
+    *,
+    role: str,
+    profile: Any,
+    context_override: Any,
+    workspace: str | None = None,
+    tool_definitions: list[dict[str, Any]] | None = None,
+) -> bool:
+    """Return True when a weak Director execution turn should get a slim tool list.
+
+    Strong PM/CE/QA turns need rich tool affordances and context. The qwen/int4
+    Director execution lane has a different failure mode: native tool schemas can
+    consume most of an 8k request before the task facts arrive. This gate only
+    trims execution-mode Director requests and never overrides a more precise
+    forced tool definition from the caller.
+    """
+    if os.environ.get(_WEAK_DIRECTOR_SLIM_TOOL_SCHEMA_ENV, "").strip().lower() in (
+        _WEAK_DIRECTOR_SLIM_TOOL_SCHEMA_DISABLED
+    ):
+        return False
+    if str(role or "").strip().lower() != "director":
+        return False
+    if not isinstance(context_override, dict):
+        return False
+    if isinstance(context_override.get("_transaction_kernel_forced_tool_definitions"), list):
+        return False
+
+    explicit = _coerce_bool_flag(context_override.get("director_slim_tool_schema"))
+    if explicit is False:
+        return False
+
+    delivery_mode = str(context_override.get("delivery_mode") or "").strip().lower()
+    execution_like = (
+        delivery_mode in _WEAK_DIRECTOR_SLIM_DELIVERY_MODES
+        or isinstance(context_override.get("director_quality_repair"), dict)
+        or bool(context_override.get("weak_director_execution"))
+    )
+    if not execution_like:
+        return False
+
+    if explicit is True:
+        return True
+
+    spec = _model_catalog_spec(profile=profile, workspace=workspace)
+    tool_schema_profile = _configured_profile_value(
+        context_override.get("tool_schema_profile"),
+        getattr(profile, "tool_schema_profile", None),
+        getattr(spec, "tool_schema_profile", None),
+    )
+    if tool_schema_profile in _FULL_PROFILE_VALUES:
+        return False
+    if tool_schema_profile in _SLIM_PROFILE_VALUES:
+        return True
+
+    execution_profile = _configured_profile_value(
+        context_override.get("execution_profile"),
+        getattr(profile, "execution_profile", None),
+        getattr(spec, "execution_profile", None),
+    )
+    if execution_profile in _FULL_PROFILE_VALUES:
+        return False
+    if execution_profile in _SLIM_PROFILE_VALUES:
+        return True
+
+    context_window_tokens = int(getattr(spec, "max_context_tokens", 0) or 0)
+    if _tool_schema_pressure(tool_definitions, context_window_tokens=context_window_tokens):
+        return True
+
+    model_text = _profile_model_text(profile)
+    return any(marker in model_text for marker in _WEAK_DIRECTOR_MODEL_MARKERS)
 
 
 # Write tools whose canonical file-path parameter is `file` (tool_spec_registry

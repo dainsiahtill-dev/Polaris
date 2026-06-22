@@ -143,6 +143,14 @@ Cell 是最小自治边界。
 4. 审计结论必须归入允许的失败分类之一：PM Contract、Chief Engineer Blueprint、Director Execution、LLM Output、Context Budget、Baseline Issue、Runtime Environment。无法归类时视为平台审计缺口，先补证据链。
 5. Factory Bench 每条角色工具失败记录必须写出 `opencode_audit` 机器可读字段；字段缺失时不得宣称失败归因闭环。
 
+### 4.15 Director Multi-Binding Degraded Execution
+
+1. Director 多绑定/多路 fanout 中，单个 provider 多次连接失败或 readiness/connectivity 失败时，Factory 启动与 Director 调度必须显式跳过该 binding，只运行仍可用的 Director binding。
+2. 该降级只适用于 Director 多绑定；PM、Chief Engineer、QA 以及单绑定 Director 仍必须 fail-closed。
+3. 跳过 binding 不得静默 fallback：`/v2/llm/status` 必须展示 `DEGRADED`、`skipped_bindings`、`skip_reason`；bench/runtime 证据必须保留 provider_id、model、binding_id 与失败原因。
+4. 如果 Director 所有 bindings 均不可用，Factory 必须 BLOCKED，不得继续运行。
+5. LLM route audit 必须以实际可达/可用 binding 为准，不得要求已跳过的坏 binding 产生 LLM 调用；也不得把跳过伪装为该 binding 成功运行。
+
 ## 5. 根目录与归属裁决
 
 规范根目录继续解释为：

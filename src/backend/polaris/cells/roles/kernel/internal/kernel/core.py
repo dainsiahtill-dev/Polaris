@@ -1489,7 +1489,8 @@ class RoleExecutionKernel:
         """Build system prompt with domain-aware fallback compatibility."""
         domain = str(getattr(request, "domain", "") or "").strip().lower() or "code"
         context_override = getattr(request, "context_override", None)
-        prompt_layer_options = self._resolve_prompt_layer_options(context_override)
+        request_message = str(getattr(request, "message", "") or "")
+        prompt_layer_options = self._resolve_prompt_layer_options(context_override, message=request_message)
         try:
             if prompt_layer_options:
                 # Explicit kwargs (not **options) so a stray key can never bind
@@ -1498,7 +1499,7 @@ class RoleExecutionKernel:
                     profile,
                     prompt_appendix,
                     domain=domain,
-                    message=str(getattr(request, "message", "") or ""),
+                    message=request_message,
                     include_working_memory_contract=prompt_layer_options.get("include_working_memory_contract", True),
                     include_tool_policy=prompt_layer_options.get("include_tool_policy", True),
                 )
@@ -1506,24 +1507,35 @@ class RoleExecutionKernel:
                 profile,
                 prompt_appendix,
                 domain=domain,
-                message=str(getattr(request, "message", "") or ""),
+                message=request_message,
             )
         except TypeError:
             return self._get_prompt_builder().build_system_prompt(profile, prompt_appendix)
 
     @staticmethod
-    def _resolve_prompt_layer_options(context_override: Any) -> dict[str, bool]:
+    def _resolve_prompt_layer_options(context_override: Any, *, message: str | None = None) -> dict[str, bool]:
         """Resolve per-turn prompt layer switches from explicit runtime context."""
         if not isinstance(context_override, dict):
             return {}
 
         delivery_mode = str(context_override.get("delivery_mode") or "").strip().lower()
         codegen_mode = str(context_override.get("director_runtime_codegen_mode") or "").strip().lower()
+        message_text = str(message or "")
+        message_lower = message_text.lower()
         is_director_codegen_bridge = bool(context_override.get("director_runtime_codegen")) and (
             delivery_mode == "propose_patch" or codegen_mode == "proposal_then_apply"
         )
+        is_single_batch_execution = (
+            delivery_mode in {"materialize_changes", "propose_patch"}
+            or "[Benchmark Tool Contract]" in message_text
+            or "materialization quality repair mode" in message_lower
+            or "[director_quality_repair:" in message_lower
+            or ("artifact quality scan failed" in message_lower and "do not read files first" in message_lower)
+        )
         suppress_working_memory = bool(
-            context_override.get("suppress_working_memory_contract") or is_director_codegen_bridge
+            context_override.get("suppress_working_memory_contract")
+            or is_director_codegen_bridge
+            or is_single_batch_execution
         )
         suppress_tool_policy = bool(context_override.get("suppress_tool_policy_prompt") or is_director_codegen_bridge)
 

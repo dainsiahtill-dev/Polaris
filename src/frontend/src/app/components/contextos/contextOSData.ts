@@ -270,9 +270,9 @@ export const ROLE_DECISION_ALIASES: Record<string, string[]> = {
  * 统一角色对话 API「所有 5 个角色」一致）。scout 为只读辅助 sub-agent，按设计不入此面。
  */
 const ROLE_DEFINITIONS: ReadonlyArray<{ id: string; key: string; courtTitle: string; title: string }> = [
-  { id: 'pm', key: 'pm', courtTitle: '尚书令', title: 'PM' },
+  { id: 'pm', key: 'pm', courtTitle: '尚书令', title: 'Project Manager' },
   { id: 'architect', key: 'architect', courtTitle: '中书令', title: 'Architect' },
-  { id: 'chief_engineer', key: 'chief_engineer', courtTitle: '工部尚书', title: 'Chief Eng' },
+  { id: 'chief_engineer', key: 'chief_engineer', courtTitle: '工部尚书', title: 'Chief Engineer' },
   { id: 'director', key: 'director', courtTitle: '工部侍郎', title: 'Director' },
   { id: 'qa', key: 'qa', courtTitle: '门下侍中', title: 'QA' },
 ];
