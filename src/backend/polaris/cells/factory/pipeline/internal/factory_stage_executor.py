@@ -52,6 +52,12 @@ logger = logging.getLogger(__name__)
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
 _DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV = "KERNELONE_FACTORY_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT"
 _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT = 4
+_DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS = 60
+_DIRECTOR_TIMEOUT_ENV_KEYS = (
+    "KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS",
+    "KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS",
+    "KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS",
+)
 
 _CE_BLUEPRINT_OUTPUT_CONTRACT = """
 
@@ -577,10 +583,39 @@ class OrchestrationStageExecutor:
                 return max(1, int(raw_override))
             except (TypeError, ValueError):
                 pass
+
+        def _parse_timeout(raw: Any) -> int | None:
+            if raw is None:
+                return None
+            try:
+                value = int(float(str(raw).strip()))
+            except (TypeError, ValueError):
+                return None
+            if value <= 0:
+                return None
+            return value
+
+        candidates: list[int] = []
+        stage_timeout = _parse_timeout(context.get("timeout"))
+        if stage_timeout is not None:
+            candidates.append(stage_timeout)
+
+        llm_timeout_candidates: list[int] = []
+        for key in ("director_llm_timeout_seconds", "llm_call_timeout_seconds"):
+            value = _parse_timeout(context.get(key))
+            if value is not None:
+                llm_timeout_candidates.append(value)
+        for env_key in _DIRECTOR_TIMEOUT_ENV_KEYS:
+            value = _parse_timeout(os.getenv(env_key))
+            if value is not None:
+                llm_timeout_candidates.append(value)
+        if llm_timeout_candidates:
+            candidates.append(max(llm_timeout_candidates) + _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS)
+
         try:
-            return max(1, int(context.get("timeout") or 600))
+            return max(candidates or [600])
         except (TypeError, ValueError):
-            return 600
+            return max(600, *(llm_timeout_candidates or []))
 
     @staticmethod
     def _director_binding_timeout_quarantine_count() -> int:

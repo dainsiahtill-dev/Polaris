@@ -319,6 +319,28 @@ def test_factory_director_context_defaults_to_auto_rounds() -> None:
     assert "director_max_rounds" not in context
     assert context["factory_run_id"] == "factory-1"
     assert context["metadata"]["factory_bench_session_id"] == "bench-1"
+    assert context["timeout"] == 1800
+    assert context["director_dispatch_timeout_seconds"] == 1800
+    assert context["llm_call_timeout_seconds"] == 1800
+    assert context["director_llm_timeout_seconds"] == 1800
+
+
+def test_factory_director_context_uses_director_timeout_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", "2100")
+    payload = FactoryStartRequest(workspace="C:/tmp/workspace")
+    state = SimpleNamespace(
+        settings=SimpleNamespace(
+            director_execution_mode="parallel",
+            director_max_parallel_tasks=2,
+        )
+    )
+
+    context = factory_router_module._build_stage_context("director_dispatch", payload, state)
+
+    assert context["timeout"] == 2100
+    assert context["director_dispatch_timeout_seconds"] == 2100
+    assert context["llm_call_timeout_seconds"] == 2100
+    assert context["director_llm_timeout_seconds"] == 2100
 
 
 def test_factory_director_context_honors_explicit_round_cap() -> None:

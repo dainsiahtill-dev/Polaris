@@ -604,12 +604,36 @@ class TestExecuteDirectorBindingFanout:
         assert result.status == "completed"
         assert mock_service.query_run_status.await_count >= 1
 
-    def test_director_dispatch_timeout_uses_stage_budget(self) -> None:
+    def test_director_dispatch_timeout_uses_stage_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
         executor = self._make_executor()
+        for key in (
+            "KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS",
+            "KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS",
+            "KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS",
+        ):
+            monkeypatch.delenv(key, raising=False)
 
         timeout = executor._director_dispatch_timeout_seconds({"timeout": 300}, task_count=5)
 
         assert timeout == 300
+
+    def test_director_dispatch_timeout_covers_context_llm_budget(self) -> None:
+        executor = self._make_executor()
+
+        timeout = executor._director_dispatch_timeout_seconds(
+            {"timeout": 300, "llm_call_timeout_seconds": 1800},
+            task_count=5,
+        )
+
+        assert timeout == 1860
+
+    def test_director_dispatch_timeout_covers_env_llm_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        executor = self._make_executor()
+        monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", "1800")
+
+        timeout = executor._director_dispatch_timeout_seconds({"timeout": 300}, task_count=5)
+
+        assert timeout == 1860
 
 
 class TestBindingOverrideInWorkerThread:

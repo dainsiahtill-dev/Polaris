@@ -107,6 +107,29 @@ def test_forced_write_file_retry_context_blocks_read_execute_only_batches() -> N
     assert "src/main.ts" in system
 
 
+def test_forced_write_file_retry_context_converges_multi_target_creates() -> None:
+    out = build_contract_retry_context(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "[mode:materialize]\n"
+                    "目标文件: index.html, src/engine/simulation.ts, src/engine/renderer.ts\n"
+                    "Create the browser entry and simulation engine files."
+                ),
+            }
+        ],
+        [{"name": "write_file"}, {"name": "execute_command"}],
+        forced_write_tool_name="write_file",
+    )
+
+    system = next(m["content"] for m in out if m["role"] == "system")
+    assert "MULTI-TARGET WRITE CONVERGENCE" in system
+    assert "choose exactly one still-missing target file" in system
+    assert "Do not modify package.json" in system
+    assert "index.html, src/engine/simulation.ts, src/engine/renderer.ts" in system
+
+
 def test_retry_enforcement_restates_target_files_not_acceptance_artifacts() -> None:
     out = append_retry_enforcement_hint(
         [
@@ -131,6 +154,30 @@ def test_retry_enforcement_restates_target_files_not_acceptance_artifacts() -> N
     assert "Only write these target files" in system
     assert "Acceptance" in system
     assert "not authorization" in system
+
+
+def test_retry_enforcement_converges_forced_write_file_multi_targets() -> None:
+    out = append_retry_enforcement_hint(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "[mode:materialize]\n"
+                    "目标文件: src/verify.ts, tests/verify.test.ts\n"
+                    "Create verification script and test."
+                ),
+            }
+        ],
+        allowed_tool_names={"execute_command", "write_file"},
+        reason="mutation requested but no write tool invocation",
+        forced_write_tool_name="write_file",
+    )
+
+    system = out[-1]["content"]
+    assert "MULTI-TARGET WRITE CONVERGENCE" in system
+    assert "select exactly one still-missing target file" in system
+    assert "Do not use package.json" in system
+    assert "src/verify.ts, tests/verify.test.ts" in system
 
 
 def test_forced_edit_blocks_enforcement_includes_minimal_line_range_schema() -> None:

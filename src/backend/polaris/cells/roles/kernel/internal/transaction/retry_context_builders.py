@@ -121,6 +121,13 @@ def build_contract_retry_context(
             "Only write these target files; acceptance criteria, verification commands, test names, and command "
             "output paths are not authorization to create or modify extra files."
         )
+        if forced_write_tool_name == "write_file" and len(target_file_tokens) > 1:
+            retry_lines.append(
+                "MULTI-TARGET WRITE CONVERGENCE: choose exactly one still-missing target file from the list above "
+                "and call write_file for that file in this retry. Prefer the first missing source, entrypoint, "
+                "test, README, or HTML target required by the current task. Do not modify package.json, tsconfig.json, "
+                "or an already-created sibling unless that exact file is the selected missing target."
+            )
 
     retry_mode_guard = (
         "RETRY MODE ACTIVE: discard any previous staged workflow (e.g., understand-first/read-first).\n"
@@ -187,6 +194,13 @@ def append_retry_enforcement_hint(
             + ". Acceptance criteria, verification commands, test names, and command output paths are "
             "not authorization to create or modify extra files."
         )
+        if forced_write_tool_name == "write_file" and len(target_file_tokens) > 1:
+            target_file_detail += (
+                "\nMULTI-TARGET WRITE CONVERGENCE: select exactly one still-missing target file from this list "
+                "and write that complete file body now. Prefer the first missing source, entrypoint, test, README, "
+                "or HTML target required by the current task. Do not use package.json, tsconfig.json, or another "
+                "already-created sibling as a substitute unless it is the selected target."
+            )
     enforcement_hint = {
         "role": "system",
         "content": (
