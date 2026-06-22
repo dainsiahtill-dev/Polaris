@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -254,6 +255,44 @@ class TestFileApplyService:
 
         assert applied == []
         assert any("invalid JSON" in error for error in errors)
+        assert not (tmp_path / "package.json").exists()
+
+    def test_write_files_normalizes_trailing_fence_json_config(self, tmp_path: Path) -> None:
+        """Direct write_files must share weak-model JSON normalization with write_file."""
+        from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
+
+        service = FileApplyService(workspace=str(tmp_path))
+        result = service.write_files(
+            [
+                {
+                    "path": "package.json",
+                    "content": '{"name":"demo","scripts":{"build":"tsc"}}\n```',
+                }
+            ],
+            allowed_scope_paths=["package.json"],
+        )
+
+        assert result == [
+            {
+                "path": "package.json",
+                "content": '{\n  "name": "demo",\n  "scripts": {\n    "build": "tsc"\n  }\n}\n',
+            }
+        ]
+        payload = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+        assert payload["scripts"]["build"] == "tsc"
+
+    def test_write_files_rejects_incomplete_empty_package_json_fragment(self, tmp_path: Path) -> None:
+        """Weak-model garbage must not be silently normalized into an empty manifest."""
+        from polaris.cells.director.tasking.internal.file_apply_service import FileApplyService
+
+        service = FileApplyService(workspace=str(tmp_path))
+        result = service.write_files(
+            [{"path": "package.json", "content": "{  "}],
+            allowed_scope_paths=["package.json"],
+        )
+
+        assert result == []
+        assert any("invalid JSON" in error for error in service._last_write_errors)
         assert not (tmp_path / "package.json").exists()
 
     def test_apply_response_operations_rolls_back_invalid_json_patch(self, tmp_path: Path) -> None:

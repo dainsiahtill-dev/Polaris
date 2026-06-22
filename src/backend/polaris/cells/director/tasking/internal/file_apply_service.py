@@ -331,6 +331,7 @@ class FileApplyService:
 
         # Import here to avoid circular dependencies
         from polaris.kernelone.events.file_event_broadcaster import write_file_with_broadcast
+        from polaris.kernelone.llm.toolkit.tool_normalization import normalize_patch_like_write_content
 
         fs = _workspace_fs(self.workspace)
         for file_info in files:
@@ -349,6 +350,20 @@ class FileApplyService:
                         old_content = fs.workspace_read_text(file_path, encoding="utf-8")
                     except OSError:
                         old_content = ""
+                normalized = normalize_patch_like_write_content(
+                    file_path,
+                    content,
+                    existing_content=old_content if os.path.isfile(full_path) else None,
+                )
+                if normalized.error:
+                    self._last_write_errors.append(normalized.error)
+                    logger.warning("Skip file '%s': %s", file_path, normalized.error)
+                    continue
+                content = str(normalized.content or "")
+                if not content:
+                    self._last_write_errors.append(f"Empty normalized content for file: {file_path}")
+                    logger.warning("Skip file '%s': empty normalized content", file_path)
+                    continue
                 policy_error = self._validate_director_policy_for_write(
                     rel_path=file_path,
                     old_content=old_content,

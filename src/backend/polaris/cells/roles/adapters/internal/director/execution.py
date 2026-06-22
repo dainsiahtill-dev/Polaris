@@ -105,6 +105,15 @@ class DirectorPatchExecutor:
     # -------------------------------------------------------------------------
 
     @staticmethod
+    def _llm_call_timeout_max_seconds() -> float:
+        raw = os.environ.get("KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS")
+        try:
+            value = float(str(raw).strip()) if raw is not None and str(raw).strip() else 1800.0
+        except (TypeError, ValueError):
+            value = 1800.0
+        return max(900.0, value)
+
+    @staticmethod
     def resolve_llm_call_timeout_seconds(context: dict[str, Any] | None) -> float:
         """解析 LLM 调用超时时间"""
         from .helpers import _DEFAULT_LLM_CALL_TIMEOUT_SECONDS
@@ -124,7 +133,7 @@ class DirectorPatchExecutor:
                 continue
             if value <= 0:
                 continue
-            return max(0.1, min(value, 900.0))
+            return max(0.1, min(value, DirectorPatchExecutor._llm_call_timeout_max_seconds()))
         return _DEFAULT_LLM_CALL_TIMEOUT_SECONDS
 
     @staticmethod

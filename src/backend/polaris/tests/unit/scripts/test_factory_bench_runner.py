@@ -2278,6 +2278,7 @@ def test_main_start_failed_chain_marks_audit_as_non_terminal(
     monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
     monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
+    monkeypatch.setattr(bench, "_materialize_role_tool_failure_opencode_audit", lambda **_kwargs: None)
     monkeypatch.setattr(
         bench,
         "build_real_run_gate",
@@ -2299,6 +2300,109 @@ def test_main_start_failed_chain_marks_audit_as_non_terminal(
     assert result == 1
     assert len(captured_records) == 1
     assert captured_records[0]["chain_terminal"] is False
+
+
+def test_main_event_wait_timeout_marks_non_terminal_and_skips_real_run_gate(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    """When runtime.v2 never delivers a terminal event, main must not run
+    build/test/start against a workspace the backend may still be mutating."""
+    captured_records: list[dict[str, Any]] = []
+    taxonomy_records: list[dict[str, Any]] = []
+
+    def _capture_build(**kwargs: Any) -> dict[str, Any]:
+        captured_records.append(kwargs)
+        return {
+            "all_checks_passed": False,
+            "static_checks_passed": False,
+            "has_plan_doc": False,
+            "has_blueprint_doc": False,
+            "has_qa_verdict": False,
+            "code_file_count": 0,
+            "source_file_count": 0,
+            "checks": [],
+            "audit_snapshot_kind": "non_terminal" if not kwargs.get("chain_terminal", True) else "terminal",
+            "audit_terminal": kwargs.get("chain_terminal", True),
+        }
+
+    def _capture_taxonomy(record: dict[str, Any]) -> dict[str, Any]:
+        taxonomy_records.append(record)
+        taxonomy = {
+            "ok": False,
+            "category": "runtime_environment",
+            "root_cause_signature": "runtime_environment:real_run_gate.chain_terminal",
+            "reasons": [],
+            "evidence": [],
+        }
+        record["failure_taxonomy"] = taxonomy
+        record["failure_category"] = taxonomy["category"]
+        record["root_cause_signature"] = taxonomy["root_cause_signature"]
+        record["failure_reasons"] = []
+        record["failure_evidence"] = []
+        record["opencode_audit"] = {"required": False}
+        record["goal_audit"] = {}
+        return taxonomy
+
+    monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--project-ids", "L1-01", "--work-dir", str(tmp_path)])
+    monkeypatch.setattr(
+        bench,
+        "load_projects",
+        lambda: [{"id": "L1-01", "level": 1, "title": "Test", "brief": "Build something", "checks": []}],
+    )
+    monkeypatch.setattr(bench, "_resolve_backend_url", lambda: "http://127.0.0.1:49977")
+    monkeypatch.setattr(bench, "_resolve_backend_token", lambda: "token")
+    monkeypatch.setattr(bench, "_ensure_bench_session", lambda **_kwargs: "bench-event-timeout")
+    monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
+    monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        bench,
+        "build_bench_backend_audit_context",
+        lambda *_args, **_kwargs: {
+            "backend_freshness": {"ok": True, "detail": "backend fresh"},
+            "backend_metadata": {"backend_base_url": ""},
+        },
+    )
+    monkeypatch.setattr(bench, "resolve_runtime_dirs_for_workspace", lambda _workspace: [])
+    monkeypatch.setattr(bench, "discover_artifacts", lambda _workspace, _runtime_dirs: {})
+    monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
+    monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
+    monkeypatch.setattr(bench, "_materialize_role_tool_failure_opencode_audit", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        bench,
+        "build_real_run_gate",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("real run gate must be skipped")),
+    )
+    monkeypatch.setattr(
+        bench,
+        "build_llm_route_audit",
+        lambda *_args, **_kwargs: {"ok": False, "summary": "LLM route audit failed"},
+    )
+    monkeypatch.setattr(bench, "apply_factory_bench_failure_taxonomy", _capture_taxonomy)
+
+    def _event_wait_timeout(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "exit_code": -1,
+            "duration_s": 1.0,
+            "run_id": "run-timeout",
+            "error": "event_wait_timeout",
+        }
+
+    monkeypatch.setattr(bench, "run_factory_chain", _event_wait_timeout)
+
+    result = bench.main()
+
+    assert result == 1
+    assert len(captured_records) == 1
+    assert captured_records[0]["chain_terminal"] is False
+    assert len(taxonomy_records) == 1
+    real_run_gate = taxonomy_records[0]["real_run_gate"]
+    assert real_run_gate["skipped"] is True
+    assert real_run_gate["requirements"]["chain_terminal"]["ok"] is False
+    assert "event_wait_timeout" in real_run_gate["summary"]
 
 
 def test_main_runner_exception_marks_audit_as_non_terminal(
@@ -2349,6 +2453,7 @@ def test_main_runner_exception_marks_audit_as_non_terminal(
     monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
     monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
+    monkeypatch.setattr(bench, "_materialize_role_tool_failure_opencode_audit", lambda **_kwargs: None)
     monkeypatch.setattr(
         bench,
         "build_real_run_gate",
@@ -2420,6 +2525,7 @@ def test_main_completed_chain_marks_audit_as_terminal(
     monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
     monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
+    monkeypatch.setattr(bench, "_materialize_role_tool_failure_opencode_audit", lambda **_kwargs: None)
     monkeypatch.setattr(
         bench,
         "build_real_run_gate",

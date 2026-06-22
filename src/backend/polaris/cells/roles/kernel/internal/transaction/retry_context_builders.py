@@ -108,6 +108,11 @@ def build_contract_retry_context(
     if forced_write_tool_name:
         retry_lines.append(f"MANDATORY: your batch must include write tool `{forced_write_tool_name}`.")
         retry_lines.append("Do not output read/list-only batches; the emitted batch must include this write tool.")
+        if forced_write_tool_name == "write_file":
+            retry_lines.append(
+                "For create-file, missing-target, scaffold, or whole-file replacement repairs, call write_file "
+                "directly with args.file and args.content; do not emit execute_command/read/list-only batches."
+            )
     if target_file_tokens:
         retry_lines.append(
             "Mutation target files detected from user request: "

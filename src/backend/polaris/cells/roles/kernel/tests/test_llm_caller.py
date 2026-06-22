@@ -99,7 +99,7 @@ class TestResolveTimeoutSeconds:
             os.environ.pop("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", None)
             _get_cached_director_timeout.cache_clear()
 
-    def test_timeout_clamped_to_max_900(self) -> None:
+    def test_timeout_clamped_to_default_max_1800(self) -> None:
         import os
 
         # Clear LRU cache so the new env var is picked up
@@ -111,10 +111,42 @@ class TestResolveTimeoutSeconds:
         try:
             profile = MockProfile(role_id="director")
             timeout = resolve_timeout_seconds(cast("RoleProfile", profile))
-            assert timeout == 900
+            assert timeout == 1800
         finally:
             os.environ.pop("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", None)
             _get_cached_director_timeout.cache_clear()
+
+    def test_timeout_max_can_be_configured_for_slow_director_models(self) -> None:
+        import os
+
+        from polaris.cells.roles.kernel.internal.llm_caller.helpers import _get_cached_director_timeout
+
+        _get_cached_director_timeout.cache_clear()
+
+        os.environ["KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS"] = "9999"
+        os.environ["KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS"] = "2400"
+        try:
+            profile = MockProfile(role_id="director")
+            timeout = resolve_timeout_seconds(cast("RoleProfile", profile))
+            assert timeout == 2400
+        finally:
+            os.environ.pop("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", None)
+            os.environ.pop("KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS", None)
+            _get_cached_director_timeout.cache_clear()
+
+    def test_context_timeout_override_clamped_to_configurable_max(self) -> None:
+        import os
+
+        os.environ["KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS"] = "2400"
+        try:
+            profile = MockProfile(role_id="director")
+            timeout = resolve_timeout_seconds(
+                cast("RoleProfile", profile),
+                {"llm_call_timeout_seconds": 9999},
+            )
+            assert timeout == 2400
+        finally:
+            os.environ.pop("KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS", None)
 
 
 class TestResolvePlatformRetryMax:

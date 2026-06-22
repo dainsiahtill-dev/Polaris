@@ -46,6 +46,48 @@ def test_write_file_rejects_source_narration_payload(tmp_path) -> None:
     assert not (tmp_path / "src" / "main.ts").exists()
 
 
+def test_write_file_rejects_repair_directive_narration_payload(tmp_path) -> None:
+    executor = DirectorToolExecutor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "path": "src/models/moonphase.ts",
+            "content": (
+                "The repair directive is clear: create the missing module imported by src/index.ts.\n"
+                "I also need to create src/engine.ts to resolve the other unresolved import.\n"
+            ),
+            "target_files": ["src/models/moonphase.ts"],
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "source_narration_contamination"
+    assert result["retryable"] is True
+    assert not (tmp_path / "src" / "models" / "moonphase.ts").exists()
+
+
+def test_write_file_rejects_quality_repair_mode_narration_payload(tmp_path) -> None:
+    executor = DirectorToolExecutor(str(tmp_path))
+
+    result = executor.execute_tool(
+        "write_file",
+        {
+            "path": "src/main.ts",
+            "content": (
+                "The quality repair mode requires me to create the missing files. Let me analyze what's needed:\n"
+                "1. `src/main.ts` - Missing target file\n"
+            ),
+            "target_files": ["src/main.ts"],
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "source_narration_contamination"
+    assert result["retryable"] is True
+    assert not (tmp_path / "src" / "main.ts").exists()
+
+
 def test_write_file_rejects_destructive_shrink(tmp_path) -> None:
     target = tmp_path / "src" / "big.ts"
     target.parent.mkdir(parents=True)

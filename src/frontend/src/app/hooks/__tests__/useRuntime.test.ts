@@ -438,7 +438,7 @@ describe('useRuntime llm filtering and dedup', () => {
         message: 'llm response completed | completion_tokens=1454',
         refs: {
           call_id: 'call-context-1',
-          context_snapshot_ref: 'ctx-snapshot-1',
+          context_snapshot_ref: 'a1b2c3d4e5f6a7b8c9d0e1f2',
         },
         tags: ['llm_realtime_bridge', 'llm_event:llm_call_end', 'projection_event:llm_completed'],
         raw: {
@@ -475,7 +475,7 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(entry?.meta?.completionTokens).toBe(1454);
     expect(entry?.meta?.totalTokens).toBe(3386);
     expect(entry?.meta?.contextTokens).toBe(1932);
-    expect(entry?.meta?.contextSnapshotRef).toBe('ctx-snapshot-1');
+    expect(entry?.meta?.contextSnapshotRef).toBe('a1b2c3d4e5f6a7b8c9d0e1f2');
     expect(entry?.meta?.callId).toBe('call-context-1');
     expect(entry?.meta?.finalRequestContextAudit).toMatchObject({
       final_request_token_estimate: 4096,
@@ -543,6 +543,7 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(entry?.meta?.totalTokens).toBe(3666);
     expect(entry?.meta?.contextTokens).toBe(4096);
     expect(entry?.meta?.callId).toBe('provider-usage-1');
+    expect(entry?.meta?.contextSnapshotRef).toBeUndefined();
     expect(entry?.meta?.contextSnapshotDegraded).toEqual({
       code: 'CONTEXT_STORE_WRITE_FAILED',
       reason: 'context_snapshot_store_failure',

@@ -66,7 +66,12 @@ class TestResolveLlmCallTimeoutSeconds:
 
     def test_clamped_to_maximum(self) -> None:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 9999.0})
-        assert result == 900.0
+        assert result == 1800.0
+
+    def test_maximum_can_be_configured_for_slow_local_models(self, monkeypatch: Any) -> None:
+        monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS", "2400")
+        result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 9999.0})
+        assert result == 2400.0
 
     def test_clamped_to_minimum(self) -> None:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 0.01})

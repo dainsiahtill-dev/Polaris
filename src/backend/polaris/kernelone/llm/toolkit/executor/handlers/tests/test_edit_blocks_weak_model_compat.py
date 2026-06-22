@@ -408,6 +408,40 @@ def test_write_file_rejects_source_narration_contamination(tmp_path: Path) -> No
     assert not (tmp_path / "pkg" / "main.ts").exists()
 
 
+def test_write_file_rejects_repair_directive_narration_contamination(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path)
+    result = _handle_write_file(
+        ex,
+        file="pkg/moonphase.ts",
+        content=(
+            "The repair directive is clear: create the missing module imported by src/index.ts.\n"
+            "For moonphase.ts - should export moon phase related types/classes.\n"
+        ),
+    )
+
+    assert result.get("ok") is False
+    assert result.get("error_type") == "source_narration_contamination"
+    assert result.get("retryable") is True
+    assert not (tmp_path / "pkg" / "moonphase.ts").exists()
+
+
+def test_write_file_rejects_quality_repair_mode_narration_contamination(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path)
+    result = _handle_write_file(
+        ex,
+        file="pkg/main.ts",
+        content=(
+            "The quality repair mode requires me to create the missing files. Let me analyze what's needed:\n"
+            "1. `src/main.ts` - Missing target file\n"
+        ),
+    )
+
+    assert result.get("ok") is False
+    assert result.get("error_type") == "source_narration_contamination"
+    assert result.get("retryable") is True
+    assert not (tmp_path / "pkg" / "main.ts").exists()
+
+
 def test_write_file_new_file_unaffected(tmp_path: Path) -> None:
     ex = _big_file_workspace(tmp_path)
     result = _handle_write_file(ex, file="pkg/fresh.py", content="x = 1\n")
@@ -427,6 +461,30 @@ def test_write_file_normalizes_fenced_package_json(tmp_path: Path) -> None:
     assert payload["name"] == "demo"
     assert payload["scripts"]["build"] == "tsc"
     assert result.get("normalized_patch_like_write") is True
+
+
+def test_write_file_normalizes_package_json_with_trailing_fence(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path)
+    result = _handle_write_file(
+        ex,
+        file="package.json",
+        content='{"name":"demo","scripts":{"build":"tsc"}}\n```',
+    )
+
+    assert result.get("ok") is True
+    payload = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert payload["name"] == "demo"
+    assert payload["scripts"]["build"] == "tsc"
+    assert result.get("normalized_patch_like_write") is True
+
+
+def test_write_file_rejects_incomplete_empty_package_json_fragment(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path)
+    result = _handle_write_file(ex, file="package.json", content="{  ")
+
+    assert result.get("ok") is False
+    assert "invalid JSON" in str(result.get("error") or "")
+    assert not (tmp_path / "package.json").exists()
 
 
 def test_write_file_normalizes_missing_json_key_opening_quote(tmp_path: Path) -> None:

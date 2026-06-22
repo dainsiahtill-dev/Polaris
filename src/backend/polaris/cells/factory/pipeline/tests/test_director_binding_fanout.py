@@ -154,6 +154,154 @@ class TestResolveDirectorBindingFanout:
             }
         ]
 
+    def test_cooldown_cannot_starve_all_ready_bindings(self) -> None:
+        executor = self._make_executor()
+        slots = []
+        for i, (pid, model) in enumerate([("qwen-a", "qwen-q6-a"), ("qwen-b", "qwen-q6-b")]):
+            slot = MagicMock()
+            slot.provider_id = pid
+            slot.model = model
+            slot.binding_id = f"director:{i}:{pid}:{model}"
+            slots.append(slot)
+
+        with (
+            patch(
+                "polaris.kernelone.llm.runtime_config.get_role_binding_slots",
+                return_value=slots,
+            ),
+            patch(
+                "polaris.kernelone.llm.runtime_config.is_role_binding_healthy",
+                return_value=False,
+            ),
+            patch(
+                "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._reachable_provider_pool",
+                return_value=["qwen-a", "qwen-b"],
+            ),
+            patch.object(executor, "_director_readiness_skip_reasons", return_value={}),
+        ):
+            result = executor._resolve_director_binding_fanout({})
+
+        assert result == [
+            {
+                "provider_id": "qwen-a",
+                "model": "qwen-q6-a",
+                "binding_id": "director:0:qwen-a:qwen-q6-a",
+            },
+            {
+                "provider_id": "qwen-b",
+                "model": "qwen-q6-b",
+                "binding_id": "director:1:qwen-b:qwen-q6-b",
+            },
+        ]
+        assert executor._last_director_binding_skips == []
+
+    def test_readiness_cooldown_cannot_starve_all_ready_bindings(self) -> None:
+        executor = self._make_executor()
+        slots = []
+        for i, (pid, model) in enumerate([("qwen-a", "qwen-q6-a"), ("qwen-b", "qwen-q6-b")]):
+            slot = MagicMock()
+            slot.provider_id = pid
+            slot.model = model
+            slot.binding_id = f"director:{i}:{pid}:{model}"
+            slots.append(slot)
+
+        readiness_skips = {
+            executor._director_binding_identity(
+                "qwen-a",
+                "qwen-q6-a",
+                "director:0:qwen-a:qwen-q6-a",
+            ): "role_binding_cooldown",
+            executor._director_binding_identity(
+                "qwen-b",
+                "qwen-q6-b",
+                "director:1:qwen-b:qwen-q6-b",
+            ): "role_binding_cooldown",
+        }
+
+        with (
+            patch(
+                "polaris.kernelone.llm.runtime_config.get_role_binding_slots",
+                return_value=slots,
+            ),
+            patch(
+                "polaris.kernelone.llm.runtime_config.is_role_binding_healthy",
+                return_value=True,
+            ),
+            patch(
+                "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._reachable_provider_pool",
+                return_value=["qwen-a", "qwen-b"],
+            ),
+            patch.object(executor, "_director_readiness_skip_reasons", return_value=readiness_skips),
+        ):
+            result = executor._resolve_director_binding_fanout({})
+
+        assert result == [
+            {
+                "provider_id": "qwen-a",
+                "model": "qwen-q6-a",
+                "binding_id": "director:0:qwen-a:qwen-q6-a",
+            },
+            {
+                "provider_id": "qwen-b",
+                "model": "qwen-q6-b",
+                "binding_id": "director:1:qwen-b:qwen-q6-b",
+            },
+        ]
+        assert executor._last_director_binding_skips == []
+
+    def test_cooldown_skips_only_when_another_binding_is_active(self) -> None:
+        executor = self._make_executor()
+        slots = []
+        for i, (pid, model) in enumerate([("qwen-a", "qwen-q6-a"), ("qwen-b", "qwen-q6-b")]):
+            slot = MagicMock()
+            slot.provider_id = pid
+            slot.model = model
+            slot.binding_id = f"director:{i}:{pid}:{model}"
+            slots.append(slot)
+
+        def is_healthy(
+            role_id: str,
+            *,
+            provider_id: str,
+            model: str,
+            binding_id: str | None = None,
+        ) -> bool:
+            del role_id, model, binding_id
+            return provider_id != "qwen-a"
+
+        with (
+            patch(
+                "polaris.kernelone.llm.runtime_config.get_role_binding_slots",
+                return_value=slots,
+            ),
+            patch(
+                "polaris.kernelone.llm.runtime_config.is_role_binding_healthy",
+                side_effect=is_healthy,
+            ),
+            patch(
+                "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._reachable_provider_pool",
+                return_value=["qwen-a", "qwen-b"],
+            ),
+            patch.object(executor, "_director_readiness_skip_reasons", return_value={}),
+        ):
+            result = executor._resolve_director_binding_fanout({})
+
+        assert result == [
+            {
+                "provider_id": "qwen-b",
+                "model": "qwen-q6-b",
+                "binding_id": "director:1:qwen-b:qwen-q6-b",
+            }
+        ]
+        assert executor._last_director_binding_skips == [
+            {
+                "provider_id": "qwen-a",
+                "model": "qwen-q6-a",
+                "binding_id": "director:0:qwen-a:qwen-q6-a",
+                "reason": "role_binding_cooldown",
+            }
+        ]
+
     def test_deduplicates_same_provider_model(self) -> None:
         executor = self._make_executor()
         slots = []
@@ -227,6 +375,7 @@ class TestExecuteDirectorBindingFanout:
             tasks=["task-1"],
             base_options={"execution_mode": "parallel"},
             bindings=bindings,
+            timeout_seconds=1800,
         )
 
         assert call_count == 3
@@ -238,6 +387,8 @@ class TestExecuteDirectorBindingFanout:
 
         for opts in captured_options:
             assert "binding_override" in opts.get("metadata", {})
+            assert opts["llm_call_timeout_seconds"] == 1800
+            assert opts["director_llm_timeout_seconds"] == 1800
 
     @pytest.mark.asyncio
     async def test_readiness_skipped_binding_is_metadata_only(self) -> None:
@@ -331,6 +482,71 @@ class TestExecuteDirectorBindingFanout:
         )
 
         assert result.status == "failed"
+
+    @pytest.mark.asyncio
+    async def test_readiness_skipped_binding_is_not_counted_as_failed(self) -> None:
+        executor = self._make_executor()
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            del workspace, tasks, options
+            return CommandResult(
+                run_id="run-live",
+                status="failed",
+                message="Run status: failed | error=director_materialization_quality_failed",
+            )
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=["TASK-1"],
+            base_options={"execution_mode": "parallel", "max_workers": 2},
+            bindings=[{"provider_id": "live", "model": "qwen-live", "binding_id": "b-live"}],
+            skipped_bindings=[
+                {
+                    "provider_id": "dead",
+                    "model": "qwen-dead",
+                    "binding_id": "b-dead",
+                    "reason": "provider_connectivity_unavailable",
+                }
+            ],
+        )
+
+        assert result.status == "failed"
+        assert "1 failed" in result.message
+        assert "1 readiness-skipped" in result.message
+        assert mock_service.execute_director_run.await_count == 1
+        assert result.metadata["active_binding_count"] == 1
+        assert result.metadata["readiness_skipped_count"] == 1
+
+    def test_fanout_all_active_bindings_failed_ignores_skipped_entries(self) -> None:
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        metadata = {
+            "binding_fanout": True,
+            "active_binding_count": 1,
+            "per_binding": [
+                {"provider_id": "live", "model": "m1", "status": "failed"},
+                {"provider_id": "dead", "model": "m2", "status": "skipped", "skipped": True},
+            ],
+        }
+
+        assert OrchestrationStageExecutor._fanout_all_active_bindings_failed(metadata) is True
+
+        skipped_only = {
+            "binding_fanout": True,
+            "active_binding_count": 0,
+            "per_binding": [
+                {"provider_id": "dead", "model": "m2", "status": "skipped", "skipped": True},
+            ],
+        }
+
+        assert OrchestrationStageExecutor._fanout_all_active_bindings_failed(skipped_only) is False
 
     def test_running_task_counts_are_not_terminal(self) -> None:
         from polaris.cells.factory.pipeline.internal.factory_run_service import (
@@ -543,7 +759,7 @@ class TestOneExecutedTwoNotExecutedFails:
 class TestUnreachableProviderFailClosed:
     """Test that unreachable providers are filtered out before fanout."""
 
-    def test_unreachable_provider_excluded_from_fanout(self) -> None:
+    def test_unreachable_provider_excluded_but_reachable_binding_kept(self) -> None:
         from pathlib import Path
 
         executor_any = MagicMock()
@@ -577,9 +793,13 @@ class TestUnreachableProviderFailClosed:
             executor._quarantined_bindings = set()
             result = executor._resolve_director_binding_fanout()
 
-        assert len(result) == 0
-        for b in result:
-            assert b["provider_id"] != "dead-end"
+        assert result == [
+            {
+                "provider_id": "openai",
+                "model": "gpt-4",
+                "binding_id": "director:0:openai:gpt-4",
+            }
+        ]
 
 
 class TestFanoutWaitForAllRuns:
@@ -1522,8 +1742,41 @@ class TestBindingTimeoutQuarantine:
         assert executor._binding_timeout_counts.get("openai:gpt-4:b0", 0) == 1
 
     @pytest.mark.asyncio
-    async def test_second_timeout_quarantines_binding(self) -> None:
-        """Second consecutive timeout should quarantine the binding."""
+    async def test_second_timeout_does_not_quarantine_by_default(self) -> None:
+        """Slow local models should not be quarantined after only two timeouts."""
+        executor = self._make_executor()
+        bindings = [
+            {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
+            {"provider_id": "anthropic", "model": "claude-3", "binding_id": "b1"},
+        ]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        executor._binding_timeout_counts["openai:gpt-4:b0"] = 1
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            return CommandResult(run_id="run-1", status="timeout", message="timed out")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "failed"
+        assert "openai:gpt-4:b0" not in executor._quarantined_bindings
+        assert result.metadata is not None
+        assert result.metadata["timeout_quarantine_threshold"] == 4
+
+    @pytest.mark.asyncio
+    async def test_timeout_quarantine_threshold_can_be_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Operators can still skip truly bad bindings after a configured count."""
+        monkeypatch.setenv("KERNELONE_FACTORY_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT", "2")
         executor = self._make_executor()
         bindings = [
             {"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"},
@@ -1550,6 +1803,8 @@ class TestBindingTimeoutQuarantine:
 
         assert result.status == "failed"
         assert "openai:gpt-4:b0" in executor._quarantined_bindings
+        assert result.metadata is not None
+        assert result.metadata["timeout_quarantine_threshold"] == 2
 
     @pytest.mark.asyncio
     async def test_quarantined_binding_skipped_in_subsequent_rounds(self) -> None:

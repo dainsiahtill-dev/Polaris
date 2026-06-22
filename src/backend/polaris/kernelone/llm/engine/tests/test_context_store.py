@@ -422,6 +422,8 @@ class TestContextStoreInvokeFailure:
         from polaris.kernelone.llm.engine import executor as executor_module
 
         request = self._build_request()
+        request.context["context_snapshot_ref"] = "stale-ref-that-must-not-leak"
+        request.context["context_snapshot_degraded"] = {"code": "STALE"}
         executor = self._make_executor_with_mock_catalog()
 
         async def _failing_store(*args: Any, **kwargs: Any) -> str:
@@ -436,6 +438,7 @@ class TestContextStoreInvokeFailure:
 
         assert response.ok is True
         ctx = request.context if isinstance(request.context, dict) else {}
+        assert ctx.get("context_snapshot_ref") is None
         degraded = ctx.get("context_snapshot_degraded")
         assert degraded is not None, "context_snapshot_degraded must be set on store failure"
         assert degraded["code"] == "CONTEXT_STORE_WRITE_FAILED"
@@ -475,6 +478,8 @@ class TestContextStoreInvokeFailure:
         from polaris.kernelone.llm.engine import executor as executor_module
 
         request = self._build_request()
+        request.context["context_snapshot_ref"] = "stale-ref-that-must-be-replaced"
+        request.context["context_snapshot_degraded"] = {"code": "STALE"}
         executor = self._make_executor_with_mock_catalog()
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -490,6 +495,7 @@ class TestContextStoreInvokeFailure:
         assert "context_snapshot_degraded" not in ctx, "context_snapshot_degraded must NOT be present on success path"
         # context_snapshot_ref should be present on success
         assert ctx.get("context_snapshot_ref") is not None
+        assert ctx.get("context_snapshot_ref") != "stale-ref-that-must-be-replaced"
 
     @pytest.mark.asyncio
     async def test_degraded_message_truncated_to_200_chars(self) -> None:
@@ -803,6 +809,39 @@ class TestContextViewerRouter:
         app.dependency_overrides[require_auth] = lambda: None
         app.state.app_state = type("NS", (), {"settings": type("S", (), {"workspace": ".", "ramdisk_root": ""})})()
         return TestClient(app)
+
+    def test_stats_merge_counts_legacy_nested_factory_contexts(self, tmp_path) -> None:
+        """Stats must count legacy nested factory context files that refs can read."""
+        from polaris.delivery.http.v2.context import _merge_legacy_context_stats
+
+        project_root = tmp_path / "l1-01-3e17e00683ce"
+        active_contexts_root = project_root / "runtime" / "contexts"
+        legacy_contexts_dir = (
+            project_root / "runtime" / "projects" / "l1-01-3e17e00683ce" / "runtime" / "contexts" / "ab"
+        )
+        legacy_contexts_dir.mkdir(parents=True)
+        legacy_file = legacy_contexts_dir / "ab5ec27cf124c2f13f936704"
+        legacy_file.write_text('{"messages":[]}', encoding="utf-8")
+
+        merged = _merge_legacy_context_stats(
+            {
+                "workspace": str(tmp_path),
+                "contexts_root": str(active_contexts_root),
+                "file_count": 0,
+                "total_bytes": 0,
+                "oldest_mtime": None,
+                "newest_mtime": None,
+                "config": {},
+                "last_sweep_at": 0.0,
+            }
+        )
+
+        assert merged["file_count"] == 1
+        assert merged["total_bytes"] == legacy_file.stat().st_size
+        assert merged["oldest_mtime"] is not None
+        assert merged["newest_mtime"] is not None
+        assert merged["config"]["legacy_file_count"] == 1
+        assert str(legacy_contexts_dir.parent) == merged["config"]["legacy_contexts_root"]
 
     def test_invalid_hash_returns_400(self, client) -> None:
         """Non-hex or wrong-length hash returns 400."""

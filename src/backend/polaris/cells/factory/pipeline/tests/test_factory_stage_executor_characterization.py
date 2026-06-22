@@ -1088,7 +1088,8 @@ class _PartialFailureProgressExecutor(OrchestrationStageExecutor):
         del context
         return object()
 
-    def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+    def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+        del context
         return [
             {"provider_id": "p1", "model": "m1"},
             {"provider_id": "p2", "model": "m2"},
@@ -1404,7 +1405,8 @@ class TestDirectorDispatchLoop:
                 del context
                 return object()
 
-            def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+            def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+                del context
                 return [
                     {"provider_id": "p1", "model": "m1"},
                     {"provider_id": "p2", "model": "m2"},
@@ -1534,7 +1536,8 @@ class TestDirectorDispatchLoop:
                 del context
                 return object()
 
-            def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+            def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+                del context
                 return [
                     {"provider_id": "p1", "model": "m1"},
                     {"provider_id": "p2", "model": "m2"},
@@ -1596,6 +1599,140 @@ class TestDirectorDispatchLoop:
         assert "director.dispatch_converged_after_partial_failure" in codes
 
     @pytest.mark.asyncio
+    async def test_materialization_quality_failure_with_artifacts_enters_quality_gate_handoff(
+        self, tmp_path: Path
+    ) -> None:
+        class _MaterializationQualityHandoffExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.stats = [
+                    {
+                        "total": 3,
+                        "pending": 3,
+                        "ready": 3,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 3,
+                        "pending": 3,
+                        "ready": 3,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 3,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 1,
+                        "failed": 2,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 3,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 1,
+                        "failed": 2,
+                        "blocked": 0,
+                    },
+                ]
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                return object()
+
+            def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+                del context
+                return [{"provider_id": "p-live", "model": "m-live", "binding_id": "b-live"}]
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(
+                    run_id="director-quality-failed",
+                    status="failed",
+                    message=(
+                        "Director binding fanout: 3 bindings, 0 succeeded, 1 failed, 0 quarantined, 2 readiness-skipped"
+                    ),
+                    metadata={
+                        "binding_fanout": True,
+                        "active_binding_count": 1,
+                        "readiness_skipped_count": 2,
+                        "per_binding": [
+                            {
+                                "provider_id": "p-live",
+                                "model": "m-live",
+                                "binding_id": "b-live",
+                                "run_id": "director-quality-failed",
+                                "status": "failed",
+                                "message": (
+                                    "Run status: failed | failed_task=task-2-director "
+                                    "| error=director_materialization_quality_failed"
+                                ),
+                                "task_status_counts": {"completed": 1, "failed": 2},
+                            },
+                            {
+                                "provider_id": "p-dead",
+                                "model": "m-dead",
+                                "binding_id": "b-dead",
+                                "run_id": "",
+                                "status": "skipped",
+                                "skipped": True,
+                                "skip_reason": "provider_connectivity_unavailable",
+                            },
+                        ],
+                    },
+                )
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"build":"tsc"},"devDependencies":{"typescript":"latest"}}',
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
+
+        executor = _MaterializationQualityHandoffExecutor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {"tasks": [{"id": "TASK-1", "target_files": ["package.json", "src/index.ts"]}]},
+        )
+        run = FactoryRun(
+            id="factory-quality-handoff",
+            config=FactoryConfig(name="quality-handoff"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-22T00:00:00+00:00",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 1},
+        )
+
+        assert result.status == "success"
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        assert payload["quality_gate_handoff"] is True
+        assert payload["failure_stage"] == ""
+        assert payload["error_code"] is None
+        codes = [item.get("code") for item in payload["signals"]]
+        assert "director.materialization_quality_handoff" in codes
+        assert "director.binding_fanout_all_failed" not in codes
+
+    @pytest.mark.asyncio
     async def test_fails_when_taskboard_not_converged_after_max_rounds(self, tmp_path: Path) -> None:
         """第一轮有进展但最终未收敛仍失败。"""
 
@@ -1640,7 +1777,8 @@ class TestDirectorDispatchLoop:
                 del context
                 return object()
 
-            def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+            def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+                del context
                 return [
                     {"provider_id": "p1", "model": "m1"},
                     {"provider_id": "p2", "model": "m2"},
@@ -1714,7 +1852,8 @@ class TestDirectorDispatchLoop:
                 del context
                 return _MockService()
 
-            def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+            def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+                del context
                 return []
 
             def _read_taskboard_stats(self) -> dict[str, int]:

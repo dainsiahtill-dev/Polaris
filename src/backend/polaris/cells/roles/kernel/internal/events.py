@@ -32,6 +32,33 @@ from polaris.kernelone.events.realtime_bridge import (
 logger = logging.getLogger(__name__)
 
 
+def _float_env(name: str) -> float | None:
+    raw = str(os.environ.get(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _resolve_lifecycle_max_age_seconds() -> float:
+    explicit = _float_env("KERNELONE_LLM_LIFECYCLE_MAX_AGE_SECONDS")
+    if explicit is not None:
+        return max(10.0, explicit)
+
+    timeout_candidates = [
+        _float_env("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS"),
+        _float_env("KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS"),
+        _float_env("KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS"),
+    ]
+    effective_timeout = max([300.0, *(value for value in timeout_candidates if value is not None)])
+    if effective_timeout > 300.0:
+        return effective_timeout + 60.0
+    return 300.0
+
+
 # 事件类型
 class LLMEventType:
     """LLM 事件类型常量（使用 kernelone/events/constants.py 中的权威常量）。"""
@@ -137,10 +164,7 @@ class LLMEventEmitter:
         self._event_history: list[LLMCallEvent] = []
         self._max_history_size = 1000
         self._open_lifecycle: dict[str, dict[str, Any]] = {}
-        self._max_lifecycle_age_seconds = max(
-            10.0,
-            float(os.environ.get("KERNELONE_LLM_LIFECYCLE_MAX_AGE_SECONDS", "300")),
-        )
+        self._max_lifecycle_age_seconds = _resolve_lifecycle_max_age_seconds()
         self._closed_without_start_count = 0
         self._reopened_without_close_count = 0
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from polaris.cells.roles.kernel.internal.events import (
     LLMEventType,
+    _resolve_lifecycle_max_age_seconds,
     emit_llm_event,
     get_global_emitter,
     get_lifecycle_snapshot,
@@ -34,6 +35,22 @@ def test_lifecycle_start_end_closes_run() -> None:
     assert snapshot["stats"]["closed_without_start_count"] == 0
 
 
+def test_lifecycle_max_age_defaults_to_director_timeout_plus_grace(monkeypatch) -> None:
+    monkeypatch.delenv("KERNELONE_LLM_LIFECYCLE_MAX_AGE_SECONDS", raising=False)
+    monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", "1800")
+    monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS", "1800")
+    monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS", "1800")
+
+    assert _resolve_lifecycle_max_age_seconds() == 1860.0
+
+
+def test_lifecycle_max_age_explicit_env_wins(monkeypatch) -> None:
+    monkeypatch.setenv("KERNELONE_LLM_LIFECYCLE_MAX_AGE_SECONDS", "120")
+    monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS", "1800")
+
+    assert _resolve_lifecycle_max_age_seconds() == 120.0
+
+
 def test_lifecycle_close_without_start_records_warning_counter() -> None:
     _reset_emitter()
 
@@ -58,7 +75,7 @@ def test_lifecycle_reopen_without_close_records_warning_counter() -> None:
         event_type=LLMEventType.CALL_START,
         role="director",
         run_id="run-reopen",
-        model="gpt-5",
+        model="gpt-5-retry",
     )
     emit_llm_event(
         event_type=LLMEventType.CALL_START,

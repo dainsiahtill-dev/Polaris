@@ -27,6 +27,9 @@ def test_general_mutation_template_does_not_rank_append_as_default_write_tool() 
     assert "edit_blocks/edit_file/search_replace/repo_apply_diff" in template
     assert "write_file" in template
     assert "append_to_file only for explicit append-at-end tasks" in template
+    assert "Step 1: read_file to confirm exact content" not in template
+    assert "call write_file immediately" in template
+    assert "A read/list/execute-only batch is invalid" in template
 
 
 def test_edit_recovery_protocol_keeps_append_as_last_resort() -> None:

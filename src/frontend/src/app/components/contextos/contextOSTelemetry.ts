@@ -441,6 +441,7 @@ function collectRoleHints(params: {
     if (role.includes('chief') || role.includes('engineer')) addRoleHint(hints, 'chief_engineer');
     if (role.includes('director')) addRoleHint(hints, 'director');
     if (role.includes('qa') || role.includes('reviewer')) addRoleHint(hints, 'qa');
+    if (hints.size > 0) return Array.from(hints);
   }
 
   if (
@@ -971,10 +972,11 @@ export function buildTelemetryFromStream(
 }
 
 function eventMatchesRole(event: ContextOSEvent, roleId: string): boolean {
+  if (event.roleHints.length > 0) return event.roleHints.includes(roleId);
   const aliases = ACTOR_ROLE_ALIASES[roleId] ?? [roleId];
   const lowered = event.actor.toLowerCase();
   if (aliases.some((alias) => lowered.includes(alias))) return true;
-  return event.roleHints.includes(roleId);
+  return false;
 }
 
 /** 汇总某角色在真实遥测里的 token（按 actor 别名匹配，来自 journal `llm` 通道的真实 usage）。 */

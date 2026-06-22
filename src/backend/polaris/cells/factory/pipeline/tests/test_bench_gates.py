@@ -77,10 +77,14 @@ def test_apply_factory_bench_failure_taxonomy_exposes_top_level_fields() -> None
     assert record["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
     assert record["failure_reasons"]
     assert record["failure_evidence"] == ["real run gate failed: build_test_lint_ran"]
-    assert record["opencode_audit"] == {
-        "required": False,
-        "reason": "no_role_tool_failure_detected",
-    }
+    opencode_audit = record["opencode_audit"]
+    assert opencode_audit["required"] is True
+    assert opencode_audit["reason"] == "role_tool_failure_detected"
+    assert opencode_audit["mode"] == "read_only_first"
+    assert opencode_audit["trigger_category"] == "llm_output"
+    assert opencode_audit["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
+    assert "target_project_code_changes" in opencode_audit["forbidden"]
+    assert "llm_call_start_final_request_context_audit" in opencode_audit["must_review"]
     assert record["goal_audit"] == {
         "total": 1,
         "real_run_gate": {"passed": 0, "total": 1},
@@ -88,6 +92,41 @@ def test_apply_factory_bench_failure_taxonomy_exposes_top_level_fields() -> None
         "failure_categories": {"llm_output": 1},
         "root_cause_signatures": {"llm_output:real_run_gate.build_test_lint_ran": 1},
     }
+
+
+def test_failure_taxonomy_classifies_non_terminal_real_run_skip_as_runtime_environment() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [],
+        "factory_gates": [
+            {
+                "gate": "real_run_gate",
+                "ok": False,
+                "detail": "real run gate skipped: chain did not reach terminal state (event_wait_timeout)",
+            }
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "skipped": True,
+            "summary": "real run gate skipped: chain did not reach terminal state (event_wait_timeout)",
+            "requirements": {
+                "chain_terminal": {
+                    "ok": False,
+                    "detail": "chain_terminal=false; phase=event_wait_timeout; status=unknown",
+                },
+                "artifact_landed": {
+                    "ok": False,
+                    "detail": "not evaluated because the Polaris chain was non-terminal",
+                },
+            },
+        },
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:real_run_gate.chain_terminal"
+    assert taxonomy["evidence"] == ["real run gate skipped: chain did not reach terminal state (event_wait_timeout)"]
 
 
 def test_start_failure_runtime_roles_not_ready_is_runtime_environment() -> None:
@@ -309,6 +348,7 @@ def test_factory_bench_taxonomy_does_not_treat_ce_full_blueprint_count_as_partia
 
     assert taxonomy["category"] == "director_tool_execution"
     assert taxonomy["root_cause_signature"] == "director_tool_execution:director_materialization_failed"
+    assert "secondary_real_run_gate:real run gate failed: build_test_lint_ran" in taxonomy["evidence"]
     assert record["failure_category"] == "director_tool_execution"
     assert record["opencode_audit"]["required"] is True
     assert record["opencode_audit"]["recommended_agent_count"] == 5

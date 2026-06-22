@@ -106,6 +106,42 @@ def test_scan_detects_source_narration_contamination(tmp_path: Path) -> None:
     ]
 
 
+def test_scan_detects_repair_directive_narration_contamination(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "models" / "moonphase.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "The repair directive is clear: create the missing module imported by src/index.ts.\n"
+        "For moonphase.ts - should export moon phase related types/classes.\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/models/moonphase.ts"])
+
+    assert errors == [
+        "Artifact quality scan failed: source narration contamination in src/models/moonphase.ts; "
+        "file starts with assistant prose instead of project source code. "
+        "Rewrite this artifact with real UTF-8 source only."
+    ]
+
+
+def test_scan_detects_quality_repair_mode_narration_contamination(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "main.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "The quality repair mode requires me to create the missing files. Let me analyze what's needed:\n"
+        "1. `src/main.ts` - Missing target file\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/main.ts"])
+
+    assert errors == [
+        "Artifact quality scan failed: source narration contamination in src/main.ts; "
+        "file starts with assistant prose instead of project source code. "
+        "Rewrite this artifact with real UTF-8 source only."
+    ]
+
+
 def test_scan_detects_generic_typescript_project_scaffold(tmp_path: Path) -> None:
     target = tmp_path / "src" / "main.ts"
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -312,6 +312,54 @@ class TestTransactionKernelPrebuiltContextPassThrough:
         assert context_override["_transaction_kernel_forced_tool_choice"] == "none"
 
     @pytest.mark.asyncio
+    async def test_provider_finalization_fallback_clears_previous_forced_tools(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(role_id="pm", model="base-model")
+        previous_tool = {"type": "function", "function": {"name": "read_file"}}
+        request = _MockRequest(
+            message="Return exactly one JSON object.",
+            run_id="run_123",
+            context_override={
+                "context_os_snapshot": {},
+                "_transaction_kernel_forced_tool_definitions": [previous_tool],
+                "_transaction_kernel_forced_tool_choice": "auto",
+            },
+        )
+
+        captured_contexts: list[Any] = []
+
+        async def _fake_call(*, context: Any, **_kwargs: Any) -> Any:
+            captured_contexts.append(context)
+            return SimpleNamespace(
+                content='{"tasks":[]}',
+                tool_calls=[],
+                error=None,
+                metadata={"prompt_tokens": 7},
+                model="base-model",
+            )
+
+        kernel.inject_llm_caller(SimpleNamespace(call=_fake_call))
+        tk = kernel._create_transaction_kernel("pm", profile, request)
+
+        response = await tk.llm_provider(
+            {
+                "messages": [
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": request.message},
+                ],
+                "tools": None,
+                "tool_choice": "none",
+            }
+        )
+
+        assert response["content"] == '{"tasks":[]}'
+        assert len(captured_contexts) == 1
+        context_override = getattr(captured_contexts[0], "context_override", None)
+        assert isinstance(context_override, dict)
+        assert context_override["_transaction_kernel_forced_tool_definitions"] == []
+        assert context_override["_transaction_kernel_forced_tool_choice"] == "none"
+
+    @pytest.mark.asyncio
     async def test_provider_preserves_existing_forced_write_tool_choice_over_auto(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")
         profile = _MockProfile(role_id="director", model="base-model")

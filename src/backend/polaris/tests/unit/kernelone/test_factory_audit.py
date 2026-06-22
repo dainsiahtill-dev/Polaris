@@ -800,17 +800,17 @@ class TestAuditSnapshotMetadata:
         # A consumer must check audit_terminal before treating this as final
         assert record["terminal_phase"] == "runner_exception"
 
-    def test_timeout_chain_is_terminal_interrupted(self, tmp_path: Path) -> None:
-        """A chain that timed out and was cancelled is a terminal state."""
+    def test_event_wait_timeout_chain_is_non_terminal(self, tmp_path: Path) -> None:
+        """An event wait timeout is only a cancel request, not a terminal audit point."""
         ws = _project_workspace(tmp_path)
         record = build_factory_audit_record(
             project={"id": "L1-01", "level": 1, "checks": ["py_compile"]},
             workspace=str(ws),
-            chain_terminal=True,
+            chain_terminal=False,
             chain_status="",
             chain_phase="event_wait_timeout",
         )
 
-        assert record["audit_snapshot_kind"] == "terminal"
-        assert record["audit_terminal"] is True
+        assert record["audit_snapshot_kind"] == "non_terminal"
+        assert record["audit_terminal"] is False
         assert record["terminal_phase"] == "event_wait_timeout"

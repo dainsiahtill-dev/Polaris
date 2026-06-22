@@ -135,12 +135,13 @@ def build_sequence_template(
     if templates_added == 0 and (requires_write or requires_verify):
         lines.append(
             "TEMPLATE [General-Mutation]: "
-            "Step 1: read_file to confirm exact content. "
-            "Step 2: For existing files, use edit_blocks/edit_file/search_replace/repo_apply_diff; "
-            "for create-file or full replacement tasks, use write_file; "
-            "use precision_edit only after exact search text has been verified; "
+            "For create-file or full replacement tasks, call write_file immediately with the complete file body. "
+            "For existing targeted edits, read only the specific target file if exact current content is needed, "
+            "then use edit_blocks/edit_file/search_replace/repo_apply_diff in the same batch. "
+            "A read/list/execute-only batch is invalid for mutation tasks. "
+            "Use precision_edit only after exact search text has been verified; "
             "use append_to_file only for explicit append-at-end tasks. "
-            "Step 3: read_file again to verify."
+            "Verify after writing when a verification/read tool is available, but never defer the write."
         )
 
     # 4. 通用完整性检查

@@ -199,6 +199,12 @@ class StreamEngine:
         reconnect_prefix = ""
         emitted_tool_signatures: set[str] = set()
         active_request = prepared.ai_request
+        request_context = getattr(active_request, "context", None)
+        if isinstance(request_context, dict):
+            request_context.pop("context_snapshot_ref", None)
+            request_context.pop("contextSnapshotRef", None)
+            request_context.pop("context_snapshot_degraded", None)
+            request_context.pop("contextSnapshotDegraded", None)
         active_native_tool_mode = prepared.native_tool_mode
         active_tool_protocol = (
             "structured_native_tools" if active_native_tool_mode == "native_tools_streaming" else "none"

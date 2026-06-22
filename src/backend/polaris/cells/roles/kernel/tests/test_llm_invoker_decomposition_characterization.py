@@ -26,6 +26,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.response_types import (
     StructuredLLMResponse,
 )
 from polaris.cells.roles.profile.public.service import RoleProfile
+from polaris.kernelone.llm.engine import AIExecutor
 from polaris.kernelone.llm.engine.contracts import AIRequest, AIResponse, TaskType, Usage
 
 # ---------------------------------------------------------------------------
@@ -364,19 +365,105 @@ async def test_call_end_event_prefers_provider_usage_over_text_estimate(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_call_start_event_persists_context_snapshot_before_emit(monkeypatch: pytest.MonkeyPatch) -> None:
+    rec = _EventRecorder()
+    rec.install(monkeypatch)
+    profile = _profile()
+    prepared = _prepared(profile)
+    captured_hash = "a1b2c3d4e5f6a7b8c9d0e1f2"
+    store_calls: list[tuple[str | None, list[Any], str, str | None]] = []
+
+    async def _fake_store(
+        workspace: str | None,
+        messages: list[Any],
+        trace_id: str,
+        call_id: str | None = None,
+    ) -> str:
+        store_calls.append((workspace, list(messages), trace_id, call_id))
+        return captured_hash
+
+    monkeypatch.setattr(AIExecutor, "_store_context_messages", _fake_store)
+    _patch_prepare(monkeypatch, prepared)
+    executor = _ScriptedExecutor([AIResponse.success(output="fresh-output", raw={"model": "m", "provider": "p"})])
+    invoker = LLMInvoker(workspace="ws", enable_cache=False, executor=executor)
+
+    resp = await invoker.call(
+        profile=profile,
+        system_prompt="sys",
+        context=_ctx(None),
+        run_id="run-context-start",
+    )
+
+    assert resp.error is None
+    assert len(rec.start) == 1
+    assert store_calls == [("ws", prepared.messages, "run-context-start", rec.start[0]["call_id"])]
+    assert executor.requests[0].context["context_snapshot_ref"] == captured_hash
+    assert rec.start[0]["metadata"]["context_snapshot_ref"] == captured_hash
+    assert rec.end[0]["metadata"]["context_snapshot_ref"] == captured_hash
+
+
+@pytest.mark.asyncio
+async def test_call_start_context_snapshot_store_failure_clears_stale_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rec = _EventRecorder()
+    rec.install(monkeypatch)
+    profile = _profile()
+    prepared = _prepared(profile)
+    if isinstance(prepared.ai_request.context, dict):
+        prepared.ai_request.context["context_snapshot_ref"] = "stale-ref"
+        prepared.ai_request.context["context_snapshot_degraded"] = {"code": "OLD", "reason": "old"}
+
+    async def _failing_store(
+        _workspace: str | None,
+        _messages: list[Any],
+        _trace_id: str,
+        _call_id: str | None = None,
+    ) -> str:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(AIExecutor, "_store_context_messages", _failing_store)
+    _patch_prepare(monkeypatch, prepared)
+    executor = _ScriptedExecutor([AIResponse.success(output="fresh-output", raw={"model": "m", "provider": "p"})])
+    invoker = LLMInvoker(workspace="ws", enable_cache=False, executor=executor)
+
+    resp = await invoker.call(
+        profile=profile,
+        system_prompt="sys",
+        context=_ctx(None),
+        run_id="run-context-start-degraded",
+    )
+
+    assert resp.error is None
+    assert len(rec.start) == 1
+    start_metadata = rec.start[0]["metadata"]
+    assert start_metadata.get("context_snapshot_ref") is None
+    assert start_metadata["context_snapshot_degraded"]["code"] == "CONTEXT_STORE_WRITE_FAILED"
+    assert start_metadata["context_snapshot_degraded"]["exception_type"] == "OSError"
+    assert "OLD" not in str(start_metadata["context_snapshot_degraded"])
+    assert executor.requests[0].context.get("context_snapshot_ref") is None
+    assert resp.metadata["context_snapshot_degraded_reason"] == "context_snapshot_store_failure"
+
+
+@pytest.mark.asyncio
 async def test_call_end_event_surfaces_context_snapshot_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
     rec = _EventRecorder()
     rec.install(monkeypatch)
     profile = _profile()
     prepared = _prepared(profile)
     if isinstance(prepared.ai_request.context, dict):
-        prepared.ai_request.context.pop("context_snapshot_ref", None)
-        prepared.ai_request.context["context_snapshot_degraded"] = {
-            "code": "CONTEXT_STORE_WRITE_FAILED",
-            "reason": "context_snapshot_store_failure",
-            "message": "disk full",
-            "exception_type": "OSError",
-        }
+        prepared.ai_request.context["context_snapshot_ref"] = "stale-ref"
+        prepared.ai_request.context["context_snapshot_degraded"] = {"code": "OLD", "reason": "old"}
+
+    async def _failing_store(
+        _workspace: str | None,
+        _messages: list[Any],
+        _trace_id: str,
+        _call_id: str | None = None,
+    ) -> str:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(AIExecutor, "_store_context_messages", _failing_store)
     _patch_prepare(monkeypatch, prepared)
     executor = _ScriptedExecutor([AIResponse.success(output="fresh-output", raw={"model": "m", "provider": "p"})])
     invoker = LLMInvoker(workspace="ws", enable_cache=False, executor=executor)

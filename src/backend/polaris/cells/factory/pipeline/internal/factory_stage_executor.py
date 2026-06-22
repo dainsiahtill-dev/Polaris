@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,6 +50,8 @@ from .factory_workspace_quality import WorkspaceQualityRunner
 logger = logging.getLogger(__name__)
 
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
+_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV = "KERNELONE_FACTORY_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT"
+_DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT = 4
 
 _CE_BLUEPRINT_OUTPUT_CONTRACT = """
 
@@ -579,6 +582,15 @@ class OrchestrationStageExecutor:
         except (TypeError, ValueError):
             return 600
 
+    @staticmethod
+    def _director_binding_timeout_quarantine_count() -> int:
+        raw = os.environ.get(_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV, "")
+        try:
+            value = int(str(raw).strip()) if str(raw).strip() else _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT
+        except (TypeError, ValueError):
+            value = _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT
+        return max(2, value)
+
     # ── Director binding fanout ────────────────────────────────────────────
 
     @staticmethod
@@ -675,7 +687,16 @@ class OrchestrationStageExecutor:
             logger.debug("Director provider reachability probe failed: %s", exc)
             live_providers = {str(slot.provider_id) for slot in slots if slot.provider_id}
         bindings: list[dict[str, str]] = []
+        cooldown_candidates: list[dict[str, str]] = []
         seen_keys: set[str] = set()
+
+        def _append_binding(binding: dict[str, str]) -> None:
+            key = f"{binding['provider_id']}|{binding['model']}"
+            if key in seen_keys:
+                return
+            seen_keys.add(key)
+            bindings.append(binding)
+
         for slot in slots:
             pid = str(slot.provider_id or "").strip()
             model = str(slot.model or "").strip()
@@ -693,6 +714,15 @@ class OrchestrationStageExecutor:
                 self._director_binding_identity(pid, model, binding_id)
             ) or readiness_skip_reasons.get(self._director_binding_identity(pid, model, ""))
             if readiness_reason:
+                if readiness_reason == "role_binding_cooldown":
+                    cooldown_candidates.append(
+                        {
+                            "provider_id": pid,
+                            "model": model,
+                            "binding_id": binding_id,
+                        }
+                    )
+                    continue
                 self._record_director_binding_skip(
                     provider_id=pid,
                     model=model,
@@ -706,24 +736,36 @@ class OrchestrationStageExecutor:
                 model=model,
                 binding_id=binding_id or None,
             ):
-                self._record_director_binding_skip(
-                    provider_id=pid,
-                    model=model,
-                    binding_id=binding_id,
-                    reason="role_binding_cooldown",
+                cooldown_candidates.append(
+                    {
+                        "provider_id": pid,
+                        "model": model,
+                        "binding_id": binding_id,
+                    }
                 )
                 continue
-            key = f"{pid}|{model}"
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            bindings.append(
+            _append_binding(
                 {
                     "provider_id": pid,
                     "model": model,
                     "binding_id": binding_id,
                 }
             )
+        if not bindings and cooldown_candidates:
+            logger.warning(
+                "Director binding cooldown would starve dispatch; allowing %d cooled binding(s)",
+                len(cooldown_candidates),
+            )
+            for binding in cooldown_candidates:
+                _append_binding(binding)
+        else:
+            for binding in cooldown_candidates:
+                self._record_director_binding_skip(
+                    provider_id=binding["provider_id"],
+                    model=binding["model"],
+                    binding_id=binding.get("binding_id", ""),
+                    reason="role_binding_cooldown",
+                )
         if len(bindings) <= 1 and not getattr(self, "_last_director_binding_skips", []):
             return []
         logger.info("Director binding fanout: %d reachable binding(s)", len(bindings))
@@ -789,6 +831,8 @@ class OrchestrationStageExecutor:
 
         async def _run_binding(binding: dict[str, str]) -> CommandResult:
             binding_opts = dict(base_options)
+            binding_opts.setdefault("llm_call_timeout_seconds", int(timeout_seconds))
+            binding_opts.setdefault("director_llm_timeout_seconds", int(timeout_seconds))
             raw_binding_metadata = base_options.get("metadata")
             binding_metadata: dict[str, Any] = (
                 dict(raw_binding_metadata) if isinstance(raw_binding_metadata, dict) else {}
@@ -881,14 +925,17 @@ class OrchestrationStageExecutor:
             await asyncio.gather(*[_wait_submitted_binding(binding, sub_result) for binding, sub_result in submitted])
         )
 
+        quarantine_threshold = self._director_binding_timeout_quarantine_count()
         for binding, result in final_results:
             key = _binding_key(binding)
             if str(result.status or "").strip().lower() == "timeout":
                 self._binding_timeout_counts[key] = self._binding_timeout_counts.get(key, 0) + 1
-                if self._binding_timeout_counts[key] >= 2:
+                if self._binding_timeout_counts[key] >= quarantine_threshold:
                     self._quarantined_bindings.add(key)
                     logger.warning(
-                        "Quarantining binding %s after %d consecutive timeouts", key, self._binding_timeout_counts[key]
+                        "Quarantining binding %s after %d consecutive timeouts",
+                        key,
+                        self._binding_timeout_counts[key],
                     )
             else:
                 self._binding_timeout_counts[key] = 0
@@ -984,8 +1031,6 @@ class OrchestrationStageExecutor:
         readiness_skipped_count = sum(
             1 for entry in per_binding if entry.get("skipped") and not entry.get("quarantined")
         )
-        if success_count <= 0:
-            fail_count += skipped_count + readiness_skipped_count
         merged_status = "completed" if success_count > 0 and fail_count == 0 else "failed"
         total_binding_count = len(bindings) + readiness_skipped_count
         return CommandResult(
@@ -1002,6 +1047,7 @@ class OrchestrationStageExecutor:
                 "active_binding_count": len(active_bindings),
                 "quarantined_binding_count": quarantined_count,
                 "quarantined_skipped_count": skipped_count,
+                "timeout_quarantine_threshold": quarantine_threshold,
                 "readiness_skipped_count": readiness_skipped_count,
                 "per_binding": per_binding,
                 "execution_mode": str(base_options.get("execution_mode", "")).strip(),
@@ -1971,11 +2017,19 @@ class OrchestrationStageExecutor:
                         "director_binding_skips": director_binding_skips,
                     },
                 }
+                director_timeout_seconds = self._director_dispatch_timeout_seconds(
+                    context,
+                    task_count=len(pm_tasks),
+                )
+                base_options["llm_call_timeout_seconds"] = int(
+                    context.get("llm_call_timeout_seconds") or director_timeout_seconds
+                )
+                base_options["director_llm_timeout_seconds"] = int(
+                    context.get("director_llm_timeout_seconds")
+                    or context.get("llm_call_timeout_seconds")
+                    or director_timeout_seconds
+                )
                 if director_binding_fanout:
-                    director_timeout_seconds = self._director_dispatch_timeout_seconds(
-                        context,
-                        task_count=len(pm_tasks),
-                    )
                     command_result = await self._execute_director_binding_fanout(
                         service=service,
                         workspace=str(self.workspace),
@@ -2235,24 +2289,43 @@ class OrchestrationStageExecutor:
         )
         final_metadata = final_result.metadata if (final_result and isinstance(final_result.metadata, dict)) else {}
         fanout_all_failed = self._fanout_all_active_bindings_failed(final_metadata)
+        fanout_quality_handoff = self._fanout_quality_failure_can_enter_quality_gate(
+            metadata=final_metadata,
+            final_stats=final_stats,
+            pm_tasks=pm_tasks,
+        )
         if fanout_all_failed and not any(
             str(item.get("code") or "") == "director.binding_fanout_all_failed"
             for item in stage_signals
             if isinstance(item, dict)
         ):
             active_count = int(final_metadata.get("active_binding_count") or 0)
-            stage_signals.append(
-                {
-                    "code": "director.binding_fanout_all_failed",
-                    "severity": "error",
-                    "detail": (
-                        "All active Director bindings ended with non-success status; "
-                        "quality gate cannot promote a failed Director materialization"
-                    ),
-                    "active_binding_count": active_count,
-                    "upstream_status": str((final_result.status if final_result else "") or "").strip(),
-                }
-            )
+            if fanout_quality_handoff:
+                stage_signals.append(
+                    {
+                        "code": "director.materialization_quality_handoff",
+                        "severity": "warning",
+                        "detail": (
+                            "All active Director bindings ended with materialization quality failure after "
+                            "writing workspace artifacts; continuing to quality_gate repair/QA harness"
+                        ),
+                        "active_binding_count": active_count,
+                        "upstream_status": str((final_result.status if final_result else "") or "").strip(),
+                    }
+                )
+            else:
+                stage_signals.append(
+                    {
+                        "code": "director.binding_fanout_all_failed",
+                        "severity": "error",
+                        "detail": (
+                            "All active Director bindings ended with non-success status; "
+                            "quality gate cannot promote a failed Director materialization"
+                        ),
+                        "active_binding_count": active_count,
+                        "upstream_status": str((final_result.status if final_result else "") or "").strip(),
+                    }
+                )
 
         stage_status = "success"
         if (
@@ -2384,6 +2457,7 @@ class OrchestrationStageExecutor:
             "signals": stage_signals,
             "fail_closed_route_events": fail_closed_events,
             "per_binding_route_events": per_binding_route_events,
+            "quality_gate_handoff": fanout_quality_handoff,
             "failure_stage": "director_dispatch" if stage_status == "failed" else "",
             "error_code": error_code or None,
             "root_cause_hint": root_cause_hint or None,
@@ -2434,7 +2508,8 @@ class OrchestrationStageExecutor:
             for item in per_binding
             if isinstance(item, dict)
             and not bool(item.get("quarantined"))
-            and str(item.get("status") or "").strip().lower() != "quarantined"
+            and not bool(item.get("skipped"))
+            and str(item.get("status") or "").strip().lower() not in {"quarantined", "skipped"}
         ]
         if not active_entries:
             return False
@@ -2445,6 +2520,88 @@ class OrchestrationStageExecutor:
 
         active_count = int(metadata.get("active_binding_count") or len(active_entries))
         return active_count > 0 and len(active_entries) >= active_count
+
+    @staticmethod
+    def _fanout_failure_mentions_materialization_quality(metadata: dict[str, Any]) -> bool:
+        per_binding = metadata.get("per_binding")
+        if not isinstance(per_binding, list):
+            return False
+        markers = (
+            "director_materialization_quality_failed",
+            "director_materialization_semantic_quality_failed",
+        )
+        for item in per_binding:
+            if not isinstance(item, dict):
+                continue
+            if bool(item.get("skipped")) or bool(item.get("quarantined")):
+                continue
+            status = str(item.get("status") or "").strip().lower()
+            if status in {"completed", "success", "skipped", "quarantined"}:
+                continue
+            text = json.dumps(item, ensure_ascii=False, default=str).lower()
+            if any(marker in text for marker in markers):
+                return True
+        return False
+
+    def _workspace_has_materialized_delivery_evidence(self, tasks: list[dict[str, Any]]) -> bool:
+        workspace_root = self.workspace.resolve()
+        declared_targets = self._collect_declared_delivery_targets(tasks)
+        for target in declared_targets:
+            path = (workspace_root / target).resolve()
+            try:
+                path.relative_to(workspace_root)
+            except ValueError:
+                continue
+            if path.is_file():
+                try:
+                    if path.stat().st_size > 0:
+                        return True
+                except OSError:
+                    continue
+            if path.is_dir():
+                try:
+                    if any(child.is_file() and child.stat().st_size > 0 for child in path.rglob("*")):
+                        return True
+                except OSError:
+                    continue
+
+        for pattern in (
+            "src/**/*.ts",
+            "src/**/*.tsx",
+            "src/**/*.js",
+            "src/**/*.jsx",
+            "src/**/*.py",
+            "tests/**/*.*",
+            "package.json",
+            "index.html",
+        ):
+            for candidate in workspace_root.glob(pattern):
+                if not candidate.is_file():
+                    continue
+                parts = set(candidate.relative_to(workspace_root).parts)
+                if parts.intersection({".git", ".polaris", "node_modules"}):
+                    continue
+                try:
+                    if candidate.stat().st_size > 0:
+                        return True
+                except OSError:
+                    continue
+        return False
+
+    def _fanout_quality_failure_can_enter_quality_gate(
+        self,
+        *,
+        metadata: dict[str, Any],
+        final_stats: dict[str, int],
+        pm_tasks: list[dict[str, Any]],
+    ) -> bool:
+        if not self._fanout_all_active_bindings_failed(metadata):
+            return False
+        if not self._is_taskboard_converged(final_stats):
+            return False
+        if not self._fanout_failure_mentions_materialization_quality(metadata):
+            return False
+        return self._workspace_has_materialized_delivery_evidence(pm_tasks)
 
     @staticmethod
     def _bool_from_context_or_env(

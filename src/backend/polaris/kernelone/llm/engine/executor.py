@@ -419,6 +419,12 @@ class AIExecutor:
             logger_prefix="[executor]",
         )
 
+        if isinstance(request.context, dict):
+            request.context.pop("context_snapshot_ref", None)
+            request.context.pop("contextSnapshotRef", None)
+            request.context.pop("context_snapshot_degraded", None)
+            request.context.pop("contextSnapshotDegraded", None)
+
         self._record_final_request_receipt(
             request=request,
             trace_id=trace_id,

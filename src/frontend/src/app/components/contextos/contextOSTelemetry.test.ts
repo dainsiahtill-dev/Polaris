@@ -591,6 +591,57 @@ describe('buildTelemetryFromStream', () => {
     expect(event.callId).toBe('call-99');
   });
 
+  it('keeps structured chief engineer context snapshots out of director role even when text mentions Director', () => {
+    const entry = logEntry({
+      id: 'ce-context-snapshot',
+      timestamp: '2026-06-22T15:36:30Z',
+      level: 'success',
+      source: 'System',
+      title: 'llm_completed',
+      message: 'Chief Engineer blueprint handoff for Director implementation',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'chief_engineer',
+        contextSnapshotRef: 'ce-context-ref',
+        promptTokens: 100,
+        completionTokens: 20,
+        totalTokens: 120,
+      },
+    });
+
+    const telemetry = buildTelemetryFromStream([entry], [], []);
+
+    expect(filterEventsForRole(telemetry.events, 'chief_engineer').map((event) => event.id)).toEqual([
+      'ce-context-snapshot',
+    ]);
+    expect(filterEventsForRole(telemetry.events, 'director')).toEqual([]);
+  });
+
+  it('keeps structured director context snapshots on director even when text mentions CE blueprint', () => {
+    const entry = logEntry({
+      id: 'director-context-snapshot',
+      timestamp: '2026-06-22T15:38:30Z',
+      level: 'success',
+      source: 'System',
+      title: 'llm_completed',
+      message: 'Chief Engineer Blueprint / CE 蓝图交接 for implementation',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        contextSnapshotRef: 'director-context-ref',
+      },
+    });
+
+    const telemetry = buildTelemetryFromStream([entry], [], []);
+
+    expect(filterEventsForRole(telemetry.events, 'director').map((event) => event.id)).toEqual([
+      'director-context-snapshot',
+    ]);
+    expect(filterEventsForRole(telemetry.events, 'chief_engineer')).toEqual([]);
+  });
+
   it('surfaces context snapshot degraded evidence without leaking objects', () => {
     const entry = logEntry({
       id: 'llm-ctx-degraded',

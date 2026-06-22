@@ -104,6 +104,24 @@ def test_build_decision_messages_materialize_strips_negative_task_contract_lines
         assert "read-only" not in lowered
 
 
+def test_build_decision_messages_materialize_guard_is_write_first_for_create_tasks() -> None:
+    controller = _make_controller()
+    context = [{"role": "user", "content": "[mode:materialize]\nCreate src/main.ts"}]
+    tool_definitions = [
+        {"type": "function", "function": {"name": "read_file"}},
+        {"type": "function", "function": {"name": "write_file"}},
+    ]
+    ledger = TurnLedger(turn_id="turn_materialize_write_first_guard")
+    ledger.set_delivery_contract(DeliveryContract(mode=DeliveryMode.MATERIALIZE_CHANGES, requires_mutation=True))
+
+    messages = controller._build_decision_messages(context, tool_definitions, ledger)
+
+    system_text = "\n".join(str(m.get("content") or "") for m in messages if m.get("role") == "system")
+    assert "search → read → write" not in system_text
+    assert "emit write_file/edit_file in this batch" in system_text
+    assert "Targeted reads are allowed only when exact existing content is required" in system_text
+
+
 def test_build_decision_messages_quality_repair_removes_read_first_templates() -> None:
     controller = _make_controller()
     user_content = (

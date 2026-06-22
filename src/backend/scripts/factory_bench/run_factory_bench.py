@@ -1119,6 +1119,7 @@ def read_chain_results_from_runtime_dirs(runtime_dirs: list[Path]) -> dict[str, 
 
 
 _EXIT_CLASS_BY_CODE = {0: "clean", 4: "director_partial", 5: "qa_failed"}
+_NON_TERMINAL_CHAIN_ERRORS = {"start_failed", "workspace_switch_failed", "event_wait_timeout"}
 
 
 def grade_chain_state(chain_results: dict[str, Any], exit_code: Any) -> str:
@@ -1135,6 +1136,54 @@ def grade_chain_state(chain_results: dict[str, Any], exit_code: Any) -> str:
     if exit_class in {"director_partial", "qa_failed"}:
         return "partial"
     return "fail"
+
+
+def _chain_reached_terminal(chain: dict[str, Any]) -> bool:
+    """Return whether the runner has a definitive backend terminal state."""
+    chain_error = str(chain.get("error") or "")
+    if chain_error in _NON_TERMINAL_CHAIN_ERRORS:
+        return False
+    return not chain.get("_runner_exception")
+
+
+def _build_non_terminal_real_run_gate(*, chain_phase: str, chain_status: str) -> dict[str, Any]:
+    """Fail closed when the chain has not reached a stable audit point."""
+    phase = chain_phase or chain_status or "unknown"
+    detail = f"chain_terminal=false; phase={phase}; status={chain_status or 'unknown'}"
+    return {
+        "ok": False,
+        "skipped": True,
+        "summary": f"real run gate skipped: chain did not reach terminal state ({phase})",
+        "requirements": {
+            "chain_terminal": {
+                "ok": False,
+                "detail": detail,
+            },
+            "artifact_landed": {
+                "ok": False,
+                "detail": "not evaluated because the Polaris chain was non-terminal",
+            },
+            "environment_prepared": {
+                "ok": False,
+                "detail": "not evaluated because the Polaris chain was non-terminal",
+            },
+            "build_test_lint_ran": {
+                "ok": False,
+                "detail": "not evaluated because the Polaris chain was non-terminal",
+            },
+            "entrypoint_smoke": {
+                "ok": False,
+                "detail": "not evaluated because the Polaris chain was non-terminal",
+                "kind": "",
+            },
+        },
+        "commands": [],
+        "entrypoint": {
+            "ok": False,
+            "kind": "",
+            "detail": "not run because the Polaris chain did not reach terminal state",
+        },
+    }
 
 
 def _resolve_bench_cache_root(workspace: Path) -> str:
@@ -3060,20 +3109,16 @@ def main() -> int:
         runtime_dirs = resolve_runtime_dirs_for_workspace(workspace)
         runtime_dir = runtime_dirs[0] if runtime_dirs else None
         # Determine whether the chain reached a genuine terminal state.
-        # - chain.get("error") == "start_failed": backend rejected the run;
-        #   the chain never entered the pipeline → non-terminal snapshot.
-        # - chain.get("_runner_exception"): runner crashed before chain
-        #   finished → non-terminal snapshot.
-        # - chain.get("error") == "event_wait_timeout": we force-cancelled;
-        #   the chain was killed → terminal (interrupted).
-        # - chain.get("timeout"): subprocess timeout → terminal (interrupted).
-        # - KeyboardInterrupt: user cancelled → terminal (interrupted).
-        # - Otherwise: wait_run_until_terminal returned a terminal status
-        #   dict → terminal.
+        # - start_failed/workspace_switch_failed: the pipeline never started.
+        # - _runner_exception: the bench runner crashed before completion.
+        # - event_wait_timeout: runtime.v2 did not deliver a terminal event;
+        #   we send cancel, but the backend may still be mutating the
+        #   workspace. Treat this as non-terminal and do not run final gates
+        #   against a racing snapshot.
+        # - Otherwise: wait_run_until_terminal returned a terminal status dict
+        #   or a legacy subprocess reached an interrupted terminal state.
         chain_error = str(chain.get("error") or "")
-        chain_is_terminal = chain_error not in ("start_failed", "workspace_switch_failed") and not chain.get(
-            "_runner_exception"
-        )
+        chain_is_terminal = _chain_reached_terminal(chain)
         chain_results_raw = chain.get("chain_results")
         chain_results_for_status: dict[str, Any] = chain_results_raw if isinstance(chain_results_raw, dict) else {}
         chain_status_raw = str(chain_results_for_status.get("exit_class", ""))
@@ -3124,11 +3169,17 @@ def main() -> int:
         raw_audit_bundle = chain.get("audit_bundle")
         audit_bundle: dict[str, Any] = raw_audit_bundle if isinstance(raw_audit_bundle, dict) else {}
         record.update(backend_audit_context)
-        record["real_run_gate"] = build_real_run_gate(
-            workspace,
-            record,
-            timeout_s=int(args.real_run_timeout),
-        )
+        if chain_is_terminal:
+            record["real_run_gate"] = build_real_run_gate(
+                workspace,
+                record,
+                timeout_s=int(args.real_run_timeout),
+            )
+        else:
+            record["real_run_gate"] = _build_non_terminal_real_run_gate(
+                chain_phase=chain_phase_raw,
+                chain_status=chain_status_raw,
+            )
         required_llm_roles = required_llm_roles_for_factory_record(chain=chain, record=record)
         record["required_llm_roles"] = list(required_llm_roles)
         record["llm_route_audit"] = build_llm_route_audit(

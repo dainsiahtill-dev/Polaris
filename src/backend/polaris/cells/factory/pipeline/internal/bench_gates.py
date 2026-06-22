@@ -2245,10 +2245,17 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     elif _record_has_explicit_director_execution_failure(record) or _record_has_director_execution_failure(record):
         category, reason = "director_tool_execution", _director_failure_reason(record)
         evidence.append(_director_failure_evidence(record))
+        real_run_gate = record.get("real_run_gate")
+        if isinstance(real_run_gate, dict) and not real_run_gate.get("ok"):
+            summary = str(real_run_gate.get("summary") or "").strip()
+            if summary:
+                evidence.append(f"secondary_real_run_gate:{summary}")
     elif isinstance(record.get("real_run_gate"), dict) and not record["real_run_gate"].get("ok"):
         failed_requirement = _first_real_run_failure(record["real_run_gate"])
         reason = f"real_run_gate.{failed_requirement or 'unknown'}"
-        if failed_requirement == "artifact_landed":
+        if failed_requirement == "chain_terminal":
+            category = "runtime_environment"
+        elif failed_requirement == "artifact_landed":
             category = "director_tool_execution"
         elif failed_requirement == "environment_prepared" and _record_has_generated_artifact_failure(record):
             category = "llm_output"

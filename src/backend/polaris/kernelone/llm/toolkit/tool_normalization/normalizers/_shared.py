@@ -360,15 +360,26 @@ def _strip_json_markdown_fence(body: str) -> tuple[str, bool]:
         stripped = re.sub(r"^```(?:json|jsonc|javascript|js)?\s*", "", stripped, flags=re.IGNORECASE)
         stripped = re.sub(r"\s*```\s*$", "", stripped)
         return stripped.strip(), True
+    if stripped.endswith("```"):
+        stripped_without_tail = re.sub(r"\s*```\s*$", "", stripped)
+        if stripped_without_tail != stripped:
+            return stripped_without_tail.strip(), True
     return body, False
 
 
-def _json_object_text(value: str) -> str | None:
+def _json_object(value: str) -> dict[str, Any] | None:
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError:
         return None
     if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
+def _json_object_text(value: str) -> str | None:
+    parsed = _json_object(value)
+    if parsed is None:
         return None
     return json.dumps(parsed, ensure_ascii=False, indent=2) + "\n"
 
@@ -378,25 +389,28 @@ def _normalize_json_write_content(file_path: str, body: str) -> tuple[str, bool]
         return None
 
     stripped, changed = _strip_json_markdown_fence(body)
-    candidates = [stripped.strip()]
-    lead = candidates[0].lstrip()
+    candidates: list[tuple[str, bool]] = [(stripped.strip(), False)]
+    lead = candidates[0][0].lstrip()
     if lead and not lead.startswith("{"):
         if lead.startswith('"'):
-            candidates.append("{" + lead)
+            candidates.append(("{" + lead, False))
         elif re.match(r'^[A-Za-z_][A-Za-z0-9_-]*"\s*:', lead):
-            candidates.append('{"' + lead)
+            candidates.append(('{"' + lead, False))
     candidates.extend(
-        candidate.rstrip() + "}" for candidate in list(candidates) if not candidate.rstrip().endswith("}")
+        (candidate.rstrip() + "}", True) for candidate, _ in list(candidates) if not candidate.rstrip().endswith("}")
     )
 
     seen: set[str] = set()
-    for candidate in candidates:
+    for candidate, appended_closer in candidates:
         if candidate in seen:
             continue
         seen.add(candidate)
-        normalized = _json_object_text(candidate)
-        if normalized is None:
+        parsed = _json_object(candidate)
+        if parsed is None:
             continue
+        if appended_closer and not parsed:
+            continue
+        normalized = json.dumps(parsed, ensure_ascii=False, indent=2) + "\n"
         return normalized, changed or normalized != body
     return None
 

@@ -25,7 +25,9 @@ _NATIVE_MESSAGE_PROVIDERS = frozenset(
 # Director timeout configuration
 _DIRECTOR_ROLE_ID = "director"
 _DIRECTOR_TIMEOUT_ENV = "KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS"
+_DIRECTOR_TIMEOUT_MAX_ENV = "KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS"
 _DEFAULT_DIRECTOR_TIMEOUT_SECONDS: float = DIRECTOR_TIMEOUT_SECONDS
+_DEFAULT_DIRECTOR_TIMEOUT_MAX_SECONDS = 1800
 
 
 @lru_cache(maxsize=1)
@@ -36,7 +38,16 @@ def _get_cached_director_timeout() -> int:
         value = int(raw)
     except (TypeError, ValueError):
         value = int(_DEFAULT_DIRECTOR_TIMEOUT_SECONDS)
-    return max(60, min(value, 900))
+    return max(60, min(value, _director_timeout_max_seconds()))
+
+
+def _director_timeout_max_seconds() -> int:
+    raw = os.environ.get(_DIRECTOR_TIMEOUT_MAX_ENV, "")
+    try:
+        value = int(float(str(raw).strip())) if str(raw).strip() else _DEFAULT_DIRECTOR_TIMEOUT_MAX_SECONDS
+    except (TypeError, ValueError):
+        value = _DEFAULT_DIRECTOR_TIMEOUT_MAX_SECONDS
+    return max(900, value)
 
 
 def _coerce_context_timeout_override(raw: Any) -> int | None:
@@ -49,7 +60,7 @@ def _coerce_context_timeout_override(raw: Any) -> int | None:
         return None
     if value <= 0:
         return None
-    return max(1, min(int(value), 900))
+    return max(1, min(int(value), _director_timeout_max_seconds()))
 
 
 def _resolve_context_timeout_override(context_override: Any) -> int | None:

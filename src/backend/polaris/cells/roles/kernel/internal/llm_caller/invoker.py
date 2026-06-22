@@ -148,6 +148,73 @@ def _with_context_snapshot_diagnostics(metadata: dict[str, Any], request: Any) -
     return payload
 
 
+_CONTEXT_SNAPSHOT_CONTEXT_KEYS = (
+    "context_snapshot_ref",
+    "contextSnapshotRef",
+    "context_snapshot_degraded",
+    "contextSnapshotDegraded",
+)
+
+
+def _clear_context_snapshot_context(request: Any) -> dict[str, Any] | None:
+    ctx = getattr(request, "context", None)
+    if not isinstance(ctx, dict):
+        try:
+            request.context = {}
+        except (AttributeError, TypeError):
+            return None
+        ctx = getattr(request, "context", None)
+    if not isinstance(ctx, dict):
+        return None
+    for key in _CONTEXT_SNAPSHOT_CONTEXT_KEYS:
+        ctx.pop(key, None)
+    return ctx
+
+
+def _context_snapshot_degraded_payload(exc: BaseException) -> dict[str, str]:
+    return {
+        "code": "CONTEXT_STORE_WRITE_FAILED",
+        "reason": "context_snapshot_store_failure",
+        "message": str(exc)[:200],
+        "exception_type": type(exc).__name__,
+    }
+
+
+async def _store_call_start_context_snapshot(
+    *,
+    workspace: str | None,
+    prepared: PreparedLLMRequest,
+    run_id: str,
+    call_id: str,
+) -> None:
+    """Persist the final provider messages before call_start emits its ref."""
+    request = prepared.ai_request
+    ctx = _clear_context_snapshot_context(request)
+    messages = list(getattr(prepared, "messages", []) or [])
+    if not messages:
+        return
+    try:
+        context_store_hash = await AIExecutor._store_context_messages(
+            workspace,
+            messages,
+            run_id,
+            call_id,
+        )
+    except (RuntimeError, ValueError, TypeError, OSError) as exc:
+        logger.warning(
+            "Failed to store LLM context snapshot before call_start: workspace=%s run_id=%s call_id=%s",
+            workspace,
+            run_id,
+            call_id,
+            exc_info=True,
+        )
+        if isinstance(ctx, dict):
+            ctx["context_snapshot_degraded"] = _context_snapshot_degraded_payload(exc)
+        return
+    if context_store_hash and isinstance(ctx, dict):
+        ctx["context_snapshot_ref"] = str(context_store_hash)
+
+
 def _usage_int(payload: dict[str, Any], *keys: str) -> int:
     for key in keys:
         value = payload.get(key)
@@ -1352,6 +1419,12 @@ class LLMInvoker:
                 platform_retry_max=platform_retry_max,
             )
             active_request = prepared.ai_request
+            await _store_call_start_context_snapshot(
+                workspace=self.workspace,
+                prepared=prepared,
+                run_id=run_id,
+                call_id=call_id,
+            )
             context_result = prepared.context_result
             prompt_tokens = context_result.token_estimate if context_result else len(system_prompt) // 4
             final_context_audit = build_final_request_context_audit_for_request(
@@ -1378,19 +1451,22 @@ class LLMInvoker:
                 compression_strategy=context_result.compression_strategy if context_result else None,
                 messages=prepared.messages,
                 metadata=_with_context_os_audit(
-                    {
-                        "temperature": temperature,
-                        "max_tokens": effective_max_tokens,
-                        "prompt_fingerprint": prompt_fingerprint,
-                        "native_tool_mode": prepared.native_tool_mode,
-                        "response_format_mode": prepared.response_format_mode,
-                        "compression_applied": context_result.compression_applied if context_result else False,
-                        "turn_round": turn_round,
-                        "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
-                        "context_tokens_after": final_context_tokens,
-                        "contextTokens": final_context_tokens,
-                        "final_request_context_audit": final_context_audit,
-                    },
+                    _with_context_snapshot_diagnostics(
+                        {
+                            "temperature": temperature,
+                            "max_tokens": effective_max_tokens,
+                            "prompt_fingerprint": prompt_fingerprint,
+                            "native_tool_mode": prepared.native_tool_mode,
+                            "response_format_mode": prepared.response_format_mode,
+                            "compression_applied": context_result.compression_applied if context_result else False,
+                            "turn_round": turn_round,
+                            "context_snapshot_ref": self._extract_context_snapshot_ref(prepared.ai_request),
+                            "context_tokens_after": final_context_tokens,
+                            "contextTokens": final_context_tokens,
+                            "final_request_context_audit": final_context_audit,
+                        },
+                        prepared.ai_request,
+                    ),
                     prepared,
                 ),
             )

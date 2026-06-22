@@ -1311,7 +1311,11 @@ class TestStreamEngineRunStream:
         prepared = Mock()
         prepared.messages = [{"role": "user", "content": "hi"}]
         prepared.ai_request = Mock()
-        prepared.ai_request.context = {"mode": "chat"}
+        prepared.ai_request.context = {
+            "mode": "chat",
+            "context_snapshot_ref": "stale-ref-that-must-not-leak",
+            "context_snapshot_degraded": {"code": "STALE"},
+        }
         prepared.native_tool_mode = "disabled"
         prepared.response_format_mode = "none"
         prepared.context_result = context_result
@@ -1347,6 +1351,7 @@ class TestStreamEngineRunStream:
         # No hash was injected because the store failed.
         start_metadata = emit_start.call_args.kwargs["metadata"]
         assert "context_snapshot_ref" not in start_metadata or not start_metadata["context_snapshot_ref"]
+        assert prepared.ai_request.context.get("context_snapshot_ref") is None
         degraded = start_metadata["context_snapshot_degraded"]
         assert degraded["code"] == "CONTEXT_STORE_WRITE_FAILED"
         assert degraded["reason"] == "context_snapshot_store_failure"

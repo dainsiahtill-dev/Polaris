@@ -693,6 +693,13 @@ function readLlmContentText(
   return '';
 }
 
+const CONTEXT_SNAPSHOT_REF_RE = /^[0-9a-f]{24}$/i;
+
+function normalizeContextSnapshotRef(value: string): string {
+  const token = String(value || '').trim();
+  return CONTEXT_SNAPSHOT_REF_RE.test(token) ? token.toLowerCase() : '';
+}
+
 function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
   const raw = String(line || '').trim();
   if (!raw) return null;
@@ -814,14 +821,14 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       dataMetadata?.contextTokens,
       dataMetadata?.context_tokens_before,
     );
-    const dataContextSnapshotRef = Parsing.firstDisplayString(
+    const dataContextSnapshotRef = normalizeContextSnapshotRef(Parsing.firstDisplayString(
       eventData?.context_snapshot_ref,
       eventData?.contextSnapshotRef,
       dataMetadata?.context_snapshot_ref,
       dataMetadata?.contextSnapshotRef,
       parsedRefs?.context_snapshot_ref,
       parsedRefs?.contextSnapshotRef,
-    );
+    ));
     const dataContextSnapshotDegraded = firstRecord(
       eventData?.context_snapshot_degraded,
       eventData?.contextSnapshotDegraded,

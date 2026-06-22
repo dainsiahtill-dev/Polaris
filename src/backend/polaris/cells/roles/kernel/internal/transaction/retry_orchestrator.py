@@ -209,6 +209,7 @@ __all__ = [
     "_resolve_materialization_workspace",
     "_should_bootstrap_original_read_batch",
     "_should_force_leaf_bootstrap_followup_write_file",
+    "_should_use_original_read_bootstrap_for_retry",
     "_synthesize_deterministic_bootstrap_write_content",
     "_synthesize_deterministic_dag_service_content",
     "_workspace_materialization_fingerprint",
@@ -239,6 +240,38 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # RetryOrchestrator
 # ---------------------------------------------------------------------------
+
+
+def _should_use_original_read_bootstrap_for_retry(
+    *,
+    context: list[dict],
+    turn_id: str,
+    config: Any,
+    original_bootstrap_invocations: list[Any],
+    from_scratch_create: bool,
+) -> bool:
+    """Decide whether a read-only original batch should run before retry.
+
+    Existing-file repair often benefits from the model's first read request. A
+    create/materialize step with missing targets has no useful target content to
+    inspect, so executing that read-only batch only delays the forced write path.
+    """
+    if not _should_bootstrap_original_read_batch(
+        context=context,
+        turn_id=turn_id,
+        config=config,
+        original_bootstrap_invocations=original_bootstrap_invocations,
+    ):
+        return False
+    if from_scratch_create:
+        logger.warning(
+            "mutation-contract READ-ONLY bootstrap blocked by create/missing-target mode "
+            "-> forcing write escalation: turn_id=%s tools=%s",
+            turn_id,
+            [extract_invocation_tool_name(inv) for inv in original_bootstrap_invocations],
+        )
+        return False
+    return True
 
 
 class WorkflowRuntimeProtocol(Protocol):
@@ -639,33 +672,20 @@ class RetryOrchestrator:
         # (observed: hallucinated vue-element-admin Windows paths). Bootstrap the
         # ORIGINAL reads directly — never throw away the model's correct request.
         original_bootstrap_invocations = _extract_decision_invocations(original_decision)
-        if _should_bootstrap_original_read_batch(
+        if _should_use_original_read_bootstrap_for_retry(
             context=context,
             turn_id=turn_id,
             config=self.config,
             original_bootstrap_invocations=original_bootstrap_invocations,
+            from_scratch_create=from_scratch_create,
         ):
-            # F24 (2026-06-16): progress-aware read-loop bound. Bootstrap the reads
-            # (gather evidence) UNLESS this step's read-only bootstraps have stalled
-            # — i.e. materialised no new bytes across the last few reads (L4-19: all
-            # reads, 0 files; L3-14: read-loop). Then stop indulging reads and take
-            # the forced-write escalation ladder. Unlike the reverted F21 count-based
-            # ceiling, normal read-then-write flows change the workspace fingerprint
-            # and never trip this, so the L2 floor is not regressed.
-            if False:
-                logger.warning(
-                    "mutation-contract READ-ONLY bootstrap stalled (no new materialization) "
-                    "-> forcing write escalation: turn_id=%s",
-                    turn_id,
-                )
-            else:
-                logger.warning(
-                    "mutation-contract violation on READ-ONLY original batch -> "
-                    "bootstrapping the ORIGINAL reads (no retry re-ask): turn_id=%s tools=%s",
-                    turn_id,
-                    [extract_invocation_tool_name(inv) for inv in original_bootstrap_invocations],
-                )
-                candidate_bootstrap_decision = original_decision
+            logger.warning(
+                "mutation-contract violation on READ-ONLY original batch -> "
+                "bootstrapping the ORIGINAL reads (no retry re-ask): turn_id=%s tools=%s",
+                turn_id,
+                [extract_invocation_tool_name(inv) for inv in original_bootstrap_invocations],
+            )
+            candidate_bootstrap_decision = original_decision
         for attempt_index in range(max_retry_attempts):
             if candidate_bootstrap_decision is not None:
                 break

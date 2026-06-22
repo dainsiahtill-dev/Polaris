@@ -20,6 +20,7 @@ from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
     _extract_latest_assistant_message,
     _read_bootstrap_makes_no_progress,
     _should_bootstrap_original_read_batch,
+    _should_use_original_read_bootstrap_for_retry,
     _workspace_materialization_fingerprint,
     append_retry_enforcement_hint,
     build_contract_retry_context,
@@ -91,6 +92,19 @@ def test_forced_write_file_enforcement_mentions_non_empty_complete_content() -> 
     assert "non-empty" in system
     assert "complete file body" in system
     assert "prose" in system
+
+
+def test_forced_write_file_retry_context_blocks_read_execute_only_batches() -> None:
+    out = build_contract_retry_context(
+        [{"role": "user", "content": "[mode:materialize]\n目标文件: src/main.ts\nCreate src/main.ts"}],
+        [{"name": "write_file"}, {"name": "read_file"}, {"name": "execute_command"}],
+        forced_write_tool_name="write_file",
+    )
+
+    system = next(m["content"] for m in out if m["role"] == "system")
+    assert "call write_file directly" in system
+    assert "do not emit execute_command/read/list-only batches" in system
+    assert "src/main.ts" in system
 
 
 def test_retry_enforcement_restates_target_files_not_acceptance_artifacts() -> None:
@@ -279,6 +293,33 @@ def test_original_read_bootstrap_allowed_without_single_target_marker(tmp_path) 
         turn_id="step-normal-bootstrap",
         config=SimpleNamespace(workspace=str(tmp_path)),
         original_bootstrap_invocations=[{"tool_name": "repo_tree"}],
+    )
+
+
+def test_original_read_bootstrap_blocked_for_from_scratch_create(tmp_path) -> None:
+    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    assert not _should_use_original_read_bootstrap_for_retry(
+        context=[{"role": "user", "content": "[mode:materialize]\n目标文件: src/main.ts\nCreate src/main.ts"}],
+        turn_id="step-create-bootstrap",
+        config=SimpleNamespace(workspace=str(tmp_path)),
+        original_bootstrap_invocations=[{"tool_name": "repo_tree"}, {"tool_name": "read_file"}],
+        from_scratch_create=True,
+    )
+
+
+def test_original_read_bootstrap_still_allowed_for_existing_file_repair(tmp_path) -> None:
+    _ro._READ_BOOTSTRAP_PROGRESS.clear()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("export const value = 1;\n", encoding="utf-8")
+
+    assert _should_use_original_read_bootstrap_for_retry(
+        context=[{"role": "user", "content": "Fix src/main.ts"}],
+        turn_id="step-existing-bootstrap",
+        config=SimpleNamespace(workspace=str(tmp_path)),
+        original_bootstrap_invocations=[{"tool_name": "read_file", "arguments": {"file": "src/main.ts"}}],
+        from_scratch_create=False,
     )
 
 
