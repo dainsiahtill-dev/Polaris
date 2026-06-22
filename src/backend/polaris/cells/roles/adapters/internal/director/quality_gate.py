@@ -16,6 +16,7 @@ symbol here).
 from __future__ import annotations
 
 import ast
+import contextlib
 import os
 import re
 import shlex
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from . import execute_method as _em
+from .execution_tools import DirectorToolExecutor
 from .helpers import has_successful_write_tool
 from .task_scope_paths import (
     _dedupe_preserve_order,
@@ -129,6 +131,18 @@ _TSC_PROJECT_DIAGNOSTIC_RE = re.compile(
     r":\s*error\s+(?P<code>TS\d+):\s*(?P<detail>.*)",
     re.IGNORECASE | re.DOTALL,
 )
+_TOOL_RECEIPT_CONTAMINATION_TOKENS = (
+    "**write_file**: error",
+    "**edit_file**: error",
+    "**append_to_file**: error",
+    "destructive shrink rejected",
+    "director_write_policy_denied",
+    "handler_error_type",
+)
+_QUALITY_SYNTAX_ERROR_PATH_RE = re.compile(
+    r"syntax error in (?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+):",
+    re.IGNORECASE,
+)
 
 
 def _quality_error_path_safe_for_repair_prompt(path: str) -> bool:
@@ -163,14 +177,117 @@ def _format_typescript_project_typecheck_error_for_repair_prompt(error: Any) -> 
     )
 
 
+def _looks_like_tool_receipt_contamination_text(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return any(token in lowered for token in _TOOL_RECEIPT_CONTAMINATION_TOKENS)
+
+
+def _format_tool_receipt_contamination_error_for_repair_prompt(error: Any) -> str:
+    text = str(error or "")
+    if not _looks_like_tool_receipt_contamination_text(text):
+        return ""
+    target = "the contaminated artifact"
+    match = _QUALITY_SYNTAX_ERROR_PATH_RE.search(text)
+    if match:
+        rel = _normalize_declared_task_path(match.group("path"))
+        if rel and _quality_error_path_safe_for_repair_prompt(rel):
+            target = rel
+    return (
+        "Artifact quality scan failed: tool execution receipt contamination in "
+        f"{target}; the file contains a Polaris tool failure receipt instead of source code. "
+        "Rewrite that artifact with real UTF-8 project code. Do not copy any write_file/edit_file "
+        "error receipt, destructive-shrink diagnostic, handler_error_type, or tool result text into files."
+    )
+
+
 def _format_quality_error_for_repair_prompt(error: Any) -> str:
     """Format quality errors for repair prompts without unsafe path tokens."""
 
     return (
-        _format_unresolved_relative_import_error_for_repair_prompt(error)
+        _format_tool_receipt_contamination_error_for_repair_prompt(error)
+        or _format_unresolved_relative_import_error_for_repair_prompt(error)
         or _format_typescript_project_typecheck_error_for_repair_prompt(error)
         or str(error)
     )
+
+
+def _tool_receipt_safe_quality_errors(errors: list[str]) -> list[str]:
+    return [_format_tool_receipt_contamination_error_for_repair_prompt(error) or str(error or "") for error in errors]
+
+
+_RAW_SINGLE_TARGET_CODE_FENCE_RE = re.compile(
+    r"^\s*```(?:[A-Za-z0-9_.+-]+)?\s*\n(?P<body>.*?)(?:\n)?```\s*$",
+    re.DOTALL,
+)
+
+
+def _normalize_raw_single_target_write_content(content: str) -> str:
+    text = str(content or "").strip()
+    if not text:
+        return ""
+    fence = _RAW_SINGLE_TARGET_CODE_FENCE_RE.match(text)
+    if fence:
+        return str(fence.group("body") or "").strip()
+    return text
+
+
+def _coerce_raw_single_target_repair_to_write_file(
+    adapter: Any,
+    *,
+    task_id: str,
+    repair_target_files: list[str],
+    content: str,
+) -> list[dict[str, Any]]:
+    """Normalize weak-model raw file bodies into write_file for one exact target.
+
+    This path is deliberately narrow: it only fires after native/tool-text
+    extraction produced no successful write, and only when the platform already
+    pinned the repair to exactly one target file.
+    """
+
+    if len(repair_target_files) != 1:
+        return []
+    target_file = _normalize_declared_task_path(repair_target_files[0])
+    if not target_file or any(marker in target_file for marker in ("*", "?")):
+        return []
+    normalized_content = _normalize_raw_single_target_write_content(content)
+    if not normalized_content:
+        return []
+    if _looks_like_tool_receipt_contamination_text(normalized_content):
+        return []
+    workspace_full = str(getattr(adapter, "workspace", "") or "")
+    if not workspace_full:
+        return []
+    message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
+    write_result = DirectorToolExecutor(
+        workspace_full,
+        message_bus=message_bus,
+        worker_id="director",
+    ).execute_tool(
+        "write_file",
+        {"file": target_file, "content": normalized_content},
+        task_id=task_id,
+    )
+    if not bool(write_result.get("ok")):
+        return []
+    with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+        adapter._update_task_progress(task_id, "executing", current_file=target_file)
+    return [
+        {
+            "tool": "write_file",
+            "tool_name": "write_file",
+            "success": True,
+            "result": {
+                "ok": True,
+                "source_tool": "director_quality_repair_raw_single_target_write_file",
+                "file": target_file,
+                "bytes_written": int(write_result.get("bytes_written") or len(normalized_content.encode("utf-8"))),
+                "operation": str(write_result.get("operation") or "modify"),
+                "broadcast_ok": bool(write_result.get("broadcast_ok")),
+                "director_policy": write_result.get("director_policy"),
+            },
+        }
+    ]
 
 
 def _stage_summary_has_recoverable_no_write_mutation_contract_exception(
@@ -770,26 +887,46 @@ async def _run_materialization_quality_repair_retry(
         return [], {"attempted": False, "reason": "no_artifact_quality_errors"}
 
     workspace_full = str(getattr(adapter, "workspace", "") or "")
+    repair_quality_errors = _tool_receipt_safe_quality_errors(artifact_quality_errors)
     missing_target_files = _missing_materialization_quality_repair_target_files(
         task,
         workspace_full,
-        artifact_quality_errors,
+        repair_quality_errors,
     )
     runtime_smoke_target_files = _python_runtime_smoke_repair_target_files(
-        artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_errors=repair_quality_errors,
         changed_files=changed_files,
         workspace_full=workspace_full,
     )
     semantic_quality_target_files = _semantic_quality_repair_target_files(
-        artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_errors=repair_quality_errors,
         changed_files=changed_files,
         workspace_full=workspace_full,
     )
-    repair_target_candidates = semantic_quality_target_files or runtime_smoke_target_files or missing_target_files
+    explicit_missing_quality_targets = _dedupe_preserve_order(
+        [
+            *[
+                rel
+                for item in _em._parse_missing_declared_target_files(repair_quality_errors)
+                if (rel := _normalize_declared_task_path(item))
+            ],
+            *_em._missing_unresolved_relative_import_target_files(repair_quality_errors, workspace_full),
+        ]
+    )
+    should_merge_missing_targets = bool(explicit_missing_quality_targets) or not (
+        runtime_smoke_target_files or semantic_quality_target_files
+    )
+    repair_target_candidates = _dedupe_preserve_order(
+        [
+            *(missing_target_files if should_merge_missing_targets else []),
+            *runtime_smoke_target_files,
+            *semantic_quality_target_files,
+        ]
+    )
     rotate_repair_targets = bool(
         len(repair_target_candidates) > 1
         and semantic_quality_target_files
-        and _should_rotate_materialization_quality_repair_targets(artifact_quality_errors)
+        and _should_rotate_materialization_quality_repair_targets(repair_quality_errors)
     )
     repair_target_files = _select_materialization_quality_repair_target_batch(
         repair_target_candidates,
@@ -800,11 +937,11 @@ async def _run_materialization_quality_repair_retry(
     missing_repair_target_files = [path for path in repair_target_files if path in missing_target_set]
     existing_repair_target_files = [path for path in repair_target_files if path not in missing_target_set]
     prompt_safe_artifact_quality_errors = [
-        _format_quality_error_for_repair_prompt(error) for error in artifact_quality_errors[:20]
+        _format_quality_error_for_repair_prompt(error) for error in repair_quality_errors[:20]
     ]
     repair_message = _build_materialization_quality_repair_message(
         original_message=original_message,
-        artifact_quality_errors=artifact_quality_errors,
+        artifact_quality_errors=repair_quality_errors,
         changed_files=changed_files,
         missing_target_files=missing_repair_target_files,
         repair_target_files=existing_repair_target_files,
@@ -884,6 +1021,15 @@ async def _run_materialization_quality_repair_retry(
         )
         if fallback_tool_results:
             repair_tool_results.extend(fallback_tool_results)
+    if not repair_tool_results or not has_successful_write_tool(repair_tool_results):
+        repair_tool_results.extend(
+            _coerce_raw_single_target_repair_to_write_file(
+                adapter,
+                task_id=target_task_id,
+                repair_target_files=repair_target_files,
+                content=content,
+            )
+        )
 
     summary = _summarize_llm_stage_result(result, stage="quality_repair")
     summary.update(

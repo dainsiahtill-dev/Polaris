@@ -239,6 +239,296 @@ def test_backend_freshness_gate_is_fail_closed_when_missing() -> None:
     assert record["all_checks_passed"] is False
 
 
+def test_role_tool_failure_opencode_audit_materializes_repo_local_evidence(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(bench, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(bench, "_OPENCODE_AUDIT_REQUEST_ROOT", tmp_path / ".polaris" / "opencode-audit-requests")
+    monkeypatch.setenv("POLARIS_FACTORY_BENCH_RUN_OPENCODE_AUDITS", "0")
+
+    workspace_root = tmp_path / "factory-bench"
+    workspace = workspace_root / "L1-01"
+    workspace.mkdir(parents=True)
+    (workspace / "package.json").write_text(
+        json.dumps({"scripts": {"build": "tsc"}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (workspace / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"target": "ES2020"}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    runtime_dir = tmp_path / "runtime"
+    events_dir = runtime_dir / "events"
+    events_dir.mkdir(parents=True)
+    (runtime_dir / "qa").mkdir()
+    (runtime_dir / "results").mkdir()
+    (events_dir / "director.llm.events.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "event": "llm_call_start",
+                        "data": {
+                            "role": "director",
+                            "run_id": "director-run-1",
+                            "model": "qwen3.6-27b",
+                            "metadata": {
+                                "final_request_context_audit": {
+                                    "final_request_token_estimate": 6800,
+                                    "context_underutilized": False,
+                                },
+                                "context_os_audit": {"ok": True},
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "event": "tool_call",
+                        "data": {
+                            "role": "director",
+                            "run_id": "director-run-1",
+                            "tool": "write_file",
+                            "args": {"file": "package.json", "content": "{  "},
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                json.dumps(
+                    {
+                        "event": "tool_result",
+                        "data": {
+                            "role": "director",
+                            "run_id": "director-run-1",
+                            "tool": "write_file",
+                            "result": {
+                                "success": False,
+                                "error": "Director write policy denied: invalid JSON",
+                                "error_type": "director_write_policy_denied",
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (events_dir / "task_runtime.execution.jsonl").write_text(
+        json.dumps(
+            {
+                "event_type": "failed",
+                "payload": {
+                    "event_type": "failed",
+                    "task_id": "2",
+                    "status": "failed",
+                    "subject": "领域模型与核心引擎实现",
+                    "run_id": "director-run-1",
+                    "details": {"error": "director_materialization_quality_failed"},
+                },
+                "metadata": {"run_id": "director-run-1", "task_id": "2"},
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (runtime_dir / "qa" / "workspace-validation.json").write_text(
+        json.dumps({"passed": False, "repair": {"success": False}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    record = {
+        "project_id": "L1-01",
+        "level": 1,
+        "backend_metadata": {"workspace": str(workspace_root)},
+        "runtime_dir": str(runtime_dir),
+        "runtime_dirs": [str(runtime_dir)],
+        "opencode_audit": {
+            "required": True,
+            "reason": "role_tool_failure_detected",
+            "trigger_category": "llm_output",
+            "root_cause_signature": "llm_output:real_run_gate.scaffolding_present",
+            "must_review": ["llm_call_start_final_request_context_audit"],
+            "forbidden": ["target_project_code_changes"],
+            "recommended_agent_count": 5,
+            "prompt": "workspace：(unknown)",
+        },
+    }
+
+    result = bench._materialize_role_tool_failure_opencode_audit(
+        base=tmp_path / "external-base",
+        run_id="run-1",
+        project_id="L1-01",
+        record=record,
+    )
+
+    assert result is not None
+    evidence_path = Path(result["evidence_bundle_path"])
+    assert evidence_path.is_relative_to(tmp_path / ".polaris" / "opencode-audit-requests")
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence["workspace"] == str(workspace.resolve())
+    assert evidence["target_workspace_evidence"]["selected_config_files"]["package.json"]["scripts"]["build"] == "tsc"
+    assert "tsconfig.json" in evidence["target_workspace_evidence"]["selected_config_files"]
+    evidence_text = json.dumps(evidence, ensure_ascii=False)
+    assert "director_materialization_quality_failed" in evidence_text
+    assert "final_request_context_audit" in evidence_text
+    role_tool_failures = evidence["role_tool_failure_events"]
+    assert len(role_tool_failures) == 2
+    assert {item["audit_unit_type"] for item in role_tool_failures} == {
+        "llm_role_event_failure",
+        "task_runtime_failure",
+    }
+    assert (
+        role_tool_failures[0]["nearest_final_request_context"]["final_request_context_audit"][
+            "final_request_token_estimate"
+        ]
+        == 6800
+    )
+    assert role_tool_failures[0]["nearest_tool_call"]["args"]["file"] == "package.json"
+    assert role_tool_failures[1]["task_id"] == "2"
+    task_runtime_excerpt = evidence["runtime_evidence"][str(runtime_dir)]["events/task_runtime.execution.jsonl"]
+    assert task_runtime_excerpt[0]["event"] == "failed"
+    assert task_runtime_excerpt[0]["error"] == "director_materialization_quality_failed"
+    prompt = Path(result["prompt_paths"][0]).read_text(encoding="utf-8")
+    assert "可读审计证据包" in prompt
+    assert "必须逐条审计每个 audit_unit_id" in prompt
+    assert "不要直接用 OpenCode Read/cat 读取外部 cache/runtime/目标 workspace 目录" in prompt
+    assert record["opencode_audit"]["execution_status"] == "request_materialized"
+    assert result["role_tool_failure_event_count"] == 2
+
+
+def test_role_tool_failure_opencode_audit_executes_by_default(monkeypatch: Any) -> None:
+    monkeypatch.delenv("POLARIS_FACTORY_BENCH_RUN_OPENCODE_AUDITS", raising=False)
+
+    assert bench._opencode_audit_execution_enabled() is True
+
+
+def test_role_tool_failure_opencode_audit_marks_partial_agent_failure(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(bench, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(bench, "_OPENCODE_AUDIT_REQUEST_ROOT", tmp_path / ".polaris" / "opencode-audit-requests")
+    monkeypatch.setattr(bench, "_opencode_audit_execution_enabled", lambda: True)
+    monkeypatch.setattr(bench.shutil, "which", lambda name: "/usr/bin/opencode" if name == "opencode" else None)
+    exit_codes = iter([0, 1])
+
+    class FakeProcess:
+        def __init__(self, exit_code: int) -> None:
+            self._exit_code = exit_code
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return self._exit_code
+
+        def kill(self) -> None:
+            return None
+
+    def fake_popen(*args: Any, **kwargs: Any) -> FakeProcess:
+        del args, kwargs
+        return FakeProcess(next(exit_codes))
+
+    monkeypatch.setattr(bench.subprocess, "Popen", fake_popen)
+    workspace_root = tmp_path / "factory-bench"
+    (workspace_root / "L1-01").mkdir(parents=True)
+    record = {
+        "project_id": "L1-01",
+        "level": 1,
+        "backend_metadata": {"workspace": str(workspace_root)},
+        "opencode_audit": {
+            "required": True,
+            "reason": "role_tool_failure_detected",
+            "trigger_category": "director_tool_execution",
+            "root_cause_signature": "director_tool_execution:tool_failed",
+            "must_review": ["runtime_event_tool_call_and_tool_result"],
+            "forbidden": ["target_project_code_changes"],
+            "recommended_agent_count": 2,
+            "prompt": "audit",
+        },
+    }
+
+    result = bench._materialize_role_tool_failure_opencode_audit(
+        base=tmp_path / "external-base",
+        run_id="run-2",
+        project_id="L1-01",
+        record=record,
+    )
+
+    assert result is not None
+    assert result["execution_status"] == "completed_with_failures"
+    assert record["opencode_audit"]["execution_status"] == "completed_with_failures"
+    request_payload = json.loads(Path(result["request_path"]).read_text(encoding="utf-8"))
+    assert request_payload["execution_status"] == "completed_with_failures"
+    assert [item["exit_code"] for item in request_payload["executions"]] == [0, 1]
+
+
+def test_role_tool_failure_opencode_audit_retries_codegraph_database_lock(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(bench, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(bench, "_OPENCODE_AUDIT_REQUEST_ROOT", tmp_path / ".polaris" / "opencode-audit-requests")
+    monkeypatch.setattr(bench, "_opencode_audit_execution_enabled", lambda: True)
+    monkeypatch.setattr(bench.shutil, "which", lambda name: "/usr/bin/opencode" if name == "opencode" else None)
+    exit_codes = iter([1, 0])
+
+    class FakeProcess:
+        def __init__(self, exit_code: int) -> None:
+            self._exit_code = exit_code
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return self._exit_code
+
+        def kill(self) -> None:
+            return None
+
+    def fake_popen(*args: Any, **kwargs: Any) -> FakeProcess:
+        del args
+        exit_code = next(exit_codes)
+        stdout = kwargs.get("stdout")
+        if stdout is not None:
+            stdout.write("database is locked\n" if exit_code else '{"status":"completed"}\n')
+        return FakeProcess(exit_code)
+
+    monkeypatch.setattr(bench.subprocess, "Popen", fake_popen)
+    workspace_root = tmp_path / "factory-bench"
+    (workspace_root / "L1-01").mkdir(parents=True)
+    record = {
+        "project_id": "L1-01",
+        "level": 1,
+        "backend_metadata": {"workspace": str(workspace_root)},
+        "opencode_audit": {
+            "required": True,
+            "reason": "role_tool_failure_detected",
+            "trigger_category": "director_tool_execution",
+            "root_cause_signature": "director_tool_execution:tool_failed",
+            "must_review": ["runtime_event_tool_call_and_tool_result"],
+            "forbidden": ["target_project_code_changes"],
+            "recommended_agent_count": 1,
+            "prompt": "audit",
+        },
+    }
+
+    result = bench._materialize_role_tool_failure_opencode_audit(
+        base=tmp_path / "external-base",
+        run_id="run-3",
+        project_id="L1-01",
+        record=record,
+    )
+
+    assert result is not None
+    assert result["execution_status"] == "completed"
+    execution = result["executions"][0]
+    assert execution["initial_exit_code"] == 1
+    assert execution["retry"]["reason"] == "codegraph_database_locked"
+    assert execution["retry"]["exit_code"] == 0
+    assert execution["exit_code"] == 0
+
+
 def test_build_bench_backend_audit_context_writes_record_fields(monkeypatch: Any, tmp_path: Path) -> None:
     captured: dict[str, Any] = {}
 

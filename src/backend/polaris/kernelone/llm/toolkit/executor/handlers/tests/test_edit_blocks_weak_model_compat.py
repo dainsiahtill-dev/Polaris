@@ -390,13 +390,56 @@ def test_write_file_overwrite_shrink_rejected(tmp_path: Path) -> None:
     result = _handle_write_file(ex, file="pkg/big_module.py", content="tiny = 1\n" * 32)
     assert result.get("ok") is False
     assert result.get("error_type") == "destructive_shrink"
-    assert "edit_blocks" in result.get("suggestion", "")
+    assert "partial edit" in result.get("suggestion", "")
+    assert "complete file body" in result.get("suggestion", "")
+
+
+def test_write_file_rejects_source_narration_contamination(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path)
+    result = _handle_write_file(
+        ex,
+        file="pkg/main.ts",
+        content="I'll address the quality repair issues immediately.\nexport const ready = true;\n",
+    )
+
+    assert result.get("ok") is False
+    assert result.get("error_type") == "source_narration_contamination"
+    assert result.get("retryable") is True
+    assert not (tmp_path / "pkg" / "main.ts").exists()
 
 
 def test_write_file_new_file_unaffected(tmp_path: Path) -> None:
     ex = _big_file_workspace(tmp_path)
     result = _handle_write_file(ex, file="pkg/fresh.py", content="x = 1\n")
     assert result.get("ok") is True
+
+
+def test_write_file_normalizes_fenced_package_json(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path)
+    result = _handle_write_file(
+        ex,
+        file="package.json",
+        content='```json\n"name": "demo",\n"scripts": {"build": "tsc"}\n}\n```',
+    )
+
+    assert result.get("ok") is True
+    payload = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert payload["name"] == "demo"
+    assert payload["scripts"]["build"] == "tsc"
+    assert result.get("normalized_patch_like_write") is True
+
+
+def test_write_file_normalizes_missing_json_key_opening_quote(tmp_path: Path) -> None:
+    ex = _big_file_workspace(tmp_path)
+    result = _handle_write_file(
+        ex,
+        file="package.json",
+        content='name": "demo",\n"scripts": {"test": "node verify.js"}\n}',
+    )
+
+    assert result.get("ok") is True
+    payload = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert payload["scripts"]["test"] == "node verify.js"
 
 
 def test_write_file_small_existing_file_overwrite_allowed(tmp_path: Path) -> None:

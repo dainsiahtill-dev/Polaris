@@ -63,6 +63,7 @@ from polaris.cells.roles.kernel.internal.context_event import (
     ToolLoopSafetyPolicy,
 )
 from polaris.cells.roles.kernel.internal.context_gateway import ContextRequest
+from polaris.cells.roles.kernel.internal.context_gateway.prompt_safety import prompt_safe_message_content
 from polaris.cells.roles.kernel.internal.metrics import get_dead_loop_metrics
 from polaris.kernelone.llm.engine.model_catalog import ModelCatalog
 from polaris.kernelone.llm.runtime_config import get_role_model
@@ -287,7 +288,7 @@ class ToolLoopController:
             ctx_event = ContextEvent(
                 event_id=str(event.get("event_id") or f"snapshot_{idx}").strip(),
                 role=role,
-                content=str(event.get("content") or ""),
+                content=prompt_safe_message_content(role, event.get("content") or ""),
                 sequence=int(event.get("sequence") or idx),
                 metadata=metadata,
             )

@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from polaris.kernelone.editing.editblock_engine import (
@@ -102,6 +103,50 @@ if TYPE_CHECKING:
     _KernelFileSystem = KernelFileSystem
 
 logger = logging.getLogger(__name__)
+
+_SOURCE_NARRATION_LEAK_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"i(?:'|’)ll\s+|"
+    r"i\s+will\s+|"
+    r"let\s+me\s+|"
+    r"here(?:'|’)s\s+|"
+    r"here\s+is\s+|"
+    r"below\s+is\s+|"
+    r"the\s+(?:two\s+)?(?:problem|problems|issue|issues)\s+(?:are|is)\b|"
+    r"我(?:会|将|来)|"
+    r"让我|"
+    r"下面(?:是|我)"
+    r")"
+)
+
+
+def _source_narration_leak_error(rel: str, text: str) -> dict[str, Any] | None:
+    code_extensions = {".py", ".pyw", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs"}
+    if Path(rel).suffix.lower() not in code_extensions:
+        return None
+    stripped = str(text or "").lstrip()
+    if not stripped:
+        return None
+    first_line = stripped.splitlines()[0].strip()
+    if first_line.startswith(("#", "//", "/*", "*", '"""', "'''")):
+        return None
+    if not _SOURCE_NARRATION_LEAK_RE.search(stripped[:500]):
+        return None
+    return {
+        "ok": False,
+        "error_type": "source_narration_contamination",
+        "retryable": True,
+        "loop_break": False,
+        "error": (
+            f"Source narration contamination: write_file for {rel} received assistant prose instead of code. "
+            "The content argument must contain only the complete UTF-8 source file body."
+        ),
+        "suggestion": (
+            "Retry write_file for the same path with real source code only. Do not include explanations, plans, "
+            "phrases like 'Let me fix', markdown, or reasoning text in code files."
+        ),
+    }
+
 
 __all__ = [
     "_DESTRUCTIVE_SHRINK_MAX_ADD_RATIO",
@@ -287,9 +332,10 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
                 old_lines,
                 new_lines,
                 tool_hint=(
-                    "write_file replaces the WHOLE file. To change part of an existing file use "
-                    "edit_blocks (line-range form: file + start + end + replace) so untouched "
-                    "code is preserved."
+                    "write_file replaces the WHOLE file. If the intent is a partial edit, emit a "
+                    "precise range/search replacement with only the changed lines so untouched code "
+                    "is preserved. If the intent is a whole-file rewrite, provide a complete file "
+                    "body comparable in size to the original."
                 ),
             )
 
@@ -303,6 +349,9 @@ def _handle_write_file(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any]
         return {"ok": False, "error": normalized.error}
 
     text = str(normalized.content or "")
+    narration_error = _source_narration_leak_error(rel, text)
+    if narration_error is not None:
+        return narration_error
     if is_empty_write_content_violation(rel, text):
         return {
             "ok": False,

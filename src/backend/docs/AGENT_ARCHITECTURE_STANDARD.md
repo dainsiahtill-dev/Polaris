@@ -169,6 +169,15 @@
 4. ContextOS 实时视图必须优先展示最终请求上下文 token（含工具 schema 和 response format），不得继续用 messages-only 或 prompt usage 冒充最终上下文占用。
 5. 最终请求上下文明显低于预期时，先归因为上下文装配/覆盖度/预算策略问题并留下 runtime event 证据；禁止通过扩大 max_tokens 或伪造 token 数掩盖缺失上下文。
 
+## 8.4 角色工具失败外部审计标准
+
+1. PM、Chief Engineer、Director、QA 任一角色发生工具调用失败、工具调用缺失、工具参数无法归一化、工具结果被误判成功、或 LLM 输出被错误当作 action 执行时，必须派发 OpenCode 外部 Agent 做独立审计。
+2. 审计必须检查最终送入 provider 的完整 LLM request、ContextOS 组装结果、tool schema/response format、token 估算与覆盖度 flags，并确认是否缺 PM 合同、Chief Engineer 蓝图/交接、目标文件、失败反馈或 workspace quality evidence。若 LLM event 中 `messages`/`content` 被 redacted，必须读取 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件，不得用 redacted event 代替完整上下文审计。
+3. 审计必须沿工具解析与归一化路径确认 `ToolSpecRegistry` aliases/arg_aliases、自然语言/JSON/XML/native tool call 解析、授权门禁、路径门禁和命令门禁是否按顺序执行。
+4. 审计必须收集 runtime event、LLM 调用日志、ContextOS 证据、bench session、角色日志和失败命令输出；不得用“模型没按格式输出”作为未审计的终结解释。
+5. OpenCode 审计默认只读；若需要修复，主 Agent 必须先拆成互不重叠的授权范围，并在回收后零信任复核 diff、测试与证据链。
+6. Factory Bench 每条角色工具失败记录必须写出机器可读 `opencode_audit` 字段，至少包含 `required`、`recommended_agent_count`、`must_review`、`forbidden`、`root_cause_signature` 与自包含 `prompt`；缺少该字段视为审计包不完整。
+
 ---
 
 ## 9. 文档与治理同步标准

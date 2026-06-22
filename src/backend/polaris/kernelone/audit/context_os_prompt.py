@@ -78,6 +78,16 @@ _CONTROL_CONTENT_TOKENS = tuple(
     )
 )
 
+_RAW_TOOL_FAILURE_RECEIPT_TOKENS = (
+    "director_policy",
+    "package_diff",
+    "handler_error_type",
+    "director_write_policy_denied'}",
+    '"director_write_policy_denied"}',
+    '"ok": false',
+    "'ok': false",
+)
+
 
 def _message_role(message: Mapping[str, Any]) -> str:
     return str(message.get("role") or "").strip().lower()
@@ -134,6 +144,21 @@ def _find_content_hits(
         ):
             continue
         for token in _CONTROL_CONTENT_TOKENS:
+            if str(token).lower() in content:
+                hits.append(str(token))
+    return _dedupe(hits)
+
+
+def _find_raw_tool_failure_receipt_hits(messages: Sequence[Mapping[str, Any]]) -> list[str]:
+    hits: list[str] = []
+    for message in messages:
+        role = _message_role(message)
+        if role not in {"assistant", "tool", "tool_result"}:
+            continue
+        content = _message_content(message).lower()
+        if not content or "[tool_failure_summary]" in content:
+            continue
+        for token in _RAW_TOOL_FAILURE_RECEIPT_TOKENS:
             if str(token).lower() in content:
                 hits.append(str(token))
     return _dedupe(hits)
@@ -273,6 +298,7 @@ def audit_context_os_prompt_messages(
         normalized_messages,
         current_user_instruction=current_user_instruction,
     )
+    raw_tool_failure_receipt_hits = _find_raw_tool_failure_receipt_hits(normalized_messages)
     empty_content_count = sum(1 for item in normalized_messages if not _message_content(item).strip())
     receipt_ref_count = sum(1 for item in normalized_messages if "receipt_refs" in item)
     role_counts = _count_roles(normalized_messages)
@@ -280,9 +306,17 @@ def audit_context_os_prompt_messages(
     current_user_final = final_role == "user"
     current_user_preserved = _current_user_instruction_present(normalized_messages, current_user_instruction)
     control_plane_isolated = not metadata_key_hits and not content_hits
+    raw_tool_failure_receipt_absent = not raw_tool_failure_receipt_hits
     data_plane_non_empty = bool(normalized_messages) and empty_content_count < len(normalized_messages)
     truth_source_ok = state_first_projected if expected else True
-    ok = bool(truth_source_ok and control_plane_isolated and data_plane_non_empty and current_user_preserved)
+    ok = bool(
+        truth_source_ok
+        and control_plane_isolated
+        and raw_tool_failure_receipt_absent
+        and data_plane_non_empty
+        and current_user_final
+        and current_user_preserved
+    )
 
     return {
         "ok": ok,
@@ -307,6 +341,8 @@ def audit_context_os_prompt_messages(
             "non_empty": bool(data_plane_non_empty),
             "empty_content_count": int(empty_content_count),
             "receipt_ref_count": int(receipt_ref_count),
+            "raw_tool_failure_receipt_absent": bool(raw_tool_failure_receipt_absent),
+            "raw_tool_failure_receipt_hits": raw_tool_failure_receipt_hits,
         },
         "current_user_instruction": {
             "provided": bool(str(current_user_instruction or "").strip()),
@@ -316,6 +352,7 @@ def audit_context_os_prompt_messages(
             "truth_source_context_os": bool(truth_source_ok),
             "prompt_projection_read_only": True,
             "control_plane_isolated": bool(control_plane_isolated),
+            "raw_tool_failure_receipt_absent": bool(raw_tool_failure_receipt_absent),
             "current_user_final": bool(current_user_final),
             "current_user_instruction_preserved": bool(current_user_preserved),
         },

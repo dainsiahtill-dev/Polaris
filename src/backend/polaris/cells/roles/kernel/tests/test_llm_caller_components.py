@@ -19,6 +19,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from polaris.cells.roles.kernel.internal.llm_caller.caller import _ensure_current_user_message_final
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
     build_final_request_context_audit,
     build_final_request_context_audit_for_request,
@@ -112,6 +113,106 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
     assert audit["coverage"]["has_pm_contract"] is True
     assert audit["coverage"]["has_target_files"] is True
     assert audit["coverage"]["has_failure_feedback"] is True
+    assert audit["available_token_headroom"] > 0
+    assert "has_workspace_quality_evidence" in audit["context_quality"]["missing_coverage"]
+    assert audit["context_quality"]["context_needs_review"] is True
+
+
+def test_final_request_context_audit_marks_complete_context_as_reasonable() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "TASK-1 acceptance criteria target_files src/index.ts "
+                "Chief Engineer blueprint construction_plan scope_for_apply "
+                "stderr exit_code failed retry factory_workspace_quality npm run build"
+            ),
+        },
+    ]
+    ai_request = Mock()
+    ai_request.context = {"chat_messages": messages}
+    ai_request.options = {"tools": []}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": []},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["context_underutilized"] is True
+    assert audit["context_quality"]["missing_coverage"] == []
+    assert audit["context_quality"]["context_needs_review"] is False
+
+
+def test_llm_caller_keeps_current_user_instruction_as_final_message() -> None:
+    messages = [
+        {"role": "system", "content": "Role contract."},
+        {"role": "user", "content": "Implement the task."},
+        {"role": "system", "content": "Projected context appended late."},
+    ]
+
+    normalized = _ensure_current_user_message_final(messages, "Implement the task.")
+
+    assert normalized[-1] == {"role": "user", "content": "Implement the task."}
+    assert normalized[1]["role"] == "system"
+
+
+def test_llm_caller_restores_missing_current_user_instruction_at_tail() -> None:
+    messages = [{"role": "system", "content": "Projected context only."}]
+
+    normalized = _ensure_current_user_message_final(messages, "Run quality repair.")
+
+    assert normalized[-1] == {"role": "user", "content": "Run quality repair."}
+
+
+def test_final_request_context_audit_recognizes_director_contract_and_blueprint_anchors() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "PM Task Contract / 任务合同:\n"
+                "任务: Implement firefly garden simulator\n"
+                "目标文件: src/engine/SimulationEngine.ts\n"
+                "Acceptance criteria / 验收标准:\n"
+                "- npm run build\n"
+                "Chief Engineer Blueprint / CE 蓝图交接:\n"
+                "- blueprint_id: bp-L1-01-4\n"
+                "- construction target: src/engine/SimulationEngine.ts\n"
+                "- construction signatures: class SimulationEngine\n"
+                "- construction verify: npm run build\n"
+            ),
+        }
+    ]
+    ai_request = Mock()
+    ai_request.context = {"chat_messages": messages}
+    ai_request.options = {}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["coverage"]["has_pm_contract"] is True
+    assert audit["coverage"]["has_chief_engineer_blueprint"] is True
+    assert audit["coverage"]["has_target_files"] is True
+    assert audit["coverage"]["has_workspace_quality_evidence"] is True
 
 
 def test_final_request_context_audit_uses_active_fallback_request_options() -> None:
@@ -159,6 +260,31 @@ def test_final_request_context_audit_uses_active_fallback_request_options() -> N
     assert audit["response_format_token_estimate"] == 0
     assert audit["final_request_token_estimate"] == audit["message_token_estimate"]
     assert audit["coverage"]["has_pm_contract"] is True
+
+
+def test_final_request_context_audit_reads_role_context_policy_window() -> None:
+    profile = Mock()
+    profile.max_context_tokens = None
+    profile.context_policy = Mock(max_context_tokens=32768)
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "user",
+                "content": "TASK-1 target_files src/index.ts Chief Engineer blueprint",
+            },
+        ],
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={},
+        ai_request=Mock(),
+        native_tool_schemas=[],
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["context_window_tokens"] == 32768
+    assert audit["context_window_utilization"] is not None
 
 
 # ============ DecisionCaller Tests ============

@@ -213,7 +213,7 @@ class DirectorPatchExecutor:
         from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_name
 
         tool_name = normalize_tool_name(call.name.lower())
-        args, args_error = self._normalize_tool_arguments(call.arguments)
+        args, args_error = self._normalize_tool_arguments(call.arguments, tool_name=tool_name)
         if args_error:
             return {"tool": tool_name, "success": False, "error": args_error}
         update_task_progress_fn(
@@ -228,15 +228,30 @@ class DirectorPatchExecutor:
             return {"tool": tool_name, "success": False, "error": str(exc)}
 
     @staticmethod
-    def _normalize_tool_arguments(raw_args: Any) -> tuple[dict[str, Any], str | None]:
+    def _normalize_tool_arguments(
+        raw_args: Any,
+        *,
+        tool_name: str | None = None,
+    ) -> tuple[dict[str, Any], str | None]:
         """归一化工具参数"""
         if isinstance(raw_args, dict):
-            return raw_args, None
-        if isinstance(raw_args, list):
+            args = raw_args
+        elif isinstance(raw_args, list):
             if len(raw_args) == 1 and isinstance(raw_args[0], dict):
-                return raw_args[0], None
-            return {}, "Invalid tool arguments type: list"
-        return {}, f"Invalid tool arguments type: {type(raw_args).__name__}"
+                args = raw_args[0]
+            else:
+                return {}, "Invalid tool arguments type: list"
+        else:
+            return {}, f"Invalid tool arguments type: {type(raw_args).__name__}"
+        canonical_tool = str(tool_name or "").strip()
+        if not canonical_tool:
+            return args, None
+        try:
+            from polaris.kernelone.llm.toolkit.tool_normalization import normalize_tool_arguments
+
+            return normalize_tool_arguments(canonical_tool, args), None
+        except (TypeError, ValueError) as exc:
+            return {}, f"Invalid tool arguments normalization: {exc}"
 
     # -------------------------------------------------------------------------
     # PATCH_FILE Format Execution

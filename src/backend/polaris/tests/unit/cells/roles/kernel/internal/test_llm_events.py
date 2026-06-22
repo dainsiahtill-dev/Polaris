@@ -56,6 +56,57 @@ def test_emit_llm_event_to_disk_redacts_prompt_payloads(monkeypatch: Any, tmp_pa
     assert "secret nested content" not in serialized
 
 
+def test_emit_llm_event_to_disk_preserves_final_request_context_audit(monkeypatch: Any, tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+
+    def _fake_roots(_workspace: str) -> SimpleNamespace:
+        return SimpleNamespace(runtime_root=str(runtime_root))
+
+    monkeypatch.setattr("polaris.cells.storage.layout.resolve_polaris_roots", _fake_roots)
+
+    audit = {
+        "schema_version": "llm.final_request_context_audit.v1",
+        "message_count": 3,
+        "message_token_estimate": 2048,
+        "tool_schema_count": 7,
+        "tool_schema_token_estimate": 512,
+        "final_request_token_estimate": 2560,
+        "context_window_tokens": 32768,
+        "context_underutilized": True,
+        "coverage": {
+            "has_pm_contract": True,
+            "has_chief_engineer_blueprint": True,
+            "has_target_files": True,
+            "has_failure_feedback": True,
+        },
+    }
+    event = events.LLMCallEvent(
+        event_type=events.LLMEventType.CALL_START,
+        role="director",
+        run_id="run-context-audit",
+        model="qwen3.6-27b-gpu1",
+        metadata={
+            "workspace": str(tmp_path),
+            "call_id": "call-context-audit",
+            "messages": [{"role": "user", "content": "secret prompt"}],
+            "final_request_context_audit": audit,
+            "context_tokens_after": 2560,
+            "contextTokens": 2560,
+        },
+    )
+
+    events._emit_llm_event_to_disk(event)
+
+    event_path = runtime_root / "events" / "director.llm.events.jsonl"
+    payload = json.loads(event_path.read_text(encoding="utf-8").strip())
+    metadata = payload["data"]["metadata"]
+
+    assert metadata["messages"] == {"redacted": True, "type": "list", "count": 1}
+    assert metadata["final_request_context_audit"] == audit
+    assert metadata["context_tokens_after"] == 2560
+    assert metadata["contextTokens"] == 2560
+
+
 def test_publish_to_realtime_bridge_redacts_prompt_payloads(monkeypatch: Any, tmp_path: Path) -> None:
     captured: list[Any] = []
     monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))

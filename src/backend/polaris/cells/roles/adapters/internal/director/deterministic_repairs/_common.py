@@ -78,7 +78,7 @@ _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE = re.compile(
 )
 
 _DECLARED_TARGET_FILE_MISSING_ERROR_RE = re.compile(
-    r"declared target file missing ['\"](?P<path>[^'\"]+)['\"]",
+    r"declared target file(?:\s+missing)?\s+['\"](?P<path>[^'\"]+)['\"](?:\s+is\s+missing)?",
     re.IGNORECASE,
 )
 

@@ -885,6 +885,43 @@ def test_deterministic_typescript_missing_export_repair_adds_type_and_function(
     assert "export function updateSimulation(..._args: unknown[]): any" in repaired
 
 
+def test_deterministic_typescript_missing_export_repair_uses_ts2724_suggestion_alias(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_export_repair,
+    )
+
+    model_dir = tmp_path / "src" / "models"
+    model_dir.mkdir(parents=True)
+    (tmp_path / "src" / "index.ts").write_text(
+        "import { IHumidityState } from './models/humidity';\n"
+        "const state: IHumidityState = new IHumidityState();\n"
+        "export { state };\n",
+        encoding="utf-8",
+    )
+    (model_dir / "humidity.ts").write_text(
+        "export class HumidityState {\n  public level = 60;\n}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/index.ts(1,10): error TS2724: '\"./models/humidity\"' has no exported member named "
+        "'IHumidityState'. Did you mean 'HumidityState'?"
+    ]
+
+    results = _apply_deterministic_typescript_missing_export_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (model_dir / "humidity.ts").read_text(encoding="utf-8")
+    assert "export { HumidityState as IHumidityState };" in repaired
+    assert "export type IHumidityState = any;" not in repaired
+
+
 def test_deterministic_typescript_missing_export_repair_avoids_unknown_type_property_trap(
     tmp_path: Any,
 ) -> None:
@@ -1163,6 +1200,8 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
         lambda *args, **kwargs: ({}, [], ["src/moon.ts"], ["src/firefly.ts", "src/moon.ts"]),
     )
 
+    quality_repair_attempts: list[dict[str, Any]] = []
+
     state, residual_errors, _summary, _write_evidence = await execute_method_module._phase_quality_repair_loop(
         adapter,
         adapter_workspace=str(tmp_path),
@@ -1170,7 +1209,7 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
         context={},
         llm_call_timeout=1.0,
         message="repair TypeScript project",
-        quality_repair_attempts=[],
+        quality_repair_attempts=quality_repair_attempts,
         quality_repair_summary=None,
         run_id="run-1",
         target_task_id="task-1",
@@ -1191,6 +1230,12 @@ async def test_phase_quality_repair_loop_continues_after_deterministic_progress_
     assert "illumination" in deterministic_inputs[0][0]
     assert "brightness" in deterministic_inputs[1][0]
     assert len(state.tool_results) == 2
+    assert quality_repair_attempts[0]["revalidated"] is True
+    assert quality_repair_attempts[0]["success"] is False
+    assert quality_repair_attempts[0]["residual_error_count"] == 1
+    assert quality_repair_attempts[-1]["revalidated"] is True
+    assert quality_repair_attempts[-1]["success"] is True
+    assert quality_repair_attempts[-1]["residual_error_count"] == 0
 
 
 def test_empty_write_content_retry_needed_only_for_blank_write() -> None:
@@ -1852,6 +1897,42 @@ class TestBuildDirectorMessage:
         assert "目标文件: src/client/three-scene.ts" in msg
         assert "- Modify the existing Three.js scene file" in msg
         assert "- Run `npm run build` passes" in msg
+
+    def test_includes_ce_blueprint_and_factory_context(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        msg = adapter._build_director_message(
+            {
+                "subject": "Implement firefly garden simulator",
+                "metadata": {
+                    "goal": "Create the L1-01 simulator artifacts",
+                    "scope_paths": ["src/engine/SimulationEngine.ts"],
+                    "target_files": ["src/engine/SimulationEngine.ts"],
+                    "execution_checklist": ["Write the simulation engine"],
+                    "acceptance_criteria": ["npm run build passes"],
+                },
+            },
+            context={
+                "blueprint_id": "bp-L1-01-4",
+                "construction_step": {
+                    "target_file": "src/engine/SimulationEngine.ts",
+                    "signatures": ["class SimulationEngine", "runSimulation()"],
+                    "verify": "npm run build",
+                },
+                "metadata": {
+                    "factory_bench_project_id": "L1-01",
+                    "factory_bench_title": "发光昆虫花园模拟器",
+                },
+            },
+        )
+
+        assert "PM Task Contract / 任务合同:" in msg
+        assert "Acceptance criteria / 验收标准:" in msg
+        assert "Chief Engineer Blueprint / CE 蓝图交接:" in msg
+        assert "- blueprint_id: bp-L1-01-4" in msg
+        assert "- construction target: src/engine/SimulationEngine.ts" in msg
+        assert "- construction signatures: class SimulationEngine; runSimulation()" in msg
+        assert "- construction verify: npm run build" in msg
+        assert "- factory bench project: L1-01 - 发光昆虫花园模拟器" in msg
 
     def test_message_requires_unittest_and_contract_scoped_python_tests(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -6490,7 +6571,7 @@ class TestQualityRepairMissingTargetContract:
         assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
 
     @pytest.mark.asyncio
-    async def test_package_manifest_quality_error_takes_priority_over_missing_targets(self, tmp_path) -> None:
+    async def test_package_manifest_quality_error_preserves_missing_targets(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (
             _run_materialization_quality_repair_retry,
         )
@@ -6564,13 +6645,10 @@ class TestQualityRepairMissingTargetContract:
 
         assert summary["semantic_quality_target_files"] == ["package.json"]
         assert summary["missing_target_files"] == ["README.md", "src/main.ts", "index.html"]
-        assert summary["repair_target_files"] == ["package.json"]
-        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
-            "tool": "write_file",
-            "target_file": "package.json",
-        }
+        assert summary["repair_target_files"] == ["README.md", "src/main.ts", "index.html", "package.json"]
+        assert "write_only_single_target" not in adapter.repair_context["director_quality_repair"]
         assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
-        assert "MISSING TARGET FILE REPAIR" not in adapter.repair_message
+        assert "MISSING TARGET FILES" in adapter.repair_message
 
     @pytest.mark.asyncio
     async def test_package_manifest_quality_error_targets_existing_path_when_changed_files_empty(
@@ -6818,6 +6896,129 @@ class TestQualityRepairMissingTargetContract:
             "tool": "write_file",
             "target_file": "services/product_service/app.py",
         }
+
+    @pytest.mark.asyncio
+    async def test_single_missing_target_repair_coerces_raw_content_to_write_file(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                return {"content": "```python\nprint('service ready')\n```", "success": True}
+
+        (tmp_path / "services" / "product_service").mkdir(parents=True)
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["services/product_service/app.py"]},
+            target_task_id="PM-0001-1",
+            run_id="run-single-missing-raw-content",
+            context={},
+            original_message="Create the missing product service file.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: declared target file missing 'services/product_service/app.py'"
+            ],
+            changed_files=[],
+        )
+
+        assert summary["tool_results"] == 1
+        assert summary["write_tool_evidence"] is True
+        assert tool_results[0]["result"]["source_tool"] == "director_quality_repair_raw_single_target_write_file"
+        assert (tmp_path / "services" / "product_service" / "app.py").read_text(encoding="utf-8") == (
+            "print('service ready')"
+        )
+
+    @pytest.mark.asyncio
+    async def test_single_target_repair_refuses_raw_tool_receipt_content(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del message, context, timeout_seconds, stage_label
+                return {
+                    "content": (
+                        "**write_file**: Error - {'ok': False, 'error': "
+                        "'Destructive shrink rejected: this edit would replace tests/garden.test.ts'}"
+                    ),
+                    "success": True,
+                }
+
+        (tmp_path / "tests").mkdir(parents=True)
+
+        tool_results, summary = await _run_materialization_quality_repair_retry(
+            _Adapter(),
+            task={"target_files": ["tests/simulation.test.ts"]},
+            target_task_id="PM-0001-2",
+            run_id="run-tool-receipt-raw-content",
+            context={},
+            original_message="Create the missing simulation test file.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: declared target file missing 'tests/simulation.test.ts'"
+            ],
+            changed_files=[],
+        )
+
+        assert tool_results == []
+        assert summary["write_tool_evidence"] is False
+        assert not (tmp_path / "tests" / "simulation.test.ts").exists()
 
     @pytest.mark.asyncio
     async def test_quality_repair_timeout_is_bounded_below_director_call_timeout(self, tmp_path) -> None:
@@ -7566,6 +7767,28 @@ class TestSyntaxRepairDirective:
         assert "edit_blocks" in message
         # Still constrains the change to the one broken line.
         assert "byte-for-byte" in message
+
+    def test_tool_receipt_contamination_is_sanitized_before_repair_prompt(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="Create simulation tests.",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: syntax error in tests/simulation.test.ts: simulation.test.ts:1\n"
+                "**write_file**: Error - {'ok': False, 'error': 'Destructive shrink rejected: "
+                "this edit would replace tests/garden.test.ts'}"
+            ],
+            changed_files=["tests/simulation.test.ts"],
+            missing_target_files=[],
+            repair_target_files=["tests/simulation.test.ts"],
+        )
+
+        assert "tool execution receipt contamination in tests/simulation.test.ts" in message
+        assert "Destructive shrink rejected" not in message
+        assert "**write_file**: Error" not in message
+        assert "tests/garden.test.ts" not in message
 
     def test_no_directive_without_syntax_errors(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

@@ -9,6 +9,7 @@ Covers fixes for:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -105,6 +106,27 @@ class TestMutationTargetDriftFiltering:
 
         assert dropped == ()
         assert filtered == invocations
+
+    def test_uses_additional_allowed_targets_from_modification_contract(self) -> None:
+        invocations: list[dict[str, Any]] = [
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "package.json", "content": "{}"},
+            },
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "pyproject.toml", "content": "[project]"},
+            },
+        ]
+
+        filtered, dropped = filter_out_of_scope_write_invocations(
+            "Implement the current task",
+            invocations,
+            additional_allowed_targets=("package.json",),
+        )
+
+        assert dropped == ("pyproject.toml",)
+        assert [item["arguments"]["file"] for item in filtered] == ["package.json"]
 
 
 # ---------------------------------------------------------------------------
@@ -446,9 +468,11 @@ class TestRetryOrchestratorBatchCountRollback:
         assert result["ok"] is True
         assert write_calls
         assert write_calls[0]["file"] == "package.json"
-        assert "no test specified" not in write_calls[0]["content"]
-        assert "package manifest check passed" in write_calls[0]["content"]
-        assert '" --' in write_calls[0]["content"]
+        manifest = json.loads(write_calls[0]["content"])
+        scripts = manifest["scripts"]
+        assert "no test specified" not in json.dumps(scripts)
+        assert set(scripts) >= {"build", "start", "test"}
+        assert "node -e" in scripts["test"]
 
     @pytest.mark.asyncio
     async def test_bootstrap_followup_uses_deterministic_write_when_model_returns_no_tool_batch(

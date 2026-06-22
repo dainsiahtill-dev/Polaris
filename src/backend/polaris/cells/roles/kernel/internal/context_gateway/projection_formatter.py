@@ -13,6 +13,7 @@ from polaris.kernelone.context.context_os.helpers import get_metadata_value
 from polaris.kernelone.context.context_os.models_v2 import ContextOSProjectionV2 as ContextOSProjection
 
 from .constants import HIGH_PRIORITY_DIALOG_ACTS, ROUTE_PRIORITY
+from .prompt_safety import prompt_safe_message_content
 
 
 class ProjectionFormatter:
@@ -87,7 +88,7 @@ class ProjectionFormatter:
                 # Full: print all events with metadata
                 for event in transcript:
                     role = event.get("role", "?")
-                    content = str(event.get("content", ""))
+                    content = prompt_safe_message_content(str(role), event.get("content", ""))
                     event_id = event.get("event_id", "")
                     sequence = event.get("sequence", 0)
                     metadata = event.get("metadata", {})
@@ -100,7 +101,7 @@ class ProjectionFormatter:
                 # Summary: show last 5 events
                 for event in transcript[-5:]:
                     role = event.get("role", "?")
-                    content = str(event.get("content", ""))[:80]
+                    content = prompt_safe_message_content(str(role), event.get("content", ""))[:80]
                     lines.append(f"  [{role}] {content}...")
         else:
             lines.append("transcript_events: (empty)")
@@ -153,7 +154,7 @@ class ProjectionFormatter:
             if role == "tool_result":
                 role = "tool"
 
-            messages.append({"role": role, "content": content})
+            messages.append({"role": role, "content": prompt_safe_message_content(role, content)})
 
         return messages
 
@@ -295,7 +296,11 @@ class ProjectionFormatter:
                 metadata["route"] = route
                 metadata["artifact_id"] = artifact_id
                 # Keep full content for recent events, use stub for older ones
-                content = event.content if is_recent else f"[Artifact stored: {artifact_id}]"
+                content = (
+                    prompt_safe_message_content(event.role, event.content)
+                    if is_recent
+                    else f"[Artifact stored: {artifact_id}]"
+                )
                 messages.append(
                     {
                         "role": event.role,
@@ -309,7 +314,7 @@ class ProjectionFormatter:
                 messages.append(
                     {
                         "role": event.role,
-                        "content": event.content,
+                        "content": prompt_safe_message_content(event.role, event.content),
                         "metadata": metadata,
                     }
                 )
@@ -337,7 +342,9 @@ class ProjectionFormatter:
             if run_card.pending_followup_action:
                 run_card_lines.append(f"Pending: {run_card.pending_followup_action}")
             if run_card.last_turn_outcome:
-                run_card_lines.append(f"Last outcome: {run_card.last_turn_outcome}")
+                run_card_lines.append(
+                    f"Last outcome: {prompt_safe_message_content('assistant', run_card.last_turn_outcome)}"
+                )
             messages.append(
                 {
                     "role": "system",

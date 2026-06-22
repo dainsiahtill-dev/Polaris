@@ -914,12 +914,21 @@ class DirectorAdapter(BaseRoleAdapter):
     # Director Message Building
     # -------------------------------------------------------------------------
 
-    def _build_director_message(self, task: dict[str, Any], *, text_patch_mode: bool = False) -> str:
+    def _build_director_message(
+        self,
+        task: dict[str, Any],
+        *,
+        text_patch_mode: bool = False,
+        context: dict[str, Any] | None = None,
+    ) -> str:
         """构建 Director 角色消息"""
         subject = task.get("subject", "")
         description = DirectorStateTracker.sanitize_task_description(str(task.get("description") or ""))
         raw_metadata = task.get("metadata")
         metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+        runtime_context = context if isinstance(context, dict) else {}
+        runtime_metadata_raw = runtime_context.get("metadata")
+        runtime_metadata: dict[str, Any] = runtime_metadata_raw if isinstance(runtime_metadata_raw, dict) else {}
         goal = str(metadata.get("goal") or task.get("goal") or "").strip()
         scope = metadata.get("scope") or task.get("scope")
         steps = (
@@ -974,8 +983,33 @@ class DirectorAdapter(BaseRoleAdapter):
         step_items = _stringify_list(steps)
         acceptance_items = _stringify_list(acceptance)
         qa_rework_items = _stringify_list(qa_rework_evidence)
+        blueprint_id = str(
+            metadata.get("blueprint_id")
+            or task.get("blueprint_id")
+            or runtime_context.get("blueprint_id")
+            or runtime_metadata.get("blueprint_id")
+            or ""
+        ).strip()
+        construction_step_raw = runtime_context.get("construction_step") or metadata.get("construction_step")
+        construction_step: dict[str, Any] = construction_step_raw if isinstance(construction_step_raw, dict) else {}
+        construction_target = str(construction_step.get("target_file") or "").strip()
+        construction_signatures = _stringify_list(construction_step.get("signatures"))[:8]
+        construction_verify = str(construction_step.get("verify") or "").strip()
+        factory_project = str(
+            metadata.get("factory_bench_project_id")
+            or runtime_metadata.get("factory_bench_project_id")
+            or runtime_context.get("factory_bench_project_id")
+            or ""
+        ).strip()
+        factory_title = str(
+            metadata.get("factory_bench_title")
+            or runtime_metadata.get("factory_bench_title")
+            or runtime_context.get("factory_bench_title")
+            or ""
+        ).strip()
 
         lines = [
+            "PM Task Contract / 任务合同:",
             f"任务: {subject}",
             "",
             f"描述: {description}" if description else "",
@@ -987,8 +1021,19 @@ class DirectorAdapter(BaseRoleAdapter):
             "执行步骤:",
             *[f"- {item}" for item in step_items],
             "",
-            "验收标准:",
+            "Acceptance criteria / 验收标准:",
             *[f"- {item}" for item in acceptance_items],
+            "",
+            "Chief Engineer Blueprint / CE 蓝图交接:",
+            f"- blueprint_id: {blueprint_id}" if blueprint_id else "- blueprint_id: not provided",
+            f"- construction target: {construction_target}" if construction_target else "",
+            ("- construction signatures: " + "; ".join(construction_signatures) if construction_signatures else ""),
+            f"- construction verify: {construction_verify}" if construction_verify else "",
+            (
+                f"- factory bench project: {factory_project}" + (f" - {factory_title}" if factory_title else "")
+                if factory_project or factory_title
+                else ""
+            ),
             "",
             "QA 返工要求:" if qa_rework_reason else "",
             f"- 原因: {qa_rework_reason}" if qa_rework_reason else "",

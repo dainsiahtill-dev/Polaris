@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.orchestration.pm_dispatch.internal.dispatch._lazy_imports import (
+    _get_chief_engineer_blueprint_services,
     _get_cognitive_runtime_services,
     _get_io_utils,
     _get_shangshuling_port,
@@ -710,6 +711,122 @@ def _build_integration_qa_last_failure(
     }
 
 
+def _build_integration_qa_verification_failure_report(
+    *,
+    result: dict[str, Any],
+    last_failure: dict[str, Any],
+    task_id: str,
+    target_task_id: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "verification.failure.v1",
+        "source": "pm_dispatch.integration_qa",
+        "failure_classification": "Director Execution",
+        "gate": "integration_qa",
+        "reason": str(result.get("reason") or "integration_qa_failed"),
+        "summary": str(result.get("summary") or ""),
+        "errors": _string_list_from_result_field(result.get("errors")),
+        "pm_task_id": task_id,
+        "target_task_id": target_task_id,
+        "run_id": str(result.get("run_id") or ""),
+        "result_path": str(result.get("result_path") or ""),
+        "runtime_result_path": str(result.get("runtime_result_path") or ""),
+        "last_failure": dict(last_failure),
+    }
+
+
+def _build_integration_qa_rework_blueprint_context(
+    *,
+    task: dict[str, Any],
+    task_id: str,
+    target_task_id: str,
+    last_failure: dict[str, Any],
+    verification_failure_report: dict[str, Any],
+) -> dict[str, Any]:
+    title = str(task.get("title") or task.get("name") or task_id).strip()
+    target_files = _string_list_from_task(task, "target_files")
+    acceptance_criteria = _string_list_from_task(task, "acceptance_criteria")
+    return {
+        "task": dict(task),
+        "task_title": f"Rework after integration QA failure: {title}" if title else "Integration QA rework",
+        "title": title,
+        "pm_task_id": task_id,
+        "director_task_id": target_task_id,
+        "target_files": target_files,
+        "scope_paths": target_files,
+        "acceptance_criteria": acceptance_criteria,
+        "execution_checklist": [
+            "Inspect the recorded integration QA failure evidence before editing.",
+            "Repair the existing implementation within the PM contract and CE handoff scope.",
+            "Run at least one real build, test, lint, CLI, Web, or API gate after the repair.",
+        ],
+        "rework": {
+            "kind": "integration_qa_failure",
+            "requires_chief_engineer_handoff": True,
+            "failure": dict(last_failure),
+            "verification_failure_report": dict(verification_failure_report),
+        },
+    }
+
+
+def _generate_integration_qa_rework_blueprint(
+    *,
+    workspace_full: str,
+    result: dict[str, Any],
+    task: dict[str, Any],
+    task_id: str,
+    target_task_id: str,
+    last_failure: dict[str, Any],
+    verification_failure_report: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        command_type, generate_blueprint = _get_chief_engineer_blueprint_services()
+    except (ImportError, RuntimeError, ValueError) as exc:
+        return {"ok": False, "error": f"chief_engineer_blueprint_unavailable: {exc}"}
+
+    objective = (
+        f"Repair task {target_task_id} after integration QA failure. "
+        f"Failure: {last_failure.get('error_message') or result.get('summary') or result.get('reason')}"
+    )
+    try:
+        blueprint_result = generate_blueprint(
+            command_type(
+                task_id=target_task_id,
+                workspace=workspace_full,
+                objective=objective[:4000],
+                run_id=str(result.get("run_id") or ""),
+                constraints={
+                    "source": "pm_dispatch.integration_qa.rework",
+                    "chain": "PM->ChiefEngineer->Director",
+                    "failure_classification": "Director Execution",
+                    "must_preserve_pm_contract": True,
+                    "target_project_code_must_not_be_hardcoded_in_polaris": True,
+                },
+                context=_build_integration_qa_rework_blueprint_context(
+                    task=task,
+                    task_id=task_id,
+                    target_task_id=target_task_id,
+                    last_failure=last_failure,
+                    verification_failure_report=verification_failure_report,
+                ),
+            )
+        )
+    except (RuntimeError, TypeError, ValueError) as exc:
+        return {"ok": False, "error": f"chief_engineer_blueprint_failed: {type(exc).__name__}: {exc}"}
+
+    blueprint_id = str(getattr(blueprint_result, "blueprint_id", "") or "").strip()
+    blueprint_path = str(getattr(blueprint_result, "blueprint_path", "") or "").strip()
+    if not bool(getattr(blueprint_result, "ok", False)) or not blueprint_id or not blueprint_path:
+        summary = str(getattr(blueprint_result, "summary", "") or getattr(blueprint_result, "status", "") or "")
+        return {"ok": False, "error": f"chief_engineer_blueprint_invalid: {summary}"}
+    return {
+        "ok": True,
+        "blueprint_id": blueprint_id,
+        "blueprint_path": blueprint_path,
+        "summary": str(getattr(blueprint_result, "summary", "") or ""),
+    }
+
+
 def _resolve_integration_qa_requeue_target_ids(
     *,
     task_market_service: Any,
@@ -792,6 +909,41 @@ def _requeue_director_tasks_after_integration_qa_failure(
             pm_task_id=task_id,
         )
         for target_task_id in target_task_ids:
+            verification_failure_report = _build_integration_qa_verification_failure_report(
+                result=result,
+                last_failure=last_failure,
+                task_id=task_id,
+                target_task_id=target_task_id,
+            )
+            ce_rework_blueprint = _generate_integration_qa_rework_blueprint(
+                workspace_full=workspace_full,
+                result=result,
+                task=task,
+                task_id=task_id,
+                target_task_id=target_task_id,
+                last_failure=last_failure,
+                verification_failure_report=verification_failure_report,
+            )
+            if not bool(ce_rework_blueprint.get("ok")):
+                feedback["skipped_task_ids"].append(target_task_id)
+                feedback["errors"].append(f"{target_task_id}: {ce_rework_blueprint.get('error') or 'ce_rework_failed'}")
+                continue
+            chief_engineer_handoff = {
+                "source": "chief_engineer.generate_task_blueprint",
+                "handoff_kind": "integration_qa_rework",
+                "chain": "PM->ChiefEngineer->Director",
+                "pm_task_id": task_id,
+                "director_task_id": target_task_id,
+                "blueprint_id": str(ce_rework_blueprint["blueprint_id"]),
+                "blueprint_path": str(ce_rework_blueprint["blueprint_path"]),
+            }
+            enriched_last_failure = {
+                **last_failure,
+                "ce_rework_required": True,
+                "ce_rework_blueprint_id": str(ce_rework_blueprint["blueprint_id"]),
+                "ce_rework_blueprint_path": str(ce_rework_blueprint["blueprint_path"]),
+                "chief_engineer_handoff": chief_engineer_handoff,
+            }
             try:
                 requeue_result = task_market_service.requeue_task(
                     requeue_task_command_v1(
@@ -800,9 +952,19 @@ def _requeue_director_tasks_after_integration_qa_failure(
                         target_stage="pending_exec",
                         reason=str(result.get("summary") or result.get("reason") or "integration_qa_failed"),
                         metadata={
-                            "source": "pm_dispatch.integration_qa",
+                            "source": "pm_dispatch.integration_qa.rework",
                             "pm_task_id": task_id,
-                            "last_failure": last_failure,
+                            "ce_rework_required": True,
+                            "ce_rework_blueprint_id": str(ce_rework_blueprint["blueprint_id"]),
+                            "ce_rework_blueprint_path": str(ce_rework_blueprint["blueprint_path"]),
+                            "chief_engineer_handoff": chief_engineer_handoff,
+                            "verification_failure_report": verification_failure_report,
+                            "last_failure": enriched_last_failure,
+                        },
+                        reopen_policy={
+                            "allowed_sources": ["pm_dispatch.integration_qa.rework"],
+                            "max_reopen_count": 3,
+                            "requires_failure_report": True,
                         },
                     )
                 )

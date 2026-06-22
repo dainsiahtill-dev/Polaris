@@ -351,6 +351,56 @@ def looks_like_patch_like_write_content(value: Any) -> bool:
     return bool(re.match(r"^\s*(?:search:?\s*\n|patch_file\b|file:|create:)\s*", body, flags=re.IGNORECASE))
 
 
+def _strip_json_markdown_fence(body: str) -> tuple[str, bool]:
+    stripped = body.strip()
+    fence_match = re.match(r"^```(?:json|jsonc|javascript|js)?\s*\n(?P<body>.*?)(?:\n)?```\s*$", stripped, re.DOTALL)
+    if fence_match is not None:
+        return fence_match.group("body").strip(), True
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json|jsonc|javascript|js)?\s*", "", stripped, flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```\s*$", "", stripped)
+        return stripped.strip(), True
+    return body, False
+
+
+def _json_object_text(value: str) -> str | None:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return json.dumps(parsed, ensure_ascii=False, indent=2) + "\n"
+
+
+def _normalize_json_write_content(file_path: str, body: str) -> tuple[str, bool] | None:
+    if not str(file_path or "").lower().endswith(".json"):
+        return None
+
+    stripped, changed = _strip_json_markdown_fence(body)
+    candidates = [stripped.strip()]
+    lead = candidates[0].lstrip()
+    if lead and not lead.startswith("{"):
+        if lead.startswith('"'):
+            candidates.append("{" + lead)
+        elif re.match(r'^[A-Za-z_][A-Za-z0-9_-]*"\s*:', lead):
+            candidates.append('{"' + lead)
+    candidates.extend(
+        candidate.rstrip() + "}" for candidate in list(candidates) if not candidate.rstrip().endswith("}")
+    )
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        normalized = _json_object_text(candidate)
+        if normalized is None:
+            continue
+        return normalized, changed or normalized != body
+    return None
+
+
 def normalize_patch_like_write_content(
     file_path: str,
     content: Any,
@@ -369,6 +419,13 @@ def normalize_patch_like_write_content(
         )
     body = cleaned_body
     if not looks_like_patch_like_write_content(body):
+        json_normalized = _normalize_json_write_content(file_path, body)
+        if json_normalized is not None:
+            normalized_body, changed = json_normalized
+            return WriteContentNormalization(
+                content=normalized_body,
+                normalized_patch_like=changed,
+            )
         return WriteContentNormalization(content=body)
 
     compare_path = _normalize_compare_path(str(file_path or ""))

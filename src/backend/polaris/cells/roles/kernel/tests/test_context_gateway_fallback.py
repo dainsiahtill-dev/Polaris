@@ -381,6 +381,11 @@ class TestProcessContextOverride:
             "llm_provider_policy": {"allowed_provider_types": ["ollama"]},
             "role_runtime_required": True,
             "cognitive_runtime_required": True,
+            "cognitive_guidance": {
+                "intent_type": "test",
+                "execution_path": "thinking",
+                "confidence": 0.7,
+            },
             "_transaction_kernel_prebuilt_messages": [{"role": "system", "content": "internal"}],
         }
         result = gateway._process_context_override(override)
@@ -394,6 +399,9 @@ class TestProcessContextOverride:
         assert "allowed_provider_types" not in content
         assert "role_runtime_required" not in content
         assert "cognitive_runtime_required" not in content
+        assert "cognitive_guidance" not in content
+        assert "execution_path" not in content
+        assert "thinking" not in content
         assert "_transaction_kernel_prebuilt_messages" not in content
 
 

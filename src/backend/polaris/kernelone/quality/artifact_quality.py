@@ -83,6 +83,28 @@ _PATCH_RESIDUE_RE = re.compile(
     r"(?m)^\s*(?:<{4,7}\s*SEARCH\b|>{4,7}\s*REPLACE\b|END\s+PATCH_FILE\b|PATCH_FILE(?::|\s+))",
     re.IGNORECASE,
 )
+_TOOL_RECEIPT_CONTAMINATION_TOKENS = (
+    "**write_file**: error",
+    "**edit_file**: error",
+    "**append_to_file**: error",
+    "destructive shrink rejected",
+    "director_write_policy_denied",
+    "handler_error_type",
+)
+_SOURCE_NARRATION_LEAK_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"i(?:'|’)ll\s+|"
+    r"i\s+will\s+|"
+    r"let\s+me\s+|"
+    r"here(?:'|’)s\s+|"
+    r"here\s+is\s+|"
+    r"below\s+is\s+|"
+    r"the\s+(?:two\s+)?(?:problem|problems|issue|issues)\s+(?:are|is)\b|"
+    r"我(?:会|将|来)|"
+    r"让我|"
+    r"下面(?:是|我)"
+    r")"
+)
 _NPM_SCRIPT_SHELL_SUBSTITUTION_RE = re.compile(r"`|\$\(")
 _NPM_SCRIPT_TSC_RE = re.compile(r"(?:^|[&|;\s])(?:npx\s+)?tsc(?:\s|$)", re.IGNORECASE)
 _TS_RETURN_OBJECT_BLOCK_RE = re.compile(r"return\s*\{(?P<body>.*?)^\s*\};", re.DOTALL | re.MULTILINE)
@@ -406,11 +428,49 @@ def _is_source_artifact(path: Path) -> bool:
     return path.name.lower() == "package.json" or path.suffix.lower() in _ARTIFACT_QUALITY_SOURCE_EXTS
 
 
+def _tool_receipt_contamination_error(relative_path: str, text: str) -> str:
+    lowered = str(text or "").lower()
+    if not any(token in lowered for token in _TOOL_RECEIPT_CONTAMINATION_TOKENS):
+        return ""
+    return (
+        "Artifact quality scan failed: tool execution receipt contamination in "
+        f"{relative_path}; file contains a Polaris tool failure receipt instead of source code. "
+        "Rewrite this artifact with real UTF-8 project code and do not copy tool error text."
+    )
+
+
+def _source_narration_contamination_error(relative_path: str, text: str) -> str:
+    suffix = Path(relative_path).suffix.lower()
+    if suffix not in _ARTIFACT_QUALITY_SOURCE_EXTS:
+        return ""
+    stripped = str(text or "").lstrip()
+    if not stripped:
+        return ""
+    first_line = stripped.splitlines()[0].strip()
+    if first_line.startswith(("#", "//", "/*", "*", '"""', "'''")):
+        return ""
+    if not _SOURCE_NARRATION_LEAK_RE.search(stripped[:500]):
+        return ""
+    return (
+        "Artifact quality scan failed: source narration contamination in "
+        f"{relative_path}; file starts with assistant prose instead of project source code. "
+        "Rewrite this artifact with real UTF-8 source only."
+    )
+
+
 def _scan_file(root_full: Path, full_path: Path, relative_path: str) -> list[str]:
     try:
         text = full_path.read_text(encoding="utf-8", errors="replace")[:1_000_000]
     except (OSError, RuntimeError, ValueError):
         return []
+
+    receipt_error = _tool_receipt_contamination_error(relative_path, text)
+    if receipt_error:
+        return [receipt_error]
+
+    narration_error = _source_narration_contamination_error(relative_path, text)
+    if narration_error:
+        return [narration_error]
 
     errors: list[str] = []
     syntax = check_source_file_syntax(str(full_path))

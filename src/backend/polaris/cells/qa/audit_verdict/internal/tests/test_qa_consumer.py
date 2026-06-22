@@ -223,6 +223,59 @@ class TestQAConsumerPollOnce:
         assert metadata["max_retries"] == 0
 
     @pytest.mark.asyncio
+    async def test_llm_review_includes_payload_context_for_ce_blueprint_coverage(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        calls: list[Any] = []
+
+        class FakeDialogueService:
+            def __init__(self, settings: object) -> None:
+                self.settings = settings
+
+            async def invoke_role_dialogue(self, command: object) -> object:
+                calls.append(command)
+                return SimpleNamespace(
+                    ok=True,
+                    status="ok",
+                    content='{"verdict":"PASS","findings":[],"summary":"ok"}',
+                    metadata={},
+                    error_code=None,
+                    error_message=None,
+                )
+
+        monkeypatch.setattr(
+            "polaris.cells.llm.dialogue.public.service.LlmDialogueService",
+            FakeDialogueService,
+        )
+        consumer = QAConsumer(workspace=str(tmp_path), worker_id="qa-llm", enable_llm_audit=True)
+
+        result = await consumer._run_qa_llm_review_async(
+            task_id="task-llm-context",
+            task_subject="Review target",
+            changed_files=[],
+            audit_result={"verdict": "FAIL", "findings": ["npm run build failed"]},
+            payload={
+                "run_id": "run-llm",
+                "input": (
+                    'PM task contract: acceptance criteria and target_files ["src/main.ts"].\n'
+                    "Chief Engineer blueprint evidence collected before QA judgement: blueprint_id=bp-1.\n"
+                    'factory_workspace_quality: npm run build failed with exit_code=2; "factory_run_id": "run-llm"'
+                ),
+            },
+        )
+
+        assert result["ok"] is True
+        assert calls
+        message = calls[0].message
+        assert "PM task contract" in message
+        assert "Chief Engineer blueprint evidence" in message
+        assert "factory_workspace_quality" in message
+        assert '"factory_run_id"' not in message
+        assert '"factory_run_ref"' in message
+
+    @pytest.mark.asyncio
     async def test_malformed_llm_review_does_not_override_deterministic_pass(
         self,
         monkeypatch: pytest.MonkeyPatch,

@@ -22,6 +22,18 @@ def _get_chief_engineer_service() -> Callable:
     return run_pre_dispatch_chief_engineer
 
 
+def _get_chief_engineer_blueprint_services() -> tuple[type, Callable]:
+    """Lazy import for chief_engineer.blueprint public blueprint generation."""
+    from polaris.cells.chief_engineer.blueprint.public.contracts import (
+        GenerateTaskBlueprintCommandV1,
+    )
+    from polaris.cells.chief_engineer.blueprint.public.service import (
+        generate_task_blueprint,
+    )
+
+    return GenerateTaskBlueprintCommandV1, generate_task_blueprint
+
+
 def _get_workflow_runtime() -> tuple[type, type, Callable]:
     """Lazy import for workflow_runtime to avoid module-level cross-Cell coupling."""
     from polaris.cells.orchestration.workflow_runtime.public.service import (

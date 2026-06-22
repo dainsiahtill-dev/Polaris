@@ -1783,6 +1783,372 @@ def _record_has_generated_artifact_failure(record: dict[str, Any]) -> bool:
     )
 
 
+def _nested_chain_results(record: dict[str, Any]) -> dict[str, Any]:
+    chain_results = record.get("chain_results")
+    if isinstance(chain_results, dict):
+        return chain_results
+    chain = record.get("chain")
+    if isinstance(chain, dict):
+        chain_results = chain.get("chain_results")
+        if isinstance(chain_results, dict):
+            return chain_results
+    return {}
+
+
+def _director_failure_evidence(record: dict[str, Any]) -> str:
+    chain = record.get("chain")
+    audit_bundle = chain.get("audit_bundle") if isinstance(chain, dict) else {}
+    failure = audit_bundle.get("failure") if isinstance(audit_bundle, dict) else {}
+    if isinstance(failure, dict):
+        detail = str(failure.get("detail") or failure.get("code") or "").strip()
+        if detail:
+            return detail
+    return ""
+
+
+def _director_failure_reason(record: dict[str, Any]) -> str:
+    text = json.dumps(record.get("chain") or {}, ensure_ascii=False, default=str).lower()
+    if "binding fanout" in text or "quarantined" in text:
+        return "director_binding_fanout_failed"
+    if (
+        "director_materialization_quality_failed" in text
+        or "director_missing_write_receipt" in text
+        or "director_no_materialized_changes" in text
+    ):
+        return "director_materialization_failed"
+    if "director.run_status_non_success" in text:
+        return "director_run_status_non_success"
+    return "director_execution_failed"
+
+
+def _record_has_director_execution_failure(record: dict[str, Any]) -> bool:
+    chain_results = _nested_chain_results(record)
+    director = chain_results.get("director") if isinstance(chain_results, dict) else {}
+    if isinstance(director, dict) and (int(director.get("failures") or 0) > 0 or int(director.get("blocked") or 0) > 0):
+        return True
+
+    text = json.dumps(
+        {
+            "terminal_status": record.get("terminal_status"),
+            "chain": record.get("chain"),
+            "failed_gates": _gate_failures(record),
+        },
+        ensure_ascii=False,
+        default=str,
+    )
+    return bool(
+        re.search(
+            r"director(?:[_ .-]?binding)?[_ .-]?fanout|"
+            r"director[_ .-]?dispatch failed|"
+            r"director[_ .-]?materialization[_ .-]?quality[_ .-]?failed|"
+            r"director[_ .-]?missing[_ .-]?write[_ .-]?receipt|"
+            r"director[_ .-]?no[_ .-]?materialized[_ .-]?changes|"
+            r"director\.run_status_non_success|"
+            r"director_partial|"
+            r"\\bquarantined\\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _record_has_explicit_director_execution_failure(record: dict[str, Any]) -> bool:
+    chain_results = _nested_chain_results(record)
+    director = chain_results.get("director") if isinstance(chain_results, dict) else {}
+    if isinstance(director, dict) and (int(director.get("failures") or 0) > 0 or int(director.get("blocked") or 0) > 0):
+        return True
+
+    text = json.dumps(
+        {
+            "chain": record.get("chain"),
+            "failed_gates": _gate_failures(record),
+        },
+        ensure_ascii=False,
+        default=str,
+    )
+    return bool(
+        re.search(
+            r"director(?:[_ .-]?binding)?[_ .-]?fanout|"
+            r"director[_ .-]?dispatch failed|"
+            r"director[_ .-]?materialization[_ .-]?quality[_ .-]?failed|"
+            r"director[_ .-]?missing[_ .-]?write[_ .-]?receipt|"
+            r"director[_ .-]?no[_ .-]?materialized[_ .-]?changes|"
+            r"director\.run_status_non_success|"
+            r"\\bquarantined\\b",
+            text,
+            re.IGNORECASE,
+        )
+    )
+
+
+_RUNTIME_ENVIRONMENT_FAILURE_TOKENS = (
+    "cognitive_runtime_mainline_unavailable",
+    "mainline_unavailable:process",
+    "process:filenotfounderror",
+    "pm.runtime.exception",
+    "runtime.environment",
+    "workspace_switch_failed",
+)
+
+
+def _record_has_runtime_environment_failure(record: dict[str, Any]) -> bool:
+    text = json.dumps(
+        {
+            "failure_reasons": record.get("failure_reasons"),
+            "failure_evidence": record.get("failure_evidence"),
+            "chain": record.get("chain"),
+            "factory_gates": record.get("factory_gates"),
+        },
+        ensure_ascii=False,
+        default=str,
+    ).lower()
+    if "workspace_switch_failed" in text:
+        return True
+    if "cognitive_runtime_mainline_unavailable" in text:
+        return True
+    return "filenotfounderror" in text and (
+        "pm.run_status_non_success" in text or "pm.runtime.exception" in text or "mainline_unavailable" in text
+    )
+
+
+def _runtime_environment_failure_reason(record: dict[str, Any]) -> str:
+    text = json.dumps(record, ensure_ascii=False, default=str).lower()
+    if "workspace_switch_failed" in text:
+        return "workspace_switch_failed"
+    if "cognitive_runtime_mainline_unavailable" in text:
+        return "cognitive_runtime_mainline_unavailable"
+    if "filenotfounderror" in text:
+        return "file_not_found"
+    return "runtime_environment_failed"
+
+
+def _runtime_environment_failure_evidence(record: dict[str, Any]) -> str:
+    chain = record.get("chain")
+    if isinstance(chain, dict) and str(chain.get("error") or "") == "workspace_switch_failed":
+        workspace_switch = chain.get("workspace_switch")
+        if isinstance(workspace_switch, dict):
+            detail = str(workspace_switch.get("workspace") or workspace_switch.get("detail") or "").strip()
+            if detail:
+                return detail
+    audit_bundle = chain.get("audit_bundle") if isinstance(chain, dict) else {}
+    failure = audit_bundle.get("failure") if isinstance(audit_bundle, dict) else {}
+    if isinstance(failure, dict):
+        detail = str(failure.get("detail") or failure.get("code") or "").strip()
+        if detail:
+            return detail
+    for key in ("failure_evidence", "failure_reasons"):
+        values = record.get(key)
+        if isinstance(values, list):
+            for value in values:
+                text = str(value or "").strip()
+                if text:
+                    return text
+    return ""
+
+
+def _record_has_qa_artifact_quality_failure(record: dict[str, Any]) -> bool:
+    """Return true when QA ran and failed on malformed generated artifacts."""
+    chain_results = _nested_chain_results(record)
+    if not bool(chain_results.get("qa_ran")):
+        return False
+    real_run_gate = record.get("real_run_gate")
+    if not (isinstance(real_run_gate, dict) and not real_run_gate.get("ok")):
+        return False
+    return _record_has_generated_artifact_failure(record)
+
+
+def _chief_engineer_failure_evidence(record: dict[str, Any]) -> str:
+    chain = record.get("chain")
+    audit_bundle = chain.get("audit_bundle") if isinstance(chain, dict) else {}
+    failure = audit_bundle.get("failure") if isinstance(audit_bundle, dict) else {}
+    if isinstance(failure, dict):
+        detail = str(failure.get("detail") or failure.get("code") or "").strip()
+        if detail:
+            return detail
+    return ""
+
+
+def _chief_engineer_failure_reason(record: dict[str, Any]) -> str:
+    text = json.dumps(record.get("chain") or {}, ensure_ascii=False, default=str).lower()
+    if "chief_engineer.llm_review_failed" in text or "no json object matched chief_engineer blueprint keys" in text:
+        return "llm_review_failed"
+    if _has_partial_chief_engineer_blueprint_generation(text):
+        return "partial_blueprint_generation"
+    return "missing_or_invalid_blueprint"
+
+
+_CE_BLUEPRINT_GENERATED_RE = re.compile(
+    r"chief engineer review generated\s+(?P<generated>\d+)\s*/\s*(?P<total>\d+)\s+blueprints",
+    re.IGNORECASE,
+)
+
+
+def _has_partial_chief_engineer_blueprint_generation(text: str) -> bool:
+    for match in _CE_BLUEPRINT_GENERATED_RE.finditer(str(text or "")):
+        try:
+            generated = int(match.group("generated"))
+            total = int(match.group("total"))
+        except (TypeError, ValueError):
+            continue
+        if total > 0 and generated < total:
+            return True
+    return False
+
+
+def _record_has_chief_engineer_blueprint_failure(record: dict[str, Any]) -> bool:
+    if record.get("has_blueprint_doc") is False or any(
+        gate.get("gate") == "blueprint_artifact_present" and not gate.get("ok") for gate in _gate_failures(record)
+    ):
+        return True
+
+    text = json.dumps(
+        {
+            "chain_state": record.get("chain_state"),
+            "chain": record.get("chain"),
+            "director_convergence": record.get("director_convergence"),
+        },
+        ensure_ascii=False,
+        default=str,
+    )
+    if str(record.get("chain_state") or "") == "clean":
+        return False
+    return bool(
+        re.search(
+            r"chief_engineer\.llm_review_failed|"
+            r"no json object matched chief_engineer blueprint keys|"
+            r"current_stage['\"]?:\s*['\"]chief_engineer_review|"
+            r"blocking_phase['\"]?:\s*['\"]chief_engineer_review",
+            text,
+            re.IGNORECASE,
+        )
+        or _has_partial_chief_engineer_blueprint_generation(text)
+    )
+
+
+_ROLE_TOOL_FAILURE_AUDIT_TOKENS = (
+    "director_write_policy_denied",
+    "handler_error_type",
+    "tool_result",
+    "tool_error",
+    "tool failure",
+    "**write_file**: error",
+    "policy_denied",
+    "permission_denied",
+    "scope_violation",
+    "unauthorized",
+    "director binding fanout",
+    "director_materialization_quality_failed",
+    "director_missing_write_receipt",
+    "director_no_materialized_changes",
+    "no_write_tool_available",
+)
+
+
+def _record_has_role_tool_failure_audit_signal(
+    record: dict[str, Any],
+    taxonomy: dict[str, Any],
+) -> bool:
+    if str(taxonomy.get("category") or "") == "director_tool_execution":
+        return True
+    text = json.dumps(
+        {
+            "failure_taxonomy": taxonomy,
+            "failure_reasons": record.get("failure_reasons"),
+            "failure_evidence": record.get("failure_evidence"),
+            "chain": record.get("chain"),
+            "llm_route_audit": record.get("llm_route_audit"),
+        },
+        ensure_ascii=False,
+        default=str,
+    ).lower()
+    return any(token in text for token in _ROLE_TOOL_FAILURE_AUDIT_TOKENS)
+
+
+def _record_workspace_hint(record: dict[str, Any], project_id: str) -> str:
+    raw_workspace = str(record.get("workspace") or "").strip()
+    if raw_workspace:
+        return raw_workspace
+    backend_metadata = record.get("backend_metadata")
+    backend_workspace = ""
+    if isinstance(backend_metadata, dict):
+        backend_workspace = str(backend_metadata.get("workspace") or "").strip()
+    if not backend_workspace:
+        return ""
+    base = Path(backend_workspace)
+    if project_id and base.name != project_id:
+        return str(base / project_id)
+    return str(base)
+
+
+def build_role_tool_failure_opencode_audit_request(
+    record: dict[str, Any],
+    taxonomy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the OpenCode audit assignment required by role tool failures."""
+    resolved_taxonomy = taxonomy if isinstance(taxonomy, dict) else {}
+    if not resolved_taxonomy:
+        existing = record.get("failure_taxonomy")
+        resolved_taxonomy = existing if isinstance(existing, dict) else classify_factory_bench_failure(record)
+
+    if bool(resolved_taxonomy.get("ok")) or not _record_has_role_tool_failure_audit_signal(record, resolved_taxonomy):
+        return {
+            "required": False,
+            "reason": "no_role_tool_failure_detected",
+        }
+
+    project_id = str(record.get("project_id") or "").strip()
+    level = record.get("level")
+    workspace = _record_workspace_hint(record, project_id)
+    runtime_dirs = record.get("runtime_dirs")
+    runtime_dir_list = [str(item) for item in runtime_dirs] if isinstance(runtime_dirs, list) else []
+    root_cause_signature = str(resolved_taxonomy.get("root_cause_signature") or "").strip()
+    evidence_items = [str(item) for item in list(resolved_taxonomy.get("evidence") or [])[:5] if str(item).strip()]
+    prompt = "\n".join(
+        [
+            "你是 Polaris 角色工具失败审计 OpenCode Agent。",
+            "任务：只读审计一次角色工具调用失败的真实根因，禁止修改代码。",
+            f"项目：{project_id or 'unknown'} L{level if level is not None else '?'}",
+            f"workspace：{workspace or '(unknown)'}",
+            f"runtime_dirs：{', '.join(runtime_dir_list) if runtime_dir_list else '(unknown)'}",
+            f"root_cause_signature：{root_cause_signature or '(unknown)'}",
+            "必须检查：",
+            "1. runtime event 中失败角色的 tool_call/tool_result 原始证据。",
+            "2. LLM call_start metadata.final_request_context_audit 与最终 messages。",
+            "3. context_snapshot_ref 对应 ContextOS 快照是否把失败回执原文再次投喂给 LLM。",
+            "4. ToolSpec、arg_aliases、工具名别名、参数字段归一化是否覆盖了该模型的调用习惯。",
+            "5. 失败应归因到 PM 合同、ChiefEngineer 蓝图、Director 工具执行、LLM 输出、上下文预算、目标项目基线、运行环境之一。",
+            "禁止：修改目标项目代码、mock 成功、吞异常、把工具失败改成静默 fallback。",
+            "最终输出 JSON：status/root_cause/evidence_paths/context_audit/tool_normalization_audit/remaining_risks。",
+            "触发证据：",
+            json.dumps(evidence_items, ensure_ascii=False),
+        ]
+    )
+    return {
+        "required": True,
+        "reason": "role_tool_failure_detected",
+        "mode": "read_only_first",
+        "recommended_agent_count": 5,
+        "trigger_category": str(resolved_taxonomy.get("category") or ""),
+        "root_cause_signature": root_cause_signature,
+        "must_review": [
+            "runtime_event_tool_call_and_tool_result",
+            "llm_call_start_final_request_context_audit",
+            "context_snapshot_ref_and_projected_messages",
+            "toolspec_arg_aliases_and_provider_tool_call_normalization",
+            "seven_bucket_failure_attribution",
+        ],
+        "forbidden": [
+            "target_project_code_changes",
+            "mock_or_fake_runtime_path",
+            "hardcoded_success",
+            "silent_fallback",
+            "polling_realtime_path",
+        ],
+        "opencode_command": 'opencode run "<self-contained role-tool-failure audit prompt>"',
+        "prompt": prompt,
+    }
+
+
 def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     """Assign one stable root-cause category to a per-project bench record."""
     if record.get("all_checks_passed"):
@@ -1799,14 +2165,23 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     combined = json.dumps(record, ensure_ascii=False, default=str)
     if _contains_context_budget_signal(combined):
         category, reason = "context_budget", "context_or_token_budget"
+    elif _record_has_runtime_environment_failure(record):
+        category, reason = "runtime_environment", _runtime_environment_failure_reason(record)
+        evidence.append(_runtime_environment_failure_evidence(record))
+    elif _record_has_chief_engineer_blueprint_failure(record):
+        category, reason = "chief_engineer_blueprint", _chief_engineer_failure_reason(record)
+        evidence.append(_chief_engineer_failure_evidence(record))
     elif isinstance(record.get("llm_route_audit"), dict) and not record["llm_route_audit"].get("ok"):
         category, reason = "llm_output", "llm_route_audit"
         evidence.append(str(record["llm_route_audit"].get("summary") or ""))
-    elif isinstance(record.get("chain"), dict) and str(record["chain"].get("error") or "") == "workspace_switch_failed":
-        category, reason = "runtime_environment", "workspace_switch_failed"
-        workspace_switch = record["chain"].get("workspace_switch")
-        if isinstance(workspace_switch, dict):
-            evidence.append(str(workspace_switch.get("workspace") or workspace_switch.get("detail") or ""))
+    elif _record_has_qa_artifact_quality_failure(record):
+        real_run_gate = record["real_run_gate"]
+        failed_requirement = _first_real_run_failure(real_run_gate)
+        category, reason = "llm_output", f"real_run_gate.{failed_requirement or 'generated_artifact_quality'}"
+        evidence.append(str(real_run_gate.get("summary") or ""))
+    elif _record_has_explicit_director_execution_failure(record) or _record_has_director_execution_failure(record):
+        category, reason = "director_tool_execution", _director_failure_reason(record)
+        evidence.append(_director_failure_evidence(record))
     elif isinstance(record.get("real_run_gate"), dict) and not record["real_run_gate"].get("ok"):
         failed_requirement = _first_real_run_failure(record["real_run_gate"])
         reason = f"real_run_gate.{failed_requirement or 'unknown'}"
@@ -1829,15 +2204,8 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     elif not record.get("has_plan_doc") or record.get("wrong_product_suspect"):
         category = "pm_contract"
         reason = "missing_or_wrong_contract"
-    elif record.get("has_blueprint_doc") is False or any(
-        gate.get("gate") == "blueprint_artifact_present" and not gate.get("ok") for gate in _gate_failures(record)
-    ):
-        category = "chief_engineer_blueprint"
-        reason = "missing_or_invalid_blueprint"
     elif str(record.get("chain_state") or "") != "clean":
-        director = (
-            record.get("chain_results", {}).get("director", {}) if isinstance(record.get("chain_results"), dict) else {}
-        )
+        director = _nested_chain_results(record).get("director", {})
         if isinstance(director, dict) and (
             int(director.get("failures") or 0) > 0 or int(director.get("blocked") or 0) > 0
         ):
@@ -1866,6 +2234,21 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
         "reasons": reasons,
         "evidence": [item for item in evidence if item],
     }
+
+
+def apply_factory_bench_failure_taxonomy(record: dict[str, Any]) -> dict[str, Any]:
+    """Classify a bench record and expose stable top-level attribution fields."""
+    taxonomy = classify_factory_bench_failure(record)
+    record["failure_taxonomy"] = taxonomy
+    record["failure_category"] = str(taxonomy.get("category") or "")
+    record["root_cause_signature"] = str(taxonomy.get("root_cause_signature") or "")
+    reasons = taxonomy.get("reasons")
+    evidence = taxonomy.get("evidence")
+    record["failure_reasons"] = list(reasons) if isinstance(reasons, list) else []
+    record["failure_evidence"] = list(evidence) if isinstance(evidence, list) else []
+    record["opencode_audit"] = build_role_tool_failure_opencode_audit_request(record, taxonomy)
+    record["goal_audit"] = aggregate_goal_audit([record])
+    return taxonomy
 
 
 def aggregate_goal_audit(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1899,8 +2282,10 @@ def aggregate_goal_audit(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 __all__ = [
     "aggregate_goal_audit",
+    "apply_factory_bench_failure_taxonomy",
     "build_llm_route_audit",
     "build_real_run_gate",
+    "build_role_tool_failure_opencode_audit_request",
     "classify_factory_bench_failure",
     "collect_llm_events",
     "resolve_expected_llm_bindings",

@@ -32,6 +32,7 @@ class CognitivePipelineResult:
     error_type: str | None = None
     retryable: bool = True
     blocked_tools: tuple[str, ...] = field(default_factory=tuple)
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 class CognitivePipeline:
@@ -82,6 +83,35 @@ class CognitivePipeline:
 
         # Step 3: BYPASS path - skip thinking, go directly to acting
         if recommendation.path == ExecutionPath.BYPASS:
+            if not self._acting.can_execute_action(message):
+                return CognitivePipelineResult(
+                    thinking_output=None,
+                    acting_output=ActingOutput(
+                        content=(
+                            "Cognitive acting skipped: input is not an explicit executable action; "
+                            "RoleRuntime remains responsible for LLM/tool execution."
+                        ),
+                        risk_level=recommendation.risk_level,
+                        actions_taken=(),
+                        rollback_steps=(),
+                        verification_needed=False,
+                        error_type=None,
+                        retryable=False,
+                    ),
+                    execution_recommendation=recommendation,
+                    reasoning_chain=reasoning_chain,
+                    meta_cognition=meta_cognition,
+                    path_taken=ExecutionPath.BYPASS,
+                    blocked=False,
+                    block_reason=None,
+                    error_type=None,
+                    retryable=False,
+                    metadata={
+                        "action_input_rejected": True,
+                        "action_rejection_reason": "not_explicit_tool_action",
+                        "tool_call_normalization_stage": "cognitive_bypass_guard",
+                    },
+                )
             acting_output = await self._acting.execute_action(
                 action=message,
                 execution_recommendation=recommendation,
@@ -98,6 +128,7 @@ class CognitivePipeline:
                 error_type=acting_output.error_type,
                 retryable=acting_output.retryable,
                 blocked_tools=acting_output.blocked_tools,
+                metadata={"action_input_rejected": False},
             )
 
         # Step 4: THINKING phase
@@ -121,6 +152,7 @@ class CognitivePipeline:
                 block_reason=None,
                 error_type=None,
                 retryable=True,
+                metadata={"action_input_rejected": True, "action_rejection_reason": "not_explicit_tool_action"},
             )
 
         acting_output = await self._acting.execute_action(
@@ -140,4 +172,5 @@ class CognitivePipeline:
             error_type=acting_output.error_type,
             retryable=acting_output.retryable,
             blocked_tools=acting_output.blocked_tools,
+            metadata={"action_input_rejected": False},
         )

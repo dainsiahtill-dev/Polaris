@@ -49,6 +49,7 @@ from .models import (
 logger = logging.getLogger(__name__)
 _IN_PROGRESS_STATUSES = {"in_design", "in_execution", "in_qa"}
 _NON_CONSUMING_REQUEUE_ERROR_CODES = frozenset({"SCOPE_CONFLICT"})
+_LEGACY_RESOLVED_REOPEN_SOURCES = frozenset({"pm_dispatch.integration_qa"})
 # Statuses a depends_on dependency can never recover from (subset of
 # models.TERMINAL_STATUSES minus "resolved"): dependents must cascade,
 # not strand.
@@ -919,8 +920,11 @@ class LifecycleMixin(ServiceBaseMixin):
 
             if item.status in {"rejected", "dead_letter"}:
                 return self._result_from_item(item, ok=False, reason="terminal_status")
-            if item.status == "resolved" and not self._integration_qa_reopen_allowed(command):
-                return self._result_from_item(item, ok=False, reason="terminal_status")
+            resolved_reopen_source = ""
+            if item.status == "resolved":
+                reopen_allowed, reopen_reason, resolved_reopen_source = self._resolved_reopen_allowed(item, command)
+                if not reopen_allowed:
+                    return self._result_from_item(item, ok=False, reason=reopen_reason)
             if item.status in {"completed", "cancelled"}:
                 return self._result_from_item(item, ok=False, reason="unsupported_status")
             if item.status == "waiting_human":
@@ -940,6 +944,10 @@ class LifecycleMixin(ServiceBaseMixin):
             item.metadata["requeue_reason"] = command.reason
             item.metadata["requeue_metadata"] = requeue_metadata
             item.metadata["requeued_at"] = now_iso()
+            if previous_status == "resolved":
+                item.metadata["reopen_count"] = self._safe_reopen_count(item.metadata) + 1
+                if resolved_reopen_source:
+                    item.metadata["last_reopen_source"] = resolved_reopen_source
             last_failure = requeue_metadata.get("last_failure")
             if isinstance(last_failure, dict):
                 item.payload = {
@@ -1454,3 +1462,71 @@ class LifecycleMixin(ServiceBaseMixin):
         metadata = dict(command.metadata)
         source = str(metadata.get("source") or "").strip()
         return source == "pm_dispatch.integration_qa"
+
+    @classmethod
+    def _resolved_reopen_allowed(
+        cls,
+        item: TaskWorkItemRecord,
+        command: RequeueTaskCommandV1,
+    ) -> tuple[bool, str, str]:
+        metadata = dict(command.metadata)
+        source = str(metadata.get("source") or "").strip()
+        if source in _LEGACY_RESOLVED_REOPEN_SOURCES:
+            return True, "requeued", source
+
+        policy = cls._resolved_reopen_policy(command)
+        if not policy:
+            return False, "terminal_status", source
+        if not cls._reopen_policy_source_allowed(source, policy):
+            return False, "terminal_status", source
+
+        max_reopen_count = cls._policy_max_reopen_count(policy)
+        if cls._safe_reopen_count(item.metadata) >= max_reopen_count:
+            return False, "reopen_limit_exceeded", source
+
+        if bool(policy.get("requires_failure_report", True)):
+            failure_report = metadata.get("verification_failure_report") or metadata.get("failure_report")
+            last_failure = metadata.get("last_failure")
+            if not isinstance(failure_report, dict) and not isinstance(last_failure, dict):
+                return False, "missing_failure_report", source
+
+        return True, "requeued", source
+
+    @staticmethod
+    def _resolved_reopen_policy(command: RequeueTaskCommandV1) -> dict[str, Any]:
+        metadata = dict(command.metadata)
+        raw_policy = command.reopen_policy or metadata.get("reopen_policy") or metadata.get("reopenPolicy")
+        return dict(raw_policy) if isinstance(raw_policy, dict) else {}
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [value.strip()] if value.strip() else []
+        if isinstance(value, (list, tuple, set)):
+            return [str(item or "").strip() for item in value if str(item or "").strip()]
+        return []
+
+    @classmethod
+    def _reopen_policy_source_allowed(cls, source: str, policy: dict[str, Any]) -> bool:
+        if not source:
+            return False
+        allowed_sources = set(cls._string_list(policy.get("allowed_sources")))
+        if source in allowed_sources:
+            return True
+        allowed_prefixes = cls._string_list(policy.get("allowed_source_prefixes"))
+        return any(source.startswith(prefix) for prefix in allowed_prefixes)
+
+    @staticmethod
+    def _policy_max_reopen_count(policy: dict[str, Any]) -> int:
+        try:
+            value = int(policy.get("max_reopen_count", 1) or 1)
+        except (TypeError, ValueError):
+            value = 1
+        return max(1, min(value, 20))
+
+    @staticmethod
+    def _safe_reopen_count(metadata: dict[str, Any]) -> int:
+        try:
+            return max(0, int(metadata.get("reopen_count", 0) or 0))
+        except (TypeError, ValueError):
+            return 0

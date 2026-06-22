@@ -12,6 +12,7 @@ from polaris.cells.factory.pipeline.internal.bench_gates import (
     _resolve_polaris_roots_runtime_dir,
     _script_depends_on_build_output,
     aggregate_goal_audit,
+    apply_factory_bench_failure_taxonomy,
     build_llm_route_audit,
     build_real_run_gate,
     classify_factory_bench_failure,
@@ -37,6 +38,469 @@ def _real_llm_event(
     if binding_id:
         event["binding_id"] = binding_id
     return event
+
+
+def test_apply_factory_bench_failure_taxonomy_exposes_top_level_fields() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [
+            {
+                "check": "ts_syntax",
+                "ok": False,
+                "detail": "TypeScript syntax check failed: src/engine/simulation.ts(58,16): TS1003",
+            }
+        ],
+        "factory_gates": [
+            {
+                "gate": "real_run_gate",
+                "ok": False,
+                "detail": "real run gate failed: build_test_lint_ran",
+            }
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: build_test_lint_ran",
+            "requirements": {
+                "artifact_landed": {"ok": True},
+                "environment_prepared": {"ok": True},
+                "build_test_lint_ran": {"ok": False},
+            },
+        },
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "llm_output"
+    assert taxonomy["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
+    assert record["failure_taxonomy"] == taxonomy
+    assert record["failure_category"] == "llm_output"
+    assert record["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
+    assert record["failure_reasons"]
+    assert record["failure_evidence"] == ["real run gate failed: build_test_lint_ran"]
+    assert record["opencode_audit"] == {
+        "required": False,
+        "reason": "no_role_tool_failure_detected",
+    }
+    assert record["goal_audit"] == {
+        "total": 1,
+        "real_run_gate": {"passed": 0, "total": 1},
+        "llm_route_audit": {"passed": 0, "total": 1},
+        "failure_categories": {"llm_output": 1},
+        "root_cause_signatures": {"llm_output:real_run_gate.build_test_lint_ran": 1},
+    }
+
+
+def test_factory_bench_taxonomy_prioritizes_pm_runtime_environment_over_missing_ce_blueprint() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "chain_state": "partial",
+        "terminal_status": "director_partial",
+        "has_blueprint_doc": False,
+        "checks": [
+            {"check": "package_scripts", "ok": False, "detail": "package.json not found"},
+        ],
+        "factory_gates": [
+            {
+                "gate": "blueprint_artifact_present",
+                "ok": False,
+                "detail": "blueprint artifact missing",
+            },
+            {
+                "gate": "chain_clean",
+                "ok": False,
+                "detail": "chain_state=partial exit_code=1",
+            },
+            {
+                "gate": "llm_route_audit",
+                "ok": False,
+                "detail": "LLM route audit failed: pm, director",
+            },
+        ],
+        "chain": {
+            "exit_code": 1,
+            "audit_bundle": {
+                "failure": {
+                    "code": "FACTORY_STAGE_FAILED",
+                    "detail": (
+                        "PM planning failed: Run status: failed | failed_task=task-0-pm (pm) | "
+                        "error=cognitive_runtime_mainline_unavailable:process:FileNotFoundError; "
+                        "error_code=pm.run_status_non_success"
+                    ),
+                }
+            },
+        },
+        "llm_route_audit": {"ok": False, "summary": "LLM route audit failed: pm, director"},
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: source_files_present",
+            "requirements": {
+                "source_files_present": {"ok": False},
+            },
+        },
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:cognitive_runtime_mainline_unavailable"
+    assert record["failure_category"] == "runtime_environment"
+    assert "cognitive_runtime_mainline_unavailable" in record["failure_evidence"][0]
+
+
+def test_factory_bench_taxonomy_prioritizes_director_fanout_over_real_run_gate() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "terminal_status": "director_partial",
+        "checks": [],
+        "factory_gates": [
+            {
+                "gate": "chain_clean",
+                "ok": False,
+                "detail": "chain_state=partial exit_code=1",
+            },
+            {
+                "gate": "real_run_gate",
+                "ok": False,
+                "detail": "real run gate failed: build_test_lint_ran",
+            },
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: build_test_lint_ran",
+            "requirements": {
+                "artifact_landed": {"ok": True},
+                "environment_prepared": {"ok": True},
+                "build_test_lint_ran": {"ok": False},
+                "entrypoint_smoke": {"ok": False},
+            },
+        },
+        "chain": {
+            "exit_code": 1,
+            "chain_results": {
+                "qa_ran": False,
+                "qa_passed": False,
+                "director": {
+                    "total": None,
+                    "successes": None,
+                    "failures": None,
+                    "blocked": None,
+                },
+                "exit_class": "director_partial",
+            },
+            "audit_bundle": {
+                "failure": {
+                    "code": "FACTORY_STAGE_FAILED",
+                    "detail": (
+                        "Director dispatch failed: Director binding fanout: 3 bindings, "
+                        "0 succeeded, 3 failed, 3 quarantined; "
+                        "error_code=director.run_status_non_success"
+                    ),
+                }
+            },
+        },
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "director_tool_execution"
+    assert taxonomy["root_cause_signature"] == "director_tool_execution:director_binding_fanout_failed"
+    assert record["failure_category"] == "director_tool_execution"
+    assert record["goal_audit"]["failure_categories"] == {"director_tool_execution": 1}
+    assert record["goal_audit"]["root_cause_signatures"] == {
+        "director_tool_execution:director_binding_fanout_failed": 1
+    }
+    assert "Director dispatch failed" in record["failure_evidence"][0]
+
+
+def test_factory_bench_taxonomy_does_not_treat_ce_full_blueprint_count_as_partial() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "chain_state": "partial",
+        "terminal_status": "director_partial",
+        "has_blueprint_doc": True,
+        "checks": [],
+        "factory_gates": [
+            {
+                "gate": "blueprint_artifact_present",
+                "ok": True,
+                "detail": "blueprint present",
+            },
+            {
+                "gate": "chain_clean",
+                "ok": False,
+                "detail": "chain_state=partial exit_code=1",
+            },
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: build_test_lint_ran",
+            "requirements": {
+                "artifact_landed": {"ok": True},
+                "environment_prepared": {"ok": True},
+                "build_test_lint_ran": {"ok": False},
+            },
+        },
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain": {
+            "exit_code": 1,
+            "stages": [
+                {
+                    "stage": "chief_engineer_review",
+                    "status": "success",
+                    "output": "Chief Engineer review generated 3/3 blueprints; signals=0",
+                }
+            ],
+            "chain_results": {
+                "qa_ran": True,
+                "qa_passed": False,
+                "director": {
+                    "total": 3,
+                    "successes": 0,
+                    "failures": 3,
+                    "blocked": 0,
+                },
+                "exit_class": "director_partial",
+            },
+            "audit_bundle": {
+                "failure": {
+                    "code": "FACTORY_STAGE_FAILED",
+                    "detail": "Director dispatch failed: director_materialization_quality_failed",
+                }
+            },
+        },
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "director_tool_execution"
+    assert taxonomy["root_cause_signature"] == "director_tool_execution:director_materialization_failed"
+    assert record["failure_category"] == "director_tool_execution"
+    assert record["opencode_audit"]["required"] is True
+    assert record["opencode_audit"]["recommended_agent_count"] == 5
+    assert "context_snapshot_ref" in record["opencode_audit"]["prompt"]
+    assert "toolspec_arg_aliases_and_provider_tool_call_normalization" in record["opencode_audit"]["must_review"]
+
+
+def test_role_tool_failure_opencode_prompt_derives_project_workspace_from_backend_metadata() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "project_id": "L1-01",
+        "level": 1,
+        "backend_metadata": {"workspace": "/tmp/factory-bench"},
+        "chain_results": {
+            "director": {
+                "total": 1,
+                "successes": 0,
+                "failures": 1,
+                "blocked": 0,
+            }
+        },
+        "chain": {
+            "audit_bundle": {"failure": {"detail": "Director dispatch failed: director_materialization_quality_failed"}}
+        },
+    }
+
+    apply_factory_bench_failure_taxonomy(record)
+
+    assert "workspace：/tmp/factory-bench/L1-01" in record["opencode_audit"]["prompt"]
+
+
+def test_factory_bench_taxonomy_prioritizes_post_qa_artifact_failure_over_director_failure() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "chain_state": "partial",
+        "checks": [{"check": "ts_syntax", "ok": True, "detail": "8 TypeScript files pass"}],
+        "factory_gates": [
+            {
+                "gate": "integration_qa_passed",
+                "ok": False,
+                "detail": "qa_ran=True qa_passed=False",
+            },
+            {
+                "gate": "real_run_gate",
+                "ok": False,
+                "detail": "real run gate failed: build_test_lint_ran",
+            },
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: build_test_lint_ran",
+            "requirements": {
+                "artifact_landed": {"ok": True},
+                "environment_prepared": {"ok": True},
+                "build_test_lint_ran": {"ok": False, "detail": "npm run build failed"},
+            },
+        },
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain": {
+            "exit_code": 1,
+            "chain_results": {
+                "qa_ran": True,
+                "qa_passed": False,
+                "director": {
+                    "total": None,
+                    "successes": None,
+                    "failures": None,
+                    "blocked": None,
+                },
+                "exit_class": "director_partial",
+            },
+            "audit_bundle": {
+                "failure": {
+                    "code": "FACTORY_STAGE_FAILED",
+                    "detail": "Director dispatch failed: director_materialization_quality_failed",
+                }
+            },
+        },
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "llm_output"
+    assert taxonomy["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
+    assert record["failure_category"] == "llm_output"
+    assert record["opencode_audit"]["required"] is True
+
+
+def test_factory_bench_taxonomy_classifies_post_qa_typescript_failure_as_llm_output() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "terminal_status": "director_partial",
+        "checks": [
+            {
+                "check": "ts_syntax",
+                "ok": False,
+                "detail": "TypeScript syntax check failed: tests/verify.test.ts(1,1698): TS1005",
+            }
+        ],
+        "factory_gates": [
+            {
+                "gate": "chain_clean",
+                "ok": False,
+                "detail": "chain_state=partial exit_code=1",
+            },
+            {
+                "gate": "integration_qa_passed",
+                "ok": False,
+                "detail": "qa_ran=True qa_passed=False",
+            },
+            {
+                "gate": "real_run_gate",
+                "ok": False,
+                "detail": "real run gate failed: build_test_lint_ran, entrypoint_smoke",
+            },
+        ],
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: build_test_lint_ran, entrypoint_smoke",
+            "requirements": {
+                "artifact_landed": {"ok": True},
+                "environment_prepared": {"ok": True},
+                "build_test_lint_ran": {"ok": False},
+                "entrypoint_smoke": {"ok": False},
+            },
+        },
+        "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
+        "chain": {
+            "exit_code": 1,
+            "chain_results": {
+                "qa_ran": True,
+                "qa_passed": False,
+                "qa_reason": "npm run build failed with TypeScript errors",
+                "director": {
+                    "total": None,
+                    "successes": None,
+                    "failures": None,
+                    "blocked": None,
+                },
+                "exit_class": "director_partial",
+            },
+            "audit_bundle": {
+                "failure": {
+                    "code": "FACTORY_STAGE_FAILED",
+                    "detail": (
+                        "Director dispatch failed: Director binding fanout: 3 bindings, "
+                        "0 succeeded, 3 failed, 0 quarantined; Quality gate failed after Director dispatch"
+                    ),
+                }
+            },
+        },
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "llm_output"
+    assert taxonomy["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
+    assert record["failure_category"] == "llm_output"
+    assert record["goal_audit"]["failure_categories"] == {"llm_output": 1}
+    assert record["opencode_audit"]["required"] is True
+
+
+def test_factory_bench_taxonomy_prioritizes_chief_engineer_blocker_over_downstream_route_audit() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "has_plan_doc": True,
+        "has_blueprint_doc": True,
+        "chain_state": "partial",
+        "checks": [
+            {
+                "check": "source_target_coverage:src/**/*.ts",
+                "ok": False,
+                "detail": "source target 'src/**/*.ts': no source files found",
+            }
+        ],
+        "factory_gates": [
+            {
+                "gate": "blueprint_artifact_present",
+                "ok": True,
+                "detail": "blueprint artifact discovered",
+            },
+            {
+                "gate": "llm_route_audit",
+                "ok": False,
+                "detail": "LLM route audit failed: director",
+            },
+        ],
+        "llm_route_audit": {"ok": False, "summary": "LLM route audit failed: director"},
+        "chain": {
+            "exit_code": 1,
+            "chain_results": {
+                "qa_ran": False,
+                "qa_passed": False,
+                "director": {"total": None, "successes": None, "failures": None, "blocked": None},
+                "exit_class": "director_partial",
+            },
+            "audit_bundle": {
+                "current_stage": "chief_engineer_review",
+                "last_successful_stage": "pm_planning",
+                "failure": {
+                    "code": "FACTORY_STAGE_FAILED",
+                    "detail": (
+                        "Chief Engineer review generated 8/9 blueprints; "
+                        "signals=1; error_code=chief_engineer.llm_review_failed; "
+                        "root_cause_hint=验证失败，已重试1次: No JSON object matched "
+                        "chief_engineer blueprint keys: construction_plan, scope_for_apply, risk_flags"
+                    ),
+                },
+                "director_convergence": {
+                    "blocking_phase": "chief_engineer_review",
+                    "missing_delivery_targets": ["director_dispatch", "quality_gate"],
+                },
+            },
+        },
+        "director_convergence": {
+            "blocking_phase": "chief_engineer_review",
+            "missing_delivery_targets": ["director_dispatch", "quality_gate"],
+        },
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "chief_engineer_blueprint"
+    assert taxonomy["root_cause_signature"] == "chief_engineer_blueprint:llm_review_failed"
+    assert record["failure_category"] == "chief_engineer_blueprint"
+    assert record["goal_audit"]["failure_categories"] == {"chief_engineer_blueprint": 1}
+    assert "Chief Engineer review generated 8/9 blueprints" in record["failure_evidence"][0]
 
 
 def test_real_run_gate_executes_python_build_and_cli_entrypoint(tmp_path: Path) -> None:

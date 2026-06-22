@@ -1099,7 +1099,7 @@ async def _execute_standard_llm_flow(
 ) -> dict[str, Any]:
     """执行标准 LLM 流程"""
     await _attach_director_file_event_bus(adapter)
-    message = adapter._build_director_message(task)
+    message = adapter._build_director_message(task, context=context)
     requires_fresh_materialization = _task_requires_fresh_materialization(task)
     context = _pin_materialize_context_delivery_mode(context, requires_fresh_materialization)
     message = _pin_materialize_delivery_mode(message, requires_fresh_materialization)
@@ -1659,6 +1659,17 @@ def _phase_deterministic_cleanup(
         all_affected_files,
         tool_results,
     )
+
+
+def _mark_quality_repair_summary_revalidated(
+    summary: dict[str, Any] | None, artifact_quality_errors: list[str]
+) -> None:
+    if not isinstance(summary, dict):
+        return
+    residual_error_count = len(artifact_quality_errors)
+    summary["revalidated"] = True
+    summary["residual_error_count"] = residual_error_count
+    summary["success"] = residual_error_count == 0
 
 
 def _phase_existing_scope_preflight(
@@ -2316,6 +2327,7 @@ async def _phase_quality_repair_loop(
                 artifact_quality_errors,
                 _adapter_workspace,
             )
+            _mark_quality_repair_summary_revalidated(deterministic_quality_summary, artifact_quality_errors)
             if not artifact_quality_errors:
                 break
         repair_tool_results, quality_repair_summary = await _run_materialization_quality_repair_retry(
@@ -2368,6 +2380,7 @@ async def _phase_quality_repair_loop(
                 artifact_quality_errors,
                 _adapter_workspace,
             )
+            _mark_quality_repair_summary_revalidated(quality_repair_summary, artifact_quality_errors)
             if artifact_quality_errors:
                 deterministic_quality_tool_results, deterministic_quality_summary = (
                     _apply_deterministic_materialization_quality_repairs(
@@ -2412,6 +2425,7 @@ async def _phase_quality_repair_loop(
                         artifact_quality_errors,
                         _adapter_workspace,
                     )
+                    _mark_quality_repair_summary_revalidated(deterministic_quality_summary, artifact_quality_errors)
                     if not artifact_quality_errors:
                         break
 

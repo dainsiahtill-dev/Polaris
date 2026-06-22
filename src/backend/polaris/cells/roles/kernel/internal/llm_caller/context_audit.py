@@ -61,8 +61,15 @@ def _request_messages(ai_request: Any, fallback: list[dict[str, Any]]) -> list[d
 
 def _context_window_tokens(prepared: PreparedLLMRequest, profile: Any) -> int:
     capability_profile = getattr(prepared, "capability_profile", None)
+    context_policy = getattr(profile, "context_policy", None)
     raw_candidates = [
         getattr(profile, "max_context_tokens", None),
+        getattr(context_policy, "max_context_tokens", None),
+        profile.get("max_context_tokens") if isinstance(profile, dict) else None,
+        profile.get("context_window_tokens") if isinstance(profile, dict) else None,
+        profile.get("context_policy", {}).get("max_context_tokens")
+        if isinstance(profile, dict) and isinstance(profile.get("context_policy"), dict)
+        else None,
         capability_profile.get("max_context_tokens") if isinstance(capability_profile, dict) else None,
         capability_profile.get("context_window_tokens") if isinstance(capability_profile, dict) else None,
     ]
@@ -91,8 +98,15 @@ def _coverage_flags(text: str) -> dict[str, bool]:
             for needle in (
                 "task-",
                 "acceptance",
+                "acceptance criteria",
                 "depends_on",
+                "pm task contract",
+                "quality gates",
+                "verification commands",
+                "任务:",
                 "任务合同",
+                "执行步骤",
+                "验收标准",
             )
         ),
         "has_chief_engineer_blueprint": any(
@@ -101,8 +115,15 @@ def _coverage_flags(text: str) -> dict[str, bool]:
                 "chief engineer",
                 "chief_engineer",
                 "blueprint",
+                "blueprint_id",
+                "ce handoff",
+                "ce 蓝图",
+                "construction signatures",
+                "construction target",
+                "construction verify",
                 "scope_for_apply",
                 "construction_plan",
+                "蓝图交接",
             )
         ),
         "has_target_files": any(
@@ -136,6 +157,40 @@ def _coverage_flags(text: str) -> dict[str, bool]:
                 "real_run_gate",
             )
         ),
+    }
+
+
+def _context_quality_findings(
+    *,
+    coverage: dict[str, bool],
+    context_underutilized: bool,
+    final_request_token_estimate: int,
+    context_window_tokens: int,
+) -> dict[str, Any]:
+    missing = [key for key, ok in coverage.items() if not ok]
+    findings: list[dict[str, Any]] = []
+    if missing:
+        findings.append(
+            {
+                "code": "missing_context_coverage",
+                "severity": "advisory",
+                "missing": missing,
+            }
+        )
+    if context_underutilized and missing:
+        findings.append(
+            {
+                "code": "underutilized_with_missing_context",
+                "severity": "warning",
+                "missing": missing,
+                "final_request_token_estimate": final_request_token_estimate,
+                "context_window_tokens": context_window_tokens,
+            }
+        )
+    return {
+        "missing_coverage": missing,
+        "context_needs_review": bool(findings),
+        "findings": findings,
     }
 
 
@@ -192,6 +247,18 @@ def build_final_request_context_audit_for_request(
     utilization = (final_request_token_estimate / window_tokens) if window_tokens > 0 else None
     message_text = "\n".join(str(message.get("content") or "") for message in messages)
 
+    context_underutilized = bool(
+        window_tokens >= _UNDERUTILIZED_WINDOW_THRESHOLD
+        and final_request_token_estimate < int(window_tokens * _UNDERUTILIZED_RATIO)
+    )
+    coverage = _coverage_flags(message_text)
+    quality = _context_quality_findings(
+        coverage=coverage,
+        context_underutilized=context_underutilized,
+        final_request_token_estimate=final_request_token_estimate,
+        context_window_tokens=window_tokens,
+    )
+
     return {
         "schema_version": "llm.final_request_context_audit.v1",
         "message_count": len(messages),
@@ -205,9 +272,8 @@ def build_final_request_context_audit_for_request(
         "final_request_token_estimate": final_request_token_estimate,
         "context_window_tokens": window_tokens,
         "context_window_utilization": round(utilization, 4) if utilization is not None else None,
-        "context_underutilized": bool(
-            window_tokens >= _UNDERUTILIZED_WINDOW_THRESHOLD
-            and final_request_token_estimate < int(window_tokens * _UNDERUTILIZED_RATIO)
-        ),
-        "coverage": _coverage_flags(message_text),
+        "context_underutilized": context_underutilized,
+        "available_token_headroom": max(0, window_tokens - final_request_token_estimate),
+        "coverage": coverage,
+        "context_quality": quality,
     }

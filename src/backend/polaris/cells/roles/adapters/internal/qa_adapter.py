@@ -98,6 +98,18 @@ _FACTORY_QUALITY_RISK_RE = re.compile(
 )
 
 
+def _sanitize_qa_target_for_prompt(target: str) -> str:
+    sanitized = str(target or "")
+    for before, after in (
+        ('"factory_run_id"', '"factory_run_ref"'),
+        ("'factory_run_id'", "'factory_run_ref'"),
+        ("factory_run_id:", "factory_run_ref:"),
+        ("factory_run_id=", "factory_run_ref="),
+    ):
+        sanitized = sanitized.replace(before, after)
+    return sanitized.strip()
+
+
 def _is_nonfatal_qa_llm_runtime_exception(error_text: str) -> bool:
     lowered = str(error_text or "").lower()
     return "cognitive_runtime_blocked" in lowered or "low probability" in lowered
@@ -226,7 +238,8 @@ class QAAdapter(BaseRoleAdapter):
         try:
             run_id = str(context.get("run_id") or "").strip() if isinstance(context, dict) else ""
             review_result = self._run_static_review(target, run_id=run_id)
-            message = self._build_qa_message(review_type, target, review_result=review_result)
+            prompt_target = _sanitize_qa_target_for_prompt(target)
+            message = self._build_qa_message(review_type, prompt_target, review_result=review_result)
             prompt_appendix = self._build_qa_prompt_appendix()
             response = await self._call_role_llm(
                 message=message,
@@ -234,7 +247,7 @@ class QAAdapter(BaseRoleAdapter):
                     "task_id": task_id,
                     "run_id": run_id,
                     "review_type": review_type,
-                    "target": target,
+                    "target": prompt_target,
                     "metadata": {
                         "native_tool_mode": "disabled",
                         "response_format_mode": "json",
@@ -255,7 +268,7 @@ class QAAdapter(BaseRoleAdapter):
             if not bool(llm_review.get("parsed_json")):
                 repair_message = self._build_qa_json_repair_message(
                     review_type,
-                    target,
+                    prompt_target,
                     review_result=review_result,
                     previous_output=raw_content,
                 )
@@ -265,7 +278,7 @@ class QAAdapter(BaseRoleAdapter):
                         "task_id": task_id,
                         "run_id": run_id,
                         "review_type": review_type,
-                        "target": target,
+                        "target": prompt_target,
                         "qa_retry": "strict_json_verdict",
                         "metadata": {
                             "native_tool_mode": "disabled",
@@ -692,11 +705,12 @@ class QAAdapter(BaseRoleAdapter):
     ) -> str:
         """Build optional LLM review prompt."""
         evidence_block = _format_qa_evidence_block(review_result)
+        prompt_target = _sanitize_qa_target_for_prompt(target)
         return "\n".join(
             [
                 "Review the QA target using only the deterministic evidence already collected by Polaris.",
                 f"Review type: {review_type}",
-                f"Target: {target}",
+                f"Target: {prompt_target}",
                 "",
                 "Deterministic evidence collected from upstream stages:",
                 evidence_block,

@@ -506,7 +506,9 @@ def _apply_deterministic_materialization_quality_repairs(
     return results, {
         "stage": "deterministic_quality_repair",
         "attempted": bool(results),
-        "success": bool(results),
+        "success": False,
+        "revalidated": False,
+        "success_reason": "repair_actions_require_quality_gate_rerun",
         "tool_results": len(results),
         "write_tool_evidence": has_successful_write_tool(results),
         "source_tools": source_tools,

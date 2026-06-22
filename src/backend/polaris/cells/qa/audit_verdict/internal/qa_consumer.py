@@ -77,6 +77,56 @@ _NO_CHANGE_MODES = frozenset(
     }
 )
 _VERIFIED_EXISTING_SCOPE_MODES = frozenset({"verified_existing_workspace_scope"})
+_QA_CONTEXT_INPUT_KEYS = (
+    "input",
+    "qa_input",
+    "role_input",
+    "review_input",
+    "factory_qa_input",
+)
+_QA_CONTEXT_MAX_CHARS = 16000
+
+
+def _sanitize_qa_context_for_prompt(text: str) -> str:
+    """Keep QA evidence readable while removing factory control-plane field names."""
+
+    sanitized = text
+    for before, after in (
+        ('"factory_run_id"', '"factory_run_ref"'),
+        ("'factory_run_id'", "'factory_run_ref'"),
+        ("factory_run_id:", "factory_run_ref:"),
+        ("factory_run_id=", "factory_run_ref="),
+    ):
+        sanitized = sanitized.replace(before, after)
+    return sanitized.strip()
+
+
+def _extract_qa_prompt_context(payload: dict[str, Any]) -> str:
+    if not isinstance(payload, dict):
+        return ""
+
+    candidates: list[str] = []
+
+    def add_candidate(value: Any) -> None:
+        if isinstance(value, str) and value.strip():
+            candidates.append(value.strip())
+
+    for key in _QA_CONTEXT_INPUT_KEYS:
+        add_candidate(payload.get(key))
+
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        for key in _QA_CONTEXT_INPUT_KEYS:
+            add_candidate(metadata.get(key))
+
+    if not candidates:
+        return ""
+    merged = "\n\n".join(candidates)
+    sanitized = _sanitize_qa_context_for_prompt(merged)
+    if len(sanitized) <= _QA_CONTEXT_MAX_CHARS:
+        return sanitized
+    return sanitized[:_QA_CONTEXT_MAX_CHARS].rstrip() + "\n[qa_context_truncated]"
+
 
 _QA_LLM_AUDIT_ENABLED_ENV = "KERNELONE_QA_LLM_AUDIT_ENABLED"
 _QA_LLM_AUDIT_TIMEOUT_ENV = "KERNELONE_QA_LLM_AUDIT_TIMEOUT_SECONDS"
@@ -1002,6 +1052,7 @@ class QAConsumer:
         task_subject: str,
         changed_files: list[str],
         audit_result: dict[str, Any],
+        qa_context: str = "",
     ) -> str:
         file_sections: list[str] = []
         workspace_root = os.path.abspath(self._workspace)
@@ -1026,6 +1077,15 @@ class QAConsumer:
                 f"FILE {rel}\n----- BEGIN UTF-8 EXCERPT -----\n{content}\n----- END UTF-8 EXCERPT -----"
             )
 
+        qa_context_section = ""
+        if qa_context.strip():
+            qa_context_section = (
+                "\n\nPM / Chief Engineer / workspace quality context:\n"
+                "----- BEGIN QA CONTEXT -----\n"
+                f"{qa_context.strip()}\n"
+                "----- END QA CONTEXT -----\n"
+            )
+
         return (
             "你是 Polaris QA。请对当前任务产物做一次独立质量审阅。\n"
             "本次审计禁止调用工具；没有工具可用。只输出 JSON 对象，不要 Markdown，不要解释。格式:\n"
@@ -1033,7 +1093,8 @@ class QAConsumer:
             f"task_id: {task_id}\n"
             f"task_subject: {task_subject}\n"
             f"deterministic_audit: {audit_result}\n"
-            f"changed_files: {changed_files}\n\n"
+            f"changed_files: {changed_files}"
+            f"{qa_context_section}\n"
             "文件摘录:\n" + ("\n\n".join(file_sections) if file_sections else "(no file excerpts)")
         )
 
@@ -1050,11 +1111,13 @@ class QAConsumer:
             return {"enabled": False}
 
         run_id = str(payload.get("run_id") or payload.get("source_run_id") or "").strip()
+        qa_context = _extract_qa_prompt_context(payload)
         message = self._build_qa_llm_review_message(
             task_id=task_id,
             task_subject=task_subject,
             changed_files=changed_files,
             audit_result=audit_result,
+            qa_context=qa_context,
         )
         try:
             import asyncio

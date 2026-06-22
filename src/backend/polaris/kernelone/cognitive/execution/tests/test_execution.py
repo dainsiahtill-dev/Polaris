@@ -159,6 +159,48 @@ async def test_pipeline_does_not_execute_materialize_request_as_action(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_bypass_rejects_materialize_contract_even_when_intent_is_read_file(tmp_path):
+    pipeline = CognitivePipeline(workspace=str(tmp_path))
+    graph = IntentGraph(
+        graph_id="misclassified_materialize_request",
+        nodes=(
+            IntentNode(
+                node_id="n1",
+                intent_type="read_file",
+                content="[mode:materialize]\n范围: src/main.ts\n目标文件: src/main.ts",
+                confidence=0.8,
+                source_event_id="test",
+            ),
+        ),
+        edges=(),
+        chains=(),
+        session_id="test",
+        created_at="2026-06-22",
+        updated_at="2026-06-22",
+    )
+    uncertainty = UncertaintyAssessment(
+        uncertainty_score=0.1,
+        confidence_lower=0.7,
+        confidence_upper=0.9,
+        recommended_action="bypass",
+    )
+
+    result = await pipeline.execute(
+        "[mode:materialize]\n范围: src/main.ts\n目标文件: src/main.ts",
+        graph,
+        uncertainty,
+    )
+
+    assert result.path_taken == ExecutionPath.BYPASS
+    assert result.acting_output is not None
+    assert result.acting_output.actions_taken == ()
+    assert result.acting_output.retryable is False
+    assert "Failed to parse action" not in result.acting_output.content
+    assert result.metadata["action_input_rejected"] is True
+    assert result.metadata["tool_call_normalization_stage"] == "cognitive_bypass_guard"
+
+
+@pytest.mark.asyncio
 async def test_risk_level_enum():
     assert RiskLevel.L0_READONLY == 0
     assert RiskLevel.L1_CREATE == 1

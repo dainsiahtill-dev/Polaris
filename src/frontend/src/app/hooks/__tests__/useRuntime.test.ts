@@ -198,6 +198,47 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(result.current.processStreamEvents[0]?.meta?.streamEvent).toBe('factory_bench.project.started');
   });
 
+  it('merges task_runtime execution events from event.factory snapshots into in-progress tasks', () => {
+    const { result } = renderHook(() =>
+      useRuntime({ autoConnect: false, workspace: '/test/workspace' })
+    );
+
+    emitRuntimeMessage({
+      type: 'snapshot',
+      channel: 'event.factory:factory-run-1',
+      lines: [
+        JSON.stringify({
+          schema_version: 1,
+          stream: 'task_runtime.execution',
+          source: 'runtime.task_runtime',
+          payload: {
+            event_type: 'claimed',
+            task_id: 'task-1',
+            status: 'in_progress',
+            subject: 'Execute L1-01 artifact materialization',
+            claimed_by: 'director-1',
+            timestamp: '2026-06-22T01:15:14.000000+00:00',
+          },
+          metadata: {
+            task_id: 'task-1',
+          },
+        }),
+      ],
+    });
+
+    expect(result.current.tasks).toHaveLength(1);
+    expect(result.current.tasks[0]).toMatchObject({
+      id: 'task-1',
+      title: 'Execute L1-01 artifact materialization',
+      status: TaskStatus.IN_PROGRESS,
+      state: TaskStatus.IN_PROGRESS,
+      done: false,
+      completed: false,
+      worker_id: 'director-1',
+      started_at: '2026-06-22T01:15:14.000000+00:00',
+    });
+  });
+
   it('appends live event.factory lines into process stream events', () => {
     const { result } = renderHook(() =>
       useRuntime({ autoConnect: false, workspace: '/test/workspace' })

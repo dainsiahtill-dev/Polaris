@@ -135,6 +135,14 @@ Cell 是最小自治边界。
 7. `KERNELONE_TASK_MARKET_MODE=off|shadow` 和 `direct_to_director|pending_exec` 只允许作为历史兼容输入；运行态必须归一到 `mainline-full` / `chief_blueprint_required`，不得恢复 PM 直达 Director。
 8. Factory Bench 必须经 HTTP Factory API 启动 `PM -> Chief Engineer -> Director` 全链路；`--use-legacy-chain`、`workflow` driver、subprocess PM->Director 只能 fail-closed，不得作为自动回退。
 
+### 4.14 Role Tool Failure External Audit
+
+1. PM、Chief Engineer、Director、QA 任一角色出现工具调用失败、工具调用缺失、工具参数无法归一化、工具结果被误判成功、或 LLM 输出被错误送入 action/parser 时，必须安排 OpenCode 外部 Agent 独立审计，不能只由主 Agent 自查结案。
+2. 审计范围必须覆盖最终送入 provider 的 LLM request（messages、tool schema、response format、token 估算、覆盖度 flags）、工具调用解析与归一化链路、`ToolSpecRegistry` aliases/arg_aliases、runtime event、LLM 调用日志、ContextOS 证据、bench session 和角色日志；若事件中 `messages`/`content` 被 redacted，必须把 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件纳入证据包，禁止只看 redacted event。
+3. OpenCode 审计默认只读；只有在主 Agent 已经拆分出互不重叠且授权明确的修复范围时，才允许子 Agent 修改代码。
+4. 审计结论必须归入允许的失败分类之一：PM Contract、Chief Engineer Blueprint、Director Execution、LLM Output、Context Budget、Baseline Issue、Runtime Environment。无法归类时视为平台审计缺口，先补证据链。
+5. Factory Bench 每条角色工具失败记录必须写出 `opencode_audit` 机器可读字段；字段缺失时不得宣称失败归因闭环。
+
 ## 5. 根目录与归属裁决
 
 规范根目录继续解释为：

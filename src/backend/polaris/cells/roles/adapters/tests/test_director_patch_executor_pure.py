@@ -198,6 +198,15 @@ class TestNormalizeToolArguments:
         assert result == {"file": "test.py"}
         assert error is None
 
+    def test_applies_tool_arg_aliases_when_tool_name_provided(self) -> None:
+        result, error = DirectorPatchExecutor._normalize_tool_arguments(
+            {"filename": "src/app.py", "text": "print('ok')\n"},
+            tool_name="write_file",
+        )
+
+        assert result == {"file": "src/app.py", "content": "print('ok')\n"}
+        assert error is None
+
     def test_list_multiple_items_error(self) -> None:
         args = [{"file": "a.py"}, {"file": "b.py"}]
         result, error = DirectorPatchExecutor._normalize_tool_arguments(args)

@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -427,6 +427,8 @@ def resolve_mutation_target_guard_violation(
 def filter_out_of_scope_write_invocations(
     latest_user_request: str,
     invocations: list[Any],
+    *,
+    additional_allowed_targets: Sequence[str] = (),
 ) -> tuple[list[Any], tuple[str, ...]]:
     """Drop out-of-scope writes when a batch also contains valid target writes.
 
@@ -437,11 +439,12 @@ def filter_out_of_scope_write_invocations(
     """
 
     explicit_targets = extract_target_files_from_message(latest_user_request)
-    if not explicit_targets:
+    allowed_targets = [*explicit_targets, *(str(item) for item in additional_allowed_targets)]
+    if not allowed_targets:
         return invocations, ()
 
     read_targets = extract_read_targets_from_invocations(invocations)
-    allowed_candidates = build_path_match_candidates(explicit_targets + read_targets)
+    allowed_candidates = build_path_match_candidates(allowed_targets + read_targets)
     if not allowed_candidates:
         return invocations, ()
 

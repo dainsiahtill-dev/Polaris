@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from polaris.cells.factory.pipeline.internal import factory_stage_executor as factory_stage_executor_module
 from polaris.cells.factory.pipeline.internal.factory_run_service import (
     CommandResult,
     FactoryConfig,
@@ -24,6 +25,7 @@ from polaris.cells.factory.pipeline.internal.factory_run_service import (
     FactoryRunStatus,
     OrchestrationStageExecutor,
 )
+from polaris.cells.roles.adapters.internal.qa_adapter import _extract_workspace_quality_summary
 from polaris.kernelone.storage import resolve_logical_path
 
 
@@ -52,6 +54,50 @@ class TestTextShapingHelpers:
 
     def test_compact_text_handles_none(self) -> None:
         assert OrchestrationStageExecutor._compact_text_for_prompt(None, max_chars=10) == ""  # type: ignore[arg-type]
+
+    def test_compact_workspace_quality_evidence_for_qa_preserves_parseable_failure(self) -> None:
+        payload = {
+            "schema_version": "factory.workspace_quality_checks.v1",
+            "source": "factory_stage_executor",
+            "factory_run_id": "factory-run-1",
+            "workspace": "/tmp/project",
+            "passed": False,
+            "commands": [
+                {
+                    "command": ["npm", "install"],
+                    "phase": "prepare",
+                    "passed": True,
+                    "exit_code": 0,
+                    "stdout_tail": "ok\n" + ("x" * 10_000),
+                },
+                {
+                    "command": ["npm", "run", "build"],
+                    "phase": "check",
+                    "passed": False,
+                    "exit_code": 2,
+                    "stdout_tail": "src/app.ts(1,1): error TS1005\n" + ("y" * 10_000),
+                },
+            ],
+            "repair": {
+                "attempted": True,
+                "success": False,
+                "source_tools": ["deterministic_ts"],
+                "evidence": ["repair failed " + ("z" * 1000)],
+            },
+        }
+
+        compact = OrchestrationStageExecutor._compact_workspace_quality_evidence_for_qa(
+            json.dumps(payload, ensure_ascii=False)
+        )
+        summary = _extract_workspace_quality_summary(compact)
+
+        assert summary is not None
+        assert summary["passed"] is False
+        assert summary["command_count"] == 2
+        assert summary["prepare_passed_count"] == 1
+        assert summary["check_passed_count"] == 0
+        assert summary["repair_attempted"] is True
+        assert summary["repair_success"] is False
 
     def test_strip_prompt_meta_lines_removes_matching_lines(self) -> None:
         text = "keep this\n这是提示词内容\nalso keep\nsystem prompt here\nfinal"
@@ -507,6 +553,167 @@ class TestRunWorkspaceQualityChecks:
         assert "deterministic_typescript_tsconfig_lib_repair" in payload["repair"]["source_tools"]
 
     @pytest.mark.asyncio
+    async def test_repair_summary_success_requires_rerun_to_pass(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-repair-still-failing",
+            config=FactoryConfig(name="quality-repair-still-failing"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+        calls: list[list[str]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            calls.append(command)
+            return {
+                "command": command,
+                "exit_code": 2,
+                "passed": False,
+                "stdout_tail": "src/index.ts(1,10): error TS2305: missing export",
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        def fake_apply_workspace_quality_repairs(
+            *,
+            run_id: str,
+            artifact_quality_errors: list[str],
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            assert run_id == "factory-quality-repair-still-failing"
+            assert artifact_quality_errors
+            return (
+                [
+                    {
+                        "tool": "write_file",
+                        "success": True,
+                        "result": {
+                            "source_tool": "deterministic_typescript_missing_export_repair",
+                            "file": "src/index.ts",
+                            "operation": "modify",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "source_tools": ["deterministic_typescript_missing_export_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 1},
+        )
+
+        assert passed is False
+        assert calls == [["npm", "run", "build"], ["npm", "run", "build"]]
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["passed"] is False
+        assert payload["repair"]["attempted"] is True
+        assert payload["repair"]["success"] is False
+        assert payload["repair"]["revalidated"] is True
+        assert payload["repair"]["residual_error_count"] == 1
+        assert "TS2305" in payload["repair"]["residual_errors"][0]
+
+    @pytest.mark.asyncio
+    async def test_repairs_typescript_failures_across_multiple_rounds(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        model_dir = tmp_path / "src" / "models"
+        model_dir.mkdir(parents=True)
+        (tmp_path / "src" / "index.ts").write_text(
+            "import { MoonPhaseModel } from './models/moonphase';\n"
+            "export class Garden {\n"
+            "  private moon = new MoonPhaseModel();\n"
+            "  public snapshot(): unknown {\n"
+            "    return this.moon.getState();\n"
+            "  }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        (model_dir / "moonphase.ts").write_text(
+            "export enum MoonPhase {\n  New,\n  Full,\n}\n",
+            encoding="utf-8",
+        )
+        run = FactoryRun(
+            id="factory-quality-multiround-repair",
+            config=FactoryConfig(name="quality-multiround-repair"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+        calls: list[list[str]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            calls.append(command)
+            model_text = (model_dir / "moonphase.ts").read_text(encoding="utf-8")
+            if "export class MoonPhaseModel" not in model_text:
+                return {
+                    "command": command,
+                    "exit_code": 2,
+                    "passed": False,
+                    "stdout_tail": (
+                        "src/index.ts(1,10): error TS2305: Module '\"./models/moonphase\"' "
+                        "has no exported member 'MoonPhaseModel'."
+                    ),
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            if "getState(" not in model_text:
+                return {
+                    "command": command,
+                    "exit_code": 2,
+                    "passed": False,
+                    "stdout_tail": (
+                        "src/index.ts(5,22): error TS2339: Property 'getState' does not exist on type 'MoonPhaseModel'."
+                    ),
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            return {
+                "command": command,
+                "exit_code": 0,
+                "passed": True,
+                "stdout_tail": "build passed",
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "run", "build"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+
+        passed, artifact = await executor._run_workspace_quality_checks(run, {})
+
+        assert passed is True
+        assert calls == [["npm", "run", "build"], ["npm", "run", "build"], ["npm", "run", "build"]]
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["passed"] is True
+        assert [item["phase"] for item in payload["commands"]] == [
+            "check",
+            "check_after_repair",
+            "check_after_repair_2",
+        ]
+        assert len(payload["repair"]["rounds"]) == 2
+        assert "deterministic_typescript_missing_export_repair" in payload["repair"]["source_tools"]
+        assert "deterministic_typescript_missing_member_repair" in payload["repair"]["source_tools"]
+
+    @pytest.mark.asyncio
     async def test_repairs_typescript_enum_member_separator_and_reruns_commands(
         self,
         tmp_path: Path,
@@ -853,6 +1060,224 @@ class TestDirectorDispatchLoop:
         per_binding = (result.metadata or {}).get("per_binding")
         assert isinstance(per_binding, list)
         assert [item["status"] for item in per_binding] == ["completed", "completed"]
+
+    @pytest.mark.asyncio
+    async def test_director_binding_fanout_stops_on_terminal_failed_task_counts(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class _FanoutService:
+            def __init__(self) -> None:
+                self.queries = 0
+
+            async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(run_id="run-stuck", status="running", message="submitted")
+
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                self.queries += 1
+                return CommandResult(
+                    run_id=run_id,
+                    status="running",
+                    message="Run status: running",
+                    metadata={
+                        "task_status_counts": {
+                            "completed": 1,
+                            "failed": 1,
+                            "pending": 0,
+                            "ready": 0,
+                            "in_progress": 0,
+                            "blocked": 0,
+                        }
+                    },
+                )
+
+        class _TerminalProbeExecutor(OrchestrationStageExecutor):
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+            ) -> CommandResult:
+                del service, initial_result, timeout_seconds, cancel_event, abort_checker
+                await asyncio.Event().wait()
+                raise AssertionError("unreachable")
+
+        service = _FanoutService()
+        executor = _TerminalProbeExecutor(tmp_path)
+        executor._binding_status_probe_seconds = 0.01
+        cancel_signals: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            factory_stage_executor_module,
+            "_signal_factory_cancel_event",
+            lambda workspace, run_id: cancel_signals.append((str(workspace), str(run_id))),
+        )
+
+        result = await asyncio.wait_for(
+            executor._execute_director_binding_fanout(
+                service=service,
+                workspace=str(tmp_path),
+                tasks=["TASK-1", "TASK-2"],
+                base_options={"execution_mode": "parallel", "max_workers": 2},
+                bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
+                timeout_seconds=60,
+            ),
+            timeout=1.0,
+        )
+
+        assert service.queries >= 1
+        assert result.status == "failed"
+        per_binding = (result.metadata or {}).get("per_binding")
+        assert isinstance(per_binding, list)
+        assert per_binding[0]["status"] == "failed"
+        assert "terminal task counts" in per_binding[0]["message"]
+        assert per_binding[0]["cancel_signal_sent"] is True
+        assert cancel_signals == [(str(tmp_path), "run-stuck")]
+
+    @pytest.mark.asyncio
+    async def test_director_binding_fanout_stops_on_terminal_workspace_taskboard_stats(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class _FanoutService:
+            def __init__(self) -> None:
+                self.queries = 0
+
+            async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(run_id="run-stuck", status="running", message="submitted")
+
+            async def query_run_status(self, run_id: str) -> CommandResult:
+                self.queries += 1
+                return CommandResult(
+                    run_id=run_id,
+                    status="running",
+                    message="Run status: running",
+                    metadata={
+                        "task_status_counts": {
+                            "completed": 0,
+                            "failed": 0,
+                            "pending": 1,
+                            "ready": 0,
+                            "in_progress": 0,
+                            "blocked": 0,
+                        }
+                    },
+                )
+
+        class _TaskboardProbeExecutor(OrchestrationStageExecutor):
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                return {
+                    "total": 3,
+                    "pending": 0,
+                    "ready": 0,
+                    "in_progress": 0,
+                    "completed": 1,
+                    "failed": 2,
+                    "blocked": 0,
+                }
+
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+            ) -> CommandResult:
+                del service, initial_result, timeout_seconds, cancel_event, abort_checker
+                await asyncio.Event().wait()
+                raise AssertionError("unreachable")
+
+        service = _FanoutService()
+        executor = _TaskboardProbeExecutor(tmp_path)
+        executor._binding_status_probe_seconds = 0.01
+        cancel_signals: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            factory_stage_executor_module,
+            "_signal_factory_cancel_event",
+            lambda workspace, run_id: cancel_signals.append((str(workspace), str(run_id))),
+        )
+
+        result = await asyncio.wait_for(
+            executor._execute_director_binding_fanout(
+                service=service,
+                workspace=str(tmp_path),
+                tasks=["TASK-1", "TASK-2", "TASK-3"],
+                base_options={"execution_mode": "parallel", "max_workers": 2},
+                bindings=[{"provider_id": "p1", "model": "m1", "binding_id": "b1"}],
+                timeout_seconds=60,
+            ),
+            timeout=1.0,
+        )
+
+        assert service.queries == 0
+        assert result.status == "failed"
+        per_binding = (result.metadata or {}).get("per_binding")
+        assert isinstance(per_binding, list)
+        assert per_binding[0]["status"] == "failed"
+        assert "workspace taskboard terminal counts" in per_binding[0]["message"]
+        assert per_binding[0]["cancel_signal_sent"] is True
+        assert cancel_signals == [(str(tmp_path), "run-stuck")]
+
+    @pytest.mark.asyncio
+    async def test_director_binding_fanout_counts_newly_quarantined_timeouts(self, tmp_path: Path) -> None:
+        class _FanoutService:
+            counter = 0
+
+            async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                self.counter += 1
+                return CommandResult(run_id=f"run-timeout-{self.counter}", status="running", message="submitted")
+
+        class _TimeoutExecutor(OrchestrationStageExecutor):
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+            ) -> CommandResult:
+                del service, timeout_seconds, cancel_event, abort_checker
+                return CommandResult(run_id=initial_result.run_id, status="timeout", message="timed out")
+
+        service = _FanoutService()
+        executor = _TimeoutExecutor(tmp_path)
+        binding = {"provider_id": "p1", "model": "m1", "binding_id": "b1"}
+
+        await executor._execute_director_binding_fanout(
+            service=service,
+            workspace=str(tmp_path),
+            tasks=["TASK-1"],
+            base_options={"execution_mode": "parallel", "max_workers": 1},
+            bindings=[binding],
+            timeout_seconds=10,
+        )
+        result = await executor._execute_director_binding_fanout(
+            service=service,
+            workspace=str(tmp_path),
+            tasks=["TASK-1"],
+            base_options={"execution_mode": "parallel", "max_workers": 1},
+            bindings=[binding],
+            timeout_seconds=10,
+        )
+
+        assert result.status == "failed"
+        assert "1 quarantined" in result.message
+        assert (result.metadata or {})["quarantined_binding_count"] == 1
+        assert (result.metadata or {})["quarantined_skipped_count"] == 0
+        per_binding = (result.metadata or {})["per_binding"]
+        assert per_binding[0]["status"] == "timeout"
+        assert per_binding[0]["quarantined"] is True
+        assert per_binding[0]["timeout_count"] == 2
 
     @pytest.mark.asyncio
     async def test_dispatch_passes_pm_plan_task_ids_to_director_fanout(self, tmp_path: Path) -> None:

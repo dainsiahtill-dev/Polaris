@@ -679,6 +679,7 @@ class ToolBatchExecutor:
         invocations, dropped_out_of_scope_writes = filter_out_of_scope_write_invocations(
             latest_user_request,
             invocations,
+            additional_allowed_targets=tuple(single_target_candidates),
         )
         if dropped_out_of_scope_writes:
             reason = (

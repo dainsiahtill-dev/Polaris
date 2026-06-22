@@ -28,6 +28,7 @@ _CONTROL_PLANE_CONTEXT_KEYS = {
     "cognitive_runtime_enabled",
     "cognitive_runtime_mode",
     "cognitive_runtime_required",
+    "cognitive_guidance",
     "context_os_expected",
     "context_os_snapshot",
     "cognitive_strategy_override",

@@ -10,6 +10,7 @@ from polaris.cells.factory.verification_guard.internal.verification_engine impor
 )
 from polaris.cells.factory.verification_guard.public.contracts import (
     IVerificationGuardService,
+    VerificationStatus,
     VerifyCompletionCommandV1,
     VerifyCompletionResultV1,
 )
@@ -33,7 +34,7 @@ class VerificationGuardService(IVerificationGuardService):
             workspace=command.workspace,
             strict_mode=command.strict_mode,
         )
-        return VerifyCompletionResultV1(ok=True, report=report)
+        return VerifyCompletionResultV1(ok=report.status == VerificationStatus.PASS, report=report)
 
 
 _SERVICE_SINGLETON: VerificationGuardService | None = None

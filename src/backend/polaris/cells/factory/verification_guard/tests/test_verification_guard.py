@@ -189,6 +189,23 @@ class TestVerificationGuardPublicService:
         assert result.report is not None
         assert result.report.status == VerificationStatus.PASS
 
+    def test_public_service_reports_failed_verification_not_ok(self, temp_workspace: str) -> None:
+        command = VerifyCompletionCommandV1(
+            workspace=temp_workspace,
+            claim=VerificationClaim(
+                claim_id="failing-claim",
+                claimed_outcome="tests pass",
+                verification_commands=['python -c "raise SystemExit(1)"'],
+            ),
+        )
+
+        result = verify_completion(command)
+
+        assert isinstance(result, VerifyCompletionResultV1)
+        assert result.ok is False
+        assert result.report is not None
+        assert result.report.status == VerificationStatus.FAIL
+
     def test_service_object_implements_public_contract(self, sample_claim: VerificationClaim) -> None:
         service = VerificationGuardService()
 

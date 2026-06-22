@@ -277,6 +277,7 @@ class RequeueTaskCommandV1:
     target_stage: str
     reason: str
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    reopen_policy: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", _require_non_empty("workspace", self.workspace))
@@ -284,6 +285,7 @@ class RequeueTaskCommandV1:
         object.__setattr__(self, "target_stage", _normalize_stage("target_stage", self.target_stage))
         object.__setattr__(self, "reason", _require_non_empty("reason", self.reason))
         object.__setattr__(self, "metadata", _copy_mapping(self.metadata))
+        object.__setattr__(self, "reopen_policy", _copy_mapping(self.reopen_policy))
 
 
 @dataclass(frozen=True)

@@ -85,6 +85,37 @@ def _normalize_user_message_for_dedupe(value: Any) -> str:
     return token
 
 
+def _ensure_current_user_message_final(
+    messages: list[dict[str, Any]],
+    current_user_instruction: Any,
+) -> list[dict[str, Any]]:
+    """Keep the active user turn as the final provider-visible instruction."""
+
+    current_user_token = _normalize_user_message_for_dedupe(current_user_instruction)
+    if not current_user_token:
+        return [dict(message) for message in messages]
+
+    normalized_messages = [dict(message) for message in messages if isinstance(message, dict)]
+    last_match_index = -1
+    for index, message in enumerate(normalized_messages):
+        role = str(message.get("role", "")).strip().lower()
+        if role != "user":
+            continue
+        content_token = _normalize_user_message_for_dedupe(message.get("content", ""))
+        if content_token == current_user_token or current_user_token in content_token:
+            last_match_index = index
+
+    if last_match_index >= 0:
+        current_message = normalized_messages.pop(last_match_index)
+        current_message["role"] = "user"
+        current_message["content"] = current_user_token
+        normalized_messages.append(current_message)
+        return normalized_messages
+
+    normalized_messages.append({"role": "user", "content": current_user_token})
+    return normalized_messages
+
+
 def _copy_provider_policy_options(*, override: Any, request_options: dict[str, Any]) -> None:
     """Copy provider type policy from role-runtime context into AIRequest options."""
     if not isinstance(override, dict):
@@ -490,6 +521,17 @@ class LLMCaller:
             context_result = await context_gateway.build_context(projection_context, system_prompt=system_prompt)
             messages = list(context_result.messages)
 
+        messages = _ensure_current_user_message_final(messages, getattr(context, "message", ""))
+        context_result = replace(
+            context_result,
+            messages=tuple(
+                {
+                    "role": str(message.get("role", "")),
+                    "content": str(message.get("content", "")),
+                }
+                for message in messages
+            ),
+        )
         input_text = messages_to_input(
             messages,
             format_type="auto",

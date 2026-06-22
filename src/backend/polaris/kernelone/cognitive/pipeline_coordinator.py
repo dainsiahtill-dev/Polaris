@@ -618,6 +618,7 @@ class CognitivePipelineCoordinator:
                 "role_id": ctx.role_id,
                 "posture": posture.value,
                 "trait_profile": trait_profile.dominant_trait.value if trait_profile else None,
+                "pipeline_metadata": dict(pipeline_result.metadata),
             },
             error_type=pipeline_result.error_type,
             retryable=pipeline_result.retryable,

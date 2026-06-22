@@ -9,6 +9,7 @@ keeps all cross-cell edges lazy (in-function) exactly as before.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -42,10 +43,13 @@ from .factory_run_models import (
     _WORKSPACE_VALIDATION_TIMEOUT_SECONDS,
     FactoryRun,
     StageResult,
+    _signal_factory_cancel_event,
 )
 from .factory_workspace_quality import WorkspaceQualityRunner
 
 logger = logging.getLogger(__name__)
+
+_WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
 
 _CE_BLUEPRINT_OUTPUT_CONTRACT = """
 
@@ -70,6 +74,7 @@ class OrchestrationStageExecutor:
         self._run_completion_waiter = RunCompletionWaiter(self.workspace)
         self._binding_timeout_counts: dict[str, int] = {}
         self._quarantined_bindings: set[str] = set()
+        self._binding_status_probe_seconds = 2.0
 
     async def execute(self, stage: str, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         handlers = {
@@ -310,6 +315,62 @@ class OrchestrationStageExecutor:
         return helpers.compact_text_for_prompt(text, max_chars=max_chars)
 
     @staticmethod
+    def _compact_workspace_quality_evidence_for_qa(text: str) -> str:
+        """Build a short, parseable workspace-quality JSON payload for QA."""
+
+        try:
+            payload = json.loads(str(text or ""))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return helpers.compact_text_for_prompt(str(text or ""), max_chars=6000)
+        if not isinstance(payload, dict):
+            return helpers.compact_text_for_prompt(str(text or ""), max_chars=6000)
+
+        commands: list[dict[str, Any]] = []
+        for item in list(payload.get("commands") or []):
+            if not isinstance(item, dict):
+                continue
+            command = item.get("command")
+            if isinstance(command, list):
+                command_value: list[str] | str = [str(part) for part in command]
+            else:
+                command_value = str(command or "")
+            row: dict[str, Any] = {
+                "command": command_value,
+                "phase": str(item.get("phase") or ""),
+                "passed": bool(item.get("passed")),
+                "exit_code": item.get("exit_code"),
+            }
+            stdout_tail = str(item.get("stdout_tail") or "").strip()
+            stderr_tail = str(item.get("stderr_tail") or "").strip()
+            if stdout_tail:
+                row["stdout_tail"] = helpers.compact_text_for_prompt(stdout_tail, max_chars=700)
+            if stderr_tail:
+                row["stderr_tail"] = helpers.compact_text_for_prompt(stderr_tail, max_chars=700)
+            commands.append(row)
+
+        repair = payload.get("repair") if isinstance(payload.get("repair"), dict) else {}
+        compact_payload: dict[str, Any] = {
+            "schema_version": payload.get("schema_version"),
+            "source": payload.get("source"),
+            "factory_run_id": payload.get("factory_run_id"),
+            "workspace": payload.get("workspace"),
+            "passed": bool(payload.get("passed")),
+            "commands": commands,
+        }
+        if isinstance(repair, dict) and repair:
+            compact_payload["repair"] = {
+                "attempted": bool(repair.get("attempted")),
+                "success": bool(repair.get("success")),
+                "source_tools": [str(item) for item in list(repair.get("source_tools") or [])[:6]],
+                "evidence": [
+                    helpers.compact_text_for_prompt(str(item or ""), max_chars=220)
+                    for item in list(repair.get("evidence") or [])[:6]
+                    if str(item or "").strip()
+                ],
+            }
+        return json.dumps(compact_payload, ensure_ascii=False, indent=2)
+
+    @staticmethod
     def _strip_prompt_meta_lines(text: str) -> str:
         return helpers.strip_prompt_meta_lines(text)
 
@@ -438,6 +499,29 @@ class OrchestrationStageExecutor:
             except (TypeError, ValueError):
                 baseline[key] = 0
         return baseline
+
+    @staticmethod
+    def _terminal_status_from_task_counts(counts: Any) -> str:
+        if not isinstance(counts, dict):
+            return ""
+
+        def _count(key: str) -> int:
+            try:
+                return int(counts.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        active = _count("pending") + _count("ready") + _count("in_progress")
+        if active > 0:
+            return ""
+        failed = _count("failed") + _count("blocked") + _count("cancelled") + _count("timeout")
+        if failed > 0:
+            return "failed"
+        completed = _count("completed") + _count("success")
+        total = _count("total") or sum(_count(key) for key in counts)
+        if total > 0 and completed >= total:
+            return "completed"
+        return ""
 
     @staticmethod
     def _is_taskboard_converged(stats: dict[str, int]) -> bool:
@@ -576,18 +660,93 @@ class OrchestrationStageExecutor:
         ) -> tuple[dict[str, str], CommandResult]:
             if sub_result.status in terminal_statuses or not str(sub_result.run_id or "").strip():
                 return binding, sub_result
-            try:
-                waited = await self._wait_run_completion(
+            run_id = str(sub_result.run_id or "").strip()
+            wait_task = asyncio.create_task(
+                self._wait_run_completion(
                     service,
                     sub_result,
                     timeout_seconds=timeout_seconds,
                     cancel_event=cancel_event,
                     abort_checker=abort_checker,
                 )
-                return binding, waited
+            )
+            try:
+                while True:
+                    probe_seconds = max(0.01, float(getattr(self, "_binding_status_probe_seconds", 2.0)))
+                    done, _ = await asyncio.wait(
+                        {wait_task},
+                        timeout=probe_seconds,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if wait_task in done:
+                        return binding, wait_task.result()
+
+                    if cancel_event is not None and cancel_event.is_set():
+                        wait_task.cancel()
+                        return binding, CommandResult(
+                            run_id=run_id,
+                            status="cancelled",
+                            message="Run cancelled: factory_cancelled",
+                        )
+
+                    taskboard_stats = self._read_taskboard_stats()
+                    taskboard_status = self._terminal_status_from_task_counts(taskboard_stats)
+                    if taskboard_status:
+                        _signal_factory_cancel_event(self.workspace, run_id)
+                        wait_task.cancel()
+                        return binding, CommandResult(
+                            run_id=run_id,
+                            status=taskboard_status,
+                            message=(
+                                "Run status inferred from workspace taskboard terminal counts while "
+                                f"orchestration task was still active: {sub_result.message}"
+                            ),
+                            metadata={
+                                "task_status_counts": taskboard_stats,
+                                "cancel_signal_sent": True,
+                                "terminal_source": "taskboard_stats",
+                                "queried_status": "not_queried",
+                            },
+                        )
+
+                    status_probe: CommandResult | None = None
+                    with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                        status_probe = await service.query_run_status(run_id)
+                    if status_probe is None:
+                        continue
+
+                    probed_status = str(status_probe.status or "").strip().lower()
+                    if probed_status in terminal_statuses:
+                        wait_task.cancel()
+                        return binding, status_probe
+
+                    metadata = status_probe.metadata if isinstance(status_probe.metadata, dict) else {}
+                    count_status = self._terminal_status_from_task_counts(metadata.get("task_status_counts"))
+                    if count_status:
+                        _signal_factory_cancel_event(self.workspace, run_id)
+                        wait_task.cancel()
+                        return binding, CommandResult(
+                            run_id=run_id,
+                            status=count_status,
+                            message=(
+                                "Run status inferred from terminal task counts while orchestration task "
+                                f"was still active: {status_probe.message}"
+                            ),
+                            metadata={
+                                **metadata,
+                                "cancel_signal_sent": True,
+                                "terminal_source": "task_status_counts",
+                                "queried_status": probed_status,
+                            },
+                        )
             except (RuntimeError, OSError, ValueError, TypeError) as exc:
                 logger.warning("Director binding fanout wait failed for run %s: %s", sub_result.run_id, exc)
                 return binding, CommandResult(run_id=sub_result.run_id, status="failed", message=f"Wait failed: {exc}")
+            finally:
+                if not wait_task.done():
+                    wait_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await wait_task
 
         final_results: list[tuple[dict[str, str], CommandResult]] = list(
             await asyncio.gather(*[_wait_submitted_binding(binding, sub_result) for binding, sub_result in submitted])
@@ -626,6 +785,15 @@ class OrchestrationStageExecutor:
                 "status": result.status or "unknown",
                 "message": result.message or "",
             }
+            result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+            for evidence_key in (
+                "cancel_signal_sent",
+                "terminal_source",
+                "queried_status",
+                "task_status_counts",
+            ):
+                if evidence_key in result_metadata:
+                    entry[evidence_key] = result_metadata[evidence_key]
             if status == "timeout":
                 entry["timeout_count"] = self._binding_timeout_counts.get(key, 0)
                 if key in self._quarantined_bindings:
@@ -649,6 +817,7 @@ class OrchestrationStageExecutor:
                 }
             )
 
+        quarantined_count = sum(1 for entry in per_binding if entry.get("quarantined"))
         skipped_count = len(quarantined_skipped)
         if success_count <= 0:
             fail_count += skipped_count
@@ -658,13 +827,14 @@ class OrchestrationStageExecutor:
             status=merged_status,
             message=(
                 f"Director binding fanout: {len(bindings)} bindings, {success_count} succeeded, "
-                f"{fail_count} failed, {skipped_count} quarantined"
+                f"{fail_count} failed, {quarantined_count} quarantined"
             ),
             metadata={
                 "binding_fanout": True,
                 "binding_count": len(bindings),
                 "active_binding_count": len(active_bindings),
-                "quarantined_binding_count": skipped_count,
+                "quarantined_binding_count": quarantined_count,
+                "quarantined_skipped_count": skipped_count,
                 "per_binding": per_binding,
                 "execution_mode": str(base_options.get("execution_mode", "")).strip(),
                 "max_workers": int(base_options.get("max_workers", 0)),
@@ -1212,7 +1382,53 @@ class OrchestrationStageExecutor:
                 + " and ".join(missing_parts)
                 + "; check RoleExecutionKernel and RoleRuntimeService metadata propagation"
             )
+        final_context_audit = _walk_values(roots, {"final_request_context_audit", "finalrequestcontextaudit"})
+        if isinstance(final_context_audit, dict):
+            evidence["final_request_context_audit"] = dict(final_context_audit)
+        context_os_audit = _walk_values(roots, {"context_os_audit", "contextosaudit"})
+        if isinstance(context_os_audit, dict):
+            evidence["context_os_audit"] = dict(context_os_audit)
+        context_snapshot_ref = str(_walk_values(roots, {"context_snapshot_ref", "contextsnapshotref"}) or "").strip()
+        if context_snapshot_ref:
+            evidence["context_snapshot_ref"] = context_snapshot_ref
+        kernel_repair_reasons = _walk_values(roots, {"kernel_repair_reasons", "kernelrepairreasons"})
+        if isinstance(kernel_repair_reasons, list):
+            evidence["kernel_repair_reasons"] = [str(item) for item in kernel_repair_reasons]
         return evidence
+
+    @staticmethod
+    def _ce_review_schema_failure_is_recoverable(ce_result: Any, *, raw_output: str) -> bool:
+        if not raw_output.strip():
+            return False
+        if "<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output:
+            return False
+        failure_text = " ".join(
+            str(value or "")
+            for value in (
+                getattr(ce_result, "error_code", None),
+                getattr(ce_result, "error_message", None),
+            )
+        ).lower()
+        return any(
+            token in failure_text
+            for token in (
+                "验证失败",
+                "validation_failed",
+                "no json object matched chief_engineer blueprint keys",
+                "json解析错误",
+            )
+        )
+
+    @staticmethod
+    def _attach_ce_llm_evidence(signal: dict[str, Any], evidence: dict[str, Any]) -> None:
+        for key in (
+            "final_request_context_audit",
+            "context_os_audit",
+            "context_snapshot_ref",
+            "kernel_repair_reasons",
+        ):
+            if key in evidence:
+                signal[key] = evidence[key]
 
     async def _execute_chief_engineer_review(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing Chief Engineer review for run %s", run.id)
@@ -1241,6 +1457,9 @@ class OrchestrationStageExecutor:
                 task_context = self._task_blueprint_context(task, run_id=run.id, index=index)
                 task_context.update(
                     {
+                        "cognitive_runtime_mode": "off",
+                        "cognitive_runtime_enabled": False,
+                        "cognitive_runtime_required": False,
                         "suppress_working_memory_contract": True,
                         "suppress_tool_policy_prompt": True,
                         "disable_internal_tool_rounds": True,
@@ -1261,6 +1480,9 @@ class OrchestrationStageExecutor:
                     metadata={
                         "constraints": self._task_blueprint_constraints(task),
                         "source": "factory_stage_executor.chief_engineer_review",
+                        "cognitive_runtime_mode": "off",
+                        "cognitive_runtime_enabled": False,
+                        "cognitive_runtime_required": False,
                         "validate_output": True,
                         "max_retries": 1,
                     },
@@ -1271,24 +1493,33 @@ class OrchestrationStageExecutor:
                 ce_evidence = self._ce_extract_llm_evidence(ce_result, task_id=task_id, run_id=run.id)
                 ce_provider = str(ce_evidence.get("provider") or "unknown")
                 ce_model = str(ce_evidence.get("model") or "unknown")
+                raw_output = str(getattr(ce_result, "output", "") or "")
 
                 # Check if CE LLM call succeeded (fail-closed)
+                recovered_review_schema_failure = False
                 if not ce_result.ok:
+                    recovered_review_schema_failure = self._ce_review_schema_failure_is_recoverable(
+                        ce_result,
+                        raw_output=raw_output,
+                    )
                     error_signal: dict[str, Any] = {
                         "code": "chief_engineer.llm_review_failed",
-                        "severity": "error",
+                        "severity": "warning" if recovered_review_schema_failure else "error",
                         "detail": ce_result.error_message or ce_result.error_code or "CE LLM call failed",
                         "task_id": task_id,
                         "provider": ce_provider,
                         "model": ce_model,
+                        "recoverable": recovered_review_schema_failure,
                     }
                     if ce_evidence.get("provider_model_unknown"):
                         error_signal["provider_model_unknown"] = True
                         error_signal["provider_model_unknown_reason"] = str(
                             ce_evidence.get("provider_model_unknown_reason") or ""
                         )
+                    self._attach_ce_llm_evidence(error_signal, ce_evidence)
                     stage_signals.append(error_signal)
-                    continue
+                    if not recovered_review_schema_failure:
+                        continue
 
                 task_error_count_before = len(stage_signals)
                 if ce_evidence.get("provider_model_unknown"):
@@ -1314,8 +1545,9 @@ class OrchestrationStageExecutor:
                         run_id=run.id,
                     )
 
-                raw_output = str(getattr(ce_result, "output", "") or "")
-                if "<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output:
+                if not recovered_review_schema_failure and (
+                    "<SESSION_PATCH" in raw_output or "</SESSION_PATCH>" in raw_output
+                ):
                     stage_signals.append(
                         {
                             "code": "chief_engineer.session_patch_output_rejected",
@@ -1326,24 +1558,25 @@ class OrchestrationStageExecutor:
                             "model": ce_model,
                         }
                     )
-                quality_result = QualityChecker(str(self.workspace)).validate_output(
-                    raw_output,
-                    cast(Any, SimpleNamespace(role_id="chief_engineer")),
-                )
-                if not quality_result.success:
-                    stage_signals.append(
-                        {
-                            "code": "chief_engineer.output_schema_invalid",
-                            "severity": "error",
-                            "detail": "; ".join(str(item) for item in quality_result.errors)
-                            or "CE output failed schema validation",
-                            "task_id": task_id,
-                            "provider": ce_provider,
-                            "model": ce_model,
-                            "quality_score": float(quality_result.quality_score),
-                            "suggestions": list(quality_result.suggestions),
-                        }
+                if not recovered_review_schema_failure:
+                    quality_result = QualityChecker(str(self.workspace)).validate_output(
+                        raw_output,
+                        cast(Any, SimpleNamespace(role_id="chief_engineer")),
                     )
+                    if not quality_result.success:
+                        stage_signals.append(
+                            {
+                                "code": "chief_engineer.output_schema_invalid",
+                                "severity": "error",
+                                "detail": "; ".join(str(item) for item in quality_result.errors)
+                                or "CE output failed schema validation",
+                                "task_id": task_id,
+                                "provider": ce_provider,
+                                "model": ce_model,
+                                "quality_score": float(quality_result.quality_score),
+                                "suggestions": list(quality_result.suggestions),
+                            }
+                        )
 
                 if len(stage_signals) > task_error_count_before:
                     continue
@@ -2035,9 +2268,10 @@ class OrchestrationStageExecutor:
             ) -> None:
                 del task_id, phase, current_file, event_code, event_status, event_reason, event_detail, event_refs
 
+        target_files = self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json"))
         return _apply_deterministic_materialization_quality_repairs(
             _QualityRepairAdapter(self.workspace),
-            task={"metadata": {"target_files": []}},
+            task={"target_files": target_files, "metadata": {"target_files": target_files}},
             task_id=f"factory-quality-gate:{run_id}",
             artifact_quality_errors=artifact_quality_errors,
         )
@@ -2118,31 +2352,81 @@ class OrchestrationStageExecutor:
             "success": False,
             "source_tools": [],
             "tool_results": 0,
+            "rounds": [],
         }
         rerun_results: list[dict[str, Any]] = []
         if run_commands and not prepare_failed and not all(bool(item.get("passed")) for item in results):
-            repair_errors = self._workspace_quality_repair_errors(results)
-            if repair_errors:
-                repair_results, repair_summary = await asyncio.to_thread(
+            max_rounds = int(context.get("workspace_quality_repair_max_rounds") or _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS)
+            max_rounds = max(1, min(max_rounds, _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS))
+            latest_check_results = [item for item in results if str(item.get("phase") or "") == "check"]
+            repair_rounds: list[dict[str, Any]] = []
+            source_tools: list[str] = []
+            evidence: list[str] = []
+            write_tool_evidence = False
+            for round_index in range(max_rounds):
+                if latest_check_results and all(bool(item.get("passed")) for item in latest_check_results):
+                    break
+                repair_errors = self._workspace_quality_repair_errors(latest_check_results or results)
+                if not repair_errors:
+                    break
+                round_repair_results, round_summary = await asyncio.to_thread(
                     self._apply_workspace_quality_repairs,
                     run_id=run.id,
                     artifact_quality_errors=repair_errors,
                 )
-                repair_summary = dict(repair_summary)
-                repair_summary["attempted"] = True
-                repair_summary["artifact_quality_errors"] = repair_errors[:10]
-                repair_summary["tool_results"] = len(repair_results)
-                repair_summary["write_tool_evidence"] = any(
+                repair_results.extend(round_repair_results)
+                normalized_round_summary = dict(round_summary)
+                round_source_tools = [
+                    str(item) for item in normalized_round_summary.get("source_tools", []) if str(item or "").strip()
+                ]
+                round_evidence = self._workspace_quality_repair_evidence(round_repair_results)
+                round_write_tool_evidence = any(
                     bool(item.get("success")) and str(item.get("tool") or item.get("tool_name") or "") == "write_file"
-                    for item in repair_results
+                    for item in round_repair_results
                 )
-                repair_summary["evidence"] = self._workspace_quality_repair_evidence(repair_results)
-                if repair_results:
-                    for command in run_commands:
-                        result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
-                        result["phase"] = "check_after_repair"
-                        results.append(result)
-                        rerun_results.append(result)
+                source_tools.extend(round_source_tools)
+                evidence.extend(round_evidence)
+                write_tool_evidence = write_tool_evidence or round_write_tool_evidence
+                repair_rounds.append(
+                    {
+                        "round": round_index + 1,
+                        "attempted": True,
+                        "artifact_quality_errors": repair_errors[:10],
+                        "tool_results": len(round_repair_results),
+                        "source_tools": round_source_tools,
+                        "write_tool_evidence": round_write_tool_evidence,
+                        "evidence": round_evidence,
+                    }
+                )
+                if not round_repair_results:
+                    break
+                latest_check_results = []
+                rerun_results = []
+                phase = "check_after_repair" if round_index == 0 else f"check_after_repair_{round_index + 1}"
+                for command in run_commands:
+                    result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
+                    result["phase"] = phase
+                    results.append(result)
+                    latest_check_results.append(result)
+                    rerun_results.append(result)
+            residual_failures = [item for item in latest_check_results if not bool(item.get("passed"))]
+            repair_revalidated = bool(rerun_results)
+            repair_summary = {
+                "attempted": bool(repair_rounds),
+                "success": repair_revalidated and not residual_failures,
+                "revalidated": repair_revalidated,
+                "residual_error_count": len(residual_failures),
+                "residual_errors": self._workspace_quality_repair_errors(residual_failures)[:10]
+                if residual_failures
+                else [],
+                "source_tools": list(dict.fromkeys(source_tools)),
+                "tool_results": len(repair_results),
+                "write_tool_evidence": write_tool_evidence,
+                "artifact_quality_errors": repair_errors[:10],
+                "evidence": evidence[:12],
+                "max_rounds": max_rounds,
+                "rounds": repair_rounds,
+            }
 
         effective_results = rerun_results if rerun_results else results
         if rerun_results:
@@ -2170,25 +2454,52 @@ class OrchestrationStageExecutor:
         self,
         qa_input: object,
         workspace_checks_artifact: str,
+        *,
+        run_id: str = "",
     ) -> str:
         base_input = str(qa_input or "").strip()
-        if not workspace_checks_artifact:
-            return base_input
-        evidence_text = self._read_text_artifact(workspace_checks_artifact, min_chars=2)
-        if not evidence_text:
-            return base_input
-        compact_evidence = self._compact_text_for_prompt(evidence_text, max_chars=6000)
         sections = [base_input] if base_input else []
-        sections.append(
-            "\n".join(
-                [
-                    "Workspace quality evidence collected before QA judgement:",
-                    f"- artifact: {workspace_checks_artifact}",
-                    "- content:",
-                    compact_evidence,
-                ]
+
+        if workspace_checks_artifact:
+            evidence_text = self._read_text_artifact(workspace_checks_artifact, min_chars=2)
+            if evidence_text:
+                compact_evidence = self._compact_workspace_quality_evidence_for_qa(evidence_text)
+                sections.append(
+                    "\n".join(
+                        [
+                            "Workspace quality evidence collected before QA judgement:",
+                            f"- artifact: {workspace_checks_artifact}",
+                            "- content:",
+                            compact_evidence,
+                        ]
+                    )
+                )
+
+        ce_review_artifact = ""
+        ce_review_text = ""
+        if run_id:
+            for candidate in (
+                f"runtime/state/blueprints/{run_id}.review.json",
+                f"runtime/blueprints/{run_id}.review.json",
+                f"workspace/.polaris/blueprints/{run_id}.review.json",
+                "workspace/.polaris/blueprints/latest.review.json",
+            ):
+                with contextlib.suppress(OSError, RuntimeError, TypeError, ValueError):
+                    ce_review_text = self._read_text_artifact(candidate, min_chars=2)
+                if ce_review_text:
+                    ce_review_artifact = candidate
+                    break
+        if ce_review_text:
+            sections.append(
+                "\n".join(
+                    [
+                        "Chief Engineer blueprint evidence collected before QA judgement:",
+                        f"- artifact: {ce_review_artifact}",
+                        "- content:",
+                        self._compact_text_for_prompt(ce_review_text, max_chars=6000),
+                    ]
+                )
             )
-        )
         return "\n\n".join(sections)
 
     async def _execute_quality_gate(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
@@ -2199,6 +2510,7 @@ class OrchestrationStageExecutor:
         qa_input = self._build_qa_input_with_workspace_quality_evidence(
             context.get("qa_input"),
             workspace_checks_artifact,
+            run_id=run.id,
         )
 
         service = self._build_orchestration_service(context)

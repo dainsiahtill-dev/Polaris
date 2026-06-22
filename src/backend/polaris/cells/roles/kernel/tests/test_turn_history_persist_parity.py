@@ -453,6 +453,45 @@ class TestPhase5ScratchpadPattern:
         assert controller._history[1].to_tuple() == ("assistant", "hi there")
         assert controller._history[2].to_tuple() == ("tool", "tool result 1")
 
+    def test_post_init_sanitizes_tool_failure_receipts_from_snapshot(self) -> None:
+        """Snapshot seeding must not replay raw tool failure receipts to the next LLM turn."""
+
+        snapshot = {
+            "transcript_log": [
+                {
+                    "role": "assistant",
+                    "content": (
+                        "**write_file**: Error - {'ok': False, 'error': 'Director write policy denied: "
+                        "package.json structured diff failed: invalid JSON', 'tool': 'write_file', "
+                        "'error_type': 'director_write_policy_denied', 'director_policy': {'package_diff': {}}, "
+                        "'handler_error_type': 'director_write_policy_denied'}"
+                    ),
+                    "event_id": "tool-failure",
+                    "sequence": 1,
+                    "metadata": {},
+                },
+            ],
+            "working_state": {},
+            "artifact_store": [],
+        }
+        request = self._make_role_turn_request_with_snapshot(
+            history_list=[],
+            snapshot=snapshot,
+        )
+        profile = self._make_profile()
+        controller = ToolLoopController(
+            request=request,
+            profile=profile,
+            safety_policy=ToolLoopController._resolve_safety_policy(None),
+        )
+
+        content = controller._history[0].content
+        assert "[tool_failure_summary]" in content
+        assert "write_file" in content
+        assert "director_write_policy_denied" in content
+        assert "director_policy" not in content
+        assert "handler_error_type" not in content
+
     def test_post_init_raises_when_no_snapshot(self) -> None:
         """Without context_os_snapshot, __post_init__ raises ValueError (SSOT enforcement).
 

@@ -51,6 +51,12 @@ _TS_NO_EXPORTED_MEMBER_ERROR_RE = re.compile(
     r"Module\s+(?P<module>.+?)\s+has\s+no\s+exported\s+member\s+['\"](?P<symbol>[^'\"]+)['\"]",
     re.IGNORECASE,
 )
+_TS_NO_EXPORTED_MEMBER_NAMED_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2724:\s*"
+    r"(?P<module>.+?)\s+has\s+no\s+exported\s+member\s+named\s+['\"](?P<symbol>[^'\"]+)['\"]"
+    r"(?:\.\s+Did\s+you\s+mean\s+['\"](?P<suggestion>[^'\"]+)['\"])?",
+    re.IGNORECASE,
+)
 _TS_NUMBER_TO_STRING_ARGUMENT_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2345:\s*"
     r"Argument\s+of\s+type\s+'number'\s+is\s+not\s+assignable\s+to\s+parameter\s+of\s+type\s+'string'",
@@ -343,11 +349,24 @@ def _apply_deterministic_typescript_missing_export_repair(
             module_text = updated_by_path.get(exporter_path) or exporter_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        if _typescript_module_runtime_exports_symbol(module_text, symbol):
+        if _typescript_module_exports_symbol(module_text, symbol):
             continue
 
-        updated = _export_existing_typescript_declaration(module_text, symbol)
+        updated = module_text
         declaration_kind = "export_existing"
+        suggestion = str(item.get("suggestion") or "").strip()
+        if suggestion:
+            declaration_kind, declaration = _build_typescript_suggested_export_alias_declaration(
+                symbol=symbol,
+                suggestion=suggestion,
+                importer_text=importer_text,
+                module_text=module_text,
+            )
+            if declaration:
+                updated = module_text.rstrip() + "\n\n" + declaration.rstrip() + "\n"
+        if updated == module_text:
+            updated = _export_existing_typescript_declaration(module_text, symbol)
+            declaration_kind = "export_existing"
         if updated == module_text:
             declaration_kind, declaration = _build_typescript_missing_export_declaration(
                 symbol=symbol,
@@ -900,19 +919,21 @@ def _parse_typescript_missing_export_errors(errors: list[str]) -> list[dict[str,
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
     for error in errors:
-        for match in _TS_NO_EXPORTED_MEMBER_ERROR_RE.finditer(str(error or "")):
-            item = {
-                "file": str(match.group("file") or "").strip(),
-                "line": str(match.group("line") or "").strip(),
-                "col": str(match.group("col") or "").strip(),
-                "module": _strip_typescript_error_module_ref(str(match.group("module") or "")),
-                "symbol": str(match.group("symbol") or "").strip(),
-            }
-            key = (item["file"], item["module"], item["symbol"])
-            if not item["file"] or not item["module"] or not item["symbol"] or key in seen:
-                continue
-            seen.add(key)
-            parsed.append(item)
+        for pattern in (_TS_NO_EXPORTED_MEMBER_ERROR_RE, _TS_NO_EXPORTED_MEMBER_NAMED_ERROR_RE):
+            for match in pattern.finditer(str(error or "")):
+                item = {
+                    "file": str(match.group("file") or "").strip(),
+                    "line": str(match.group("line") or "").strip(),
+                    "col": str(match.group("col") or "").strip(),
+                    "module": _strip_typescript_error_module_ref(str(match.group("module") or "")),
+                    "symbol": str(match.group("symbol") or "").strip(),
+                    "suggestion": str(match.groupdict().get("suggestion") or "").strip(),
+                }
+                key = (item["file"], item["module"], item["symbol"])
+                if not item["file"] or not item["module"] or not item["symbol"] or key in seen:
+                    continue
+                seen.add(key)
+                parsed.append(item)
     return parsed
 
 
@@ -3185,6 +3206,23 @@ def _typescript_module_runtime_exports_symbol(module_text: str, symbol: str) -> 
     return False
 
 
+def _typescript_module_exports_symbol(module_text: str, symbol: str) -> bool:
+    if _typescript_module_runtime_exports_symbol(module_text, symbol):
+        return True
+    escaped = re.escape(symbol)
+    return bool(re.search(rf"export\s+(?:interface|type)\s+{escaped}\b", module_text))
+
+
+def _typescript_module_declares_symbol(module_text: str, symbol: str) -> bool:
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return False
+    escaped = re.escape(symbol)
+    declaration_re = re.compile(
+        rf"(?:export\s+)?(?:abstract\s+)?(?:enum|class|interface|type|const|let|var|function)\s+{escaped}\b"
+    )
+    return bool(declaration_re.search(module_text))
+
+
 def _find_typescript_runtime_symbol_source(
     *,
     workspace_path: Path,
@@ -3255,6 +3293,22 @@ def _build_typescript_missing_export_declaration(*, symbol: str, importer_text: 
     if symbol[:1].isupper():
         return "type", f"export type {symbol} = any;"
     return "const", f"export const {symbol}: unknown = undefined;"
+
+
+def _build_typescript_suggested_export_alias_declaration(
+    *,
+    symbol: str,
+    suggestion: str,
+    importer_text: str,
+    module_text: str,
+) -> tuple[str, str]:
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol) or not _TS_IDENTIFIER_RE.fullmatch(suggestion):
+        return "", ""
+    if symbol == suggestion or not _typescript_module_declares_symbol(module_text, suggestion):
+        return "", ""
+    if _typescript_symbol_is_constructed(importer_text, symbol) or _typescript_symbol_is_called(importer_text, symbol):
+        return "runtime_alias", f"export {{ {suggestion} as {symbol} }};"
+    return "type_alias", f"export type {symbol} = {suggestion};"
 
 
 def _typescript_symbol_is_constructed(text: str, symbol: str) -> bool:

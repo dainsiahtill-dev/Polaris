@@ -69,6 +69,43 @@ def test_scan_detects_generated_structural_marker(tmp_path: Path) -> None:
     assert "structural build passed" in errors[0]
 
 
+def test_scan_detects_tool_receipt_contamination_without_echoing_receipt(tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "simulation.test.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "**write_file**: Error - {'ok': False, 'error': 'Destructive shrink rejected: "
+        "this edit would replace tests/garden.test.ts'}\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["tests/simulation.test.ts"])
+
+    assert errors == [
+        "Artifact quality scan failed: tool execution receipt contamination in tests/simulation.test.ts; "
+        "file contains a Polaris tool failure receipt instead of source code. "
+        "Rewrite this artifact with real UTF-8 project code and do not copy tool error text."
+    ]
+    assert "Destructive shrink rejected" not in errors[0]
+    assert "tests/garden.test.ts" not in errors[0]
+
+
+def test_scan_detects_source_narration_contamination(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "main.ts"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "I'll address the quality repair issues immediately.\nexport const ready = true;\n",
+        encoding="utf-8",
+    )
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["src/main.ts"])
+
+    assert errors == [
+        "Artifact quality scan failed: source narration contamination in src/main.ts; "
+        "file starts with assistant prose instead of project source code. "
+        "Rewrite this artifact with real UTF-8 source only."
+    ]
+
+
 def test_scan_detects_generic_typescript_project_scaffold(tmp_path: Path) -> None:
     target = tmp_path / "src" / "main.ts"
     target.parent.mkdir(parents=True, exist_ok=True)

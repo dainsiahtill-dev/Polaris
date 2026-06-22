@@ -18,6 +18,7 @@ from polaris.cells.orchestration.pm_dispatch.internal import dispatch_pipeline  
 from polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline import (  # noqa: E402
     run_post_dispatch_integration_qa,
 )
+from polaris.kernelone.storage import resolve_logical_path  # noqa: E402
 
 
 class _SuccessfulCognitiveRuntimeService:
@@ -388,6 +389,19 @@ def test_run_post_dispatch_integration_qa_failure_requeues_director_with_critiqu
     assert last_failure["source"] == "pm_dispatch.integration_qa"
     assert "pytest -q" in last_failure["error_message"]
     assert last_failure["target_files"] == ["src/app.py"]
+    assert last_failure["ce_rework_required"] is True
+    assert last_failure["ce_rework_blueprint_path"].startswith("runtime/blueprints/")
+    assert last_failure["chief_engineer_handoff"]["chain"] == "PM->ChiefEngineer->Director"
+    metadata = row["metadata"]["requeue_metadata"]
+    assert metadata["source"] == "pm_dispatch.integration_qa.rework"
+    assert metadata["ce_rework_required"] is True
+    assert metadata["ce_rework_blueprint_id"]
+    assert metadata["ce_rework_blueprint_path"].startswith("runtime/blueprints/")
+    assert Path(resolve_logical_path(str(workspace), metadata["ce_rework_blueprint_path"])).is_file()
+    assert metadata["chief_engineer_handoff"]["chain"] == "PM->ChiefEngineer->Director"
+    assert metadata["chief_engineer_handoff"]["director_task_id"] == "TASK-A"
+    assert metadata["verification_failure_report"]["failure_classification"] == "Director Execution"
+    assert row["metadata"]["reopen_count"] == 1
 
 
 def test_integration_qa_failure_requeues_fission_leaf_for_parent_pm_task(
@@ -490,6 +504,15 @@ def test_integration_qa_failure_requeues_fission_leaf_for_parent_pm_task(
     assert last_failure["error_code"] == "INTEGRATION_QA_FAILED"
     assert last_failure["source"] == "pm_dispatch.integration_qa"
     assert "pytest -q" in last_failure["error_message"]
+    assert last_failure["ce_rework_required"] is True
+    assert last_failure["chief_engineer_handoff"]["director_task_id"] == "TASK-PARENT::step-1"
+    metadata = leaf["metadata"]["requeue_metadata"]
+    assert metadata["source"] == "pm_dispatch.integration_qa.rework"
+    assert metadata["ce_rework_required"] is True
+    assert metadata["chief_engineer_handoff"]["chain"] == "PM->ChiefEngineer->Director"
+    assert metadata["chief_engineer_handoff"]["pm_task_id"] == "TASK-PARENT"
+    assert metadata["chief_engineer_handoff"]["director_task_id"] == "TASK-PARENT::step-1"
+    assert metadata["verification_failure_report"]["target_task_id"] == "TASK-PARENT::step-1"
 
 
 def test_integration_qa_last_failure_preserves_string_errors() -> None:

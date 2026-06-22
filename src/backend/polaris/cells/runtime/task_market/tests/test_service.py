@@ -2893,6 +2893,180 @@ def test_requeue_task_allows_integration_qa_to_reopen_resolved_work(tmp_path: Pa
     assert requeued.status == "pending_exec"
 
 
+def test_requeue_task_rejects_resolved_work_without_reopen_policy(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-resolved-generic",
+            run_id="run-resolved-generic",
+            task_id="step-resolved-generic",
+            stage="pending_exec",
+            source_role="pm_dispatch",
+            payload={"title": "step"},
+        )
+    )
+    claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director",
+            worker_role="director",
+        )
+    )
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="step-resolved-generic",
+            lease_token=claim.lease_token,
+            terminal_status="resolved",
+            summary="done",
+        )
+    )
+
+    requeued = service.requeue_task(
+        RequeueTaskCommandV1(
+            workspace=str(workspace),
+            task_id="step-resolved-generic",
+            target_stage="pending_exec",
+            reason="verification failed",
+            metadata={
+                "source": "verification.failure",
+                "last_failure": {
+                    "error_code": "BUILD_FAILED",
+                    "error_message": "npm run build failed",
+                },
+            },
+        )
+    )
+
+    assert requeued.ok is False
+    assert requeued.reason == "terminal_status"
+    assert requeued.status == "resolved"
+
+
+def test_requeue_task_allows_verification_policy_to_reopen_resolved_work(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-resolved-verification",
+            run_id="run-resolved-verification",
+            task_id="step-resolved-verification",
+            stage="pending_exec",
+            source_role="pm_dispatch",
+            payload={"title": "step"},
+        )
+    )
+    claim = service.claim_work_item(
+        ClaimTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            stage="pending_exec",
+            worker_id="director",
+            worker_role="director",
+        )
+    )
+    service.acknowledge_task_stage(
+        AcknowledgeTaskStageCommandV1(
+            workspace=str(workspace),
+            task_id="step-resolved-verification",
+            lease_token=claim.lease_token,
+            terminal_status="resolved",
+            summary="done",
+        )
+    )
+
+    requeued = service.requeue_task(
+        RequeueTaskCommandV1(
+            workspace=str(workspace),
+            task_id="step-resolved-verification",
+            target_stage="pending_exec",
+            reason="verification build failed",
+            metadata={
+                "source": "verification.failure",
+                "last_failure": {
+                    "error_code": "BUILD_FAILED",
+                    "error_message": "npm run build failed",
+                },
+                "verification_failure_report": {
+                    "gate": "build_test_lint",
+                    "command": ["npm", "run", "build"],
+                    "exit_code": 2,
+                },
+            },
+            reopen_policy={
+                "allowed_source_prefixes": ["verification."],
+                "max_reopen_count": 2,
+                "requires_failure_report": True,
+            },
+        )
+    )
+
+    assert requeued.ok is True
+    assert requeued.status == "pending_exec"
+    store = get_store(str(workspace))
+    item = store.load_items()["step-resolved-verification"]
+    assert item.metadata["reopen_count"] == 1
+    assert item.metadata["last_reopen_source"] == "verification.failure"
+    assert item.payload["last_failure"]["error_code"] == "BUILD_FAILED"
+
+
+def test_requeue_task_enforces_verification_reopen_limit(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    service = TaskMarketService()
+    service.publish_work_item(
+        PublishTaskWorkItemCommandV1(
+            workspace=str(workspace),
+            trace_id="tr-resolved-limit",
+            run_id="run-resolved-limit",
+            task_id="step-resolved-limit",
+            stage="pending_exec",
+            source_role="pm_dispatch",
+            payload={"title": "step"},
+        )
+    )
+    store = get_store(str(workspace))
+    items = store.load_items()
+    item = items["step-resolved-limit"]
+    item.status = "resolved"
+    item.metadata = {**dict(item.metadata), "reopen_count": 1}
+    items[item.task_id] = item
+    store.save_items_and_outbox_atomic(items=items, transitions=[], outbox_records=[])
+
+    requeued = service.requeue_task(
+        RequeueTaskCommandV1(
+            workspace=str(workspace),
+            task_id="step-resolved-limit",
+            target_stage="pending_exec",
+            reason="verification build failed again",
+            metadata={
+                "source": "verification.failure",
+                "last_failure": {
+                    "error_code": "BUILD_FAILED",
+                    "error_message": "npm run build failed",
+                },
+                "verification_failure_report": {
+                    "gate": "build_test_lint",
+                    "exit_code": 2,
+                },
+            },
+            reopen_policy={
+                "allowed_source_prefixes": ["verification."],
+                "max_reopen_count": 1,
+            },
+        )
+    )
+
+    assert requeued.ok is False
+    assert requeued.reason == "reopen_limit_exceeded"
+    assert requeued.status == "resolved"
+
+
 def test_requeue_task_allows_expired_lease_recovery(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir()

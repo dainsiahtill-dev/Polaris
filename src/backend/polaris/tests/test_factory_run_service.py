@@ -5,6 +5,7 @@ import json
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 from polaris.cells.factory.pipeline.internal import (
@@ -1293,8 +1294,11 @@ class TestOrchestrationStageExecutor:
         # Mock RoleRuntimeService to return successful result
         from polaris.cells.roles.runtime.public.contracts._execution_contracts import RoleExecutionResultV1
 
+        captured_commands = []
+
         class FakeRoleRuntimeService:
             async def execute_role_task(self, command):
+                captured_commands.append(command)
                 return RoleExecutionResultV1(
                     ok=True,
                     status="success",
@@ -1343,6 +1347,14 @@ class TestOrchestrationStageExecutor:
         payload = json.loads(review_path.read_text(encoding="utf-8"))
         assert payload["generated_blueprints"] == 1
         assert payload["blueprints"][0]["task_id"] == "TASK-1"
+        assert len(captured_commands) == 1
+        ce_command = captured_commands[0]
+        assert ce_command.context["cognitive_runtime_mode"] == "off"
+        assert ce_command.context["cognitive_runtime_enabled"] is False
+        assert ce_command.context["cognitive_runtime_required"] is False
+        assert ce_command.metadata["cognitive_runtime_mode"] == "off"
+        assert ce_command.metadata["cognitive_runtime_enabled"] is False
+        assert ce_command.metadata["cognitive_runtime_required"] is False
         blueprint_path = Path(resolve_runtime_path(str(temp_workspace), payload["blueprints"][0]["blueprint_path"]))
         assert blueprint_path.is_file()
         mirrored_review = Path(
@@ -1940,6 +1952,19 @@ class TestOrchestrationStageExecutor:
             json.dumps({"passed": True, "score": 92, "critical_issue_count": 0}, ensure_ascii=False),
             encoding="utf-8",
         )
+        executor._write_json_artifact(
+            f"runtime/state/blueprints/{run.id}.review.json",
+            {
+                "schema_version": "factory.chief_engineer_review.v1",
+                "generated_blueprints": 1,
+                "blueprints": [
+                    {
+                        "task_id": "TASK-1",
+                        "summary": "Create the runtime entrypoint and tests.",
+                    }
+                ],
+            },
+        )
 
         result = await executor._execute_quality_gate(
             run,
@@ -1958,6 +1983,67 @@ class TestOrchestrationStageExecutor:
         assert '"run"' in qa_input
         assert '"build"' in qa_input
         assert '"exit_code": 0' in qa_input
+        assert "Chief Engineer blueprint evidence collected before QA judgement" in qa_input
+        assert f"runtime/state/blueprints/{run.id}.review.json" in qa_input
+        assert '"generated_blueprints": 1' in qa_input
+
+    def test_qa_input_injects_chief_engineer_latest_review_fallback(self, temp_workspace):
+        executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        executor._write_json_artifact(
+            "workspace/.polaris/blueprints/latest.review.json",
+            {
+                "schema_version": "factory.chief_engineer_review.v1",
+                "generated_blueprints": 2,
+                "blueprints": [{"task_id": "TASK-2", "summary": "Mirror fallback blueprint"}],
+            },
+        )
+
+        qa_input = executor._build_qa_input_with_workspace_quality_evidence(
+            "original qa context",
+            "",
+            run_id="factory_missing_state_review",
+        )
+
+        assert "original qa context" in qa_input
+        assert "Chief Engineer blueprint evidence collected before QA judgement" in qa_input
+        assert "workspace/.polaris/blueprints/latest.review.json" in qa_input
+        assert '"generated_blueprints": 2' in qa_input
+
+    def test_workspace_quality_repairs_pass_declared_target_files_to_director_repairs(
+        self,
+        temp_workspace,
+        monkeypatch,
+    ):
+        from polaris.cells.roles.adapters.public import service as role_service
+
+        executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "target_files": ["src/main.ts", "README.md"],
+                    }
+                ]
+            },
+        )
+        captured: dict[str, Any] = {}
+
+        def _capture_repair(adapter: Any, *, task: dict[str, Any], task_id: str, artifact_quality_errors: list[str]):
+            del adapter, task_id, artifact_quality_errors
+            captured["task"] = task
+            return [], {"attempted": False}
+
+        monkeypatch.setattr(role_service, "apply_deterministic_materialization_quality_repairs", _capture_repair)
+
+        executor._apply_workspace_quality_repairs(
+            run_id="run-target-files",
+            artifact_quality_errors=["Artifact quality scan failed: declared target file missing 'src/main.ts'"],
+        )
+
+        assert captured["task"]["target_files"] == ["src/main.ts", "README.md"]
+        assert captured["task"]["metadata"]["target_files"] == ["src/main.ts", "README.md"]
 
     @pytest.mark.asyncio
     async def test_quality_gate_installs_node_dependencies_before_scripts(self, temp_workspace):
@@ -2455,6 +2541,83 @@ class TestCEProviderModelPropagationR15A:
             f"Expected model='kimi-k2-thinking-turbo', got '{evidence.get('model')}'"
         )
         assert evidence.get("provider_model_unknown") is not True
+
+    @pytest.mark.asyncio
+    async def test_ce_review_schema_failure_records_warning_and_continues_blueprint(
+        self,
+        temp_workspace: Path,
+    ) -> None:
+        from polaris.cells.roles.runtime.public.contracts._execution_contracts import (
+            RoleExecutionResultV1,
+        )
+
+        self._write_plan(temp_workspace)
+        executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+        run = FactoryRun(
+            id="factory_test_ce_schema_recoverable",
+            config=FactoryConfig(name="test-run", stages=["chief_engineer_review"]),
+            status=FactoryRunStatus.RUNNING,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        class _SchemaFailedRuntimeService:
+            async def execute_role_task(self, command: object) -> RoleExecutionResultV1:
+                return RoleExecutionResultV1(
+                    ok=False,
+                    status="failed",
+                    role="chief_engineer",
+                    workspace=str(temp_workspace),
+                    task_id="TASK-1",
+                    run_id="factory_test_ce_schema_recoverable",
+                    output='{"plan": "analysis only"',
+                    error_code="role_runtime_error",
+                    error_message=(
+                        "验证失败，已重试1次: No JSON object matched chief_engineer blueprint keys: "
+                        "construction_plan, scope_for_apply, risk_flags"
+                    ),
+                    usage={
+                        "kernel_repair_reasons": ["attempt_0: No JSON object matched chief_engineer blueprint keys"]
+                    },
+                    metadata={
+                        "provider_id": "kimi",
+                        "model": "kimi-k2-thinking-turbo",
+                        "final_request_context_audit": {
+                            "final_request_token_estimate": 2708,
+                            "context_underutilized": False,
+                        },
+                        "context_os_audit": {"ok": True},
+                        "context_snapshot_ref": "ctx-ce-schema-failure",
+                    },
+                )
+
+        original_service = factory_stage_module.RoleRuntimeService
+        factory_stage_module.RoleRuntimeService = _SchemaFailedRuntimeService  # type: ignore
+        try:
+            result = await executor._execute_chief_engineer_review(run, context={})
+        finally:
+            factory_stage_module.RoleRuntimeService = original_service  # type: ignore
+
+        assert result.status == "success"
+
+        review_path = Path(
+            resolve_runtime_path(
+                str(temp_workspace),
+                f"runtime/state/blueprints/{run.id}.review.json",
+            )
+        )
+        review_payload = json.loads(review_path.read_text(encoding="utf-8"))
+        assert review_payload["generated_blueprints"] == 1
+        signals = review_payload["signals"]
+        assert len(signals) == 1
+        signal = signals[0]
+        assert signal["code"] == "chief_engineer.llm_review_failed"
+        assert signal["severity"] == "warning"
+        assert signal["recoverable"] is True
+        assert signal["provider"] == "kimi"
+        assert signal["model"] == "kimi-k2-thinking-turbo"
+        assert signal["context_snapshot_ref"] == "ctx-ce-schema-failure"
+        assert signal["final_request_context_audit"]["final_request_token_estimate"] == 2708
+        assert signal["context_os_audit"]["ok"] is True
 
     @pytest.mark.asyncio
     async def test_ce_evidence_failed_result_preserves_provider_model(self, temp_workspace: Path) -> None:

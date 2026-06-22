@@ -373,6 +373,21 @@ class TestBuildQaMessage:
         msg = adapter._build_qa_message("quality_gate", "Project X", review_result={})
         assert "no deterministic evidence" in msg
 
+    def test_sanitizes_factory_run_id_without_dropping_ce_context(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        target = (
+            'PM task contract: target_files ["src/main.ts"].\n'
+            "Chief Engineer blueprint evidence: blueprint_id=bp-1.\n"
+            'factory_workspace_quality: npm run build failed; "factory_run_id": "run-1"'
+        )
+
+        msg = adapter._build_qa_message("quality_gate", target)
+
+        assert "Chief Engineer blueprint evidence" in msg
+        assert "factory_workspace_quality" in msg
+        assert '"factory_run_id"' not in msg
+        assert '"factory_run_ref"' in msg
+
     def test_prompt_appendix_contains_json_contract(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         appendix = adapter._build_qa_prompt_appendix()
@@ -424,6 +439,68 @@ class TestParseReviewResult:
 
 
 class TestQaExecute:
+    def test_execute_sanitizes_target_before_llm_context_projection(self, tmp_path: Any, monkeypatch: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        calls: list[dict[str, Any]] = []
+
+        async def fake_invoke_role_runtime_first(**kwargs: Any) -> dict[str, str]:
+            calls.append(dict(kwargs))
+            return {
+                "response": json.dumps(
+                    {
+                        "verdict": "PASS",
+                        "score": 96,
+                        "critical_issues": [],
+                        "major_issues": [],
+                        "warnings": [],
+                        "evidence": ["workspace_checks_passed=True"],
+                        "suggestions": [],
+                    },
+                    ensure_ascii=False,
+                )
+            }
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.adapters.internal.qa_adapter.invoke_role_runtime_first",
+            fake_invoke_role_runtime_first,
+        )
+        monkeypatch.setattr(
+            adapter,
+            "_run_static_review",
+            lambda target, *, run_id="": {
+                "verdict": "PASS",
+                "score": 100,
+                "critical_issues": [],
+                "major_issues": [],
+                "warnings": [],
+                "evidence": ["static_passed=True"],
+                "suggestions": [],
+            },
+        )
+        target = (
+            'Workspace quality evidence: {"factory_run_id": "factory-1"}\n'
+            "Chief Engineer blueprint evidence collected before QA judgement: blueprint_id=bp-1"
+        )
+
+        result = asyncio.run(
+            adapter.execute(
+                "qa-task",
+                {"review_type": "quality_gate", "review_target": target},
+                {"run_id": "factory-1"},
+            )
+        )
+
+        assert result["success"] is True
+        assert len(calls) == 1
+        message = str(calls[0].get("message") or "")
+        context = calls[0].get("context")
+        assert isinstance(context, dict)
+        assert '"factory_run_id"' not in message
+        assert '"factory_run_id"' not in str(context.get("target") or "")
+        assert '"factory_run_ref"' in message
+        assert '"factory_run_ref"' in str(context.get("target") or "")
+        assert "Chief Engineer blueprint evidence" in message
+
     def test_cognitive_runtime_blocked_is_nonfatal_when_static_gate_passes(
         self, tmp_path: Any, monkeypatch: Any
     ) -> None:

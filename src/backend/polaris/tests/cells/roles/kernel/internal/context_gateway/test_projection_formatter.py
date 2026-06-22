@@ -191,6 +191,34 @@ def test_format_snapshot_summary_last_five_only(sample_snapshot: dict[str, Any])
     assert "msg0" not in result
 
 
+def test_format_snapshot_sanitizes_tool_failure_receipts() -> None:
+    """ContextOS snapshot summaries must not expose raw tool failure payloads."""
+    snapshot = {
+        "transcript_log": [
+            {
+                "role": "assistant",
+                "content": (
+                    "**write_file**: Error - {'ok': False, 'error': 'Director write policy denied: "
+                    "package.json structured diff failed: invalid JSON', 'tool': 'write_file', "
+                    "'error_type': 'director_write_policy_denied', 'director_policy': {'package_diff': {}}, "
+                    "'handler_error_type': 'director_write_policy_denied'}"
+                ),
+                "event_id": "evt_tool_fail",
+                "sequence": 1,
+                "metadata": {},
+            }
+        ]
+    }
+
+    result = ProjectionFormatter.format_context_os_snapshot(snapshot, verbosity="debug")
+
+    assert "[tool_failure_summary]" in result
+    assert "write_file" in result
+    assert "director_write_policy_denied" in result
+    assert "director_policy" not in result
+    assert "handler_error_type" not in result
+
+
 # ---------------------------------------------------------------------------
 # 3. expand_transcript_to_messages
 # ---------------------------------------------------------------------------
@@ -229,6 +257,31 @@ def test_expand_transcript_empty_input() -> None:
     """expand_transcript_to_messages with no transcript_log must return []."""
     assert ProjectionFormatter.expand_transcript_to_messages({}) == []
     assert ProjectionFormatter.expand_transcript_to_messages({"transcript_log": []}) == []
+
+
+def test_expand_transcript_sanitizes_tool_failure_receipts() -> None:
+    """Prompt-facing transcript expansion must summarize raw tool failure receipts."""
+    snapshot = {
+        "transcript_log": [
+            {
+                "role": "tool_result",
+                "content": (
+                    '{"ok": false, "error": "Director write policy denied: package.json structured diff failed: '
+                    'invalid JSON", "tool": "write_file", "error_type": "director_write_policy_denied", '
+                    '"director_policy": {"package_diff": {}}, "handler_error_type": "director_write_policy_denied"}'
+                ),
+            }
+        ]
+    }
+
+    messages = ProjectionFormatter.expand_transcript_to_messages(snapshot)
+
+    assert messages[0]["role"] == "tool"
+    assert "[tool_failure_summary]" in messages[0]["content"]
+    assert "write_file" in messages[0]["content"]
+    assert "director_write_policy_denied" in messages[0]["content"]
+    assert "director_policy" not in messages[0]["content"]
+    assert "handler_error_type" not in messages[0]["content"]
 
 
 # ---------------------------------------------------------------------------
@@ -454,3 +507,32 @@ def test_messages_from_projection_preserves_patch_content() -> None:
     assert len(messages) == 1
     assert messages[0]["content"] == "patch content"
     assert messages[0]["metadata"]["route"] == "patch"
+
+
+def test_messages_from_projection_sanitizes_tool_failure_receipts() -> None:
+    """Projection active-window messages must not replay raw tool failure receipts."""
+    projection = MagicMock()
+    projection.head_anchor = ""
+    projection.tail_anchor = ""
+    projection.run_card = None
+    evt = MagicMock(
+        sequence=1,
+        route="patch",
+        role="assistant",
+        content=(
+            "**write_file**: Error - {'ok': False, 'error': 'Director write policy denied: "
+            "package.json structured diff failed: invalid JSON', 'tool': 'write_file', "
+            "'error_type': 'director_write_policy_denied', 'director_policy': {'package_diff': {}}, "
+            "'handler_error_type': 'director_write_policy_denied'}"
+        ),
+        metadata=(("route", "patch"),),
+        artifact_id=None,
+        event_id="e1",
+    )
+    projection.active_window = (evt,)
+
+    messages = ProjectionFormatter.messages_from_projection(projection)
+
+    assert "[tool_failure_summary]" in messages[0]["content"]
+    assert "director_policy" not in messages[0]["content"]
+    assert "handler_error_type" not in messages[0]["content"]

@@ -15,6 +15,11 @@ from polaris.kernelone.events.file_event_broadcaster import (
     replace_in_file_with_broadcast,
     write_file_with_broadcast,
 )
+from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_guards import (
+    _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO,
+    _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES,
+    _destructive_shrink_error,
+)
 from polaris.kernelone.llm.toolkit.tool_normalization import (
     normalize_patch_like_write_content,
 )
@@ -100,6 +105,49 @@ _COLLAPSED_BARE_NEWLINE_MARKER_RE = re.compile(
     r")\b)"
 )
 _ESCAPED_NEWLINE_MARKER_RE = re.compile(r"\\n(?=\s{2,}|\s*\w)")
+_SOURCE_NARRATION_LEAK_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"i(?:'|’)ll\s+|"
+    r"i\s+will\s+|"
+    r"let\s+me\s+|"
+    r"here(?:'|’)s\s+|"
+    r"here\s+is\s+|"
+    r"below\s+is\s+|"
+    r"the\s+(?:two\s+)?(?:problem|problems|issue|issues)\s+(?:are|is)\b|"
+    r"我(?:会|将|来)|"
+    r"让我|"
+    r"下面(?:是|我)"
+    r")"
+)
+
+
+def _source_narration_leak_error(rel_path: str, text: str) -> dict[str, Any] | None:
+    suffix = Path(rel_path).suffix.lower()
+    if suffix not in _SOURCE_CONTENT_EXTENSIONS:
+        return None
+    stripped = str(text or "").lstrip()
+    if not stripped:
+        return None
+    first_line = stripped.splitlines()[0].strip()
+    if first_line.startswith(("#", "//", "/*", "*", '"""', "'''")):
+        return None
+    if not _SOURCE_NARRATION_LEAK_RE.search(stripped[:500]):
+        return None
+    return {
+        "ok": False,
+        "blocked": True,
+        "error_type": "source_narration_contamination",
+        "retryable": True,
+        "error": (
+            f"Source narration contamination: write_file for {rel_path} received assistant prose instead of code. "
+            "The content argument must contain only the complete UTF-8 source file body."
+        ),
+        "suggestion": (
+            "Retry write_file for the same path with real source code only. Do not include explanations, plans, "
+            "phrases like 'Let me fix', markdown, or reasoning text in code files."
+        ),
+        "file": rel_path,
+    }
 
 
 def _validate_source_write_content_shape(*, rel_path: str, content: str) -> dict[str, Any]:
@@ -109,6 +157,9 @@ def _validate_source_write_content_shape(*, rel_path: str, content: str) -> dict
         return {"ok": True}
 
     text = str(content or "")
+    narration_error = _source_narration_leak_error(rel_path, text)
+    if narration_error is not None:
+        return narration_error
     if "\n" in text or "\r" in text or len(text) < 120:
         return {"ok": True}
 
@@ -321,6 +372,26 @@ class DirectorToolExecutor:
                     existing_content = None
 
             rel_path = target.relative_to(workspace).as_posix()
+            if existing_content is not None:
+                old_lines = existing_content.count("\n") + (
+                    1 if existing_content and not existing_content.endswith("\n") else 0
+                )
+                new_lines = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
+                if (
+                    old_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
+                    and new_lines <= old_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO
+                ):
+                    return _destructive_shrink_error(
+                        file_path,
+                        old_lines,
+                        new_lines,
+                        tool_hint=(
+                            "write_file replaces the WHOLE file. If the intent is a partial edit, emit a "
+                            "precise range/search replacement with only the changed lines so untouched code "
+                            "is preserved. If the intent is a whole-file rewrite, provide a complete file "
+                            "body comparable in size to the original."
+                        ),
+                    )
             normalized = normalize_patch_like_write_content(
                 rel_path,
                 content,

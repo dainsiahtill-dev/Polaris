@@ -1366,6 +1366,13 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           return;
         }
 
+        const mergeTaskLifecycleFromRaw = (raw: Record<string, unknown>) => {
+          const lifecycleUpdate = runtimeTaskLifecyclePayload(raw);
+          if (lifecycleUpdate) {
+            setTasks(mergeRuntimeTaskLifecycle(useRuntimeStore.getState().tasks, lifecycleUpdate));
+          }
+        };
+
         // Handle settings changed event
         if (finalMsgType === 'settings_changed') {
           const eventPayload = Parsing.isRecord(payload.payload) ? payload.payload : Parsing.isRecord(payload.event) ? payload.event : null;
@@ -1537,10 +1544,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               if (!line.trim()) return;
               try {
                 const raw = JSON.parse(line);
-                const lifecycleUpdate = Parsing.isRecord(raw) ? runtimeTaskLifecyclePayload(raw) : null;
-                if (lifecycleUpdate) {
-                  setTasks(mergeRuntimeTaskLifecycle(useRuntimeStore.getState().tasks, lifecycleUpdate));
-                }
+                if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
                 const log = parseRuntimeEvent(raw);
                 if (log) logs.push(log);
                 const fileEdit = Parsing.extractRuntimeFileEditEvent(raw);
@@ -1578,9 +1582,18 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               setLlmStreamEvents([...current, ...uniqueLogs].slice(-180));
             }
           } else if (isProcessStreamChannel(channel) || isFactoryEventChannel(channel)) {
-            const processLogs = payload.lines
-              .map((line) => parseProcessStreamLine(channel, line))
-              .filter((entry): entry is LogEntry => Boolean(entry));
+            const processLogs: LogEntry[] = [];
+            payload.lines.forEach((line: string) => {
+              if (!line.trim()) return;
+              try {
+                const raw = JSON.parse(line);
+                if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
+              } catch {
+                // Process-stream parsing below still handles non-JSON text lines.
+              }
+              const entry = parseProcessStreamLine(channel, line);
+              if (entry) processLogs.push(entry);
+            });
             if (processLogs.length > 0) {
               const current = useRuntimeStore.getState().processStreamEvents;
               setProcessStreamEvents(Parsing.appendLogEntries(current, processLogs, 240));
@@ -1612,10 +1625,7 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
           } else if (channel === 'runtime_events') {
             try {
               const raw = JSON.parse(payload.text);
-              const lifecycleUpdate = Parsing.isRecord(raw) ? runtimeTaskLifecyclePayload(raw) : null;
-              if (lifecycleUpdate) {
-                setTasks(mergeRuntimeTaskLifecycle(useRuntimeStore.getState().tasks, lifecycleUpdate));
-              }
+              if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
               const log = parseRuntimeEvent(raw);
               if (log) {
                 appendExecutionLog(log);
@@ -1667,6 +1677,12 @@ export function useRuntime(options: UseRuntimeOptions = {}): UseRuntimeResult {
               }
             }
           } else if (isProcessStreamChannel(channel) || isFactoryEventChannel(channel)) {
+            try {
+              const raw = JSON.parse(payload.text);
+              if (Parsing.isRecord(raw)) mergeTaskLifecycleFromRaw(raw);
+            } catch {
+              // Process-stream parsing below still handles non-JSON text lines.
+            }
             const processLog = parseProcessStreamLine(channel, payload.text);
             if (processLog) {
               appendProcessStreamEvent(processLog);
