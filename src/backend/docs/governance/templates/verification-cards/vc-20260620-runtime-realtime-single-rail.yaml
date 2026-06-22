@@ -2,7 +2,7 @@ card_id: "vc-20260620-runtime-realtime-single-rail"
 bug_summary: >
   Runtime UI realtime updates could still depend on process-local fanout,
   signal-hub file watchers, startup journal snapshots, or removed SSE/polling
-  concepts instead of the unified Nat-JetStream runtime.v2 WebSocket rail.
+  concepts instead of the unified Nats-JetStream runtime.v2 WebSocket rail.
 
 classification: structural
 
@@ -18,7 +18,7 @@ assumptions:
     evidence: >
       Read src/backend/AGENTS.md section 4.12 and
       src/backend/docs/AGENT_ARCHITECTURE_STANDARD.md section 8; both require
-      Nat-JetStream + /v2/ws/runtime and forbid SSE, HTTP long polling, timer
+      Nats-JetStream + /v2/ws/runtime and forbid SSE, HTTP long polling, timer
       HTTP polling, file polling, and polling fallback.
 
   - id: "A2"

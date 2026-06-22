@@ -61,14 +61,14 @@ describe('useTestStream', () => {
     vi.clearAllMocks();
   });
 
-  it('starts LLM tests through the Nat-JetStream endpoint, not the legacy stream endpoint', async () => {
+  it('starts LLM tests through the Nats-JetStream endpoint, not the legacy stream endpoint', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({
       ok: true,
       test_run_id: 'hook-run-1',
       status: 'started',
       channel: 'llm-test:hook-run-1',
       subject: 'hp.runtime.llm.test.hook-run-1',
-      transport: 'nat-jetstream',
+      transport: 'nats-jetstream',
     }));
     vi.stubGlobal('fetch', fetchMock);
 

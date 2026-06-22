@@ -938,6 +938,11 @@ describe('safeText', () => {
     expect(safeText({ key: 'value' })).toBe('{"key":"value"}');
     expect(safeText({ a: 1 })).not.toContain('[object Object]');
   });
+  it('summarizes legacy summary payloads instead of rendering raw JSON', () => {
+    expect(safeText({ redacted: true, type: 'str', chars: 127 })).toBe('历史事件仅有摘要 · str · 127 chars');
+    expect(safeText('{"redacted":true,"type":"str","chars":114}')).toBe('历史事件仅有摘要 · str · 114 chars');
+    expect(safeText({ redacted: true })).toBe('历史事件仅有摘要');
+  });
   it('returns fallback for empty objects', () => {
     expect(safeText({})).toBe('');
     expect(safeText({}, 'empty')).toBe('empty');

@@ -604,7 +604,7 @@ async def test_docs_init_dialogue_jetstream_starts_nat_channel_and_publishes_eve
         "status": "started",
         "channel": "docs-init-dialogue:docs-dialogue-1",
         "subject": "hp.runtime.docs.init.dialogue.docs-dialogue-1",
-        "transport": "nat-jetstream",
+        "transport": "nats-jetstream",
     }
     assert len(scheduled) == 1
 
@@ -698,7 +698,7 @@ async def test_docs_init_preview_jetstream_starts_nat_channel_and_publishes_even
         "status": "started",
         "channel": "docs-init-preview:docs-preview-1",
         "subject": "hp.runtime.docs.init.preview.docs-preview-1",
-        "transport": "nat-jetstream",
+        "transport": "nats-jetstream",
     }
     assert len(scheduled) == 1
 

@@ -13,7 +13,7 @@ The Polaris API standardization effort consolidated fragmented endpoints from th
 - **Structured errors**: Replace bare `HTTPException` with `StructuredHTTPException` following the ADR-003 error contract (`{error: {code, message, details}}`).
 - **Pydantic response models**: Every v2 route declares explicit `response_model` classes.
 - **RBAC by default**: All v2 routes require authentication via `require_auth`; sensitive operations add `require_role`.
-- **Realtime single rail**: legacy HTTP stream endpoints were superseded by Nat-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket. Product realtime must not use SSE, HTTP long-polling, timer fetch loops, file polling, or polling fallback.
+- **Realtime single rail**: legacy HTTP stream endpoints were superseded by Nats-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket. Product realtime must not use SSE, HTTP long-polling, timer fetch loops, file polling, or polling fallback.
 - **Cell-aware architecture**: v2 routes delegate to Cell public services rather than inlining business logic.
 
 ---
@@ -191,7 +191,7 @@ Compatibility facade mounting the migrated `audit_router` under `/v2/audit`.
    ```
    instead of the previous bare `{"detail": "..."}`.
 
-3. **Role realtime events normalized**: Role chat and runtime activity now publish normalized realtime events through Nat-JetStream and `/v2/ws/runtime`. Legacy HTTP stream routes are fail-closed migration surfaces, not product realtime transports.
+3. **Role realtime events normalized**: Role chat and runtime activity now publish normalized realtime events through Nats-JetStream and `/v2/ws/runtime`. Legacy HTTP stream routes are fail-closed migration surfaces, not product realtime transports.
 
 4. **Director status endpoint simplified**: `/v2/director/status` returns only local Director state. For unified runtime projection, use the WebSocket status endpoint.
 
@@ -287,7 +287,7 @@ class StructuredHTTPException(HTTPException):
 
 ### 7.1 Canonical Event Schema
 
-Product realtime uses one transport rail: Nat-JetStream subjects consumed by
+Product realtime uses one transport rail: Nats-JetStream subjects consumed by
 the `runtime.v2` WebSocket endpoint at `/v2/ws/runtime`. Browser code must use
 the shared runtime transport and subscribe to logical channels such as
 `runtime_events`, `llm`, `dialogue`, `event.factory`, or

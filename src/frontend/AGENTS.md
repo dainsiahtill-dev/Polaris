@@ -8,7 +8,7 @@ This file is a local hard gate for frontend work. It does not weaken the root
 
 ## Realtime Transport
 
-1. Product realtime UI must use the unified Nat-JetStream runtime.v2 WebSocket
+1. Product realtime UI must use the unified Nats-JetStream runtime.v2 WebSocket
    transport only: `/v2/ws/runtime` through `RuntimeTransportProvider` and
    `runtimeSocketManager`.
 2. Do not add or retain SSE, `EventSource`, `text/event-stream`,
@@ -46,5 +46,5 @@ paths for:
 - `fetchRunStatus`
 
 Any hit in a product data-refresh path is a failure unless it is removed or
-converted to Nat-JetStream/WebSocket push. Test waits and UI-only timers must be
+converted to Nats-JetStream/WebSocket push. Test waits and UI-only timers must be
 clearly outside realtime data delivery.

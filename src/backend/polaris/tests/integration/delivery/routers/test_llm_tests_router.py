@@ -109,7 +109,7 @@ class TestLlmTestsRouter:
             "status": "started",
             "channel": "llm-test:run-1",
             "subject": "hp.runtime.llm.test.run-1",
-            "transport": "nat-jetstream",
+            "transport": "nats-jetstream",
         }
         assert len(scheduled) == 1
 

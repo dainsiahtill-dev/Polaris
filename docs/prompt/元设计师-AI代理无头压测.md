@@ -17,7 +17,7 @@
 
 - Polaris 的 `Architect/Court -> PM -> Chief Engineer -> Director -> QA` AI 代理链是否稳定
 - Claude / Codex 这类代理在 Polaris 里是否持续输出有效任务合同与执行结果
-- Nat-JetStream + `/v2/ws/runtime` runtime.v2 推送、PM 合同、Director 血缘、QA 结果是否一致
+- Nats-JetStream + `/v2/ws/runtime` runtime.v2 推送、PM 合同、Director 血缘、QA 结果是否一致
 - 当链路失败时，Polaris 能否自行定位根因、修复并回归
 
 ## 当前正式无头执行面
@@ -37,7 +37,7 @@
 实时观测面只使用：
 
 - `WS /v2/ws/runtime?protocol=runtime.v2` 作为唯一实时流
-- Factory、PM、ChiefEngineer、Director、ContextOS 事件必须经 Nat-JetStream 进入 runtime WebSocket
+- Factory、PM、ChiefEngineer、Director、ContextOS 事件必须经 Nats-JetStream 进入 runtime WebSocket
 
 说明：
 
@@ -98,7 +98,7 @@ python scripts/run_agent_headless_stress.py --agent-label codex
 - qa result
 - runtime 事件文件路径
 - runtime WebSocket 统计
-- Nat-JetStream/runtime.v2 Factory 事件统计
+- Nats-JetStream/runtime.v2 Factory 事件统计
 
 ## 失败后的动作
 

@@ -575,7 +575,7 @@ async def test_v2_llm_interview_jetstream_starts_nat_channel_and_publishes_event
         "status": "started",
         "channel": "llm-interview:interactive-1",
         "subject": "hp.runtime.llm.interview.interactive-1",
-        "transport": "nat-jetstream",
+        "transport": "nats-jetstream",
     }
     assert len(scheduled) == 1
 

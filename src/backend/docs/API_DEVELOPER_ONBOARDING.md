@@ -364,7 +364,7 @@ Polaris product realtime delivery is single-rail:
 | Pattern | Use case | Allowed |
 |---------|----------|---------|
 | `response_model=...` | Standard request/response, initial snapshot, explicit user refresh | Yes |
-| Nat-JetStream + `/v2/ws/runtime` runtime.v2 | Realtime event delivery | Yes |
+| Nats-JetStream + `/v2/ws/runtime` runtime.v2 | Realtime event delivery | Yes |
 | SSE / `EventSource` / `text/event-stream` / `StreamingResponse` | Product realtime streaming | No |
 | HTTP polling / long-polling / timer fetch loops | Product realtime updates | No |
 

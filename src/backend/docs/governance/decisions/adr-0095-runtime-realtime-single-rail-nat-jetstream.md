@@ -1,4 +1,4 @@
-# ADR-0095: Runtime Realtime Single Rail Nat-JetStream
+# ADR-0095: Runtime Realtime Single Rail Nats-JetStream
 
 Status: Accepted
 
@@ -8,7 +8,7 @@ Date: 2026-06-20
 
 Polaris runtime observation had accumulated multiple delivery paths:
 
-- runtime.v2 WebSocket consumers backed by Nat-JetStream.
+- runtime.v2 WebSocket consumers backed by Nats-JetStream.
 - process-local fanout queues for file and task events.
 - signal-hub file watchers that caused WebSocket loops to rescan runtime files.
 - removed HTTP SSE endpoints that still appeared in historical docs and tests.
@@ -20,7 +20,7 @@ could accidentally reintroduce polling or SSE as a fallback.
 ## Decision
 
 1. Product realtime delivery has one rail only:
-   `Nat-JetStream -> JetStreamConsumerManager -> /v2/ws/runtime runtime.v2`.
+   `Nats-JetStream -> JetStreamConsumerManager -> /v2/ws/runtime runtime.v2`.
 2. Product WebSocket loops must not consume process-local fanout, signal-hub
    watchers, file polling, timer HTTP polling, HTTP long polling, or SSE.
 3. Durable files remain facts and query sources, but they are not realtime

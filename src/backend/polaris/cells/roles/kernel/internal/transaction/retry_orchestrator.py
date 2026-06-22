@@ -54,6 +54,9 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     is_stale_edit_contract_violation,
     rollback_state_after_retry_batch_failure,
 )
+from polaris.cells.roles.kernel.internal.transaction.forced_write_command_normalizer import (
+    normalize_forced_write_command_decision,
+)
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import (
     requires_mutation_intent,
     requires_verification_intent,
@@ -757,6 +760,17 @@ class RetryOrchestrator:
             )
 
             retry_decision = self.decoder.decode(retry_response, TurnId(turn_id))
+            if escalated_definitions is not None:
+                retry_decision, normalization_events = normalize_forced_write_command_decision(
+                    retry_decision,
+                    allowed_tool_names=set(attempt_allowed_tool_names),
+                )
+                if normalization_events:
+                    logger.warning(
+                        "mutation-contract retry attempt=%s normalized forced-write command intent: %s",
+                        attempt_index + 1,
+                        normalization_events,
+                    )
             ledger.replace_decision(retry_decision)
             if retry_decision.get("kind") != TurnDecisionKind.TOOL_BATCH:
                 if not raw_native_names and escalated_definitions is not None:

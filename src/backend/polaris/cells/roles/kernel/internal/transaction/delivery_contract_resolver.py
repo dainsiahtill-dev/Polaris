@@ -34,6 +34,47 @@ from polaris.cells.roles.kernel.internal.transaction.task_contract_builder impor
 
 logger = logging.getLogger(__name__)
 
+_NO_WRITE_STRUCTURED_ROLES = frozenset({"pm", "chief_engineer", "chiefengineer", "architect", "qa"})
+
+_STRUCTURED_OUTPUT_MARKERS = (
+    "output contract",
+    "return exactly one json object",
+    "required top-level keys",
+    "只输出 json",
+    "输出 json",
+    "禁止输出 [tool_call]",
+    "禁止输出 <tool_call>",
+    "禁止输出工具调用",
+    "do not emit tool calls",
+    "do not emit tool call",
+    "do not emit tool_calls",
+    "pm 合同",
+    "任务合同",
+    "chief engineer output contract",
+    "construction_plan",
+    "scope_for_apply",
+    "risk_flags",
+)
+
+
+def _is_no_write_structured_role(role_id: str) -> bool:
+    return role_id.strip().lower().replace("-", "_") in _NO_WRITE_STRUCTURED_ROLES
+
+
+def _looks_like_structured_output_contract(message: str) -> bool:
+    lowered = message.strip().lower()
+    return any(marker in lowered for marker in _STRUCTURED_OUTPUT_MARKERS)
+
+
+def _structured_no_write_contract() -> DeliveryContract:
+    return DeliveryContract(
+        mode=DeliveryMode.PROPOSE_PATCH,
+        requires_mutation=False,
+        requires_verification=False,
+        allow_inline_code=True,
+        allow_patch_proposal=True,
+    )
+
 
 async def resolve_turn_delivery_contract(
     *,
@@ -43,6 +84,7 @@ async def resolve_turn_delivery_contract(
     ledger: TurnLedger,
     resolve_delivery_mode_hybrid: Callable[[str], Awaitable[DeliveryContract]],
     inherit_materialize_from_history: Callable[[list[dict[str, Any]], str], DeliveryContract | None],
+    role_id: str = "",
 ) -> DeliveryContract:
     """Resolve and record the Phase-1b delivery contract for the turn.
 
@@ -89,6 +131,29 @@ async def resolve_turn_delivery_contract(
                 "message_count": len(context),
             }
         )
+    if (
+        _is_no_write_structured_role(role_id)
+        and not has_available_write_tool(tool_definitions)
+        and _looks_like_structured_output_contract(latest_user_request)
+    ):
+        logger.warning(
+            "delivery-contract-role-no-write-structured: turn_id=%s role=%s latest_msg=%r "
+            "forcing PROPOSE_PATCH before mutation intent resolution",
+            turn_id,
+            role_id,
+            latest_user_request[:160],
+        )
+        ledger.anomaly_flags.append(
+            {
+                "type": "DELIVERY_CONTRACT_ROLE_NO_WRITE_STRUCTURED_OUTPUT",
+                "turn_id": turn_id,
+                "role_id": role_id,
+                "reason": "structured_output_role_has_no_write_tools",
+                "latest_request": latest_user_request,
+            }
+        )
+        return _structured_no_write_contract()
+
     delivery_contract = await resolve_delivery_mode_hybrid(latest_user_request)
     enforced_contract = enforce_explicit_materialize_delivery_marker(latest_user_request, delivery_contract)
     if enforced_contract is not delivery_contract:

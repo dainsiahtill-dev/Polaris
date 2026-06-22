@@ -32,11 +32,11 @@ Polaris 是一个**单人云端主模型 + 本地 SLM 协同**的自动化编程
 
 ### FR-2: 流式实时输出
 
-**描述**：模型必须支持逐 token 的实时输出，提供即时反馈；Polaris 产品实时 UI 只能通过统一 Nat-JetStream + `/v2/ws/runtime` WebSocket 投影接收事件。
+**描述**：模型必须支持逐 token 的实时输出，提供即时反馈；Polaris 产品实时 UI 只能通过统一 Nats-JetStream + `/v2/ws/runtime` WebSocket 投影接收事件。
 
 **验收标准**：
 - Provider 层可以解析上游模型的原生流式格式，但产品/前端实时通道禁止 SSE、HTTP 长轮询、文件轮询和定时 fetch 轮询
-- 所有 PM、Chief Engineer、Director、Factory、ContextOS 运行态事件必须发布到 Nat-JetStream，并通过 `/v2/ws/runtime` runtime.v2 WebSocket 推送给前端
+- 所有 PM、Chief Engineer、Director、Factory、ContextOS 运行态事件必须发布到 Nats-JetStream，并通过 `/v2/ws/runtime` runtime.v2 WebSocket 推送给前端
 - Factory Bench 和首页主战场必须通过实时事件联动 `PM → Chief Engineer → Director` 三段状态，不得用 HTTP status/get/list 轮询或 PM→Director 快照兜底
 - WebSocket 订阅/连接失败时，前端必须显示断线或订阅失败；禁止自动改用 HTTP status/get/list 接口作为实时兜底，禁止展示旧快照冒充实时推送
 - Token 输出延迟 < 100ms
@@ -111,7 +111,7 @@ Polaris 是一个**单人云端主模型 + 本地 SLM 协同**的自动化编程
 | SDK 兼容 | OpenAI SDK 标准接口 |
 | Provider 兼容 | CLI / Local HTTP / Standard HTTPS |
 | 模型兼容 | 必须支持 Thinking + Streaming |
-| 协议兼容 | 上游 Provider 原生流式输入可解析；Polaris 产品实时输出统一为 Nat-JetStream + `/v2/ws/runtime` WebSocket |
+| 协议兼容 | 上游 Provider 原生流式输入可解析；Polaris 产品实时输出统一为 Nats-JetStream + `/v2/ws/runtime` WebSocket |
 
 ### NFR-3: 可观测性要求
 
@@ -217,7 +217,7 @@ async def test_pm_qualification():
 | 术语 | 定义 |
 |------|------|
 | Thinking | 模型输出的推理过程，通常用 `<thinking>` 或 `reasoning_summary` 包裹 |
-| Streaming | 逐 token 的实时输出；产品实时展示统一经 Nat-JetStream + `/v2/ws/runtime` WebSocket 推送 |
+| Streaming | 逐 token 的实时输出；产品实时展示统一经 Nats-JetStream + `/v2/ws/runtime` WebSocket 推送 |
 | Provider | LLM 的接入方式（CLI / Local HTTP / HTTPS） |
 | Cost Channel | 成本类型（LOCAL/FIXED/METERED） |
 | Role | Polaris 中的角色（PM/Chief Engineer/Director/QA/Docs） |

@@ -272,7 +272,7 @@ async function installLlmDeepLayoutRoutes(window: Page): Promise<void> {
       status: "started",
       channel,
       subject: `hp.runtime.llm.interview.${sessionId}`,
-      transport: "nat-jetstream",
+      transport: "nats-jetstream",
     });
 
     setTimeout(() => {

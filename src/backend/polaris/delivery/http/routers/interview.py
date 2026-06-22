@@ -390,7 +390,7 @@ def v2_llm_interview_cancel(payload: InterviewCancelPayload) -> dict[str, Any]:
 
 @router.post("/v2/llm/interview/jetstream", dependencies=[Depends(require_auth)])
 async def v2_llm_interview_jetstream(request: Request, payload: InterviewAskPayload) -> dict[str, Any]:
-    """Start an interview run and publish chunks through runtime Nat-JetStream."""
+    """Start an interview run and publish chunks through runtime Nats-JetStream."""
     state = get_state(request)
     session_id = _safe_event_id(payload.session_id, "interactive")
     task = asyncio.create_task(
@@ -407,5 +407,5 @@ async def v2_llm_interview_jetstream(request: Request, payload: InterviewAskPayl
         "status": "started",
         "channel": f"llm-interview:{session_id}",
         "subject": f"hp.runtime.llm.interview.{session_id}",
-        "transport": "nat-jetstream",
+        "transport": "nats-jetstream",
     }

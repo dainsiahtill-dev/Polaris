@@ -258,7 +258,7 @@ async def v2_llm_test(request: Request, payload: LlmTestPayload) -> dict[str, An
 
 @router.post("/v2/llm/test/jetstream", dependencies=[Depends(require_auth)])
 async def v2_llm_test_jetstream(request: Request, payload: LlmTestPayload) -> dict[str, Any]:
-    """Start LLM readiness tests and publish progress through runtime Nat-JetStream."""
+    """Start LLM readiness tests and publish progress through runtime Nats-JetStream."""
     state = get_state(request)
     workspace_raw = state.settings.workspace
     workspace = str(workspace_raw) if not isinstance(workspace_raw, str) else workspace_raw
@@ -286,7 +286,7 @@ async def v2_llm_test_jetstream(request: Request, payload: LlmTestPayload) -> di
         "status": "started",
         "channel": f"llm-test:{run_id}",
         "subject": f"hp.runtime.llm.test.{run_id}",
-        "transport": "nat-jetstream",
+        "transport": "nats-jetstream",
     }
 
 

@@ -5,7 +5,7 @@ This module provides a unified pipeline for all log events:
 - Normalize: Convert to CanonicalLogEventV2 schema
 - Deduplicate: Remove duplicate events via fingerprint
 - Persist: Write to三层 files (raw, norm, enriched)
-- Publish: Emit runtime.v2 events through Nat-JetStream
+- Publish: Emit runtime.v2 events through Nats-JetStream
 - Enrich: Async LLM enhancement of events
 
 Usage:

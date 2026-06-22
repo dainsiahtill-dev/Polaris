@@ -26,7 +26,7 @@ Polaris v2 API consolidates fragmented legacy endpoints (`/pm/chat`, `/director/
 - **Unified routing**: All new endpoints live under `/v2/` with consistent tagging and OpenAPI documentation.
 - **Structured errors**: Every error response follows the ADR-003 contract (`{error: {code, message, details}}`).
 - **RBAC by default**: All v2 routes require authentication; sensitive operations require explicit roles.
-- **Realtime single rail**: product realtime streaming uses Nat-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket only. Legacy HTTP stream routes fail closed and must not be used for UI realtime.
+- **Realtime single rail**: product realtime streaming uses Nats-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket only. Legacy HTTP stream routes fail closed and must not be used for UI realtime.
 - **Cell-aware architecture**: v2 routes delegate to Cell public services rather than inlining business logic.
 
 If you are building a new integration, start directly with v2. If you have an existing v1 client, use this guide to migrate.
@@ -38,7 +38,7 @@ If you are building a new integration, start directly with v2. If you have an ex
 | Change | v1 Behavior | v2 Behavior | Impact |
 |--------|-------------|-------------|--------|
 | **Error format** | `{"detail": "string"}` | `{"error": {"code": "...", "message": "...", "details": {}}}` | All error parsing logic must be updated. |
-| **Realtime transport** | Ad-hoc HTTP stream endpoints | Nat-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket | Clients must subscribe to WebSocket channels; do not use HTTP stream routes. |
+| **Realtime transport** | Ad-hoc HTTP stream endpoints | Nats-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket | Clients must subscribe to WebSocket channels; do not use HTTP stream routes. |
 | **Authentication** | Optional on some routes | Required on **all** `/v2/*` routes | Clients must send `Authorization: Bearer <token>` on every request. |
 | **Role chat** | `POST /v2/pm/chat` only | `POST /v2/role/{role}/chat` for all 5 roles | PM chat moved to unified role entry. |
 | **Director status** | Single monolithic payload | `source=auto\|local\|workflow` parameter | Clients must choose projection source. |
@@ -317,7 +317,7 @@ from polaris.delivery.http.dependencies import require_permission
 
 ### 6.1 Canonical Runtime Channels
 
-All product realtime events are published to Nat-JetStream and delivered to
+All product realtime events are published to Nats-JetStream and delivered to
 clients through `/v2/ws/runtime` using the `runtime.v2` WebSocket protocol.
 Legacy HTTP stream routes are retained only as fail-closed compatibility
 surfaces.

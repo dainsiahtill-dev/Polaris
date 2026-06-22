@@ -108,6 +108,9 @@ export function ContextStoreStatsPanel({ workspace, enabled = true }: ContextSto
           state,
           sweepPending,
           sweepError,
+          onRetry: () => {
+            void refresh();
+          },
           onTriggerSweep: () => {
             void onTriggerSweep();
           },
@@ -125,10 +128,11 @@ interface RenderBodyParams {
   state: ReturnType<typeof useContextStoreStats>['state'];
   sweepPending: boolean;
   sweepError: string | null;
+  onRetry: () => void;
   onTriggerSweep: () => void;
 }
 
-function renderBody({ state, sweepPending, sweepError, onTriggerSweep }: RenderBodyParams) {
+function renderBody({ state, sweepPending, sweepError, onRetry, onTriggerSweep }: RenderBodyParams) {
   if (state.kind === 'idle') {
     return (
       <div className="rounded-lg border border-dashed border-white/10 px-3 py-5 text-center text-[11px] text-text-dim">
@@ -148,7 +152,7 @@ function renderBody({ state, sweepPending, sweepError, onTriggerSweep }: RenderB
     return <DisabledHint reason={state.reason} />;
   }
   if (state.kind === 'error' && !state.previous) {
-    return <ErrorMessage message={state.message} onRetry={() => undefined} />;
+    return <ErrorMessage message={state.message} onRetry={onRetry} />;
   }
   // ready | error-with-previous | loading-with-previous → 渲染历史数据
   const data = state.kind === 'ready' ? state.data

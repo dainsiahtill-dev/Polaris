@@ -134,7 +134,7 @@ rules:
   - id: realtime_single_rail_no_polling
     severity: blocker
     description: >
-      Product realtime delivery must use the unified Nat-JetStream runtime.v2
+      Product realtime delivery must use the unified Nats-JetStream runtime.v2
       WebSocket path only. SSE, EventSource, StreamingResponse event streams,
       HTTP long-polling, timer-driven fetch polling, file polling, and polling
       fallbacks are forbidden in application realtime surfaces.

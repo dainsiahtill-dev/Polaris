@@ -206,8 +206,25 @@ def resolve_prompt_layer_options(context_override: Any, *, message: str | None =
     if not isinstance(context_override, dict):
         return {}
 
+    def _forced_tool_choice_name(raw_choice: Any) -> str:
+        if isinstance(raw_choice, dict):
+            function_payload = raw_choice.get("function")
+            if isinstance(function_payload, dict):
+                return str(function_payload.get("name") or "").strip().lower()
+            return str(raw_choice.get("name") or "").strip().lower()
+        return str(raw_choice or "").strip().lower()
+
     delivery_mode = str(context_override.get("delivery_mode") or "").strip().lower()
     codegen_mode = str(context_override.get("director_runtime_codegen_mode") or "").strip().lower()
+    forced_tool_name = _forced_tool_choice_name(context_override.get("_transaction_kernel_forced_tool_choice"))
+    is_forced_write_turn = forced_tool_name in {
+        "append_to_file",
+        "edit_blocks",
+        "edit_file",
+        "precision_edit",
+        "repo_apply_diff",
+        "write_file",
+    }
     message_text = str(message or "")
     message_lower = message_text.lower()
     is_director_codegen_bridge = bool(context_override.get("director_runtime_codegen")) and (
@@ -222,8 +239,10 @@ def resolve_prompt_layer_options(context_override: Any, *, message: str | None =
     )
     suppress_working_memory = bool(
         context_override.get("suppress_working_memory_contract")
+        or context_override.get("_transaction_kernel_suppress_session_patch")
         or is_director_codegen_bridge
         or is_single_batch_execution
+        or is_forced_write_turn
     )
     suppress_tool_policy = bool(context_override.get("suppress_tool_policy_prompt") or is_director_codegen_bridge)
 

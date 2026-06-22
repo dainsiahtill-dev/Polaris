@@ -47,7 +47,7 @@ async def runtime_websocket(
     """Main runtime WebSocket endpoint.
 
     Provides runtime.v2 WebSocket access. Product realtime events are delivered
-    exclusively through Nat-JetStream consumers; file-watch/process-local
+    exclusively through Nats-JetStream consumers; file-watch/process-local
     realtime adapters are not registered by this endpoint.
     """
     auth: Auth = websocket.app.state.auth

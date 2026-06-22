@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 import time
 import warnings
@@ -362,6 +363,15 @@ _DISK_AUDIT_REDACTED_KEYS = {
     "input_text",
     "output_text",
 }
+_REALTIME_TEXT_LIMIT = 8_000
+_REALTIME_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"sk-[A-Za-z0-9_-]{20,}", re.IGNORECASE), "***OPENAI_KEY***"),
+    (re.compile(r"github_pat_[A-Za-z0-9_]{20,}", re.IGNORECASE), "***GITHUB_TOKEN***"),
+    (re.compile(r"gh[pousr]_[A-Za-z0-9_]{20,}", re.IGNORECASE), "***GITHUB_TOKEN***"),
+    (re.compile(r"AIza[A-Za-z0-9_-]{20,}", re.IGNORECASE), "***GCP_API_KEY***"),
+    (re.compile(r"ya29\.[A-Za-z0-9_-]{20,}", re.IGNORECASE), "***GOOGLE_TOKEN***"),
+    (re.compile(r"Bearer\s+[A-Za-z0-9._-]{16,}", re.IGNORECASE), "Bearer ***TOKEN***"),
+)
 
 
 def get_global_emitter() -> LLMEventEmitter:
@@ -502,6 +512,31 @@ def _sanitize_llm_event_for_disk(value: Any) -> Any:
     return value
 
 
+def _sanitize_realtime_text(value: str) -> str:
+    text = value
+    for pattern, replacement in _REALTIME_SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    if len(text) <= _REALTIME_TEXT_LIMIT:
+        return text
+    return f"{text[:_REALTIME_TEXT_LIMIT]}... [truncated {len(text) - _REALTIME_TEXT_LIMIT} chars]"
+
+
+def _sanitize_llm_event_for_realtime(value: Any) -> Any:
+    """Prepare LLM event data for the local runtime UI.
+
+    Disk audit intentionally summarizes prompt/response fields. The runtime
+    workbench is an authenticated local operator surface, so it keeps readable
+    content while still masking credentials and bounding very large strings.
+    """
+    if isinstance(value, dict):
+        return {str(key): _sanitize_llm_event_for_realtime(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_llm_event_for_realtime(item) for item in value]
+    if isinstance(value, str):
+        return _sanitize_realtime_text(value)
+    return value
+
+
 def _emit_llm_event_to_disk(event: LLMCallEvent) -> None:
     """Write LLM event to disk JSONL file for audit trail.
 
@@ -612,7 +647,7 @@ def _publish_to_realtime_bridge(event: LLMCallEvent) -> None:
                 source="application.roles.events",
                 timestamp=str(event.timestamp or ""),
                 iteration=_resolve_iteration(event),
-                data=_sanitize_llm_event_for_disk(event.to_dict()),
+                data=_sanitize_llm_event_for_realtime(event.to_dict()),
             )
         )
     except (RuntimeError, ValueError):

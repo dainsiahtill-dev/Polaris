@@ -136,7 +136,7 @@
 
 ## 8. 实时观测标准
 
-1. 实时推送必须使用统一 Nat-JetStream + `/v2/ws/runtime` WebSocket runtime.v2；禁止产品代码新增或保留 SSE、HTTP 长轮询、定时 HTTP 轮询、文件轮询伪实时、轮询兜底。
+1. 实时推送必须使用统一 Nats-JetStream + `/v2/ws/runtime` WebSocket runtime.v2；禁止产品代码新增或保留 SSE、HTTP 长轮询、定时 HTTP 轮询、文件轮询伪实时、轮询兜底。
    - Searchable forbidden terms: 禁止轮询, HTTP long polling, timer HTTP polling, file polling, polling fallback, SSE.
 2. HTTP 只允许用于初始快照、显式用户刷新、一次性 command/query；不得通过 `setInterval`、timer、后台 loop 调 HTTP 端点模拟实时。
 3. 新增实时事件必须先定义 JetStream subject/channel 映射，并通过 `delivery/ws` runtime.v2 subject builder 进入统一通道；前端统一通过 `RuntimeTransportProvider`/`runtimeSocketManager` 订阅。

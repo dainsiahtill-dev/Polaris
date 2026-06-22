@@ -68,7 +68,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 5. **修复范围允许双域**：Polaris 主仓 + C:/Temp 新项目
 6. **运行策略为"直到通过"**：不设轮次上限，持续循环，直到所有验收门禁 PASS
 7. **只能修改 Polaris**：绝对不能修改目标项目的任何代码
-8. **实时推送单轨制**：应用/前端实时状态只能走统一 Nat-JetStream + `/v2/ws/runtime` WebSocket；禁止新增或保留 SSE、HTTP 长轮询、`setInterval`/timer fetch 轮询、轮询兜底、文件轮询伪实时。HTTP 只允许用于初始快照、显式用户刷新、一次性命令/查询；测试代码可为等待异步完成而轮询状态端点，但不得作为产品实时链路。
+8. **实时推送单轨制**：应用/前端实时状态只能走统一 Nats-JetStream + `/v2/ws/runtime` WebSocket；禁止新增或保留 SSE、HTTP 长轮询、`setInterval`/timer fetch 轮询、轮询兜底、文件轮询伪实时。HTTP 只允许用于初始快照、显式用户刷新、一次性命令/查询；测试代码可为等待异步完成而轮询状态端点，但不得作为产品实时链路。
 9. **全链路任务流唯一制**：运行态任务链路只能是 `PM → Chief Engineer → Director`。PM 只能生成任务合同并交给 Chief Engineer 产出蓝图/交接证据；Director 只能消费 CE 交接后的任务。禁止任何产品代码、脚本、UI 或文档回退为 `PM → Director` 旧链路，缺少 CE 投影/蓝图时必须显示阻塞或等待 CE，不得直连 Director。
 10. **工具调用归一化优先**：平台必须适配不同 LLM 的自然工具调用习惯，先通过统一 ToolSpecRegistry/tool alias/arg_aliases 归一化工具名与参数，再进入授权、路径、命令、读写门禁；禁止强迫 LLM 只按 Polaris 内部字段写调用。不可安全推断的调用必须 fail-closed 并留下工具/LLM/runtime 证据，禁止吞异常、硬编码成功、静默 fallback。
 11. **LLM 最终请求上下文审计**：每次真实 LLM 调用都必须审计最终 provider request，而不只统计 messages 投影；审计至少包含 message/tool schema/response_format token 估算、最终请求 token、窗口利用率，以及 PM 合同、Chief Engineer 蓝图、目标文件、失败反馈、workspace quality evidence 覆盖度 flags。ContextOS 必须优先展示最终请求上下文 token，禁止用 messages-only 或 prompt usage 冒充最终上下文占用。
@@ -76,7 +76,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 
 ### 实时推送硬门禁
 
-- 首页主工作区、Factory 工作区、PM/ChiefEngineer/Director 工作区、ContextOS 实时视图必须通过同一套 Nat-JetStream runtime.v2 WebSocket 接收推送。
+- 首页主工作区、Factory 工作区、PM/ChiefEngineer/Director 工作区、ContextOS 实时视图必须通过同一套 Nats-JetStream runtime.v2 WebSocket 接收推送。
 - 禁止为了"兜底"并行保留第二套实时机制；发现双轨（SSE + WS、WS + HTTP polling、WS + 文件轮询）视为 P0。
 - WebSocket 订阅/连接失败必须 fail-closed：UI 应显示断线/订阅失败并等待用户操作或连接恢复；禁止自动调用 HTTP status/get/list 接口作为实时兜底，禁止用“最近一次快照”冒充正在实时更新。
 - 新增实时事件必须先定义 JetStream subject/channel 映射，再由 `RuntimeTransportProvider`/`runtimeSocketManager` 订阅；不得在组件内用 `setInterval` 调接口模拟实时。

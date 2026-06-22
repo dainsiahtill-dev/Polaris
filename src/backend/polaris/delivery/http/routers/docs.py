@@ -574,7 +574,7 @@ async def _run_docs_init_dialogue_jetstream(
 
 @router.post("/v2/docs/init/dialogue/jetstream", dependencies=[Depends(require_auth)])
 async def docs_init_dialogue_jetstream_v2(request: Request, payload: DocsInitDialoguePayload) -> dict[str, Any]:
-    """Start docs wizard dialogue and publish chunks through runtime Nat-JetStream."""
+    """Start docs wizard dialogue and publish chunks through runtime Nats-JetStream."""
     state = get_state(request)
     workspace = state.settings.workspace
     workspace_str = str(workspace) if not isinstance(workspace, str) else workspace
@@ -598,7 +598,7 @@ async def docs_init_dialogue_jetstream_v2(request: Request, payload: DocsInitDia
         "status": "started",
         "channel": _docs_init_channel("dialogue", session_id),
         "subject": _docs_init_subject("dialogue", session_id),
-        "transport": "nat-jetstream",
+        "transport": "nats-jetstream",
     }
 
 
@@ -826,7 +826,7 @@ async def _run_docs_init_preview_jetstream(
 
 @router.post("/v2/docs/init/preview/jetstream", dependencies=[Depends(require_auth)])
 async def docs_init_preview_jetstream_v2(request: Request, payload: DocsInitPreviewPayload) -> dict[str, Any]:
-    """Start docs preview generation and publish chunks through runtime Nat-JetStream."""
+    """Start docs preview generation and publish chunks through runtime Nats-JetStream."""
     state = get_state(request)
     workspace = state.settings.workspace
     workspace_str = str(workspace) if not isinstance(workspace, str) else workspace
@@ -846,7 +846,7 @@ async def docs_init_preview_jetstream_v2(request: Request, payload: DocsInitPrev
         "status": "started",
         "channel": _docs_init_channel("preview", session_id),
         "subject": _docs_init_subject("preview", session_id),
-        "transport": "nat-jetstream",
+        "transport": "nats-jetstream",
     }
 
 

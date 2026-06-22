@@ -163,6 +163,41 @@ class TestL1CacheHitRate:
         stats = builder.get_cache_stats()
         assert stats["l1_cached_roles"] == 20
 
+    def test_chief_engineer_prompt_identity_is_not_director(self) -> None:
+        builder = PromptBuilder()
+        prompt = builder.build_system_prompt(_make_profile(template_id="chief_engineer"))
+
+        assert "你是 Polaris 体系中的 **Chief Engineer**" in prompt
+        assert "请保持 **Chief Engineer** 的性格特点" in prompt
+        assert "你是 Polaris 体系中的 **Director**" not in prompt
+        assert "请保持 **Director** 的性格特点" not in prompt
+
+    def test_architect_prompt_identity_is_not_director(self) -> None:
+        builder = PromptBuilder()
+        prompt = builder.build_system_prompt(_make_profile(template_id="architect"))
+
+        assert "你是 Polaris 体系中的 **Architect**" in prompt
+        assert "你是 Polaris 体系中的 **Director**" not in prompt
+
+    def test_core_role_identity_mismatch_fails_closed(self) -> None:
+        builder = PromptBuilder()
+        profile = _make_profile(template_id="chief_engineer")
+        profile.role_id = "chief_engineer"
+
+        with pytest.raises(RuntimeError, match="prompt_role_identity_mismatch:chief_engineer"):
+            builder._assert_core_role_identity(
+                profile,
+                """
+<role_definition>
+# 系统定位
+你是 Polaris 体系中的 **Director**。
+
+# 表达方式
+请保持 **Director** 的性格特点:
+</role_definition>
+""",
+            )
+
 
 # ---------------------------------------------------------------------------
 # L2 cache — security boundary benchmarks

@@ -71,6 +71,34 @@ def _load_context_payload(file_path: Path, canonical_hash: str) -> dict[str, Any
     return payload
 
 
+@router.get(
+    "/v2/context/stats",
+    response_model=ContextStoreStatsResponse,
+    dependencies=[Depends(require_auth)],
+)
+def get_context_stats(request: Request) -> dict[str, Any]:
+    """Return basic stats about the ``runtime/contexts/`` tree.
+
+    This static route must be registered before ``/v2/context/{hash}``;
+    otherwise Starlette treats ``stats`` as a snapshot hash and the request
+    fails with ``INVALID_HASH`` before reaching the stats handler.
+    """
+    workspace = _resolve_workspace(request)
+    retention = _build_retention(workspace)
+    stats = retention.get_stats()
+    return {
+        "workspace": stats["workspace"],
+        "contexts_root": stats["contexts_root"],
+        "file_count": stats["file_count"],
+        "total_bytes": stats["total_bytes"],
+        "oldest_mtime": stats["oldest_mtime"],
+        "newest_mtime": stats["newest_mtime"],
+        "config": stats["config"],
+        "last_sweep_at": stats["last_sweep_at"],
+        "last_sweep_report": None,
+    }
+
+
 @router.get("/v2/context/{hash}", dependencies=[Depends(require_auth)])
 def get_context_by_hash(request: Request, hash: str) -> dict[str, Any]:
     """Retrieve a stored context snapshot by its SHA-256 hash reference.
@@ -107,9 +135,7 @@ def get_context_by_hash(request: Request, hash: str) -> dict[str, Any]:
         message="Context snapshot belongs to a different workspace",
     )
 
-    workspace_raw = settings.workspace
-    workspace = str(workspace_raw) if isinstance(workspace_raw, str) else workspace_raw
-    workspace = workspace or "."
+    workspace = _resolve_workspace(request)
 
     layout = StorageLayout(workspace=workspace, runtime_base=build_cache_root("", workspace))
     shard = canonical_hash[:2]
@@ -175,8 +201,7 @@ def _resolve_workspace(request: Request) -> str:
     """Mirror the workspace resolution used by ``get_context_by_hash``."""
     state = get_state(request)
     workspace_raw = state.settings.workspace
-    workspace = str(workspace_raw) if isinstance(workspace_raw, str) else workspace_raw
-    return workspace or "."
+    return str(workspace_raw) if workspace_raw else "."
 
 
 def _build_retention(workspace: str) -> ContextStoreRetention:
@@ -200,34 +225,6 @@ def _build_retention(workspace: str) -> ContextStoreRetention:
         if runtime_cfg is not None:
             config = getattr(runtime_cfg, "context_store_retention", None)
     return ContextStoreRetention(workspace=workspace, config=config)
-
-
-@router.get(
-    "/v2/context/stats",
-    response_model=ContextStoreStatsResponse,
-    dependencies=[Depends(require_auth)],
-)
-def get_context_stats(request: Request) -> dict[str, Any]:
-    """Return basic stats about the ``runtime/contexts/`` tree.
-
-    This is a lightweight endpoint that doesn't require admin privileges.
-    It returns basic statistics but doesn't include sweep functionality
-    or detailed sweep reports.
-    """
-    workspace = _resolve_workspace(request)
-    retention = _build_retention(workspace)
-    stats = retention.get_stats()
-    return {
-        "workspace": stats["workspace"],
-        "contexts_root": stats["contexts_root"],
-        "file_count": stats["file_count"],
-        "total_bytes": stats["total_bytes"],
-        "oldest_mtime": stats["oldest_mtime"],
-        "newest_mtime": stats["newest_mtime"],
-        "config": stats["config"],
-        "last_sweep_at": stats["last_sweep_at"],
-        "last_sweep_report": None,
-    }
 
 
 @router.get(

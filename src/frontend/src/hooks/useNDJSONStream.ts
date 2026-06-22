@@ -45,7 +45,7 @@ function eventFromRuntimeMessage(message: unknown, channel: string): NDJSONEvent
 }
 
 /**
- * Starts docs-init generation over Nat-JetStream and consumes the matching
+ * Starts docs-init generation over Nats-JetStream and consumes the matching
  * runtime WebSocket channel. The public callback shape remains NDJSON-like
  * because DocsInitDialog already models events as `{ type, data }`.
  */

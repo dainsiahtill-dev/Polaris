@@ -304,14 +304,10 @@ class TurnEngine(TurnEngineCompatMixin):
         def _preserve_existing_forced_tool_scope(context_override: dict[str, Any], tool_choice: Any) -> bool:
             existing_forced_defs = context_override.get("_transaction_kernel_forced_tool_definitions")
             existing_forced_choice = context_override.get("_transaction_kernel_forced_tool_choice")
-            existing_forced_scope = (
-                (isinstance(existing_forced_defs, list) and bool(existing_forced_defs))
-                or (
-                    existing_forced_choice is not None
-                    and not (
-                        isinstance(existing_forced_choice, str)
-                        and existing_forced_choice.strip().lower() in {"", "auto"}
-                    )
+            existing_forced_scope = (isinstance(existing_forced_defs, list) and bool(existing_forced_defs)) or (
+                existing_forced_choice is not None
+                and not (
+                    isinstance(existing_forced_choice, str) and existing_forced_choice.strip().lower() in {"", "auto"}
                 )
             )
             incoming_choice_is_default = tool_choice is None or (
@@ -537,6 +533,7 @@ class TurnEngine(TurnEngineCompatMixin):
             llm_provider=llm_provider,
             tool_runtime=tool_runtime,
             config=TransactionConfig(
+                role_id=role,
                 domain="code" if role in {"director", "chief_engineer"} else "document",
                 mutation_guard_mode="strict" if role == "director" else "warn",
                 recon_required=self._resolve_recon_required(role, profile),

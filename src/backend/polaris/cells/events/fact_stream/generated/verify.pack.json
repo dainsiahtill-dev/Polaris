@@ -6,9 +6,9 @@
   "guarantees": [
     {
       "id": "runtime-v2-jetstream-single-rail",
-      "statement": "Product realtime delivery uses Nat-JetStream consumed by /v2/ws/runtime runtime.v2 only.",
+      "statement": "Product realtime delivery uses Nats-JetStream consumed by /v2/ws/runtime runtime.v2 only.",
       "evidence": [
-        "src/backend/docs/governance/decisions/adr-0095-runtime-realtime-single-rail-nat-jetstream.md",
+        "src/backend/docs/governance/decisions/adr-0095-runtime-realtime-single-rail-nats-jetstream.md",
         "src/backend/polaris/tests/test_realtime_single_rail_static_guard.py"
       ]
     },

@@ -78,7 +78,7 @@ def _ensure_jetstream_support() -> bool:
 #
 # The module-level flag is intentionally false for offline/library imports.
 # FastAPI runtime startup enables the env switch so role-kernel log events are
-# published to the platform Nat-JetStream bus without forcing isolated tests to
+# published to the platform Nats-JetStream bus without forcing isolated tests to
 # connect to NATS.
 PUBLISH_ENABLED = False
 _JETSTREAM_PUBLISH_FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
@@ -284,7 +284,7 @@ class LogEventWriter:
                 logger.warning("Failed to write event to %s: %s", path, e)
 
     def _publish_realtime_event(self, event: CanonicalLogEventV2) -> None:
-        """Publish canonical realtime events only through Nat-JetStream."""
+        """Publish canonical realtime events only through Nats-JetStream."""
         if _jetstream_publish_enabled() and (_jetstream_available or _ensure_jetstream_support()):
             self._publish_to_jetstream(event)
 

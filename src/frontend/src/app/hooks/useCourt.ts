@@ -4,7 +4,7 @@
  * 提供宫廷拓扑、状态查询等功能的 React Hooks
  * 使用统一的 RuntimeTransportProvider 进行 WebSocket 通信
  *
- * Architecture Note (Nat-JetStream Runtime Transport):
+ * Architecture Note (Nats-JetStream Runtime Transport):
  * - 使用 useRuntimeTransport 替代直接 connectWebSocket
  * - 共享全局 WebSocket 连接，避免多连问题
  */

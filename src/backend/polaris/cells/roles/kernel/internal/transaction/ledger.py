@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 class TransactionConfig:
     """事务控制器配置"""
 
+    role_id: str = ""
     domain: Literal["document", "code"] = "document"
     workspace: str = ""
     max_tool_execution_time_ms: int = 60000

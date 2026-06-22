@@ -7,7 +7,7 @@ import { expect, test } from "./fixtures";
  *
  * 目标：在真实 Electron 应用里证明
  *   1) ContextOS 入口可达、视图可渲染；
- *   2) 仪表盘的实时数据来自 Polaris **既有的实时框架**（Nat-JetStream → WebSocket /v2/ws/runtime），
+ *   2) 仪表盘的实时数据来自 Polaris **既有的实时框架**（Nats-JetStream → WebSocket /v2/ws/runtime），
  *      而非文件轮询/文件快照：测试直接发布 runtime.v2 envelope，WS 推送 → useRuntime →
  *      ContextOS 实时呈现。（ContextOS 自身不读任何文件——它只消费 WS 推送的 props。）
  */
@@ -139,7 +139,7 @@ test("ContextOS entry is reachable and the real-time dashboard renders", async (
 /**
  * 端到端证明「ContextOS 经 WebSocket 实时框架呈现**真实生产形态**的数据，无轮询」。
  *
- * 关键（修正上一版假绿）：真实运行时事件必须走 Nat-JetStream runtime.v2 envelope，而不是写
+ * 关键（修正上一版假绿）：真实运行时事件必须走 Nats-JetStream runtime.v2 envelope，而不是写
  * per-run 文件后等待重连快照。测试发布：
  *   - LLM 调用 → envelope(channel=llm, payload=CanonicalLogEventV2)，携带
  *     raw.stream_event=llm_completed，raw.data.{prompt,completion}_tokens + metadata.elapsed_ms。
@@ -163,7 +163,7 @@ test("ContextOS renders REAL production-shape telemetry over the runtime WebSock
   await expect(source).toBeVisible({ timeout: 20000 });
   await expect(window.getByTestId("contextos-telemetry-freshness")).toContainText("WS LIVE");
 
-  // 2) 通过生产 Nat-JetStream runtime.v2 rail 发布真实生产形态事件。
+  // 2) 通过生产 Nats-JetStream runtime.v2 rail 发布真实生产形态事件。
   const runtimeEvents = [
     {
       schema_version: 1,

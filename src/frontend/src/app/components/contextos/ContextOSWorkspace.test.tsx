@@ -141,10 +141,10 @@ function baseProps() {
 }
 
 describe('ContextOSWorkspace', () => {
-  it('renders the dashboard shell + all 8 pipeline stages with empty props', () => {
+  it('renders the dashboard shell + all pipeline stages with empty props', () => {
     render(<ContextOSWorkspace {...baseProps()} />);
     expect(screen.getByTestId('contextos-workspace')).toBeTruthy();
-    for (const id of ['request', 'truthlog', 'working_mem', 'projection', 'role_signal', 'budget', 'prompt', 'llm']) {
+    for (const id of ['request', 'truthlog', 'working_mem', 'projection', 'role_signal', 'prompt', 'budget', 'llm', 'receipt']) {
       expect(screen.getByTestId(`contextos-stage-${id}`)).toBeTruthy();
     }
     // Bench strip should not pollute the ContextOS view.
@@ -153,6 +153,79 @@ describe('ContextOSWorkspace', () => {
     for (const id of ['pm', 'architect', 'chief_engineer', 'director', 'qa']) {
       expect(screen.getByTestId(`contextos-role-${id}`)).toBeTruthy();
     }
+  });
+
+  it('opens a tailored detail modal for every ContextOS pipeline node', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmRuntimeState={READY_LLM_WITH_WINDOWS}
+        llmStreamEvents={LLM_STREAM}
+        executionLogs={EXECUTION_STREAM}
+      />,
+    );
+
+    const expectedDetails: Array<[string, string]> = [
+      ['request', '入口摘要'],
+      ['truthlog', '事件类型分布'],
+      ['working_mem', '角色工作记忆'],
+      ['projection', 'ProjectionEngine 解释'],
+      ['role_signal', '角色信号面'],
+      ['prompt', '提示构成'],
+      ['budget', 'CompressionEngine 判定'],
+      ['llm', 'LLM 调用事件'],
+      ['receipt', '回执与快照证据'],
+    ];
+
+    for (const [stageId, detailTitle] of expectedDetails) {
+      fireEvent.click(screen.getByTestId(`contextos-stage-${stageId}`));
+      const modal = screen.getByTestId('contextos-pipeline-detail-modal');
+      expect(modal.textContent).toContain(detailTitle);
+      expect(screen.getByTestId(`contextos-pipeline-detail-${stageId}`)).toBeTruthy();
+      fireEvent.click(screen.getByTestId('contextos-pipeline-detail-close'));
+      expect(screen.queryByTestId('contextos-pipeline-detail-modal')).toBeNull();
+    }
+  });
+
+  it('renders legacy summarized LLM payloads as readable summaries inside the LLM detail view', () => {
+    const redactedStream: LogEntry[] = [
+      {
+        id: 'redacted-director-call',
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        source: 'Director',
+        message: '{"redacted":true,"type":"str","chars":127}',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          model: 'qwen3.6-27b-gpu1',
+          providerName: 'Qwen B',
+          promptTokens: 2700,
+          completionTokens: 100,
+          totalTokens: 2800,
+          contextTokens: 2700,
+          durationMs: 61620,
+          contextSnapshotRef: '1234567890abcdef12345678',
+        },
+        tags: ['llm_completed'],
+      },
+    ];
+
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmRuntimeState={READY_LLM_WITH_WINDOWS}
+        llmStreamEvents={redactedStream}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('contextos-stage-llm'));
+    const modal = screen.getByTestId('contextos-pipeline-detail-llm');
+    expect(modal.textContent).toContain('LLM 响应已完成');
+    expect(modal.textContent).toContain('历史事件仅有摘要');
+    expect(modal.textContent).toContain('qwen3.6-27b-gpu1');
+    expect(modal.textContent).not.toContain('{"redacted"');
   });
 
   it('surfaces context snapshot degradation in the role detail panel', () => {

@@ -68,14 +68,14 @@ describe('useRoleChat', () => {
     vi.clearAllMocks();
   });
 
-  it('streams role chat through Nat-JetStream instead of the legacy SSE stream endpoint', async () => {
+  it('streams role chat through Nats-JetStream instead of the legacy SSE stream endpoint', async () => {
     apiFetchMock.mockResolvedValue(jsonResponse({
       ok: true,
       session_id: 'pm-chat-1',
       status: 'started',
       channel: 'chat:pm-chat-1',
       subject: 'hp.runtime.chat.pm-chat-1',
-      transport: 'nat-jetstream',
+      transport: 'nats-jetstream',
     }));
 
     const { result } = renderHook(() => useRoleChat({

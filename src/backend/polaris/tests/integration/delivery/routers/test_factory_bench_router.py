@@ -5,7 +5,7 @@ projects across many workspaces, so its session state cannot live inside
 ``FactoryRunService``). They expose the ``FactoryBenchService`` so the
 ``scripts/factory_bench/run_factory_bench.py`` subprocess can publish
 lifecycle events, and the Factory front-end panel can subscribe via the
-unified Nat-JetStream WebSocket transport.
+unified Nats-JetStream WebSocket transport.
 """
 
 from __future__ import annotations

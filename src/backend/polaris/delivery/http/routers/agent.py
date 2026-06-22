@@ -839,7 +839,7 @@ async def agent_turn(
             "ok": True,
             "session_id": session_id,
             "jetstream_url": f"/v2/roles/sessions/{session_id}/messages/jetstream",
-            "transport": "nat-jetstream",
+            "transport": "nats-jetstream",
         }
 
     response = await _execute_agent_message(

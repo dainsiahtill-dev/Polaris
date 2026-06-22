@@ -1,7 +1,7 @@
 /**
  * Smoke tests for BenchPanel — verifies the panel renders the bench session
  * list, shows the live event stream, and reacts to status changes without
- * crashing. Transport wiring is covered by the Nat-JetStream factoryService
+ * crashing. Transport wiring is covered by the Nats-JetStream factoryService
  * contract tests — this test is about the visual layer.
  */
 

@@ -71,7 +71,7 @@ describe('useAIDialogue RoleSession bridge', () => {
     runtimeTransportMock.connected = true;
   });
 
-  it('creates, attaches, and streams through a RoleSession Nat-JetStream channel when desktop task context exists', async () => {
+  it('creates, attaches, and streams through a RoleSession Nats-JetStream channel when desktop task context exists', async () => {
     apiFetchMock.mockImplementation((path: string) => {
       if (path === directorStatusPath) {
         return Promise.resolve(jsonResponse({ ready: true, configured: true, role: 'director' }));
@@ -89,7 +89,7 @@ describe('useAIDialogue RoleSession bridge', () => {
           status: 'started',
           channel: 'chat:session-1',
           subject: 'hp.runtime.chat.session-1',
-          transport: 'nat-jetstream',
+          transport: 'nats-jetstream',
         }));
       }
       return Promise.resolve(jsonResponse({ ok: true }));
@@ -195,7 +195,7 @@ describe('useAIDialogue RoleSession bridge', () => {
     });
   });
 
-  it('uses role chat Nat-JetStream before a RoleSession exists', async () => {
+  it('uses role chat Nats-JetStream before a RoleSession exists', async () => {
     apiFetchMock.mockImplementation((path: string) => {
       if (path === pmStatusPath) {
         return Promise.resolve(jsonResponse({ ready: true, configured: true, role: 'pm' }));
@@ -207,7 +207,7 @@ describe('useAIDialogue RoleSession bridge', () => {
           status: 'started',
           channel: 'chat:pm-chat-session',
           subject: 'hp.runtime.chat.pm-chat-session',
-          transport: 'nat-jetstream',
+          transport: 'nats-jetstream',
         }));
       }
       return Promise.resolve(jsonResponse({ ok: true }));

@@ -110,6 +110,96 @@ async def test_downgrade_when_no_write_tools() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pm_structured_output_role_skips_mutation_resolution_when_no_write_tools() -> None:
+    ledger = TurnLedger(turn_id="t_pm_structured")
+    context: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": (
+                "上一版 PM 合同未通过质量门禁，请重写并只输出 JSON。\n"
+                "禁止输出 [TOOL_CALL]、<tool_call>、函数调用或任意工具参数。"
+            ),
+        }
+    ]
+
+    async def _should_not_resolve(_msg: str) -> DeliveryContract:
+        raise AssertionError("structured no-write role must not run mutation intent resolution")
+
+    contract = await resolve_turn_delivery_contract(
+        turn_id="t_pm_structured",
+        context=context,
+        tool_definitions=[{"type": "function", "function": {"name": "read_file"}}],
+        ledger=ledger,
+        resolve_delivery_mode_hybrid=_should_not_resolve,
+        inherit_materialize_from_history=_no_inherit,
+        role_id="pm",
+    )
+
+    assert contract.mode == DeliveryMode.PROPOSE_PATCH
+    assert contract.requires_mutation is False
+    assert any(flag.get("type") == "DELIVERY_CONTRACT_ROLE_NO_WRITE_STRUCTURED_OUTPUT" for flag in ledger.anomaly_flags)
+    assert not any(flag.get("type") == "DELIVERY_CONTRACT_DOWNGRADED_NO_WRITE_TOOLS" for flag in ledger.anomaly_flags)
+
+
+@pytest.mark.asyncio
+async def test_chief_engineer_output_contract_skips_materialize_downgrade_when_no_write_tools() -> None:
+    ledger = TurnLedger(turn_id="t_ce_structured")
+    context: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": (
+                "实现萤火虫、花朵、月相、湿度等核心领域模型。\n\n"
+                "Chief Engineer output contract:\n"
+                "- Return exactly one JSON object, with no Markdown fence and no surrounding prose.\n"
+                "- Required top-level keys: construction_plan, scope_for_apply, risk_flags.\n"
+                "- Do not emit tool calls, code patches, <SESSION_PATCH>, or file edit instructions."
+            ),
+        }
+    ]
+
+    async def _should_not_resolve(_msg: str) -> DeliveryContract:
+        raise AssertionError("chief engineer structured output must not be classified as direct mutation")
+
+    contract = await resolve_turn_delivery_contract(
+        turn_id="t_ce_structured",
+        context=context,
+        tool_definitions=[{"type": "function", "function": {"name": "read_file"}}],
+        ledger=ledger,
+        resolve_delivery_mode_hybrid=_should_not_resolve,
+        inherit_materialize_from_history=_no_inherit,
+        role_id="chief_engineer",
+    )
+
+    assert contract.mode == DeliveryMode.PROPOSE_PATCH
+    assert contract.requires_mutation is False
+    assert any(flag.get("type") == "DELIVERY_CONTRACT_ROLE_NO_WRITE_STRUCTURED_OUTPUT" for flag in ledger.anomaly_flags)
+    assert not any(flag.get("type") == "DELIVERY_CONTRACT_DOWNGRADED_NO_WRITE_TOOLS" for flag in ledger.anomaly_flags)
+
+
+@pytest.mark.asyncio
+async def test_director_still_downgrades_materialize_when_write_tool_missing() -> None:
+    ledger = TurnLedger(turn_id="t_director_no_write")
+    context: list[dict[str, Any]] = [{"role": "user", "content": "实现登录功能"}]
+
+    contract = await resolve_turn_delivery_contract(
+        turn_id="t_director_no_write",
+        context=context,
+        tool_definitions=[{"type": "function", "function": {"name": "read_file"}}],
+        ledger=ledger,
+        resolve_delivery_mode_hybrid=_resolve_materialize,
+        inherit_materialize_from_history=_no_inherit,
+        role_id="director",
+    )
+
+    assert contract.mode == DeliveryMode.PROPOSE_PATCH
+    assert contract.requires_mutation is False
+    assert any(flag.get("type") == "DELIVERY_CONTRACT_DOWNGRADED_NO_WRITE_TOOLS" for flag in ledger.anomaly_flags)
+    assert not any(
+        flag.get("type") == "DELIVERY_CONTRACT_ROLE_NO_WRITE_STRUCTURED_OUTPUT" for flag in ledger.anomaly_flags
+    )
+
+
+@pytest.mark.asyncio
 async def test_no_downgrade_when_write_tool_present() -> None:
     ledger = TurnLedger(turn_id="t_keep")
     context: list[dict[str, Any]] = [{"role": "user", "content": "实现登录功能"}]

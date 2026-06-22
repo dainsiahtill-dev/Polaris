@@ -86,7 +86,7 @@ debts:
       - "Extend parity coverage when additional shared contracts are added to the engine surface"
 
   - id: "DEBT-20260620-runtime-realtime-single-rail"
-    title: "Runtime realtime transport must remain Nat-JetStream single rail"
+    title: "Runtime realtime transport must remain Nats-JetStream single rail"
     classification: structural
     status: monitoring
     severity: high
@@ -101,7 +101,7 @@ debts:
       Product realtime previously had multiple implicit rails: runtime.v2
       JetStream, process-local fanout, signal-hub file watchers, startup
       journal snapshots, and historical SSE language. The runtime delivery
-      path is now guarded as Nat-JetStream -> /v2/ws/runtime only.
+      path is now guarded as Nats-JetStream -> /v2/ws/runtime only.
     root_cause: >
       Realtime semantics were spread across WebSocket delivery, log writing,
       file-edit broadcasting, and workflow/process status writers. This allowed
@@ -113,7 +113,7 @@ debts:
       - "Changing log writer, workflow status, process status, or file edit event publication"
       - "Adding an HTTP endpoint that refreshes UI state on a timer"
     mitigations:
-      - "ADR-0095 records Nat-JetStream as the only product realtime rail"
+      - "ADR-0095 records Nats-JetStream as the only product realtime rail"
       - "test_realtime_single_rail_static_guard.py blocks legacy realtime tokens in product paths"
       - "WebSocket tests verify runtime.v2 SUBSCRIBE, explicit EVENT query, and no process-local registration"
       - "Status workflow/process and file-edit producers publish runtime.v2 JetStream envelopes"
@@ -123,7 +123,7 @@ debts:
       - "Provider SSE parsing still exists for upstream LLM APIs and must not be confused with product SSE transport"
     linked_assets:
       adrs:
-        - "docs/governance/decisions/adr-0095-runtime-realtime-single-rail-nat-jetstream.md"
+        - "docs/governance/decisions/adr-0095-runtime-realtime-single-rail-nats-jetstream.md"
       verification_cards:
         - "docs/governance/templates/verification-cards/vc-20260620-runtime-realtime-single-rail.yaml"
       verify_packs:

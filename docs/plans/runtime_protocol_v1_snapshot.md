@@ -2,7 +2,7 @@
 
 本文档记录迁移前的历史 Runtime WebSocket/SSE 契约，仅作为基线对比输入。
 
-**当前强制约束**：产品实时链路已经统一为 Nat-JetStream + `/v2/ws/runtime` runtime.v2。禁止恢复或新增 SSE、HTTP 长轮询、timer fetch 轮询、文件轮询或轮询兜底；HTTP 只允许初始快照、显式用户刷新和一次性查询。
+**当前强制约束**：产品实时链路已经统一为 Nats-JetStream + `/v2/ws/runtime` runtime.v2。禁止恢复或新增 SSE、HTTP 长轮询、timer fetch 轮询、文件轮询或轮询兜底；HTTP 只允许初始快照、显式用户刷新和一次性查询。
 
 ## 1. WebSocket 端点
 

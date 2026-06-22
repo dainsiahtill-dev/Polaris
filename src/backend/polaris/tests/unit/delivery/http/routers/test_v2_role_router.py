@@ -275,7 +275,7 @@ async def test_role_chat_jetstream_uses_context_workspace(client: AsyncClient, m
 
     assert response.status_code == 200
     data = response.json()
-    assert data["transport"] == "nat-jetstream"
+    assert data["transport"] == "nats-jetstream"
     assert data["channel"].startswith("chat:")
     ready_state = mock_ready.call_args.args[0]
     assert str(ready_state.settings.workspace).replace("\\", "/") == "C:/Temp/Product"

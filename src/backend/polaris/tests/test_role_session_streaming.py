@@ -175,7 +175,7 @@ async def test_send_message_jetstream_starts_nat_channel_and_persists_messages(m
         "status": "started",
         "channel": "chat:session-1",
         "subject": "hp.runtime.chat.session-1",
-        "transport": "nat-jetstream",
+        "transport": "nats-jetstream",
     }
     assert len(scheduled) == 1
     await scheduled[0]

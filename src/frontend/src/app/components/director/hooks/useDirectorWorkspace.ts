@@ -363,7 +363,7 @@ export function useDirectorWorkspace({
     setActiveViewState(view);
   }, []);
 
-  // Runtime task rows are owned by Nat-JetStream/runtime.v2 push. Do not merge
+  // Runtime task rows are owned by Nats-JetStream/runtime.v2 push. Do not merge
   // automatic HTTP task snapshots here; that masks missing realtime delivery.
   const visibleTasks = useMemo(() => {
     const toTaskId = (task: PmTask): string => String(task.id || '').trim();

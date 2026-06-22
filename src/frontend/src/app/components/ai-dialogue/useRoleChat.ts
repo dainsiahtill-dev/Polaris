@@ -230,7 +230,7 @@ export function useRoleChat(options: UseRoleChatOptions): UseRoleChatReturn {
       const payload = await response.json() as JetstreamChatStartResponse;
       const channel = String(payload.channel || '').trim();
       if (!channel) {
-        throw new Error('missing Nat-JetStream channel');
+        throw new Error('missing Nats-JetStream channel');
       }
 
       const messageId = (Date.now() + 1).toString();

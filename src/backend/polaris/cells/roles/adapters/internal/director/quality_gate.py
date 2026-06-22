@@ -903,6 +903,11 @@ async def _run_materialization_quality_repair_retry(
         changed_files=changed_files,
         workspace_full=workspace_full,
     )
+    explicit_quality_target_files = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=repair_quality_errors,
+        changed_files=changed_files,
+        workspace_full=workspace_full,
+    )
     explicit_missing_quality_targets = _dedupe_preserve_order(
         [
             *[
@@ -914,13 +919,14 @@ async def _run_materialization_quality_repair_retry(
         ]
     )
     should_merge_missing_targets = bool(explicit_missing_quality_targets) or not (
-        runtime_smoke_target_files or semantic_quality_target_files
+        runtime_smoke_target_files or semantic_quality_target_files or explicit_quality_target_files
     )
     repair_target_candidates = _dedupe_preserve_order(
         [
             *(missing_target_files if should_merge_missing_targets else []),
             *runtime_smoke_target_files,
             *semantic_quality_target_files,
+            *explicit_quality_target_files,
         ]
     )
     rotate_repair_targets = bool(
@@ -955,6 +961,7 @@ async def _run_materialization_quality_repair_retry(
             "missing_target_files": missing_target_files[:20],
             "runtime_smoke_target_files": runtime_smoke_target_files[:20],
             "semantic_quality_target_files": semantic_quality_target_files[:20],
+            "explicit_quality_target_files": explicit_quality_target_files[:20],
             "repair_target_files": repair_target_files[:12],
         },
     }
@@ -1041,6 +1048,7 @@ async def _run_materialization_quality_repair_retry(
             "missing_target_files": missing_target_files[:12],
             "runtime_smoke_target_files": runtime_smoke_target_files[:12],
             "semantic_quality_target_files": semantic_quality_target_files[:12],
+            "explicit_quality_target_files": explicit_quality_target_files[:12],
             "repair_target_files": repair_target_files[:12],
             "rotated_repair_targets": rotate_repair_targets,
         }
@@ -1284,6 +1292,60 @@ _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES: frozenset[str] = frozenset(
         ".tsx",
     }
 )
+
+_EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS: tuple[str, ...] = (
+    "prettier",
+    "syntaxerror",
+    "syntax error",
+    "parse error",
+    "unterminated string literal",
+    "unexpected token",
+    "unexpected end of input",
+    "was never closed",
+    "py_compile failed",
+    "ruff failed",
+    "format failed",
+)
+
+
+def _explicit_artifact_quality_repair_target_files(
+    *,
+    artifact_quality_errors: list[str],
+    changed_files: list[str],
+    workspace_full: str,
+) -> list[str]:
+    """Return explicit failing artifact paths from syntax/format quality errors."""
+
+    joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
+    if not any(hint in joined_errors for hint in _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS):
+        return []
+
+    workspace_root = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
+    if workspace_root is None or not workspace_root.is_dir():
+        return []
+
+    changed_source_files = {
+        rel
+        for item in changed_files
+        if (rel := _normalize_declared_task_path(str(item or "")))
+        and Path(rel).suffix.lower() in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES
+    }
+    candidates: list[str] = []
+    for item in artifact_quality_errors:
+        text = str(item or "")
+        if not any(hint in text.lower() for hint in _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS):
+            continue
+        for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(text):
+            rel = _normalize_declared_task_path(match.group("path"))
+            if not rel:
+                continue
+            if Path(rel).suffix.lower() not in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES:
+                continue
+            if changed_source_files and rel not in changed_source_files:
+                continue
+            if _workspace_path_exists_case_insensitive(workspace_root, rel):
+                candidates.append(rel)
+    return _dedupe_preserve_order(candidates)
 
 
 def _semantic_quality_repair_target_files(

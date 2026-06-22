@@ -1,11 +1,11 @@
 # 神经织网（Neural Weave）全双工流式架构重构蓝图
 
-**状态**: 历史归档；产品实时传输部分已被 Nat-JetStream + `/v2/ws/runtime` runtime.v2 取代
+**状态**: 历史归档；产品实时传输部分已被 Nats-JetStream + `/v2/ws/runtime` runtime.v2 取代
 **日期**: 2026-04-04
 **负责人**: Python 架构十人委员会
 **依赖**: `polaris/kernelone/stream/`, `polaris/kernelone/llm/engine/stream/`
 
-> 2026-06-21 强制修订：本文保留为历史架构记录，不得作为当前产品实时链路实现依据。产品/前端实时状态只能走 Nat-JetStream + `/v2/ws/runtime` WebSocket；禁止恢复本文中的 SSE、`StreamingResponse`、`text/event-stream`、EventSource 或任何轮询兜底。Provider 内部解析上游 LLM SSE 响应不属于产品实时传输，可按 provider 规范保留。
+> 2026-06-21 强制修订：本文保留为历史架构记录，不得作为当前产品实时链路实现依据。产品/前端实时状态只能走 Nats-JetStream + `/v2/ws/runtime` WebSocket；禁止恢复本文中的 SSE、`StreamingResponse`、`text/event-stream`、EventSource 或任何轮询兜底。Provider 内部解析上游 LLM SSE 响应不属于产品实时传输，可按 provider 规范保留。
 
 ---
 

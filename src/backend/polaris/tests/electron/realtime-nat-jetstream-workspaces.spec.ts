@@ -314,7 +314,7 @@ async function publishBenchMarker(
   surface: string,
   index: number,
 ): Promise<string> {
-  const marker = `nat-jetstream-${surface}-${Date.now()}`;
+  const marker = `nats-jetstream-${surface}-${Date.now()}`;
   const result = await backendJson<BenchPostResult>(window, `/v2/factory/bench/sessions/${sessionId}/events`, {
     method: "POST",
     body: {
@@ -402,7 +402,7 @@ async function assertSurfaceReceivesBenchPush(
   return marker;
 }
 
-test("main, Factory, PM, Chief Engineer, Director, and ContextOS receive live bench events over Nat-JetStream runtime.v2", async ({ window }, testInfo) => {
+test("main, Factory, PM, Chief Engineer, Director, and ContextOS receive live bench events over Nats-JetStream runtime.v2", async ({ window }, testInfo) => {
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   window.on("pageerror", (error) => {
@@ -513,11 +513,11 @@ test("main, Factory, PM, Chief Engineer, Director, and ContextOS receive live be
     contentType: "image/png",
   });
 
-  await testInfo.attach("nat-jetstream-workspace-realtime-evidence.json", {
+  await testInfo.attach("nats-jetstream-workspace-realtime-evidence.json", {
     body: JSON.stringify(
       {
         session_id: sessionId,
-        transport: "Nat-JetStream runtime.v2 WebSocket",
+        transport: "Nats-JetStream runtime.v2 WebSocket",
         surfaces: evidence,
       },
       null,
@@ -531,6 +531,6 @@ test("main, Factory, PM, Chief Engineer, Director, and ContextOS receive live be
   networkAudit.detach();
 
   assertRealtimeNetworkAudit(networkAudit, wsCapture.frames);
-  expect(pageErrors, "pageerror should remain empty during Nat-JetStream workspace audit").toEqual([]);
+  expect(pageErrors, "pageerror should remain empty during Nats-JetStream workspace audit").toEqual([]);
   expect(consoleErrors.filter((entry) => !/Unable to preload CSS/i.test(entry)), "console errors should remain empty").toEqual([]);
 });

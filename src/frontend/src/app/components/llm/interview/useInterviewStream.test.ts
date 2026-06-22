@@ -93,7 +93,7 @@ describe('createContentTagParser', () => {
 });
 
 describe('useInterviewStream', () => {
-  it('starts interview over Nat-JetStream and completes from runtime WebSocket events', async () => {
+  it('starts interview over Nats-JetStream and completes from runtime WebSocket events', async () => {
     const report = {
       sessionId: 'interactive-1',
       answer: '实施计划',
@@ -107,7 +107,7 @@ describe('useInterviewStream', () => {
       status: 'started',
       channel: 'llm-interview:interactive-1',
       subject: 'hp.runtime.llm.interview.interactive-1',
-      transport: 'nat-jetstream',
+      transport: 'nats-jetstream',
     }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -181,7 +181,7 @@ describe('useInterviewStream', () => {
       status: 'started',
       channel: 'llm-interview:interactive-plain',
       subject: 'hp.runtime.llm.interview.interactive-plain',
-      transport: 'nat-jetstream',
+      transport: 'nats-jetstream',
     }));
     vi.stubGlobal('fetch', fetchMock);
 

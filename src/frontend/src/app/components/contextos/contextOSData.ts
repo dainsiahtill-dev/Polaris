@@ -324,16 +324,45 @@ function safeNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function redactedDisplayText(value: Record<string, unknown>): string | null {
+  if (value['redacted'] !== true) return null;
+  const type = typeof value['type'] === 'string' && value['type'].trim() ? value['type'].trim() : null;
+  const chars = typeof value['chars'] === 'number' && Number.isFinite(value['chars'])
+    ? Math.max(0, Math.round(value['chars']))
+    : null;
+  const parts = ['历史事件仅有摘要'];
+  if (type) parts.push(type);
+  if (chars !== null) parts.push(`${chars} chars`);
+  return parts.join(' · ');
+}
+
+function redactedJsonDisplayText(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') || !trimmed.includes('"redacted"')) return null;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return isRecord(parsed) ? redactedDisplayText(parsed) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Safely convert any value to a displayable string.
  * Prevents [object Object] from leaking into the UI.
- * Objects are JSON-stringified; primitives are coerced; null/undefined become fallback.
+ * Legacy summary payloads are humanized; primitives are coerced; null/undefined become fallback.
  */
 export function safeText(value: unknown, fallback = ''): string {
   if (value === null || value === undefined) return fallback;
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return redactedJsonDisplayText(value) ?? value;
   if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value);
-  if (typeof value === 'object') {
+  if (isRecord(value)) {
+    const redacted = redactedDisplayText(value);
+    if (redacted) return redacted;
     try {
       const json = JSON.stringify(value);
       if (json === '{}') return fallback;

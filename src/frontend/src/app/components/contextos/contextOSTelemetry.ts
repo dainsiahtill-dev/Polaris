@@ -233,6 +233,41 @@ function nonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function redactedDisplayText(value: Record<string, unknown>): string | null {
+  if (value['redacted'] !== true) return null;
+  const type = nonEmptyString(value['type']);
+  const chars = toFiniteOrNull(value['chars']);
+  const parts = ['历史事件仅有摘要'];
+  if (type) parts.push(type);
+  if (chars !== null) parts.push(`${chars} chars`);
+  return parts.join(' · ');
+}
+
+function redactedJsonDisplayText(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') || !trimmed.includes('"redacted"')) return null;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return isRecord(parsed) ? redactedDisplayText(parsed) : null;
+  } catch {
+    return null;
+  }
+}
+
+function displayLogText(value: unknown, streamEvent: string): string {
+  const text = nonEmptyString(value);
+  if (!text) return '';
+  const redacted = redactedJsonDisplayText(text);
+  if (!redacted) return text;
+  if (streamEvent === 'llm_completed' || streamEvent === 'invoke_done' || streamEvent === 'llm_call_end' || streamEvent === 'call_end') {
+    return `LLM 响应已完成 · ${redacted}`;
+  }
+  if (streamEvent === 'llm_failed' || streamEvent === 'invoke_error' || streamEvent === 'llm_call_error' || streamEvent === 'llm_error' || streamEvent === 'call_error') {
+    return `LLM 调用失败 · ${redacted}`;
+  }
+  return redacted;
+}
+
 function readContextSnapshotDegraded(meta: Record<string, unknown>): ContextSnapshotDegraded | null {
   const degraded = isRecord(meta['contextSnapshotDegraded'])
     ? meta['contextSnapshotDegraded']
@@ -499,7 +534,9 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const channel = nonEmptyString(meta['channel']) || channelFallback;
   const actor = nonEmptyString(log.source) || 'System';
   const isError = log.level === 'error';
-  const text = `${log.title || ''} ${log.message || ''}`;
+  const displayTitle = displayLogText(log.title, streamEvent);
+  const displayMessage = displayLogText(log.message, streamEvent);
+  const text = `${displayTitle} ${displayMessage}`;
   const token = `${streamEvent} ${text}`.toLowerCase();
 
   // 结构化信号（来自 meta = 事件 data/output）。
@@ -631,7 +668,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const eventId = nonEmptyString(log.id) || `ws-${channel}-${index}`;
   const eventTs = nonEmptyString(log.timestamp);
   const epoch = toEpochMs(eventTs);
-  const summary = (nonEmptyString(log.message) || nonEmptyString(log.title) || streamEvent)
+  const summary = (displayMessage || displayTitle || streamEvent)
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 160);

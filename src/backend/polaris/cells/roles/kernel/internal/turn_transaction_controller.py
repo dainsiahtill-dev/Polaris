@@ -907,6 +907,7 @@ class TurnTransactionController:
             ledger=ledger,
             resolve_delivery_mode_hybrid=self._resolve_delivery_mode_hybrid,
             inherit_materialize_from_history=self._inherit_materialize_from_history,
+            role_id=self.config.role_id,
         )
 
         ledger.set_delivery_contract(delivery_contract)

@@ -1,5 +1,5 @@
 /**
- * Chat Stream Hook (WebSocket / NAT-JetStream)
+ * Chat Stream Hook (WebSocket / Nats-JetStream)
  *
  *   1. POST /v2/role/{role}/chat/jetstream 立即返回 session_id
  *   2. 通过 runtime transport 订阅 chat:<session_id> 通道

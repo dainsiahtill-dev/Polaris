@@ -60,7 +60,7 @@ describe('useNDJSONStream', () => {
     vi.clearAllMocks();
   });
 
-  it('starts docs init streams through Nat-JetStream runtime events', async () => {
+  it('starts docs init streams through Nats-JetStream runtime events', async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({
         ok: true,
@@ -68,7 +68,7 @@ describe('useNDJSONStream', () => {
         status: 'started',
         channel: 'docs-init-dialogue:docs-dialogue-1',
         subject: 'hp.runtime.docs.init.dialogue.docs-dialogue-1',
-        transport: 'nat-jetstream',
+        transport: 'nats-jetstream',
       })
     );
     vi.stubGlobal('fetch', fetchMock);

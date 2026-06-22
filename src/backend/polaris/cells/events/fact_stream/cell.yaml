@@ -4,7 +4,7 @@ kind: capability
 visibility: public
 stateful: true
 owner: observability
-purpose: 'Provide append-only runtime fact stream ingestion, Nat-JetStream publication,
+purpose: 'Provide append-only runtime fact stream ingestion, Nats-JetStream publication,
   and query infrastructure for PM, Director, QA and realtime projection consumers.
 
   '

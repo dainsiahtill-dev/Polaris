@@ -1,4 +1,4 @@
-"""Factory Router - unattended factory HTTP + Nat-JetStream adapter."""
+"""Factory Router - unattended factory HTTP + Nats-JetStream adapter."""
 
 from __future__ import annotations
 
@@ -1713,7 +1713,7 @@ async def get_factory_run_artifacts(
 # a terminal, not in the backend process) can publish its lifecycle to the
 # Factory front-end panel in real time. The bench subprocess posts over HTTP
 # (urllib in the bench, FastAPI here) and the front-end subscribes via the
-# unified Nat-JetStream WebSocket runtime transport. Failures on either side
+# unified Nats-JetStream WebSocket runtime transport. Failures on either side
 # are soft: missing session dir / dropped events are logged, never raised into
 # the HTTP response, so a misconfigured bench can never crash the panel.
 # =============================================================================

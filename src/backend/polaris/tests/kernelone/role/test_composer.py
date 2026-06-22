@@ -65,10 +65,30 @@ class TestRoleComposer:
 
     def test_compose_by_recipe_builtin(self) -> None:
         """Test compose_by_recipe with builtin recipes."""
-        for recipe_id in ["pm", "director", "qa"]:
+        for recipe_id in ["pm", "architect", "chief_engineer", "director", "qa"]:
             composed = self.composer.compose_by_recipe(recipe_id)
             assert composed is not None, f"Failed for recipe {recipe_id}"
             assert len(composed.system_prompt) > 0
+
+    def test_chief_engineer_recipe_has_distinct_identity(self) -> None:
+        """Chief Engineer must not silently reuse Director's anchor/persona."""
+        composed = self.composer.compose_by_recipe("chief_engineer")
+
+        assert composed is not None
+        assert composed.metadata.anchor_id == "polaris_chief_engineer"
+        assert composed.metadata.persona_id == "gongbu_shangshu"
+        assert "你是 Polaris 体系中的 **Chief Engineer**" in composed.system_prompt
+        assert "你是 Polaris 体系中的 **Director**" not in composed.system_prompt
+        assert "请保持 **Chief Engineer** 的性格特点" in composed.system_prompt
+
+    def test_architect_recipe_has_distinct_identity(self) -> None:
+        """Architect must not silently reuse Director's anchor."""
+        composed = self.composer.compose_by_recipe("architect")
+
+        assert composed is not None
+        assert composed.metadata.anchor_id == "polaris_architect"
+        assert "你是 Polaris 体系中的 **Architect**" in composed.system_prompt
+        assert "你是 Polaris 体系中的 **Director**" not in composed.system_prompt
 
     def test_compose_by_recipe_professional(self) -> None:
         """Test compose_by_recipe with professional recipes."""

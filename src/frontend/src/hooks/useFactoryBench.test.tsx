@@ -95,7 +95,7 @@ describe('useFactoryBench', () => {
     expect(result.current.isStreaming).toBe(false);
   });
 
-  it('tears down the Nat-JetStream bench subscription on unmount', async () => {
+  it('tears down the Nats-JetStream bench subscription on unmount', async () => {
     const unsubscribe = vi.fn();
     const unregisterHandler = vi.fn();
     runtimeTransportMock.subscribeChannels.mockReturnValue(unsubscribe);
@@ -116,7 +116,7 @@ describe('useFactoryBench', () => {
     expect(runtimeTransportMock.subscribeChannels).toHaveBeenCalledTimes(1);
   });
 
-  it('auto-selects a newly announced bench session from Nat-JetStream without polling', async () => {
+  it('auto-selects a newly announced bench session from Nats-JetStream without polling', async () => {
     let handler: ((message: unknown) => void) | null = null;
     runtimeTransportMock.registerMessageHandler.mockImplementation((nextHandler: (message: unknown) => void) => {
       handler = nextHandler;

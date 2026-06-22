@@ -54,7 +54,7 @@ describe('runStreamingTest', () => {
     vi.clearAllMocks();
   });
 
-  it('runs LLM tests over Nat-JetStream runtime WebSocket events', async () => {
+  it('runs LLM tests over Nats-JetStream runtime WebSocket events', async () => {
     const report = {
       schema_version: 1,
       test_run_id: 'run-1',
@@ -78,7 +78,7 @@ describe('runStreamingTest', () => {
       status: 'started',
       channel: 'llm-test:run-1',
       subject: 'hp.runtime.llm.test.run-1',
-      transport: 'nat-jetstream',
+      transport: 'nats-jetstream',
     }));
     vi.stubGlobal('fetch', fetchMock);
 

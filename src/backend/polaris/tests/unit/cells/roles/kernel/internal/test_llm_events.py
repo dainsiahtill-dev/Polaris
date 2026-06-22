@@ -107,10 +107,11 @@ def test_emit_llm_event_to_disk_preserves_final_request_context_audit(monkeypatc
     assert metadata["contextTokens"] == 2560
 
 
-def test_publish_to_realtime_bridge_redacts_prompt_payloads(monkeypatch: Any, tmp_path: Path) -> None:
+def test_publish_to_realtime_bridge_preserves_local_workbench_content(monkeypatch: Any, tmp_path: Path) -> None:
     captured: list[Any] = []
     monkeypatch.setenv("KERNELONE_WORKSPACE", str(tmp_path))
     monkeypatch.setattr(events, "publish_llm_realtime_event", captured.append)
+    long_response = "R" * (events._REALTIME_TEXT_LIMIT + 5)
 
     event = events.LLMCallEvent(
         event_type=events.LLMEventType.CALL_END,
@@ -120,8 +121,14 @@ def test_publish_to_realtime_bridge_redacts_prompt_payloads(monkeypatch: Any, tm
         metadata={
             "workspace": str(tmp_path),
             "call_id": "call-rt",
-            "messages": [{"role": "user", "content": "secret realtime prompt"}],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "secret realtime prompt with sk-testsecret0000000000000000",
+                }
+            ],
             "response_content": "secret realtime answer",
+            "long_response": long_response,
         },
     )
 
@@ -131,7 +138,9 @@ def test_publish_to_realtime_bridge_redacts_prompt_payloads(monkeypatch: Any, tm
     data = captured[0].data
     serialized = json.dumps(data, ensure_ascii=False)
     assert data["metadata"]["call_id"] == "call-rt"
-    assert data["metadata"]["messages"] == {"redacted": True, "type": "list", "count": 1}
-    assert data["metadata"]["response_content"] == {"redacted": True, "type": "str", "chars": 22}
-    assert "secret realtime prompt" not in serialized
-    assert "secret realtime answer" not in serialized
+    assert "secret realtime prompt" in serialized
+    assert "secret realtime answer" in serialized
+    assert "sk-testsecret0000000000000000" not in serialized
+    assert "***OPENAI_KEY***" in serialized
+    assert '"redacted": true' not in serialized
+    assert data["metadata"]["long_response"].endswith("... [truncated 5 chars]")

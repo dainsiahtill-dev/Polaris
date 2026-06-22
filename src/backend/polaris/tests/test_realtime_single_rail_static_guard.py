@@ -43,7 +43,7 @@ FRONTEND_CONTEXTOS_HELPER_FILES = (
 )
 FRONTEND_SETTINGS_MODAL_FILE = FRONTEND_SRC / "app" / "components" / "SettingsModal.tsx"
 FRONTEND_REALTIME_AUDIT_SPEC = (
-    REPO_ROOT / "src" / "backend" / "polaris" / "tests" / "electron" / "realtime-nat-jetstream-workspaces.spec.ts"
+    REPO_ROOT / "src" / "backend" / "polaris" / "tests" / "electron" / "realtime-nats-jetstream-workspaces.spec.ts"
 )
 TASK_MARKET_EVENT_WAKE_FILES = (
     REPO_ROOT / "src" / "backend" / "polaris" / "cells" / "runtime" / "task_market" / "internal" / "consumer_loop.py",
@@ -318,7 +318,7 @@ ACTIVE_DOC_FORBIDDEN_ADVERTISING = (
 )
 
 REQUIRED_POLICY_PHRASES = (
-    "Nat-JetStream",
+    "Nats-JetStream",
     "/v2/ws/runtime",
     "禁止轮询",
     "HTTP long polling",
@@ -642,14 +642,14 @@ def test_contextos_workspace_llm_metrics_derive_from_ws_push() -> None:
 
     ws_markers = (
         "WebSocket /v2/ws/runtime",
-        "Nat-Jetstream",
+        "Nats-JetStream",
         "runtime.v2",
     )
     has_ws_marker = any(m in text for m in ws_markers)
     if not has_ws_marker:
         findings.append(
             f"{FRONTEND_CONTEXTOS_WORKSPACE_FILE.relative_to(REPO_ROOT)} missing WS transport marker "
-            "(WebSocket /v2/ws/runtime, Nat-Jetstream, or runtime.v2)"
+            "(WebSocket /v2/ws/runtime, Nats-JetStream, or runtime.v2)"
         )
 
     assert findings == []

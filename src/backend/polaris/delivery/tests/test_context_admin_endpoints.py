@@ -74,6 +74,40 @@ class TestContextAdminGate:
 class TestContextAdminStats:
     """GET /v2/context/admin/stats returns the schema fields."""
 
+    def test_basic_stats_route_is_not_captured_by_hash_route(
+        self,
+        disabled_client: TestClient,
+        tmp_path: Any,
+    ) -> None:
+        """GET /v2/context/stats must resolve to stats, not /{hash}."""
+        from polaris.kernelone.storage.io_paths import build_cache_root
+
+        workspace = str(tmp_path)
+        with (
+            patch.object(v2_context, "_resolve_workspace", return_value=workspace),
+            patch.object(v2_context, "_build_retention") as build_mock,
+        ):
+            cfg = v2_context.ContextStoreRetentionConfig(
+                ttl_seconds=86400,
+                max_total_bytes=1024,
+                max_files=10,
+                sweep_min_interval_seconds=0,
+                enabled=True,
+            )
+            retention = v2_context.ContextStoreRetention(
+                workspace=workspace,
+                config=cfg,
+                runtime_base=build_cache_root("", workspace),
+            )
+            build_mock.return_value = retention
+            response = disabled_client.get("/v2/context/stats")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["workspace"] == workspace
+        assert data["last_sweep_report"] is None
+        assert data.get("detail", {}).get("code") != "INVALID_HASH"
+
     def test_stats_returns_expected_schema(self, enabled_client: TestClient, tmp_path: Any) -> None:
         """The stats endpoint returns the schema when enabled."""
         # Plant a fake context store so the gate has something to count.

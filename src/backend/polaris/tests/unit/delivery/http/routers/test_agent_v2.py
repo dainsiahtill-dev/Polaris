@@ -548,5 +548,5 @@ async def test_v2_agent_turn_stream(client: AsyncClient) -> None:
         data = response.json()
         assert data["ok"] is True
         assert data["jetstream_url"] == "/v2/roles/sessions/sess-new/messages/jetstream"
-        assert data["transport"] == "nat-jetstream"
+        assert data["transport"] == "nats-jetstream"
         assert "stream_url" not in data

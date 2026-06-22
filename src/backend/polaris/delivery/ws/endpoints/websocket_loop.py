@@ -98,7 +98,7 @@ async def run_main_loop(
     """Run the runtime.v2 WebSocket event loop.
 
     Product realtime has a single rail:
-    Nat-JetStream -> JetStreamConsumerManager -> runtime.v2 WebSocket EVENT.
+    Nats-JetStream -> JetStreamConsumerManager -> runtime.v2 WebSocket EVENT.
     File snapshots, process-local fanout, signal hub watchers, and timer-based
     incremental scans are deliberately not event sources in this loop.
     """

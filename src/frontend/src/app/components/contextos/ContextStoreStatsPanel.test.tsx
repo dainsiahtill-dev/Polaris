@@ -227,6 +227,24 @@ describe('ContextStoreStatsPanel', () => {
     expect(within(screen.getByTestId('contextos-store-stats-error')).getByText(/HTTP 500/)).toBeTruthy();
   });
 
+  it('retries the stats request from the initial error state', async () => {
+    mockedApiFetch.mockResolvedValueOnce(mockJsonResponse(500, 'boom'));
+    mockAdminReady({ file_count: 42, total_bytes: 2048, last_sweep_report: null });
+    render(<ContextStoreStatsPanel workspace="/repo" />);
+    await waitFor(() => {
+      expect(screen.getByTestId('contextos-store-stats-error')).toBeTruthy();
+    });
+
+    fireEvent.click(within(screen.getByTestId('contextos-store-stats-error')).getByText('重试'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('contextos-store-stats-ready')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('contextos-store-stats-error')).toBeNull();
+    expect(screen.getByText('42')).toBeTruthy();
+    expect(mockedApiFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('does not surface aborted stats reads as user-visible errors', async () => {
     mockedApiFetch.mockRejectedValueOnce(new Error('signal is aborted without reason'));
     render(<ContextStoreStatsPanel workspace="/repo" />);

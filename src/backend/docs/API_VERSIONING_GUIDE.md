@@ -308,7 +308,7 @@ INTERNAL_ERROR           # Unhandled exception
 
 Polaris product realtime is single-rail as of 2026-06-20:
 
-1. Realtime UI state must flow through Nat-JetStream and the unified `/v2/ws/runtime` WebSocket runtime.v2 protocol.
+1. Realtime UI state must flow through Nats-JetStream and the unified `/v2/ws/runtime` WebSocket runtime.v2 protocol.
 2. Do not add or restore product SSE endpoints, `EventSource` clients, `StreamingResponse` event streams, HTTP long-polling, timer-driven fetch loops, file polling, or polling fallback.
 3. HTTP endpoints are allowed for initial snapshots, explicit user refreshes, and one-shot command/query responses only.
 4. New realtime events must define a JetStream subject/channel mapping and be consumed in the frontend through `RuntimeTransportProvider` / `runtimeSocketManager`.
@@ -437,7 +437,7 @@ request.state.user_role = UserRole.ADMIN
 | Auth dependency | `polaris.delivery.http.dependencies.require_auth` |
 | Role dependency | `polaris.delivery.http.middleware.rbac.require_role` |
 | RBAC middleware | `polaris.delivery.http.middleware.rbac.RBACMiddleware` |
-| Realtime transport | Nat-JetStream subjects + `/v2/ws/runtime` runtime.v2 WebSocket |
+| Realtime transport | Nats-JetStream subjects + `/v2/ws/runtime` runtime.v2 WebSocket |
 | Error handlers | `polaris.delivery.http.error_handlers.setup_exception_handlers` |
 | User roles | `polaris.delivery.http.auth.roles.UserRole` |
 | Auth context | `polaris.kernelone.auth_context.SimpleAuthContext` |

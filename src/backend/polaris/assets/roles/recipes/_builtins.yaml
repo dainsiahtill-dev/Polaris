@@ -31,7 +31,7 @@ recipes:
     legacy_id: qa
 
   architect:
-    anchor: polaris_director
+    anchor: polaris_architect
     persona: zhongshuling
     profession: software_engineer
     description: 架构师，负责系统设计
@@ -39,8 +39,8 @@ recipes:
     legacy_id: architect
 
   chief_engineer:
-    anchor: polaris_director
-    persona: gongbu_shilang
+    anchor: polaris_chief_engineer
+    persona: gongbu_shangshu
     profession: software_engineer
     description: 总工程师，负责技术分析和实施蓝图
     backward_compatible: true

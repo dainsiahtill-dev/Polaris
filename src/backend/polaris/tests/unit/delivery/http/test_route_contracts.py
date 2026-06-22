@@ -101,7 +101,7 @@ def test_legacy_http_sse_routes_are_not_registered(monkeypatch, method: str, pat
 
 
 def test_role_runtime_chat_does_not_expose_queue_streaming_helper() -> None:
-    """Role chat delivery must use Nat-JetStream instead of an in-process stream queue."""
+    """Role chat delivery must use Nats-JetStream instead of an in-process stream queue."""
     from polaris.delivery.http.routers import role_runtime_chat
 
     assert not hasattr(role_runtime_chat, "execute_role_chat_streaming")

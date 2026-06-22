@@ -1,4 +1,4 @@
-"""Nat-JetStream publication and runtime event validation helpers.
+"""Nats-JetStream publication and runtime event validation helpers.
 
 SECURITY HARDENING:
 - S1: Schema validation with RuntimeEventEnvelope

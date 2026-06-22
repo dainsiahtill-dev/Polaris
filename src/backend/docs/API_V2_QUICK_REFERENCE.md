@@ -2,7 +2,7 @@
 
 Concise developer reference for the Polaris V2 HTTP API. All paths are canonical `/v2/*` routes.
 
-> Realtime transport policy (2026-06-20): product realtime must use Nat-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket only. SSE, `EventSource`, `StreamingResponse` event streams, HTTP long-polling, timer-driven fetch polling, file polling, and polling fallback are forbidden for product realtime. Legacy stream routes are listed only for migration/fail-closed awareness.
+> Realtime transport policy (2026-06-20): product realtime must use Nats-JetStream + `/v2/ws/runtime` runtime.v2 WebSocket only. SSE, `EventSource`, `StreamingResponse` event streams, HTTP long-polling, timer-driven fetch polling, file polling, and polling fallback are forbidden for product realtime. Legacy stream routes are listed only for migration/fail-closed awareness.
 
 ---
 
@@ -395,7 +395,7 @@ All errors follow the unified `StructuredHTTPException` format (ADR-003):
 
 ## 4. Realtime Events
 
-Product realtime events are delivered through `/v2/ws/runtime` using the runtime.v2 WebSocket protocol backed by Nat-JetStream.
+Product realtime events are delivered through `/v2/ws/runtime` using the runtime.v2 WebSocket protocol backed by Nats-JetStream.
 
 Do not implement product realtime with SSE, `EventSource`, `StreamingResponse`, HTTP long-polling, timer-driven fetch polling, file polling, or polling fallback. Legacy stream routes are compatibility/migration surfaces only and must not be used by the frontend realtime path.
 

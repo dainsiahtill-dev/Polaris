@@ -1,4 +1,4 @@
-"""Tests for Nat-JetStream publication safety helpers.
+"""Tests for Nats-JetStream publication safety helpers.
 
 Covers:
 - Security validation functions: subject, workspace key, payload size, timestamp
@@ -193,7 +193,7 @@ class TestSecurityValidation:
 
 
 class TestNatJetStreamPublication:
-    """Tests for the unified Nat-JetStream publication helper."""
+    """Tests for the unified Nats-JetStream publication helper."""
 
     @pytest.mark.asyncio
     async def test_invalid_subject_is_rejected_before_publish(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,7 +208,7 @@ class TestNatJetStreamPublication:
 
     @pytest.mark.asyncio
     async def test_missing_jetstream_client_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Publication failure is explicit when Nat-JetStream is unavailable."""
+        """Publication failure is explicit when Nats-JetStream is unavailable."""
         import polaris.infrastructure.messaging as messaging
 
         async def no_client() -> None:
@@ -220,7 +220,7 @@ class TestNatJetStreamPublication:
 
     @pytest.mark.asyncio
     async def test_publish_timeout_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Nat-JetStream publish timeouts must not escape the bool-returning helper."""
+        """Nats-JetStream publish timeouts must not escape the bool-returning helper."""
         import polaris.infrastructure.messaging as messaging
 
         class TimeoutClient:

@@ -156,7 +156,7 @@ function allPassed(c: ConnectivityChecklist): boolean {
   );
 }
 
-test("端到端启动与联通核验: backend + nat-jetstream + vite", async ({ window }, testInfo) => {
+test("端到端启动与联通核验: backend + nats-jetstream + vite", async ({ window }, testInfo) => {
   const checklist: ConnectivityChecklist = {
     backend: { health: false, settings: false, port: null, token_valid: false },
     vite_renderer: { root_mounted: false, ready_state: "" },

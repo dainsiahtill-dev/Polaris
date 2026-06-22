@@ -30,6 +30,7 @@ import {
   ArrowRight,
   Coins,
   Activity,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -94,6 +95,7 @@ const STAGE_ICONS: Record<string, LucideIcon> = {
   budget: Gauge,
   prompt: FileStack,
   llm: Cpu,
+  receipt: ShieldCheck,
 };
 
 const STATE_STYLES: Record<PipelineState, { dot: string; ring: string; text: string; label: string }> = {
@@ -140,16 +142,29 @@ function formatFreshness(epochMs: number): string {
 // 子组件
 // ---------------------------------------------------------------------------
 
-function PipelineNode({ stage }: { stage: PipelineStage }) {
+function PipelineNode({
+  stage,
+  selected = false,
+  onSelect,
+}: {
+  stage: PipelineStage;
+  selected?: boolean;
+  onSelect?: () => void;
+}) {
   const Icon = STAGE_ICONS[stage.id] ?? Activity;
   const style = STATE_STYLES[stage.state];
   return (
-    <div
+    <button
+      type="button"
       data-testid={`contextos-stage-${stage.id}`}
       data-state={stage.state}
+      data-selected={selected}
+      aria-pressed={selected}
+      onClick={onSelect}
       className={cn(
-        'relative flex w-[104px] shrink-0 flex-col items-center gap-1 rounded-xl border px-2 py-2.5 text-center transition-all duration-500',
+        'relative flex w-[104px] shrink-0 flex-col items-center gap-1 rounded-xl border px-2 py-2.5 text-center transition-all duration-500 hover:-translate-y-0.5 hover:border-accent-secondary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-secondary/70 active:translate-y-0',
         style.ring,
+        selected && 'border-accent-secondary/70 ring-2 ring-accent-secondary/45',
       )}
       title={`${stage.component} — ${stage.hint}`}
     >
@@ -166,7 +181,7 @@ function PipelineNode({ stage }: { stage: PipelineStage }) {
       <div className={cn('mt-0.5 rounded-full bg-black/30 px-1.5 py-0.5 font-mono text-[9px]', style.text)}>
         {stage.metric}
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -179,6 +194,620 @@ function FlowArrow({ active }: { active: boolean }) {
           active ? 'text-accent-secondary' : 'text-text-dim/40',
         )}
       />
+    </div>
+  );
+}
+
+type ContextOSTelemetryView = ReturnType<typeof buildTelemetryFromStream>;
+
+function DetailStat({
+  label,
+  value,
+  sub,
+  tone = 'idle',
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: string;
+  tone?: PipelineState;
+}) {
+  return (
+    <div className="min-w-0 rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-text-dim" title={label}>
+          {label}
+        </span>
+        <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', STATE_STYLES[tone].dot)} />
+      </div>
+      <div className={cn('mt-1 truncate font-mono text-lg font-bold', STATE_STYLES[tone].text)} title={String(value)}>
+        {value}
+      </div>
+      {sub && <div className="mt-1 truncate text-[10px] text-text-dim" title={sub}>{sub}</div>}
+    </div>
+  );
+}
+
+function DetailBlock({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-white/[0.08] bg-white/[0.025] p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-semibold text-text-main" title={title}>{title}</div>
+          {subtitle && <div className="truncate text-[10px] text-text-dim" title={subtitle}>{subtitle}</div>}
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function DetailEmpty({ label }: { label: string }) {
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-white/10 px-3 py-5 text-center">
+      <Activity className="h-4 w-4 text-text-dim/30" />
+      <div className="text-[11px] text-text-dim">{label}</div>
+    </div>
+  );
+}
+
+function DetailEventList({ events, emptyLabel }: { events: ContextOSEvent[]; emptyLabel: string }) {
+  if (events.length === 0) return <DetailEmpty label={emptyLabel} />;
+  return (
+    <div className="space-y-1">
+      {events.map((event) => {
+        const tone: PipelineState = event.category === 'error' ? 'blocked' : event.isProjection || event.hasUsage ? 'active' : 'idle';
+        const summary = safeText(event.summary) || safeText(event.kind) || '事件';
+        return (
+          <div
+            key={event.id}
+            className="grid grid-cols-[58px_72px_1fr] gap-2 rounded-md px-2 py-1.5 text-[10px] hover:bg-white/[0.04]"
+          >
+            <span className="font-mono text-text-dim">{contextOSFormat.clock(event.ts)}</span>
+            <span className={cn('truncate font-medium', STATE_STYLES[tone].text)} title={event.actor}>
+              {safeText(event.actor)}
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-text-main" title={summary}>{summary}</div>
+              <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-dim">{safeText(event.kind) || event.category}</span>
+                {event.totalTokens > 0 && (
+                  <span className="rounded bg-accent-secondary/10 px-1 font-mono text-[9px] text-accent-secondary">
+                    {contextOSFormat.tokens(event.totalTokens)} tok
+                  </span>
+                )}
+                {event.contextTokens !== null && event.contextTokens > 0 && (
+                  <span className="rounded bg-accent-secondary/10 px-1 font-mono text-[9px] text-accent-secondary">
+                    ctx {contextOSFormat.tokens(event.contextTokens)}
+                  </span>
+                )}
+                {event.durationMs !== null && event.durationMs > 0 && (
+                  <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-muted">{event.durationMs}ms</span>
+                )}
+                {event.contextSnapshotRef && (
+                  <span className="rounded bg-gold/10 px-1 font-mono text-[9px] text-gold">snapshot</span>
+                )}
+                {event.contextSnapshotDegraded && (
+                  <span className="rounded bg-status-warning/10 px-1 font-mono text-[9px] text-status-warning">degraded</span>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LlmCallCard({ event }: { event: ContextOSEvent }) {
+  const summary = safeText(event.summary) || safeText(event.kind) || 'LLM 调用';
+  const modelLabel = event.model || '未记录模型';
+  const providerLabel = event.providerName || event.providerId || 'provider unknown';
+  const hasContext = event.contextTokens !== null && event.contextTokens > 0;
+  const hasSnapshot = Boolean(event.contextSnapshotRef);
+  return (
+    <div className="rounded-xl border border-accent-secondary/15 bg-gradient-to-br from-accent-secondary/[0.08] via-white/[0.025] to-black/20 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md border border-accent-secondary/20 bg-accent-secondary/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-accent-secondary">
+              {safeText(event.actor)}
+            </span>
+            <span className="truncate text-xs font-semibold text-text-main" title={modelLabel}>{modelLabel}</span>
+          </div>
+          <div className="mt-1 truncate font-mono text-[10px] text-text-dim" title={providerLabel}>{providerLabel}</div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="font-mono text-[10px] text-text-dim">{contextOSFormat.clock(event.ts)}</div>
+          <div className={cn('mt-1 rounded px-1.5 py-0.5 font-mono text-[9px]', event.category === 'error' ? 'bg-status-error/10 text-status-error' : 'bg-accent-secondary/10 text-accent-secondary')}>
+            {event.category === 'error' ? 'failed' : 'completed'}
+          </div>
+        </div>
+      </div>
+      <div className="mt-3 rounded-lg border border-white/[0.06] bg-black/25 px-3 py-2 text-[11px] text-text-muted" title={summary}>
+        <span className="line-clamp-2">{summary}</span>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <DetailStat label="Prompt" value={contextOSFormat.tokens(event.promptTokens)} tone={event.promptTokens > 0 ? 'active' : 'idle'} sub="输入 token" />
+        <DetailStat label="Output" value={contextOSFormat.tokens(event.completionTokens)} tone={event.completionTokens > 0 ? 'active' : 'idle'} sub="输出 token" />
+        <DetailStat label="Context" value={hasContext ? contextOSFormat.tokens(event.contextTokens!) : 'n/a'} tone={hasContext ? 'active' : 'idle'} sub="最终请求上下文" />
+        <DetailStat label="Latency" value={event.durationMs !== null ? `${event.durationMs}ms` : 'n/a'} tone={event.durationMs !== null ? 'active' : 'idle'} sub={hasSnapshot ? 'snapshot linked' : 'no snapshot'} />
+      </div>
+    </div>
+  );
+}
+
+function LlmCallDeck({ events }: { events: ContextOSEvent[] }) {
+  if (events.length === 0) return <DetailEmpty label="暂无 LLM 调用事件" />;
+  return (
+    <div className="space-y-2.5">
+      {events.map((event) => <LlmCallCard key={event.id} event={event} />)}
+    </div>
+  );
+}
+
+function ProjectionEvidenceDeck({ events }: { events: ContextOSEvent[] }) {
+  if (events.length === 0) return <DetailEmpty label="暂无投影事件" />;
+  return (
+    <div className="grid gap-2">
+      {events.map((event) => {
+        const source = event.finalRequestTokenEstimate !== null
+          ? 'final request audit'
+          : event.contextItems !== null
+            ? 'context.build'
+            : event.projectionKey
+              ? 'projection key'
+              : 'text signal';
+        return (
+          <div key={event.id} className="rounded-xl border border-accent-secondary/15 bg-black/20 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-xs font-semibold text-text-main" title={safeText(event.summary)}>
+                  {safeText(event.summary) || 'Context projection'}
+                </div>
+                <div className="mt-1 font-mono text-[10px] text-accent-secondary">{source}</div>
+              </div>
+              <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-text-dim">
+                {contextOSFormat.clock(event.ts)}
+              </span>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <DetailStat label="Items" value={event.contextItems ?? 'n/a'} tone={event.contextItems !== null ? 'active' : 'idle'} sub="WorkingMem" />
+              <DetailStat label="Tokens" value={event.contextTokens !== null ? contextOSFormat.tokens(event.contextTokens) : 'n/a'} tone={event.contextTokens !== null ? 'active' : 'idle'} sub="context size" />
+              <DetailStat label="Final" value={event.finalRequestTokenEstimate !== null ? contextOSFormat.tokens(event.finalRequestTokenEstimate) : 'n/a'} tone={event.finalRequestTokenEstimate !== null ? 'active' : 'idle'} sub="provider request" />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ReceiptEvidenceDeck({ events }: { events: ContextOSEvent[] }) {
+  if (events.length === 0) return <DetailEmpty label="暂无回执或快照事件" />;
+  return (
+    <div className="space-y-2">
+      {events.map((event) => {
+        const degraded = event.contextSnapshotDegraded;
+        const statusTone: PipelineState = degraded || event.category === 'error' ? 'blocked' : event.contextSnapshotRef || event.contextHash ? 'active' : 'idle';
+        const statusLabel = degraded ? '快照降级' : event.contextSnapshotRef ? '快照已落盘' : event.contextHash ? '上下文哈希' : '回执观测';
+        return (
+          <div key={event.id} className={cn('rounded-xl border p-3', statusTone === 'blocked' ? 'border-status-error/25 bg-status-error/10' : 'border-gold/20 bg-gold/[0.04]')}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className={cn('text-xs font-semibold', STATE_STYLES[statusTone].text)}>{statusLabel}</div>
+                <div className="mt-1 truncate text-[11px] text-text-muted" title={safeText(event.summary)}>
+                  {safeText(event.summary) || safeText(event.kind)}
+                </div>
+              </div>
+              <span className="shrink-0 rounded bg-black/30 px-1.5 py-0.5 font-mono text-[9px] text-text-dim">
+                {contextOSFormat.clock(event.ts)}
+              </span>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <DetailStat label="Ref" value={event.contextSnapshotRef ? `${event.contextSnapshotRef.slice(0, 8)}...` : event.contextHash ? `${event.contextHash.slice(0, 8)}...` : 'n/a'} tone={statusTone} sub="snapshot/hash" />
+              <DetailStat label="Call" value={event.callId ? `${event.callId.slice(0, 12)}...` : 'n/a'} tone={event.callId ? 'active' : 'idle'} sub="correlation id" />
+              <DetailStat label="Reason" value={degraded?.reason || 'ok'} tone={degraded ? 'blocked' : 'active'} sub={degraded?.message || 'receipt path'} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DetailDecisionList({ rows }: { rows: DecisionRow[] }) {
+  if (rows.length === 0) return <DetailEmpty label="暂无请求或决策记录" />;
+  return (
+    <div className="space-y-1">
+      {rows.slice(0, 6).map((row, index) => (
+        <div key={`${row.id}-${index}`} className="grid grid-cols-[58px_78px_1fr] gap-2 rounded-md px-2 py-1.5 text-[10px] hover:bg-white/[0.04]">
+          <span className="font-mono text-text-dim">{row.time}</span>
+          <span className="truncate font-medium text-text-muted" title={`${row.actor} ${row.kind}`}>
+            {safeText(row.actor)}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-text-main" title={row.summary}>{safeText(row.summary) || safeText(row.kind)}</div>
+            {(row.tokens || row.latencyMs || row.receipt) && (
+              <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                {row.tokens && <span className="rounded bg-accent-secondary/10 px-1 font-mono text-[9px] text-accent-secondary">{contextOSFormat.tokens(row.tokens)} tok</span>}
+                {row.latencyMs && <span className="rounded bg-white/5 px-1 font-mono text-[9px] text-text-muted">{row.latencyMs}ms</span>}
+                {row.receipt && <span className="rounded bg-gold/10 px-1 font-mono text-[9px] text-gold">回执</span>}
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DetailRoleList({ roles }: { roles: RoleCard[] }) {
+  return (
+    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+      {roles.map((role) => {
+        const ctx = role.internalContext;
+        const windowLabel = ctx.contextWindowTokens !== null ? contextOSFormat.windowTokens(ctx.contextWindowTokens) : '未知';
+        return (
+          <div key={role.id} className="rounded-lg border border-white/[0.06] bg-black/20 px-2.5 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate text-[11px] font-semibold text-text-main" title={role.title}>{role.title}</div>
+                <div className="truncate font-mono text-[9px] text-text-dim">T{ctx.eventCount} · P{ctx.projectionCount} · R{ctx.receiptCount}</div>
+              </div>
+              <span className={cn('rounded px-1.5 py-0.5 text-[9px]', STATE_STYLES[role.state].ring, STATE_STYLES[role.state].text)}>
+                {STATE_STYLES[role.state].label}
+              </span>
+            </div>
+            <div className="mt-1.5 flex items-center justify-between gap-2 font-mono text-[9px] text-text-dim">
+              <span className="truncate">{ctx.windowOccupancyTokens !== null ? `~${contextOSFormat.tokens(ctx.windowOccupancyTokens)}` : '无 usage'}</span>
+              <span className="shrink-0">/ {windowLabel}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DetailBindingBudgetList({ rows }: { rows: RoleBindingBudget[] }) {
+  if (rows.length === 0) return <DetailEmpty label="暂无 provider/model 绑定预算" />;
+  return (
+    <div className="space-y-1.5">
+      {rows.slice(0, 6).map((row) => (
+        <BindingBudgetRow key={row.id} row={row} />
+      ))}
+      {rows.length > 6 && (
+        <div className="text-right font-mono text-[9px] text-text-dim">仅显示前 6 路 · 共 {rows.length} 路</div>
+      )}
+    </div>
+  );
+}
+
+function PipelineDetailModal({
+  stage,
+  model,
+  telemetry,
+  onClose,
+}: {
+  stage: PipelineStage;
+  model: ContextOSModel;
+  telemetry: ContextOSTelemetryView;
+  onClose: () => void;
+}) {
+  const Icon = STAGE_ICONS[stage.id] ?? Activity;
+  const style = STATE_STYLES[stage.state];
+  const recentEvents = telemetry.events.slice(0, 6);
+  const projectionEvents = telemetry.events.filter((event) => event.isProjection).slice(0, 6);
+  const callEvents = telemetry.events.filter((event) => event.isCall || event.hasUsage).slice(0, 6);
+  const receiptEvents = telemetry.events.filter((event) => event.contextSnapshotRef || event.contextSnapshotDegraded || event.contextHash).slice(0, 6);
+  const errorEvents = telemetry.events.filter((event) => event.category === 'error' || event.contextSnapshotDegraded).slice(0, 6);
+  const activeRoles = model.roles.filter((role) => role.state === 'active').length;
+  const blockedRoles = model.roles.filter((role) => role.state === 'blocked').length;
+  const roleWindowTotal = model.roles.reduce((sum, role) => sum + (role.internalContext.workingMemoryItems ?? 0), 0);
+  const windowDenominator = model.contextWindowTokens !== null ? contextOSFormat.windowTokens(model.contextWindowTokens) : '未知';
+  const contextWindowOccupancy = model.contextWindowTokens !== null && model.contextWindowTokens > 0
+    ? Math.max(0, Math.min(1, model.windowOccupancyTokens / model.contextWindowTokens))
+    : 0;
+
+  const sharedStats = (
+    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      <DetailStat label="状态" value={STATE_STYLES[stage.state].label} tone={stage.state} sub={stage.component} />
+      <DetailStat label="节点指标" value={stage.metric} tone={stage.state} sub={stage.hint} />
+      <DetailStat label="遥测事件" value={telemetry.events.length} tone={telemetry.events.length > 0 ? 'active' : 'idle'} sub={model.telemetryWindowed ? '最近窗口' : '实时流'} />
+      <DetailStat label="错误" value={model.errorCount} tone={model.errorCount > 0 ? 'blocked' : 'idle'} sub="ContextOS / LLM / 回执" />
+    </div>
+  );
+
+  let body: ReactNode;
+  switch (stage.id) {
+    case 'request':
+      body = (
+        <>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <DetailStat label="请求轮次" value={model.iteration ?? 'n/a'} tone={model.iteration !== null ? 'active' : 'idle'} sub="PM iteration / run id" />
+            <DetailStat label="任务数" value={model.taskCount} tone={model.taskCount > 0 ? 'active' : 'idle'} sub="snapshot.tasks" />
+            <DetailStat label="决策记录" value={model.decisions.length} tone={model.decisions.length > 0 ? 'active' : 'idle'} sub="dialogue / telemetry" />
+            <DetailStat label="运行阶段" value={model.running ? 'running' : 'idle'} tone={model.running ? 'active' : 'idle'} sub={model.tokensRealtime ? '实时 token 已接入' : '等待实时 usage'} />
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+            <DetailBlock title="入口摘要" subtitle="用户请求进入 ContextOS 后的可观测负载">
+              <div className="space-y-2 text-[11px] text-text-muted">
+                <div className="rounded-lg bg-black/20 px-3 py-2">当前阶段：<span className="font-mono text-text-main">{model.running ? '运行中' : '空闲'}</span></div>
+                <div className="rounded-lg bg-black/20 px-3 py-2">任务看板：<span className="font-mono text-text-main">{model.taskCount}</span> 个任务</div>
+                <div className="rounded-lg bg-black/20 px-3 py-2">质量门：<span className="font-mono text-text-main">{model.errorCount > 0 ? '有风险' : '未见错误'}</span></div>
+              </div>
+            </DetailBlock>
+            <DetailBlock title="最近请求证据" subtitle="来自决策流和运行时推送">
+              <DetailDecisionList rows={model.decisions} />
+            </DetailBlock>
+          </div>
+        </>
+      );
+      break;
+    case 'truthlog':
+      body = (
+        <>
+          {sharedStats}
+          <div className="grid gap-3 lg:grid-cols-[0.9fr_1.1fr]">
+            <DetailBlock title="事件类型分布" subtitle="按真实观测事件 category 聚合">
+              {model.eventTypes.length > 0 ? <EventTypeDistribution slices={model.eventTypes} total={model.eventTypesTotal} /> : <DetailEmpty label="暂无事件类型分布" />}
+            </DetailBlock>
+            <DetailBlock title="TruthLog 最近事件" subtitle="WebSocket 实时流倒序">
+              <DetailEventList events={recentEvents} emptyLabel="暂无 TruthLog 事件" />
+            </DetailBlock>
+          </div>
+        </>
+      );
+      break;
+    case 'working_mem':
+      body = (
+        <>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <DetailStat label="在窗项" value={model.contextItemsCount !== null ? model.contextItemsCount : `~${roleWindowTotal}`} tone={(model.contextItemsCount ?? roleWindowTotal) > 0 ? 'active' : 'idle'} sub={model.contextItemsCount !== null ? 'context.build 实测' : '角色窗口估算'} />
+            <DetailStat label="角色活动" value={`${activeRoles}/${model.roles.length}`} tone={activeRoles > 0 ? 'active' : 'idle'} sub="有实时事件的角色" />
+            <DetailStat label="最新窗口" value={model.windowOccupancyTokens > 0 ? `~${contextOSFormat.tokens(model.windowOccupancyTokens)}` : '无 usage'} tone={model.windowOccupancyTokens > 0 ? 'active' : 'idle'} sub={`分母 ${windowDenominator}`} />
+            <DetailStat label="窗口占用" value={model.contextWindowTokens !== null ? `${Math.round(contextWindowOccupancy * 100)}%` : '未知'} tone={contextWindowOccupancy > 0 ? 'active' : 'idle'} sub={model.contextWindowDetail} />
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
+            <DetailBlock title="角色工作记忆" subtitle="每个角色自己的窗口和 usage 状态">
+              <DetailRoleList roles={model.roles} />
+            </DetailBlock>
+            <DetailBlock title="WorkingMem 证据" subtitle="context.build / prompt_context 相关事件">
+              <DetailEventList events={projectionEvents.length > 0 ? projectionEvents : recentEvents} emptyLabel="暂无 WorkingMem 事件" />
+            </DetailBlock>
+          </div>
+        </>
+      );
+      break;
+    case 'projection':
+      body = (
+        <>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <DetailStat label="投影数" value={model.projectionCount} tone={model.projectionCount > 0 ? 'active' : 'idle'} sub={model.telemetryActive ? '真实投影事件' : '等待实时遥测'} />
+            <DetailStat label="上下文项" value={model.contextItemsCount ?? '未知'} tone={model.contextItemsCount !== null ? 'active' : 'idle'} sub="context.build items_count" />
+            <DetailStat label="装配 token" value={model.contextWindowTokens !== null ? windowDenominator : '未知'} tone={model.contextWindowTokens !== null ? 'active' : 'idle'} sub="角色绑定最小窗口" />
+            <DetailStat label="事件窗口" value={model.eventTypesTotal} tone={model.eventTypesTotal > 0 ? 'active' : 'idle'} sub={model.telemetryWindowed ? '最近窗口' : '完整观测'} />
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[0.85fr_1.15fr]">
+            <DetailBlock title="ProjectionEngine 解释" subtitle="排序投影和预算规划证据">
+              <div className="space-y-2 text-[11px] text-text-muted">
+                <div className="rounded-lg bg-black/20 px-3 py-2">投影来源：<span className="text-text-main">context.build / prompt_context / final_request_context_audit</span></div>
+                <div className="rounded-lg bg-black/20 px-3 py-2">计数策略：<span className="text-text-main">按 stable projection key 去重</span></div>
+                <div className="rounded-lg bg-black/20 px-3 py-2">当前可信度：<span className="text-text-main">{model.telemetryActive ? '真实遥测' : '无实时证据'}</span></div>
+              </div>
+            </DetailBlock>
+            <DetailBlock title="投影事件" subtitle="最近 context projection 证据">
+              <ProjectionEvidenceDeck events={projectionEvents} />
+            </DetailBlock>
+          </div>
+        </>
+      );
+      break;
+    case 'role_signal':
+      body = (
+        <>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <DetailStat label="主角色" value={model.roles.length} tone="active" sub="PM / Architect / CE / Director / QA" />
+            <DetailStat label="活动角色" value={activeRoles} tone={activeRoles > 0 ? 'active' : 'idle'} sub="有实时角色事件" />
+            <DetailStat label="受阻角色" value={blockedRoles} tone={blockedRoles > 0 ? 'blocked' : 'idle'} sub="LLM readiness blocked" />
+            <DetailStat label="模型绑定" value={model.bindingBudgets.length} tone={model.bindingBudgets.length > 0 ? 'active' : 'idle'} sub="provider/model 预算行" />
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
+            <DetailBlock title="角色信号面" subtitle="角色运行态和内部 ContextOS 计数">
+              <DetailRoleList roles={model.roles} />
+            </DetailBlock>
+            <DetailBlock title="模型绑定预算" subtitle="多路 Director 会拆成独立预算行">
+              <DetailBindingBudgetList rows={model.bindingBudgets} />
+            </DetailBlock>
+          </div>
+        </>
+      );
+      break;
+    case 'prompt':
+      body = (
+        <>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <DetailStat label="Prompt" value={contextOSFormat.tokens(model.promptTokens)} tone={model.promptTokens > 0 ? 'active' : 'idle'} sub={model.tokensRealtime ? 'journal llm 实时' : 'usage stats / 空'} />
+            <DetailStat label="Completion" value={contextOSFormat.tokens(model.completionTokens)} tone={model.completionTokens > 0 ? 'active' : 'idle'} sub="输出 token" />
+            <DetailStat label="平均每次" value={contextOSFormat.tokens(model.avgPerCall)} tone={model.avgPerCall > 0 ? 'active' : 'idle'} sub="total / calls" />
+            <DetailStat label="调用数" value={model.calls} tone={model.calls > 0 ? 'active' : 'idle'} sub="离散 LLM 调用" />
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[0.8fr_1.2fr]">
+            <DetailBlock title="提示构成" subtitle="真实 Prompt / Completion 二分">
+              {model.totalTokens > 0 ? (
+                <div className="space-y-2.5">
+                  {model.budget.map((slice) => (
+                    <BudgetBar key={slice.key} label={slice.label} tokens={slice.tokens} ratio={slice.ratio} colorClass={slice.colorClass} />
+                  ))}
+                </div>
+              ) : <DetailEmpty label="暂无 token 用量" />}
+            </DetailBlock>
+            <DetailBlock title="Prompt 装配事件" subtitle="包含 context token / prompt hash 的最近事件">
+              <DetailEventList events={callEvents.length > 0 ? callEvents : recentEvents} emptyLabel="暂无 Prompt 装配事件" />
+            </DetailBlock>
+          </div>
+        </>
+      );
+      break;
+    case 'budget':
+      body = (
+        <>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <DetailStat label="窗口占用" value={model.contextWindowTokens !== null ? `${Math.round(contextWindowOccupancy * 100)}%` : '未知'} tone={contextWindowOccupancy > 0 ? 'active' : 'idle'} sub={model.contextWindowDetail} />
+            <DetailStat label="占用分子" value={model.windowOccupancyTokens > 0 ? `~${contextOSFormat.tokens(model.windowOccupancyTokens)}` : '无 usage'} tone={model.windowOccupancyTokens > 0 ? 'active' : 'idle'} sub="最终请求或平均 prompt" />
+            <DetailStat label="窗口分母" value={windowDenominator} tone={model.contextWindowTokens !== null ? 'active' : 'idle'} sub={model.contextWindowLabel} />
+            <DetailStat label="绑定行" value={model.bindingBudgets.length} tone={model.bindingBudgets.length > 0 ? 'active' : 'idle'} sub="provider/model budgets" />
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[0.9fr_1.1fr]">
+            <DetailBlock title="CompressionEngine 判定" subtitle="装配后预算压缩兜底视角">
+              <div className="space-y-2 text-[11px] text-text-muted">
+                <div className="h-2 overflow-hidden rounded-full bg-white/5">
+                  <div
+                    className={cn(
+                      'h-full rounded-full',
+                      contextWindowOccupancy > 0.85 ? 'bg-status-error' : contextWindowOccupancy > 0.6 ? 'bg-status-warning' : 'bg-accent-secondary',
+                    )}
+                    style={{ width: model.contextWindowTokens !== null ? `${Math.max(2, Math.round(contextWindowOccupancy * 100))}%` : '0%' }}
+                  />
+                </div>
+                <div>分子优先级：final request token，其次 context tokens，最后平均 prompt 估算。</div>
+                <div>分母来源：当前角色绑定中的最小 max_context_tokens。</div>
+              </div>
+            </DetailBlock>
+            <DetailBlock title="模型预算行" subtitle="每个 provider/model 单独展示">
+              <DetailBindingBudgetList rows={model.bindingBudgets} />
+            </DetailBlock>
+          </div>
+        </>
+      );
+      break;
+    case 'llm':
+      body = (
+        <>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <DetailStat label="调用" value={model.calls} tone={model.calls > 0 ? 'active' : 'idle'} sub={model.tokensRealtime ? '实时 journal llm' : '无实时 usage'} />
+            <DetailStat label="Token" value={contextOSFormat.tokens(model.totalTokens)} tone={model.totalTokens > 0 ? 'active' : 'idle'} sub="prompt + completion" />
+            <DetailStat label="最近时延" value={model.realLatencyMs !== null ? `${model.realLatencyMs}ms` : '未知'} tone={model.realLatencyMs !== null ? 'active' : 'idle'} sub="provider elapsed ms" />
+            <DetailStat label="Worker" value={model.workers.length} tone={model.workers.length > 0 ? 'active' : 'idle'} sub={model.hasWorkers ? '多 worker 追踪' : '未携带 worker_id'} />
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+            <DetailBlock title="LLM 调用事件" subtitle="llm_completed / llm_failed">
+              <LlmCallDeck events={callEvents} />
+            </DetailBlock>
+            <DetailBlock title="模型预算与并发" subtitle="多路 Director / provider 归属">
+              {model.workers.length > 0 ? (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {model.workers.slice(0, 4).map((worker) => (
+                    <div key={worker.workerId} className="rounded-lg border border-white/[0.06] bg-black/20 px-2.5 py-2">
+                      <div className="truncate font-mono text-[11px] font-semibold text-text-main">{worker.workerId}</div>
+                      <div className="mt-1 grid grid-cols-3 gap-1 font-mono text-[9px] text-text-dim">
+                        <span>{worker.calls} calls</span>
+                        <span>{contextOSFormat.tokens(worker.tokens)} tok</span>
+                        <span>{worker.latencyMs !== null ? `${worker.latencyMs}ms` : 'n/a'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <DetailBindingBudgetList rows={model.bindingBudgets} />
+              )}
+            </DetailBlock>
+          </div>
+        </>
+      );
+      break;
+    case 'receipt':
+      body = (
+        <>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <DetailStat label="回执" value={model.receiptCount} tone={model.receiptCount > 0 ? 'active' : 'idle'} sub="context snapshot refs" />
+            <DetailStat label="错误" value={model.errorCount} tone={model.errorCount > 0 ? 'blocked' : 'idle'} sub="Receipt / LLM / runtime" />
+            <DetailStat label="快照事件" value={receiptEvents.length} tone={receiptEvents.length > 0 ? 'active' : 'idle'} sub="可追踪 context ref" />
+            <DetailStat label="最近时延" value={model.realLatencyMs !== null ? `${model.realLatencyMs}ms` : '未知'} tone={model.realLatencyMs !== null ? 'active' : 'idle'} sub="回执闭环延迟线索" />
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[0.95fr_1.05fr]">
+            <DetailBlock title="回执与快照证据" subtitle="可追踪 context snapshot 或降级原因">
+              <ReceiptEvidenceDeck events={receiptEvents.length > 0 ? receiptEvents : callEvents} />
+            </DetailBlock>
+            <DetailBlock title="异常闭环" subtitle="ReceiptStore / provider / runtime 错误">
+              <DetailEventList events={errorEvents} emptyLabel="暂无错误闭环" />
+            </DetailBlock>
+          </div>
+        </>
+      );
+      break;
+    default:
+      body = (
+        <>
+          {sharedStats}
+          <DetailBlock title="最近证据" subtitle="该节点暂无专用视图，展示最近运行时事件">
+            <DetailEventList events={recentEvents} emptyLabel="暂无事件" />
+          </DetailBlock>
+        </>
+      );
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="contextos-pipeline-detail-title"
+      data-testid="contextos-pipeline-detail-modal"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className={cn(
+          'max-h-[88vh] w-full max-w-5xl overflow-hidden rounded-2xl border bg-bg-panel/95 shadow-[0_0_44px_rgba(74,158,158,0.18)] backdrop-blur-xl',
+          stage.state === 'blocked' ? 'border-status-error/40' : 'border-accent-secondary/30',
+        )}
+        data-testid={`contextos-pipeline-detail-${stage.id}`}
+      >
+        <header className="flex items-start justify-between gap-3 border-b border-white/[0.08] px-4 py-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-black/35', style.text)}>
+              <Icon className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 id="contextos-pipeline-detail-title" className="font-heading text-sm font-bold text-text-main">
+                  {stage.label}
+                </h2>
+                <StatusBadge color={badgeColorForState(stage.state)} variant="dot" pulse={stage.state === 'active'}>
+                  <span className="font-mono text-[10px]">{STATE_STYLES[stage.state].label}</span>
+                </StatusBadge>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-text-dim">
+                <span className="font-mono text-accent-secondary/80">{stage.component}</span>
+                <span>{stage.hint}</span>
+                <span className={cn('rounded bg-black/30 px-1.5 py-0.5 font-mono', style.text)}>{stage.metric}</span>
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.03] text-text-muted transition-colors hover:border-accent-secondary/40 hover:text-text-main focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-secondary/70"
+            aria-label="关闭详情"
+            data-testid="contextos-pipeline-detail-close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+        <div className="max-h-[calc(88vh-76px)] space-y-3 overflow-auto p-4">
+          {body}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1014,6 +1643,7 @@ export function ContextOSWorkspace({
   const [viewerRole, setViewerRole] = useState<string>('');
   // Phase 3+：worker-scoped context viewer。
   const [viewerWorkerId, setViewerWorkerId] = useState<string | null>(null);
+  const [pipelineDetailId, setPipelineDetailId] = useState<string | null>(null);
 
   const wsTone = live ? 'success' : reconnecting ? 'warning' : 'error';
   const wsLabel = live ? 'WS LIVE' : reconnecting ? 'WS RECONNECT' : 'WS OFFLINE';
@@ -1060,6 +1690,21 @@ export function ContextOSWorkspace({
     ? selectedRole.internalContext.bindingBudgets
     : model.bindingBudgets;
   const visibleBudgetBindingRows = budgetBindingRows.slice(0, selectedRole ? 8 : 10);
+  const receiptStage: PipelineStage = {
+    id: 'receipt',
+    label: 'Receipt',
+    component: 'Context Snapshot + Telemetry',
+    hint: '落盘上下文快照与遥测反馈闭环',
+    state: model.errorCount > 0 ? 'blocked' : model.receiptCount > 0 || model.calls > 0 ? 'active' : 'idle',
+    metric: model.errorCount > 0
+      ? `${model.errorCount} 错误`
+      : model.receiptCount > 0
+        ? `${model.receiptCount} 快照`
+        : `${model.calls} 调用`,
+  };
+  const selectedPipelineStage = pipelineDetailId
+    ? [...model.pipeline, receiptStage].find((stage) => stage.id === pipelineDetailId) ?? null
+    : null;
 
   const toggleRole = (roleId: string) => setActiveRole((prev) => (prev === roleId ? null : roleId));
 
@@ -1132,7 +1777,7 @@ export function ContextOSWorkspace({
           >
             <span
               className="font-mono text-[10px]"
-              title="ContextOS 遥测：WebSocket /v2/ws/runtime，经 Nat-Jetstream 推送；时间为最近一条事件"
+              title="ContextOS 遥测：WebSocket /v2/ws/runtime，经 Nats-JetStream 推送；时间为最近一条事件"
               data-testid="contextos-telemetry-freshness"
             >
               {model.telemetryActive
@@ -1242,35 +1887,19 @@ export function ContextOSWorkspace({
                   {model.pipeline.map((stage, index) => (
                     <div key={stage.id} className="flex items-center gap-1">
                       {index > 0 && <FlowArrow active={pipelineLive} />}
-                      <PipelineNode stage={stage} />
+                      <PipelineNode
+                        stage={stage}
+                        selected={pipelineDetailId === stage.id}
+                        onSelect={() => setPipelineDetailId(stage.id)}
+                      />
                     </div>
                   ))}
                   <FlowArrow active={pipelineLive} />
-                  <div
-                    className={cn(
-                      'flex w-[104px] shrink-0 flex-col items-center gap-1 rounded-xl border px-2 py-2.5 text-center transition-all duration-500',
-                      model.errorCount > 0 ? 'border-status-error/50 bg-status-error/10' : 'border-gold/30 bg-gold/5',
-                    )}
-                    title="Context Snapshot + Telemetry — 落盘上下文快照与遥测反馈闭环"
-                  >
-                    <div className={cn('relative flex h-8 w-8 items-center justify-center rounded-lg bg-black/30', model.errorCount > 0 ? 'text-status-error' : 'text-gold')}>
-                      <ShieldCheck className="h-4 w-4" />
-                      {model.errorCount > 0 && (
-                        <span className="absolute right-1.5 top-1.5 flex h-1.5 w-1.5">
-                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-status-error opacity-75 motion-reduce:animate-none" />
-                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-status-error" />
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] font-semibold leading-tight text-text-main">Receipt</div>
-                    <div className={cn('mt-0.5 rounded-full bg-black/30 px-1.5 py-0.5 font-mono text-[9px]', model.errorCount > 0 ? 'text-status-error' : 'text-gold')}>
-                      {model.errorCount > 0
-                        ? `${model.errorCount} 错误`
-                        : model.receiptCount > 0
-                          ? `${model.receiptCount} 快照`
-                          : `${model.calls} 调用`}
-                    </div>
-                  </div>
+                  <PipelineNode
+                    stage={receiptStage}
+                    selected={pipelineDetailId === receiptStage.id}
+                    onSelect={() => setPipelineDetailId(receiptStage.id)}
+                  />
                 </div>
                 {idle && (
                   <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -1339,7 +1968,7 @@ export function ContextOSWorkspace({
                 model.telemetryActive
                   ? activeRole
                     ? `实时事件流 · 仅 ${activeRole.toUpperCase()}`
-                    : '实时事件流 · Nat-Jetstream'
+                    : '实时事件流 · Nats-JetStream'
                   : activeRole
                     ? `决策与回执流 · 仅 ${activeRole.toUpperCase()}`
                     : '决策与回执流'
@@ -1498,6 +2127,15 @@ export function ContextOSWorkspace({
           </div>
         </div>
       </main>
+
+      {selectedPipelineStage && (
+        <PipelineDetailModal
+          stage={selectedPipelineStage}
+          model={model}
+          telemetry={telemetry}
+          onClose={() => setPipelineDetailId(null)}
+        />
+      )}
 
       {/* Context Viewer Modal */}
       {viewerHash && (

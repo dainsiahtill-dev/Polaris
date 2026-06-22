@@ -3,7 +3,7 @@
  * subprocess into the Factory front-end panel.
  *
  * Transport: HTTP state snapshots for explicit hydration plus
- * Nat-JetStream/WebSocket fanout for realtime event delivery.
+ * Nats-JetStream/WebSocket fanout for realtime event delivery.
  *
  * Backend pipeline (matched to the platform's runtime event subsystem):
  *   bench subprocess → POST /events  (durable JSONL + NAT JetStream fanout)

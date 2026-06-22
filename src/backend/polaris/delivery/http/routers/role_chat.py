@@ -486,7 +486,7 @@ async def role_chat_jetstream(
         "status": "started",
         "channel": channel,
         "subject": subject,
-        "transport": "nat-jetstream",
+        "transport": "nats-jetstream",
     }
 
 

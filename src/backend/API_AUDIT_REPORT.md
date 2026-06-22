@@ -5,11 +5,11 @@
 | 命名空间 | 方法 | 路径 | 状态 | 备注 |
 |---------|------|------|------|------|
 | v2 | POST | /v2/pm/chat | 可用 | 仅 PM 角色，非统一接口 |
-| v2 | POST | /v2/pm/chat/stream | 移除/封闭 | 旧 HTTP SSE 入口；实时输出必须走 Nat-JetStream + `/v2/ws/runtime` |
+| v2 | POST | /v2/pm/chat/stream | 移除/封闭 | 旧 HTTP SSE 入口；实时输出必须走 Nats-JetStream + `/v2/ws/runtime` |
 | v2 | GET | /v2/role/{role}/chat/status | 可用 | 5 角色状态查询 |
 | v2 | GET | /v2/role/chat/roles | 可用 | 列出支持角色 |
 | v2 | CRUD | /v2/roles/sessions/* | 可用 | 会话完整生命周期 |
-| v2 | POST | /v2/roles/sessions/{id}/messages/stream | 移除/封闭 | 旧 HTTP SSE 入口；改用 Nat-JetStream 角色会话事件 |
+| v2 | POST | /v2/roles/sessions/{id}/messages/stream | 移除/封闭 | 旧 HTTP SSE 入口；改用 Nats-JetStream 角色会话事件 |
 | v2 | POST | /v2/stream/chat | 移除/封闭 | 旧 Neural Weave HTTP SSE 入口；改用统一 WebSocket 运行时 |
 | v2 | POST | /v2/stream/chat/backpressure | 可用 | 显式背压 |
 | v2 | CRUD | /v2/factory/runs/* | 可用 | 无人值守流水线 |
@@ -39,14 +39,14 @@
 1. **返回类型不统一**：大量端点使用 `dict[str, Any]` 而非 Pydantic `response_model`（如 `role_chat.py`、`pm_chat.py`），导致 OpenAPI 无法生成准确 Schema。
 2. **错误格式不一致**：`_shared.py` 定义了 `StructuredHTTPException`（ADR-003 格式），但许多路由仍直接返回 `{"ok": False, "error": str}` 或抛出裸 `HTTPException`，客户端需兼容多种错误形状。
 3. **命名空间混乱**：`cognitive_runtime.py` 使用 `/cognitive-runtime`（无 v2），`agent.py` 使用 `/agent`（无 v2），`pm_management.py` 使用 `/pm`（无 v2），与 v2 目标态混杂。
-4. **旧 HTTP SSE 方言已废弃**：历史 `sse_utils.py`、`stream_router.py`、`agent.py` 方言不得再作为产品实时传输；旧 stream 路由必须 fail closed，前端只消费 Nat-JetStream + `/v2/ws/runtime` runtime.v2。
+4. **旧 HTTP SSE 方言已废弃**：历史 `sse_utils.py`、`stream_router.py`、`agent.py` 方言不得再作为产品实时传输；旧 stream 路由必须 fail closed，前端只消费 Nats-JetStream + `/v2/ws/runtime` runtime.v2。
 5. **认证覆盖缺口**：`/health`、`/ready`、`/live`、`/v2/stream/health` 无 `require_auth`，在暴露环境中存在信息泄露风险。
 
 ## 4. 旧 HTTP Stream 端点处置
 
 | 维度 | 状态 | 说明 |
 |------|------|------|
-| 传输策略 | 封闭 | 产品实时单轨制：Nat-JetStream + `/v2/ws/runtime` WebSocket |
+| 传输策略 | 封闭 | 产品实时单轨制：Nats-JetStream + `/v2/ws/runtime` WebSocket |
 | 旧入口 | 封闭 | HTTP stream 路由返回结构化错误，不返回事件流 |
 | Factory 实时 | 单轨 | 订阅 `event.factory` / `event.factory:<run_id>` 频道 |
 | 前端实时 | 单轨 | `runtimeSocketManager` 是 runtime domain 唯一 WebSocket owner |

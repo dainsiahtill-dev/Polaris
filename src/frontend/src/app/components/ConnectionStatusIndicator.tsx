@@ -1,7 +1,7 @@
 /**
  * ConnectionStatusIndicator - WebSocket 连接状态指示器
  *
- * 统一的连接状态 UI 组件。Realtime 只允许统一的 Nat-JetStream WebSocket。
+ * 统一的连接状态 UI 组件。Realtime 只允许统一的 Nats-JetStream WebSocket。
  * 提供清晰的视觉反馈，帮助用户理解当前连接状态。
  *
  * Features:

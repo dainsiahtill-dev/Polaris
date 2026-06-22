@@ -922,7 +922,7 @@ async def _run_single_round(
 
     report.runtime_ws = dict(ws_collector.stats)
     report.factory_realtime = {
-        "transport": "nat-jetstream",
+        "transport": "nats-jetstream",
         "connected": bool(report.runtime_ws.get("connected")),
         "total_messages": int(report.runtime_ws.get("total_messages") or 0),
         "runtime_event": int(report.runtime_ws.get("runtime_event") or 0),

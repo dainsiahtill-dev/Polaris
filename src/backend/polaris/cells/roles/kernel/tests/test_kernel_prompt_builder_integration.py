@@ -124,3 +124,42 @@ def test_build_system_prompt_for_quality_repair_suppresses_working_memory_only(m
     assert captured["appendix"] == "quality repair appendix"
     assert captured["include_working_memory_contract"] is False
     assert captured["include_tool_policy"] is True
+
+
+def test_build_system_prompt_for_forced_write_suppresses_working_memory_only(monkeypatch) -> None:
+    profile = SimpleNamespace(
+        role_id="director",
+        model="qwen3.6-27b-int4",
+        version="1.0.0",
+        tool_policy=SimpleNamespace(policy_id="director-policy-v1", whitelist=["execute_command", "write_file"]),
+        prompt_policy=SimpleNamespace(core_template_id="director", tpl_version="1.0"),
+    )
+    kernel = RoleExecutionKernel(workspace=".", registry=_StubRegistry(profile))  # type: ignore[arg-type]
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.CHAT,
+        workspace=".",
+        message="Retry the failed artifact write using exactly one write_file call.",
+        history=[],
+        context_override={
+            "_transaction_kernel_forced_tool_choice": {
+                "type": "function",
+                "function": {"name": "write_file"},
+            },
+        },
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_build_system_prompt(_profile, prompt_appendix, **kwargs: object) -> str:
+        captured["appendix"] = str(prompt_appendix or "")
+        captured.update(kwargs)
+        return "system-prompt"
+
+    prompt_builder = kernel._get_prompt_builder()
+    monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
+
+    result = kernel._build_system_prompt_for_request(profile, request, "forced write appendix")  # type: ignore[arg-type]
+
+    assert result == "system-prompt"
+    assert captured["appendix"] == "forced write appendix"
+    assert captured["include_working_memory_contract"] is False
+    assert captured["include_tool_policy"] is True

@@ -763,7 +763,7 @@ async def send_message_jetstream(
     session_id: str,
     payload: SendMessageRequest,
 ) -> dict[str, Any]:
-    """Start a RoleSession chat turn and publish chunks over Nat-JetStream."""
+    """Start a RoleSession chat turn and publish chunks over Nats-JetStream."""
     try:
         with _role_session_service(request) as service:
             session = service.get_session(session_id)
@@ -888,7 +888,7 @@ async def send_message_jetstream(
             "status": "started",
             "channel": f"chat:{session_id}",
             "subject": f"hp.runtime.chat.{session_id}",
-            "transport": "nat-jetstream",
+            "transport": "nats-jetstream",
         }
 
     except HTTPException:

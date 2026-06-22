@@ -22,7 +22,7 @@
 1. 单一回合驱动器：`RoleExecutionKernel` 成为唯一回合推进入口。
 2. 子状态隔离：sequential 仅写 `metadata.seq.*`，绝不写 workflow/taskboard 主状态字段。
 3. 统一预算与终止：采用固定预算模型和 fail-fast 规则，避免隐式无限循环。
-4. 端到端可观测：新增 `seq.*` 事件并进入 Nat-JetStream + runtime.v2 WebSocket 投影，observer 可直接查看 sequential trace。
+4. 端到端可观测：新增 `seq.*` 事件并进入 Nats-JetStream + runtime.v2 WebSocket 投影，observer 可直接查看 sequential trace。
 5. 兼容现有编排：不改变 phase/status 主状态语义，不改变 taskboard 主迁移规则。
 
 非目标：
@@ -47,7 +47,7 @@
 2. Kernel 调用统一 `SequentialEngine`，驱动 step 决策与工具调用编排。
 3. `SequentialEngine` 通过 `ToolGateway` 执行工具并返回结构化结果。
 4. 每个 step 产生日志化 `seq.*` 事件（start/step/progress/no_progress/end/error）。
-5. 事件进入 runtime event bus，经 Nat-JetStream + runtime.v2 WebSocket 进入投影层。
+5. 事件进入 runtime event bus，经 Nats-JetStream + runtime.v2 WebSocket 进入投影层。
 6. Observer 在新增 `sequential_trace` 面板展示 step 序列与终止原因。
 7. `status.merge_workflow_tasks` 仅附加只读 `seq` 展示字段，不参与主状态计算。
 
@@ -338,7 +338,7 @@ for intent in intents:
 
 runtime.v2 WebSocket 投影契约：
 
-1. 复用现有 Nat-JetStream + `/v2/ws/runtime` runtime.v2 链路，不新增独立传输协议，不恢复 SSE 或任何轮询兜底。
+1. 复用现有 Nats-JetStream + `/v2/ws/runtime` runtime.v2 链路，不新增独立传输协议，不恢复 SSE 或任何轮询兜底。
 2. `projection-focus` 扩展为 `llm|seq|all`，默认 `all`。
 3. `observer` 新增 `sequential_trace` 面板：
    - 步骤流（step timeline）
@@ -418,7 +418,7 @@ M2（状态边界）：
 
 M3（观测投影）：
 
-1. 打通 `seq.*` 事件到 Nat-JetStream + runtime.v2 WebSocket。
+1. 打通 `seq.*` 事件到 Nats-JetStream + runtime.v2 WebSocket。
 2. observer 增加 `sequential_trace` 面板与 focus 过滤。
 3. 回滚点：focus 回退为 `llm|all`，保留后端事件兼容。
 

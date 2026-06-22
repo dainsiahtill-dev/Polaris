@@ -7543,6 +7543,108 @@ class TestQualityRepairMissingTargetContract:
 
         assert targets == ["tests/test_product.py"]
 
+    def test_explicit_artifact_quality_repair_targets_prettier_syntax_path(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _explicit_artifact_quality_repair_target_files,
+        )
+
+        source = tmp_path / "src" / "engine" / "simulation.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const broken = 'unterminated\n", encoding="utf-8")
+        (tmp_path / "index.html").write_text('<div id="app"></div>\n', encoding="utf-8")
+
+        targets = _explicit_artifact_quality_repair_target_files(
+            artifact_quality_errors=[
+                "[error] src/engine/simulation.ts: SyntaxError: Unterminated string literal. (1:24)"
+            ],
+            changed_files=["src/engine/simulation.ts", "index.html"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/engine/simulation.ts"]
+
+    @pytest.mark.asyncio
+    async def test_quality_repair_forces_write_for_explicit_artifact_syntax_path(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            def __init__(self) -> None:
+                self.allowed_tool_names: set[str] | None = None
+                self.allow_patch_fallback: bool | None = None
+
+            @staticmethod
+            def extract_kernel_tool_results(result) -> list:
+                del result
+                return []
+
+            async def execute_tools(
+                self,
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **kwargs: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                self.allowed_tool_names = kwargs.get("allowed_tool_names")
+                self.allow_patch_fallback = kwargs.get("allow_patch_fallback")
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self._execution = _Execution()
+                self.repair_context: dict[str, Any] = {}
+                self.repair_message = ""
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_context = context
+                self.repair_message = message
+                return {"content": ""}
+
+        source = tmp_path / "src" / "engine" / "simulation.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const broken = 'unterminated\n", encoding="utf-8")
+        (tmp_path / "index.html").write_text('<div id="app"></div>\n', encoding="utf-8")
+
+        adapter = _Adapter()
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["src/engine/simulation.ts", "index.html"]},
+            target_task_id="PM-0001-9",
+            run_id="run-explicit-artifact-quality-write-only",
+            context={},
+            original_message="Implement the simulation engine and app shell.",
+            llm_call_timeout=10,
+            artifact_quality_errors=[
+                "[error] src/engine/simulation.ts: SyntaxError: Unterminated string literal. (1:24)"
+            ],
+            changed_files=["src/engine/simulation.ts", "index.html"],
+        )
+
+        assert summary["explicit_quality_target_files"] == ["src/engine/simulation.ts"]
+        assert summary["repair_target_files"] == ["src/engine/simulation.ts"]
+        assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
+            "tool": "write_file",
+            "target_file": "src/engine/simulation.ts",
+        }
+        assert adapter._execution.allowed_tool_names == {"write_file"}
+        assert adapter._execution.allow_patch_fallback is False
+        assert "EXISTING FAILED TARGET FILES" in adapter.repair_message
+        assert "SINGLE FAILED TARGET REPAIR" in adapter.repair_message
+        assert "src/engine/simulation.ts" in adapter.repair_message
+
     def test_semantic_quality_repair_accepts_new_catalog_languages(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _semantic_quality_repair_target_files,

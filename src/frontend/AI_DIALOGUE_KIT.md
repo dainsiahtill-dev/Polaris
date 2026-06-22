@@ -96,7 +96,7 @@ import { ArchitectAIDialoguePanel } from '@/app/components/architect';
 ## 优势
 
 1. **统一架构**: 所有角色对话使用相同的 AI Platform 层
-2. **流式支持**: 内置 Nat-JetStream + Runtime WebSocket 流式输出，支持思考过程
+2. **流式支持**: 内置 Nats-JetStream + Runtime WebSocket 流式输出，支持思考过程
 3. **类型安全**: TypeScript 完整类型支持
 4. **可复用**: 一套代码支持所有角色
 5. **易扩展**: 添加新角色只需配置，无需复制代码

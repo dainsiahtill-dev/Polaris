@@ -5,7 +5,7 @@
  * Provides:
  * - React Query caching for run status
  * - Automatic request cancellation via AbortController
- * - Nat-JetStream/WebSocket event subscription through runtime.v2
+ * - Nats-JetStream/WebSocket event subscription through runtime.v2
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';

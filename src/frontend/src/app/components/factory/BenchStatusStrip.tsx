@@ -6,7 +6,7 @@
  * they have open. The strip auto-hides when no bench session is active.
  *
  * Drives off the same `useFactoryBench` hook as the Factory page's
- * BenchPanel, so the same Nat-JetStream WebSocket stream powers every
+ * BenchPanel, so the same Nats-JetStream WebSocket stream powers every
  * surface.
  */
 

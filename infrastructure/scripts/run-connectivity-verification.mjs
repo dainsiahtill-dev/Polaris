@@ -2,7 +2,7 @@
 /**
  * Polaris 一键端到端启动与联通核验
  *
- * 验证 backend + nat-jetstream + vite 三层的联通性:
+ * 验证 backend + nats-jetstream + vite 三层的联通性:
  *   1. Vite Renderer (端口 5173)
  *   2. Backend API (端口 49977)
  *   3. NATS/JetStream (通过 runtime.v2 WebSocket)
@@ -34,7 +34,7 @@ function buildSpawnCommand() {
 async function main() {
   console.log("══════════════════════════════════════════════════════════════");
   console.log("  Polaris 端到端启动与联通核验");
-  console.log("  backend + nat-jetstream + vite");
+  console.log("  backend + nats-jetstream + vite");
   console.log("══════════════════════════════════════════════════════════════\n");
 
   const env = {

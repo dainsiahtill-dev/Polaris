@@ -114,9 +114,9 @@ Cell 是最小自治边界。
 
 未落地的目录、Cell、契约或流程，不得写成“当前已完成事实”。
 
-### 4.12 Realtime Single-Rail（Nat-JetStream Only）
+### 4.12 Realtime Single-Rail（Nats-JetStream Only）
 
-1. Polaris 产品实时链路只能使用统一 Nat-JetStream + `/v2/ws/runtime` WebSocket runtime.v2 协议。
+1. Polaris 产品实时链路只能使用统一 Nats-JetStream + `/v2/ws/runtime` WebSocket runtime.v2 协议。
 2. 禁止新增或恢复 SSE、`StreamingResponse` 事件流、HTTP 长轮询、定时 HTTP 轮询、文件轮询伪实时、轮询兜底。
    - Searchable forbidden terms: 禁止轮询, HTTP long polling, timer HTTP polling, file polling, polling fallback, SSE.
 3. 后端实时事件必须发布到 JetStream subject，并通过 `delivery/ws` runtime.v2 subject builder 暴露为 channel；前端必须通过 `RuntimeTransportProvider`/`runtimeSocketManager` 订阅。

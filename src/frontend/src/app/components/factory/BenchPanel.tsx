@@ -1,7 +1,7 @@
 /**
  * BenchPanel — a Factory sub-panel that streams L1-L8 bench progress in
  * real time. Driven by `useFactoryBench`; no polling, all events arrive
- * over the unified Nat-JetStream/WebSocket runtime transport, keyed to the
+ * over the unified Nats-JetStream/WebSocket runtime transport, keyed to the
  * bench session instead of the chain subprocess workspace.
  */
 

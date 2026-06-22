@@ -1155,7 +1155,7 @@ def _resolve_bench_cache_root(workspace: Path) -> str:
 
 
 # Module-level state populated by main() so the emit helper can also
-# forward each event to the Factory HTTP backend (Nat-JetStream/WebSocket fanout).
+# forward each event to the Factory HTTP backend (Nats-JetStream/WebSocket fanout).
 # Empty values mean "no backend wiring": the helper degrades to local JSONL
 # only and never makes a network call.
 _BENCH_BACKEND: dict[str, str] = {"backend_url": "", "session_id": "", "token": ""}
@@ -1187,7 +1187,7 @@ def _emit_bench_event(
 
     Backend path: when main() registered a session, also POSTs the event to
     ``/v2/factory/bench/sessions/{id}/events`` so the Factory front-end
-    panel can observe through the unified Nat-JetStream/WebSocket runtime path.
+    panel can observe through the unified Nats-JetStream/WebSocket runtime path.
 
     Returns True if at least one of the two paths succeeded; False only when
     neither produced a record (e.g. local path has no run_id and backend
@@ -1673,7 +1673,7 @@ def _push_bench_progress_to_backend(
     zero they had at registration time and the bench UI shows ``0/Y 通过``
     for the whole run. The bench subprocess must call this after every
     project so each project.finished (success or fail) increments the
-    right counter and the Nat-JetStream/WebSocket snapshot reflects it on the next tick.
+    right counter and the Nats-JetStream/WebSocket snapshot reflects it on the next tick.
     """
     payload: dict[str, Any] = {
         "completed": int(completed),

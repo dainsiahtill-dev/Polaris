@@ -166,6 +166,35 @@ describe('buildTelemetryFromStream', () => {
     expect(t.lastLatencyMs).toBe(2400); // recovered from details
   });
 
+  it('summarizes legacy LLM payload summaries before they reach the UI', () => {
+    const redactedDone = logEntry({
+      id: 'redacted-done',
+      timestamp: '2026-06-15T10:00:03Z',
+      level: 'success',
+      source: 'Director',
+      message: '{"redacted":true,"type":"str","chars":127}',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        promptTokens: 2700,
+        completionTokens: 100,
+        totalTokens: 2800,
+        contextTokens: 2700,
+        durationMs: 61620,
+        contextSnapshotRef: '1234567890abcdef12345678',
+      },
+      tags: ['llm_completed'],
+    });
+    const t = buildTelemetryFromStream([redactedDone], [], []);
+
+    expect(t.events[0].summary).toBe('LLM 响应已完成 · 历史事件仅有摘要 · str · 127 chars');
+    expect(t.events[0].summary).not.toContain('{"redacted"');
+    expect(t.totalCalls).toBe(1);
+    expect(t.events[0].promptTokens).toBe(2700);
+    expect(t.events[0].completionTokens).toBe(100);
+  });
+
   it('counts errors from error-level / llm_failed events', () => {
     const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
     expect(t.errorCount).toBe(2); // llm_failed + runtime 任务执行失败

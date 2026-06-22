@@ -63,7 +63,7 @@ export function useTestStream(options: UseTestStreamOptions = {}) {
       return;
     }
 
-    devLogger.debug('[useTestStream] Starting Nat-JetStream test', payload);
+    devLogger.debug('[useTestStream] Starting Nats-JetStream test', payload);
     isStreamingRef.current = true;
     setIsStreaming(true);
 
@@ -72,7 +72,7 @@ export function useTestStream(options: UseTestStreamOptions = {}) {
     onEvent?.({
       type: 'stdout',
       timestamp: new Date().toISOString(),
-      content: '正在建立 Nat-JetStream 测试通道...',
+      content: '正在建立 Nats-JetStream 测试通道...',
     });
 
     try {

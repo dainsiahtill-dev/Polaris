@@ -151,6 +151,13 @@ class PromptBuilder:
     L1_CACHE_MAX_SIZE = 20  # L1缓存最大角色数
     _CHUNK_MODEL_WINDOW = 128_000
     _CHUNK_SAFETY_MARGIN = 0.85
+    _CORE_ROLE_IDENTITY_MARKERS: dict[str, tuple[str, str]] = {
+        "pm": ("PM", "PM"),
+        "architect": ("Architect", "Architect"),
+        "chief_engineer": ("Chief Engineer", "Chief Engineer"),
+        "director": ("Director", "Director"),
+        "qa": ("QA", "QA"),
+    }
 
     def __init__(self, workspace: str = "") -> None:
         self.workspace = workspace
@@ -509,7 +516,57 @@ class PromptBuilder:
             normalized = self._normalize_assembled_message_content(msg.get("content"))
             if normalized:
                 prompt_parts.append(normalized)
-        return "\n\n".join(prompt_parts)
+        prompt = "\n\n".join(prompt_parts)
+        self._assert_core_role_identity(profile, prompt)
+        return prompt
+
+    @classmethod
+    def _assert_core_role_identity(cls, profile: RoleProfile, prompt: str) -> None:
+        role_id = str(getattr(profile, "role_id", "") or "").strip()
+        expected = cls._CORE_ROLE_IDENTITY_MARKERS.get(role_id)
+        if expected is None:
+            return
+        expected_anchor, expected_persona = expected
+        role_block = cls._extract_role_definition_block(prompt)
+        if not role_block:
+            cls._emit_role_identity_mismatch(role_id, "missing_role_definition")
+            raise RuntimeError(f"prompt_role_identity_mismatch:{role_id}:missing_role_definition")
+
+        mismatches: list[str] = []
+        if f"你是 Polaris 体系中的 **{expected_anchor}**" not in role_block:
+            mismatches.append("anchor")
+        if f"请保持 **{expected_persona}** 的性格特点" not in role_block:
+            mismatches.append("persona")
+
+        conflicting_roles = [
+            candidate
+            for candidate, (anchor, persona) in cls._CORE_ROLE_IDENTITY_MARKERS.items()
+            if candidate != role_id
+            and (
+                f"你是 Polaris 体系中的 **{anchor}**" in role_block
+                or f"请保持 **{persona}** 的性格特点" in role_block
+            )
+        ]
+        if conflicting_roles:
+            mismatches.append(f"conflict:{','.join(conflicting_roles)}")
+        if mismatches:
+            reason = "|".join(mismatches)
+            cls._emit_role_identity_mismatch(role_id, reason)
+            raise RuntimeError(f"prompt_role_identity_mismatch:{role_id}:{reason}")
+
+    @staticmethod
+    def _extract_role_definition_block(prompt: str) -> str:
+        match = re.search(r"<role_definition>.*?</role_definition>", str(prompt or ""), re.DOTALL)
+        return match.group(0) if match else ""
+
+    @staticmethod
+    def _emit_role_identity_mismatch(role_id: str, reason: str) -> None:
+        emit_debug_event(
+            category="prompt",
+            label="role_identity_mismatch",
+            source="roles.kernel.prompt_builder",
+            payload={"role_id": role_id, "reason": reason},
+        )
 
     @staticmethod
     def _normalize_assembled_message_content(content: Any) -> str:
