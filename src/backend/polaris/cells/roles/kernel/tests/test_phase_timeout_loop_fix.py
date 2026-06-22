@@ -54,10 +54,11 @@ def _make_executor(
     mock_guard_assert: Any,
     *,
     guard_mode: Literal["strict", "warn", "off"] = "warn",
+    role_id: str = "",
 ) -> ToolBatchExecutor:
     return ToolBatchExecutor(
         tool_runtime=AsyncMock(),
-        config=TransactionConfig(mutation_guard_mode=guard_mode),
+        config=TransactionConfig(mutation_guard_mode=guard_mode, role_id=role_id),
         emit_event=mock_emit_event,
         guard_assert_single_tool_batch=mock_guard_assert,
         finalization_handler=AsyncMock(),
@@ -243,6 +244,43 @@ class TestSessionLevelPhaseCounter:
         assert result is False, (
             "When session_turns_in_phase <= 2, _check_intent_mismatch should allow exploration (return False)"
         )
+
+    def test_no_write_structured_role_does_not_upgrade_to_materialize(
+        self, mock_emit_event: Any, mock_guard_assert: Any
+    ) -> None:
+        """CE/PM structured JSON contracts may contain mutation verbs but must stay no-write."""
+        executor = _make_executor(mock_emit_event, mock_guard_assert, role_id="chief_engineer")
+        ledger = TurnLedger(turn_id="turn_ce_structured")
+        ledger.set_delivery_contract(
+            DeliveryContract(
+                mode=DeliveryMode.PROPOSE_PATCH,
+                requires_mutation=False,
+                allow_inline_code=True,
+                allow_patch_proposal=True,
+            )
+        )
+        ledger.anomaly_flags.append(
+            {
+                "type": "DELIVERY_CONTRACT_ROLE_NO_WRITE_STRUCTURED_OUTPUT",
+                "turn_id": "turn_ce_structured",
+                "role_id": "chief_engineer",
+            }
+        )
+        ledger.phase_manager._turns_in_current_phase = 4
+
+        result = executor._check_intent_mismatch(
+            ledger,
+            [],
+            (
+                "实现萤火虫、花朵、月相、湿度等核心领域模型。\n\n"
+                "Chief Engineer output contract: Return exactly one JSON object."
+            ),
+        )
+
+        assert result is False
+        assert ledger.delivery_contract.mode == DeliveryMode.PROPOSE_PATCH
+        assert ledger.delivery_contract.requires_mutation is False
+        assert not any(flag.get("type") == "DELIVERY_CONTRACT_INTENT_MISMATCH_BLOCK" for flag in ledger.anomaly_flags)
 
 
 # ---------------------------------------------------------------------------

@@ -256,6 +256,21 @@ class TestTransactionKernelPrebuiltContextPassThrough:
 
         assert tk.config.workspace == str(tmp_path)
 
+    def test_create_transaction_kernel_carries_role_id(self) -> None:
+        kernel = RoleExecutionKernel.create_default(workspace=".")
+        profile = _MockProfile(role_id="chief_engineer")
+        request = _MockRequest(
+            message="Chief Engineer output contract: return exactly one JSON object.",
+            run_id="run_123",
+            workspace=".",
+        )
+
+        tk = kernel._create_transaction_kernel("chief_engineer", profile, request)
+
+        assert tk.config.role_id == "chief_engineer"
+        assert tk.config.domain == "code"
+        assert tk.config.mutation_guard_mode == "warn"
+
     @pytest.mark.asyncio
     async def test_provider_preserves_explicit_empty_forced_tools_override(self) -> None:
         kernel = RoleExecutionKernel.create_default(workspace=".")

@@ -102,6 +102,8 @@ class FinalizationCaller:
             prebuilt = [{"role": "system", "content": prompt}, *prebuilt]
 
         override["_transaction_kernel_prebuilt_messages"] = prebuilt
+        override["_transaction_kernel_forced_tool_definitions"] = []
+        override["_transaction_kernel_forced_tool_choice"] = "none"
 
         # Rebuild frozen ContextRequest with updated override
         return type(context)(

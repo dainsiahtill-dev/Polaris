@@ -96,6 +96,7 @@ def create_transaction_kernel(
             override = dict(provider_request.context_override or {})
         else:
             override = {}
+        incoming_choice_is_none = isinstance(tool_choice, str) and tool_choice.strip().lower() == "none"
         explicit_tool_disable = (
             isinstance(override.get("_transaction_kernel_forced_tool_definitions"), list)
             and not override.get("_transaction_kernel_forced_tool_definitions")
@@ -114,11 +115,19 @@ def create_transaction_kernel(
         override["_transaction_kernel_prebuilt_messages"] = [
             dict(item) for item in prebuilt_messages if isinstance(item, dict)
         ]
-        if isinstance(tool_definitions, list) and not explicit_tool_disable and not preserve_existing_forced_scope:
+        if incoming_choice_is_none:
+            override["_transaction_kernel_forced_tool_definitions"] = []
+            override["_transaction_kernel_forced_tool_choice"] = "none"
+        elif isinstance(tool_definitions, list) and not explicit_tool_disable and not preserve_existing_forced_scope:
             override["_transaction_kernel_forced_tool_definitions"] = [
                 dict(item) for item in tool_definitions if isinstance(item, dict)
             ]
-        if tool_choice is not None and not explicit_tool_disable and not preserve_existing_forced_scope:
+        if (
+            tool_choice is not None
+            and not incoming_choice_is_none
+            and not explicit_tool_disable
+            and not preserve_existing_forced_scope
+        ):
             override["_transaction_kernel_forced_tool_choice"] = tool_choice
         # ADR-0090 W2.6: phase-aware low temperature rides the same channel.
         if temperature_override is not None:
@@ -357,6 +366,7 @@ def create_transaction_kernel(
         tool_runtime=tool_runtime,
         config=TransactionConfig(
             domain="code" if role in {"director", "chief_engineer"} else "document",
+            role_id=role,
             workspace=str(request.workspace or "").strip(),
             mutation_guard_mode="strict" if role == "director" else "warn",
         ),

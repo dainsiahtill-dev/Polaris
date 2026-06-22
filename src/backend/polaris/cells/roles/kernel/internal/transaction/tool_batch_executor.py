@@ -77,6 +77,9 @@ _TOOL_NAME_CANONICAL_ALIASES = {
     "project_scaffolding": "project_scaffold",
 }
 
+_NO_WRITE_STRUCTURED_ROLES = frozenset({"pm", "chief_engineer", "architect", "qa"})
+_NO_WRITE_STRUCTURED_FLAG = "DELIVERY_CONTRACT_ROLE_NO_WRITE_STRUCTURED_OUTPUT"
+
 
 # Edit-tool failure signatures (verbatim substrings of executor error payloads).
 # Used to recognize "the previous edit attempt failed" from the conversation so
@@ -120,6 +123,24 @@ def _tool_name_allowed_by_alias(tool_name: str, allowed_tool_names: set[str]) ->
         return False
     normalized_allowed = {_normalize_allowed_tool_name_alias(name) for name in allowed_tool_names}
     return normalized_tool_name in normalized_allowed
+
+
+def _is_no_write_structured_turn(config: TransactionConfig, ledger: TurnLedger) -> bool:
+    """Whether resolver already pinned this turn as a structured no-write role output."""
+    role_id = str(getattr(config, "role_id", "") or "").strip().lower()
+    if role_id not in _NO_WRITE_STRUCTURED_ROLES:
+        return False
+    contract = getattr(ledger, "delivery_contract", None)
+    if contract is None:
+        return False
+    if getattr(contract, "mode", None) != DeliveryMode.PROPOSE_PATCH:
+        return False
+    if bool(getattr(contract, "requires_mutation", False)):
+        return False
+    return any(
+        isinstance(flag, Mapping) and str(flag.get("type") or "").strip().upper() == _NO_WRITE_STRUCTURED_FLAG
+        for flag in getattr(ledger, "anomaly_flags", [])
+    )
 
 
 def _tool_requires_existing_file(tool_name: str) -> bool:
@@ -1519,6 +1540,13 @@ class ToolBatchExecutor:
         if not latest_user_request:
             return False
         if not self.requires_mutation_intent(latest_user_request):
+            return False
+        if _is_no_write_structured_turn(self.config, ledger):
+            logger.debug(
+                "intent-mismatch-suppressed-no-write-structured: role=%s turn_id=%s",
+                str(getattr(self.config, "role_id", "") or ""),
+                ledger.turn_id,
+            )
             return False
         if tool_batch_has_authoritative_write_invocation(invocations):
             return False

@@ -443,6 +443,31 @@ class TestFinalizationCaller:
         assert messages[0]["content"] == "new prompt"
         assert messages[1]["content"] == "hi"
 
+    def test_override_prebuilt_system_prompt_disables_transaction_tools(self) -> None:
+        """Finalization must clear decision-phase forced tools from the final request."""
+        invoker = Mock()
+        caller = FinalizationCaller(invoker)
+
+        context = Mock()
+        context.message = "hello"
+        context.history = ()
+        context.task_id = None
+        context.context_override = {
+            "_transaction_kernel_prebuilt_messages": [
+                {"role": "system", "content": "old"},
+                {"role": "user", "content": "hi"},
+            ],
+            "_transaction_kernel_forced_tool_definitions": [{"type": "function", "function": {"name": "read_file"}}],
+            "_transaction_kernel_forced_tool_choice": "auto",
+        }
+
+        new_context = caller._override_prebuilt_system_prompt(context, "finalization prompt")
+
+        override = new_context.context_override or {}
+        assert override["_transaction_kernel_prebuilt_messages"][0]["content"] == "finalization prompt"
+        assert override["_transaction_kernel_forced_tool_definitions"] == []
+        assert override["_transaction_kernel_forced_tool_choice"] == "none"
+
     def test_build_finalization_prompt_for_execution(self) -> None:
         """执行类请求应生成执行型提示词."""
         invoker = Mock()
