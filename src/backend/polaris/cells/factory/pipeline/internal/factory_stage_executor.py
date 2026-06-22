@@ -30,6 +30,7 @@ from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
+from polaris.kernelone.workflow.timeout_policy import _director_child_workflow_timeout_seconds
 
 from . import factory_stage_helpers as helpers
 from .factory_artifact_store import ArtifactStore
@@ -43,7 +44,6 @@ from .factory_run_models import (
     _WORKSPACE_VALIDATION_TIMEOUT_SECONDS,
     FactoryRun,
     StageResult,
-    _signal_factory_cancel_event,
 )
 from .factory_workspace_quality import WorkspaceQualityRunner
 
@@ -483,6 +483,10 @@ class OrchestrationStageExecutor:
             "pending": 0,
             "ready": 0,
             "in_progress": 0,
+            "in_design": 0,
+            "in_execution": 0,
+            "in_qa": 0,
+            "waiting_human": 0,
             "completed": 0,
             "failed": 0,
             "blocked": 0,
@@ -511,7 +515,18 @@ class OrchestrationStageExecutor:
             except (TypeError, ValueError):
                 return 0
 
-        active = _count("pending") + _count("ready") + _count("in_progress")
+        active = (
+            _count("pending")
+            + _count("ready")
+            + _count("in_progress")
+            + _count("in_design")
+            + _count("in_execution")
+            + _count("in_qa")
+            + _count("running")
+            + _count("processing")
+            + _count("executing")
+            + _count("waiting_human")
+        )
         if active > 0:
             return ""
         failed = _count("failed") + _count("blocked") + _count("cancelled") + _count("timeout")
@@ -549,6 +564,20 @@ class OrchestrationStageExecutor:
     @staticmethod
     def _metadata_indicates_execution(metadata: dict[str, Any]) -> bool:
         return helpers.metadata_indicates_execution(metadata)
+
+    @staticmethod
+    def _director_dispatch_timeout_seconds(context: dict[str, Any], *, task_count: int) -> int:
+        try:
+            base_timeout = max(1, int(context.get("timeout") or 600))
+        except (TypeError, ValueError):
+            base_timeout = 600
+        try:
+            return _director_child_workflow_timeout_seconds(
+                {"task_timeout_seconds": base_timeout, "ready_timeout_seconds": 30},
+                task_count=max(1, int(task_count or 0)),
+            )
+        except (RuntimeError, TypeError, ValueError):
+            return base_timeout
 
     # ── Director binding fanout ────────────────────────────────────────────
 
@@ -689,26 +718,6 @@ class OrchestrationStageExecutor:
                             message="Run cancelled: factory_cancelled",
                         )
 
-                    taskboard_stats = self._read_taskboard_stats()
-                    taskboard_status = self._terminal_status_from_task_counts(taskboard_stats)
-                    if taskboard_status:
-                        _signal_factory_cancel_event(self.workspace, run_id)
-                        wait_task.cancel()
-                        return binding, CommandResult(
-                            run_id=run_id,
-                            status=taskboard_status,
-                            message=(
-                                "Run status inferred from workspace taskboard terminal counts while "
-                                f"orchestration task was still active: {sub_result.message}"
-                            ),
-                            metadata={
-                                "task_status_counts": taskboard_stats,
-                                "cancel_signal_sent": True,
-                                "terminal_source": "taskboard_stats",
-                                "queried_status": "not_queried",
-                            },
-                        )
-
                     status_probe: CommandResult | None = None
                     with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
                         status_probe = await service.query_run_status(run_id)
@@ -723,22 +732,7 @@ class OrchestrationStageExecutor:
                     metadata = status_probe.metadata if isinstance(status_probe.metadata, dict) else {}
                     count_status = self._terminal_status_from_task_counts(metadata.get("task_status_counts"))
                     if count_status:
-                        _signal_factory_cancel_event(self.workspace, run_id)
-                        wait_task.cancel()
-                        return binding, CommandResult(
-                            run_id=run_id,
-                            status=count_status,
-                            message=(
-                                "Run status inferred from terminal task counts while orchestration task "
-                                f"was still active: {status_probe.message}"
-                            ),
-                            metadata={
-                                **metadata,
-                                "cancel_signal_sent": True,
-                                "terminal_source": "task_status_counts",
-                                "queried_status": probed_status,
-                            },
-                        )
+                        continue
             except (RuntimeError, OSError, ValueError, TypeError) as exc:
                 logger.warning("Director binding fanout wait failed for run %s: %s", sub_result.run_id, exc)
                 return binding, CommandResult(run_id=sub_result.run_id, status="failed", message=f"Wait failed: {exc}")
@@ -1797,13 +1791,17 @@ class OrchestrationStageExecutor:
                     },
                 }
                 if len(director_binding_fanout) > 1:
+                    director_timeout_seconds = self._director_dispatch_timeout_seconds(
+                        context,
+                        task_count=len(pm_tasks),
+                    )
                     command_result = await self._execute_director_binding_fanout(
                         service=service,
                         workspace=str(self.workspace),
                         tasks=requested_task_ids,
                         base_options=base_options,
                         bindings=director_binding_fanout,
-                        timeout_seconds=int(context.get("timeout", 600)),
+                        timeout_seconds=director_timeout_seconds,
                         cancel_event=self._resolve_cancel_event(context),
                         abort_checker=abort_checker,
                     )
@@ -1816,10 +1814,14 @@ class OrchestrationStageExecutor:
                         options=base_options,
                     )
                     last_command_result = command_result
+                    director_timeout_seconds = self._director_dispatch_timeout_seconds(
+                        context,
+                        task_count=len(pm_tasks),
+                    )
                     director_result = await self._wait_run_completion(
                         service,
                         command_result,
-                        timeout_seconds=int(context.get("timeout", 600)),
+                        timeout_seconds=director_timeout_seconds,
                         cancel_event=self._resolve_cancel_event(context),
                         abort_checker=abort_checker,
                     )
@@ -1934,12 +1936,17 @@ class OrchestrationStageExecutor:
                                 "code": "director.dispatch_timeout",
                                 "severity": "error",
                                 "detail": (
-                                    f"Director dispatch timed out after {int(context.get('timeout', 600))} seconds; "
+                                    "Director dispatch timed out after "
+                                    f"{self._director_dispatch_timeout_seconds(context, task_count=len(pm_tasks))} "
+                                    "seconds; "
                                     "no further progress possible"
                                 ),
                                 "upstream_status": director_status,
                                 "round": round_index,
-                                "timeout_seconds": int(context.get("timeout", 600)),
+                                "timeout_seconds": self._director_dispatch_timeout_seconds(
+                                    context,
+                                    task_count=len(pm_tasks),
+                                ),
                             }
                         )
                     else:
@@ -2012,6 +2019,26 @@ class OrchestrationStageExecutor:
             final_stats=final_stats,
             converged=converged,
         )
+        final_metadata = final_result.metadata if (final_result and isinstance(final_result.metadata, dict)) else {}
+        fanout_all_failed = self._fanout_all_active_bindings_failed(final_metadata)
+        if fanout_all_failed and not any(
+            str(item.get("code") or "") == "director.binding_fanout_all_failed"
+            for item in stage_signals
+            if isinstance(item, dict)
+        ):
+            active_count = int(final_metadata.get("active_binding_count") or 0)
+            stage_signals.append(
+                {
+                    "code": "director.binding_fanout_all_failed",
+                    "severity": "error",
+                    "detail": (
+                        "All active Director bindings ended with non-success status; "
+                        "quality gate cannot promote a failed Director materialization"
+                    ),
+                    "active_binding_count": active_count,
+                    "upstream_status": str((final_result.status if final_result else "") or "").strip(),
+                }
+            )
 
         stage_status = "success"
         if (
@@ -2176,6 +2203,31 @@ class OrchestrationStageExecutor:
     @staticmethod
     def _is_director_no_materialized_changes(result: CommandResult) -> bool:
         return helpers.is_director_no_materialized_changes(result)
+
+    @staticmethod
+    def _fanout_all_active_bindings_failed(metadata: dict[str, Any]) -> bool:
+        if not bool(metadata.get("binding_fanout")):
+            return False
+        per_binding = metadata.get("per_binding")
+        if not isinstance(per_binding, list):
+            return False
+
+        active_entries = [
+            item
+            for item in per_binding
+            if isinstance(item, dict)
+            and not bool(item.get("quarantined"))
+            and str(item.get("status") or "").strip().lower() != "quarantined"
+        ]
+        if not active_entries:
+            return False
+
+        success_statuses = {"completed", "success"}
+        if any(str(item.get("status") or "").strip().lower() in success_statuses for item in active_entries):
+            return False
+
+        active_count = int(metadata.get("active_binding_count") or len(active_entries))
+        return active_count > 0 and len(active_entries) >= active_count
 
     @staticmethod
     def _bool_from_context_or_env(
@@ -2402,13 +2454,39 @@ class OrchestrationStageExecutor:
                     break
                 latest_check_results = []
                 rerun_results = []
-                phase = "check_after_repair" if round_index == 0 else f"check_after_repair_{round_index + 1}"
-                for command in run_commands:
+                round_prepare_failed = False
+                prepare_phase = (
+                    "prepare_after_repair" if round_index == 0 else f"prepare_after_repair_{round_index + 1}"
+                )
+                for command in prepare_commands:
                     result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
-                    result["phase"] = phase
+                    result["phase"] = prepare_phase
                     results.append(result)
-                    latest_check_results.append(result)
-                    rerun_results.append(result)
+                    if not bool(result.get("passed")):
+                        round_prepare_failed = True
+                phase = "check_after_repair" if round_index == 0 else f"check_after_repair_{round_index + 1}"
+                if round_prepare_failed:
+                    for command in run_commands:
+                        result = {
+                            "command": command,
+                            "phase": phase,
+                            "exit_code": None,
+                            "passed": False,
+                            "error": "skipped because workspace validation preparation failed after repair",
+                            "stdout_tail": "",
+                            "stderr_tail": "",
+                        }
+                        results.append(result)
+                        latest_check_results.append(result)
+                        rerun_results.append(result)
+                    break
+                else:
+                    for command in run_commands:
+                        result = await asyncio.to_thread(self._run_workspace_quality_command, command, timeout_seconds)
+                        result["phase"] = phase
+                        results.append(result)
+                        latest_check_results.append(result)
+                        rerun_results.append(result)
             residual_failures = [item for item in latest_check_results if not bool(item.get("passed"))]
             repair_revalidated = bool(rerun_results)
             repair_summary = {

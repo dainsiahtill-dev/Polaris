@@ -602,6 +602,29 @@ def test_nested_blocks_json_with_markers_unwraps_and_applies(tmp_path: Path) -> 
     assert "line_3 = 333" in (tmp_path / "pkg" / "big_module.py").read_text(encoding="utf-8")
 
 
+def test_nested_blocks_json_with_line_range_list_applies(tmp_path: Path) -> None:
+    """Factory-bench L1-01 shape: [{"file": "...", "blocks": [{start,end,replace}]}]."""
+    ex = _big_file_workspace(tmp_path, lines=10)
+    payload = json.dumps(
+        [
+            {
+                "file": "pkg/big_module.py",
+                "blocks": [
+                    {"filepath": "pkg/big_module.py", "start": 2, "end": 2, "replace": "line_2 = 222\n"},
+                    {"start": 3, "end": 3, "replace": "line_3 = 333\n"},
+                ],
+            }
+        ]
+    )
+
+    result = _handle_edit_blocks(ex, blocks=payload)
+
+    assert result.get("ok") is True, result
+    content = (tmp_path / "pkg" / "big_module.py").read_text(encoding="utf-8")
+    assert "line_2 = 222" in content
+    assert "line_3 = 333" in content
+
+
 def test_new_file_via_edit_blocks_teaches_write_file(tmp_path: Path) -> None:
     """The L1-01 chain shape: whole-file code stuffed into blocks for a file
     that does not exist must teach write_file, not read_file."""

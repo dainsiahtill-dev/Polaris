@@ -191,6 +191,13 @@ def is_taskboard_converged(stats: dict[str, int]) -> bool:
         int(stats.get("pending") or 0) <= 0
         and int(stats.get("ready") or 0) <= 0
         and int(stats.get("in_progress") or 0) <= 0
+        and int(stats.get("in_design") or 0) <= 0
+        and int(stats.get("in_execution") or 0) <= 0
+        and int(stats.get("in_qa") or 0) <= 0
+        and int(stats.get("running") or 0) <= 0
+        and int(stats.get("processing") or 0) <= 0
+        and int(stats.get("executing") or 0) <= 0
+        and int(stats.get("waiting_human") or 0) <= 0
         and int(stats.get("blocked") or 0) <= 0
     )
 
@@ -198,7 +205,23 @@ def is_taskboard_converged(stats: dict[str, int]) -> bool:
 def has_director_progress(before: dict[str, int], after: dict[str, int]) -> bool:
     return any(
         int(after.get(key) or 0) != int(before.get(key) or 0)
-        for key in ("pending", "ready", "in_progress", "completed", "failed", "blocked")
+        for key in (
+            "pending",
+            "ready",
+            "in_progress",
+            "in_design",
+            "in_execution",
+            "in_qa",
+            "running",
+            "processing",
+            "executing",
+            "waiting_human",
+            "completed",
+            "failed",
+            "blocked",
+            "cancelled",
+            "timeout",
+        )
     )
 
 

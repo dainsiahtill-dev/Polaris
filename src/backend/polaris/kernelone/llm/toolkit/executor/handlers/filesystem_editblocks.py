@@ -491,6 +491,41 @@ def _synthesize_blocks_from_json_payload(
             inner = item.get("blocks")
             if len(items) == 1 and isinstance(inner, str) and inner.strip():
                 return None, {"__unwrap_blocks__": inner, "__unwrap_file__": item.get("file") or default_file}
+            if isinstance(inner, (dict, list)):
+                nested_items = inner if isinstance(inner, list) else [inner]
+                outer_file = next(
+                    (str(item[key]) for key in _JSON_EDIT_FILE_KEYS if item.get(key)),
+                    None,
+                ) or (str(default_file) if default_file else None)
+                for nested in nested_items:
+                    if not isinstance(nested, dict):
+                        return None, None
+                    nested_item = dict(nested)
+                    if outer_file and not any(nested_item.get(key) for key in _JSON_EDIT_FILE_KEYS):
+                        nested_item["file"] = outer_file
+                    nested_start = nested_item.get("start", nested_item.get("start_line"))
+                    nested_end = nested_item.get("end", nested_item.get("end_line"))
+                    if nested_start is None or nested_end is None:
+                        return None, None
+                    nested_file = next(
+                        (str(nested_item[key]) for key in _JSON_EDIT_FILE_KEYS if nested_item.get(key)),
+                        None,
+                    ) or (str(default_file) if default_file else None)
+                    nested_replacement = next(
+                        (nested_item[key] for key in _JSON_EDIT_REPLACE_KEYS if nested_item.get(key) is not None),
+                        None,
+                    )
+                    block, err = _synthesize_line_range_block(
+                        self,
+                        nested_file,
+                        nested_start,
+                        nested_end,
+                        nested_replacement,
+                    )
+                    if err is not None:
+                        return None, err
+                    synthesized.append(block or "")
+                continue
             item_file = next(
                 (str(item[key]) for key in _JSON_EDIT_FILE_KEYS if item.get(key)),
                 None,

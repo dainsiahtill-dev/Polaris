@@ -171,6 +171,51 @@ describe('buildTelemetryFromStream', () => {
     expect(t.errorCount).toBe(2); // llm_failed + runtime 任务执行失败
   });
 
+  it('counts runtime llm_error as a terminal Director LLM call with final request evidence', () => {
+    const runtimeLlmError = logEntry({
+      id: 'rt-director-llm-error',
+      timestamp: '2026-06-22T14:28:23Z',
+      level: 'error',
+      source: 'director',
+      message: 'LLM call_error',
+      details: 'circuit_open:57s_remaining',
+      meta: {
+        channel: 'runtime_events',
+        event_type: 'llm_error',
+        role: 'director',
+        model: 'qwen3.6-27b-code-gpu0',
+        error_category: 'network',
+        error_message: 'circuit_open:57s_remaining',
+        context_tokens_after: 7069,
+        call_id: 'call-circuit-open',
+        metadata: {
+          elapsed_ms: 115,
+          final_request_context_audit: {
+            final_request_token_estimate: 7069,
+            tool_schema_token_estimate: 5146,
+            coverage: {
+              has_pm_contract: true,
+              has_chief_engineer_blueprint: true,
+              has_target_files: true,
+            },
+          },
+        },
+      },
+    });
+    const t = buildTelemetryFromStream([], [runtimeLlmError], []);
+
+    expect(t.totalCalls).toBe(1);
+    expect(t.errorCount).toBe(1);
+    expect(t.totalTokens).toBe(7069);
+    expect(t.contextTokensLatest).toBe(7069);
+    expect(telemetryRoleCalls(t, 'director')).toBe(1);
+    expect(telemetryRoleTokens(t, 'director')).toBe(7069);
+    expect(t.events[0].category).toBe('error');
+    expect(t.events[0].isCall).toBe(true);
+    expect(t.events[0].callId).toBe('call-circuit-open');
+    expect(t.events[0].finalRequestTokenEstimate).toBe(7069);
+  });
+
   it('counts context-assembly events (prompt_context) as projections', () => {
     const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
     expect(t.projectionCount).toBe(1); // prompt_context

@@ -27,6 +27,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
 from polaris.cells.roles.kernel.internal.llm_caller.decision_caller import DecisionCaller
 from polaris.cells.roles.kernel.internal.llm_caller.error_handling import (
     ERROR_CATEGORY_AUTH,
+    ERROR_CATEGORY_CANCELLED,
     ERROR_CATEGORY_NETWORK,
     ERROR_CATEGORY_RATE_LIMIT,
     ERROR_CATEGORY_TIMEOUT,
@@ -496,6 +497,14 @@ class TestClassifyError:
         """网络错误应分类为 network."""
         assert classify_error("Connection refused") == ERROR_CATEGORY_NETWORK
         assert classify_error("DNS resolution failed") == ERROR_CATEGORY_NETWORK
+
+    def test_circuit_open_classification(self) -> None:
+        """Provider circuit breaker open is a runtime/provider availability failure."""
+        assert classify_error("circuit_open:57s_remaining") == ERROR_CATEGORY_NETWORK
+
+    def test_cancelled_classification(self) -> None:
+        """Cancellation must not fall through to unknown."""
+        assert classify_error("call_cancelled") == ERROR_CATEGORY_CANCELLED
 
     def test_auth_classification(self) -> None:
         """认证错误应分类为 auth."""

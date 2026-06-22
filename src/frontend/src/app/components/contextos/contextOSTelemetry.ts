@@ -295,11 +295,12 @@ function classifyStream(params: {
     streamEvent === 'llm_failed' ||
     streamEvent === 'llm_call_end' ||
     streamEvent === 'llm_call_error' ||
+    streamEvent === 'llm_error' ||
     streamEvent === 'call_end' ||
     streamEvent === 'call_error';
 
   let category: ContextOSEvent['category'];
-  if (isError || streamEvent === 'invoke_error' || streamEvent === 'llm_failed' || streamEvent === 'llm_call_error' || streamEvent === 'call_error') category = 'error';
+  if (isError || streamEvent === 'invoke_error' || streamEvent === 'llm_failed' || streamEvent === 'llm_call_error' || streamEvent === 'llm_error' || streamEvent === 'call_error') category = 'error';
   else if (streamEvent === 'tool_call' || streamEvent === 'tool_result') category = 'tool';
   else if (isProjection) category = 'projection';
   else if (isCall) category = 'call';
@@ -489,6 +490,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     streamEvent === 'llm_failed' ||
     streamEvent === 'llm_call_end' ||
     streamEvent === 'llm_call_error' ||
+    streamEvent === 'llm_error' ||
     streamEvent === 'call_end' ||
     streamEvent === 'call_error';
   const nonFinalUsageEvent = streamEvent === 'content_preview' ||

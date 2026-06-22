@@ -49,7 +49,7 @@ from .models import (
 logger = logging.getLogger(__name__)
 _IN_PROGRESS_STATUSES = {"in_design", "in_execution", "in_qa"}
 _NON_CONSUMING_REQUEUE_ERROR_CODES = frozenset({"SCOPE_CONFLICT"})
-_LEGACY_RESOLVED_REOPEN_SOURCES = frozenset({"pm_dispatch.integration_qa"})
+_LEGACY_RESOLVED_REOPEN_SOURCES: frozenset[str] = frozenset()
 # Statuses a depends_on dependency can never recover from (subset of
 # models.TERMINAL_STATUSES minus "resolved"): dependents must cascade,
 # not strand.

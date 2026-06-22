@@ -949,7 +949,7 @@ def _requeue_director_tasks_after_integration_qa_failure(
                     requeue_task_command_v1(
                         workspace=workspace_full,
                         task_id=target_task_id,
-                        target_stage="pending_exec",
+                        target_stage="pending_design",
                         reason=str(result.get("summary") or result.get("reason") or "integration_qa_failed"),
                         metadata={
                             "source": "pm_dispatch.integration_qa.rework",

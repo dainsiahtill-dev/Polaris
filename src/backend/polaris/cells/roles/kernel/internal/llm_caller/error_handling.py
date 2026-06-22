@@ -44,6 +44,9 @@ def classify_error(error_str: str) -> str:
     if "timeout" in error_lower or "timed out" in error_lower:
         return ERROR_CATEGORY_TIMEOUT
 
+    if "call_cancelled" in error_lower or "cancellederror" in error_lower:
+        return ERROR_CATEGORY_CANCELLED
+
     if (
         "rate limit" in error_lower
         or "429" in error_lower
@@ -59,7 +62,9 @@ def classify_error(error_str: str) -> str:
     if "connection" in error_lower or "network" in error_lower or "dns" in error_lower:
         return ERROR_CATEGORY_NETWORK
     if (
-        "500 server error" in error_lower
+        "circuit_open" in error_lower
+        or "circuit breaker" in error_lower
+        or "500 server error" in error_lower
         or "internal server error" in error_lower
         or "502" in error_lower
         or "503" in error_lower

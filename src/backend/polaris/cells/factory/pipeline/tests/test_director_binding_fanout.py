@@ -246,6 +246,69 @@ class TestExecuteDirectorBindingFanout:
 
         assert result.status == "failed"
 
+    def test_running_task_counts_are_not_terminal(self) -> None:
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        active_statuses = ("running", "processing", "executing", "in_design", "in_execution", "in_qa", "waiting_human")
+        for status in active_statuses:
+            counts = {"completed": 1, "failed": 2, status: 1}
+
+            assert OrchestrationStageExecutor._terminal_status_from_task_counts(counts) == ""
+
+    @pytest.mark.asyncio
+    async def test_running_task_counts_do_not_cancel_active_binding(self) -> None:
+        executor = self._make_executor()
+        executor._binding_status_probe_seconds = 0.001
+        bindings = [{"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"}]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            return CommandResult(run_id="run-1", status="running", message="submitted")
+
+        async def mock_wait(
+            service: Any,
+            initial: Any,
+            timeout_seconds: int = 300,
+            *,
+            cancel_event: Any = None,
+            abort_checker: Any = None,
+        ) -> CommandResult:
+            await asyncio.sleep(0.02)
+            return CommandResult(run_id=initial.run_id, status="completed", message="done")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+        mock_service.query_run_status = AsyncMock(
+            return_value=CommandResult(
+                run_id="run-1",
+                status="running",
+                message="still active",
+                metadata={"task_status_counts": {"completed": 1, "failed": 2, "running": 2}},
+            )
+        )
+        executor._wait_run_completion = mock_wait  # type: ignore[assignment]
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "completed"
+        assert mock_service.query_run_status.await_count >= 1
+
+    def test_director_dispatch_timeout_scales_with_task_count(self) -> None:
+        executor = self._make_executor()
+
+        timeout = executor._director_dispatch_timeout_seconds({"timeout": 300}, task_count=5)
+
+        assert timeout > 300
+
 
 class TestBindingOverrideInWorkerThread:
     """Tests for binding override application in _run_role_adapter_in_worker."""

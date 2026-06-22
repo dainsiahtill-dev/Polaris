@@ -382,7 +382,7 @@ def test_run_post_dispatch_integration_qa_failure_requeues_director_with_critiqu
     status = service.query_status(QueryTaskMarketStatusV1(workspace=str(workspace), include_payload=True))
     rows = {item["task_id"]: item for item in status.items}
     row = rows["TASK-A"]
-    assert row["status"] == "pending_exec"
+    assert row["status"] == "pending_design"
     assert rows["TASK-PM"]["status"] == "resolved"
     last_failure = row["payload"]["last_failure"]
     assert last_failure["error_code"] == "INTEGRATION_QA_FAILED"
@@ -499,7 +499,7 @@ def test_integration_qa_failure_requeues_fission_leaf_for_parent_pm_task(
     assert rows["TASK-PARENT"]["is_leaf"] is False
     assert rows["TASK-PARENT"]["status"] == "pending_exec"
     leaf = rows["TASK-PARENT::step-1"]
-    assert leaf["status"] == "pending_exec"
+    assert leaf["status"] == "pending_design"
     last_failure = leaf["payload"]["last_failure"]
     assert last_failure["error_code"] == "INTEGRATION_QA_FAILED"
     assert last_failure["source"] == "pm_dispatch.integration_qa"

@@ -2840,7 +2840,7 @@ def test_requeue_task_rejects_terminal_and_legacy_terminal_statuses(tmp_path: Pa
         assert requeued.reason in {"terminal_status", "unsupported_status"}
 
 
-def test_requeue_task_allows_integration_qa_to_reopen_resolved_work(tmp_path: Path) -> None:
+def test_requeue_task_rejects_legacy_integration_qa_reopen_without_policy(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir()
     service = TaskMarketService()
@@ -2889,8 +2889,9 @@ def test_requeue_task_allows_integration_qa_to_reopen_resolved_work(tmp_path: Pa
         )
     )
 
-    assert requeued.ok is True
-    assert requeued.status == "pending_exec"
+    assert requeued.ok is False
+    assert requeued.reason == "terminal_status"
+    assert requeued.status == "resolved"
 
 
 def test_requeue_task_rejects_resolved_work_without_reopen_policy(tmp_path: Path) -> None:

@@ -67,6 +67,11 @@ _TS_TOO_FEW_ARGUMENTS_ERROR_RE = re.compile(
     r"Expected\s+(?P<expected>\d+)\s+arguments?,\s+but\s+got\s+(?P<got>\d+)",
     re.IGNORECASE,
 )
+_TS_UNINITIALIZED_PROPERTY_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2564:\s*"
+    r"Property\s+['\"](?P<member>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+has\s+no\s+initializer",
+    re.IGNORECASE,
+)
 _TS_CANNOT_FIND_NAME_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2304:\s*"
     r"Cannot\s+find\s+name\s+['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]",
@@ -438,9 +443,15 @@ def _apply_deterministic_typescript_missing_member_repair(
         if declaration_path is None or declaration_text is None or class_start < 0 or class_end < 0:
             continue
         class_text = declaration_text[class_start:class_end]
-        if _typescript_class_text_has_member(class_text, member):
-            continue
         usage_line = _typescript_error_usage_line(workspace_path, item)
+        static_context = _typescript_static_member_access_context(
+            raw_type_name=raw_type_name,
+            type_name=type_name,
+            member=member,
+            usage_line=usage_line,
+        )
+        if _typescript_class_text_has_member(class_text, member, static_context=static_context):
+            continue
         inferred_type = _infer_typescript_missing_member_value_type(
             workspace_path=workspace_path,
             item=item,
@@ -453,12 +464,7 @@ def _apply_deterministic_typescript_missing_member_repair(
                 usage_line=usage_line,
                 class_text=class_text,
                 inferred_type=inferred_type,
-                static_context=_typescript_static_member_access_context(
-                    raw_type_name=raw_type_name,
-                    type_name=type_name,
-                    member=member,
-                    usage_line=usage_line,
-                ),
+                static_context=static_context,
             )
         else:
             member_declaration = _build_typescript_missing_member_signature(
@@ -686,6 +692,15 @@ def _apply_deterministic_typescript_too_few_arguments_repair(
         method_name = _typescript_call_name_from_usage_line(usage_line, int(item["col"]))
         if not method_name:
             continue
+        callsite_repair = _repair_typescript_too_few_arguments_callsite(
+            workspace_path=workspace_path,
+            item=item,
+            method_name=method_name,
+            updated_by_path=updated_by_path,
+        )
+        if callsite_repair is not None:
+            repaired.append(callsite_repair)
+            continue
         declaration = _find_unique_typescript_method_declaration(
             workspace_path=workspace_path,
             method_name=method_name,
@@ -731,6 +746,63 @@ def _apply_deterministic_typescript_too_few_arguments_repair(
     )
 
 
+def _apply_deterministic_typescript_uninitialized_property_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    uninitialized = _parse_typescript_uninitialized_property_errors(artifact_quality_errors)
+    if not uninitialized:
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired: list[dict[str, str]] = []
+    for item in uninitialized:
+        raw_file = str(item.get("file") or "").strip()
+        member = str(item.get("member") or "").strip()
+        if not raw_file or not member:
+            continue
+        target_path = (workspace_path / raw_file).resolve()
+        try:
+            target_path.relative_to(workspace_path)
+        except ValueError:
+            continue
+        try:
+            text = updated_by_path.get(target_path) or target_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        line_index = int(item.get("line") or "0") - 1
+        lines = text.splitlines()
+        if line_index < 0 or line_index >= len(lines):
+            continue
+        line = lines[line_index]
+        repaired_line = _typescript_property_line_with_default(line, member)
+        if repaired_line == line:
+            continue
+        lines[line_index] = repaired_line
+        updated_by_path[target_path] = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+        repaired.append(
+            {
+                "file": target_path.relative_to(workspace_path).as_posix(),
+                "member": member,
+            }
+        )
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_uninitialized_property_repair",
+        metadata_key="properties",
+        metadata_value=repaired,
+    )
+
+
 def _parse_typescript_missing_member_errors(errors: list[str]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str, str, str]] = set()
@@ -744,6 +816,24 @@ def _parse_typescript_missing_member_errors(errors: list[str]) -> list[dict[str,
             }
             key = (item["file"], item["line"], item["type"], item["member"])
             if not item["file"] or not item["member"] or not item["type"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _parse_typescript_uninitialized_property_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for error in errors:
+        for match in _TS_UNINITIALIZED_PROPERTY_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": str(match.group("file") or "").strip(),
+                "line": str(match.group("line") or "").strip(),
+                "member": str(match.group("member") or "").strip(),
+            }
+            key = (item["file"], item["line"], item["member"])
+            if not item["file"] or not item["line"] or not item["member"] or key in seen:
                 continue
             seen.add(key)
             parsed.append(item)
@@ -1177,9 +1267,24 @@ def _find_matching_brace(text: str, open_brace: int) -> int:
     return -1
 
 
-def _typescript_class_text_has_member(class_text: str, member: str) -> bool:
+def _typescript_class_text_has_member(class_text: str, member: str, *, static_context: bool = False) -> bool:
     escaped = re.escape(member)
-    return bool(re.search(rf"\b(?:get\s+)?{escaped}\b\s*(?:\(|:)", class_text))
+    if static_context:
+        return bool(
+            re.search(
+                rf"^\s*(?:(?:public|private|protected)\s+)?static\s+(?:readonly\s+)?(?:get\s+)?"
+                rf"{escaped}\b\s*(?:\(|:|=)",
+                class_text,
+                re.MULTILINE,
+            )
+        )
+    return bool(
+        re.search(
+            rf"^\s*(?:(?:public|private|protected)\s+)?(?:readonly\s+)?(?:get\s+)?{escaped}\b\s*(?:\(|:|=)",
+            class_text,
+            re.MULTILINE,
+        )
+    )
 
 
 def _typescript_error_usage_line(workspace_path: Path, item: dict[str, str]) -> str:
@@ -2036,6 +2141,58 @@ def _typescript_call_name_from_usage_line(usage_line: str, column: int) -> str:
     return str(matches[-1].group("name") or "").strip()
 
 
+def _repair_typescript_too_few_arguments_callsite(
+    *,
+    workspace_path: Path,
+    item: dict[str, str],
+    method_name: str,
+    updated_by_path: dict[Path, str],
+) -> dict[str, str] | None:
+    """Repair conservative callsite arity patterns that should not mutate declarations."""
+    if method_name != "clamp" or item.get("expected") != "3" or item.get("got") != "2":
+        return None
+    raw_file = str(item.get("file") or "").strip()
+    if not raw_file:
+        return None
+    target_path = (workspace_path / raw_file).resolve()
+    try:
+        target_path.relative_to(workspace_path)
+    except ValueError:
+        return None
+    try:
+        text = updated_by_path.get(target_path) or target_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    line_index = int(item.get("line") or "0") - 1
+    lines = text.splitlines()
+    if line_index < 0 or line_index >= len(lines):
+        return None
+    line = lines[line_index]
+    column_index = max(0, int(item.get("col") or "1") - 1)
+    for match in re.finditer(r"\bclamp\s*\(", line):
+        open_index = line.find("(", match.start())
+        close_index = _find_matching_paren(line, open_index)
+        if close_index < 0 or not (match.start() <= column_index <= close_index):
+            continue
+        spans = _split_typescript_argument_spans(line, open_index + 1, close_index)
+        if len(spans) != 2:
+            continue
+        first_arg = line[spans[0][0] : spans[0][1]].strip()
+        second_arg = line[spans[1][0] : spans[1][1]].strip()
+        if not first_arg or not second_arg:
+            continue
+        lines[line_index] = line[: open_index + 1] + f"{first_arg}, 0, {second_arg}" + line[close_index:]
+        updated_by_path[target_path] = "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+        return {
+            "file": target_path.relative_to(workspace_path).as_posix(),
+            "method": method_name,
+            "expected": item["expected"],
+            "got": item["got"],
+            "repair": "callsite_insert_default_min_bound",
+        }
+    return None
+
+
 def _find_unique_typescript_method_declaration(
     *,
     workspace_path: Path,
@@ -2080,6 +2237,25 @@ def _add_defaults_to_typescript_method_params(line: str, *, got_count: int, expe
     if not changed:
         return line
     return line[: open_index + 1] + ", ".join(params) + line[close_index:]
+
+
+def _typescript_property_line_with_default(line: str, member: str) -> str:
+    safe_member = re.escape(str(member or "").strip())
+    if not safe_member or "=" in line or "!" in line:
+        return line
+    match = re.match(
+        rf"^(?P<prefix>\s*(?:(?:public|private|protected)\s+)?(?:readonly\s+)?{safe_member}\s*:\s*)"
+        r"(?P<type>[^;=]+)(?P<suffix>;?\s*)$",
+        line,
+    )
+    if not match:
+        return line
+    field_type = str(match.group("type") or "unknown").strip()
+    if not field_type:
+        return line
+    return (
+        f"{match.group('prefix')}{field_type} = {_typescript_default_value_for_type(field_type)}{match.group('suffix')}"
+    )
 
 
 def _split_typescript_params(params_text: str) -> list[str]:
@@ -2148,6 +2324,12 @@ def _build_typescript_missing_member_declaration(
                 "  }"
             )
         return f"  public {safe_member}({params}): number {{\n    return 0;\n  }}"
+    if static_context and class_name:
+        constructor_args = _typescript_constructor_default_arguments(class_text)
+        return f"  public static readonly {safe_member}: {class_name} = new {class_name}({constructor_args});"
+    if re.search(rf"\.\s*{re.escape(safe_member)}\s*=(?!=)", usage_line):
+        value_type = inferred_type.strip() or _typescript_missing_member_value_type(safe_member, usage_line, class_text)
+        return f"  public {safe_member}: {value_type} = {_typescript_default_value_for_type(value_type)};"
     if re.search(rf"\.{re.escape(safe_member)}\s*\.length\b", usage_line):
         fallback = "this.id" if re.search(r"\bid\s*:", class_text) else '""'
         return f"  public get {safe_member}(): string {{\n    return {fallback};\n  }}"

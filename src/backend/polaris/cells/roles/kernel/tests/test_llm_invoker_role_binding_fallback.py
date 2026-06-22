@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -132,7 +133,7 @@ def _prepared(profile: RoleProfile) -> PreparedLLMRequest:
 
 
 @pytest.fixture
-def role_slots(monkeypatch: pytest.MonkeyPatch) -> None:
+def role_slots(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     reset_runtime_config_manager()
     set_runtime_config_manager(
         cast(
@@ -201,7 +202,17 @@ async def test_pm_rate_limit_falls_back_to_next_same_role_binding(
 
 
 @pytest.mark.asyncio
-async def test_director_http_500_falls_back_to_next_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "provider_error",
+    [
+        "500 Server Error: Internal Server Error url: http://localhost:8189/v1/chat/completions",
+        "circuit_open:57s_remaining",
+    ],
+)
+async def test_director_retryable_provider_error_falls_back_to_next_binding(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_error: str,
+) -> None:
     reset_runtime_config_manager()
     set_runtime_config_manager(
         cast(
@@ -237,7 +248,7 @@ async def test_director_http_500_falls_back_to_next_binding(monkeypatch: pytest.
     monkeypatch.setattr(LLMInvoker, "_emit_call_error_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(LLMInvoker, "_emit_call_retry_event", lambda *_args, **_kwargs: None)
 
-    executor = _Executor("500 Server Error: Internal Server Error url: http://localhost:8189/v1/chat/completions")
+    executor = _Executor(provider_error)
     invoker = LLMInvoker(workspace=".", enable_cache=False, executor=executor)
 
     response = await invoker.call(

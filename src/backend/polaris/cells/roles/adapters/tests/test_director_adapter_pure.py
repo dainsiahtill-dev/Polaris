@@ -796,6 +796,51 @@ def test_deterministic_typescript_missing_member_repair_adds_static_factories_fo
     assert "undefined as unknown as unknown(" not in simulation
 
 
+def test_deterministic_typescript_missing_member_repair_adds_static_values_for_typeof_errors(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src" / "models").mkdir(parents=True)
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "src" / "models" / "moonphase.ts").write_text(
+        "export class MoonPhase {\n"
+        "  constructor() {}\n"
+        "  public get NewMoon(): unknown {\n"
+        "    return undefined;\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "engine" / "garden.ts").write_text(
+        "import { MoonPhase } from '../models/moonphase';\n"
+        "const currentMoon = MoonPhase.NewMoon;\n"
+        "if (currentMoon === MoonPhase.FullMoon) console.log('bright');\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/engine/garden.ts(2,31): error TS2339: Property 'NewMoon' does not exist on type "
+        "'typeof MoonPhase'.\n"
+        "src/engine/garden.ts(3,31): error TS2339: Property 'FullMoon' does not exist on type "
+        "'typeof MoonPhase'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    moon = (tmp_path / "src" / "models" / "moonphase.ts").read_text(encoding="utf-8")
+    assert "public static readonly NewMoon: MoonPhase = new MoonPhase();" in moon
+    assert "public static readonly FullMoon: MoonPhase = new MoonPhase();" in moon
+    assert "public get NewMoon" in moon
+
+
 def test_deterministic_typescript_missing_export_repair_adds_constructed_class(
     tmp_path: Any,
 ) -> None:
@@ -1052,6 +1097,94 @@ def test_deterministic_typescript_too_few_arguments_repair_adds_trailing_default
     assert results
     repaired = (tmp_path / "src" / "firefly.ts").read_text(encoding="utf-8")
     assert "temperature: number = 0" in repaired
+
+
+def test_deterministic_typescript_too_few_arguments_repair_fixes_two_arg_clamp_calls(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_too_few_arguments_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "engine.ts").write_text(
+        "function clamp(value: number, min: number, max: number): number {\n"
+        "  return Math.max(min, Math.min(max, value));\n"
+        "}\n"
+        "let y = clamp(42, 600);\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/engine.ts(4,9): error TS2554: Expected 3 arguments, but got 2."
+    ]
+
+    results = _apply_deterministic_typescript_too_few_arguments_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "engine.ts").read_text(encoding="utf-8")
+    assert "let y = clamp(42, 0, 600);" in repaired
+
+
+def test_deterministic_typescript_missing_member_repair_does_not_confuse_parameters_with_fields(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "flower.ts").write_text(
+        "export class Flower {\n  updateHumidity(humidity: number): void {\n    this.humidity = humidity;\n  }\n}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/flower.ts(3,10): error TS2339: Property 'humidity' does not exist on type 'Flower'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "flower.ts").read_text(encoding="utf-8")
+    assert "public humidity: number = 0;" in repaired
+
+
+def test_deterministic_typescript_uninitialized_property_repair_adds_default_value(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_uninitialized_property_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "flower.ts").write_text(
+        "export class Flower {\n  public happiness: number;\n  constructor() {}\n}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/flower.ts(2,10): error TS2564: Property 'happiness' has no initializer "
+        "and is not definitely assigned in the constructor."
+    ]
+
+    results = _apply_deterministic_typescript_uninitialized_property_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "flower.ts").read_text(encoding="utf-8")
+    assert "public happiness: number = 0;" in repaired
 
 
 def test_deterministic_typescript_tsconfig_lib_repair_adds_dom(tmp_path: Any) -> None:
