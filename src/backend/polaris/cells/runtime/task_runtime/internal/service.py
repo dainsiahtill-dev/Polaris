@@ -872,7 +872,7 @@ class TaskRuntimeService:
             return None
 
     def _write_session(self, session: TaskExecutionSession) -> None:
-        self._kernel_fs.write_json(
+        self._kernel_fs.write_json_atomic(
             self._session_logical_path(session.task_id),
             session.to_dict(),
             indent=2,

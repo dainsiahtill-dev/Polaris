@@ -792,6 +792,35 @@ def test_pm_service_rebinds_to_application_settings_object(tmp_path: Path) -> No
     assert Path(str(service._settings.workspace)).resolve() == workspace_b.resolve()
 
 
+def test_pm_service_rebind_keeps_explicit_workspace_when_persisted_workspace_is_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace_old = tmp_path / "workspace-old"
+    workspace_new = tmp_path / "workspace-new"
+    workspace_old.mkdir(parents=True, exist_ok=True)
+    workspace_new.mkdir(parents=True, exist_ok=True)
+
+    original_settings = Settings(workspace=workspace_old)
+    service = PMService(original_settings, StorageLayout(original_settings.workspace, original_settings.runtime_base))
+    monkeypatch.setattr(
+        "polaris.cells.storage.layout.public.service.load_persisted_settings",
+        lambda _workspace="": {"workspace": str(workspace_old)},
+    )
+
+    updated_settings = Settings(workspace=workspace_new)
+    service.rebind_settings(updated_settings)
+
+    resolved_log_path = Path(service._resolve_log_path()).resolve()
+    expected_log_path = (
+        StorageLayout(Path(str(workspace_new)), updated_settings.runtime_base)
+        .get_path("logs", "pm.process.log")
+        .resolve()
+    )
+    assert resolved_log_path == expected_log_path
+    assert Path(str(updated_settings.workspace)).resolve() == workspace_new.resolve()
+
+
 def test_pm_service_build_command_uses_runtime_json_log_rel_path(tmp_path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

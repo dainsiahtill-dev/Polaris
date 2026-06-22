@@ -71,8 +71,9 @@ function isAbortLikeError(err: unknown): boolean {
 export function useContextStoreStats(options: {
   workspace?: string | null;
   enabled?: boolean;
+  refreshSignal?: string | number | null;
 }): UseContextStoreStatsResult {
-  const { workspace, enabled = true } = options;
+  const { workspace, enabled = true, refreshSignal = null } = options;
 
   const [state, setState] = useState<StatsFetchState>({ kind: 'idle' });
   const abortRef = useRef<AbortController | null>(null);
@@ -185,7 +186,7 @@ export function useContextStoreStats(options: {
     return () => {
       abortRef.current?.abort();
     };
-  }, [workspace, enabled, fetchOnce]);
+  }, [workspace, enabled, refreshSignal, fetchOnce]);
 
   const triggerSweep = useCallback(async (): Promise<{ ok: boolean; error: string | null }> => {
     try {

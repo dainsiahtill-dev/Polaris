@@ -276,6 +276,57 @@ def test_task_runtime_service_persists_sessions_under_canonical_task_namespace(t
     assert not service._kernel_fs.exists(legacy_path)
 
 
+def test_task_runtime_service_writes_sessions_atomically(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    created = service.create(
+        subject="persist task session atomically",
+        description="session readers must never observe partial JSON writes",
+    )
+
+    atomic_calls: list[tuple[str, object, int, bool]] = []
+    original_atomic_write = service._kernel_fs.write_json_atomic
+
+    def write_json_atomic_spy(
+        logical_path: str,
+        payload: object,
+        *,
+        indent: int = 2,
+        ensure_ascii: bool = False,
+    ) -> object:
+        atomic_calls.append((logical_path, payload, indent, ensure_ascii))
+        return original_atomic_write(
+            logical_path,
+            payload,
+            indent=indent,
+            ensure_ascii=ensure_ascii,
+        )
+
+    def reject_non_atomic_session_write(*args: object, **kwargs: object) -> object:
+        raise AssertionError("task runtime sessions must use write_json_atomic")
+
+    monkeypatch.setattr(service._kernel_fs, "write_json_atomic", write_json_atomic_spy)
+    monkeypatch.setattr(service._kernel_fs, "write_json", reject_non_atomic_session_write)
+
+    claimed = service.claim_execution(
+        created.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-atomic-session",
+        selection_source="task_id_lookup",
+    )
+
+    assert claimed["success"] is True
+    assert atomic_calls
+    logical_path, payload, indent, ensure_ascii = atomic_calls[-1]
+    assert logical_path == f"runtime/tasks/task_{created.id}.session.json"
+    assert isinstance(payload, dict)
+    assert indent == 2
+    assert ensure_ascii is False
+
+
 def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)

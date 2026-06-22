@@ -116,6 +116,24 @@ describe('ContextStoreStatsPanel', () => {
     expect(screen.queryByText('只读')).toBeNull();
   });
 
+  it('refreshes stats when a WebSocket snapshot signal changes', async () => {
+    mockAdminReady({ file_count: 1, total_bytes: 1024, last_sweep_report: null });
+    const { rerender } = render(<ContextStoreStatsPanel workspace="/repo" refreshSignal={null} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('contextos-store-stats-ready')).toBeTruthy();
+    });
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1);
+
+    mockAdminReady({ file_count: 2, total_bytes: 2048, last_sweep_report: null });
+    rerender(<ContextStoreStatsPanel workspace="/repo" refreshSignal="ctx-ref-1:100:1" />);
+
+    await waitFor(() => {
+      expect(mockedApiFetch).toHaveBeenCalledTimes(2);
+    });
+    rerender(<ContextStoreStatsPanel workspace="/repo" refreshSignal="ctx-ref-1:100:1" />);
+    expect(mockedApiFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('renders ready view without sweep button when basic stats endpoint returns 200', async () => {
     // Admin endpoint returns 404
     mockAdminDisabled();

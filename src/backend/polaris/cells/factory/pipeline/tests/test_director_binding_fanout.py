@@ -604,6 +604,60 @@ class TestExecuteDirectorBindingFanout:
         assert result.status == "completed"
         assert mock_service.query_run_status.await_count >= 1
 
+    @pytest.mark.asyncio
+    async def test_terminal_failed_task_counts_end_binding_wait(self) -> None:
+        executor = self._make_executor()
+        executor._binding_status_probe_seconds = 0.001
+        bindings = [{"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"}]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            return CommandResult(run_id="run-1", status="running", message="submitted")
+
+        wait_cancelled = False
+
+        async def mock_wait(
+            service: Any,
+            initial: Any,
+            timeout_seconds: int = 300,
+            *,
+            cancel_event: Any = None,
+            abort_checker: Any = None,
+        ) -> CommandResult:
+            nonlocal wait_cancelled
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                wait_cancelled = True
+                raise
+            return CommandResult(run_id=initial.run_id, status="completed", message="late")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+        mock_service.query_run_status = AsyncMock(
+            return_value=CommandResult(
+                run_id="run-1",
+                status="running",
+                message="run row has not converged yet",
+                metadata={"task_status_counts": {"total": 3, "completed": 1, "failed": 2}},
+            )
+        )
+        executor._wait_run_completion = mock_wait  # type: ignore[assignment]
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "failed"
+        assert result.metadata["per_binding"][0]["terminal_source"] == "task_status_counts"
+        assert result.metadata["per_binding"][0]["queried_status"] == "running"
+        assert wait_cancelled is True
+
     def test_director_dispatch_timeout_uses_stage_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
         executor = self._make_executor()
         for key in (

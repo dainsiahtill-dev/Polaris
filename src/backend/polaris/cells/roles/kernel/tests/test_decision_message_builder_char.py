@@ -78,7 +78,11 @@ def test_build_decision_messages_injects_implementing_hard_gate() -> None:
 def test_build_decision_messages_materialize_strips_negative_task_contract_lines() -> None:
     controller = _make_controller()
     # A benchmark contract drives task_contract_hint synthesis with NEGATIVE lines.
-    user_content = "[Benchmark Tool Contract]\nRequired tools: write_file\n请实现 src/main.ts 并写入文件。"
+    user_content = (
+        "[Benchmark Tool Contract]\n"
+        "Required tools (at least once): write_file\n"
+        "Create src/main.ts and write the implementation."
+    )
     context = [{"role": "user", "content": user_content}]
     tool_definitions = [
         {"type": "function", "function": {"name": "read_file"}},
@@ -102,6 +106,11 @@ def test_build_decision_messages_materialize_strips_negative_task_contract_lines
         assert "hard gate" not in lowered
         assert "rejected" not in lowered
         assert "read-only" not in lowered
+    positive_text = "\n".join(positive_blocks)
+    assert "TEMPLATE [General-Mutation]" in positive_text
+    assert "call write_file immediately with the complete file body" in positive_text
+    assert "edit_blocks/edit_file/search_replace/repo_apply_diff" in positive_text
+    assert "read/list/execute-only batch is invalid" not in positive_text
 
 
 def test_build_decision_messages_materialize_guard_is_write_first_for_create_tasks() -> None:

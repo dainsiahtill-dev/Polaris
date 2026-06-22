@@ -52,10 +52,12 @@ export interface ContextStoreStatsPanelProps {
   workspace?: string | null;
   /** 父组件传入的开关（默认 ON）。disable 后面板静默不渲染。 */
   enabled?: boolean;
+  /** WebSocket snapshot/ref 事件驱动的一次性刷新信号；不是定时轮询。 */
+  refreshSignal?: string | number | null;
 }
 
-export function ContextStoreStatsPanel({ workspace, enabled = true }: ContextStoreStatsPanelProps) {
-  const { state, refresh, triggerSweep } = useContextStoreStats({ workspace, enabled });
+export function ContextStoreStatsPanel({ workspace, enabled = true, refreshSignal = null }: ContextStoreStatsPanelProps) {
+  const { state, refresh, triggerSweep } = useContextStoreStats({ workspace, enabled, refreshSignal });
   const [sweepPending, setSweepPending] = useState(false);
   const [sweepError, setSweepError] = useState<string | null>(null);
 

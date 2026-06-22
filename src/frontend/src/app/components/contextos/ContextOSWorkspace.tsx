@@ -1660,6 +1660,14 @@ export function ContextOSWorkspace({
   const telemetryAgeMs = lastEventEpoch ? Date.now() - lastEventEpoch : null;
   const telemetryFresh = telemetryAgeMs !== null && telemetryAgeMs < 30_000; // 30s 内视为"实时"
   const freshnessLabel = lastEventEpoch ? formatFreshness(lastEventEpoch) : null;
+  const contextStoreRefreshSignal = useMemo(() => {
+    const latestSnapshotEvent = telemetry.events.find(
+      (event) => event.contextSnapshotRef || event.contextSnapshotDegraded || event.contextHash,
+    );
+    if (!latestSnapshotEvent) return null;
+    const ref = latestSnapshotEvent.contextSnapshotRef || latestSnapshotEvent.contextHash || latestSnapshotEvent.id;
+    return `${ref}:${latestSnapshotEvent.epoch}:${latestSnapshotEvent.seq}`;
+  }, [telemetry.events]);
 
   const filteredDecisions = useMemo(
     () => model.decisions.filter((row) => decisionMatchesRole(row.actor, activeRole)),
@@ -2123,7 +2131,7 @@ export function ContextOSWorkspace({
               </SectionCard>
             )}
 
-            <ContextStoreStatsPanel workspace={workspace} />
+            <ContextStoreStatsPanel workspace={workspace} refreshSignal={contextStoreRefreshSignal} />
           </div>
         </div>
       </main>

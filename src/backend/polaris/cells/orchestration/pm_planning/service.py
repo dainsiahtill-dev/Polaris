@@ -288,12 +288,12 @@ class PMService:
 
     def refresh_storage_layout(self) -> None:
         """Refresh storage binding after workspace/runtime settings updates."""
-        self._refresh_storage_layout(force=True)
+        self._refresh_storage_layout(force=True, allow_persisted_fallback=False)
 
     def rebind_settings(self, settings: Settings) -> None:
         """Bind this long-lived service to the application settings object."""
         self._settings = settings
-        self._refresh_storage_layout(force=True)
+        self._refresh_storage_layout(force=True, allow_persisted_fallback=False)
 
     async def run_once(self) -> dict:
         """Run PM once."""
@@ -802,7 +802,7 @@ class PMService:
         storage = self._refresh_storage_layout()
         return storage.get_path("contracts", "pm_tasks.contract.json")
 
-    def _resolve_effective_workspace(self) -> Path:
+    def _resolve_effective_workspace(self, *, allow_persisted_fallback: bool = True) -> Path:
         configured_raw = str(getattr(self._settings, "workspace", "") or "").strip()
         configured_path: Path | None = None
         if configured_raw:
@@ -815,20 +815,21 @@ class PMService:
                 configured_path = None
 
         persisted_path: Path | None = None
-        try:
-            from polaris.cells.storage.layout.public.service import load_persisted_settings
+        if allow_persisted_fallback:
+            try:
+                from polaris.cells.storage.layout.public.service import load_persisted_settings
 
-            persisted_payload = load_persisted_settings(configured_raw)
-            persisted_raw = str(
-                persisted_payload.get("workspace") if isinstance(persisted_payload, dict) else ""
-            ).strip()
-            if persisted_raw:
-                candidate = Path(persisted_raw).expanduser().resolve()
-                if candidate.is_dir():
-                    persisted_path = candidate
-        except (RuntimeError, ValueError) as exc:
-            logger.warning("Failed to load persisted workspace settings: %s", exc)
-            persisted_path = None
+                persisted_payload = load_persisted_settings(configured_raw)
+                persisted_raw = str(
+                    persisted_payload.get("workspace") if isinstance(persisted_payload, dict) else ""
+                ).strip()
+                if persisted_raw:
+                    candidate = Path(persisted_raw).expanduser().resolve()
+                    if candidate.is_dir():
+                        persisted_path = candidate
+            except (RuntimeError, ValueError) as exc:
+                logger.warning("Failed to load persisted workspace settings: %s", exc)
+                persisted_path = None
 
         selected = configured_path
         if persisted_path is not None and configured_path is not None:
@@ -854,8 +855,13 @@ class PMService:
             self._settings.workspace = selected
         return selected
 
-    def _refresh_storage_layout(self, force: bool = False) -> StorageLayout:
-        workspace = self._resolve_effective_workspace()
+    def _refresh_storage_layout(
+        self,
+        force: bool = False,
+        *,
+        allow_persisted_fallback: bool = True,
+    ) -> StorageLayout:
+        workspace = self._resolve_effective_workspace(allow_persisted_fallback=allow_persisted_fallback)
         runtime_base = Path(str(self._settings.runtime_base)).expanduser().resolve()
         candidate = StorageLayout(workspace, runtime_base)
         if force or self._storage is None:

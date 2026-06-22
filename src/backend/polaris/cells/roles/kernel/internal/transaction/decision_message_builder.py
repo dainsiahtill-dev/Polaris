@@ -60,6 +60,60 @@ def _line_conflicts_with_quality_repair(line: str) -> bool:
     )
 
 
+def _sanitize_materialize_positive_task_contract_line(line: str) -> str | None:
+    """Keep positive tool templates while stripping negative benchmark wording."""
+    stripped = line.strip()
+    lowered = stripped.lower()
+    if not stripped:
+        return stripped
+    if stripped.startswith("TEMPLATE [General-Mutation]:"):
+        return (
+            "TEMPLATE [General-Mutation]: "
+            "For create-file or full replacement tasks, call write_file immediately with the complete file body. "
+            "For existing targeted edits, inspect only the specific target file when exact current content is needed, "
+            "then use edit_blocks/edit_file/search_replace/repo_apply_diff. "
+            "Use precision_edit only after exact search text has been verified; "
+            "use append_to_file only for explicit append-at-end tasks. "
+            "Verify after writing when a verification/read tool is available."
+        )
+    if stripped.startswith("TEMPLATE [Edit-Then-Verify]:"):
+        return (
+            "TEMPLATE [Edit-Then-Verify]: "
+            "Step 1: read_file the target file only when exact existing content is needed. "
+            "Step 2: use edit_blocks/edit_file/search_replace/repo_apply_diff for existing content changes; "
+            "use write_file for create-file or full replacement tasks. "
+            "Step 3: read_file again when verification is required."
+        )
+    if stripped.startswith("TEMPLATE [Search-Replace]:"):
+        return (
+            "TEMPLATE [Search-Replace]: "
+            "Step 1: use repo_rg/ripgrep to locate occurrences when the target is unknown. "
+            "Step 2: read_file the exact target file. "
+            "Step 3: use search_replace or precision_edit to perform the replacement."
+        )
+    if stripped.startswith("COMPLETION CHECK:"):
+        return (
+            "COMPLETION CHECK: Finish only after the required write/edit and verification tools "
+            "for this turn have been emitted."
+        )
+    if any(
+        marker in lowered
+        for marker in (
+            "invalid",
+            "hard gate",
+            "rejected",
+            "do not stop",
+            "read-only",
+            "single-batch",
+            "same batch",
+            "this request requires mutation",
+            "valid pattern",
+        )
+    ):
+        return None
+    return line
+
+
 def build_decision_messages(
     context: list[dict[str, Any]],
     tool_definitions: list[dict[str, Any]],
@@ -195,26 +249,11 @@ def build_decision_messages(
             # MATERIALIZE 模式（非 SUPER）: 只保留正例模板和恢复协议，过滤掉 NEGATIVE/HARD GATE 规则
             positive_lines = []
             for line in task_contract_hint.split("\n"):
-                # 跳过 NEGATIVE 规则行（包含 "INVALID", "HARD GATE", "rejected" 等）
-                lowered_line = line.lower()
-                if any(
-                    marker in lowered_line
-                    for marker in (
-                        "invalid",
-                        "hard gate",
-                        "rejected",
-                        "do not stop",
-                        "read-only",
-                        "single-batch",
-                        "same batch",
-                        "this request requires mutation",
-                        "valid pattern",
-                    )
-                ):
-                    continue
                 if _is_quality_repair and _line_conflicts_with_quality_repair(line):
                     continue
-                positive_lines.append(line)
+                positive_line = _sanitize_materialize_positive_task_contract_line(line)
+                if positive_line is not None:
+                    positive_lines.append(positive_line)
             if positive_lines:
                 messages.append(
                     {

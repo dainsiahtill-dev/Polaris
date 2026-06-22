@@ -946,7 +946,20 @@ class OrchestrationStageExecutor:
                     metadata = status_probe.metadata if isinstance(status_probe.metadata, dict) else {}
                     count_status = self._terminal_status_from_task_counts(metadata.get("task_status_counts"))
                     if count_status:
-                        continue
+                        wait_task.cancel()
+                        return binding, CommandResult(
+                            run_id=run_id,
+                            status=count_status,
+                            message=(
+                                "Director binding reached terminal task counts "
+                                f"before run status converged: {metadata.get('task_status_counts')}"
+                            ),
+                            metadata={
+                                **metadata,
+                                "terminal_source": "task_status_counts",
+                                "queried_status": probed_status,
+                            },
+                        )
             except (RuntimeError, OSError, ValueError, TypeError) as exc:
                 logger.warning("Director binding fanout wait failed for run %s: %s", sub_result.run_id, exc)
                 return binding, CommandResult(run_id=sub_result.run_id, status="failed", message=f"Wait failed: {exc}")
