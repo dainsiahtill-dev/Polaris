@@ -7,11 +7,12 @@ UTF-8 编码验证: 本文所有文本使用 UTF-8
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from .context_audit import build_final_request_context_audit_for_request
+from .context_audit import build_final_provider_request_snapshot, build_final_request_context_audit_for_request
 from .error_handling import (
     ERROR_CATEGORY_CANCELLED,
     build_native_tool_unavailable_error,
@@ -29,6 +30,20 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
+
+
+def _store_context_messages_accepts_provider_request(store_context_messages: Any) -> bool:
+    try:
+        signature = inspect.signature(store_context_messages)
+    except (TypeError, ValueError):
+        return True
+    positional_count = 0
+    for parameter in signature.parameters.values():
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            return True
+        if parameter.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            positional_count += 1
+    return positional_count >= 5
 
 
 def _is_stream_cancel_requested(context: Any) -> bool:
@@ -140,7 +155,7 @@ class StreamEngine:
             emit_call_end_event: Event emitter callable.
             emit_call_retry_event: Event emitter callable.
             store_context_messages: Optional async callable
-                ``async (workspace, messages, trace_id, call_id) -> str | None``
+                ``async (workspace, messages, trace_id, call_id, provider_request) -> str | None``
                 that persists the post-compression chat messages to the
                 runtime context store and returns the 24-char reference hash.
                 The callable MUST be a coroutine — it is awaited so the
@@ -311,12 +326,26 @@ class StreamEngine:
             snapshot_messages: list[Any] = list(getattr(prepared, "messages", []) or [])
             if snapshot_messages:
                 try:
-                    context_store_hash = await self._store_context_messages(
-                        self.workspace,
-                        snapshot_messages,
-                        run_id,
-                        call_id,
+                    provider_request = build_final_provider_request_snapshot(
+                        ai_request=prepared.ai_request,
+                        prepared=prepared,
+                        profile=profile,
                     )
+                    if _store_context_messages_accepts_provider_request(self._store_context_messages):
+                        context_store_hash = await self._store_context_messages(
+                            self.workspace,
+                            snapshot_messages,
+                            run_id,
+                            call_id,
+                            provider_request,
+                        )
+                    else:
+                        context_store_hash = await self._store_context_messages(
+                            self.workspace,
+                            snapshot_messages,
+                            run_id,
+                            call_id,
+                        )
                 except (RuntimeError, ValueError, TypeError, OSError) as exc:
                     logger.warning(
                         "[StreamEngine] context_snapshot store failed (non-fatal): %s",

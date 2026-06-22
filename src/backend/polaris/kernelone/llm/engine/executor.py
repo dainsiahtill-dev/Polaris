@@ -772,6 +772,7 @@ class AIExecutor:
         messages: list[Any],
         trace_id: str,
         call_id: str | None = None,
+        provider_request: dict[str, Any] | None = None,
     ) -> str:
         """Store compressed chat messages to runtime/contexts/ by SHA-256 hash.
 
@@ -805,6 +806,8 @@ class AIExecutor:
             "messages": messages,
             "stored_at": datetime.now(timezone.utc).isoformat(),
         }
+        if isinstance(provider_request, dict):
+            payload["provider_request"] = provider_request
         content = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         full_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         # Defence in depth: fullmatch the producer-side hash against the
@@ -854,6 +857,7 @@ class AIExecutor:
         messages: list[Any],
         trace_id: str,
         call_id: str | None = None,
+        provider_request: dict[str, Any] | None = None,
     ) -> str:
         """Async-safe variant of ``_store_context_messages_sync``.
 
@@ -869,6 +873,7 @@ class AIExecutor:
             messages,
             trace_id,
             call_id,
+            provider_request,
         )
 
     @staticmethod

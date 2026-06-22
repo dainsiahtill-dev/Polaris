@@ -89,6 +89,22 @@ _STRING_TYPED_PARAM_NAMES = frozenset(
 )
 
 
+def _qwen3coder_allows_empty_arguments(tool_name: str) -> bool:
+    canonical_tool_name = _canonical_tool_name(tool_name)
+    if not canonical_tool_name:
+        return False
+    try:
+        from polaris.kernelone.tool_execution.tool_spec_registry import ToolSpecRegistry
+
+        spec = ToolSpecRegistry.get(canonical_tool_name)
+    except (RuntimeError, ValueError, TypeError, ImportError):
+        return False
+    if spec is None:
+        return False
+    required = spec.parameters.get("required") if isinstance(spec.parameters, dict) else None
+    return not required
+
+
 class XMLToolParser:
     """XML tool parser.
 
@@ -306,7 +322,7 @@ class XMLToolParser:
                 # genuinely scalar params (line numbers, flags).
                 arguments[key] = raw_value if key.lower() in _STRING_TYPED_PARAM_NAMES else parse_value(raw_value)
                 matched_spans.append(param_match.span())
-            if not arguments:
+            if not arguments and not _qwen3coder_allows_empty_arguments(tool_name):
                 continue
             # Truncation guard: a <parameter=> opener that lies OUTSIDE every
             # fully-closed span is a genuine mid-value truncation (skip, re-ask).

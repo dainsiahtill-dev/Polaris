@@ -44,6 +44,7 @@ from polaris.cells.roles.kernel.internal.llm_caller.helpers import (
 )
 from polaris.cells.roles.kernel.internal.llm_caller.invoker import LLMInvoker
 from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import build_native_tool_schemas
+from polaris.kernelone.context.contracts import TurnEngineContextResult
 
 
 class MockProfile:
@@ -59,6 +60,13 @@ class MockProfile:
         self.model = model
         self.provider_id = provider_id
         self.tool_policy = SimpleNamespace(allowed_tools=[], denied_tools=[])
+
+
+def _turn_context_result(content: str, token_estimate: int = 12) -> TurnEngineContextResult:
+    return TurnEngineContextResult(
+        messages=({"role": "user", "content": content},),
+        token_estimate=token_estimate,
+    )
 
 
 class TestResolveTimeoutSeconds:
@@ -714,10 +722,7 @@ class TestPreparedRequestArchitecture:
                 pass
 
             async def build_context(self, _context, *, system_prompt=None):
-                return SimpleNamespace(
-                    messages=[{"role": "user", "content": "hello"}],
-                    token_estimate=12,
-                )
+                return _turn_context_result("hello")
 
         monkeypatch.setattr(
             "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
@@ -756,10 +761,7 @@ class TestPreparedRequestArchitecture:
                 pass
 
             async def build_context(self, _context, *, system_prompt=None):
-                return SimpleNamespace(
-                    messages=[{"role": "user", "content": "hello"}],
-                    token_estimate=12,
-                )
+                return _turn_context_result("hello")
 
         monkeypatch.setattr(
             "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
@@ -874,10 +876,7 @@ class TestPreparedRequestArchitecture:
                 pass
 
             async def build_context(self, _context, *, system_prompt=None):
-                return SimpleNamespace(
-                    messages=[{"role": "user", "content": "hello"}],
-                    token_estimate=12,
-                )
+                return _turn_context_result("hello")
 
         monkeypatch.setattr(
             "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
@@ -921,10 +920,7 @@ class TestPreparedRequestArchitecture:
                 pass
 
             async def build_context(self, _context, *, system_prompt=None):
-                return SimpleNamespace(
-                    messages=[{"role": "user", "content": "create index.html"}],
-                    token_estimate=12,
-                )
+                return _turn_context_result("create index.html")
 
         monkeypatch.setattr(
             "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
@@ -959,6 +955,73 @@ class TestPreparedRequestArchitecture:
         assert prepared.request_options["tool_choice"] == forced_choice
 
     @pytest.mark.asyncio
+    async def test_prepare_llm_request_quality_repair_forced_tools_keep_read_locate_context(
+        self,
+        monkeypatch,
+    ) -> None:
+        caller = LLMCaller(workspace="C:/workspace")
+        profile = MockProfile(role_id="director", model="gpt-5", provider_id="openai")
+        profile.tool_policy = SimpleNamespace(whitelist=["read_file", "repo_tree", "write_file"])
+
+        class _FakeGateway:
+            def __init__(self, _profile, _workspace) -> None:
+                pass
+
+            async def build_context(self, _context, *, system_prompt=None):
+                return _turn_context_result("repair missing moon model")
+
+        monkeypatch.setattr(
+            "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
+            _FakeGateway,
+        )
+        monkeypatch.setattr(
+            LLMCaller,
+            "_build_native_tool_schemas",
+            staticmethod(
+                lambda _profile: [
+                    {"type": "function", "function": {"name": "write_file"}},
+                    {"type": "function", "function": {"name": "read_file"}},
+                    {"type": "function", "function": {"name": "repo_tree"}},
+                    {"type": "function", "function": {"name": "scout_probe"}},
+                ]
+            ),
+        )
+
+        forced_tools = [{"type": "function", "function": {"name": "write_file"}}]
+        forced_choice = {"type": "function", "function": {"name": "write_file"}}
+        context = SimpleNamespace(
+            task_id=None,
+            context_override={
+                "_transaction_kernel_forced_tool_definitions": forced_tools,
+                "_transaction_kernel_forced_tool_choice": forced_choice,
+                "director_quality_repair": {
+                    "missing_target_files": ["src/models/moon.ts"],
+                    "repair_target_files": ["src/models/moon.ts"],
+                    "write_only_single_target": {
+                        "tool": "write_file",
+                        "target_file": "src/models/moon.ts",
+                    },
+                },
+            },
+        )
+        prepared = await caller._prepare_llm_request(
+            profile=cast("RoleProfile", profile),
+            system_prompt="system",
+            context=cast("ContextRequest", context),
+            temperature=0.2,
+            max_tokens=256,
+            stream=False,
+        )
+
+        tool_names = [
+            str(item.get("function", {}).get("name") or "")
+            for item in prepared.request_options["tools"]
+            if isinstance(item.get("function"), dict)
+        ]
+        assert tool_names == ["write_file", "read_file", "repo_tree"]
+        assert prepared.request_options["tool_choice"] == forced_choice
+
+    @pytest.mark.asyncio
     async def test_prepare_llm_request_honors_explicit_empty_forced_tools(self, monkeypatch) -> None:
         caller = LLMCaller(workspace="C:/workspace")
         profile = MockProfile(role_id="director", model="gpt-5", provider_id="openai")
@@ -969,10 +1032,7 @@ class TestPreparedRequestArchitecture:
                 pass
 
             async def build_context(self, _context, *, system_prompt=None):
-                return SimpleNamespace(
-                    messages=[{"role": "user", "content": "return fenced file blocks"}],
-                    token_estimate=12,
-                )
+                return _turn_context_result("return fenced file blocks")
 
         monkeypatch.setattr(
             "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",

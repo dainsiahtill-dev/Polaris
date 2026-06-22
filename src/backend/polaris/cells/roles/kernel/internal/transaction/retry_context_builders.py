@@ -42,6 +42,20 @@ def _extract_latest_assistant_message(context: list[dict]) -> str:
     return ""
 
 
+def _extract_role_definition_block(context: list[dict]) -> str:
+    """Return the first role identity block from the original system context."""
+    for message in context:
+        if not isinstance(message, Mapping):
+            continue
+        if str(message.get("role") or "").strip().lower() != "system":
+            continue
+        content = str(message.get("content") or "")
+        match = re.search(r"<role_definition>.*?</role_definition>", content, re.DOTALL)
+        if match:
+            return match.group(0).strip()
+    return ""
+
+
 def build_contract_retry_context(
     context: list[dict],
     tool_definitions: list[dict],
@@ -49,6 +63,7 @@ def build_contract_retry_context(
     forced_write_tool_name: str | None = None,
 ) -> list[dict]:
     """构建突变合约违反后的 retry 上下文。"""
+    role_definition = _extract_role_definition_block(context)
     latest_user = extract_latest_user_message(context)
     latest_assistant = _extract_latest_assistant_message(context)
     raw_target_file_tokens = extract_target_files_from_message(latest_user)
@@ -130,14 +145,24 @@ def build_contract_retry_context(
             )
 
     retry_mode_guard = (
-        "RETRY MODE ACTIVE: discard any previous staged workflow (e.g., understand-first/read-first).\n"
+        "RETRY MODE ACTIVE: discard only the previous staged execution workflow "
+        "(e.g., understand-first/read-first).\n"
+        "Do not discard the role identity, workspace, target files, tool schema, or safety constraints.\n"
         "Output a single valid TOOL_BATCH immediately under the constraints below.\n"
         "Do not emit plain-text-only response."
     )
+    system_content_parts = []
+    if role_definition:
+        system_content_parts.append(role_definition)
+        system_content_parts.append(
+            "RETRY IDENTITY GUARD: keep the role above authoritative for this retry; "
+            "do not infer or switch to another Polaris role."
+        )
+    system_content_parts.extend([retry_mode_guard, *retry_lines])
     retry_context: list[dict[str, str]] = [
         {
             "role": "system",
-            "content": "\n".join([retry_mode_guard, *retry_lines]),
+            "content": "\n".join(system_content_parts),
         }
     ]
     if latest_user:

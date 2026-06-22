@@ -536,6 +536,48 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(pm?.internalContext.latestTurnId).toBe('turn-42');
   });
 
+  it('prefers provider call context snapshot over newer projection-only snapshot', () => {
+    const llmStream: LogEntry[] = [
+      wsLog({
+        id: 'projection-newer',
+        timestamp: '2026-06-19T10:00:03Z',
+        level: 'info',
+        source: 'PM',
+        message: 'context projection refreshed',
+        meta: {
+          channel: 'runtime_events',
+          role: 'PM',
+          contextSnapshotRef: 'projection-only-newer',
+        },
+      }),
+      wsLog({
+        id: 'provider-call-older',
+        timestamp: '2026-06-19T10:00:02Z',
+        level: 'success',
+        source: 'PM',
+        message: 'llm response completed',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'PM',
+          promptTokens: 1000,
+          completionTokens: 500,
+          finalRequestTokenEstimate: 6329,
+          contextSnapshotRef: 'provider-call-older',
+          turnId: 'turn-provider',
+          callId: 'call-provider',
+        },
+      }),
+    ];
+    const telemetry = telemetryOf(llmStream, []);
+    const model = buildContextOSModel(baseInput({ telemetry }));
+    const pm = model.roles.find((r) => r.id === 'pm');
+
+    expect(pm?.internalContext.latestContextSnapshotRef).toBe('provider-call-older');
+    expect(pm?.internalContext.latestCallId).toBe('call-provider');
+    expect(pm?.internalContext.latestTurnId).toBe('turn-provider');
+  });
+
   it('leaves latestContextSnapshotRef null when no event carries it', () => {
     const llmStream: LogEntry[] = [
       wsLog({

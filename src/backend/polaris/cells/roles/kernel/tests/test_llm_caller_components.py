@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from polaris.cells.roles.kernel.internal.llm_caller.caller import _ensure_current_user_message_final
 from polaris.cells.roles.kernel.internal.llm_caller.context_audit import (
+    build_final_provider_request_snapshot,
     build_final_request_context_audit,
     build_final_request_context_audit_for_request,
 )
@@ -117,6 +118,56 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
     assert audit["available_token_headroom"] > 0
     assert "has_workspace_quality_evidence" in audit["context_quality"]["missing_coverage"]
     assert audit["context_quality"]["context_needs_review"] is True
+
+
+def test_final_provider_request_snapshot_summarizes_tools_and_choice() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 32768
+    tool_schema = {
+        "type": "function",
+        "function": {
+            "name": "repo_tree",
+            "description": "List repository files.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "depth": {"type": "integer"},
+                },
+                "required": ["path"],
+            },
+        },
+    }
+    messages = [{"role": "user", "content": "TASK-1 target_files src/index.ts Chief Engineer blueprint"}]
+    ai_request = Mock()
+    ai_request.context = {"chat_messages": messages}
+    ai_request.options = {"tools": [tool_schema], "tool_choice": "auto"}
+    ai_request.input = ""
+    prepared = PreparedLLMRequest(
+        messages=messages,
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={"tools": [tool_schema], "tool_choice": "auto"},
+        ai_request=ai_request,
+        native_tool_schemas=[],
+    )
+
+    snapshot = build_final_provider_request_snapshot(ai_request=ai_request, prepared=prepared, profile=profile)
+
+    assert snapshot["schema_version"] == "llm.provider_request_snapshot.v1"
+    assert snapshot["message_count"] == 1
+    assert snapshot["tool_schema_count"] == 1
+    assert snapshot["tool_choice"] == "auto"
+    assert snapshot["tools"] == [
+        {
+            "type": "function",
+            "name": "repo_tree",
+            "argument_keys": ["depth", "path"],
+            "required": ["path"],
+        }
+    ]
+    assert snapshot["final_request_context_audit"]["tool_schema_count"] == 1
 
 
 def test_final_request_context_audit_marks_complete_context_as_reasonable() -> None:

@@ -36,6 +36,15 @@ _ANALYSIS = (
     "应在 __init__ 中检测 memoryview 并调用 .tobytes()。"
 )
 
+_DIRECTOR_ROLE_DEFINITION = """<role_definition>
+# 系统定位
+你是 Polaris 体系中的 **Director**。
+
+# 表达方式
+请保持 **Director** 的性格特点:
+- 语气特点: 沉稳、专业、惜字如金。
+</role_definition>"""
+
 
 def _context() -> list[dict]:
     return [
@@ -64,6 +73,27 @@ def test_retry_feeds_back_prior_analysis_for_transcription() -> None:
     assert "ALREADY analysed" in system
     assert "memoryview" in system  # the model's own plan is echoed back
     assert "Transcribe" in system
+
+
+def test_retry_preserves_role_definition_identity() -> None:
+    out = build_contract_retry_context(
+        [
+            {"role": "system", "content": _DIRECTOR_ROLE_DEFINITION + "\n\nOther static policy."},
+            {"role": "user", "content": "Create src/main.ts"},
+            {"role": "assistant", "content": "I should create the TypeScript entrypoint but forgot the tool call."},
+        ],
+        [{"name": "write_file"}, {"name": "read_file"}, {"name": "repo_tree"}],
+        forced_write_tool_name="write_file",
+    )
+
+    system = next(m["content"] for m in out if m["role"] == "system")
+    assert system.startswith("<role_definition>")
+    assert "你是 Polaris 体系中的 **Director**" in system
+    assert "请保持 **Director** 的性格特点" in system
+    assert "Chief Engineer" not in system
+    assert "RETRY IDENTITY GUARD" in system
+    assert "Do not discard the role identity" in system
+    assert "RETRY MODE ACTIVE" in system
 
 
 def test_retry_skips_easy_path_when_no_edit_blocks_tool() -> None:

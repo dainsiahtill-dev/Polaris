@@ -40,7 +40,7 @@ from polaris.kernelone.llm.runtime_config import (
 from polaris.kernelone.telemetry.debug_stream import emit_debug_event
 
 from ..llm_cache import get_global_llm_cache
-from .context_audit import build_final_request_context_audit_for_request
+from .context_audit import build_final_provider_request_snapshot, build_final_request_context_audit_for_request
 from .error_handling import (
     ERROR_CATEGORY_CANCELLED,
     build_native_tool_unavailable_error,
@@ -184,6 +184,7 @@ async def _store_call_start_context_snapshot(
     *,
     workspace: str | None,
     prepared: PreparedLLMRequest,
+    profile: Any,
     run_id: str,
     call_id: str,
 ) -> None:
@@ -199,6 +200,11 @@ async def _store_call_start_context_snapshot(
             messages,
             run_id,
             call_id,
+            build_final_provider_request_snapshot(
+                ai_request=request,
+                prepared=prepared,
+                profile=profile,
+            ),
         )
     except (RuntimeError, ValueError, TypeError, OSError) as exc:
         logger.warning(
@@ -1422,6 +1428,7 @@ class LLMInvoker:
             await _store_call_start_context_snapshot(
                 workspace=self.workspace,
                 prepared=prepared,
+                profile=profile,
                 run_id=run_id,
                 call_id=call_id,
             )

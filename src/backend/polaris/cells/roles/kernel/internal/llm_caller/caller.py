@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from polaris.cells.roles.kernel.internal.events import LLMEventType, emit_llm_event
+from polaris.cells.roles.kernel.internal.forced_tool_scope import augment_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.interaction_contract import (
     ProviderCapabilities,
     build_interaction_contract,
@@ -416,13 +417,25 @@ class LLMCaller:
         native_response_format: dict[str, Any] | None = None
         response_format_mode = "plain_text"
         provider_id = str(getattr(profile, "provider_id", "") or "")
+        role_native_tool_schemas: list[dict[str, Any]] | None = None
+
+        def _role_native_tools() -> list[dict[str, Any]]:
+            nonlocal role_native_tool_schemas
+            if role_native_tool_schemas is None:
+                role_native_tool_schemas = self._build_native_tool_schemas(profile)
+            return role_native_tool_schemas
+
+        def _forced_or_role_tool_schemas() -> list[dict[str, Any]]:
+            if forced_tool_definitions is not None:
+                return augment_forced_transaction_tool_definitions(
+                    tool_definitions=_role_native_tools(),
+                    forced_definitions=forced_tool_definitions,
+                    context_override=override,
+                )
+            return _role_native_tools() if contract.native_tools_enabled else []
 
         if stream:
-            raw_tool_schemas = (
-                forced_tool_definitions
-                if forced_tool_definitions is not None
-                else (self._build_native_tool_schemas(profile) if contract.native_tools_enabled else [])
-            )
+            raw_tool_schemas = _forced_or_role_tool_schemas()
             if raw_tool_schemas:
                 native_tool_schemas = [dict(item) for item in raw_tool_schemas]
                 if self._formatter is not None:
@@ -432,17 +445,13 @@ class LLMCaller:
                 request_options["tool_choice"] = forced_tool_choice if forced_tool_choice is not None else "auto"
                 native_tool_mode = "native_tools_streaming"
             elif contract.tool_whitelist and not forced_tools_disabled:
-                native_tool_schemas = self._build_native_tool_schemas(profile)
+                native_tool_schemas = _role_native_tools()
                 native_tool_mode = "native_tools_unavailable"
         else:
             effective_platform_retry_max = resolve_platform_retry_max(profile, platform_retry_max)
             request_options["max_retries"] = effective_platform_retry_max
             request_options["platform_transport_only"] = True
-            raw_tool_schemas = (
-                forced_tool_definitions
-                if forced_tool_definitions is not None
-                else (self._build_native_tool_schemas(profile) if contract.native_tools_enabled else [])
-            )
+            raw_tool_schemas = _forced_or_role_tool_schemas()
             if raw_tool_schemas:
                 native_tool_schemas = [dict(item) for item in raw_tool_schemas]
                 if self._formatter is not None:
@@ -452,7 +461,7 @@ class LLMCaller:
                 request_options["tool_choice"] = forced_tool_choice if forced_tool_choice is not None else "auto"
                 native_tool_mode = "native_tools"
             elif contract.tool_whitelist and not forced_tools_disabled:
-                native_tool_schemas = self._build_native_tool_schemas(profile)
+                native_tool_schemas = _role_native_tools()
                 native_tool_mode = "native_tools_unavailable"
             if contract.structured_output_enabled and response_model is not None:
                 native_response_format = build_native_response_format(response_model)

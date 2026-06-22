@@ -707,14 +707,14 @@ class TurnEngineExecutor:
         declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
         if declared_step_targets:
             tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
-        # Prong A (I3-r23): from-scratch leaf -> restrict to write tools on turn 1.
+        # Prong A (I3-r23): from-scratch leaf -> minimal execution schema on turn 1.
         _from_scratch_target = resolve_from_scratch_write_target(
             getattr(request, "context_override", None), str(self._kernel.workspace or ".")
         )
         if _from_scratch_target:
             tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
             logger.info(
-                "first-turn write-only for from-scratch leaf step: target=%s",
+                "first-turn minimal execution schema for from-scratch leaf step: target=%s",
                 _from_scratch_target,
             )
         else:
@@ -945,14 +945,14 @@ class TurnEngineExecutor:
         declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
         if declared_step_targets:
             tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
-        # Prong A (I3-r23): from-scratch leaf -> restrict to write tools on turn 1.
+        # Prong A (I3-r23): from-scratch leaf -> minimal execution schema on turn 1.
         _from_scratch_target = resolve_from_scratch_write_target(
             getattr(request, "context_override", None), str(self._kernel.workspace or ".")
         )
         if _from_scratch_target:
             tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
             logger.info(
-                "first-turn write-only for from-scratch leaf step: target=%s",
+                "first-turn minimal execution schema for from-scratch leaf step: target=%s",
                 _from_scratch_target,
             )
         else:

@@ -710,15 +710,16 @@ class TurnEngine(TurnEngineCompatMixin):
         if declared_step_targets:
             tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
         # Prong A (I3-r23): a from-scratch leaf step writes on turn 1 — restrict to
-        # write tools so the weak Director cannot detour into a read, which would
-        # trigger an output-starving bootstrap retry (live r23 main.js dead-letter).
+        # minimal execution tools so weak Directors still receive schema-backed
+        # read/locate tools referenced by prompts while mutation gates require a
+        # write in the emitted batch.
         _from_scratch_target = resolve_from_scratch_write_target(
             getattr(request, "context_override", None), kernel.workspace
         )
         if _from_scratch_target:
             tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
             logger.info(
-                "first-turn write-only for from-scratch leaf step: target=%s",
+                "first-turn minimal execution schema for from-scratch leaf step: target=%s",
                 _from_scratch_target,
             )
         else:
@@ -1004,15 +1005,16 @@ class TurnEngine(TurnEngineCompatMixin):
         if declared_step_targets:
             tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
         # Prong A (I3-r23): a from-scratch leaf step writes on turn 1 — restrict to
-        # write tools so the weak Director cannot detour into a read, which would
-        # trigger an output-starving bootstrap retry (live r23 main.js dead-letter).
+        # minimal execution tools so weak Directors still receive schema-backed
+        # read/locate tools referenced by prompts while mutation gates require a
+        # write in the emitted batch.
         _from_scratch_target = resolve_from_scratch_write_target(
             getattr(request, "context_override", None), kernel.workspace
         )
         if _from_scratch_target:
             tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
             logger.info(
-                "first-turn write-only for from-scratch leaf step: target=%s",
+                "first-turn minimal execution schema for from-scratch leaf step: target=%s",
                 _from_scratch_target,
             )
         else:

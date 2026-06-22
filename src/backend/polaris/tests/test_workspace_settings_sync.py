@@ -1,14 +1,27 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
-from polaris.bootstrap.config import Settings
+from polaris.bootstrap.config import Settings, SettingsUpdate
 from polaris.cells.policy.workspace_guard.service import SELF_UPGRADE_MODE_ENV, get_meta_project_root
+from polaris.cells.runtime.state_owner.public.service import AppState
 from polaris.cells.storage.layout.internal.settings_utils import get_settings_path, load_persisted_settings
 from polaris.delivery.http.app_factory import create_app
+from polaris.delivery.http.routers.system import _update_settings_internal
+
+
+class _RawJsonRequest:
+    def __init__(self, state: AppState, payload: dict[str, object]) -> None:
+        self.app = SimpleNamespace(state=SimpleNamespace(app_state=state))
+        self._payload = payload
+
+    async def json(self) -> dict[str, object]:
+        return self._payload
 
 
 def test_settings_route_updates_workspace_env_and_persists_workspace(tmp_path: Path, monkeypatch) -> None:
@@ -134,3 +147,24 @@ def test_settings_route_allows_meta_project_workspace_with_self_upgrade(tmp_path
     assert os.environ.get(SELF_UPGRADE_MODE_ENV) == "1"
     os.environ.pop("KERNELONE_WORKSPACE", None)
     os.environ.pop(SELF_UPGRADE_MODE_ENV, None)
+
+
+def test_settings_internal_honors_raw_workspace_when_projection_misses_field(tmp_path: Path, monkeypatch) -> None:
+    test_token = "test-settings-token"
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir(parents=True, exist_ok=True)
+    workspace_b.mkdir(parents=True, exist_ok=True)
+
+    config_root = tmp_path / "config-root"
+    monkeypatch.setenv("KERNELONE_ROOT", str(config_root))
+    monkeypatch.setenv("KERNELONE_TOKEN", test_token)
+    monkeypatch.delenv(SELF_UPGRADE_MODE_ENV, raising=False)
+
+    state = AppState(settings=Settings(workspace=str(workspace_a), ramdisk_root=""))
+    request = _RawJsonRequest(state, {"workspace": str(workspace_b)})
+
+    payload = asyncio.run(_update_settings_internal(request, SettingsUpdate()))
+
+    assert Path(payload["workspace"]).resolve() == workspace_b.resolve()
+    assert Path(str(state.settings.workspace)).resolve() == workspace_b.resolve()

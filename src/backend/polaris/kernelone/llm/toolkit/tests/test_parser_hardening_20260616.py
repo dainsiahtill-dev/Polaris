@@ -121,3 +121,19 @@ class TestXmlParamValueCoercion:
         assert len(calls) == 1
         assert calls[0].arguments["path"] == "a.py"
         assert calls[0].arguments["limit"] == 50
+
+    def test_qwen3coder_empty_repo_tree_call_is_preserved(self) -> None:
+        text = "<function=repo_tree></function>"
+
+        calls = XMLToolParser.parse(text, allowed_tool_names=["repo_tree"])
+
+        assert len(calls) == 1
+        assert calls[0].name == "repo_tree"
+        assert calls[0].arguments == {}
+
+    def test_qwen3coder_empty_required_arg_call_still_dropped(self) -> None:
+        text = "<function=read_file></function>"
+
+        calls = XMLToolParser.parse(text, allowed_tool_names=["read_file"])
+
+        assert calls == []

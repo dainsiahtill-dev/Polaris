@@ -73,6 +73,25 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 10. **工具调用归一化优先**：平台必须适配不同 LLM 的自然工具调用习惯，先通过统一 ToolSpecRegistry/tool alias/arg_aliases 归一化工具名与参数，再进入授权、路径、命令、读写门禁；禁止强迫 LLM 只按 Polaris 内部字段写调用。不可安全推断的调用必须 fail-closed 并留下工具/LLM/runtime 证据，禁止吞异常、硬编码成功、静默 fallback。
 11. **LLM 最终请求上下文审计**：每次真实 LLM 调用都必须审计最终 provider request，而不只统计 messages 投影；审计至少包含 message/tool schema/response_format token 估算、最终请求 token、窗口利用率，以及 PM 合同、Chief Engineer 蓝图、目标文件、失败反馈、workspace quality evidence 覆盖度 flags。ContextOS 必须优先展示最终请求上下文 token，禁止用 messages-only 或 prompt usage 冒充最终上下文占用。
 12. **角色工具失败外部审计**：PM、Chief Engineer、Director、QA 任一角色发生工具调用失败、工具调用缺失、工具参数无法归一化、工具结果被误判成功、或 LLM 输出被错误当作工具 action 时，主 Agent 必须安排至少一个 OpenCode 外部 Agent 做独立审计。审计必须覆盖最终送入 LLM 的完整 provider request 上下文、工具调用归一化链路、ToolSpec/arg_aliases、runtime event、LLM 调用日志、ContextOS 证据和失败归因；若 LLM event 因安全策略 redacted 了 `messages`/`content`，必须把 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件纳入 OpenCode 证据包；禁止只凭主 Agent 推断结案。
+13. **最终请求唯一真相与主动缺陷发现制**：主 Agent 不能等待用户从 UI 发现问题后再被动排查。每次 bench、角色运行或工具失败后，必须主动先验 `context_snapshot_ref` 对应的最终 provider request，并把它作为唯一事实源；`messages`、prompt 文本、RoleProfile whitelist、日志摘要、UI 文案都只能作为辅助证据，不能替代最终 provider request。必须逐项比对：
+   - `provider_request.messages[0]` 的角色身份是否与当前角色一致，禁止 CE/Director/PM 系统提示串线。
+   - `provider_request.tools` 是否包含任务和提示词要求的可调用工具；如果提示词要求 `repo_tree`、`read_file`、`repo_read_*`、`write_file`、`execute_command` 等工具，而最终 tools schema 缺失，直接按 P0 平台缺陷处理。
+   - `provider_request.tool_choice`、`response_format`、tool schema 参数、arg aliases 是否与 ToolSpecRegistry/运行时归一化链路一致。
+   - `final_request_context_audit` 的 token、窗口利用率、tool schema token、coverage flags 是否来自最终请求，禁止用 messages-only 估算冒充。
+   - 弱模型 slim/单批次/retry/escape-hatch 策略不得把提示词要求或任务必需的读/定位工具静默裁掉；若确需限制工具，必须在 runtime event 和 ContextOS 中写出裁剪原因、原始工具集、裁剪后工具集和风险。
+14. **主 Agent 自主审计闭环**：遇到进展卡住、长时间停留同一项目、LLM call_error、工具调用缺失、上下文快照不可用、角色身份异常、可运行门禁失败时，主 Agent 必须立即形成机器可读缺陷清单并逐项关闭；禁止反复描述同一现象而不落地修复。每个缺陷至少记录：现象、最终请求证据、runtime/bench/log 证据、根因分类、修复文件、验证命令、剩余风险。未完成该闭环不得宣称“继续跑下一批”或“已验证模型能力”。
+15. **多维主动审计矩阵**：主 Agent 不能只沿当前报错点线性排查，也不能只修用户指出的单点。每次卡住、重跑、失败归因或进入下一项目之前，必须主动从以下维度并行找缺口，并把结论写入阶段报告：
+   - 架构链路：是否仍有旧链路、旁路、fallback、PM→Director、跳过 CE、双轨实时或目标项目污染。
+   - 角色身份：PM/Chief Engineer/Director/QA 的 system prompt、role metadata、run_id、trace_id 是否串线。
+   - 最终 LLM 请求：provider request 的 messages/tools/tool_choice/response_format/token/window/coverage 是否合理。
+   - 工具链路：ToolSpecRegistry、tool alias、arg_aliases、parser、native tool、text fallback、授权、路径门禁、结果判定是否一致。
+   - 上下文卫生：长期 retry 回灌、过期失败原因、无关历史、矛盾指令、弱模型过载、messages-only 统计冒充最终请求。
+   - 运行时事件：Nats/JetStream、`/v2/ws/runtime`、runtime event、bench session、ContextOS、日志、截图或测试结果是否互相印证。
+   - UI 投影：前端是否接收到真实推送，workspace/阶段/进行中/工具调用/ContextOS 快照是否与后端状态一致。
+   - 产物门禁：落盘、依赖/环境、build/test/lint 至少一个真实门禁、CLI/Web/API 至少一个入口是否实际执行。
+   - 模型健康：绑定模型是否可达、连续失败是否应跳过、超时是否匹配模型速度、弱/强模型策略是否按配置生效。
+   - 收敛性：当前问题是否是新通用根因，是否需要平台硬化、文档沉淀、回归测试和下一批验证。
+16. **用户观察反向触发复盘**：凡是用户通过 UI、截图、日志或手工观察先于主 Agent 发现缺陷，必须视为主 Agent 审计遗漏。修复时除解决代码根因外，还必须补充一条可自动发现同类问题的审计规则、测试、日志断言或文档硬约束；禁止只修当前样例。
 
 ### 实时推送硬门禁
 
@@ -185,6 +204,9 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
    - 检查是否存在工具调用证据
    - 检查是否出现 `unauthorized=false`/越权阻断事件
    - 检查是否有危险命令/路径穿越被触发
+   - 必须打开最新 `context_snapshot_ref`，核对 `provider_request.tools` 与 Director 当前任务一致；不能只看 prompt、RoleProfile 或 UI 摘要。
+   - 如果 Director prompt 中要求 `repo_tree`/`read_file`/`repo_read_*`，但最终 provider request 未提供这些工具 schema，视为 P0 上下文/工具装配缺陷，先修平台再继续 bench。
+   - 如果模型输出 `<function=...>`、`[TOOL_CALL]`、JSON tool call、自然语言工具意图等任一形态却没有进入真实 tool execution，必须审计 parser、ToolSpecRegistry、arg_aliases、provider tool_choice、native/text fallback 全链路。
 
 5. 若工具策略异常、越权或无效调用导致失败，修复根因后重跑 Director
 
@@ -209,6 +231,8 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 3. **生成最小充分修复方案并实施**（不得跳过验证）
 4. **重跑失败环节 → 重跑全链路**
 5. **仅当所有门禁 PASS 才结束**
+6. **主动发现优先**：每轮重跑后必须先审计最终 provider request、ContextOS 快照、runtime events、bench session、目标产物和门禁结果；不得只看终端是否还在运行，也不得等用户截图指出异常后再补查。
+7. **经验沉淀**：任何由用户观察才暴露的问题，都必须在根因修复同时沉淀到本文件或相关子目录 `AGENTS.md`/架构文档的强制约束中，避免同类问题再次靠人工观察发现。
 
 ---
 

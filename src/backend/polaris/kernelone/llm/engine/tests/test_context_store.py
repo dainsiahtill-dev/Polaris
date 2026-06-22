@@ -177,6 +177,43 @@ class TestStoreContextMessages:
                 payload = json.load(f)
         assert payload["messages"] == []
 
+    def test_optional_provider_request_snapshot_is_persisted(self) -> None:
+        """Provider request audit data is durable with the context snapshot."""
+        messages = [{"role": "user", "content": "use repo_tree"}]
+        provider_request = {
+            "schema_version": "llm.provider_request_snapshot.v1",
+            "tool_schema_count": 1,
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "repo_tree",
+                    "argument_keys": [],
+                    "required": [],
+                }
+            ],
+            "tool_choice": "auto",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hash_key = AIExecutor._store_context_messages_sync(
+                workspace=tmpdir,
+                messages=messages,
+                trace_id="trace-abc",
+                call_id="call-123",
+                provider_request=provider_request,
+            )
+            from polaris.kernelone.storage import StorageLayout
+            from polaris.kernelone.storage.io_paths import build_cache_root
+
+            cache_root = build_cache_root("", tmpdir)
+            layout = StorageLayout(workspace=tmpdir, runtime_base=cache_root)
+            shard = hash_key[:2]
+            file_path = str(layout.get_path("runtime", f"contexts/{shard}/{hash_key}"))
+            with open(file_path, encoding="utf-8") as f:
+                payload = json.load(f)
+
+        assert payload["messages"] == messages
+        assert payload["provider_request"] == provider_request
+
     def test_producer_hash_matches_fullmatch(self) -> None:
         """Returned hash MUST satisfy CONTEXT_HASH_PATTERN.fullmatch.
 

@@ -21,6 +21,7 @@ import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any, Literal, cast
 
+from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import restrict_tool_definitions_to_write
 from polaris.cells.roles.kernel.internal.speculation.cancel import CancellationCoordinator
 from polaris.cells.roles.kernel.internal.speculation.task_group import TurnScopedTaskGroup
 from polaris.cells.roles.kernel.internal.stream_shadow_engine import StreamShadowEngine
@@ -1156,31 +1157,18 @@ class StreamOrchestrator:
             if self._consecutive_exploring_count >= _escape_hatch_threshold and not self._escape_hatch_triggered:
                 logger.warning(
                     "escape_hatch_triggered: consecutive_exploring=%d turn_id=%s "
-                    "forcing MATERIALIZE_CHANGES with write-only tools",
+                    "forcing MATERIALIZE_CHANGES with minimal execution tools",
                     self._consecutive_exploring_count,
                     turn_id,
                 )
                 self._escape_hatch_triggered = True
                 delivery_contract = _build_delivery_contract_from_mode(DeliveryMode.MATERIALIZE_CHANGES)
                 ledger.set_delivery_contract(delivery_contract)
-                # 限制工具列表：只保留 write 工具，强制 LLM 必须修改
-                _write_tool_names: set[str] = {
-                    "write_file",
-                    "edit_file",
-                    "repo_apply_diff",
-                    "precision_edit",
-                    "write_files_batch",
-                }
-                tool_definitions = [
-                    td
-                    for td in tool_definitions
-                    if str(
-                        (td.get("function") or {}).get("name", "")
-                        if isinstance(td.get("function"), Mapping)
-                        else td.get("name", "")
-                    ).strip()
-                    in _write_tool_names
-                ]
+                # Keep the same minimal execution schema as from-scratch weak
+                # Director turns. The mutation gates still require a write in
+                # the batch; the provider schema must retain read/locate tools
+                # that prompts reference for recovery and verification.
+                tool_definitions = restrict_tool_definitions_to_write(tool_definitions)
                 if not tool_definitions:
                     logger.error(
                         "escape_hatch_no_write_tools: turn_id=%s no write tools available",

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from polaris.cells.roles.kernel.internal.forced_tool_scope import augment_forced_transaction_tool_definitions
+
 if TYPE_CHECKING:
     from polaris.cells.roles.profile.public.service import RoleTurnRequest
 
@@ -197,4 +199,8 @@ def _apply_forced_transaction_tool_definitions(
     forced_definitions = _extract_forced_transaction_tool_definitions(context_override)
     if forced_definitions is None:
         return tool_definitions
-    return forced_definitions
+    return augment_forced_transaction_tool_definitions(
+        tool_definitions=tool_definitions,
+        forced_definitions=forced_definitions,
+        context_override=context_override,
+    )

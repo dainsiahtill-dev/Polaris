@@ -260,6 +260,18 @@ def get_settings(request: Request) -> dict[str, Any]:
 # DEPRECATED
 async def _update_settings_internal(request: Request, payload: SettingsUpdate) -> dict[str, Any]:
     state = get_state(request)
+    raw_payload: dict[str, Any] = {}
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            raw_payload = body
+    except (RuntimeError, ValueError):
+        raw_payload = {}
+    raw_workspace_supplied = "workspace" in raw_payload
+    if raw_workspace_supplied:
+        raw_workspace = str(raw_payload.get("workspace") or "").strip()
+        if raw_workspace:
+            payload.workspace = raw_workspace
     previous_workspace = str(state.settings.workspace or DEFAULT_WORKSPACE).strip()
     target_self_upgrade_mode = (
         bool(payload.self_upgrade_mode)
@@ -345,6 +357,16 @@ async def _update_settings_internal(request: Request, payload: SettingsUpdate) -
             current_workspace = str(state.settings.workspace or "").strip()
         if current_workspace != resolved_requested:
             state.settings.workspace = Path(resolved_requested)
+            try:
+                current_workspace = str(Path(str(state.settings.workspace)).resolve())
+            except (RuntimeError, ValueError):
+                current_workspace = str(state.settings.workspace or "").strip()
+        if current_workspace != resolved_requested:
+            raise StructuredHTTPException(
+                status_code=500,
+                code="SETTINGS_WORKSPACE_UPDATE_FAILED",
+                message="settings workspace update did not take effect",
+            )
     sync_process_settings_environment(state.settings)
     set_debug_tracing_enabled(bool(state.settings.debug_tracing))
     if payload.workspace:

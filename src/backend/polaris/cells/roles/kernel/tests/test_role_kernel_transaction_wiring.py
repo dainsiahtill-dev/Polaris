@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from polaris.cells.roles.kernel.internal.kernel import core as kernel_core
 from polaris.cells.roles.kernel.internal.kernel.core import RoleExecutionKernel
+from polaris.cells.roles.kernel.internal.kernel.tool_policy import _apply_forced_transaction_tool_definitions
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import DeliveryContract, DeliveryMode
 from polaris.cells.roles.kernel.internal.transaction.finalization import FinalizationHandler
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
@@ -46,6 +47,69 @@ class _MockRequest:
     metadata: dict[str, Any] = field(default_factory=dict)
     context_override: dict[str, Any] | None = field(default_factory=lambda: {"context_os_snapshot": {}})
     tool_results: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _tool_schema(name: str) -> dict[str, Any]:
+    return {"type": "function", "function": {"name": name}}
+
+
+def _tool_schema_names(tool_definitions: list[dict[str, Any]]) -> list[str]:
+    names: list[str] = []
+    for definition in tool_definitions:
+        function_payload = definition.get("function")
+        if isinstance(function_payload, dict):
+            names.append(str(function_payload.get("name") or ""))
+    return names
+
+
+class TestForcedToolScopePolicy:
+    def test_quality_repair_forced_scope_keeps_context_companion_tools(self) -> None:
+        forced_write_tool = _tool_schema("write_file")
+        tool_definitions = [
+            forced_write_tool,
+            _tool_schema("read_file"),
+            _tool_schema("repo_tree"),
+            _tool_schema("repo_rg"),
+            _tool_schema("scout_probe"),
+        ]
+        context_override = {
+            "_transaction_kernel_forced_tool_definitions": [forced_write_tool],
+            "_transaction_kernel_forced_tool_choice": {
+                "type": "function",
+                "function": {"name": "write_file"},
+            },
+            "director_quality_repair": {
+                "missing_target_files": ["src/models/moon.ts"],
+                "repair_target_files": ["src/models/moon.ts"],
+                "write_only_single_target": {
+                    "tool": "write_file",
+                    "target_file": "src/models/moon.ts",
+                },
+            },
+        }
+
+        result = _apply_forced_transaction_tool_definitions(tool_definitions, context_override)
+
+        assert _tool_schema_names(result) == ["write_file", "read_file", "repo_tree", "repo_rg"]
+
+    def test_plain_forced_scope_stays_exact(self) -> None:
+        forced_write_tool = _tool_schema("write_file")
+        tool_definitions = [
+            forced_write_tool,
+            _tool_schema("read_file"),
+            _tool_schema("repo_tree"),
+        ]
+        context_override = {
+            "_transaction_kernel_forced_tool_definitions": [forced_write_tool],
+            "_transaction_kernel_forced_tool_choice": {
+                "type": "function",
+                "function": {"name": "write_file"},
+            },
+        }
+
+        result = _apply_forced_transaction_tool_definitions(tool_definitions, context_override)
+
+        assert result == [forced_write_tool]
 
 
 class TestTransactionKernelFeatureFlag:

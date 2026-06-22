@@ -194,6 +194,90 @@ def _context_quality_findings(
     }
 
 
+def _request_option_payloads(ai_request: Any, prepared: PreparedLLMRequest) -> tuple[Any, Any, Any]:
+    request_options = getattr(ai_request, "options", None)
+    if isinstance(request_options, dict):
+        tool_schema_payload = request_options.get("tools") if "tools" in request_options else []
+        response_format_payload = request_options.get("response_format")
+        tool_choice_payload = request_options.get("tool_choice")
+        return tool_schema_payload, response_format_payload, tool_choice_payload
+
+    raw_prepared_options = getattr(prepared, "request_options", {})
+    prepared_options = raw_prepared_options if isinstance(raw_prepared_options, dict) else {}
+    tool_schema_payload = prepared_options.get("tools", getattr(prepared, "native_tool_schemas", []))
+    response_format_payload = prepared_options.get("response_format", getattr(prepared, "native_response_format", None))
+    tool_choice_payload = prepared_options.get("tool_choice")
+    return tool_schema_payload, response_format_payload, tool_choice_payload
+
+
+def _json_safe(value: Any) -> Any:
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _summarize_tool_schema(tool: Any) -> dict[str, Any]:
+    if not isinstance(tool, dict):
+        return {"type": type(tool).__name__, "name": "", "argument_keys": [], "required": []}
+    function_payload = tool.get("function")
+    function = function_payload if isinstance(function_payload, dict) else tool
+    parameters_payload = function.get("parameters") if isinstance(function, dict) else {}
+    parameters = parameters_payload if isinstance(parameters_payload, dict) else {}
+    properties_payload = parameters.get("properties")
+    properties = properties_payload if isinstance(properties_payload, dict) else {}
+    required_payload = parameters.get("required")
+    required = required_payload if isinstance(required_payload, list) else []
+    return {
+        "type": str(tool.get("type") or "function"),
+        "name": str(function.get("name") or ""),
+        "argument_keys": sorted(str(key) for key in properties),
+        "required": [str(item) for item in required],
+    }
+
+
+def _summarize_response_format(response_format: Any) -> Any:
+    if response_format is None:
+        return None
+    if not isinstance(response_format, dict):
+        return _json_safe(response_format)
+    summary: dict[str, Any] = {"type": response_format.get("type")}
+    json_schema = response_format.get("json_schema")
+    if isinstance(json_schema, dict):
+        summary["json_schema_name"] = json_schema.get("name")
+        schema = json_schema.get("schema")
+        if isinstance(schema, dict):
+            properties = schema.get("properties")
+            if isinstance(properties, dict):
+                summary["json_schema_property_keys"] = sorted(str(key) for key in properties)
+    return _json_safe(summary)
+
+
+def build_final_provider_request_snapshot(
+    *,
+    ai_request: Any,
+    prepared: PreparedLLMRequest,
+    profile: Any,
+) -> dict[str, Any]:
+    """Build a durable, non-content provider request audit snapshot."""
+    tool_schema_payload, response_format_payload, tool_choice_payload = _request_option_payloads(ai_request, prepared)
+    tools = tool_schema_payload if isinstance(tool_schema_payload, list) else []
+    messages = _request_messages(ai_request, [dict(item) for item in prepared.messages if isinstance(item, dict)])
+    return {
+        "schema_version": "llm.provider_request_snapshot.v1",
+        "message_count": len(messages),
+        "tool_schema_count": len(tools),
+        "tools": [_summarize_tool_schema(tool) for tool in tools],
+        "tool_choice": _json_safe(tool_choice_payload),
+        "response_format": _summarize_response_format(response_format_payload),
+        "final_request_context_audit": build_final_request_context_audit_for_request(
+            ai_request=ai_request,
+            prepared=prepared,
+            profile=profile,
+        ),
+    }
+
+
 def build_final_request_context_audit(
     *,
     prepared: PreparedLLMRequest,
@@ -224,17 +308,7 @@ def build_final_request_context_audit_for_request(
     message_chars = _message_chars(messages)
     message_token_estimate = _estimate_tokens_from_chars(message_chars)
 
-    request_options = getattr(ai_request, "options", None)
-    if isinstance(request_options, dict):
-        tool_schema_payload = request_options.get("tools") if "tools" in request_options else []
-        response_format_payload = request_options.get("response_format")
-    else:
-        raw_prepared_options = getattr(prepared, "request_options", {})
-        prepared_options = raw_prepared_options if isinstance(raw_prepared_options, dict) else {}
-        tool_schema_payload = prepared_options.get("tools", getattr(prepared, "native_tool_schemas", []))
-        response_format_payload = prepared_options.get(
-            "response_format", getattr(prepared, "native_response_format", None)
-        )
+    tool_schema_payload, response_format_payload, _tool_choice_payload = _request_option_payloads(ai_request, prepared)
     tool_schema_chars = _json_chars(tool_schema_payload)
     tool_schema_token_estimate = _estimate_tokens_from_chars(tool_schema_chars)
     tool_schema_count = len(tool_schema_payload) if isinstance(tool_schema_payload, list) else 0

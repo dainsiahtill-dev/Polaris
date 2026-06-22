@@ -382,6 +382,19 @@ function formatTokens(value: number): string {
   return String(Math.round(value));
 }
 
+function isProviderRequestSnapshotCandidate(event: ContextOSEvent): boolean {
+  return Boolean(
+    event.contextSnapshotRef
+    && (
+      event.isCall
+      || event.callId
+      || event.hasUsage
+      || event.finalRequestTokenEstimate !== null
+      || event.finalRequestContextAudit !== null
+    ),
+  );
+}
+
 function formatWindowTokens(value: number): string {
   if (value >= 1_000_000) {
     return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
@@ -1152,8 +1165,10 @@ export function buildContextOSModel(input: {
         ? `${roleEvents.length} 事件`
         : '待命';
 
-    // Find the most recent call with a context snapshot ref
-    const lastCallWithSnapshot = roleEvents.find((event) => event.contextSnapshotRef);
+    // Prefer the latest provider-call snapshot. Context projection snapshots can be newer
+    // but do not prove final request tools / response_format and must not shadow LLM calls.
+    const lastCallWithSnapshot = roleEvents.find(isProviderRequestSnapshotCandidate)
+      ?? roleEvents.find((event) => event.contextSnapshotRef);
     const latestContextSnapshotRef = lastCallWithSnapshot ? lastCallWithSnapshot.contextSnapshotRef : null;
     const latestCallId = lastCallWithSnapshot ? lastCallWithSnapshot.callId : null;
     const latestTurnId = lastCallWithSnapshot ? lastCallWithSnapshot.turnId : null;
