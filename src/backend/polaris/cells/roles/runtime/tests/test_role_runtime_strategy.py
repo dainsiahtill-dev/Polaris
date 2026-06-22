@@ -402,6 +402,56 @@ class TestRoleRuntimeServiceStrategy:
             )
 
     @pytest.mark.asyncio
+    async def test_prepare_session_request_continues_when_cognitive_mainline_degrades(
+        self,
+        monkeypatch,
+    ) -> None:
+        from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1
+        from polaris.cells.roles.runtime.public.service import RoleRuntimeService
+        from polaris.kernelone.cognitive import middleware as cognitive_middleware
+
+        class DegradedCognitiveMiddleware:
+            def __init__(self, *, workspace: str | None = None, enabled: bool | None = None) -> None:
+                self.workspace = workspace
+                self.enabled = enabled
+
+            async def process(self, *, message: str, role_id: str, session_id: str | None = None):
+                return {
+                    "enabled": False,
+                    "blocked": False,
+                    "degraded": True,
+                    "degraded_reason": "process:FileNotFoundError:/tmp/missing/session.json",
+                }
+
+        monkeypatch.setattr(cognitive_middleware, "CognitiveMiddleware", DegradedCognitiveMiddleware)
+
+        request = await RoleRuntimeService()._prepare_session_request(
+            ExecuteRoleSessionCommandV1(
+                role="pm",
+                session_id="sess-mainline-degraded",
+                workspace="/repo",
+                user_message="plan task contracts",
+                metadata={
+                    "cognitive_runtime_mode": "mainline",
+                    "cognitive_runtime_required": True,
+                },
+                stream=False,
+            )
+        )
+
+        assert request.context_override is not None
+        assert request.context_override["cognitive_guidance"]["degraded"] is True
+        assert request.context_override["cognitive_guidance"]["verification_needed"] is True
+        preflight = request.metadata["cognitive_runtime_preflight"]
+        assert preflight == {
+            "mode": "mainline",
+            "applied": False,
+            "degraded": True,
+            "degraded_reason": "process:FileNotFoundError:/tmp/missing/session.json",
+            "reason": "mainline_degraded:process:FileNotFoundError:/tmp/missing/session.json",
+        }
+
+    @pytest.mark.asyncio
     async def test_prepare_session_request_allows_approved_cognitive_mainline_blocker(
         self,
         monkeypatch,

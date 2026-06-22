@@ -58,6 +58,18 @@ class CognitiveMiddleware:
         # Default: cognitive middleware is ENABLED for unified cognitive + role system
         return env_value not in ("0", "false", "no", "off")
 
+    @staticmethod
+    def _degraded_reason(prefix: str, exc: BaseException) -> str:
+        """Return a bounded, actionable degraded reason for runtime evidence."""
+
+        detail = str(exc).strip().replace("\n", " ")
+        if len(detail) > 240:
+            detail = f"{detail[:237]}..."
+        reason = f"{prefix}:{type(exc).__name__}"
+        if detail:
+            reason = f"{reason}:{detail}"
+        return reason
+
     def _get_orchestrator(self) -> CognitiveOrchestrator | None:
         """Lazy initialization of orchestrator.
 
@@ -174,7 +186,7 @@ class CognitiveMiddleware:
             # Telemetry refactor: carry an actionable degraded_reason so the caller
             # (e.g. the mainline preflight) can surface WHY cognition was skipped instead
             # of absorbing the specific failure into a generic "unavailable".
-            return self._degraded_context(reason=f"process:{type(exc).__name__}")
+            return self._degraded_context(reason=self._degraded_reason("process", exc))
 
     def inject_into_context(
         self,

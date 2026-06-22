@@ -11,6 +11,7 @@ from polaris.kernelone.cognitive.context import (
     classify_cognitive_control_prompt,
     sanitize_conversation_turn_for_persistence,
 )
+from polaris.kernelone.cognitive.middleware import CognitiveMiddleware
 
 
 def _turn(message: str, *, response: str | None = None, role_id: str = "pm") -> ConversationTurn:
@@ -34,6 +35,21 @@ def test_classifies_pm_quality_retry_prompt() -> None:
             "当前分数: 0",
             "强制要求：",
             "上一版输出片段：",
+        ]
+    )
+
+    assert classify_cognitive_control_prompt(prompt) == "quality_gate_retry"
+
+
+def test_classifies_pm_quality_retry_feedback_prompt() -> None:
+    prompt = "\n".join(
+        [
+            "PM task contract quality feedback.",
+            "Revise the task contract using the quality evidence below.",
+            "Output contract: return one JSON object with top-level key `tasks`; no Markdown fences or surrounding prose.",
+            "当前分数: 88",
+            "Previous output excerpt:",
+            '{"tasks":[]}',
         ]
     )
 
@@ -72,6 +88,18 @@ def test_sanitizes_role_adapter_control_prompt_and_echo() -> None:
     )
     assert "你是 Polaris PM" not in sanitized.message
     assert "TOOL_CALL" not in str(sanitized.response)
+
+
+def test_classifies_role_adapter_output_contract_prompt() -> None:
+    prompt = "\n".join(
+        [
+            "你是 Polaris PM，需要产出可执行任务合同。",
+            "请仅输出 JSON，格式如下：",
+            "Output contract: return exactly one JSON object with top-level key `tasks`; no Markdown fences or surrounding prose.",
+        ]
+    )
+
+    assert classify_cognitive_control_prompt(prompt) == "role_adapter_generation_prompt"
 
 
 def test_keeps_normal_user_message_unchanged() -> None:
@@ -162,3 +190,12 @@ def test_session_manager_sanitizes_legacy_file_on_load(tmp_path: Path) -> None:
         assert "上一版架构文档未通过质量门禁" not in json.dumps(persisted, ensure_ascii=False)
     finally:
         manager._stop_cleanup_thread()
+
+
+def test_cognitive_middleware_degraded_reason_includes_bounded_exception_detail() -> None:
+    reason = CognitiveMiddleware._degraded_reason(
+        "process",
+        FileNotFoundError("/tmp/missing/session.json"),
+    )
+
+    assert reason == "process:FileNotFoundError:/tmp/missing/session.json"

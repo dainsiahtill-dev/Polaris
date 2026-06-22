@@ -77,8 +77,14 @@ export interface ContextOSEvent {
   turnId: string | null;
   /** Correlates start/end/preview events that belong to the same provider call. */
   callId: string | null;
+  /** Provider id/name and model observed on this event, when the runtime stream carries it. */
+  providerId: string | null;
+  providerName: string | null;
+  model: string | null;
   /** 是否为上下文装配 / 投影事件（按事件名/消息识别 context.build / prompt_context / projection）。 */
   isProjection: boolean;
+  /** Stable identity used to count one context projection once across start/end/preview echoes. */
+  projectionKey: string | null;
   /** 是否为一次离散 LLM 调用（llm_completed / llm_failed 或旧版 invoke_done / invoke_error）。 */
   isCall: boolean;
   /**
@@ -249,7 +255,68 @@ function readContextSnapshotDegraded(meta: Record<string, unknown>): ContextSnap
 
 function readFinalRequestTokenEstimate(audit: Record<string, unknown> | null): number | null {
   if (!audit) return null;
-  return toFiniteOrNull(audit['final_request_token_estimate']);
+  return toFiniteOrNull(audit['final_request_token_estimate']) ?? toFiniteOrNull(audit['finalRequestTokenEstimate']);
+}
+
+function readContextOSAudit(meta: Record<string, unknown>): Record<string, unknown> | null {
+  if (isRecord(meta['context_os_audit'])) return meta['context_os_audit'];
+  if (isRecord(meta['contextOSAudit'])) return meta['contextOSAudit'];
+  return null;
+}
+
+function booleanValue(value: unknown): boolean {
+  if (value === true) return true;
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+function contextOSAuditProjected(audit: Record<string, unknown> | null): boolean {
+  if (!audit) return false;
+  if (booleanValue(audit['projected'])) return true;
+  const stateFirst = isRecord(audit['state_first_context_os'])
+    ? audit['state_first_context_os']
+    : isRecord(audit['stateFirstContextOS'])
+      ? audit['stateFirstContextOS']
+      : null;
+  return booleanValue(stateFirst?.['projected']);
+}
+
+function buildProjectionKey(params: {
+  isProjection: boolean;
+  source: 'context-build' | 'final-request' | 'text';
+  actor: string;
+  callId: string | null;
+  contextSnapshotRef: string | null;
+  promptHash: string | null;
+  turnId: string | null;
+  contextHash: string | null;
+  eventId: string;
+  streamEvent: string;
+  epoch: number;
+  summary: string;
+}): string | null {
+  if (!params.isProjection) return null;
+  if (params.source === 'final-request') {
+    const stableRef =
+      params.callId ||
+      params.contextSnapshotRef ||
+      params.promptHash ||
+      params.turnId ||
+      params.contextHash;
+    return stableRef ? `final:${params.actor}:${stableRef}` : `final:${params.eventId}`;
+  }
+  if (params.source === 'context-build') {
+    const stableRef = params.contextHash || params.contextSnapshotRef || params.promptHash || params.turnId;
+    return stableRef ? `build:${params.actor}:${stableRef}` : `build:${params.eventId}`;
+  }
+  return [
+    'text',
+    params.actor,
+    params.streamEvent,
+    params.epoch > 0 ? String(params.epoch) : params.eventId,
+    params.summary,
+  ].join('\u001f');
 }
 
 function toFiniteOrNull(value: unknown): number | null {
@@ -449,6 +516,11 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
       ? meta['finalRequestContextAudit']
       : null;
   const finalRequestTokenEstimate = readFinalRequestTokenEstimate(finalRequestContextAudit);
+  const contextOSAudit = readContextOSAudit(meta);
+  const rawFinalRequestProjectionEvidence =
+    finalRequestTokenEstimate !== null ||
+    finalRequestContextAudit !== null ||
+    contextOSAuditProjected(contextOSAudit);
   const snapshotHash = nonEmptyString(meta['snapshot_hash']);
   const requestHash = nonEmptyString(meta['request_hash']);
   const contextHash = nonEmptyString(meta['context_hash']) || requestHash || null;
@@ -460,6 +532,9 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   // Phase 3+：多 worker Director / 并发 LLM 调用的 worker 归属（meta.worker_id / meta.workerId）。
   // 后端未发时一律 null，绝不冒充。
   const workerId = nonEmptyString(meta['worker_id']) || nonEmptyString(meta['workerId']) || null;
+  const providerId = nonEmptyString(meta['provider_id']) || nonEmptyString(meta['providerId']) || null;
+  const providerName = nonEmptyString(meta['provider_name']) || nonEmptyString(meta['providerName']) || nonEmptyString(meta['provider']) || null;
+  const model = nonEmptyString(meta['model']) || nonEmptyString(meta['model_name']) || null;
 
   // 真实 per-call 用量（来自 journal `llm` 通道 raw.data，经 parseLlmStreamLine 注入 meta）。
   // 兼容 snake_case（runtime_events 通道可能用 prompt_tokens/completion_tokens/total_tokens）。
@@ -513,6 +588,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const accountedCompletionTokens = hasUsage ? usageCompletionTokens : 0;
   const accountedTotalTokens = hasUsage ? usageTotalTokens : 0;
   const metaDurationMs = toFiniteOrNull(meta['durationMs']) ?? toFiniteOrNull(meta['elapsed_ms']);
+  const hasFinalRequestProjectionEvidence = rawFinalRequestProjectionEvidence && !nonFinalUsageEvent;
 
   // 投影 / 上下文装配的识别（按可靠性递减）：
   //  ① context.build 携带 items_count（装配规模，最可靠签名）；
@@ -524,6 +600,7 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const projectionStrategy = nonEmptyString(meta['strategy']);
   const isProjection =
     contextItems !== null ||
+    hasFinalRequestProjectionEvidence ||
     Boolean(personaId) ||
     Boolean(projectionStrategy) ||
     token.includes('context.build') ||
@@ -535,6 +612,12 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     token.includes('projection') ||
     token.includes('context_assembl') ||
     token.includes('context.item');
+  const projectionSource: 'context-build' | 'final-request' | 'text' =
+    contextItems !== null || Boolean(personaId) || Boolean(projectionStrategy)
+      ? 'context-build'
+      : hasFinalRequestProjectionEvidence
+        ? 'final-request'
+        : 'text';
 
   // 落盘快照回执：以 context.snapshot 的 snapshot_hash 为唯一签名。注意真实 context.build 的 output
   // 也带 snapshot_hash，但它同时带 items_count（是装配事件而非回执），故按「有 snapshot_hash 且无
@@ -545,19 +628,26 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const roleHints = collectRoleHints({ actor, channel, streamEvent, text, meta });
   // 真实时延：meta.durationMs（journal raw.data.metadata.elapsed_ms）优先，回退从 details 文本还原。
   const durationMs = metaDurationMs ?? parseLatencyMs(log.details);
+  const eventId = nonEmptyString(log.id) || `ws-${channel}-${index}`;
+  const eventTs = nonEmptyString(log.timestamp);
+  const epoch = toEpochMs(eventTs);
+  const summary = (nonEmptyString(log.message) || nonEmptyString(log.title) || streamEvent)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160);
 
   return {
-    id: nonEmptyString(log.id) || `ws-${channel}-${index}`,
+    id: eventId,
     seq: index,
-    ts: nonEmptyString(log.timestamp),
-    epoch: toEpochMs(nonEmptyString(log.timestamp)),
+    ts: eventTs,
+    epoch,
     actor,
     roleHints,
     name: nonEmptyString(log.title) || streamEvent || nonEmptyString(meta['streamEvent']),
     kind: channel || 'stream',
     mode: channel || 'unknown',
     iteration: null,
-    summary: (nonEmptyString(log.message) || nonEmptyString(log.title) || streamEvent).replace(/\s+/g, ' ').trim().slice(0, 160),
+    summary,
     promptTokens: accountedPromptTokens,
     completionTokens: accountedCompletionTokens,
     totalTokens: accountedTotalTokens,
@@ -577,7 +667,24 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     turnId: turnId || null,
     callId: callId || null,
     workerId,
+    providerId,
+    providerName,
+    model,
     isProjection,
+    projectionKey: buildProjectionKey({
+      isProjection,
+      source: projectionSource,
+      actor,
+      callId: callId || null,
+      contextSnapshotRef: contextSnapshotRef || null,
+      promptHash: promptHash || null,
+      turnId: turnId || null,
+      contextHash,
+      eventId,
+      streamEvent,
+      epoch,
+      summary,
+    }),
     isCall,
     category,
   };
@@ -646,7 +753,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
   let totalTokens = 0;
   let promptTokens = 0;
   let completionTokens = 0;
-  let projectionCount = 0;
+  const projectionKeys = new Set<string>();
   let receiptCount = 0;
   let errorCount = 0;
   let latencySum = 0;
@@ -658,7 +765,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
   let hasWorkers = false;
 
   for (const event of events) {
-    if (event.isProjection) projectionCount += 1;
+    if (event.isProjection) projectionKeys.add(event.projectionKey || event.id);
     if (event.hasReceipt) receiptCount += 1;
     if (event.category === 'error') errorCount += 1;
     if (event.durationMs !== null) {
@@ -762,7 +869,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
     totalTokens,
     promptTokens,
     completionTokens,
-    projectionCount,
+    projectionCount: projectionKeys.size,
     receiptCount,
     contextItemsCount: lastContextBuild ? lastContextBuild.contextItems : null,
     contextTokensLatest: lastContextSize

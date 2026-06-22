@@ -734,6 +734,7 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       : (rawObj && rawObj.data && typeof rawObj.data === 'object'
           ? (rawObj.data as Record<string, unknown>)
           : null);
+    const parsedRefs = firstRecord(parsed.refs, rawObj?.refs);
     if (!modelName && eventData) {
       modelName = Parsing.firstDisplayString(eventData.model, eventData.model_name);
     }
@@ -750,6 +751,25 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     // context_tokens_after，以及 raw.data.metadata.elapsed_ms（真实时延）。这些是实时遥测的核心信号。
     const dataMetadata = firstRecord(eventData?.metadata, rawObj?.metadata, parsed.metadata);
     const dataUsage = firstRecord(eventData?.usage, dataMetadata?.usage, rawObj?.usage, parsed.usage);
+    const dataProviderId = Parsing.firstDisplayString(
+      eventData?.provider_id,
+      eventData?.providerId,
+      dataMetadata?.provider_id,
+      dataMetadata?.providerId,
+      parsed.provider_id,
+      parsed.providerId,
+    );
+    const dataProviderName = Parsing.firstDisplayString(
+      eventData?.provider_name,
+      eventData?.providerName,
+      eventData?.provider,
+      dataMetadata?.provider_name,
+      dataMetadata?.providerName,
+      dataMetadata?.provider,
+      parsed.provider_name,
+      parsed.providerName,
+      parsed.provider,
+    );
     const dataPromptTokens = positiveNumber(
       eventData?.prompt_tokens,
       eventData?.promptTokens,
@@ -794,7 +814,14 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       dataMetadata?.contextTokens,
       dataMetadata?.context_tokens_before,
     );
-    const dataContextSnapshotRef = Parsing.firstDisplayString(eventData?.context_snapshot_ref, dataMetadata?.context_snapshot_ref);
+    const dataContextSnapshotRef = Parsing.firstDisplayString(
+      eventData?.context_snapshot_ref,
+      eventData?.contextSnapshotRef,
+      dataMetadata?.context_snapshot_ref,
+      dataMetadata?.contextSnapshotRef,
+      parsedRefs?.context_snapshot_ref,
+      parsedRefs?.contextSnapshotRef,
+    );
     const dataContextSnapshotDegraded = firstRecord(
       eventData?.context_snapshot_degraded,
       eventData?.contextSnapshotDegraded,
@@ -807,9 +834,46 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       dataMetadata?.context_snapshot_degraded_reason,
       dataMetadata?.contextSnapshotDegradedReason,
     );
-    const dataPromptHash = Parsing.firstDisplayString(eventData?.prompt_hash, dataMetadata?.prompt_hash);
-    const dataTurnId = Parsing.firstDisplayString(eventData?.turn_id, dataMetadata?.turn_id);
-    const dataCallId = Parsing.firstDisplayString(eventData?.call_id, eventData?.callId, dataMetadata?.call_id, dataMetadata?.callId);
+    const dataPromptHash = Parsing.firstDisplayString(
+      eventData?.prompt_hash,
+      eventData?.promptHash,
+      dataMetadata?.prompt_hash,
+      dataMetadata?.promptHash,
+      parsedRefs?.prompt_hash,
+      parsedRefs?.promptHash,
+    );
+    const dataTurnId = Parsing.firstDisplayString(
+      eventData?.turn_id,
+      eventData?.turnId,
+      dataMetadata?.turn_id,
+      dataMetadata?.turnId,
+      parsedRefs?.turn_id,
+      parsedRefs?.turnId,
+    );
+    const dataCallId = Parsing.firstDisplayString(
+      eventData?.call_id,
+      eventData?.callId,
+      dataMetadata?.call_id,
+      dataMetadata?.callId,
+      parsedRefs?.call_id,
+      parsedRefs?.callId,
+    );
+    const dataFinalRequestContextAudit = firstRecord(
+      eventData?.final_request_context_audit,
+      eventData?.finalRequestContextAudit,
+      dataMetadata?.final_request_context_audit,
+      dataMetadata?.finalRequestContextAudit,
+      parsed.final_request_context_audit,
+      parsed.finalRequestContextAudit,
+    );
+    const dataContextOSAudit = firstRecord(
+      eventData?.context_os_audit,
+      eventData?.contextOSAudit,
+      dataMetadata?.context_os_audit,
+      dataMetadata?.contextOSAudit,
+      parsed.context_os_audit,
+      parsed.contextOSAudit,
+    );
     const dataElapsedMs = dataMetadata ? Number(dataMetadata.elapsed_ms ?? 0) : 0;
     const dataDurationMs = dataDuration && Number.isFinite(Number(dataDuration)) && Number(dataDuration) > 0
       ? Number(dataDuration)
@@ -954,6 +1018,8 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       channel,
       streamEvent: normalizedEvent || undefined,
       role: actor || undefined,
+      providerId: dataProviderId || undefined,
+      providerName: dataProviderName || undefined,
       model: modelName || undefined,
       runId: runScope || undefined,
       // 真实 per-call 用量 / 上下文规模 / 时延（来自 journal raw.data）——供 ContextOS 实时遥测消费。
@@ -969,6 +1035,8 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       promptHash: dataPromptHash || undefined,
       turnId: dataTurnId || undefined,
       callId: dataCallId || undefined,
+      finalRequestContextAudit: dataFinalRequestContextAudit || undefined,
+      contextOSAudit: dataContextOSAudit || undefined,
     };
 
     const compact = message.replace(/\s+/g, ' ').trim();

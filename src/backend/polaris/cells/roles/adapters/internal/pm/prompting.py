@@ -170,7 +170,7 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
                 "    }",
                 "  ]",
                 "}",
-                "禁止返回 Markdown、解释文本、代码块或工具调用标签；仅返回一个 JSON 对象。",
+                "Output contract: return exactly one JSON object with top-level key `tasks`; no Markdown fences or surrounding prose.",
                 "要求：至少 3 个任务，必须形成依赖链，验收标准必须可验证。",
                 "Director/ChiefEngineer 任务必须提供真实相对路径 scope_paths/target_files。",
                 "路径只能是仓库内相对文件或目录，例如 package.json、src/store、src/App.tsx、tests/spec。",
@@ -198,8 +198,9 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
             max_chars=_PM_RETRY_DIRECTIVE_MAX_CHARS,
         )
         lines = [
-            "上一版 PM 合同未通过质量门禁，请重写并只输出 JSON。",
-            "禁止输出 [TOOL_CALL]、<tool_call>、函数调用或任意工具参数。",
+            "PM task contract quality feedback.",
+            "Revise the task contract using the quality evidence below.",
+            "Output contract: return one JSON object with top-level key `tasks`; no Markdown fences or surrounding prose.",
             "",
             f"需求指令: {directive_for_prompt or '请结合当前工作区推断需求'}",
             f"当前分数: {int(quality.get('score') or 0)}",
@@ -237,7 +238,7 @@ class PMPromptBuildingMixin(_PMAdapterMixinBase):
         lines.extend(
             [
                 "",
-                "上一版输出片段：",
+                "Previous output excerpt:",
                 previous_output[:1400],
             ]
         )

@@ -31,7 +31,7 @@ import time
 import uuid as _uuid
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 from urllib.parse import urlparse
 
 sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
@@ -66,7 +66,7 @@ _FIXTURE = Path(__file__).resolve().parent / "projects_v2.json"
 _BACKEND_ROOT = Path("/home/dains/Documents/polaris/src/backend")
 _REPO_ROOT = _BACKEND_ROOT.parent.parent
 _OPENCODE_AUDIT_REQUEST_ROOT = _REPO_ROOT / ".polaris" / "opencode-audit-requests"
-FACTORY_BENCH_REQUIRED_LLM_ROLES = ("pm", "director")
+FACTORY_BENCH_REQUIRED_LLM_ROLES = ("pm", "chief_engineer", "director", "qa")
 
 
 def _sanitize_run_id(raw: str | None) -> str:
@@ -1747,20 +1747,36 @@ def map_factory_run_to_chain_results(
 ) -> dict[str, Any]:
     """Translate /v2/factory/runs status + audit-bundle into the dict shape
     previously produced by read_chain_results()."""
-    summary_json = audit_bundle.get("summary_json") or {}
-    if isinstance(summary_json, str):
+    summary_raw = audit_bundle.get("summary_json") or {}
+    summary_json: dict[str, Any]
+    if isinstance(summary_raw, str):
         try:
-            summary_json = json.loads(summary_json)
+            parsed_summary = json.loads(summary_raw)
         except ValueError:
             summary_json = {}
+        else:
+            summary_json = parsed_summary if isinstance(parsed_summary, dict) else {}
+    elif isinstance(summary_raw, dict):
+        summary_json = cast(dict[str, Any], summary_raw)
+    else:
+        summary_json = {}
 
-    gates = audit_bundle.get("gates") or run_status.get("gates") or []
-    qa_gate: dict[str, Any] = next((g for g in gates if g.get("gate_name") == "quality_gate"), {})
+    gates_raw = audit_bundle.get("gates") or run_status.get("gates") or []
+    gates = gates_raw if isinstance(gates_raw, list) else []
+    qa_gate: dict[str, Any] = next(
+        (cast(dict[str, Any], g) for g in gates if isinstance(g, dict) and g.get("gate_name") == "quality_gate"),
+        {},
+    )
     qa_passed = bool(qa_gate.get("passed"))
     qa_ran = bool(qa_gate)
 
     status = str(run_status.get("status") or "").lower()
     phase = str(run_status.get("phase") or "").lower()
+    metadata_raw = run_status.get("metadata")
+    metadata: dict[str, Any] = cast(dict[str, Any], metadata_raw) if isinstance(metadata_raw, dict) else {}
+    current_stage = str(metadata.get("current_stage") or run_status.get("current_stage") or "").lower()
+    failed_stage = str(metadata.get("last_failed_stage") or "").lower()
+    stage_hint = failed_stage or current_stage or phase
 
     exit_class = "hard_failed"
     if status == "completed" and qa_passed:
@@ -1768,14 +1784,26 @@ def map_factory_run_to_chain_results(
     elif (status == "completed" and qa_ran and not qa_passed) or (status == "failed" and phase == "qa_gate"):
         exit_class = "qa_failed"
     elif status == "failed":
-        exit_class = "director_partial"
+        if "pm" in stage_hint:
+            exit_class = "pm_failed"
+        elif "chief" in stage_hint or "engineer" in stage_hint:
+            exit_class = "chief_engineer_failed"
+        elif "director" in stage_hint:
+            exit_class = "director_partial"
+        elif "qa" in stage_hint or "quality" in stage_hint:
+            exit_class = "qa_failed"
 
-    director = summary_json.get("director") if isinstance(summary_json, dict) else {}
+    director = summary_json.get("director") or {}
     if not director:
-        events_tail = audit_bundle.get("events_tail") or []
+        events_tail_raw = audit_bundle.get("events_tail") or []
+        events_tail = events_tail_raw if isinstance(events_tail_raw, list) else []
         for evt in reversed(events_tail):
-            if evt.get("stage") == "director_dispatch" and isinstance(evt.get("result"), dict):
-                director = evt["result"]
+            if (
+                isinstance(evt, dict)
+                and evt.get("stage") == "director_dispatch"
+                and isinstance(evt.get("result"), dict)
+            ):
+                director = cast(dict[str, Any], evt["result"])
                 break
 
     return {
@@ -1790,7 +1818,61 @@ def map_factory_run_to_chain_results(
         },
         "contract_goal": "",
         "exit_class": exit_class,
+        "factory_stage_hint": stage_hint,
     }
+
+
+def required_llm_roles_for_factory_record(
+    *,
+    chain: dict[str, Any],
+    record: dict[str, Any],
+) -> tuple[str, ...]:
+    del record
+    chain_results_raw = chain.get("chain_results")
+    chain_results: dict[str, Any] = (
+        cast(dict[str, Any], chain_results_raw) if isinstance(chain_results_raw, dict) else {}
+    )
+    stage_hint = str(chain_results.get("factory_stage_hint") or "").strip().lower()
+    terminal_status = chain.get("factory_terminal_status")
+    if isinstance(terminal_status, dict):
+        terminal_status_map = cast(dict[str, Any], terminal_status)
+        terminal_metadata_raw = terminal_status_map.get("metadata")
+        metadata: dict[str, Any] = (
+            cast(dict[str, Any], terminal_metadata_raw) if isinstance(terminal_metadata_raw, dict) else {}
+        )
+        stage_hint = (
+            str(
+                metadata.get("last_failed_stage")
+                or metadata.get("current_stage")
+                or terminal_status_map.get("current_stage")
+                or terminal_status_map.get("phase")
+                or stage_hint
+            )
+            .strip()
+            .lower()
+        )
+    exit_class = str(chain_results.get("exit_class") or "").strip().lower()
+    roles: list[str] = ["pm"]
+    pm_only_stage = "pm" in stage_hint and "chief" not in stage_hint and "director" not in stage_hint
+    if exit_class == "pm_failed" or pm_only_stage:
+        return tuple(roles)
+    roles.append("chief_engineer")
+    if exit_class == "chief_engineer_failed" or "chief" in stage_hint or "engineer" in stage_hint:
+        return tuple(dict.fromkeys(roles))
+    director_result = chain_results.get("director")
+    director_evidence = False
+    if isinstance(director_result, dict):
+        director_evidence = any(value not in (None, "", 0) for value in director_result.values())
+    if "director" in stage_hint or exit_class in {"director_partial", "qa_failed", "clean"} or director_evidence:
+        roles.append("director")
+    if (
+        bool(chain_results.get("qa_ran"))
+        or "qa" in stage_hint
+        or "quality" in stage_hint
+        or exit_class in {"qa_failed", "clean"}
+    ):
+        roles.append("qa")
+    return tuple(role for role in FACTORY_BENCH_REQUIRED_LLM_ROLES if role in set(roles))
 
 
 def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2421,6 +2503,7 @@ def run_factory_chain(
         "exit_code": 0 if str(terminal_status.get("status") or "").lower() == "completed" else 1,
         "duration_s": round(time.time() - started, 1),
         "run_id": run_id,
+        "factory_terminal_status": terminal_status,
         "chain_results": chain_results,
         "audit_bundle": audit_bundle,
     }
@@ -3046,10 +3129,12 @@ def main() -> int:
             record,
             timeout_s=int(args.real_run_timeout),
         )
+        required_llm_roles = required_llm_roles_for_factory_record(chain=chain, record=record)
+        record["required_llm_roles"] = list(required_llm_roles)
         record["llm_route_audit"] = build_llm_route_audit(
             collect_llm_events(workspace, runtime_dirs, audit_bundle),
             expected_bindings=expected_llm_bindings,
-            required_roles=FACTORY_BENCH_REQUIRED_LLM_ROLES,
+            required_roles=required_llm_roles,
             require_all_director_routes=False,
         )
         apply_factory_bench_gates(record, chain)

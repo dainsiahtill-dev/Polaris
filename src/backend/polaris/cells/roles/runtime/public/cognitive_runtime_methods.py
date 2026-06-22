@@ -240,20 +240,38 @@ class _CognitiveRuntimeMixin:
         )
         if not bool(cognitive_context.get("enabled")):
             # Telemetry refactor: the middleware degrades to enabled=False on an infra
-            # failure; carry its degraded_reason into the breadcrumb and the raised error
-            # so the actionable cause is not absorbed into a generic "unavailable".
+            # failure; carry its degraded_reason into the breadcrumb. Infra degradation is
+            # evidence, not a reason to skip the real bound LLM call: governance blockers
+            # still fail closed below, but missing optional cognitive files must not stop
+            # PM/CE/Director from exercising the production model route.
             degraded_reason = str(cognitive_context.get("degraded_reason") or "").strip()
+            if degraded_reason:
+                metadata["cognitive_runtime_preflight"] = {
+                    "mode": mode.value,
+                    "applied": False,
+                    "degraded": True,
+                    "degraded_reason": degraded_reason,
+                    "reason": f"mainline_degraded:{degraded_reason}",
+                }
+                context_override["cognitive_guidance"] = {
+                    "degraded": True,
+                    "degraded_reason": degraded_reason,
+                    "intent_type": "unknown",
+                    "execution_path": "unknown",
+                    "verification_needed": True,
+                    "blocked_tools": (),
+                }
+                request.context_override = context_override
+                request.metadata = metadata
+                return request
             metadata["cognitive_runtime_preflight"] = {
                 "mode": mode.value,
                 "applied": False,
-                "reason": f"mainline_unavailable:{degraded_reason}" if degraded_reason else "mainline_unavailable",
+                "degraded": False,
+                "reason": "mainline_unavailable",
             }
             request.metadata = metadata
-            raise RuntimeError(
-                f"cognitive_runtime_mainline_unavailable:{degraded_reason}"
-                if degraded_reason
-                else "cognitive_runtime_mainline_unavailable"
-            )
+            raise RuntimeError("cognitive_runtime_mainline_unavailable")
 
         approved_blocker: dict[str, str] | None = None
         block_reason = ""

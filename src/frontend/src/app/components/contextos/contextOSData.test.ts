@@ -208,6 +208,14 @@ describe('buildContextOSModel', () => {
     expect(pm?.contextWindowLabel).toBe('kimi-for-coding 绑定');
     expect(director?.contextWindowTokens).toBe(32_768);
     expect(director?.contextWindowLabel).toBe('2 路最小窗口');
+    expect(director?.internalContext.bindingBudgets.map((row) => row.model)).toEqual([
+      'qwen3.6-27b-gpu0',
+      'qwen3.6-27b-gpu1',
+    ]);
+    expect(director?.internalContext.bindingBudgets.map((row) => row.contextWindowTokens)).toEqual([
+      32_768,
+      65_536,
+    ]);
     expect(qa?.contextWindowTokens).toBe(1_000_000);
   });
 
@@ -385,6 +393,80 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(pm?.internalContext.windowOccupancyLabel).toBe('平均提示 (估算)');
     expect(director?.internalContext.windowOccupancyTokens).toBe(800);
     expect(director?.internalContext.windowOccupancyLabel).toBe('平均提示 (估算)');
+  });
+
+  it('splits role binding budgets by provider/model when multi-binding telemetry carries model evidence', () => {
+    const directorStream: LogEntry[] = [
+      wsLog({
+        id: 'd-gpu0',
+        timestamp: '2026-06-15T10:00:02Z',
+        level: 'success',
+        source: 'Director',
+        message: 'director gpu0 call',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          providerId: 'qwen-a',
+          providerName: 'Qwen A',
+          model: 'qwen3.6-27b-gpu0',
+          promptTokens: 400,
+          completionTokens: 100,
+          totalTokens: 500,
+          durationMs: 1200,
+        },
+        tags: ['llm_completed'],
+      }),
+      wsLog({
+        id: 'd-gpu1',
+        timestamp: '2026-06-15T10:00:04Z',
+        level: 'success',
+        source: 'Director',
+        message: 'director gpu1 call',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          providerId: 'qwen-b',
+          providerName: 'Qwen B',
+          model: 'qwen3.6-27b-gpu1',
+          promptTokens: 900,
+          completionTokens: 300,
+          totalTokens: 1200,
+          durationMs: 2200,
+        },
+        tags: ['llm_completed'],
+      }),
+    ];
+    const model = buildContextOSModel(baseInput({
+      llmRuntimeState: READY_LLM_WITH_WINDOWS,
+      telemetry: telemetryOf(directorStream, []),
+    }));
+    const director = model.roles.find((r) => r.id === 'director');
+    const rows = director?.internalContext.bindingBudgets ?? [];
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      providerId: 'qwen-a',
+      model: 'qwen3.6-27b-gpu0',
+      contextWindowTokens: 32_768,
+      calls: 1,
+      promptTokens: 400,
+      totalTokens: 500,
+      usageSource: 'matched',
+    });
+    expect(rows[0].windowOccupancyTokens).toBe(400);
+    expect(rows[1]).toMatchObject({
+      providerId: 'qwen-b',
+      model: 'qwen3.6-27b-gpu1',
+      contextWindowTokens: 65_536,
+      calls: 1,
+      promptTokens: 900,
+      totalTokens: 1200,
+      usageSource: 'matched',
+    });
+    expect(rows[1].windowOccupancyTokens).toBe(900);
+    expect(model.bindingBudgets.filter((row) => row.roleId === 'director')).toHaveLength(2);
   });
 
   it('uses real context_tokens_after for global window occupancy before falling back to prompt averages', () => {

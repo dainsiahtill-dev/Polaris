@@ -161,6 +161,28 @@ class TestValidateLLMConfig:
         assert is_valid is True
         assert errors == []
 
+    def test_validate_accepts_provider_model_capability_profile(self) -> None:
+        """Provider card capability settings are first-class config fields."""
+        config = {
+            "schema_version": 2,
+            "providers": {
+                "local-qwen": {
+                    "type": "openai_compat",
+                    "base_url": "http://127.0.0.1:8000/v1",
+                    "max_context_tokens": 32768,
+                    "max_output_tokens": 8192,
+                    "execution_profile": "compact",
+                    "tool_schema_profile": "slim",
+                }
+            },
+            "roles": {"director": {"provider_id": "local-qwen", "model": "qwen3.6-27b-code-gpu0"}},
+        }
+
+        is_valid, errors, _ = validate_llm_config(config)
+
+        assert is_valid is True
+        assert errors == []
+
     def test_validate_rejects_unbounded_provider_timeout(self) -> None:
         """Provider timeout still has a hard safety bound."""
         config = {

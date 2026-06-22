@@ -1617,6 +1617,25 @@ def _is_real_llm_route_event(event: dict[str, Any]) -> bool:
     return bool(event.get("invocation") and source.lower() == "llm" and not cache_hit and provider and model)
 
 
+def _is_llm_route_skip_event(event: dict[str, Any]) -> bool:
+    source = _norm_text(event.get("source"))
+    data = _as_dict(event.get("data"))
+    data_meta = _as_dict(data.get("metadata"))
+    if not source or source.lower() != "llm":
+        source = _norm_text(data_meta.get("source"))
+    provider = _norm_text(event.get("provider_id") or event.get("provider"))
+    model = _norm_text(event.get("model") or data.get("model"))
+    reason = _norm_text(event.get("skip_reason") or data_meta.get("skip_reason"))
+    allowed_reasons = {
+        "provider_connectivity_unavailable",
+        "provider_unreachable",
+        "provider_readiness_failed",
+        "role_binding_cooldown",
+        "binding_unavailable",
+    }
+    return bool(source.lower() == "llm" and provider and model and event.get("skipped") and reason in allowed_reasons)
+
+
 def _resolve_provider_from_expected(
     event: dict[str, Any],
     expected_bindings: dict[str, list[dict[str, Any]]],
@@ -1664,9 +1683,16 @@ def build_llm_route_audit(
         _resolve_provider_from_expected(event, expected)
     evidence = [event for event in candidate_events if _is_real_llm_route_event(event)]
     terminal = [event for event in evidence if event.get("terminal")]
+    diagnostic_events = [
+        event for event in events if _norm_role(event.get("role")) in required_roles and _is_llm_route_skip_event(event)
+    ]
     by_role: dict[str, list[dict[str, Any]]] = {}
     for event in terminal or evidence:
         by_role.setdefault(_norm_role(event.get("role")), []).append(event)
+    diagnostic_by_role: dict[str, list[dict[str, Any]]] = {}
+    for event in diagnostic_events:
+        _resolve_provider_from_expected(event, expected)
+        diagnostic_by_role.setdefault(_norm_role(event.get("role")), []).append(event)
 
     role_results: dict[str, dict[str, Any]] = {}
     ok = True
@@ -1678,10 +1704,21 @@ def build_llm_route_audit(
         configured_loose = {_loose_binding_key(row) for row in configured if _loose_binding_key(row) != "|"}
         observed_keys = {_binding_key(row) for row in observed if _loose_binding_key(row) != "|"}
         observed_loose = {_loose_binding_key(row) for row in observed if _loose_binding_key(row) != "|"}
+        skipped = list(diagnostic_by_role.get(normalized) or [])
+        skipped_keys = {_binding_key(row) for row in skipped if _loose_binding_key(row) != "|"}
+        skipped_loose = {_loose_binding_key(row) for row in skipped if _loose_binding_key(row) != "|"}
         missing = sorted(
-            key for key in configured_keys if key not in observed_keys and key.rsplit("|", 1)[0] not in observed_loose
+            key
+            for key in configured_keys
+            if key not in observed_keys
+            and key not in skipped_keys
+            and key.rsplit("|", 1)[0] not in observed_loose
+            and key.rsplit("|", 1)[0] not in skipped_loose
         )
-        family_ok = any(_matches_family(normalized, row) for row in observed)
+        configured_match_ok = bool(observed_keys.intersection(configured_keys)) or bool(
+            observed_loose.intersection(configured_loose)
+        )
+        family_ok = configured_match_ok or any(_matches_family(normalized, row) for row in observed)
         binding_ok = bool(configured) and bool(observed) and not missing
         if normalized != "director" and configured_loose:
             binding_ok = bool(observed_loose.intersection(configured_loose))
@@ -1701,6 +1738,8 @@ def build_llm_route_audit(
             "configured": configured,
             "observed_count": len(observed),
             "observed_bindings": sorted(observed_loose),
+            "skipped_bindings": sorted(skipped_loose),
+            "fail_closed_count": len(skipped),
             "missing_bindings": missing,
             "family_ok": family_ok,
             "multi_route_ok": multi_route_ok,
@@ -2062,7 +2101,15 @@ def _record_has_role_tool_failure_audit_signal(
     record: dict[str, Any],
     taxonomy: dict[str, Any],
 ) -> bool:
-    if str(taxonomy.get("category") or "") == "director_tool_execution":
+    category = str(taxonomy.get("category") or "")
+    if category in {
+        "pm_contract",
+        "chief_engineer_blueprint",
+        "director_tool_execution",
+        "llm_output",
+        "context_budget",
+        "runtime_environment",
+    }:
         return True
     text = json.dumps(
         {
@@ -2070,7 +2117,9 @@ def _record_has_role_tool_failure_audit_signal(
             "failure_reasons": record.get("failure_reasons"),
             "failure_evidence": record.get("failure_evidence"),
             "chain": record.get("chain"),
+            "chain_results": record.get("chain_results"),
             "llm_route_audit": record.get("llm_route_audit"),
+            "required_llm_roles": record.get("required_llm_roles"),
         },
         ensure_ascii=False,
         default=str,

@@ -31,6 +31,7 @@ sys.path.insert(0, "/home/dains/Documents/polaris/src/backend")
 from scripts.factory_bench.run_factory_bench import (
     build_requirements_doc,
     map_factory_run_to_chain_results,
+    required_llm_roles_for_factory_record,
     run_factory_chain,
 )
 
@@ -336,7 +337,7 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self.assertEqual(result.get("exit_code"), 1)
 
     def test_map_factory_run_to_chain_results_director_partial(self) -> None:
-        """When status is failed but phase is not qa_gate, exit_class=director_partial."""
+        """Director-stage failures remain director_partial."""
         run_status = {"status": "failed", "phase": "director_dispatch"}
         audit_bundle = {
             "gates": [
@@ -349,6 +350,64 @@ class TestFactoryRunsIntegration(unittest.TestCase):
         self.assertEqual(chain_results["qa_ran"], True)
         self.assertEqual(chain_results["qa_passed"], False)
         self.assertEqual(chain_results["exit_class"], "director_partial")
+
+    def test_map_factory_run_to_chain_results_pm_failed(self) -> None:
+        run_status = {
+            "status": "failed",
+            "phase": "planning",
+            "current_stage": "pm_planning",
+            "metadata": {"current_stage": "pm_planning", "last_failed_stage": "pm_planning"},
+        }
+        chain_results = map_factory_run_to_chain_results(run_status, {"gates": [], "events_tail": []})
+        self.assertEqual(chain_results["exit_class"], "pm_failed")
+        self.assertEqual(chain_results["factory_stage_hint"], "pm_planning")
+
+    def test_map_factory_run_to_chain_results_chief_engineer_failed(self) -> None:
+        run_status = {
+            "status": "failed",
+            "phase": "implementation",
+            "current_stage": "chief_engineer_review",
+            "metadata": {
+                "current_stage": "chief_engineer_review",
+                "last_failed_stage": "chief_engineer_review",
+            },
+        }
+        chain_results = map_factory_run_to_chain_results(run_status, {"gates": [], "events_tail": []})
+        self.assertEqual(chain_results["exit_class"], "chief_engineer_failed")
+
+    def test_required_llm_roles_are_stage_aware(self) -> None:
+        pm_chain = {"chain_results": {"exit_class": "pm_failed", "factory_stage_hint": "pm_planning"}}
+        self.assertEqual(required_llm_roles_for_factory_record(chain=pm_chain, record={}), ("pm",))
+
+        director_chain = {
+            "chain_results": {
+                "exit_class": "director_partial",
+                "factory_stage_hint": "director_dispatch",
+                "qa_ran": False,
+            }
+        }
+        self.assertEqual(
+            required_llm_roles_for_factory_record(chain=director_chain, record={}),
+            ("pm", "chief_engineer", "director"),
+        )
+
+        chief_chain = {
+            "chain_results": {
+                "exit_class": "chief_engineer_failed",
+                "factory_stage_hint": "chief_engineer_review",
+                "director": {"total": None, "successes": None, "failures": None, "blocked": None},
+            }
+        }
+        self.assertEqual(
+            required_llm_roles_for_factory_record(chain=chief_chain, record={}),
+            ("pm", "chief_engineer"),
+        )
+
+        clean_chain = {"chain_results": {"exit_class": "clean", "factory_stage_hint": "quality_gate", "qa_ran": True}}
+        self.assertEqual(
+            required_llm_roles_for_factory_record(chain=clean_chain, record={}),
+            ("pm", "chief_engineer", "director", "qa"),
+        )
 
     def test_map_factory_run_to_chain_results_hard_failed(self) -> None:
         """When status is cancelled (not failed/completed), exit_class=hard_failed."""

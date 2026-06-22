@@ -340,6 +340,34 @@ def test_role_tool_failure_opencode_prompt_derives_project_workspace_from_backen
     assert "workspace：/tmp/factory-bench/L1-01" in record["opencode_audit"]["prompt"]
 
 
+def test_pm_contract_failure_requires_opencode_audit() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "project_id": "L1-01",
+        "level": 1,
+        "chain": {
+            "chain_results": {
+                "qa_ran": False,
+                "qa_passed": False,
+                "exit_class": "pm_failed",
+                "factory_stage_hint": "pm_planning",
+            },
+            "audit_bundle": {
+                "failure": {
+                    "code": "FACTORY_STAGE_FAILED",
+                    "detail": "PM contract quality failed",
+                }
+            },
+        },
+        "factory_gates": [{"gate": "chain_terminal", "ok": False, "detail": "pm failed"}],
+    }
+
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
+
+    assert taxonomy["category"] == "pm_contract"
+    assert record["opencode_audit"]["required"] is True
+
+
 def test_factory_bench_taxonomy_prioritizes_post_qa_artifact_failure_over_director_failure() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,
@@ -1585,6 +1613,33 @@ def test_llm_route_audit_requires_actual_bound_families_and_all_director_routes(
     assert audit["roles"]["director"]["multi_route_ok"] is True
 
 
+def test_llm_route_audit_prefers_actual_configured_binding_over_hardcoded_family() -> None:
+    expected = {
+        "pm": [{"role": "pm", "provider_id": "openai-a", "model": "gpt-5.3-codex", "binding_id": ""}],
+        "chief_engineer": [
+            {"role": "chief_engineer", "provider_id": "glm-a", "model": "glm-4.7-flash", "binding_id": ""}
+        ],
+        "qa": [{"role": "qa", "provider_id": "gemini-a", "model": "gemini-2.5-pro", "binding_id": ""}],
+        "director": [
+            {"role": "director", "provider_id": "local-director", "model": "custom-director-30b", "binding_id": "d0"}
+        ],
+    }
+    events = [
+        _real_llm_event("pm", "openai-a", "gpt-5.3-codex"),
+        _real_llm_event("chief_engineer", "glm-a", "glm-4.7-flash"),
+        _real_llm_event("qa", "gemini-a", "gemini-2.5-pro"),
+        _real_llm_event("director", "local-director", "custom-director-30b", "d0"),
+    ]
+
+    audit = build_llm_route_audit(events, expected_bindings=expected)
+
+    assert audit["ok"] is True
+    assert audit["roles"]["pm"]["family_ok"] is True
+    assert audit["roles"]["chief_engineer"]["family_ok"] is True
+    assert audit["roles"]["qa"]["family_ok"] is True
+    assert audit["roles"]["director"]["family_ok"] is True
+
+
 def test_llm_route_audit_fails_when_a_director_route_is_unobserved() -> None:
     expected = {
         "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": ""}],
@@ -1607,6 +1662,45 @@ def test_llm_route_audit_fails_when_a_director_route_is_unobserved() -> None:
     assert audit["ok"] is False
     assert audit["roles"]["director"]["multi_route_ok"] is False
     assert audit["roles"]["director"]["missing_bindings"]
+
+
+def test_llm_route_audit_treats_readiness_skipped_director_as_diagnostic() -> None:
+    expected = {
+        "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": ""}],
+        "chief_engineer": [{"role": "chief_engineer", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": ""}],
+        "qa": [{"role": "qa", "provider_id": "minimax-a", "model": "MiniMax-M3", "binding_id": ""}],
+        "director": [
+            {"role": "director", "provider_id": "qwen-gpu0", "model": "qwen3.6-27b", "binding_id": "d0"},
+            {"role": "director", "provider_id": "qwen-gpu1", "model": "qwen3.6-27b", "binding_id": "d1"},
+        ],
+    }
+    events = [
+        _real_llm_event("pm", "kimi-a", "kimi-k2"),
+        _real_llm_event("chief_engineer", "kimi-a", "kimi-k2"),
+        _real_llm_event("qa", "minimax-a", "MiniMax-M3"),
+        _real_llm_event("director", "qwen-gpu1", "qwen3.6-27b", "d1"),
+        {
+            "event": "llm_route_terminal",
+            "role": "director",
+            "provider_id": "qwen-gpu0",
+            "model": "qwen3.6-27b",
+            "binding_id": "d0",
+            "source": "llm",
+            "cache_hit": False,
+            "invocation": False,
+            "terminal": True,
+            "fail_closed": True,
+            "skipped": True,
+            "skip_reason": "provider_connectivity_unavailable",
+        },
+    ]
+
+    audit = build_llm_route_audit(events, expected_bindings=expected)
+
+    assert audit["ok"] is True
+    assert audit["roles"]["director"]["missing_bindings"] == []
+    assert audit["roles"]["director"]["skipped_bindings"] == ["qwen-gpu0|qwen3.6-27b"]
+    assert audit["roles"]["director"]["fail_closed_count"] == 1
 
 
 def test_llm_route_audit_accepts_single_live_director_route() -> None:

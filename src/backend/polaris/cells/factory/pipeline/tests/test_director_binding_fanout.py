@@ -103,6 +103,57 @@ class TestResolveDirectorBindingFanout:
         provider_ids = [b["provider_id"] for b in result]
         assert "offline" not in provider_ids
 
+    def test_filters_readiness_skipped_binding_but_keeps_remaining_route(self) -> None:
+        executor = self._make_executor()
+        slots = []
+        for i, (pid, model) in enumerate([("dead", "qwen-offline"), ("live", "qwen-live")]):
+            slot = MagicMock()
+            slot.provider_id = pid
+            slot.model = model
+            slot.binding_id = f"director:{i}:{pid}:{model}"
+            slots.append(slot)
+
+        with (
+            patch(
+                "polaris.kernelone.llm.runtime_config.get_role_binding_slots",
+                return_value=slots,
+            ),
+            patch(
+                "polaris.kernelone.llm.runtime_config.is_role_binding_healthy",
+                return_value=True,
+            ),
+            patch(
+                "polaris.cells.orchestration.pm_dispatch.internal.dispatch_pipeline._reachable_provider_pool",
+                return_value=["dead", "live"],
+            ),
+            patch.object(
+                executor,
+                "_director_readiness_skip_reasons",
+                return_value={
+                    executor._director_binding_identity("dead", "qwen-offline", "director:0:dead:qwen-offline"): (
+                        "provider_connectivity_unavailable"
+                    )
+                },
+            ),
+        ):
+            result = executor._resolve_director_binding_fanout({})
+
+        assert result == [
+            {
+                "provider_id": "live",
+                "model": "qwen-live",
+                "binding_id": "director:1:live:qwen-live",
+            }
+        ]
+        assert executor._last_director_binding_skips == [
+            {
+                "provider_id": "dead",
+                "model": "qwen-offline",
+                "binding_id": "director:0:dead:qwen-offline",
+                "reason": "provider_connectivity_unavailable",
+            }
+        ]
+
     def test_deduplicates_same_provider_model(self) -> None:
         executor = self._make_executor()
         slots = []
@@ -187,6 +238,41 @@ class TestExecuteDirectorBindingFanout:
 
         for opts in captured_options:
             assert "binding_override" in opts.get("metadata", {})
+
+    @pytest.mark.asyncio
+    async def test_readiness_skipped_binding_is_metadata_only(self) -> None:
+        executor = self._make_executor()
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            del workspace, tasks, options
+            return CommandResult(run_id="run-live", status="completed", message="ok")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=["TASK-1"],
+            base_options={"execution_mode": "parallel", "max_workers": 2},
+            bindings=[{"provider_id": "live", "model": "qwen-live", "binding_id": "b-live"}],
+            skipped_bindings=[
+                {
+                    "provider_id": "dead",
+                    "model": "qwen-dead",
+                    "binding_id": "b-dead",
+                    "reason": "provider_connectivity_unavailable",
+                }
+            ],
+        )
+
+        assert result.status == "completed"
+        assert mock_service.execute_director_run.await_count == 1
+        assert result.metadata["readiness_skipped_count"] == 1
+        per_binding = result.metadata["per_binding"]
+        assert [entry["status"] for entry in per_binding] == ["completed", "skipped"]
+        assert per_binding[1]["skip_reason"] == "provider_connectivity_unavailable"
 
     @pytest.mark.asyncio
     async def test_partial_failure_returns_failed_status(self) -> None:
@@ -302,12 +388,12 @@ class TestExecuteDirectorBindingFanout:
         assert result.status == "completed"
         assert mock_service.query_run_status.await_count >= 1
 
-    def test_director_dispatch_timeout_scales_with_task_count(self) -> None:
+    def test_director_dispatch_timeout_uses_stage_budget(self) -> None:
         executor = self._make_executor()
 
         timeout = executor._director_dispatch_timeout_seconds({"timeout": 300}, task_count=5)
 
-        assert timeout > 300
+        assert timeout == 300
 
 
 class TestBindingOverrideInWorkerThread:

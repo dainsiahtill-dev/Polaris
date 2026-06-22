@@ -56,6 +56,7 @@ import {
   type PipelineStage,
   type PipelineState,
   type RoleCard,
+  type RoleBindingBudget,
   type RoleInternalContext,
   type WorkerCard,
 } from './contextOSData';
@@ -192,7 +193,9 @@ function RoleHex({ role, selected, onSelect }: { role: RoleCard; selected: boole
     ? contextOSFormat.windowTokens(ctx.contextWindowTokens)
     : '窗口未知';
   const windowSourceLabel = ctx.contextWindowSource === 'binding'
-    ? ctx.contextWindowModel ? `${ctx.contextWindowModel} 绑定` : '绑定'
+    ? ctx.bindingBudgets.length > 1
+      ? `${ctx.bindingBudgets.length} 路绑定`
+      : ctx.contextWindowModel ? `${ctx.contextWindowModel} 绑定` : '绑定'
     : '未知';
   return (
     <button
@@ -679,6 +682,82 @@ function BudgetBar({ label, tokens, ratio, colorClass }: { label: string; tokens
   );
 }
 
+function BindingBudgetRow({ row }: { row: RoleBindingBudget }) {
+  const hasUsage = row.windowOccupancyTokens !== null;
+  const ratio = hasUsage && row.contextWindowTokens !== null && row.contextWindowTokens > 0
+    ? Math.max(0, Math.min(1, row.windowOccupancyTokens! / row.contextWindowTokens))
+    : 0;
+  const provider = row.providerName || row.providerId || 'Provider unknown';
+  const model = row.model || '未归属模型';
+  const usageLabel = row.usageSource === 'matched'
+    ? '模型实测'
+    : row.usageSource === 'role_aggregate'
+      ? '角色聚合'
+      : '无 usage';
+
+  return (
+    <div
+      data-testid={`contextos-binding-budget-${row.id}`}
+      className="rounded-lg border border-white/[0.06] bg-white/[0.025] px-2.5 py-2"
+      title={row.windowOccupancyDetail}
+    >
+      <div className="mb-1.5 flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-[11px] font-semibold text-text-main" title={row.label}>
+            {model}
+          </div>
+          <div className="truncate font-mono text-[9px] text-text-dim" title={provider}>
+            {provider}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <span
+            className={cn(
+              'rounded px-1.5 py-0.5 text-[9px]',
+              row.usageSource === 'matched'
+                ? 'bg-accent-secondary/10 text-accent-secondary'
+                : row.usageSource === 'role_aggregate'
+                  ? 'bg-status-warning/10 text-status-warning'
+                  : 'bg-white/5 text-text-dim',
+            )}
+          >
+            {usageLabel}
+          </span>
+          {row.calls > 0 && (
+            <span className="rounded bg-black/30 px-1.5 py-0.5 font-mono text-[9px] text-text-muted">
+              {row.calls} calls
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
+        <div
+          className={cn(
+            'h-full rounded-full transition-all duration-500',
+            ratio > 0.85 ? 'bg-status-error' : ratio > 0.6 ? 'bg-status-warning' : 'bg-accent-secondary',
+          )}
+          style={{ width: hasUsage ? `${Math.max(2, Math.round(ratio * 100))}%` : '0%' }}
+        />
+      </div>
+      <div className="mt-1.5 flex items-center justify-between gap-2 font-mono text-[9px] text-text-dim">
+        <span className="truncate">
+          {hasUsage ? `~${contextOSFormat.tokens(row.windowOccupancyTokens!)}` : '无 usage'}
+          <span className="ml-1 text-text-dim/70">{row.windowOccupancyLabel}</span>
+        </span>
+        <span className="shrink-0">
+          / {row.contextWindowTokens !== null ? contextOSFormat.windowTokens(row.contextWindowTokens) : '未知'}
+        </span>
+      </div>
+      {(row.totalTokens > 0 || row.latencyMs !== null) && (
+        <div className="mt-1 flex items-center justify-end gap-1.5 font-mono text-[9px] text-text-dim/80">
+          {row.totalTokens > 0 && <span>{contextOSFormat.tokens(row.totalTokens)} tok</span>}
+          {row.latencyMs !== null && <span>{row.latencyMs}ms</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EventTypeDistribution({ slices, total }: { slices: EventTypeSlice[]; total: number }) {
   return (
     <div className="space-y-2.5">
@@ -960,7 +1039,7 @@ export function ContextOSWorkspace({
   const budgetWindowTokens = selectedRole?.contextWindowTokens ?? model.contextWindowTokens;
   const budgetWindowSource = selectedRole?.contextWindowSource ?? model.contextWindowSource;
   const budgetWindowLabel = selectedRole
-    ? `${selectedRole.title} · ${selectedRole.contextWindowLabel}${budgetWindowSource === 'binding' ? ' · 绑定' : ''}`
+    ? `${selectedRole.id.toUpperCase()} · ${selectedRole.title} · ${selectedRole.contextWindowLabel}${budgetWindowSource === 'binding' ? ' · 绑定' : ''}`
     : `${model.contextWindowLabel}${budgetWindowSource === 'binding' ? ' · 绑定' : ''}`;
   const budgetWindowDetail = selectedRole?.contextWindowDetail ?? model.contextWindowDetail;
   const globalWindowOccupancyTokens = model.windowOccupancyTokens > 0 ? model.windowOccupancyTokens : null;
@@ -977,6 +1056,10 @@ export function ContextOSWorkspace({
     ? Math.max(0, Math.min(1, budgetWindowOccupancyTokens / budgetWindowTokens))
     : 0;
   const hasBudgetWindowUsage = budgetWindowOccupancyTokens !== null;
+  const budgetBindingRows = selectedRole
+    ? selectedRole.internalContext.bindingBudgets
+    : model.bindingBudgets;
+  const visibleBudgetBindingRows = budgetBindingRows.slice(0, selectedRole ? 8 : 10);
 
   const toggleRole = (roleId: string) => setActiveRole((prev) => (prev === roleId ? null : roleId));
 
@@ -1371,6 +1454,35 @@ export function ContextOSWorkspace({
                     <span className="max-w-[170px] truncate">{budgetWindowLabel}</span>
                   </div>
                 </div>
+
+                {visibleBudgetBindingRows.length > 0 && (
+                  <div
+                    className="space-y-2 border-t border-white/[0.06] pt-3"
+                    data-testid="contextos-binding-budgets"
+                  >
+                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="flex min-w-0 items-center gap-1 text-text-muted">
+                        <Cpu className="h-3 w-3 shrink-0" />
+                        <span className="truncate">
+                          {selectedRole ? `${selectedRole.title} 模型预算` : '模型预算'}
+                        </span>
+                      </span>
+                      <span className="font-mono text-[9px] text-text-dim">
+                        {budgetBindingRows.length} 路
+                      </span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {visibleBudgetBindingRows.map((row) => (
+                        <BindingBudgetRow key={row.id} row={row} />
+                      ))}
+                    </div>
+                    {budgetBindingRows.length > visibleBudgetBindingRows.length && (
+                      <div className="text-right font-mono text-[9px] text-text-dim">
+                        仅显示前 {visibleBudgetBindingRows.length} 路
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </SectionCard>
 

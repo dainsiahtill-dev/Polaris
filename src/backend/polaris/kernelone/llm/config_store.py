@@ -250,6 +250,10 @@ class ProviderConfig(BaseModel):
     temperature: float | None = Field(default=None, ge=0, le=2)
     max_tokens: int | None = Field(default=None, gt=0, le=100000)
     max_concurrency: int | None = Field(default=None, gt=0, le=1000)
+    max_context_tokens: int | None = Field(default=None, gt=0, le=1000000)
+    max_output_tokens: int | None = Field(default=None, gt=0, le=1000000)
+    execution_profile: str | None = None
+    tool_schema_profile: str | None = None
 
     @field_validator("type")
     @classmethod

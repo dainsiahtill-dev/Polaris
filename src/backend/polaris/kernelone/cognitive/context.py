@@ -51,10 +51,18 @@ def classify_cognitive_control_prompt(text: str | None) -> str | None:
     ):
         return "quality_gate_retry"
     if (
+        value.startswith("PM task contract quality feedback.")
+        and "Output contract:" in value
+        and "Previous output excerpt:" in value
+    ):
+        return "quality_gate_retry"
+    if (
         "你是 Polaris " in value
         and ("请仅输出 JSON" in value or "仅返回一个 JSON 对象" in value or "只输出 JSON" in value)
         and ("禁止输出" in value or "禁止返回 Markdown" in value or "绝对禁止输出" in value)
     ):
+        return "role_adapter_generation_prompt"
+    if "你是 Polaris " in value and "Output contract:" in value and "top-level key `tasks`" in value:
         return "role_adapter_generation_prompt"
     if (
         "当前阶段没有读取/检查工具" in value

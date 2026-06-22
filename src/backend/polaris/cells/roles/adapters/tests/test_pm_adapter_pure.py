@@ -78,6 +78,9 @@ class TestBuildPmRetryMessage:
         assert "missing_goal" in msg
         assert "weak_scope" in msg
         assert "至少 3 个任务" in msg
+        assert "上一版 PM 合同未通过质量门禁" not in msg
+        assert "禁止输出 [TOOL_CALL]" not in msg
+        assert "Previous output excerpt:" in msg
 
 
 class TestPlanArtifactSanitization:

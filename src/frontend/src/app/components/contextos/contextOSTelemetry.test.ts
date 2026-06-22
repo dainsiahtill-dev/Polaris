@@ -221,6 +221,63 @@ describe('buildTelemetryFromStream', () => {
     expect(t.projectionCount).toBe(1); // prompt_context
   });
 
+  it('counts final request context audit as one projection per provider call', () => {
+    const start = logEntry({
+      id: 'llm-start-final-context',
+      timestamp: '2026-06-22T10:00:00Z',
+      level: 'thinking',
+      source: 'PM',
+      message: '正在请求 kimi-for-coding 响应…',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_waiting',
+        role: 'PM',
+        callId: 'call-final-context',
+        finalRequestContextAudit: {
+          final_request_token_estimate: 4627,
+          tool_schema_token_estimate: 2477,
+        },
+        contextOSAudit: {
+          state_first_context_os: { projected: true },
+        },
+      },
+      tags: ['llm_waiting'],
+    });
+    const done = logEntry({
+      id: 'llm-done-final-context',
+      timestamp: '2026-06-22T10:00:03Z',
+      level: 'success',
+      source: 'PM',
+      message: 'llm response completed | completion_tokens=37',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'PM',
+        callId: 'call-final-context',
+        contextSnapshotRef: 'ctx-final-context',
+        promptTokens: 5000,
+        completionTokens: 37,
+        totalTokens: 5037,
+        finalRequestContextAudit: {
+          final_request_token_estimate: 4627,
+          tool_schema_token_estimate: 2477,
+        },
+        contextOSAudit: {
+          state_first_context_os: { projected: true },
+        },
+      },
+      tags: ['llm_completed'],
+    });
+
+    const t = buildTelemetryFromStream([start, done], [], []);
+
+    expect(t.projectionCount).toBe(1);
+    expect(t.totalCalls).toBe(1);
+    expect(t.totalTokens).toBe(4627);
+    expect(t.contextTokensLatest).toBe(4627);
+    expect(t.events.some((event) => event.projectionKey === 'final:PM:call-final-context')).toBe(true);
+  });
+
   it('aggregates ContextOS main tokens from final/context request size while preserving usage split', () => {
     const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
     expect(t.totalTokens).toBe(1932); // contextTokens is the request-side context size

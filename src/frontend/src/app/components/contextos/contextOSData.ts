@@ -74,6 +74,34 @@ export interface EventTypeSlice {
   colorClass: string;
 }
 
+export interface RoleBindingBudget {
+  id: string;
+  roleId: string;
+  label: string;
+  providerId: string | null;
+  providerName: string | null;
+  providerType: string | null;
+  model: string | null;
+  profile: string | null;
+  contextWindowTokens: number | null;
+  maxOutputTokens: number | null;
+  contextWindowLabel: string;
+  contextWindowDetail: string;
+  contextWindowSource: 'binding' | 'unknown';
+  calls: number;
+  totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  contextTokensLatest: number | null;
+  windowOccupancyTokens: number | null;
+  windowOccupancyLabel: string;
+  windowOccupancyDetail: string;
+  latencyMs: number | null;
+  lastEventAt: number | null;
+  matchedEvents: number;
+  usageSource: 'matched' | 'role_aggregate' | 'none';
+}
+
 export interface RoleInternalContext {
   roleId: string;
   title: string;
@@ -113,6 +141,8 @@ export interface RoleInternalContext {
   latestCallId: string | null;
   /** Most recent turn ID for this role. */
   latestTurnId: string | null;
+  /** Per provider/model context budget rows for this role. */
+  bindingBudgets: RoleBindingBudget[];
   detail: string;
 }
 
@@ -244,6 +274,8 @@ export interface ContextOSModel {
   workers: WorkerCard[];
   /** 是否识别到任何带 worker_id 的真实事件（用于 UI 判断是否展示多 worker 面板）。 */
   hasWorkers: boolean;
+  /** Per-role provider/model context budget rows. */
+  bindingBudgets: RoleBindingBudget[];
 }
 
 /** 事件类型 → 展示标签与颜色（与解析层 category 一致）。 */
@@ -352,6 +384,162 @@ function bindingWindow(binding: LlmRuntimeRoleBinding): number | null {
   return typeof binding.maxContextTokens === 'number' && Number.isFinite(binding.maxContextTokens) && binding.maxContextTokens > 0
     ? binding.maxContextTokens
     : null;
+}
+
+function keyToken(value: string | null | undefined): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function idToken(value: string | null | undefined): string {
+  const normalized = keyToken(value).replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  return normalized || 'unknown';
+}
+
+function bindingDisplayName(binding: Pick<RoleBindingBudget, 'providerName' | 'providerId' | 'model'>): string {
+  const provider = binding.providerName || binding.providerId || '';
+  const model = binding.model || '未知模型';
+  return provider ? `${provider} / ${model}` : model;
+}
+
+function roleDetailAsBinding(detail: LlmRuntimeRoleDetail): LlmRuntimeRoleBinding {
+  return {
+    providerId: detail.providerId,
+    providerName: detail.providerName,
+    providerType: detail.providerType,
+    model: detail.model,
+    profile: '',
+    maxContextTokens: detail.maxContextTokens,
+    maxOutputTokens: detail.maxOutputTokens,
+  };
+}
+
+function emptyBindingBudget(
+  roleKey: string,
+  binding: LlmRuntimeRoleBinding,
+  index: number,
+  source: 'binding' | 'unknown',
+): RoleBindingBudget {
+  const tokens = bindingWindow(binding);
+  const providerName = binding.providerName || binding.providerId || null;
+  const model = binding.model || null;
+  const label = bindingDisplayName({ providerName, providerId: binding.providerId || null, model });
+  return {
+    id: `${idToken(roleKey)}-${idToken(binding.providerId || providerName)}-${idToken(model)}-${index}`,
+    roleId: roleKey,
+    label,
+    providerId: binding.providerId || null,
+    providerName,
+    providerType: binding.providerType || null,
+    model,
+    profile: binding.profile || null,
+    contextWindowTokens: tokens,
+    maxOutputTokens: typeof binding.maxOutputTokens === 'number' && binding.maxOutputTokens > 0
+      ? binding.maxOutputTokens
+      : null,
+    contextWindowLabel: tokens !== null ? `${contextOSFormat.windowTokens(tokens)} 窗口` : '窗口未知',
+    contextWindowDetail: tokens !== null ? `${label} · maxContextTokens` : `${label} · 无 maxContextTokens`,
+    contextWindowSource: tokens !== null ? source : 'unknown',
+    calls: 0,
+    totalTokens: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    contextTokensLatest: null,
+    windowOccupancyTokens: null,
+    windowOccupancyLabel: '无 usage',
+    windowOccupancyDetail: '该绑定尚无可归属的实时 usage 事件',
+    latencyMs: null,
+    lastEventAt: null,
+    matchedEvents: 0,
+    usageSource: 'none',
+  };
+}
+
+function deriveRoleBindingBudgetTemplates(state: LlmRuntimeGateState, roleKey: string): RoleBindingBudget[] {
+  const detail = roleDetailForWindow(state, roleKey);
+  if (!detail) return [];
+
+  const bindings = detail.bindings.length > 0
+    ? detail.bindings
+    : (detail.providerId || detail.providerName || detail.model || detail.maxContextTokens)
+      ? [roleDetailAsBinding(detail)]
+      : [];
+
+  return bindings.map((binding, index) => emptyBindingBudget(roleKey, binding, index, 'binding'));
+}
+
+function eventMatchesBinding(event: ContextOSEvent, binding: RoleBindingBudget): boolean {
+  const eventProviderId = keyToken(event.providerId);
+  const eventProviderName = keyToken(event.providerName);
+  const eventModel = keyToken(event.model);
+  const bindingProviderId = keyToken(binding.providerId);
+  const bindingProviderName = keyToken(binding.providerName);
+  const bindingModel = keyToken(binding.model);
+
+  if (eventProviderId && bindingProviderId && eventProviderId === bindingProviderId) return true;
+  if (eventModel && bindingModel && eventModel === bindingModel) return true;
+  return Boolean(eventProviderName && bindingProviderName && eventProviderName === bindingProviderName && (!eventModel || !bindingModel || eventModel === bindingModel));
+}
+
+function summarizeBindingBudget(
+  template: RoleBindingBudget,
+  events: ContextOSEvent[],
+  usageSource: RoleBindingBudget['usageSource'],
+): RoleBindingBudget {
+  if (events.length === 0) return template;
+
+  let totalTokens = 0;
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let calls = 0;
+
+  for (const event of events) {
+    totalTokens += event.totalTokens;
+    promptTokens += event.promptTokens;
+    completionTokens += event.completionTokens;
+    if (event.isCall || event.hasUsage) calls += 1;
+  }
+
+  const latestContextSize = events.find(
+    (event) => event.finalRequestTokenEstimate !== null || event.contextTokens !== null,
+  );
+  const contextTokensLatest = latestContextSize
+    ? (latestContextSize.finalRequestTokenEstimate ?? latestContextSize.contextTokens)
+    : null;
+  const usageCalls = events.filter((event) => event.hasUsage).length;
+  const promptAverage = usageCalls > 0 && promptTokens > 0 ? Math.round(promptTokens / usageCalls) : null;
+  const windowOccupancyTokens = contextTokensLatest !== null && contextTokensLatest > 0
+    ? contextTokensLatest
+    : promptAverage;
+  const windowOccupancyLabel = contextTokensLatest !== null && contextTokensLatest > 0
+    ? '最新最终请求 (实测)'
+    : promptAverage !== null
+      ? usageSource === 'matched' ? '模型提示均值 (实测)' : '角色聚合提示均值'
+      : '无 usage';
+  const windowOccupancyDetail = contextTokensLatest !== null && contextTokensLatest > 0
+    ? '来自该绑定最近一次 final_request_context_audit/context_tokens_after'
+    : promptAverage !== null
+      ? usageSource === 'matched'
+        ? '按 provider/model 匹配到的实时 usage 事件计算'
+        : '事件未携带 provider/model，只能显示为角色聚合'
+      : '该绑定尚无可归属的实时 usage 事件';
+  const latestLatency = events.find((event) => event.durationMs !== null);
+  const latestEvent = events.find((event) => event.epoch > 0);
+
+  return {
+    ...template,
+    calls,
+    totalTokens,
+    promptTokens,
+    completionTokens,
+    contextTokensLatest,
+    windowOccupancyTokens,
+    windowOccupancyLabel,
+    windowOccupancyDetail,
+    latencyMs: latestLatency ? latestLatency.durationMs : null,
+    lastEventAt: latestEvent ? latestEvent.epoch : null,
+    matchedEvents: events.length,
+    usageSource,
+  };
 }
 
 function deriveRoleContextWindow(
@@ -873,6 +1061,53 @@ export function buildContextOSModel(input: {
       : promptAverage !== null
         ? '来自该角色 usage 事件的 prompt_tokens 平均值 (非窗口实测)'
         : '该角色尚无带 usage 的实时观测事件';
+    const bindingTemplates = deriveRoleBindingBudgetTemplates(llmRuntimeState, role.key);
+    const usageEvents = roleEvents.filter((event) =>
+      event.isCall || event.hasUsage || event.finalRequestTokenEstimate !== null || event.contextTokens !== null,
+    );
+    const bindingBudgets = bindingTemplates.map((template) => {
+      const matched = usageEvents.filter((event) => eventMatchesBinding(event, template));
+      if (matched.length > 0) return summarizeBindingBudget(template, matched, 'matched');
+      if (bindingTemplates.length === 1 && usageEvents.length > 0) {
+        return summarizeBindingBudget(template, usageEvents, 'role_aggregate');
+      }
+      return template;
+    });
+    if (bindingTemplates.length > 1) {
+      const unassignedEvents = usageEvents.filter(
+        (event) => !bindingTemplates.some((template) => eventMatchesBinding(event, template)),
+      );
+      if (unassignedEvents.length > 0) {
+        const aggregateTemplate: RoleBindingBudget = {
+          id: `${idToken(role.key)}-role-aggregate-unassigned`,
+          roleId: role.key,
+          label: '角色聚合 / 未归属模型',
+          providerId: null,
+          providerName: '角色聚合',
+          providerType: null,
+          model: null,
+          profile: null,
+          contextWindowTokens: roleWindow.tokens,
+          maxOutputTokens: null,
+          contextWindowLabel: roleWindow.tokens !== null ? `${contextOSFormat.windowTokens(roleWindow.tokens)} 最小窗口` : '窗口未知',
+          contextWindowDetail: '多路绑定事件未携带 provider/model，无法精确归属到单个模型',
+          contextWindowSource: roleWindow.source,
+          calls: 0,
+          totalTokens: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          contextTokensLatest: null,
+          windowOccupancyTokens: null,
+          windowOccupancyLabel: '无 usage',
+          windowOccupancyDetail: '多路绑定事件未携带 provider/model，无法精确归属到单个模型',
+          latencyMs: null,
+          lastEventAt: null,
+          matchedEvents: 0,
+          usageSource: 'none',
+        };
+        bindingBudgets.push(summarizeBindingBudget(aggregateTemplate, unassignedEvents, 'role_aggregate'));
+      }
+    }
 
     // 当前任务：ContextOSEvent 目前未携带 refs，先诚实留空；后续可在 logEntryToEvent 中扩展
     // refs/task_id 字段后再精确填充。
@@ -926,6 +1161,7 @@ export function buildContextOSModel(input: {
       latestContextSnapshotRef,
       latestCallId,
       latestTurnId,
+      bindingBudgets,
       detail,
     };
   }
@@ -966,6 +1202,7 @@ export function buildContextOSModel(input: {
       internalContext,
     };
   });
+  const bindingBudgets = roles.flatMap((role) => role.internalContext.bindingBudgets);
 
   const policies: string[] = [
     '自适应排序',
@@ -1045,6 +1282,7 @@ export function buildContextOSModel(input: {
     policies,
     workers,
     hasWorkers,
+    bindingBudgets,
   };
 }
 

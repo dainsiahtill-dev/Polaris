@@ -436,6 +436,10 @@ describe('useRuntime llm filtering and dedup', () => {
         kind: 'state',
         actor: 'pm',
         message: 'llm response completed | completion_tokens=1454',
+        refs: {
+          call_id: 'call-context-1',
+          context_snapshot_ref: 'ctx-snapshot-1',
+        },
         tags: ['llm_realtime_bridge', 'llm_event:llm_call_end', 'projection_event:llm_completed'],
         raw: {
           stream_event: 'llm_completed',
@@ -446,7 +450,16 @@ describe('useRuntime llm filtering and dedup', () => {
             prompt_tokens: 1932,
             completion_tokens: 1454,
             context_tokens_after: 1932,
-            metadata: { elapsed_ms: 71431.06 },
+            metadata: {
+              elapsed_ms: 71431.06,
+              final_request_context_audit: {
+                final_request_token_estimate: 4096,
+                tool_schema_token_estimate: 1200,
+              },
+              context_os_audit: {
+                state_first_context_os: { projected: true },
+              },
+            },
           },
         },
       }),
@@ -462,10 +475,23 @@ describe('useRuntime llm filtering and dedup', () => {
     expect(entry?.meta?.completionTokens).toBe(1454);
     expect(entry?.meta?.totalTokens).toBe(3386);
     expect(entry?.meta?.contextTokens).toBe(1932);
+    expect(entry?.meta?.contextSnapshotRef).toBe('ctx-snapshot-1');
+    expect(entry?.meta?.callId).toBe('call-context-1');
+    expect(entry?.meta?.finalRequestContextAudit).toMatchObject({
+      final_request_token_estimate: 4096,
+      tool_schema_token_estimate: 1200,
+    });
+    expect(entry?.meta?.contextOSAudit).toMatchObject({
+      state_first_context_os: { projected: true },
+    });
     // 真实时延来自 raw.data.metadata.elapsed_ms（四舍五入）。
     expect(entry?.meta?.durationMs).toBe(71431);
     expect(entry?.details).toContain('71431ms');
     expect(entry?.details).toContain('completion=1454');
+
+    const telemetry = buildTelemetryFromStream(result.current.llmStreamEvents, [], []);
+    expect(telemetry.projectionCount).toBe(1);
+    expect(telemetry.contextTokensLatest).toBe(4096);
   });
 
   it('preserves provider-native usage aliases through useRuntime into ContextOS telemetry', () => {

@@ -306,6 +306,70 @@ describe('ContextOSWorkspace', () => {
     expect(source.textContent).toContain('平均提示');
   });
 
+  it('renders each Director provider/model as its own context budget row', () => {
+    const multiDirectorStream: LogEntry[] = [
+      {
+        id: 'director-gpu0',
+        timestamp: new Date(Date.now() - 1000).toISOString(),
+        level: 'success',
+        source: 'Director',
+        message: 'director gpu0 call returned',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          providerId: 'qwen-a',
+          providerName: 'Qwen A',
+          model: 'qwen3.6-27b-gpu0',
+          promptTokens: 400,
+          completionTokens: 100,
+          totalTokens: 500,
+          durationMs: 1200,
+        },
+        tags: ['llm_completed'],
+      },
+      {
+        id: 'director-gpu1',
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        source: 'Director',
+        message: 'director gpu1 call returned',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          providerId: 'qwen-b',
+          providerName: 'Qwen B',
+          model: 'qwen3.6-27b-gpu1',
+          promptTokens: 900,
+          completionTokens: 300,
+          totalTokens: 1200,
+          durationMs: 2200,
+        },
+        tags: ['llm_completed'],
+      },
+    ];
+
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmRuntimeState={READY_LLM_WITH_WINDOWS}
+        llmStreamEvents={multiDirectorStream}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('contextos-role-director'));
+
+    const budgetPanel = screen.getByTestId('contextos-binding-budgets');
+    expect(budgetPanel.textContent).toContain('Director 模型预算');
+    expect(budgetPanel.textContent).toContain('2 路');
+    expect(budgetPanel.textContent).toContain('qwen3.6-27b-gpu0');
+    expect(budgetPanel.textContent).toContain('qwen3.6-27b-gpu1');
+    expect(screen.getByTestId('contextos-binding-budget-director-qwen-a-qwen3-6-27b-gpu0-0').textContent).toContain('~400');
+    expect(screen.getByTestId('contextos-binding-budget-director-qwen-b-qwen3-6-27b-gpu1-1').textContent).toContain('~900');
+    expect(screen.getByTestId('contextos-role-window-director').textContent).toContain('2 路绑定');
+  });
+
   it('surfaces REAL ContextOS telemetry from the live WebSocket stream props', () => {
     render(
       <ContextOSWorkspace

@@ -30,7 +30,6 @@ from polaris.cells.roles.runtime.public.service import RoleRuntimeService
 from polaris.cells.runtime.task_runtime.public.service import TaskRuntimeService
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
 from polaris.kernelone.fs import KernelFileSystem, get_default_adapter
-from polaris.kernelone.workflow.timeout_policy import _director_child_workflow_timeout_seconds
 
 from . import factory_stage_helpers as helpers
 from .factory_artifact_store import ArtifactStore
@@ -74,6 +73,7 @@ class OrchestrationStageExecutor:
         self._run_completion_waiter = RunCompletionWaiter(self.workspace)
         self._binding_timeout_counts: dict[str, int] = {}
         self._quarantined_bindings: set[str] = set()
+        self._last_director_binding_skips: list[dict[str, Any]] = []
         self._binding_status_probe_seconds = 2.0
 
     async def execute(self, stage: str, run: FactoryRun, context: dict[str, Any]) -> StageResult:
@@ -567,23 +567,94 @@ class OrchestrationStageExecutor:
 
     @staticmethod
     def _director_dispatch_timeout_seconds(context: dict[str, Any], *, task_count: int) -> int:
+        del task_count
+        raw_override = context.get("director_dispatch_timeout_seconds")
+        if raw_override is not None:
+            try:
+                return max(1, int(raw_override))
+            except (TypeError, ValueError):
+                pass
         try:
-            base_timeout = max(1, int(context.get("timeout") or 600))
+            return max(1, int(context.get("timeout") or 600))
         except (TypeError, ValueError):
-            base_timeout = 600
-        try:
-            return _director_child_workflow_timeout_seconds(
-                {"task_timeout_seconds": base_timeout, "ready_timeout_seconds": 30},
-                task_count=max(1, int(task_count or 0)),
-            )
-        except (RuntimeError, TypeError, ValueError):
-            return base_timeout
+            return 600
 
     # ── Director binding fanout ────────────────────────────────────────────
 
-    def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+    @staticmethod
+    def _director_binding_identity(provider_id: str, model: str, binding_id: str = "") -> str:
+        return f"{str(provider_id or '').strip()}|{str(model or '').strip()}|{str(binding_id or '').strip()}"
+
+    def _record_director_binding_skip(
+        self,
+        *,
+        provider_id: str,
+        model: str,
+        binding_id: str,
+        reason: str,
+    ) -> None:
+        skip = {
+            "provider_id": str(provider_id or "").strip(),
+            "model": str(model or "").strip(),
+            "binding_id": str(binding_id or "").strip(),
+            "reason": str(reason or "").strip() or "binding_unavailable",
+        }
+        if not skip["provider_id"] or not skip["model"]:
+            return
+        skips = getattr(self, "_last_director_binding_skips", [])
+        identity = self._director_binding_identity(skip["provider_id"], skip["model"], skip["binding_id"])
+        if any(
+            self._director_binding_identity(
+                str(item.get("provider_id") or ""),
+                str(item.get("model") or ""),
+                str(item.get("binding_id") or ""),
+            )
+            == identity
+            for item in skips
+            if isinstance(item, dict)
+        ):
+            return
+        skips.append(skip)
+        self._last_director_binding_skips = skips
+
+    def _director_readiness_skip_reasons(self, context: dict[str, Any] | None = None) -> dict[str, str]:
+        if context is None:
+            context = {}
         try:
-            from polaris.kernelone.llm.runtime_config import get_role_binding_slots
+            from polaris.bootstrap.config import Settings
+            from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+        except ImportError as exc:
+            logger.debug("Director readiness skip resolution unavailable: %s", exc)
+            return {}
+        try:
+            settings = context.get("settings") or Settings(workspace=Path(self.workspace))
+            status = build_llm_status(settings)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Director readiness status unavailable: %s", exc)
+            return {}
+        roles = status.get("roles") if isinstance(status, dict) else {}
+        director = roles.get("director") if isinstance(roles, dict) else {}
+        skipped = director.get("skipped_bindings") if isinstance(director, dict) else None
+        if not isinstance(skipped, list):
+            return {}
+        reasons: dict[str, str] = {}
+        for item in skipped:
+            if not isinstance(item, dict):
+                continue
+            provider_id = str(item.get("provider_id") or "").strip()
+            model = str(item.get("model") or "").strip()
+            binding_id = str(item.get("binding_id") or "").strip()
+            reason = str(item.get("reason") or "readiness_skipped").strip()
+            if not provider_id or not model:
+                continue
+            reasons[self._director_binding_identity(provider_id, model, binding_id)] = reason
+            reasons.setdefault(self._director_binding_identity(provider_id, model, ""), reason)
+        return reasons
+
+    def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+        self._last_director_binding_skips = []
+        try:
+            from polaris.kernelone.llm.runtime_config import get_role_binding_slots, is_role_binding_healthy
         except (ImportError, RuntimeError) as exc:
             logger.debug("Director binding fanout resolution unavailable: %s", exc)
             return []
@@ -594,6 +665,7 @@ class OrchestrationStageExecutor:
             return []
         if len(slots) <= 1:
             return []
+        readiness_skip_reasons = self._director_readiness_skip_reasons(context)
         try:
             from polaris.cells.orchestration.pm_dispatch.public.service import reachable_provider_pool
 
@@ -606,20 +678,53 @@ class OrchestrationStageExecutor:
         seen_keys: set[str] = set()
         for slot in slots:
             pid = str(slot.provider_id or "").strip()
+            model = str(slot.model or "").strip()
+            binding_id = str(slot.binding_id or "").strip()
             if not pid or pid not in live_providers:
+                if pid and model:
+                    self._record_director_binding_skip(
+                        provider_id=pid,
+                        model=model,
+                        binding_id=binding_id,
+                        reason="provider_unreachable",
+                    )
                 continue
-            key = f"{pid}|{slot.model}"
+            readiness_reason = readiness_skip_reasons.get(
+                self._director_binding_identity(pid, model, binding_id)
+            ) or readiness_skip_reasons.get(self._director_binding_identity(pid, model, ""))
+            if readiness_reason:
+                self._record_director_binding_skip(
+                    provider_id=pid,
+                    model=model,
+                    binding_id=binding_id,
+                    reason=readiness_reason,
+                )
+                continue
+            if not is_role_binding_healthy(
+                "director",
+                provider_id=pid,
+                model=model,
+                binding_id=binding_id or None,
+            ):
+                self._record_director_binding_skip(
+                    provider_id=pid,
+                    model=model,
+                    binding_id=binding_id,
+                    reason="role_binding_cooldown",
+                )
+                continue
+            key = f"{pid}|{model}"
             if key in seen_keys:
                 continue
             seen_keys.add(key)
             bindings.append(
                 {
                     "provider_id": pid,
-                    "model": str(slot.model or "").strip(),
-                    "binding_id": str(slot.binding_id or "").strip(),
+                    "model": model,
+                    "binding_id": binding_id,
                 }
             )
-        if len(bindings) <= 1:
+        if len(bindings) <= 1 and not getattr(self, "_last_director_binding_skips", []):
             return []
         logger.info("Director binding fanout: %d reachable binding(s)", len(bindings))
         return bindings
@@ -635,12 +740,42 @@ class OrchestrationStageExecutor:
         timeout_seconds: int = 600,
         cancel_event: asyncio.Event | None = None,
         abort_checker: Any = None,
+        skipped_bindings: list[dict[str, Any]] | None = None,
     ) -> CommandResult:
         terminal_statuses = {"completed", "success", "failed", "cancelled", "timeout", "partial"}
         submitted: list[tuple[dict[str, str], CommandResult]] = []
+        readiness_skipped = [dict(item) for item in list(skipped_bindings or []) if isinstance(item, dict)]
 
         def _binding_key(binding: dict[str, str]) -> str:
             return f"{binding['provider_id']}:{binding['model']}:{binding.get('binding_id', '')}"
+
+        def _backend_failure_reason(result: CommandResult) -> str:
+            status = str(result.status or "").strip().lower()
+            if status == "timeout":
+                return "timeout"
+            text = " ".join(
+                str(item or "")
+                for item in (
+                    result.reason_code,
+                    result.message,
+                    (result.metadata or {}).get("error") if isinstance(result.metadata, dict) else "",
+                )
+            ).lower()
+            backend_markers = (
+                "provider_connectivity_unavailable",
+                "connection refused",
+                "cannot connect",
+                "connect timeout",
+                "read timeout",
+                "timed out",
+                "timeout",
+                "circuit_open",
+                "llm call error",
+                "binding_fanout_error",
+            )
+            if any(marker in text for marker in backend_markers):
+                return "provider_backend_failure"
+            return ""
 
         active_bindings = []
         quarantined_skipped = []
@@ -757,6 +892,17 @@ class OrchestrationStageExecutor:
                     )
             else:
                 self._binding_timeout_counts[key] = 0
+            backend_failure_reason = _backend_failure_reason(result)
+            if backend_failure_reason:
+                with contextlib.suppress(ImportError, RuntimeError, TypeError, ValueError):
+                    from polaris.kernelone.llm.runtime_config import mark_role_binding_unhealthy
+
+                    mark_role_binding_unhealthy(
+                        "director",
+                        provider_id=binding["provider_id"],
+                        model=binding["model"],
+                        binding_id=binding.get("binding_id") or None,
+                    )
 
         per_binding: list[dict[str, Any]] = []
         success_count = 0
@@ -793,6 +939,9 @@ class OrchestrationStageExecutor:
                 if key in self._quarantined_bindings:
                     entry["quarantined"] = True
                     entry["quarantine_reason"] = "consecutive_timeout"
+            backend_failure_reason = _backend_failure_reason(result)
+            if backend_failure_reason:
+                entry["backend_failure_reason"] = backend_failure_reason
             per_binding.append(entry)
 
         for binding in quarantined_skipped:
@@ -811,24 +960,49 @@ class OrchestrationStageExecutor:
                 }
             )
 
+        for binding in readiness_skipped:
+            provider_id = str(binding.get("provider_id") or "").strip()
+            model = str(binding.get("model") or "").strip()
+            binding_id = str(binding.get("binding_id") or "").strip()
+            if not provider_id or not model:
+                continue
+            per_binding.append(
+                {
+                    "provider_id": provider_id,
+                    "model": model,
+                    "binding_id": binding_id,
+                    "run_id": "",
+                    "status": "skipped",
+                    "message": "Skipped by Director binding readiness filter",
+                    "skipped": True,
+                    "skip_reason": str(binding.get("reason") or "binding_unavailable").strip(),
+                }
+            )
+
         quarantined_count = sum(1 for entry in per_binding if entry.get("quarantined"))
         skipped_count = len(quarantined_skipped)
+        readiness_skipped_count = sum(
+            1 for entry in per_binding if entry.get("skipped") and not entry.get("quarantined")
+        )
         if success_count <= 0:
-            fail_count += skipped_count
+            fail_count += skipped_count + readiness_skipped_count
         merged_status = "completed" if success_count > 0 and fail_count == 0 else "failed"
+        total_binding_count = len(bindings) + readiness_skipped_count
         return CommandResult(
             run_id=first_run_id,
             status=merged_status,
             message=(
-                f"Director binding fanout: {len(bindings)} bindings, {success_count} succeeded, "
-                f"{fail_count} failed, {quarantined_count} quarantined"
+                f"Director binding fanout: {total_binding_count} bindings, {success_count} succeeded, "
+                f"{fail_count} failed, {quarantined_count} quarantined, "
+                f"{readiness_skipped_count} readiness-skipped"
             ),
             metadata={
                 "binding_fanout": True,
-                "binding_count": len(bindings),
+                "binding_count": total_binding_count,
                 "active_binding_count": len(active_bindings),
                 "quarantined_binding_count": quarantined_count,
                 "quarantined_skipped_count": skipped_count,
+                "readiness_skipped_count": readiness_skipped_count,
                 "per_binding": per_binding,
                 "execution_mode": str(base_options.get("execution_mode", "")).strip(),
                 "max_workers": int(base_options.get("max_workers", 0)),
@@ -869,6 +1043,11 @@ class OrchestrationStageExecutor:
             if entry.get("quarantined"):
                 event["quarantined"] = True
                 event["quarantine_reason"] = entry.get("quarantine_reason", "")
+            if entry.get("skipped"):
+                event["skipped"] = True
+                event["skip_reason"] = entry.get("skip_reason", "")
+                event["invocation"] = False
+                event["fail_closed"] = True
             events.append(event)
         return events
 
@@ -1754,7 +1933,8 @@ class OrchestrationStageExecutor:
             )
 
         if not stage_signals:
-            director_binding_fanout = self._resolve_director_binding_fanout()
+            director_binding_fanout = self._resolve_director_binding_fanout(context)
+            director_binding_skips = list(getattr(self, "_last_director_binding_skips", []))
 
             for round_index in range(1, max_rounds + 1):
                 before_stats = self._read_taskboard_stats()
@@ -1788,9 +1968,10 @@ class OrchestrationStageExecutor:
                         **context_metadata,
                         "factory_run_id": str(context.get("factory_run_id") or run.id or "").strip(),
                         "factory_stage": "director_dispatch",
+                        "director_binding_skips": director_binding_skips,
                     },
                 }
-                if len(director_binding_fanout) > 1:
+                if director_binding_fanout:
                     director_timeout_seconds = self._director_dispatch_timeout_seconds(
                         context,
                         task_count=len(pm_tasks),
@@ -1804,6 +1985,39 @@ class OrchestrationStageExecutor:
                         timeout_seconds=director_timeout_seconds,
                         cancel_event=self._resolve_cancel_event(context),
                         abort_checker=abort_checker,
+                        skipped_bindings=director_binding_skips,
+                    )
+                    last_command_result = command_result
+                    director_result = command_result
+                elif director_binding_skips:
+                    per_binding = [
+                        {
+                            "provider_id": str(binding.get("provider_id") or "").strip(),
+                            "model": str(binding.get("model") or "").strip(),
+                            "binding_id": str(binding.get("binding_id") or "").strip(),
+                            "run_id": "",
+                            "status": "skipped",
+                            "message": "Skipped by Director binding readiness filter",
+                            "skipped": True,
+                            "skip_reason": str(binding.get("reason") or "binding_unavailable").strip(),
+                        }
+                        for binding in director_binding_skips
+                        if isinstance(binding, dict)
+                    ]
+                    command_result = CommandResult(
+                        run_id="",
+                        status="failed",
+                        message="No available Director binding after readiness filtering",
+                        reason_code="DIRECTOR_BINDINGS_UNAVAILABLE",
+                        metadata={
+                            "binding_fanout": True,
+                            "binding_count": len(per_binding),
+                            "active_binding_count": 0,
+                            "readiness_skipped_count": len(per_binding),
+                            "per_binding": per_binding,
+                            "execution_mode": execution_mode,
+                            "max_workers": max_workers,
+                        },
                     )
                     last_command_result = command_result
                     director_result = command_result
@@ -2086,9 +2300,12 @@ class OrchestrationStageExecutor:
             metadata = attempt.get("metadata") if isinstance(attempt, dict) else {}
             if not isinstance(metadata, dict):
                 continue
-            per_binding = metadata.get("per_binding")
-            if isinstance(per_binding, list):
-                per_binding_route_events.extend(self._build_per_binding_route_events(per_binding))
+            per_binding_raw = metadata.get("per_binding")
+            if isinstance(per_binding_raw, list):
+                per_binding_items = [item for item in per_binding_raw if isinstance(item, dict)]
+                per_binding_route_events.extend(
+                    self._build_per_binding_route_events(cast(list[dict[str, Any]], per_binding_items))
+                )
 
         if stage_status != "cancelled":
             binding_ok, binding_signals = self._validate_director_binding_coverage(
