@@ -950,6 +950,114 @@ def test_deterministic_typescript_missing_member_repair_adds_interface_propertie
     assert "  brightness: number;" in repaired
 
 
+def test_deterministic_html_typescript_module_script_repair_rewrites_entrypoint(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_html_typescript_module_script_repair,
+    )
+
+    (tmp_path / "src" / "engine").mkdir(parents=True)
+    (tmp_path / "index.html").write_text(
+        '<div id="garden"></div>\n<script type="module" src="/src/engine/renderer.ts"></script>\n',
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: HTML module script references TypeScript source "
+        "'/src/engine/renderer.ts' in index.html; static entrypoints must load JavaScript"
+    ]
+
+    results = _apply_deterministic_html_typescript_module_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "index.html").read_text(encoding="utf-8")
+    assert 'src="dist/engine/renderer.js"' in repaired
+    assert "/src/engine/renderer.ts" not in repaired
+
+
+def test_deterministic_typescript_member_alias_repair_rewrites_structural_drift(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_member_alias_repair,
+    )
+
+    engine_dir = tmp_path / "src" / "engine"
+    engine_dir.mkdir(parents=True)
+    (engine_dir / "simulation.ts").write_text(
+        "export interface Vec2 { x: number; y: number; }\n"
+        "export interface Firefly {\n"
+        "  position: Vec2;\n"
+        "  brightness: number;\n"
+        "}\n"
+        "export interface Flower {\n"
+        "  position: Vec2;\n"
+        "  petalRadius: number;\n"
+        "  hue: number;\n"
+        "  saturation: number;\n"
+        "  lightness: number;\n"
+        "}\n"
+        "export interface Moon {\n"
+        "  position: Vec2;\n"
+        "  intensity: number;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (engine_dir / "renderer.ts").write_text(
+        "import type { Firefly, Flower, Moon } from './simulation.js';\n"
+        "export function render(moon: Moon, flower: Flower, firefly: Firefly): string {\n"
+        "  const moonGlow = moon.brightness;\n"
+        "  const flowerSize = flower.size;\n"
+        "  const flowerX = flower.x;\n"
+        "  const flowerY = flower.y;\n"
+        "  const flowerColor = flower.color;\n"
+        "  const fireflyGlow = firefly.glow;\n"
+        "  const fireflyX = firefly.x;\n"
+        "  const fireflyY = firefly.y;\n"
+        "  return `${moonGlow}:${flowerSize}:${flowerX}:${flowerY}:${flowerColor}:${fireflyGlow}:${fireflyX}:${fireflyY}`;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/engine/renderer.ts(3,25): error TS2339: Property 'brightness' does not exist on type 'Moon'.\n"
+        "src/engine/renderer.ts(4,29): error TS2339: Property 'size' does not exist on type 'Flower'.\n"
+        "src/engine/renderer.ts(5,27): error TS2339: Property 'x' does not exist on type 'Flower'.\n"
+        "src/engine/renderer.ts(6,27): error TS2339: Property 'y' does not exist on type 'Flower'.\n"
+        "src/engine/renderer.ts(7,31): error TS2339: Property 'color' does not exist on type 'Flower'.\n"
+        "src/engine/renderer.ts(8,31): error TS2339: Property 'glow' does not exist on type 'Firefly'.\n"
+        "src/engine/renderer.ts(9,29): error TS2339: Property 'x' does not exist on type 'Firefly'.\n"
+        "src/engine/renderer.ts(10,29): error TS2339: Property 'y' does not exist on type 'Firefly'."
+    ]
+
+    results = _apply_deterministic_typescript_member_alias_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (engine_dir / "renderer.ts").read_text(encoding="utf-8")
+    assert "moon.intensity" in repaired
+    assert "flower.petalRadius" in repaired
+    assert "flower.position.x" in repaired
+    assert "flower.position.y" in repaired
+    assert (
+        "`hsl(${flower.hue}, ${Math.round(flower.saturation * 100)}%, ${Math.round(flower.lightness * 100)}%)`"
+        in repaired
+    )
+    assert "firefly.brightness" in repaired
+    assert "firefly.position.x" in repaired
+    assert "firefly.position.y" in repaired
+    assert "moon.brightness" not in repaired
+    assert "flower.size" not in repaired
+    assert "firefly.glow" not in repaired
+
+
 def test_deterministic_typescript_missing_member_repair_infers_destructured_object_shapes(
     tmp_path: Any,
 ) -> None:
@@ -1844,6 +1952,148 @@ def test_deterministic_typescript_nullable_dom_handle_repair_adds_guard(tmp_path
     assert 'throw new Error("DOM element unavailable: canvas");' in repaired
     assert repaired.index("if (!container) {") < repaired.index("const canvas")
     assert repaired.index("if (!canvas) {") < repaired.index("container.appendChild")
+
+
+def test_deterministic_typescript_nullable_dom_handle_repair_narrows_existing_guard(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_nullable_canvas_context_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "renderer.ts").write_text(
+        "const canvas = document.getElementById(\n"
+        '  "sim-canvas",\n'
+        ") as HTMLCanvasElement | null;\n"
+        "if (!canvas) {\n"
+        '  throw new Error("missing canvas");\n'
+        "}\n"
+        "function resize(): void {\n"
+        "  canvas.width = 100;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/renderer.ts(8,3): error TS18047: 'canvas' is possibly 'null'."
+    ]
+
+    results = _apply_deterministic_typescript_nullable_canvas_context_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "renderer.ts").read_text(encoding="utf-8")
+    assert "as HTMLCanvasElement;" in repaired
+    assert "HTMLCanvasElement | null" not in repaired
+    assert repaired.count("if (!canvas) {") == 1
+
+
+def test_deterministic_typescript_duplicate_object_property_repair_removes_reported_line(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_duplicate_object_property_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "flower.ts").write_text(
+        "enum Phase { Quarter = 'quarter', Full = 'full' }\n"
+        "const adjacent = {\n"
+        "  [Phase.Quarter]: [Phase.Full],\n"
+        "  [Phase.Full]: [Phase.Quarter],\n"
+        "  [Phase.Quarter]: [Phase.Quarter],\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    errors = ["src/flower.ts(5,3): error TS1117: An object literal cannot have multiple properties with the same name."]
+
+    results = _apply_deterministic_typescript_duplicate_object_property_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "flower.ts").read_text(encoding="utf-8")
+    assert repaired.count("[Phase.Quarter]:") == 1
+    assert "[Phase.Full]: [Phase.Quarter]" in repaired
+
+
+def test_deterministic_typescript_sourcefile_diagnostics_repair_replaces_bad_scaffold(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_sourcefile_diagnostics_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "verify.ts").write_text(
+        'import * as ts from "typescript";\n'
+        "function check(file: string, text: string): string[] {\n"
+        "  const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.ES2020, true);\n"
+        "  const diagnostics = undefined as unknown as unknown ?? [];\n"
+        "  if (0 > 0) {\n"
+        "    return diagnostics.map((d) => String(d.messageText));\n"
+        "  }\n"
+        "  return [];\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "src/verify.ts(4,23): error TS2871: This expression is always nullish.",
+        "src/verify.ts(6,24): error TS2339: Property 'map' does not exist on type '{}'.",
+        "src/verify.ts(6,29): error TS7006: Parameter 'd' implicitly has an 'any' type.",
+    ]
+
+    results = _apply_deterministic_typescript_sourcefile_diagnostics_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "verify.ts").read_text(encoding="utf-8")
+    assert "const diagnostics: readonly ts.Diagnostic[]" in repaired
+    assert "ts.transpileModule(text" in repaired
+    assert "if (diagnostics.length > 0)" in repaired
+    assert "undefined as unknown" not in repaired
+
+
+def test_deterministic_typescript_missing_export_repair_handles_quality_unresolved_symbol(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_export_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "verify.ts").write_text(
+        "function runAll(): string[] {\n  return [];\n}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "verify.test.ts").write_text(
+        'import { runAllChecks } from "../src/verify";\nconst result = runAllChecks();\n',
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: unresolved import symbol 'runAllChecks' "
+        "from '../src/verify' in tests/verify.test.ts (sibling module does not define it)"
+    ]
+
+    results = _apply_deterministic_typescript_missing_export_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "verify.ts").read_text(encoding="utf-8")
+    assert "export { runAll as runAllChecks };" in repaired
 
 
 def test_deterministic_materialization_repair_routes_vitest_globals(tmp_path: Any) -> None:

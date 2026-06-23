@@ -187,3 +187,4 @@ pytest-cache-files-*/
 /runtime/
 audit/*.jsonl
 audit/.key
+.polaris_runtime/*

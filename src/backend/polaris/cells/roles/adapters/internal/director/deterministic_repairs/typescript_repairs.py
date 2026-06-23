@@ -31,6 +31,7 @@ from ._common import (
     _TS_OBJECT_PROPERTY_VALUE_SEMICOLON_LINE_RE,
     _TS_RETURN_OBJECT_START_RE,
     _TS_RUNTIME_EXPORT_TEMPLATE,
+    _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE,
     _UNRESOLVED_RELATIVE_IMPORT_ERROR_RE,
     _dedupe_paths,
     _parse_named_import_symbols,
@@ -70,6 +71,21 @@ _TS_TOO_FEW_ARGUMENTS_ERROR_RE = re.compile(
 _TS_POSSIBLY_NULL_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS18047:\s*"
     r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+possibly\s+['\"]null['\"]",
+    re.IGNORECASE,
+)
+_TS_DUPLICATE_OBJECT_PROPERTY_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS1117:\s*"
+    r"An\s+object\s+literal\s+cannot\s+have\s+multiple\s+properties\s+with\s+the\s+same\s+name",
+    re.IGNORECASE,
+)
+_TS_SOURCEFILE_DIAGNOSTICS_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS(?:2339|2871|7006):\s*"
+    r"(?P<message>[^\n]*(?:parseDiagnostics|diagnostics|always\s+nullish|implicitly\s+has\s+an\s+['\"]any['\"]\s+type)[^\n]*)",
+    re.IGNORECASE,
+)
+_HTML_TS_MODULE_SCRIPT_ERROR_RE = re.compile(
+    r"HTML\s+module\s+script\s+references\s+TypeScript\s+source\s+['\"](?P<src>[^'\"]+\.tsx?)['\"]\s+"
+    r"in\s+(?P<path>\S+);\s+static\s+entrypoints\s+must\s+load\s+JavaScript",
     re.IGNORECASE,
 )
 _TS_NULLABLE_CANVAS_CONTEXT_ARGUMENT_ERROR_RE = re.compile(
@@ -399,6 +415,8 @@ def _apply_deterministic_typescript_missing_export_repair(
         updated = module_text
         declaration_kind = "export_existing"
         suggestion = str(item.get("suggestion") or "").strip()
+        if not suggestion:
+            suggestion = _find_typescript_similar_runtime_declaration(module_text, symbol)
         if suggestion:
             declaration_kind, declaration = _build_typescript_suggested_export_alias_declaration(
                 symbol=symbol,
@@ -707,6 +725,216 @@ def _apply_deterministic_typescript_nullable_canvas_context_repair(
         updated_by_path=updated_by_path,
         source_tool="deterministic_typescript_nullable_canvas_context_repair",
         metadata_key="guards",
+        metadata_value=repaired,
+    )
+
+
+def _apply_deterministic_typescript_duplicate_object_property_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    duplicate_properties = _parse_typescript_duplicate_object_property_errors(artifact_quality_errors)
+    if not duplicate_properties:
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired: list[dict[str, str]] = []
+    by_file: dict[str, set[int]] = {}
+    for item in duplicate_properties:
+        try:
+            line_no = int(item.get("line") or "0")
+        except ValueError:
+            continue
+        if line_no > 0:
+            by_file.setdefault(item["file"], set()).add(line_no)
+
+    for rel_file, line_numbers in by_file.items():
+        path = (workspace_path / rel_file).resolve()
+        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
+            continue
+        try:
+            original = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        repaired_text, removed_lines = _repair_typescript_duplicate_object_property_lines(original, line_numbers)
+        if repaired_text == original or not removed_lines:
+            continue
+        updated_by_path[path] = repaired_text
+        repaired.extend({"file": rel_file, "line": str(line_no)} for line_no in removed_lines)
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_duplicate_object_property_repair",
+        metadata_key="duplicates",
+        metadata_value=repaired,
+    )
+
+
+def _apply_deterministic_html_typescript_module_script_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    script_errors = _parse_html_typescript_module_script_errors(artifact_quality_errors)
+    if not script_errors:
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired: list[dict[str, str]] = []
+    for item in script_errors:
+        rel_file = _normalize_declared_task_path(item["file"])
+        source_ref = str(item.get("source") or "").strip()
+        if not rel_file or not source_ref:
+            continue
+        path = (workspace_path / rel_file).resolve()
+        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
+            continue
+        try:
+            original = updated_by_path.get(path) or path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        replacement = _html_javascript_entrypoint_for_typescript_source(source_ref)
+        if not replacement:
+            continue
+        repaired_text = original.replace(f'src="{source_ref}"', f'src="{replacement}"')
+        repaired_text = repaired_text.replace(f"src='{source_ref}'", f"src='{replacement}'")
+        if repaired_text == original:
+            continue
+        updated_by_path[path] = repaired_text
+        repaired.append({"file": rel_file, "source": source_ref, "replacement": replacement})
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_html_typescript_module_script_repair",
+        metadata_key="scripts",
+        metadata_value=repaired,
+    )
+
+
+def _apply_deterministic_typescript_member_alias_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    missing_members = _parse_typescript_missing_member_errors(artifact_quality_errors)
+    if not missing_members:
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired: list[dict[str, str]] = []
+    for item in missing_members:
+        rel_file = _normalize_declared_task_path(item["file"])
+        member = str(item.get("member") or "").strip()
+        type_name = _typescript_declaration_type_name(str(item.get("type") or ""))
+        if not rel_file or not _TS_IDENTIFIER_RE.fullmatch(member) or not type_name:
+            continue
+        path = (workspace_path / rel_file).resolve()
+        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
+            continue
+        usage_line = _typescript_error_usage_line(workspace_path, item)
+        receiver = _typescript_receiver_for_member_access(usage_line, member)
+        if not receiver:
+            continue
+        existing_members = _typescript_existing_member_names_for_type(
+            workspace_path=workspace_path,
+            type_name=type_name,
+            updated_by_path=updated_by_path,
+        )
+        replacement = _typescript_member_alias_replacement(
+            receiver=receiver,
+            missing_member=member,
+            existing_members=existing_members,
+        )
+        if not replacement:
+            continue
+        try:
+            original = updated_by_path.get(path) or path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        repaired_text = re.sub(
+            rf"\b{re.escape(receiver)}\s*\.\s*{re.escape(member)}\b",
+            replacement,
+            original,
+        )
+        if repaired_text == original:
+            continue
+        updated_by_path[path] = repaired_text
+        repaired.append(
+            {
+                "file": rel_file,
+                "type": type_name,
+                "member": member,
+                "receiver": receiver,
+                "replacement": replacement,
+            }
+        )
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_member_alias_repair",
+        metadata_key="aliases",
+        metadata_value=repaired,
+    )
+
+
+def _apply_deterministic_typescript_sourcefile_diagnostics_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    diagnostic_errors = _parse_typescript_sourcefile_diagnostics_errors(artifact_quality_errors)
+    if not diagnostic_errors:
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired: list[dict[str, str]] = []
+    for rel_file in _dedupe_preserve_order([item["file"] for item in diagnostic_errors]):
+        path = (workspace_path / rel_file).resolve()
+        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
+            continue
+        try:
+            original = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        repaired_text = _repair_typescript_sourcefile_diagnostics_usage(original)
+        if repaired_text == original:
+            continue
+        updated_by_path[path] = repaired_text
+        repaired.append({"file": rel_file, "symbol": "diagnostics"})
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_sourcefile_diagnostics_repair",
+        metadata_key="diagnostics",
         metadata_value=repaired,
     )
 
@@ -1295,6 +1523,20 @@ def _parse_typescript_missing_export_errors(errors: list[str]) -> list[dict[str,
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
     for error in errors:
+        for match in _UNRESOLVED_IMPORT_SYMBOL_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": _normalize_declared_task_path(match.group("path")),
+                "line": "",
+                "col": "",
+                "module": str(match.group("module") or "").strip().strip("\"'"),
+                "symbol": str(match.group("symbol") or "").strip(),
+                "suggestion": "",
+            }
+            key = (item["file"], item["module"], item["symbol"])
+            if not item["file"] or not item["module"] or not item["symbol"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
         for pattern in (_TS_NO_EXPORTED_MEMBER_ERROR_RE, _TS_NO_EXPORTED_MEMBER_NAMED_ERROR_RE):
             for match in pattern.finditer(str(error or "")):
                 item = {
@@ -1384,6 +1626,53 @@ def _parse_typescript_nullable_canvas_context_errors(errors: list[str]) -> list[
             item = {"file": _normalize_declared_task_path(match.group("file")), "symbol": ""}
             key = (item["file"], item["symbol"])
             if not item["file"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _parse_typescript_duplicate_object_property_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for error in errors:
+        for match in _TS_DUPLICATE_OBJECT_PROPERTY_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": _normalize_declared_task_path(match.group("file")),
+                "line": str(match.group("line") or "").strip(),
+            }
+            key = (item["file"], item["line"])
+            if not item["file"] or not item["line"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _parse_typescript_sourcefile_diagnostics_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for error in errors:
+        for match in _TS_SOURCEFILE_DIAGNOSTICS_ERROR_RE.finditer(str(error or "")):
+            rel_file = _normalize_declared_task_path(match.group("file"))
+            if not rel_file or rel_file in seen:
+                continue
+            seen.add(rel_file)
+            parsed.append({"file": rel_file})
+    return parsed
+
+
+def _parse_html_typescript_module_script_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for error in errors:
+        for match in _HTML_TS_MODULE_SCRIPT_ERROR_RE.finditer(str(error or "")):
+            item = {
+                "file": _normalize_declared_task_path(match.group("path")),
+                "source": str(match.group("src") or "").strip(),
+            }
+            key = (item["file"], item["source"])
+            if not item["file"] or not item["source"] or key in seen:
                 continue
             seen.add(key)
             parsed.append(item)
@@ -1536,9 +1825,10 @@ def _repair_typescript_nullable_canvas_context_guards(
     text: str,
     symbols: set[str],
 ) -> tuple[str, list[str]]:
+    text, multiline_guarded = _repair_typescript_multiline_dom_handle_declarations(text, symbols)
     lines = text.splitlines()
     repaired_lines: list[str] = []
-    guarded: list[str] = []
+    guarded: list[str] = list(multiline_guarded)
     for index, line in enumerate(lines):
         match = _TS_CANVAS_CONTEXT_DECLARATION_LINE_RE.match(line)
         if match:
@@ -1567,8 +1857,12 @@ def _repair_typescript_nullable_canvas_context_guards(
         if symbols and symbol not in symbols:
             repaired_lines.append(line)
             continue
-        repaired_lines.append(line)
+        repaired_line = _typescript_dom_handle_non_null_assertion_line(line)
+        line_changed = repaired_line != line
+        repaired_lines.append(repaired_line)
         if _typescript_nullable_guard_follows(lines, index, symbol):
+            if line_changed:
+                guarded.append(symbol)
             continue
         indent = str(dom_match.group("indent") or "")
         repaired_lines.append(f"{indent}if (!{symbol}) {{")
@@ -1580,14 +1874,79 @@ def _repair_typescript_nullable_canvas_context_guards(
     return "\n".join(repaired_lines) + ("\n" if text.endswith("\n") else ""), _dedupe_preserve_order(guarded)
 
 
+def _repair_typescript_multiline_dom_handle_declarations(
+    text: str,
+    symbols: set[str],
+) -> tuple[str, list[str]]:
+    guarded: list[str] = []
+    declaration_re = re.compile(
+        r"(?ms)^(?P<indent>\s*)(?P<kind>const|let|var)\s+"
+        r"(?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*"
+        r"(?P<source>(?:document\.(?:getElementById|querySelector)|"
+        r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\.querySelector)"
+        r"\s*\(.*?\)\s+as\s+(?P<type>[^;\n]*\bnull\b[^;\n]*)\s*;)"
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        symbol = str(match.group("symbol") or "").strip()
+        if symbols and symbol not in symbols:
+            return match.group(0)
+        source = str(match.group("source") or "")
+        narrowed_source = re.sub(r"\s*\|\s*null\b", "", source)
+        narrowed_source = re.sub(r"\bnull\s*\|\s*", "", narrowed_source)
+        if narrowed_source == source:
+            return match.group(0)
+        guarded.append(symbol)
+        declaration = f"{match.group('indent')}{match.group('kind')} {symbol} = {narrowed_source}"
+        following = text[match.end() : match.end() + 240]
+        if _typescript_nullable_guard_in_text_window(following, symbol):
+            return declaration
+        indent = str(match.group("indent") or "")
+        return (
+            f"{declaration}\n"
+            f"{indent}if (!{symbol}) {{\n"
+            f'{indent}  throw new Error("DOM element unavailable: {symbol}");\n'
+            f"{indent}}}"
+        )
+
+    repaired = declaration_re.sub(_replace, text)
+    return repaired, _dedupe_preserve_order(guarded)
+
+
 def _typescript_canvas_context_non_null_assertion_line(line: str) -> str:
     if re.search(r"\.getContext\(\s*['\"]2d['\"]\s*\)!", line):
         return line
     return re.sub(r"(\.getContext\(\s*['\"]2d['\"]\s*\))(\s*;?\s*)$", r"\1!\2", line)
 
 
+def _typescript_dom_handle_non_null_assertion_line(line: str) -> str:
+    if "| null" in line or "null |" in line:
+        narrowed = re.sub(r"\s*\|\s*null\b", "", line)
+        narrowed = re.sub(r"\bnull\s*\|\s*", "", narrowed)
+        return narrowed
+    if re.search(
+        r"(?:document\.(?:getElementById|querySelector)|"
+        r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\.querySelector)"
+        r"\s*\([^;\n]*\)!",
+        line,
+    ):
+        return line
+    return re.sub(
+        r"((?:document\.(?:getElementById|querySelector)|"
+        r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\.querySelector)"
+        r"\s*\([^;\n]*\))",
+        r"\1!",
+        line,
+        count=1,
+    )
+
+
 def _typescript_nullable_guard_follows(lines: list[str], index: int, symbol: str) -> bool:
     window = "\n".join(lines[index + 1 : index + 7])
+    return _typescript_nullable_guard_in_text_window(window, symbol)
+
+
+def _typescript_nullable_guard_in_text_window(window: str, symbol: str) -> bool:
     compact = re.sub(r"\s+", "", window)
     return (
         f"if(!{symbol})" in compact
@@ -1596,6 +1955,153 @@ def _typescript_nullable_guard_follows(lines: list[str], index: int, symbol: str
         or f"if(null==={symbol})" in compact
         or f"if(null=={symbol})" in compact
     )
+
+
+def _repair_typescript_duplicate_object_property_lines(
+    text: str,
+    line_numbers: set[int],
+) -> tuple[str, list[int]]:
+    if not line_numbers:
+        return text, []
+    lines = text.splitlines()
+    removed: list[int] = []
+    for line_no in sorted(line_numbers, reverse=True):
+        index = line_no - 1
+        if index < 0 or index >= len(lines):
+            continue
+        line = lines[index]
+        if not _looks_like_single_line_typescript_object_property(line):
+            continue
+        del lines[index]
+        removed.append(line_no)
+    if not removed:
+        return text, []
+    repaired = "\n".join(lines)
+    if text.endswith("\n"):
+        repaired += "\n"
+    return repaired, sorted(removed)
+
+
+def _looks_like_single_line_typescript_object_property(line: str) -> bool:
+    stripped = str(line or "").strip()
+    if not stripped or ":" not in stripped:
+        return False
+    if stripped.startswith(("case ", "default", "return ", "if ", "for ", "while ", "//", "/*", "*")):
+        return False
+    property_re = re.compile(r"^(?:[A-Za-z_$][A-Za-z0-9_$]*|['\"][^'\"]+['\"]|\[[^\]]+\])\s*:\s*.+,?\s*(?://.*)?$")
+    return bool(property_re.match(stripped))
+
+
+def _repair_typescript_sourcefile_diagnostics_usage(text: str) -> str:
+    if "ts.createSourceFile" not in text:
+        return text
+    create_match = re.search(
+        r"ts\.createSourceFile\(\s*(?P<file>[A-Za-z_$][A-Za-z0-9_$]*)\s*,\s*"
+        r"(?P<source>[A-Za-z_$][A-Za-z0-9_$]*)",
+        text,
+        re.DOTALL,
+    )
+    source_var = str(create_match.group("source") if create_match else "text")
+    file_var = str(create_match.group("file") if create_match else "file")
+    diagnostics_re = re.compile(
+        r"(?m)^(?P<indent>\s*)const\s+diagnostics(?:\s*:[^=]+)?\s*=\s*"
+        r"(?P<expr>[^\n;]*(?:parseDiagnostics|undefined\s+as\s+unknown|unknown\s*\?\?\s*\[\])[^\n;]*);?\s*$"
+    )
+
+    def _replace(match: re.Match[str]) -> str:
+        indent = str(match.group("indent") or "")
+        inner = indent + "  "
+        return (
+            f"{indent}const diagnostics: readonly ts.Diagnostic[] =\n"
+            f"{inner}ts.transpileModule({source_var}, {{\n"
+            f"{inner}  compilerOptions: {{\n"
+            f"{inner}    module: ts.ModuleKind.ES2020,\n"
+            f"{inner}    target: ts.ScriptTarget.ES2020,\n"
+            f"{inner}  }},\n"
+            f"{inner}  fileName: {file_var},\n"
+            f"{inner}  reportDiagnostics: true,\n"
+            f"{inner}}}).diagnostics ?? [];"
+        )
+
+    repaired, replacements = diagnostics_re.subn(_replace, text, count=1)
+    if replacements == 0:
+        return text
+    repaired = re.sub(r"if\s*\(\s*(?:0\s*>\s*0|false)\s*\)", "if (diagnostics.length > 0)", repaired)
+    return repaired
+
+
+def _html_javascript_entrypoint_for_typescript_source(source_ref: str) -> str:
+    source = str(source_ref or "").strip().replace("\\", "/")
+    if not source.endswith((".ts", ".tsx")):
+        return ""
+    source_no_root = source.lstrip("/")
+    if source_no_root.startswith("src/"):
+        source_no_root = "dist/" + source_no_root[len("src/") :]
+    replacement = re.sub(r"\.tsx?$", ".js", source_no_root)
+    if not replacement:
+        return ""
+    return replacement
+
+
+def _typescript_existing_member_names_for_type(
+    *,
+    workspace_path: Path,
+    type_name: str,
+    updated_by_path: dict[Path, str],
+) -> set[str]:
+    declaration_path, declaration_text, start, end = _find_typescript_structural_type_declaration(
+        workspace_path=workspace_path,
+        type_name=type_name,
+        updated_by_path=updated_by_path,
+    )
+    if declaration_path is not None and declaration_text is not None and start >= 0 and end >= 0:
+        return set(_typescript_structural_member_type_map(declaration_text[start:end]).keys())
+    declaration_path, declaration_text, start, end = _find_typescript_class_declaration(
+        workspace_path=workspace_path,
+        type_name=type_name,
+        updated_by_path=updated_by_path,
+    )
+    if declaration_path is None or declaration_text is None or start < 0 or end < 0:
+        return set()
+    class_text = declaration_text[start:end]
+    members: set[str] = set()
+    member_re = re.compile(
+        r"^\s*(?:(?:public|private|protected)\s+)?(?:readonly\s+)?"
+        r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?:[:=]|\()",
+        re.MULTILINE,
+    )
+    for match in member_re.finditer(class_text):
+        members.add(str(match.group("name") or "").strip())
+    return {member for member in members if member}
+
+
+def _typescript_member_alias_replacement(
+    *,
+    receiver: str,
+    missing_member: str,
+    existing_members: set[str],
+) -> str:
+    if missing_member in {"x", "y"} and "position" in existing_members:
+        return f"{receiver}.position.{missing_member}"
+    if missing_member == "brightness" and "intensity" in existing_members:
+        return f"{receiver}.intensity"
+    if missing_member == "glow" and "brightness" in existing_members:
+        return f"{receiver}.brightness"
+    if missing_member == "size":
+        if "petalRadius" in existing_members:
+            return f"{receiver}.petalRadius"
+        if "radius" in existing_members:
+            return f"{receiver}.radius"
+    if missing_member == "color":
+        if {"hue", "saturation", "lightness"}.issubset(existing_members):
+            return (
+                f"`hsl(${{{receiver}.hue}}, "
+                f"${{Math.round({receiver}.saturation * 100)}}%, "
+                f"${{Math.round({receiver}.lightness * 100)}}%)`"
+            )
+        if "hue" in existing_members:
+            return f"`hsl(${{{receiver}.hue}}, 70%, 62%)`"
+    return ""
 
 
 def _add_vitest_import_to_typescript_test(text: str, symbols: set[str]) -> str:
@@ -3949,6 +4455,46 @@ def _build_typescript_suggested_export_alias_declaration(
     if _typescript_symbol_is_constructed(importer_text, symbol) or _typescript_symbol_is_called(importer_text, symbol):
         return "runtime_alias", f"export {{ {suggestion} as {symbol} }};"
     return "type_alias", f"export type {symbol} = {suggestion};"
+
+
+def _find_typescript_similar_runtime_declaration(module_text: str, symbol: str) -> str:
+    """Find a narrow alias candidate for generated import/export name drift."""
+
+    wanted = _normalize_typescript_identifier_for_similarity(symbol)
+    if not wanted:
+        return ""
+    declaration_re = re.compile(
+        r"^\s*(?:export\s+)?(?:async\s+)?(?:function|class|const|let|var|enum)\s+"
+        r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\b",
+        re.MULTILINE,
+    )
+    best = ""
+    best_score = 0
+    for match in declaration_re.finditer(module_text):
+        name = str(match.group("name") or "").strip()
+        if name == symbol:
+            continue
+        candidate = _normalize_typescript_identifier_for_similarity(name)
+        if not candidate:
+            continue
+        score = 0
+        if wanted.startswith(candidate):
+            score = len(candidate)
+        elif candidate.startswith(wanted):
+            score = len(wanted)
+        if score > best_score and score >= min(4, len(wanted)):
+            best = name
+            best_score = score
+    return best
+
+
+def _normalize_typescript_identifier_for_similarity(symbol: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "", str(symbol or "")).lower()
+    for suffix in ("checks", "check", "results", "result", "items", "item"):
+        if normalized.endswith(suffix) and len(normalized) > len(suffix) + 2:
+            normalized = normalized[: -len(suffix)]
+            break
+    return normalized
 
 
 def _typescript_symbol_is_constructed(text: str, symbol: str) -> bool:
