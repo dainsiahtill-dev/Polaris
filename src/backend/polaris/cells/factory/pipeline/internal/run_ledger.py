@@ -316,9 +316,38 @@ def _required_evidence_modalities_from_record(
     return _string_list(required)
 
 
+def _enabled_evidence_modalities_from_record(record: dict[str, Any]) -> list[str]:
+    enabled: list[str] = []
+
+    def extend(value: Any) -> None:
+        enabled.extend(_modality_list(value))
+
+    gate_policy = _record_policy_dict(record, "gate_policy", "quality_gate_policy")
+    verifier_policy = _record_policy_dict(record, "verifier_policy", "qa_verifier_policy", "domain_verifier_policy")
+    extend(record.get("enabled_evidence_modalities"))
+    extend(gate_policy.get("enabled_evidence_modalities") or gate_policy.get("enabled_modalities"))
+    extend(verifier_policy.get("enabled_evidence_modalities") or verifier_policy.get("enabled_modalities"))
+    if _record_bool(record, "browser_enabled", "qa_browser_enabled") or bool(verifier_policy.get("browser_enabled")):
+        enabled.append("browser")
+    if _record_bool(record, "visual_enabled", "qa_visual_enabled") or bool(verifier_policy.get("visual_enabled")):
+        enabled.append("visual")
+    if bool(verifier_policy.get("multimodal_llm_enabled")):
+        enabled.append("llm_judge")
+    if bool(verifier_policy.get("user_scripts_enabled")):
+        enabled.append("user_script")
+    if bool(verifier_policy.get("domain_verifiers_enabled")):
+        enabled.append("domain")
+    return _string_list(enabled)
+
+
 def _required_modalities_from_job_token(job_token: dict[str, Any]) -> list[str]:
     gate_policy = _dict_value(job_token.get("gate_policy"))
     return _modality_list(gate_policy.get("required_evidence_modalities") or gate_policy.get("required_modalities"))
+
+
+def _enabled_modalities_from_job_token(job_token: dict[str, Any]) -> list[str]:
+    gate_policy = _dict_value(job_token.get("gate_policy"))
+    return _modality_list(gate_policy.get("enabled_evidence_modalities") or gate_policy.get("enabled_modalities"))
 
 
 def _missing_required_modalities(
@@ -641,11 +670,13 @@ def build_job_token_from_record(
         record,
         stage=stage,
     )
+    enabled_evidence_modalities = _enabled_evidence_modalities_from_record(record)
     gate_policy = {
         "stage": stage,
         "requires_physical_artifacts": True,
         "requires_real_entrypoint": stage == "real_run_gate",
         "requires_command_evidence": stage == "real_run_gate",
+        "enabled_evidence_modalities": enabled_evidence_modalities,
         "required_evidence_modalities": required_evidence_modalities,
     }
     contract_sources: list[str] = []
@@ -829,6 +860,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     sampled_command_count = 0
     truncated_command_events = 0
     evidence_modalities: dict[str, dict[str, Any]] = {}
+    enabled_modalities: list[str] = []
     required_modalities: list[str] = []
     missing_required_modalities: list[str] = []
     for event in events:
@@ -854,7 +886,9 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         if physical_evidence.get("commands_truncated"):
             truncated_command_events += 1
         gate_modalities = _evidence_modalities_from_physical_evidence(physical_evidence)
+        gate_enabled_modalities = _enabled_modalities_from_job_token(job_token)
         gate_required_modalities = _required_modalities_from_job_token(job_token)
+        enabled_modalities.extend(gate_enabled_modalities)
         required_modalities.extend(gate_required_modalities)
         gate_missing_required_modalities = _missing_required_modalities(gate_required_modalities, gate_modalities)
         missing_required_modalities.extend(gate_missing_required_modalities)
@@ -885,12 +919,14 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "capability_ok": bool(capability_audit.get("ok")),
                 "capability_issues": list(issues) if isinstance(issues, list) else [],
                 "evidence_modalities": gate_modalities,
+                "enabled_evidence_modalities": gate_enabled_modalities,
                 "required_evidence_modalities": gate_required_modalities,
                 "missing_required_evidence_modalities": gate_missing_required_modalities,
             }
         )
     failed_gates = [gate for gate in gates if not gate["ok"]]
     capability_ok = bool(gates) and not capability_issues and all(gate["capability_ok"] for gate in gates)
+    enabled_modalities = _string_list(enabled_modalities)
     required_modalities = _string_list(required_modalities)
     missing_required_modalities = _string_list(missing_required_modalities)
     evidence_policy_ok = bool(gates) and not missing_required_modalities
@@ -924,6 +960,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         "evidence_modalities": dict(sorted(evidence_modalities.items())),
         "evidence_policy": {
             "ok": evidence_policy_ok,
+            "enabled_modalities": enabled_modalities,
             "required_modalities": required_modalities,
             "missing_required_modalities": missing_required_modalities,
         },

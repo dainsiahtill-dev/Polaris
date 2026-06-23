@@ -2433,143 +2433,6 @@ def _record_has_chief_engineer_blueprint_failure(record: dict[str, Any]) -> bool
     )
 
 
-_ROLE_TOOL_FAILURE_AUDIT_TOKENS = (
-    "director_write_policy_denied",
-    "handler_error_type",
-    "tool_result",
-    "tool_error",
-    "tool failure",
-    "**write_file**: error",
-    "policy_denied",
-    "permission_denied",
-    "scope_violation",
-    "unauthorized",
-    "director binding fanout",
-    "director_materialization_quality_failed",
-    "director_materialization_semantic_quality_failed",
-    "director_missing_write_receipt",
-    "director_no_materialized_changes",
-    "no_write_tool_available",
-    "write_tool_evidence=false",
-    '"write_tool_evidence": false',
-)
-
-
-def _record_has_role_tool_failure_audit_signal(
-    record: dict[str, Any],
-    taxonomy: dict[str, Any],
-) -> bool:
-    category = str(taxonomy.get("category") or "")
-    if category in {
-        "pm_contract",
-        "chief_engineer_blueprint",
-        "director_tool_execution",
-        "llm_output",
-        "context_budget",
-        "runtime_environment",
-    }:
-        return True
-    text = json.dumps(
-        {
-            "failure_taxonomy": taxonomy,
-            "failure_reasons": record.get("failure_reasons"),
-            "failure_evidence": record.get("failure_evidence"),
-            "chain": record.get("chain"),
-            "chain_results": record.get("chain_results"),
-            "llm_route_audit": record.get("llm_route_audit"),
-            "required_llm_roles": record.get("required_llm_roles"),
-        },
-        ensure_ascii=False,
-        default=str,
-    ).lower()
-    return any(token in text for token in _ROLE_TOOL_FAILURE_AUDIT_TOKENS)
-
-
-def _record_workspace_hint(record: dict[str, Any], project_id: str) -> str:
-    raw_workspace = str(record.get("workspace") or "").strip()
-    if raw_workspace:
-        return raw_workspace
-    backend_metadata = record.get("backend_metadata")
-    backend_workspace = ""
-    if isinstance(backend_metadata, dict):
-        backend_workspace = str(backend_metadata.get("workspace") or "").strip()
-    if not backend_workspace:
-        return ""
-    base = Path(backend_workspace)
-    if project_id and base.name != project_id:
-        return str(base / project_id)
-    return str(base)
-
-
-def build_role_tool_failure_opencode_audit_request(
-    record: dict[str, Any],
-    taxonomy: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Return the OpenCode audit assignment required by role tool failures."""
-    resolved_taxonomy = taxonomy if isinstance(taxonomy, dict) else {}
-    if not resolved_taxonomy:
-        existing = record.get("failure_taxonomy")
-        resolved_taxonomy = existing if isinstance(existing, dict) else classify_factory_bench_failure(record)
-
-    if bool(resolved_taxonomy.get("ok")) or not _record_has_role_tool_failure_audit_signal(record, resolved_taxonomy):
-        return {
-            "required": False,
-            "reason": "no_role_tool_failure_detected",
-        }
-
-    project_id = str(record.get("project_id") or "").strip()
-    level = record.get("level")
-    workspace = _record_workspace_hint(record, project_id)
-    runtime_dirs = record.get("runtime_dirs")
-    runtime_dir_list = [str(item) for item in runtime_dirs] if isinstance(runtime_dirs, list) else []
-    root_cause_signature = str(resolved_taxonomy.get("root_cause_signature") or "").strip()
-    evidence_items = [str(item) for item in list(resolved_taxonomy.get("evidence") or [])[:5] if str(item).strip()]
-    prompt = "\n".join(
-        [
-            "你是 Polaris 角色工具失败审计 OpenCode Agent。",
-            "任务：只读审计一次角色工具调用失败的真实根因，禁止修改代码。",
-            f"项目：{project_id or 'unknown'} L{level if level is not None else '?'}",
-            f"workspace：{workspace or '(unknown)'}",
-            f"runtime_dirs：{', '.join(runtime_dir_list) if runtime_dir_list else '(unknown)'}",
-            f"root_cause_signature：{root_cause_signature or '(unknown)'}",
-            "必须检查：",
-            "1. runtime event 中失败角色的 tool_call/tool_result 原始证据。",
-            "2. LLM call_start metadata.final_request_context_audit 与最终 messages。",
-            "3. context_snapshot_ref 对应 ContextOS 快照是否把失败回执原文再次投喂给 LLM。",
-            "4. ToolSpec、arg_aliases、工具名别名、参数字段归一化是否覆盖了该模型的调用习惯。",
-            "5. 失败应归因到 PM 合同、ChiefEngineer 蓝图、Director 工具执行、LLM 输出、上下文预算、目标项目基线、运行环境之一。",
-            "禁止：修改目标项目代码、mock 成功、吞异常、把工具失败改成静默 fallback。",
-            "最终输出 JSON：status/root_cause/evidence_paths/context_audit/tool_normalization_audit/remaining_risks。",
-            "触发证据：",
-            json.dumps(evidence_items, ensure_ascii=False),
-        ]
-    )
-    return {
-        "required": True,
-        "reason": "role_tool_failure_detected",
-        "mode": "read_only_first",
-        "recommended_agent_count": 5,
-        "trigger_category": str(resolved_taxonomy.get("category") or ""),
-        "root_cause_signature": root_cause_signature,
-        "must_review": [
-            "runtime_event_tool_call_and_tool_result",
-            "llm_call_start_final_request_context_audit",
-            "context_snapshot_ref_and_projected_messages",
-            "toolspec_arg_aliases_and_provider_tool_call_normalization",
-            "seven_bucket_failure_attribution",
-        ],
-        "forbidden": [
-            "target_project_code_changes",
-            "mock_or_fake_runtime_path",
-            "hardcoded_success",
-            "silent_fallback",
-            "polling_realtime_path",
-        ],
-        "opencode_command": 'opencode run "<self-contained role-tool-failure audit prompt>"',
-        "prompt": prompt,
-    }
-
-
 def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     """Assign one stable root-cause category to a per-project bench record."""
     if record.get("all_checks_passed"):
@@ -2682,7 +2545,9 @@ def apply_factory_bench_failure_taxonomy(record: dict[str, Any]) -> dict[str, An
     evidence = taxonomy.get("evidence")
     record["failure_reasons"] = list(reasons) if isinstance(reasons, list) else []
     record["failure_evidence"] = list(evidence) if isinstance(evidence, list) else []
-    record["opencode_audit"] = build_role_tool_failure_opencode_audit_request(record, taxonomy)
+    # OpenCode external audits are a main-Agent-only collaboration mechanism.
+    # They must never become Polaris/Factory machine-readable platform state.
+    record.pop("opencode_audit", None)
     record["goal_audit"] = aggregate_goal_audit([record])
     return taxonomy
 
@@ -2725,7 +2590,6 @@ __all__ = [
     "apply_factory_bench_failure_taxonomy",
     "build_llm_route_audit",
     "build_real_run_gate",
-    "build_role_tool_failure_opencode_audit_request",
     "classify_factory_bench_failure",
     "collect_llm_events",
     "resolve_expected_llm_bindings",

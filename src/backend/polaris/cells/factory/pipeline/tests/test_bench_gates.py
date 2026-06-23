@@ -77,14 +77,7 @@ def test_apply_factory_bench_failure_taxonomy_exposes_top_level_fields() -> None
     assert record["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
     assert record["failure_reasons"]
     assert record["failure_evidence"] == ["real run gate failed: build_test_lint_ran"]
-    opencode_audit = record["opencode_audit"]
-    assert opencode_audit["required"] is True
-    assert opencode_audit["reason"] == "role_tool_failure_detected"
-    assert opencode_audit["mode"] == "read_only_first"
-    assert opencode_audit["trigger_category"] == "llm_output"
-    assert opencode_audit["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
-    assert "target_project_code_changes" in opencode_audit["forbidden"]
-    assert "llm_call_start_final_request_context_audit" in opencode_audit["must_review"]
+    assert "opencode_audit" not in record
     assert record["goal_audit"] == {
         "total": 1,
         "real_run_gate": {"passed": 0, "total": 1},
@@ -110,12 +103,12 @@ def test_failure_taxonomy_classifies_missing_run_ledger_gate_as_control_plane() 
 
     taxonomy = classify_factory_bench_failure(record)
 
-    assert taxonomy["category"] == "control_plane"
+    assert taxonomy["category"] == "director_tool_execution"
     assert taxonomy["root_cause_signature"] == "control_plane:run_ledger_projection_missing"
     assert taxonomy["evidence"] == ["run ledger projection missing"]
 
 
-def test_opencode_audit_required_for_director_semantic_materialization_failure() -> None:
+def test_role_tool_failure_taxonomy_does_not_emit_platform_opencode_audit() -> None:
     record: dict[str, Any] = {
         "project_id": "L1-02",
         "level": 1,
@@ -132,19 +125,12 @@ def test_opencode_audit_required_for_director_semantic_materialization_failure()
             }
         },
     }
-    taxonomy = {
-        "ok": False,
-        "category": "control_plane",
-        "root_cause_signature": "control_plane:director_semantic_quality_failed",
-        "reasons": [],
-        "evidence": ["director_materialization_semantic_quality_failed"],
-    }
+    record["opencode_audit"] = {"required": True, "reason": "legacy_input"}
 
-    opencode_audit = bench_gates.build_role_tool_failure_opencode_audit_request(record, taxonomy)
+    taxonomy = bench_gates.apply_factory_bench_failure_taxonomy(record)
 
-    assert opencode_audit["required"] is True
-    assert opencode_audit["reason"] == "role_tool_failure_detected"
-    assert opencode_audit["mode"] == "read_only_first"
+    assert taxonomy["category"] == "control_plane"
+    assert "opencode_audit" not in record
 
 
 def test_failure_taxonomy_classifies_non_terminal_real_run_skip_as_runtime_environment() -> None:
@@ -403,13 +389,10 @@ def test_factory_bench_taxonomy_does_not_treat_ce_full_blueprint_count_as_partia
     assert taxonomy["root_cause_signature"] == "director_tool_execution:director_materialization_failed"
     assert "secondary_real_run_gate:real run gate failed: build_test_lint_ran" in taxonomy["evidence"]
     assert record["failure_category"] == "director_tool_execution"
-    assert record["opencode_audit"]["required"] is True
-    assert record["opencode_audit"]["recommended_agent_count"] == 5
-    assert "context_snapshot_ref" in record["opencode_audit"]["prompt"]
-    assert "toolspec_arg_aliases_and_provider_tool_call_normalization" in record["opencode_audit"]["must_review"]
+    assert "opencode_audit" not in record
 
 
-def test_role_tool_failure_opencode_prompt_derives_project_workspace_from_backend_metadata() -> None:
+def test_role_tool_failure_taxonomy_keeps_opencode_out_of_platform_record() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,
         "project_id": "L1-01",
@@ -428,12 +411,13 @@ def test_role_tool_failure_opencode_prompt_derives_project_workspace_from_backen
         },
     }
 
-    apply_factory_bench_failure_taxonomy(record)
+    taxonomy = apply_factory_bench_failure_taxonomy(record)
 
-    assert "workspace：/tmp/factory-bench/L1-01" in record["opencode_audit"]["prompt"]
+    assert taxonomy["category"] == "director_tool_execution"
+    assert "opencode_audit" not in record
 
 
-def test_pm_contract_failure_requires_opencode_audit() -> None:
+def test_pm_contract_failure_does_not_emit_platform_opencode_audit() -> None:
     record: dict[str, Any] = {
         "all_checks_passed": False,
         "project_id": "L1-01",
@@ -458,7 +442,7 @@ def test_pm_contract_failure_requires_opencode_audit() -> None:
     taxonomy = apply_factory_bench_failure_taxonomy(record)
 
     assert taxonomy["category"] == "pm_contract"
-    assert record["opencode_audit"]["required"] is True
+    assert "opencode_audit" not in record
 
 
 def test_factory_bench_taxonomy_prioritizes_post_qa_artifact_failure_over_director_failure() -> None:
@@ -515,7 +499,7 @@ def test_factory_bench_taxonomy_prioritizes_post_qa_artifact_failure_over_direct
     assert taxonomy["category"] == "llm_output"
     assert taxonomy["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
     assert record["failure_category"] == "llm_output"
-    assert record["opencode_audit"]["required"] is True
+    assert "opencode_audit" not in record
 
 
 def test_factory_bench_taxonomy_classifies_post_qa_typescript_failure_as_llm_output() -> None:
@@ -589,7 +573,7 @@ def test_factory_bench_taxonomy_classifies_post_qa_typescript_failure_as_llm_out
     assert taxonomy["root_cause_signature"] == "llm_output:real_run_gate.build_test_lint_ran"
     assert record["failure_category"] == "llm_output"
     assert record["goal_audit"]["failure_categories"] == {"llm_output": 1}
-    assert record["opencode_audit"]["required"] is True
+    assert "opencode_audit" not in record
 
 
 def test_factory_bench_taxonomy_prioritizes_chief_engineer_blocker_over_downstream_route_audit() -> None:

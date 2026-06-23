@@ -18,6 +18,7 @@ import {
   Layers,
   Terminal,
   Sparkles,
+  Globe,
 } from 'lucide-react';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
@@ -53,6 +54,14 @@ interface WorkflowSettingsTabProps {
     pm_max_same?: number;
     qa_enabled?: boolean;
     slm_enabled?: boolean;
+    verifier_policy?: {
+      browser_enabled?: boolean;
+      visual_enabled?: boolean;
+      multimodal_llm_enabled?: boolean;
+      user_scripts_enabled?: boolean;
+      domain_verifiers_enabled?: boolean;
+      required_evidence_modalities?: string[];
+    };
   } | null;
   onSave: (payload: Record<string, unknown>) => Promise<void>;
 }
@@ -177,6 +186,7 @@ function ToggleField({
         <div className="flex items-center justify-between gap-4">
           <span className="text-sm font-medium text-slate-200">{label}</span>
           <Switch
+            aria-label={label}
             checked={checked}
             onCheckedChange={onChange}
             className="data-[state=checked]:bg-emerald-500"
@@ -214,6 +224,11 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
     pmMaxSame: 3,
     qaEnabled: true,
     slmEnabled: false,
+    verifierBrowserEnabled: false,
+    verifierVisualEnabled: false,
+    verifierMultimodalLlmEnabled: false,
+    verifierUserScriptsEnabled: false,
+    verifierDomainEnabled: false,
   });
 
   useEffect(() => {
@@ -240,6 +255,13 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
       pmMaxSame: settings.pm_max_same ?? prev.pmMaxSame,
       qaEnabled: settings.qa_enabled ?? prev.qaEnabled,
       slmEnabled: settings.slm_enabled ?? prev.slmEnabled,
+      verifierBrowserEnabled: settings.verifier_policy?.browser_enabled ?? prev.verifierBrowserEnabled,
+      verifierVisualEnabled: settings.verifier_policy?.visual_enabled ?? prev.verifierVisualEnabled,
+      verifierMultimodalLlmEnabled:
+        settings.verifier_policy?.multimodal_llm_enabled ?? prev.verifierMultimodalLlmEnabled,
+      verifierUserScriptsEnabled:
+        settings.verifier_policy?.user_scripts_enabled ?? prev.verifierUserScriptsEnabled,
+      verifierDomainEnabled: settings.verifier_policy?.domain_verifiers_enabled ?? prev.verifierDomainEnabled,
     }));
   }, [settings]);
 
@@ -268,6 +290,14 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
         pm_max_same: formState.pmMaxSame,
         qa_enabled: formState.qaEnabled,
         slm_enabled: formState.slmEnabled,
+        verifier_policy: {
+          browser_enabled: formState.verifierBrowserEnabled,
+          visual_enabled: formState.verifierVisualEnabled,
+          multimodal_llm_enabled: formState.verifierMultimodalLlmEnabled,
+          user_scripts_enabled: formState.verifierUserScriptsEnabled,
+          domain_verifiers_enabled: formState.verifierDomainEnabled,
+          required_evidence_modalities: settings?.verifier_policy?.required_evidence_modalities ?? [],
+        },
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -531,6 +561,61 @@ export function WorkflowSettingsTab({ settings, onSave }: WorkflowSettingsTabPro
             </div>
           </SectionCard>
         </div>
+      </section>
+
+      {/* Verifier Policy Section */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 uppercase tracking-wider">
+          <CheckCircle2 className="w-4 h-4 text-cyan-300" />
+          验收能力策略
+        </div>
+
+        <SectionCard
+          title="可选证据模态"
+          icon={Activity}
+          description="这些能力只在启用后参与平台级 QA/Verifier；未启用时不会成为硬门禁"
+        >
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <ToggleField
+              label="Browser 验收"
+              description="使用浏览器/Playwright 类环境采集页面运行证据"
+              checked={formState.verifierBrowserEnabled}
+              onChange={(v) => updateField('verifierBrowserEnabled', v)}
+              icon={Globe}
+            />
+            <ToggleField
+              label="Visual 验收"
+              description="采集截图、Canvas 或视觉状态证据；可供多模态 QA 使用"
+              checked={formState.verifierVisualEnabled}
+              onChange={(v) => updateField('verifierVisualEnabled', v)}
+              icon={Sparkles}
+            />
+            <ToggleField
+              label="多模态 LLM 裁判"
+              description="允许支持视觉的 QA 模型参与页面、图像或交互结果验收"
+              checked={formState.verifierMultimodalLlmEnabled}
+              onChange={(v) => updateField('verifierMultimodalLlmEnabled', v)}
+              icon={Cpu}
+            />
+            <ToggleField
+              label="用户脚本验证"
+              description="允许项目提供受控脚本验证物理、算法、数据或领域规则"
+              checked={formState.verifierUserScriptsEnabled}
+              onChange={(v) => updateField('verifierUserScriptsEnabled', v)}
+              icon={Terminal}
+            />
+            <ToggleField
+              label="领域验证器"
+              description="启用物理引擎、粒子、数据质量、算法阈值等专用验证器"
+              checked={formState.verifierDomainEnabled}
+              onChange={(v) => updateField('verifierDomainEnabled', v)}
+              icon={Layers}
+            />
+          </div>
+          <div className="mt-4 rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-3 text-xs text-cyan-100/80">
+            Run Ledger 只把显式 required 的证据模态视为硬门禁；这些开关表示能力是否可用，不会隐式要求用户安装浏览器或视觉环境。
+          </div>
+        </SectionCard>
       </section>
 
       {/* Features Section */}

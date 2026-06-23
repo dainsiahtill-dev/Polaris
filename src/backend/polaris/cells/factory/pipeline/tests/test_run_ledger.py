@@ -262,6 +262,7 @@ def test_run_ledger_projection_is_canonical_read_model(tmp_path: Path) -> None:
     assert projection["capability"]["latest_token_id"] == ledger_meta["job_token_id"]
     assert projection["physical_evidence"]["command_count"] >= projection["physical_evidence"]["sampled_command_count"]
     assert projection["evidence_policy"]["ok"] is True
+    assert projection["evidence_policy"]["enabled_modalities"] == []
     assert projection["evidence_policy"]["required_modalities"] == ["code", "command"]
 
 
@@ -306,6 +307,7 @@ def test_run_ledger_projection_tracks_user_verifier_modalities(tmp_path: Path) -
     assert projection["ok"] is True
     assert projection["evidence_policy"] == {
         "ok": True,
+        "enabled_modalities": [],
         "required_modalities": ["physics"],
         "missing_required_modalities": [],
     }
@@ -359,6 +361,47 @@ def test_run_ledger_policy_does_not_require_browser_unless_explicit(tmp_path: Pa
     token = build_job_token_from_record(record, run_id="bench_1", project_id="P1")
 
     assert token.gate_policy["required_evidence_modalities"] == ["code", "command"]
+
+
+def test_run_ledger_policy_tracks_enabled_browser_without_requiring_it(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "code_files": ["index.html"],
+        "verifier_policy": {
+            "browser_enabled": True,
+            "visual_enabled": True,
+            "enabled_evidence_modalities": ["browser", "visual"],
+            "required_evidence_modalities": [],
+        },
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "run static web app"},
+    }
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1", stage="qa_verifier")
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": True,
+            "summary": "non-browser verifier passed",
+        },
+        gate_name="qa_verifier",
+    )
+
+    RunLedger(tmp_path, run_id="bench_1").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+
+    assert token.gate_policy["enabled_evidence_modalities"] == ["browser", "visual"]
+    assert token.gate_policy["required_evidence_modalities"] == []
+    assert projection["ok"] is True
+    assert projection["evidence_policy"] == {
+        "ok": True,
+        "enabled_modalities": ["browser", "visual"],
+        "required_modalities": [],
+        "missing_required_modalities": [],
+    }
+    assert projection["gates"][0]["enabled_evidence_modalities"] == ["browser", "visual"]
 
 
 def test_run_ledger_policy_can_explicitly_require_browser_evidence(tmp_path: Path) -> None:

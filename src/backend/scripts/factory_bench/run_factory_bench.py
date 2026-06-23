@@ -3681,12 +3681,6 @@ def main() -> int:
         )
         apply_factory_bench_gates(record, chain)
         apply_factory_bench_failure_taxonomy(record)
-        opencode_audit_schedule = _materialize_role_tool_failure_opencode_audit(
-            base=base,
-            run_id=run_id,
-            project_id=pid,
-            record=record,
-        )
         convergence = audit_bundle.get("director_convergence")
         if isinstance(convergence, dict):
             record["director_convergence"] = convergence
@@ -3745,22 +3739,6 @@ def main() -> int:
                 "failure_taxonomy": record["failure_taxonomy"],
             },
         )
-        if opencode_audit_schedule:
-            _emit_bench_event(
-                workspace=base,
-                project_id=pid,
-                level=int(project.get("level") or 0),
-                name="opencode.audit.scheduled",
-                summary=f"{pid} role-tool-failure OpenCode audit scheduled",
-                meta={
-                    "session_id": bench_session_id,
-                    "project_id": pid,
-                    "request_path": opencode_audit_schedule.get("request_path"),
-                    "agent_count": opencode_audit_schedule.get("agent_count"),
-                    "execution_status": record.get("opencode_audit", {}).get("execution_status"),
-                    "root_cause_signature": record.get("root_cause_signature"),
-                },
-            )
         # Push live counters so the front-end sees ``X/Y 通过`` update
         # immediately, not only at run.completed.
         if backend_url and bench_session_id:

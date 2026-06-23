@@ -156,14 +156,21 @@ function controlPlaneProjectionSummary(projection: ControlPlaneProjection): stri
 
 function evidencePolicyLabel(projection: ControlPlaneProjection): string {
   const policy = projection.evidence_policy;
-  if (!policy || policy.required_modalities.length === 0) return '可选验证未启用';
+  const enabled = policy?.enabled_modalities ?? [];
+  if (!policy || (enabled.length === 0 && policy.required_modalities.length === 0)) {
+    return '可选验证未启用';
+  }
   return policy.ok ? '可选验证已启用' : '可选验证缺证据';
 }
 
 function evidencePolicySummary(projection: ControlPlaneProjection): string {
   const policy = projection.evidence_policy;
-  if (!policy || policy.required_modalities.length === 0) {
+  const enabled = policy?.enabled_modalities ?? [];
+  if (!policy || (enabled.length === 0 && policy.required_modalities.length === 0)) {
     return 'browser / visual / domain verifier 未作为硬门禁';
+  }
+  if (policy.required_modalities.length === 0) {
+    return `可选启用 ${enabled.join(', ')} · 未作为硬门禁`;
   }
   const required = policy.required_modalities.join(', ');
   if (policy.missing_required_modalities.length > 0) {

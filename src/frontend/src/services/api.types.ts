@@ -646,6 +646,17 @@ export interface BackendSettings {
   slm_enabled?: boolean;
   qa_enabled?: boolean;
   debug_tracing?: boolean;
+  verifier_policy?: VerifierPolicySettings;
+}
+
+export interface VerifierPolicySettings {
+  browser_enabled?: boolean;
+  visual_enabled?: boolean;
+  multimodal_llm_enabled?: boolean;
+  user_scripts_enabled?: boolean;
+  domain_verifiers_enabled?: boolean;
+  enabled_evidence_modalities?: string[];
+  required_evidence_modalities?: string[];
 }
 
 // ============================================================================

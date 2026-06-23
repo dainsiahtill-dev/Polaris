@@ -80,6 +80,7 @@ def _empty_control_plane_projection(*, session_status: str, audit_path: Path | N
 
 
 def _merge_project_evidence_policy(projects: list[dict[str, Any]]) -> dict[str, Any]:
+    enabled: list[str] = []
     required: list[str] = []
     missing: list[str] = []
     has_policy = False
@@ -88,16 +89,21 @@ def _merge_project_evidence_policy(projects: list[dict[str, Any]]) -> dict[str, 
         if not isinstance(policy, dict):
             continue
         has_policy = True
+        raw_enabled = policy.get("enabled_modalities")
+        if isinstance(raw_enabled, list):
+            enabled.extend(str(item) for item in raw_enabled if str(item))
         raw_required = policy.get("required_modalities")
         if isinstance(raw_required, list):
             required.extend(str(item) for item in raw_required if str(item))
         raw_missing = policy.get("missing_required_modalities")
         if isinstance(raw_missing, list):
             missing.extend(str(item) for item in raw_missing if str(item))
+    enabled = list(dict.fromkeys(enabled))
     required = list(dict.fromkeys(required))
     missing = list(dict.fromkeys(missing))
     return {
         "ok": has_policy and not missing,
+        "enabled_modalities": enabled,
         "required_modalities": required,
         "missing_required_modalities": missing,
     }

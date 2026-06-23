@@ -17,6 +17,7 @@ from polaris.bootstrap.config import (
     ServerConfig,
     Settings,
     SettingsUpdate,
+    VerifierPolicyConfig,
     default_system_cache_base,
     find_workspace_root,
     get_backend_root,
@@ -234,6 +235,47 @@ class TestServerConfig:
         assert "http://example.com" in config.cors_origins
 
 
+class TestVerifierPolicyConfig:
+    """Test platform-level verifier policy configuration."""
+
+    def test_defaults_do_not_enable_optional_modalities(self) -> None:
+        config = VerifierPolicyConfig()
+
+        assert config.browser_enabled is False
+        assert config.visual_enabled is False
+        assert config.multimodal_llm_enabled is False
+        assert config.user_scripts_enabled is False
+        assert config.domain_verifiers_enabled is False
+        assert config.enabled_evidence_modalities() == []
+        assert config.required_evidence_modalities == []
+
+    def test_normalizes_enabled_and_required_modalities(self) -> None:
+        config = VerifierPolicyConfig(
+            browser_enabled="true",  # type: ignore[arg-type]
+            visual_enabled="1",  # type: ignore[arg-type]
+            multimodal_llm_enabled=True,
+            user_scripts_enabled=True,
+            domain_verifiers_enabled=True,
+            required_evidence_modalities="browser; multimodal_llm, domain-verifier",
+        )
+
+        assert config.enabled_evidence_modalities() == [
+            "browser",
+            "visual",
+            "llm_judge",
+            "user_script",
+            "domain",
+        ]
+        assert config.required_evidence_modalities == ["browser", "llm_judge", "domain"]
+        assert config.to_gate_policy()["enabled_evidence_modalities"] == [
+            "browser",
+            "visual",
+            "llm_judge",
+            "user_script",
+            "domain",
+        ]
+
+
 class TestSettingsUpdate:
     """Test partial settings update payload."""
 
@@ -250,6 +292,7 @@ class TestSettingsUpdate:
         update = SettingsUpdate(timeout=300)
         assert update.timeout == 300
         assert update.workspace is None
+        assert update.verifier_policy is None
 
 
 class TestSettings:
@@ -270,6 +313,7 @@ class TestSettings:
         assert isinstance(settings.logging, LoggingConfig)
         assert isinstance(settings.server, ServerConfig)
         assert isinstance(settings.jsonl, JSONLConfig)
+        assert isinstance(settings.verifier_policy, VerifierPolicyConfig)
 
     def test_model_property(self) -> None:
         """Should expose model via property."""
@@ -323,6 +367,22 @@ class TestSettings:
         settings.apply_update(update)
         assert settings.jsonl.max_buffer == 5000
 
+    def test_apply_update_verifier_policy(self) -> None:
+        """Should apply platform verifier policy updates."""
+        settings = Settings(self_upgrade_mode=True)
+        update = SettingsUpdate(
+            verifier_policy={
+                "browser_enabled": True,
+                "visual_enabled": True,
+                "required_evidence_modalities": ["browser"],
+            }
+        )
+        settings.apply_update(update)
+
+        assert settings.verifier_policy.browser_enabled is True
+        assert settings.verifier_policy.visual_enabled is True
+        assert settings.verifier_policy.required_evidence_modalities == ["browser"]
+
     def test_to_payload(self) -> None:
         """Should produce JSON-safe payload."""
         settings = Settings()
@@ -331,6 +391,20 @@ class TestSettings:
         assert "model" in payload
         assert "pm_backend" in payload
         assert "director_model" in payload
+        assert payload["verifier_policy"]["enabled_evidence_modalities"] == []
+        assert payload["verifier_policy"]["required_evidence_modalities"] == []
+
+    def test_from_env_verifier_policy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Should parse verifier policy from platform environment variables."""
+        monkeypatch.setenv("KERNELONE_VERIFIER_BROWSER_ENABLED", "1")
+        monkeypatch.setenv("KERNELONE_VERIFIER_VISUAL_ENABLED", "true")
+        monkeypatch.setenv("KERNELONE_VERIFIER_REQUIRED_MODALITIES", "browser, visual")
+
+        settings = Settings.from_env()
+
+        assert settings.verifier_policy.browser_enabled is True
+        assert settings.verifier_policy.visual_enabled is True
+        assert settings.verifier_policy.required_evidence_modalities == ["browser", "visual"]
 
     def test_runtime_base_property(self) -> None:
         """Should resolve runtime base correctly."""

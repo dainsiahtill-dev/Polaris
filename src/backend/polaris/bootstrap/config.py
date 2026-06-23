@@ -302,6 +302,122 @@ class ServerConfig(BaseModel):
     )
 
 
+def _normalize_modality_name(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    alias = {
+        "llm": "llm_judge",
+        "multimodal": "llm_judge",
+        "multimodal_llm": "llm_judge",
+        "script": "user_script",
+        "user_scripts": "user_script",
+        "domain_verifier": "domain",
+        "domain_verifiers": "domain",
+    }.get(text, text)
+    return "".join(ch for ch in alias if ch.isalnum() or ch == "_")
+
+
+def _normalize_modality_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw_values = [item.strip() for item in value.replace(";", ",").split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        raw_values = list(value)
+    else:
+        raw_values = []
+    output: list[str] = []
+    seen: set[str] = set()
+    for item in raw_values:
+        name = _normalize_modality_name(item)
+        if name and name not in seen:
+            output.append(name)
+            seen.add(name)
+    return output
+
+
+class VerifierPolicyConfig(BaseModel):
+    """Platform-level optional QA/verifier capability policy.
+
+    Factory Bench may consume this during internal stress testing, but this
+    config is intentionally platform-named: production UI and formal project
+    runs must not depend on Bench concepts to decide which evidence modalities
+    are enabled or required.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    browser_enabled: bool = Field(
+        default=False,
+        description="Enable browser-based QA evidence when the environment supports it.",
+    )
+    visual_enabled: bool = Field(
+        default=False,
+        description="Enable visual evidence such as screenshots/canvas probes.",
+    )
+    multimodal_llm_enabled: bool = Field(
+        default=False,
+        description="Enable multimodal LLM judgement as an optional QA verifier.",
+    )
+    user_scripts_enabled: bool = Field(
+        default=False,
+        description="Allow user-provided verifier scripts to run under gate policy.",
+    )
+    domain_verifiers_enabled: bool = Field(
+        default=False,
+        description="Enable domain-specific verifier evidence such as physics/data/algorithm checks.",
+    )
+    required_evidence_modalities: list[str] = Field(
+        default_factory=list,
+        description="Evidence modalities that are hard requirements for gate success.",
+    )
+
+    @field_validator(
+        "browser_enabled",
+        "visual_enabled",
+        "multimodal_llm_enabled",
+        "user_scripts_enabled",
+        "domain_verifiers_enabled",
+        mode="before",
+    )
+    @classmethod
+    def normalize_bool(cls, value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return bool(value)
+
+    @field_validator("required_evidence_modalities", mode="before")
+    @classmethod
+    def normalize_required_modalities(cls, value: Any) -> list[str]:
+        return _normalize_modality_list(value)
+
+    def enabled_evidence_modalities(self) -> list[str]:
+        modalities: list[str] = []
+        if self.browser_enabled:
+            modalities.append("browser")
+        if self.visual_enabled:
+            modalities.append("visual")
+        if self.multimodal_llm_enabled:
+            modalities.append("llm_judge")
+        if self.user_scripts_enabled:
+            modalities.append("user_script")
+        if self.domain_verifiers_enabled:
+            modalities.append("domain")
+        return modalities
+
+    def to_gate_policy(self) -> dict[str, Any]:
+        """Return the platform verifier slice expected by Job Token builders."""
+
+        return {
+            "browser_enabled": self.browser_enabled,
+            "visual_enabled": self.visual_enabled,
+            "multimodal_llm_enabled": self.multimodal_llm_enabled,
+            "user_scripts_enabled": self.user_scripts_enabled,
+            "domain_verifiers_enabled": self.domain_verifiers_enabled,
+            "enabled_evidence_modalities": self.enabled_evidence_modalities(),
+            "required_evidence_modalities": list(self.required_evidence_modalities),
+        }
+
+
 class SettingsUpdate(BaseModel):
     """Partial settings update payload."""
 
@@ -322,6 +438,7 @@ class SettingsUpdate(BaseModel):
     server: dict[str, Any] | None = None
     jsonl: dict[str, Any] | None = None
     nats: dict[str, Any] | None = None
+    verifier_policy: dict[str, Any] | None = None
 
     model: str | None = None
     pm_backend: str | None = None
@@ -417,6 +534,7 @@ class Settings(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     jsonl: JSONLConfig = Field(default_factory=JSONLConfig.from_env)
     nats: NATSConfig = Field(default_factory=NATSConfig)
+    verifier_policy: VerifierPolicyConfig = Field(default_factory=VerifierPolicyConfig)
 
     timeout: int = Field(default=0, description="PM orchestration timeout in seconds")
     close_to_tray: bool = Field(default=True, description="Hide window to tray when the desktop window is closed")
@@ -846,6 +964,8 @@ class Settings(BaseModel):
                 self.server = ServerConfig(**value)
             elif key == "jsonl" and isinstance(value, dict):
                 self.jsonl = JSONLConfig(**value)
+            elif key == "verifier_policy" and isinstance(value, dict):
+                self.verifier_policy = VerifierPolicyConfig(**value)
             elif key == "jsonl_lock_stale_sec":
                 self.jsonl.lock_stale_sec = float(value or 120.0)
             elif key == "jsonl_buffer_enabled":
@@ -1041,6 +1161,7 @@ class Settings(BaseModel):
         payload["nats_required"] = self.nats.required
         payload["nats_url"] = self.nats.url
         payload["nats_stream_name"] = self.nats.stream_name
+        payload["verifier_policy"] = self.verifier_policy.to_gate_policy()
         return payload
 
     @classmethod
@@ -1234,6 +1355,23 @@ class Settings(BaseModel):
                 nats_config[key] = _parse_value(raw)
         if nats_config:
             kwargs["nats"] = NATSConfig(**nats_config)
+
+        verifier_policy_config: dict[str, Any] = {}
+        for key, env_key in (
+            ("browser_enabled", "KERNELONE_VERIFIER_BROWSER_ENABLED"),
+            ("visual_enabled", "KERNELONE_VERIFIER_VISUAL_ENABLED"),
+            ("multimodal_llm_enabled", "KERNELONE_VERIFIER_MULTIMODAL_LLM_ENABLED"),
+            ("user_scripts_enabled", "KERNELONE_VERIFIER_USER_SCRIPTS_ENABLED"),
+            ("domain_verifiers_enabled", "KERNELONE_VERIFIER_DOMAIN_ENABLED"),
+        ):
+            raw = os.environ.get(env_key)
+            if raw is not None:
+                verifier_policy_config[key] = _parse_bool(raw)
+        required_modalities = os.environ.get("KERNELONE_VERIFIER_REQUIRED_MODALITIES")
+        if required_modalities:
+            verifier_policy_config["required_evidence_modalities"] = _normalize_modality_list(required_modalities)
+        if verifier_policy_config:
+            kwargs["verifier_policy"] = VerifierPolicyConfig(**verifier_policy_config)
 
         return cls(**kwargs)
 

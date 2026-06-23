@@ -8,6 +8,7 @@
 
 export interface ControlPlaneEvidencePolicy {
   ok: boolean;
+  enabled_modalities?: string[];
   required_modalities: string[];
   missing_required_modalities: string[];
 }
@@ -51,4 +52,3 @@ export interface ControlPlaneProjection {
   evidence_policy?: ControlPlaneEvidencePolicy;
   evidence_modalities?: Record<string, ControlPlaneEvidenceModalitySummary>;
 }
-
