@@ -1491,6 +1491,7 @@ def test_main_audit_path_points_to_conflict_when_same_id_reused(monkeypatch: Any
         "build_factory_audit_record",
         lambda **_kwargs: _successful_audit_record(),
     )
+    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
     monkeypatch.setattr(
         bench,
         "build_real_run_gate",
@@ -2214,11 +2215,6 @@ def test_main_start_failed_chain_marks_audit_as_non_terminal(
     monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
     monkeypatch.setattr(
         bench,
-        "_materialize_role_tool_failure_opencode_audit",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("OpenCode audit is main-agent-only")),
-    )
-    monkeypatch.setattr(
-        bench,
         "build_real_run_gate",
         lambda *_args, **_kwargs: {"ok": False, "summary": "real run failed"},
     )
@@ -2309,11 +2305,6 @@ def test_main_event_wait_timeout_marks_non_terminal_and_skips_real_run_gate(
     monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
     monkeypatch.setattr(
         bench,
-        "_materialize_role_tool_failure_opencode_audit",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("OpenCode audit is main-agent-only")),
-    )
-    monkeypatch.setattr(
-        bench,
         "build_real_run_gate",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("real run gate must be skipped")),
     )
@@ -2396,11 +2387,6 @@ def test_main_runner_exception_marks_audit_as_non_terminal(
     monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
     monkeypatch.setattr(
         bench,
-        "_materialize_role_tool_failure_opencode_audit",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("OpenCode audit is main-agent-only")),
-    )
-    monkeypatch.setattr(
-        bench,
         "build_real_run_gate",
         lambda *_args, **_kwargs: {"ok": False, "summary": "real run failed"},
     )
@@ -2462,11 +2448,7 @@ def test_main_completed_chain_marks_audit_as_terminal(
     monkeypatch.setattr(bench, "collect_llm_events", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(bench, "resolve_expected_llm_bindings", lambda: {})
     monkeypatch.setattr(bench, "build_factory_audit_record", _capture_build)
-    monkeypatch.setattr(
-        bench,
-        "_materialize_role_tool_failure_opencode_audit",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("OpenCode audit is main-agent-only")),
-    )
+    monkeypatch.setattr(bench, "load_run_ledger_projection", _ok_run_ledger_projection)
     monkeypatch.setattr(
         bench,
         "build_real_run_gate",

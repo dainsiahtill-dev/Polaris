@@ -129,7 +129,7 @@ def test_role_tool_failure_taxonomy_does_not_emit_platform_opencode_audit() -> N
 
     taxonomy = bench_gates.apply_factory_bench_failure_taxonomy(record)
 
-    assert taxonomy["category"] == "control_plane"
+    assert taxonomy["category"] == "director_tool_execution"
     assert "opencode_audit" not in record
 
 

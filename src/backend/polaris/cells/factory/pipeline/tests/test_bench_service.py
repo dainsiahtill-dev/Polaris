@@ -153,6 +153,12 @@ class TestFactoryBenchService(unittest.TestCase):
                                     "sampled_command_count": 2,
                                     "truncated_command_events": 0,
                                 },
+                                "evidence_policy": {
+                                    "ok": True,
+                                    "enabled_modalities": ["browser"],
+                                    "required_modalities": [],
+                                    "missing_required_modalities": [],
+                                },
                             },
                         }
                     ],
@@ -178,6 +184,8 @@ class TestFactoryBenchService(unittest.TestCase):
         self.assertEqual(projection["missing"], 0)
         self.assertEqual(projection["projects"][0]["project_id"], "L1-01")
         self.assertEqual(projection["projects"][0]["latest_token_id"], "job-token-1")
+        self.assertEqual(projection["evidence_policy"]["enabled_modalities"], ["browser"])
+        self.assertEqual(projection["projects"][0]["evidence_policy"]["enabled_modalities"], ["browser"])
         self.assertEqual(projection["goal_audit"], {"projected": 1, "total": 1, "missing": 0})
         self.assertEqual(listed[0]["control_plane_projection"], projection)
 

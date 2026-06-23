@@ -182,6 +182,39 @@ describe('ContextOSWorkspace', () => {
     expect(chip.textContent).toContain('source=run_ledger_projection');
   });
 
+  it('distinguishes enabled verifier capabilities from hard evidence requirements', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        controlPlaneProjection={{
+          schema_version: 1,
+          source: 'run_ledger_projection',
+          available: true,
+          ok: true,
+          status: 'ready',
+          audit_path: '/tmp/demo/run_ledger.ndjson',
+          total: 1,
+          projected: 1,
+          missing: 0,
+          failed: 0,
+          projects: [],
+          detail: 'run ledger projection ready',
+          evidence_policy: {
+            ok: true,
+            enabled_modalities: ['browser', 'visual'],
+            required_modalities: [],
+            missing_required_modalities: [],
+          },
+        }}
+      />,
+    );
+
+    const policy = screen.getByTestId('contextos-evidence-policy');
+    expect(policy.textContent).toContain('可选验证已启用');
+    expect(policy.textContent).toContain('可选启用 browser, visual');
+    expect(policy.textContent).toContain('未作为硬门禁');
+  });
+
   it('opens a tailored detail modal for every ContextOS pipeline node', () => {
     render(
       <ContextOSWorkspace
