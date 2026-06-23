@@ -805,6 +805,57 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       dataMetadata?.output_tokens,
       dataMetadata?.outputTokens,
     );
+    const dataCacheCreationTokens = positiveNumber(
+      eventData?.cache_creation_input_tokens,
+      eventData?.cacheCreationInputTokens,
+      dataUsage?.cache_creation_input_tokens,
+      dataUsage?.cacheCreationInputTokens,
+      dataMetadata?.cache_creation_input_tokens,
+      dataMetadata?.cacheCreationInputTokens,
+    );
+    const dataCacheReadTokens = positiveNumber(
+      eventData?.cache_read_input_tokens,
+      eventData?.cacheReadInputTokens,
+      dataUsage?.cache_read_input_tokens,
+      dataUsage?.cacheReadInputTokens,
+      dataMetadata?.cache_read_input_tokens,
+      dataMetadata?.cacheReadInputTokens,
+    );
+    const dataCachedTokens = positiveNumber(
+      eventData?.cached_tokens,
+      eventData?.cachedTokens,
+      eventData?.cached_prompt_tokens,
+      dataUsage?.cached_tokens,
+      dataUsage?.cachedTokens,
+      dataUsage?.cached_prompt_tokens,
+      dataMetadata?.cached_tokens,
+      dataMetadata?.cachedTokens,
+      dataCacheReadTokens,
+    );
+    const dataReasoningTokens = positiveNumber(
+      eventData?.reasoning_tokens,
+      eventData?.reasoningTokens,
+      dataUsage?.reasoning_tokens,
+      dataUsage?.reasoningTokens,
+      dataUsage?.output_tokens_details && typeof dataUsage.output_tokens_details === 'object'
+        ? (dataUsage.output_tokens_details as Record<string, unknown>).reasoning_tokens
+        : undefined,
+      dataUsage?.completion_tokens_details && typeof dataUsage.completion_tokens_details === 'object'
+        ? (dataUsage.completion_tokens_details as Record<string, unknown>).reasoning_tokens
+        : undefined,
+    );
+    const dataAudioTokens = positiveNumber(
+      eventData?.audio_tokens,
+      eventData?.audioTokens,
+      dataUsage?.audio_tokens,
+      dataUsage?.audioTokens,
+    );
+    const dataToolTokens = positiveNumber(
+      eventData?.tool_tokens,
+      eventData?.toolTokens,
+      dataUsage?.tool_tokens,
+      dataUsage?.toolTokens,
+    );
     const dataTotalTokens = positiveNumber(
       eventData?.total_tokens,
       eventData?.totalTokens,
@@ -885,7 +936,9 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
     const dataDurationMs = dataDuration && Number.isFinite(Number(dataDuration)) && Number(dataDuration) > 0
       ? Number(dataDuration)
       : (Number.isFinite(dataElapsedMs) && dataElapsedMs > 0 ? dataElapsedMs : 0);
-    const safePromptTokens = Number.isFinite(dataPromptTokens) && dataPromptTokens > 0 ? dataPromptTokens : 0;
+    const safePromptTokens = Number.isFinite(dataPromptTokens) && dataPromptTokens > 0
+      ? dataPromptTokens + dataCacheCreationTokens + dataCacheReadTokens
+      : 0;
     const safeCompletionTokens = Number.isFinite(dataCompletionTokens) && dataCompletionTokens > 0 ? dataCompletionTokens : 0;
     const safeContextTokens = Number.isFinite(dataContextTokens) && dataContextTokens > 0 ? dataContextTokens : 0;
     const usageTotalTokens = dataTotalTokens > 0 ? dataTotalTokens : safePromptTokens + safeCompletionTokens;
@@ -920,7 +973,15 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       message = `正在请求 ${modelName || dataBackend || 'LLM'} 响应…`;
       details = modelName ? `model=${modelName}` : '';
       level = 'thinking';
-    } else if (normalizedEvent === 'llm_completed' || normalizedEvent === 'call_end' || eventToken === 'llm_call_end') {
+    } else if (
+      normalizedEvent === 'llm_completed' ||
+      normalizedEvent === 'call_end' ||
+      normalizedEvent === 'complete' ||
+      normalizedEvent === 'response.completed' ||
+      normalizedEvent === 'response.done' ||
+      normalizedEvent === 'message_stop' ||
+      eventToken === 'llm_call_end'
+    ) {
       // 规范 LLM 生命周期：调用成功完成，携带真实 prompt/completion tokens 与时延。
       const baseMsg = Parsing.firstDisplayString(parsed.message);
       const responseContent = readLlmContentText(rawObj, eventData, parsed);
@@ -933,7 +994,7 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       ].filter((token) => token.length > 0);
       details = detailTokens.join(' ');
       level = 'success';
-    } else if (normalizedEvent === 'llm_failed' || eventToken === 'llm_call_error') {
+    } else if (normalizedEvent === 'llm_failed' || normalizedEvent === 'response.failed' || eventToken === 'llm_call_error') {
       // 规范 LLM 生命周期：调用失败。
       const errMsg = (eventData ? Parsing.firstDisplayString(eventData.error_message, eventData.error) : '') || dataError;
       message = errMsg ? `LLM 调用失败: ${errMsg}` : 'LLM 调用失败';
@@ -1030,9 +1091,16 @@ function parseLlmStreamLine(channel: string, line: string): LogEntry | null {
       model: modelName || undefined,
       runId: runScope || undefined,
       // 真实 per-call 用量 / 上下文规模 / 时延（来自 journal raw.data）——供 ContextOS 实时遥测消费。
+      usage: dataUsage || undefined,
       promptTokens: safePromptTokens > 0 ? safePromptTokens : undefined,
       completionTokens: safeCompletionTokens > 0 ? safeCompletionTokens : undefined,
       totalTokens: usageTotalTokens > 0 ? usageTotalTokens : undefined,
+      cachedTokens: dataCachedTokens > 0 ? dataCachedTokens : undefined,
+      cacheCreationInputTokens: dataCacheCreationTokens > 0 ? dataCacheCreationTokens : undefined,
+      cacheReadInputTokens: dataCacheReadTokens > 0 ? dataCacheReadTokens : undefined,
+      reasoningTokens: dataReasoningTokens > 0 ? dataReasoningTokens : undefined,
+      audioTokens: dataAudioTokens > 0 ? dataAudioTokens : undefined,
+      toolTokens: dataToolTokens > 0 ? dataToolTokens : undefined,
       contextTokens: safeContextTokens > 0 ? safeContextTokens : undefined,
       durationMs: dataDurationMs > 0 ? Math.round(dataDurationMs) : undefined,
       // NEW fields for context viewer

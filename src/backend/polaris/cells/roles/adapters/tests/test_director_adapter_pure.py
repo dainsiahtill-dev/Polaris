@@ -341,6 +341,52 @@ def test_deterministic_npm_script_repair_builds_before_missing_dist_entrypoint(t
     assert not any("references missing local entrypoint" in error for error in repaired_errors)
 
 
+def test_deterministic_npm_script_repair_replaces_missing_verify_entrypoint(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_npm_test_script_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("console.log('firefly flower moon humidity');\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"outDir": "dist", "rootDir": "src"}, "include": ["src/**/*.ts"]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "glowing-insect-garden",
+                "version": "1.0.0",
+                "scripts": {
+                    "build": "tsc",
+                    "test": "npm run build && node scripts/verify.js",
+                    "verify": "node scripts/verify.js",
+                },
+                "devDependencies": {"typescript": "^5.4.0"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert any("script 'verify' references missing local entrypoint 'scripts/verify.js'" in error for error in errors)
+
+    results = _apply_deterministic_npm_test_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["scripts"]["verify"] == "npm run build"
+    assert repaired["scripts"]["test"] == "npm run verify"
+    repaired_errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert not any("references missing local entrypoint" in error for error in repaired_errors)
+
+
 def test_deterministic_npm_script_repair_replaces_placeholder_start_and_swallowing_build(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
         _apply_deterministic_npm_test_script_repair,
@@ -8037,6 +8083,70 @@ class TestQualityRepairMissingTargetContract:
         )
 
         assert targets == ["src/index.ts", "src/main.ts", "package.json"]
+
+    def test_unresolved_symbol_without_typecheck_triggers_exporter_repair(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _select_materialization_quality_repair_target_batch,
+            _semantic_quality_repair_target_files,
+            _should_preserve_materialization_quality_repair_batch,
+        )
+
+        src_dir = tmp_path / "src"
+        tests_dir = tmp_path / "tests"
+        src_dir.mkdir()
+        tests_dir.mkdir()
+        (src_dir / "verify.ts").write_text("export const verify = () => true;\n", encoding="utf-8")
+        (tests_dir / "verify.test.ts").write_text(
+            "import { runVerify } from '../src/verify';\nvoid runVerify;\n",
+            encoding="utf-8",
+        )
+        quality_errors = [
+            "Artifact quality scan failed: unresolved import symbol 'runVerify' "
+            "from '../src/verify' in tests/verify.test.ts (sibling module does not define it)"
+        ]
+
+        targets = _semantic_quality_repair_target_files(
+            artifact_quality_errors=quality_errors,
+            changed_files=["README.md", "src/verify.ts", "tests/verify.test.ts", "package.json"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/verify.ts"]
+        assert _should_preserve_materialization_quality_repair_batch(quality_errors) is True
+        assert _select_materialization_quality_repair_target_batch(
+            ["src/verify.ts", "tests/verify.test.ts"],
+            repair_attempt=2,
+            preserve_batch_after_first_attempt=_should_preserve_materialization_quality_repair_batch(quality_errors),
+        ) == ["src/verify.ts", "tests/verify.test.ts"]
+
+    def test_workspace_typecheck_repair_ignores_tsc_config_argument_path(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _semantic_quality_repair_target_files,
+        )
+
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (tmp_path / "tsconfig.json").write_text('{"compilerOptions":{"strict":true}}\n', encoding="utf-8")
+        (src_dir / "index.ts").write_text(
+            "export const report = (): MissingType => ({} as never);\n",
+            encoding="utf-8",
+        )
+        quality_errors = [
+            "Artifact quality scan failed: workspace validation command failed (npm run build): "
+            "> glow-bug-garden-simulator@1.0.0 build\n"
+            "> tsc -p tsconfig.json\n\n"
+            "src/index.ts(32,14): error TS2304: Cannot find name 'MoonPhase'.",
+            "Artifact quality scan failed: TypeScript project typecheck failed: "
+            "src/index.ts(32,14): error TS2304: Cannot find name 'MoonPhase'.",
+        ]
+
+        targets = _semantic_quality_repair_target_files(
+            artifact_quality_errors=quality_errors,
+            changed_files=["package.json", "tsconfig.json", "src/index.ts"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/index.ts"]
 
     def test_explicit_quality_repair_targets_vitest_source_and_test_files(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (

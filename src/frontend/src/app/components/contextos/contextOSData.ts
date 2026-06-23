@@ -92,6 +92,15 @@ export interface RoleBindingBudget {
   totalTokens: number;
   promptTokens: number;
   completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  toolTokens: number;
+  reasoningTokens: number;
+  audioTokens: number;
+  serverToolUseCount: number;
+  realProviderTokens: number;
+  estimatedTokens: number;
   contextTokensLatest: number | null;
   windowOccupancyTokens: number | null;
   windowOccupancyLabel: string;
@@ -100,6 +109,14 @@ export interface RoleBindingBudget {
   lastEventAt: number | null;
   matchedEvents: number;
   usageSource: 'matched' | 'role_aggregate' | 'none';
+  usageKind: 'provider' | 'stream_final' | 'request_estimate' | 'char_estimate' | 'mixed' | 'none';
+  usageProvenance: 'provider' | 'estimated' | 'mixed' | 'none';
+  bindingId: string | null;
+  taskId: string | null;
+  pmTaskId: string | null;
+  chiefBlueprintId: string | null;
+  skipped: boolean;
+  skipReason: string | null;
 }
 
 export interface RoleInternalContext {
@@ -131,6 +148,13 @@ export interface RoleInternalContext {
   totalTokens: number;
   promptTokens: number;
   completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  toolTokens: number;
+  reasoningTokens: number;
+  audioTokens: number;
+  serverToolUseCount: number;
   calls: number;
   lastEventAt: number | null;
   currentTaskId: string | null;
@@ -231,6 +255,15 @@ export interface ContextOSModel {
   totalTokens: number;
   promptTokens: number;
   completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  toolTokens: number;
+  reasoningTokens: number;
+  audioTokens: number;
+  serverToolUseCount: number;
+  providerUsageTokens: number;
+  usageSourceLabel: string;
   /** token 是否来自实时遥测（journal `llm` 通道）。false = 退回用量统计通道（非实时）或无数据。 */
   tokensRealtime: boolean;
   calls: number;
@@ -445,6 +478,7 @@ function bindingDisplayName(binding: Pick<RoleBindingBudget, 'providerName' | 'p
 
 function roleDetailAsBinding(detail: LlmRuntimeRoleDetail): LlmRuntimeRoleBinding {
   return {
+    bindingId: null,
     providerId: detail.providerId,
     providerName: detail.providerName,
     providerType: detail.providerType,
@@ -485,6 +519,15 @@ function emptyBindingBudget(
     totalTokens: 0,
     promptTokens: 0,
     completionTokens: 0,
+    cachedTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    toolTokens: 0,
+    reasoningTokens: 0,
+    audioTokens: 0,
+    serverToolUseCount: 0,
+    realProviderTokens: 0,
+    estimatedTokens: 0,
     contextTokensLatest: null,
     windowOccupancyTokens: null,
     windowOccupancyLabel: '无 usage',
@@ -493,6 +536,14 @@ function emptyBindingBudget(
     lastEventAt: null,
     matchedEvents: 0,
     usageSource: 'none',
+    usageKind: 'none',
+    usageProvenance: 'none',
+    bindingId: binding.bindingId || null,
+    taskId: null,
+    pmTaskId: null,
+    chiefBlueprintId: null,
+    skipped: binding.skipped === true,
+    skipReason: binding.skipReason || null,
   };
 }
 
@@ -506,10 +557,24 @@ function deriveRoleBindingBudgetTemplates(state: LlmRuntimeGateState, roleKey: s
       ? [roleDetailAsBinding(detail)]
       : [];
 
-  return bindings.map((binding, index) => emptyBindingBudget(roleKey, binding, index, 'binding'));
+  return bindings.map((binding, index) => {
+    const row = emptyBindingBudget(roleKey, binding, index, 'binding');
+    const skipped = (state.skippedBindings || []).find((item) => {
+      const roleMatches = !item.roleId || keyToken(item.roleId) === keyToken(roleKey);
+      if (!roleMatches) return false;
+      if (item.bindingId && row.bindingId) return keyToken(item.bindingId) === keyToken(row.bindingId);
+      if (item.providerId && row.providerId) return keyToken(item.providerId) === keyToken(row.providerId) && (!item.model || !row.model || keyToken(item.model) === keyToken(row.model));
+      return Boolean(item.model && row.model && keyToken(item.model) === keyToken(row.model));
+    });
+    return skipped
+      ? { ...row, skipped: true, skipReason: skipped.skipReason || row.skipReason || 'binding_skipped' }
+      : row;
+  });
 }
 
 function eventMatchesBinding(event: ContextOSEvent, binding: RoleBindingBudget): boolean {
+  const eventBindingId = keyToken(event.bindingId);
+  const bindingId = keyToken(binding.bindingId);
   const eventProviderId = keyToken(event.providerId);
   const eventProviderName = keyToken(event.providerName);
   const eventModel = keyToken(event.model);
@@ -517,9 +582,34 @@ function eventMatchesBinding(event: ContextOSEvent, binding: RoleBindingBudget):
   const bindingProviderName = keyToken(binding.providerName);
   const bindingModel = keyToken(binding.model);
 
-  if (eventProviderId && bindingProviderId && eventProviderId === bindingProviderId) return true;
-  if (eventModel && bindingModel && eventModel === bindingModel) return true;
-  return Boolean(eventProviderName && bindingProviderName && eventProviderName === bindingProviderName && (!eventModel || !bindingModel || eventModel === bindingModel));
+  if (eventBindingId && bindingId) return eventBindingId === bindingId;
+  if (eventProviderId && bindingProviderId) {
+    return eventProviderId === bindingProviderId && (!eventModel || !bindingModel || eventModel === bindingModel);
+  }
+  if (eventProviderName && bindingProviderName) {
+    return eventProviderName === bindingProviderName && (!eventModel || !bindingModel || eventModel === bindingModel);
+  }
+  if (eventModel && bindingModel && eventModel === bindingModel) {
+    return !bindingProviderId && !bindingProviderName;
+  }
+  return false;
+}
+
+function summarizeUsageKind(events: ContextOSEvent[]): RoleBindingBudget['usageKind'] {
+  const kinds = new Set(events.map((event) => event.usageSource).filter((source) => source !== 'none'));
+  if (kinds.size === 0) return 'none';
+  if (kinds.size > 1) return 'mixed';
+  const [kind] = Array.from(kinds);
+  return kind;
+}
+
+function summarizeUsageProvenance(events: ContextOSEvent[]): RoleBindingBudget['usageProvenance'] {
+  const hasProvider = events.some((event) => event.hasUsage && !event.estimatedTokens);
+  const hasEstimated = events.some((event) => event.estimatedTokens || event.usageSource === 'request_estimate');
+  if (hasProvider && hasEstimated) return 'mixed';
+  if (hasProvider) return 'provider';
+  if (hasEstimated) return 'estimated';
+  return 'none';
 }
 
 function summarizeBindingBudget(
@@ -528,26 +618,46 @@ function summarizeBindingBudget(
   usageSource: RoleBindingBudget['usageSource'],
 ): RoleBindingBudget {
   if (events.length === 0) return template;
+  const orderedEvents = [...events].sort((a, b) => (b.epoch - a.epoch) || (b.seq - a.seq));
 
   let totalTokens = 0;
   let promptTokens = 0;
   let completionTokens = 0;
+  let cachedTokens = 0;
+  let cacheCreationTokens = 0;
+  let cacheReadTokens = 0;
+  let toolTokens = 0;
+  let reasoningTokens = 0;
+  let audioTokens = 0;
+  let serverToolUseCount = 0;
+  let realProviderTokens = 0;
+  let estimatedTokens = 0;
   let calls = 0;
 
-  for (const event of events) {
-    totalTokens += event.totalTokens;
+  for (const event of orderedEvents) {
+    const observedTokens = contextOSObservedTokens(event);
+    totalTokens += observedTokens;
     promptTokens += event.promptTokens;
     completionTokens += event.completionTokens;
+    cachedTokens += event.cachedTokens;
+    cacheCreationTokens += event.cacheCreationTokens;
+    cacheReadTokens += event.cacheReadTokens;
+    toolTokens += event.toolTokens;
+    reasoningTokens += event.reasoningTokens;
+    audioTokens += event.audioTokens;
+    serverToolUseCount += event.serverToolUseCount;
+    if (event.hasUsage && !event.estimatedTokens) realProviderTokens += event.totalTokens;
+    if (event.estimatedTokens || event.usageSource === 'request_estimate') estimatedTokens += observedTokens;
     if (event.isCall || event.hasUsage) calls += 1;
   }
 
-  const latestContextSize = events.find(
+  const latestContextSize = orderedEvents.find(
     (event) => event.finalRequestTokenEstimate !== null || event.contextTokens !== null,
   );
   const contextTokensLatest = latestContextSize
     ? (latestContextSize.finalRequestTokenEstimate ?? latestContextSize.contextTokens)
     : null;
-  const usageCalls = events.filter((event) => event.hasUsage).length;
+  const usageCalls = orderedEvents.filter((event) => event.hasUsage).length;
   const promptAverage = usageCalls > 0 && promptTokens > 0 ? Math.round(promptTokens / usageCalls) : null;
   const windowOccupancyTokens = contextTokensLatest !== null && contextTokensLatest > 0
     ? contextTokensLatest
@@ -555,7 +665,7 @@ function summarizeBindingBudget(
   const windowOccupancyLabel = contextTokensLatest !== null && contextTokensLatest > 0
     ? '最新最终请求 (实测)'
     : promptAverage !== null
-      ? usageSource === 'matched' ? '模型提示均值 (实测)' : '角色聚合提示均值'
+      ? usageSource === 'matched' ? '匹配事件 prompt 均值' : '角色聚合 prompt 均值'
       : '无 usage';
   const windowOccupancyDetail = contextTokensLatest !== null && contextTokensLatest > 0
     ? '来自该绑定最近一次 final_request_context_audit/context_tokens_after'
@@ -564,8 +674,9 @@ function summarizeBindingBudget(
         ? '按 provider/model 匹配到的实时 usage 事件计算'
         : '事件未携带 provider/model，只能显示为角色聚合'
       : '该绑定尚无可归属的实时 usage 事件';
-  const latestLatency = events.find((event) => event.durationMs !== null);
-  const latestEvent = events.find((event) => event.epoch > 0);
+  const latestLatency = orderedEvents.find((event) => event.durationMs !== null);
+  const latestEvent = orderedEvents.find((event) => event.epoch > 0);
+  const latestTaskEvent = orderedEvents.find((event) => event.taskId || event.pmTaskId || event.chiefBlueprintId);
 
   return {
     ...template,
@@ -573,14 +684,28 @@ function summarizeBindingBudget(
     totalTokens,
     promptTokens,
     completionTokens,
+    cachedTokens,
+    cacheCreationTokens,
+    cacheReadTokens,
+    toolTokens,
+    reasoningTokens,
+    audioTokens,
+    serverToolUseCount,
+    realProviderTokens,
+    estimatedTokens,
     contextTokensLatest,
     windowOccupancyTokens,
     windowOccupancyLabel,
     windowOccupancyDetail,
     latencyMs: latestLatency ? latestLatency.durationMs : null,
     lastEventAt: latestEvent ? latestEvent.epoch : null,
-    matchedEvents: events.length,
+    matchedEvents: orderedEvents.length,
     usageSource,
+    usageKind: summarizeUsageKind(orderedEvents),
+    usageProvenance: summarizeUsageProvenance(orderedEvents),
+    taskId: latestTaskEvent?.taskId ?? null,
+    pmTaskId: latestTaskEvent?.pmTaskId ?? null,
+    chiefBlueprintId: latestTaskEvent?.chiefBlueprintId ?? null,
   };
 }
 
@@ -814,8 +939,21 @@ export function buildContextOSModel(input: {
   const completionTokens = telemetryActive && telemetry.completionTokens > 0
     ? telemetry.completionTokens
     : safeNumber(usageTotals.completion_tokens);
+  const cachedTokens = telemetryActive ? telemetry.cachedTokens : 0;
+  const cacheCreationTokens = telemetryActive ? telemetry.cacheCreationTokens : 0;
+  const cacheReadTokens = telemetryActive ? telemetry.cacheReadTokens : 0;
+  const toolTokens = telemetryActive ? telemetry.toolTokens : 0;
+  const reasoningTokens = telemetryActive ? telemetry.reasoningTokens : 0;
+  const audioTokens = telemetryActive ? telemetry.audioTokens : 0;
+  const serverToolUseCount = telemetryActive ? telemetry.serverToolUseCount : 0;
+  const providerUsageTokens = promptTokens + completionTokens;
   // token 是否实时（来自 journal `llm` 通道的真实 usage）；否则退回用量统计通道（非实时）。
   const tokensRealtime = telemetryActive && telemetry.totalTokens > 0;
+  const usageSourceLabel = tokensRealtime
+    ? 'provider usage · 实时'
+    : totalTokens > 0
+      ? '用量统计 · 非实时'
+      : '无 usage';
   const calls = telemetryActive ? telemetry.totalCalls : safeNumber(usageStats?.calls);
   const byMode: Record<string, { total_tokens: number; calls: number }> = telemetryActive
     ? Object.fromEntries(
@@ -976,11 +1114,28 @@ export function buildContextOSModel(input: {
     },
   ];
 
-  // 预算构成：真实的 提示/输出 二分（不伪造 System/Memory/Tool 细分）。
-  const budget: BudgetSlice[] = [
-    { key: 'prompt', label: '提示 (Prompt)', tokens: promptTokens, ratio: totalTokens > 0 ? promptTokens / totalTokens : 0, colorClass: 'bg-accent-secondary' },
-    { key: 'completion', label: '输出 (Completion)', tokens: completionTokens, ratio: totalTokens > 0 ? completionTokens / totalTokens : 0, colorClass: 'bg-gold' },
+  // 预算构成：provider 真实 usage 细分；cache/tool 缺失时不臆造。
+  const directPromptTokens = Math.max(0, promptTokens - cacheCreationTokens - cacheReadTokens);
+  const budgetDenominator = Math.max(
+    totalTokens,
+    directPromptTokens + cacheCreationTokens + cacheReadTokens + completionTokens + toolTokens + reasoningTokens + audioTokens,
+    0,
+  );
+  const rawBudget: Array<Omit<BudgetSlice, 'ratio'>> = [
+    { key: 'prompt', label: cacheCreationTokens > 0 || cacheReadTokens > 0 ? '输入 (未缓存)' : '输入 / Prompt', tokens: directPromptTokens, colorClass: 'bg-accent-secondary' },
+    { key: 'cache_creation', label: '缓存写入', tokens: cacheCreationTokens, colorClass: 'bg-status-info' },
+    { key: 'cache_read', label: '缓存读取', tokens: cacheReadTokens, colorClass: 'bg-status-success' },
+    { key: 'tools', label: '工具/格式开销', tokens: toolTokens, colorClass: 'bg-accent' },
+    { key: 'reasoning', label: '推理开销', tokens: reasoningTokens, colorClass: 'bg-status-warning' },
+    { key: 'audio', label: '音频 token', tokens: audioTokens, colorClass: 'bg-status-info' },
+    { key: 'completion', label: '输出 / Completion', tokens: completionTokens, colorClass: 'bg-gold' },
   ];
+  const budget: BudgetSlice[] = rawBudget
+    .filter((slice) => slice.tokens > 0 || slice.key === 'prompt' || slice.key === 'completion')
+    .map((slice) => ({
+      ...slice,
+      ratio: budgetDenominator > 0 ? slice.tokens / budgetDenominator : 0,
+    }));
 
   // 按模式分布（真实 by_mode），取 token 最高的前 6 个。
   const modePalette = ['bg-accent-secondary', 'bg-gold', 'bg-accent', 'bg-status-info', 'bg-status-success', 'bg-status-warning'];
@@ -1054,6 +1209,13 @@ export function buildContextOSModel(input: {
     let totalTokens = 0;
     let promptTokens = 0;
     let completionTokens = 0;
+    let cachedTokens = 0;
+    let cacheCreationTokens = 0;
+    let cacheReadTokens = 0;
+    let toolTokens = 0;
+    let reasoningTokens = 0;
+    let audioTokens = 0;
+    let serverToolUseCount = 0;
     let errorCount = 0;
     let latencySum = 0;
     let latencyCount = 0;
@@ -1065,6 +1227,13 @@ export function buildContextOSModel(input: {
       totalTokens += contextOSObservedTokens(event);
       promptTokens += event.promptTokens;
       completionTokens += event.completionTokens;
+      cachedTokens += event.cachedTokens;
+      cacheCreationTokens += event.cacheCreationTokens;
+      cacheReadTokens += event.cacheReadTokens;
+      toolTokens += event.toolTokens;
+      reasoningTokens += event.reasoningTokens;
+      audioTokens += event.audioTokens;
+      serverToolUseCount += event.serverToolUseCount;
       if (event.durationMs !== null) {
         latencySum += event.durationMs;
         latencyCount += 1;
@@ -1076,6 +1245,13 @@ export function buildContextOSModel(input: {
     totalTokens = roleAggregate?.totalTokens ?? totalTokens;
     promptTokens = roleAggregate?.promptTokens ?? promptTokens;
     completionTokens = roleAggregate?.completionTokens ?? completionTokens;
+    cachedTokens = roleAggregate?.cachedTokens ?? cachedTokens;
+    cacheCreationTokens = roleAggregate?.cacheCreationTokens ?? cacheCreationTokens;
+    cacheReadTokens = roleAggregate?.cacheReadTokens ?? cacheReadTokens;
+    toolTokens = roleAggregate?.toolTokens ?? toolTokens;
+    reasoningTokens = roleAggregate?.reasoningTokens ?? reasoningTokens;
+    audioTokens = roleAggregate?.audioTokens ?? audioTokens;
+    serverToolUseCount = roleAggregate?.serverToolUseCount ?? serverToolUseCount;
 
     // 最近一次 context.build 的 items_count 和最终请求 token 来自该角色自身的事件子集。
     const lastContextBuild = roleEvents.find((event) => event.contextItems !== null);
@@ -1138,6 +1314,15 @@ export function buildContextOSModel(input: {
           totalTokens: 0,
           promptTokens: 0,
           completionTokens: 0,
+          cachedTokens: 0,
+          cacheCreationTokens: 0,
+          cacheReadTokens: 0,
+          toolTokens: 0,
+          reasoningTokens: 0,
+          audioTokens: 0,
+          serverToolUseCount: 0,
+          realProviderTokens: 0,
+          estimatedTokens: 0,
           contextTokensLatest: null,
           windowOccupancyTokens: null,
           windowOccupancyLabel: '无 usage',
@@ -1146,6 +1331,14 @@ export function buildContextOSModel(input: {
           lastEventAt: null,
           matchedEvents: 0,
           usageSource: 'none',
+          usageKind: 'none',
+          usageProvenance: 'none',
+          bindingId: null,
+          taskId: null,
+          pmTaskId: null,
+          chiefBlueprintId: null,
+          skipped: false,
+          skipReason: null,
         };
         bindingBudgets.push(summarizeBindingBudget(aggregateTemplate, unassignedEvents, 'role_aggregate'));
       }
@@ -1198,6 +1391,13 @@ export function buildContextOSModel(input: {
       totalTokens,
       promptTokens,
       completionTokens,
+      cachedTokens,
+      cacheCreationTokens,
+      cacheReadTokens,
+      toolTokens,
+      reasoningTokens,
+      audioTokens,
+      serverToolUseCount,
       calls,
       lastEventAt,
       currentTaskId,
@@ -1298,6 +1498,15 @@ export function buildContextOSModel(input: {
     totalTokens,
     promptTokens,
     completionTokens,
+    cachedTokens,
+    cacheCreationTokens,
+    cacheReadTokens,
+    toolTokens,
+    reasoningTokens,
+    audioTokens,
+    serverToolUseCount,
+    providerUsageTokens,
+    usageSourceLabel,
     tokensRealtime,
     calls,
     avgPerCall,

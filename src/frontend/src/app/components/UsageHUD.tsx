@@ -5,6 +5,12 @@ export interface UsageStats {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    cached_tokens?: number;
+    cache_creation_tokens?: number;
+    cache_read_tokens?: number;
+    tool_tokens?: number;
+    reasoning_tokens?: number;
+    audio_tokens?: number;
   };
   calls: number;
   estimated_calls: number;

@@ -1,27 +1,19 @@
 import { useMemo } from 'react';
 import type { UsageStats } from '@/app/components/UsageHUD';
 import type { LogEntry } from '@/types/log';
-
-function toNum(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return 0;
-}
+import { buildTelemetryFromStream } from '@/app/components/contextos/contextOSTelemetry';
 
 /**
  * Hook deriving LLM usage statistics from the live WebSocket runtime stream.
  *
- * Source of truth = Polaris's existing realtime framework, NOT file polling:
+ * Source of truth = Polaris's existing realtime framework, not file reads:
  *   emit_llm_event → MessageBus → WS /v2/ws/runtime → useRuntime.llmStreamEvents.
  * The journal `llm` channel (CanonicalLogEventV2) carries real per-call usage in
  * raw.data (prompt/completion tokens), which parseLlmStreamLine surfaces into
  * LogEntry.meta (promptTokens / completionTokens / totalTokens). We aggregate those
- * push-delivered events — no polling, no file read.
+ * push-delivered events — no timer loop, no file read.
  *
- * Previously this polled `runtime/events/llm.observations.jsonl` — a phantom file no
+ * Previously this read `runtime/events/llm.observations.jsonl` on a repeat loop — a phantom file no
  * backend code path writes — so the global token HUD was permanently empty in real
  * runs. This rewire roots out that defect by consuming the same realtime stream the
  * rest of the app already renders live.
@@ -31,45 +23,30 @@ export function useUsageStats(llmStreamEvents: readonly LogEntry[] | null | unde
     const events = Array.isArray(llmStreamEvents) ? llmStreamEvents : [];
     if (events.length === 0) return null;
 
-    const totals = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-    const byMode: Record<string, { total_tokens: number; calls: number }> = {};
-    let calls = 0;
-
-    for (const entry of events) {
-      const meta = entry && typeof entry.meta === 'object' && entry.meta ? (entry.meta as Record<string, unknown>) : {};
-      const streamEvent = String(meta['streamEvent'] || '').toLowerCase();
-      // A discrete call = a "completed" lifecycle event. Recognise both the canonical
-      // journal vocabulary (llm_completed/llm_failed) and the legacy one (invoke_*).
-      const isCall =
-        streamEvent === 'llm_completed' ||
-        streamEvent === 'llm_failed' ||
-        streamEvent === 'invoke_done' ||
-        streamEvent === 'invoke_error';
-
-      const prompt = toNum(meta['promptTokens']);
-      const completion = toNum(meta['completionTokens']);
-      const total = toNum(meta['totalTokens']) || prompt + completion;
-
-      totals.prompt_tokens += prompt;
-      totals.completion_tokens += completion;
-      totals.total_tokens += total;
-
-      if (isCall) {
-        calls += 1;
-        const mode = String(meta['role'] || entry.source || 'unknown').toLowerCase();
-        if (!byMode[mode]) byMode[mode] = { total_tokens: 0, calls: 0 };
-        byMode[mode].calls += 1;
-        byMode[mode].total_tokens += total;
-      }
-    }
-
-    if (calls === 0 && totals.total_tokens === 0) return null;
+    const telemetry = buildTelemetryFromStream(events, [], []);
+    if (!telemetry.hasData || (telemetry.totalCalls === 0 && telemetry.totalTokens === 0)) return null;
+    const byMode = Object.fromEntries(
+      Object.entries(telemetry.byRole).map(([role, aggregate]) => [
+        role,
+        { total_tokens: aggregate.totalTokens, calls: aggregate.calls },
+      ]),
+    );
 
     return {
-      totals,
-      calls,
+      totals: {
+        prompt_tokens: telemetry.promptTokens,
+        completion_tokens: telemetry.completionTokens,
+        total_tokens: telemetry.totalTokens,
+        cached_tokens: telemetry.cachedTokens,
+        cache_creation_tokens: telemetry.cacheCreationTokens,
+        cache_read_tokens: telemetry.cacheReadTokens,
+        tool_tokens: telemetry.toolTokens,
+        reasoning_tokens: telemetry.reasoningTokens,
+        audio_tokens: telemetry.audioTokens,
+      },
+      calls: telemetry.totalCalls,
       // Journal usage is a real token count, never a char estimate.
-      estimated_calls: 0,
+      estimated_calls: telemetry.estimatedCalls,
       by_mode: byMode,
     };
   }, [llmStreamEvents]);

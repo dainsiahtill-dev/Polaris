@@ -72,6 +72,31 @@ describe('useUsageStats (WebSocket-derived)', () => {
     expect(result.current.stats?.totals.total_tokens).toBe(500);
   });
 
+  it('uses the same ContextOS parser for cache/reasoning usage details', () => {
+    const responseComplete = llmEvent({
+      id: 'response-complete',
+      source: 'Director',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'response.completed',
+        role: 'Director',
+        usage: {
+          input_tokens: 100,
+          cache_read_input_tokens: 50,
+          output_tokens: 10,
+          output_tokens_details: { reasoning_tokens: 7 },
+        },
+      },
+    });
+    const { result } = renderHook(() => useUsageStats([responseComplete]));
+    expect(result.current.stats?.calls).toBe(1);
+    expect(result.current.stats?.totals.prompt_tokens).toBe(150);
+    expect(result.current.stats?.totals.completion_tokens).toBe(10);
+    expect(result.current.stats?.totals.total_tokens).toBe(160);
+    expect(result.current.stats?.totals.cached_tokens).toBe(50);
+    expect(result.current.stats?.totals.reasoning_tokens).toBe(7);
+  });
+
   it('returns null when events carry activity but no usage tokens', () => {
     const { result } = renderHook(() => useUsageStats([WAITING]));
     expect(result.current.stats).toBeNull();

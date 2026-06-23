@@ -1182,6 +1182,8 @@ def _should_rotate_materialization_quality_repair_targets(artifact_quality_error
 
 def _should_preserve_materialization_quality_repair_batch(artifact_quality_errors: list[str]) -> bool:
     joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
+    if "unresolved import symbol" in joined_errors or "has no exported member" in joined_errors:
+        return True
     coupled_hints = (
         "unresolved import symbol",
         "typescript project typecheck failed",
@@ -1210,6 +1212,10 @@ _SEMANTIC_QUALITY_EXPLICIT_PATH_RE = re.compile(
 _TS_NO_EXPORTED_MEMBER_QUALITY_RE = re.compile(
     r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.tsx?)\(\d+,\d+\):\s*"
     r"error\s+TS2305:\s*Module\s+['\"](?P<module>.+?)['\"]\s+has no exported member",
+    re.IGNORECASE,
+)
+_TS_DIAGNOSTIC_PATH_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.tsx?)\(\d+,\d+\):\s*error\s+TS\d+:",
     re.IGNORECASE,
 )
 
@@ -1347,6 +1353,8 @@ _SEMANTIC_QUALITY_SINGLE_TARGET_HINTS: tuple[str, ...] = (
     "npm package manifest contains",
     "npm package manifest declares",
     "typescript project typecheck failed",
+    "unresolved import symbol",
+    "error ts",
     "step verify target mismatch",
 )
 
@@ -1555,6 +1563,27 @@ def _semantic_quality_exporting_module_targets(
     return _dedupe_preserve_order(targets), importing_files
 
 
+def _typescript_diagnostic_target_files(
+    artifact_quality_errors: list[str],
+    workspace_root: Path,
+) -> list[str]:
+    targets: list[str] = []
+    for item in artifact_quality_errors:
+        for match in _TS_DIAGNOSTIC_PATH_RE.finditer(str(item or "")):
+            rel = _normalize_declared_task_path(match.group("path"))
+            if (
+                rel
+                and Path(rel).suffix.lower() in {".ts", ".tsx"}
+                and _workspace_path_exists_case_insensitive(workspace_root, rel)
+            ):
+                targets.append(rel)
+    return _dedupe_preserve_order(targets)
+
+
+def _is_typescript_command_config_path(rel_path: str) -> bool:
+    return Path(str(rel_path or "")).name.lower() in {"tsconfig.json", "jsconfig.json"}
+
+
 def _resolve_quality_error_module_target(
     *,
     importer_rel: str,
@@ -1615,6 +1644,7 @@ def _semantic_quality_repair_target_files(
         artifact_quality_errors,
         workspace_root,
     )
+    diagnostic_targets = _typescript_diagnostic_target_files(artifact_quality_errors, workspace_root)
     candidates: list[str] = []
     for item in changed_files:
         rel = _normalize_declared_task_path(str(item or ""))
@@ -1638,8 +1668,16 @@ def _semantic_quality_repair_target_files(
                 explicit_candidates.append(rel)
     explicit_unique = _dedupe_preserve_order(explicit_candidates)
     if exporting_targets:
-        filtered_explicit = [rel for rel in explicit_unique if rel not in importing_files]
-        return _dedupe_preserve_order([*exporting_targets, *filtered_explicit])
+        filtered_diagnostics = [rel for rel in diagnostic_targets if rel not in importing_files]
+        filtered_explicit = [
+            rel
+            for rel in explicit_unique
+            if rel not in importing_files and not (diagnostic_targets and _is_typescript_command_config_path(rel))
+        ]
+        return _dedupe_preserve_order([*exporting_targets, *filtered_diagnostics, *filtered_explicit])
+    if diagnostic_targets:
+        filtered_explicit = [rel for rel in explicit_unique if not _is_typescript_command_config_path(rel)]
+        return _dedupe_preserve_order([*filtered_explicit, *diagnostic_targets])
     if explicit_unique:
         return explicit_unique
 

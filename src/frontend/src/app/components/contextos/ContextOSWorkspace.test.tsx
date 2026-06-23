@@ -286,6 +286,51 @@ describe('ContextOSWorkspace', () => {
     expect(screen.getAllByText('10,000').length).toBeGreaterThan(0);
   });
 
+  it('renders provider usage source and cache/tool budget chips from live telemetry', () => {
+    const protocolUsageStream: LogEntry[] = [
+      {
+        id: 'director-protocol-usage',
+        timestamp: new Date().toISOString(),
+        level: 'success',
+        source: 'Director',
+        message: 'director provider call',
+        meta: {
+          channel: 'llm',
+          streamEvent: 'llm_completed',
+          role: 'Director',
+          providerId: 'qwen-a',
+          providerName: 'Qwen A',
+          model: 'qwen3.6-27b-gpu0',
+          usage: {
+            input_tokens: 1000,
+            cache_read_input_tokens: 500,
+            output_tokens: 100,
+          },
+          final_request_context_audit: {
+            final_request_token_estimate: 1800,
+            tool_schema_token_estimate: 150,
+            response_format_token_estimate: 25,
+          },
+          context_tokens_after: 1800,
+        },
+        tags: ['llm_completed'],
+      },
+    ];
+
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        llmRuntimeState={READY_LLM_WITH_WINDOWS}
+        llmStreamEvents={protocolUsageStream}
+      />,
+    );
+
+    expect(screen.getByText('provider usage · 实时')).toBeTruthy();
+    expect(screen.getAllByText(/cache read/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/tools/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/provider usage/).length).toBeGreaterThan(0);
+  });
+
   it('renders Context Budget against the actual selected role window', () => {
     const usageStats: UsageStats = {
       totals: { prompt_tokens: 16_384, completion_tokens: 1024, total_tokens: 17_408 },
@@ -469,7 +514,7 @@ describe('ContextOSWorkspace', () => {
 
     // Real per-call tokens (journal llm channel raw.data) are surfaced as realtime, not degraded.
     expect(screen.getAllByText('3,386').length).toBeGreaterThan(0);
-    expect(screen.getByText(/tokens · 实时/)).toBeTruthy();
+    expect(screen.getByText('provider usage · 实时')).toBeTruthy();
     // The honest "waiting / unavailable" empty-state is NOT shown once real tokens arrive.
     expect(screen.queryByTestId('contextos-tokens-unavailable')).toBeNull();
 

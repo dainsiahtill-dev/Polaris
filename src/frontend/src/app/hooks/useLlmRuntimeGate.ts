@@ -2,14 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import type { LlmStatus } from '@/app/types/appContracts';
 
 export interface LlmRuntimeGateState {
-  state: 'READY' | 'BLOCKED' | 'UNKNOWN';
+  state: 'READY' | 'BLOCKED' | 'DEGRADED' | 'UNKNOWN';
   blockedRoles: string[];
   requiredRoles: string[];
   lastUpdated: string | null;
   roleDetails?: Record<string, LlmRuntimeRoleDetail>;
+  skippedBindings?: LlmRuntimeSkippedBinding[];
 }
 
 export interface LlmRuntimeRoleBinding {
+  bindingId: string | null;
   providerId: string;
   providerName: string;
   providerType: string;
@@ -17,6 +19,18 @@ export interface LlmRuntimeRoleBinding {
   profile: string;
   maxContextTokens: number | null;
   maxOutputTokens: number | null;
+  skipped?: boolean;
+  skipReason?: string;
+}
+
+export interface LlmRuntimeSkippedBinding {
+  roleId: string | null;
+  bindingId: string | null;
+  providerId: string | null;
+  providerName: string | null;
+  model: string | null;
+  skipReason: string;
+  skippedAt: string | null;
 }
 
 export interface LlmRuntimeRoleDetail {
@@ -50,6 +64,7 @@ const EMPTY_LLM_RUNTIME_STATE: LlmRuntimeGateState = {
   requiredRoles: [],
   lastUpdated: null,
   roleDetails: {},
+  skippedBindings: [],
 };
 
 const READINESS_ISSUE_LABELS: Record<string, string> = {
@@ -92,12 +107,13 @@ function readBooleanOrNull(value: unknown): boolean | null {
 function normalizeRoleBindings(value: unknown): LlmRuntimeRoleBinding[] {
   if (!Array.isArray(value)) return [];
   return value
-    .map((item) => {
+    .map((item): LlmRuntimeRoleBinding | null => {
       const binding = item && typeof item === 'object' ? item as Record<string, unknown> : {};
       const providerId = readText(binding.provider_id);
       const model = readText(binding.model);
       if (!providerId && !model) return null;
       return {
+        bindingId: readText(binding.binding_id) || readText(binding.bindingId) || null,
         providerId,
         providerName: readText(binding.provider_name),
         providerType: readText(binding.provider_type),
@@ -105,6 +121,8 @@ function normalizeRoleBindings(value: unknown): LlmRuntimeRoleBinding[] {
         profile: readText(binding.profile),
         maxContextTokens: readPositiveIntOrNull(binding.max_context_tokens),
         maxOutputTokens: readPositiveIntOrNull(binding.max_output_tokens),
+        skipped: readBooleanOrNull(binding.skipped) ?? undefined,
+        skipReason: readText(binding.skip_reason) || readText(binding.skipReason) || undefined,
       };
     })
     .filter((item): item is LlmRuntimeRoleBinding => item !== null);
@@ -139,6 +157,28 @@ function normalizeRoleDetails(value: unknown): Record<string, LlmRuntimeRoleDeta
       })
       .filter(([roleId]) => Boolean(roleId)),
   );
+}
+
+function normalizeSkippedBindings(value: unknown): LlmRuntimeSkippedBinding[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const record = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+      const providerId = readText(record.provider_id) || readText(record.providerId);
+      const model = readText(record.model);
+      const skipReason = readText(record.skip_reason) || readText(record.skipReason) || readText(record.reason);
+      if (!providerId && !model && !skipReason) return null;
+      return {
+        roleId: readText(record.role_id) || readText(record.roleId) || null,
+        bindingId: readText(record.binding_id) || readText(record.bindingId) || null,
+        providerId: providerId || null,
+        providerName: readText(record.provider_name) || readText(record.providerName) || null,
+        model: model || null,
+        skipReason: skipReason || 'binding_skipped',
+        skippedAt: readText(record.skipped_at) || readText(record.skippedAt) || null,
+      };
+    })
+    .filter((item): item is LlmRuntimeSkippedBinding => item !== null);
 }
 
 function roleDetailFor(
@@ -177,6 +217,7 @@ export function normalizeLlmRuntimeGatePayload(payload: unknown): LlmRuntimeGate
   const record = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
   const stateToken = String(record.state || '').trim().toUpperCase();
   const roleDetails = normalizeRoleDetails(record.roles);
+  const skippedBindings = normalizeSkippedBindings(record.skipped_bindings ?? record.skippedBindings);
   const rawBlockedRoles = normalizeRoleList(record.blocked_roles);
   const blockedRoles = rawBlockedRoles
     .filter((role) => !isDeprecatedReadinessStaleBlock(roleDetailFor(roleDetails, role)));
@@ -188,6 +229,8 @@ export function normalizeLlmRuntimeGatePayload(payload: unknown): LlmRuntimeGate
       ? staleOnlyBlock
         ? 'READY'
         : 'BLOCKED'
+      : stateToken === 'DEGRADED'
+        ? 'DEGRADED'
       : 'UNKNOWN';
   return {
     state,
@@ -195,6 +238,7 @@ export function normalizeLlmRuntimeGatePayload(payload: unknown): LlmRuntimeGate
     requiredRoles,
     lastUpdated: typeof record.last_updated === 'string' ? record.last_updated : null,
     roleDetails,
+    skippedBindings,
   };
 }
 

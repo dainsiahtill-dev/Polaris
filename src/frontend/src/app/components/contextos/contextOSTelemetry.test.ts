@@ -752,10 +752,13 @@ describe('buildTelemetryFromStream', () => {
   it('aggregates events + real tokens by actor', () => {
     const t = buildTelemetryFromStream(LLM_STREAM, EXECUTION, PROCESS);
     // PM: llm_completed (call, 1932 context tok) + prompt_context (projection). llm_waiting/thinking filtered.
-    expect(t.byActor['PM']).toEqual({ totalTokens: 1932, calls: 1, events: 2 });
+    expect(t.byActor['PM']).toMatchObject({ totalTokens: 1932, calls: 1, events: 2 });
+    expect(t.byActor['PM'].promptTokens).toBe(1932);
+    expect(t.byActor['PM'].completionTokens).toBe(1454);
+    expect(t.byActor['PM'].toolTokens).toBe(0);
     // Director: llm_failed (call+error) + tool_call + runtime_error
-    expect(t.byActor['Director']).toEqual({ totalTokens: 0, calls: 1, events: 3 });
-    expect(t.byActor['Process']).toEqual({ totalTokens: 0, calls: 0, events: 1 });
+    expect(t.byActor['Director']).toMatchObject({ totalTokens: 0, calls: 1, events: 3 });
+    expect(t.byActor['Process']).toMatchObject({ totalTokens: 0, calls: 0, events: 1 });
   });
 
   it('flags windowed when a stream reaches its ring-buffer cap', () => {
@@ -916,6 +919,201 @@ describe('Real token verification — not hardcoded estimates', () => {
     expect(t.totalTokens).toBe(0);
     expect(t.totalTokens).not.toBe(1200);
     expect(telemetryRoleTokens(t, 'pm')).toBe(0);
+  });
+});
+
+describe('provider usage compatibility', () => {
+  it('aggregates Anthropic cache creation/read usage as first-class ContextOS budget fields', () => {
+    const entry = logEntry({
+      id: 'anthropic-cache-usage',
+      timestamp: '2026-06-22T10:00:00Z',
+      level: 'success',
+      source: 'Director',
+      message: 'anthropic compatible call completed',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        model: 'claude-compatible',
+        usage: {
+          input_tokens: 1200,
+          cache_creation_input_tokens: 300,
+          cache_read_input_tokens: 700,
+          output_tokens: 90,
+        },
+      },
+      tags: ['llm_completed'],
+    });
+
+    const t = buildTelemetryFromStream([entry], [], []);
+    expect(t.totalTokens).toBe(2290);
+    expect(t.promptTokens).toBe(2200);
+    expect(t.completionTokens).toBe(90);
+    expect(t.cachedTokens).toBe(700);
+    expect(t.cacheCreationTokens).toBe(300);
+    expect(t.cacheReadTokens).toBe(700);
+    expect(t.events[0].usageSource).toBe('provider');
+    expect(telemetryRoleTokens(t, 'director')).toBe(2290);
+  });
+
+  it('accepts OpenAI-compatible stream final usage emitted on complete events', () => {
+    const entry = logEntry({
+      id: 'openai-stream-final-usage',
+      timestamp: '2026-06-22T10:00:01Z',
+      level: 'success',
+      source: 'Director',
+      message: 'stream complete',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'complete',
+        role: 'Director',
+        model: 'openai-compatible',
+        _internal_provider_usage: true,
+        usage: {
+          prompt_tokens: 1000,
+          completion_tokens: 200,
+          total_tokens: 1200,
+          cached_tokens: 400,
+        },
+      },
+      tags: ['complete'],
+    });
+
+    const t = buildTelemetryFromStream([entry], [], []);
+    expect(t.totalCalls).toBe(1);
+    expect(t.totalTokens).toBe(1200);
+    expect(t.promptTokens).toBe(1000);
+    expect(t.completionTokens).toBe(200);
+    expect(t.cachedTokens).toBe(400);
+    expect(t.events[0].usageSource).toBe('stream_final');
+  });
+
+  it('recognizes native OpenAI Responses events with reasoning/audio usage details', () => {
+    const entry = logEntry({
+      id: 'responses-completed',
+      timestamp: '2026-06-22T10:00:03Z',
+      level: 'success',
+      source: 'Director',
+      message: 'response completed',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'response.completed',
+        role: 'Director',
+        providerId: 'openai-compatible',
+        model: 'o3-compatible',
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 200,
+          total_tokens: 1200,
+          input_tokens_details: { cached_tokens: 111, audio_tokens: 7 },
+          output_tokens_details: { reasoning_tokens: 33, audio_tokens: 9 },
+        },
+      },
+      tags: ['response.completed'],
+    });
+
+    const t = buildTelemetryFromStream([entry], [], []);
+    expect(t.totalCalls).toBe(1);
+    expect(t.events[0].isCall).toBe(true);
+    expect(t.events[0].category).toBe('call');
+    expect(t.cachedTokens).toBe(111);
+    expect(t.reasoningTokens).toBe(33);
+    expect(t.audioTokens).toBe(16);
+    expect(Object.values(t.byProviderModel)[0]).toMatchObject({
+      providerId: 'openai-compatible',
+      model: 'o3-compatible',
+      totalTokens: 1200,
+      reasoningTokens: 33,
+      audioTokens: 16,
+    });
+  });
+
+  it('keeps Anthropic server_tool_use request counts separate from token usage', () => {
+    const entry = logEntry({
+      id: 'anthropic-server-tools',
+      timestamp: '2026-06-22T10:00:04Z',
+      level: 'success',
+      source: 'Director',
+      message: 'anthropic call with server tools',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        usage: {
+          input_tokens: 100,
+          output_tokens: 20,
+          server_tool_use: { web_search_requests: 2 },
+        },
+      },
+      tags: ['llm_completed'],
+    });
+
+    const t = buildTelemetryFromStream([entry], [], []);
+    expect(t.totalTokens).toBe(120);
+    expect(t.serverToolUseCount).toBe(2);
+    expect(t.events[0].serverToolUseCount).toBe(2);
+  });
+
+  it('preserves structured provider error metadata for live error analysis', () => {
+    const entry = logEntry({
+      id: 'responses-failed',
+      timestamp: '2026-06-22T10:00:05Z',
+      level: 'error',
+      source: 'Director',
+      message: 'response failed',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'response.failed',
+        role: 'Director',
+        error_code: 'rate_limit_exceeded',
+        error_category: 'rate_limit',
+        provider_status: 429,
+        retry_after: 12,
+        circuit_open_remaining: 57,
+        exception_type: 'RateLimitError',
+      },
+      tags: ['response.failed'],
+    });
+
+    const t = buildTelemetryFromStream([entry], [], []);
+    expect(t.totalCalls).toBe(1);
+    expect(t.errorCount).toBe(1);
+    expect(t.events[0]).toMatchObject({
+      category: 'error',
+      errorCode: 'rate_limit_exceeded',
+      errorCategory: 'rate_limit',
+      providerStatus: 429,
+      retryAfterSeconds: 12,
+      circuitOpenRemainingSeconds: 57,
+      exceptionType: 'RateLimitError',
+    });
+  });
+
+  it('keeps final request token estimates and tool/schema overhead when provider usage is absent', () => {
+    const entry = logEntry({
+      id: 'final-request-audit-only',
+      timestamp: '2026-06-22T10:00:02Z',
+      level: 'success',
+      source: 'Director',
+      message: 'llm_call_end without provider usage',
+      meta: {
+        channel: 'runtime_events',
+        event_type: 'llm_call_end',
+        role: 'director',
+        final_request_context_audit: {
+          final_request_token_estimate: 2300,
+          tool_schema_token_estimate: 180,
+          response_format_token_estimate: 20,
+        },
+      },
+    });
+
+    const t = buildTelemetryFromStream([], [entry], []);
+    expect(t.totalTokens).toBe(2300);
+    expect(t.toolTokens).toBe(200);
+    expect(t.events[0].usageSource).toBe('request_estimate');
+    expect(t.events[0].hasUsage).toBe(false);
+    expect(telemetryRoleTokens(t, 'director')).toBe(2300);
   });
 });
 

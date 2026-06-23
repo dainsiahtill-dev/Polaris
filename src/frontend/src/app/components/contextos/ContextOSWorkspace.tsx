@@ -1311,6 +1311,95 @@ function BudgetBar({ label, tokens, ratio, colorClass }: { label: string; tokens
   );
 }
 
+const USAGE_KIND_LABELS: Record<RoleBindingBudget['usageKind'], string> = {
+  provider: 'provider usage',
+  stream_final: 'stream final',
+  request_estimate: 'request estimate',
+  char_estimate: 'char estimate',
+  mixed: 'mixed usage',
+  none: 'no usage',
+};
+
+function UsageMetricChip({
+  label,
+  tokens,
+  tone = 'neutral',
+}: {
+  label: string;
+  tokens: number;
+  tone?: 'neutral' | 'cache' | 'tool' | 'output' | 'reasoning' | 'error';
+}) {
+  if (tokens <= 0) return null;
+  return (
+    <span
+      className={cn(
+        'rounded border px-1.5 py-0.5 font-mono text-[9px]',
+        tone === 'cache'
+          ? 'border-status-success/20 bg-status-success/10 text-status-success'
+          : tone === 'tool'
+            ? 'border-accent/20 bg-accent/10 text-accent'
+            : tone === 'output'
+              ? 'border-gold/20 bg-gold/10 text-gold'
+              : tone === 'reasoning'
+                ? 'border-status-warning/20 bg-status-warning/10 text-status-warning'
+                : tone === 'error'
+                  ? 'border-status-error/20 bg-status-error/10 text-status-error'
+                  : 'border-white/[0.07] bg-white/[0.04] text-text-muted',
+      )}
+      title={`${label}: ${tokens.toLocaleString()} tokens`}
+    >
+      {label} {contextOSFormat.tokens(tokens)}
+    </span>
+  );
+}
+
+function UsageBreakdownChips({
+  promptTokens,
+  completionTokens,
+  cachedTokens,
+  cacheCreationTokens,
+  cacheReadTokens,
+  toolTokens,
+  reasoningTokens = 0,
+  audioTokens = 0,
+  serverToolUseCount = 0,
+}: {
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  toolTokens: number;
+  reasoningTokens?: number;
+  audioTokens?: number;
+  serverToolUseCount?: number;
+}) {
+  const directPromptTokens = Math.max(0, promptTokens - cacheCreationTokens - cacheReadTokens);
+  const effectiveCachedTokens = Math.max(cachedTokens, cacheReadTokens);
+  const hasBreakdown =
+    directPromptTokens > 0 ||
+    completionTokens > 0 ||
+    effectiveCachedTokens > 0 ||
+    cacheCreationTokens > 0 ||
+    toolTokens > 0 ||
+    reasoningTokens > 0 ||
+    audioTokens > 0 ||
+    serverToolUseCount > 0;
+  if (!hasBreakdown) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      <UsageMetricChip label="in" tokens={directPromptTokens} />
+      <UsageMetricChip label="out" tokens={completionTokens} tone="output" />
+      <UsageMetricChip label="cache read" tokens={effectiveCachedTokens} tone="cache" />
+      <UsageMetricChip label="cache write" tokens={cacheCreationTokens} tone="cache" />
+      <UsageMetricChip label="tools" tokens={toolTokens} tone="tool" />
+      <UsageMetricChip label="reasoning" tokens={reasoningTokens} tone="reasoning" />
+      <UsageMetricChip label="audio" tokens={audioTokens} tone="tool" />
+      <UsageMetricChip label="server tools" tokens={serverToolUseCount} tone="tool" />
+    </div>
+  );
+}
+
 function BindingBudgetRow({ row }: { row: RoleBindingBudget }) {
   const hasUsage = row.windowOccupancyTokens !== null;
   const ratio = hasUsage && row.contextWindowTokens !== null && row.contextWindowTokens > 0
@@ -1323,6 +1412,15 @@ function BindingBudgetRow({ row }: { row: RoleBindingBudget }) {
     : row.usageSource === 'role_aggregate'
       ? '角色聚合'
       : '无 usage';
+  const usageKindLabel = USAGE_KIND_LABELS[row.usageKind];
+  const provenanceLabel = row.usageProvenance === 'provider'
+    ? '真实'
+    : row.usageProvenance === 'estimated'
+      ? '估算'
+      : row.usageProvenance === 'mixed'
+        ? '混合'
+        : null;
+  const taskRef = row.taskId || row.pmTaskId || row.chiefBlueprintId;
 
   return (
     <div
@@ -1357,6 +1455,30 @@ function BindingBudgetRow({ row }: { row: RoleBindingBudget }) {
               {row.calls} calls
             </span>
           )}
+          {row.usageKind !== 'none' && (
+            <span className="rounded bg-white/[0.05] px-1.5 py-0.5 font-mono text-[9px] text-text-dim">
+              {usageKindLabel}
+            </span>
+          )}
+          {provenanceLabel && (
+            <span
+              className={cn(
+                'rounded px-1.5 py-0.5 text-[9px]',
+                row.usageProvenance === 'provider'
+                  ? 'bg-status-success/10 text-status-success'
+                  : row.usageProvenance === 'estimated'
+                    ? 'bg-status-warning/10 text-status-warning'
+                    : 'bg-white/[0.05] text-text-dim',
+              )}
+            >
+              {provenanceLabel}
+            </span>
+          )}
+          {row.skipped && (
+            <span className="rounded bg-status-error/10 px-1.5 py-0.5 text-[9px] text-status-error" title={row.skipReason || undefined}>
+              skipped
+            </span>
+          )}
         </div>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-white/5">
@@ -1383,6 +1505,24 @@ function BindingBudgetRow({ row }: { row: RoleBindingBudget }) {
           {row.latencyMs !== null && <span>{row.latencyMs}ms</span>}
         </div>
       )}
+      {taskRef && (
+        <div className="mt-1 truncate font-mono text-[9px] text-text-dim/80" title={taskRef}>
+          task {taskRef}
+        </div>
+      )}
+      <div className="mt-1.5">
+        <UsageBreakdownChips
+          promptTokens={row.promptTokens}
+          completionTokens={row.completionTokens}
+          cachedTokens={row.cachedTokens}
+          cacheCreationTokens={row.cacheCreationTokens}
+          cacheReadTokens={row.cacheReadTokens}
+          toolTokens={row.toolTokens}
+          reasoningTokens={row.reasoningTokens}
+          audioTokens={row.audioTokens}
+          serverToolUseCount={row.serverToolUseCount}
+        />
+      </div>
     </div>
   );
 }
@@ -2010,7 +2150,7 @@ export function ContextOSWorkspace({
                       <>
                         <span className="font-heading text-3xl font-bold text-text-main">{model.totalTokens.toLocaleString()}</span>
                         <span className="text-[11px] text-text-dim">
-                          {model.tokensRealtime ? 'tokens · 实时 (journal llm)' : 'tokens · 用量统计 (非实时)'}
+                          {model.usageSourceLabel}
                         </span>
                         {model.estimatedCalls > 0 && (
                           <span
@@ -2044,6 +2184,17 @@ export function ContextOSWorkspace({
                     {model.budget.map((slice) => (
                       <BudgetBar key={slice.key} label={slice.label} tokens={slice.tokens} ratio={slice.ratio} colorClass={slice.colorClass} />
                     ))}
+                    <UsageBreakdownChips
+                      promptTokens={model.promptTokens}
+                      completionTokens={model.completionTokens}
+                      cachedTokens={model.cachedTokens}
+                      cacheCreationTokens={model.cacheCreationTokens}
+                      cacheReadTokens={model.cacheReadTokens}
+                      toolTokens={model.toolTokens}
+                      reasoningTokens={model.reasoningTokens}
+                      audioTokens={model.audioTokens}
+                      serverToolUseCount={model.serverToolUseCount}
+                    />
                   </div>
                 ) : (
                   <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-[11px] text-text-dim">

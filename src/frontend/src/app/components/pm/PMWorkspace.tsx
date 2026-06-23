@@ -95,7 +95,7 @@ interface PMWorkspaceProps {
   qualityGate?: QualityGateData | null;
   taskTraceMap?: TaskTraceMap;
   llmRuntimeState?: {
-    state: 'READY' | 'BLOCKED' | 'UNKNOWN';
+    state: 'READY' | 'BLOCKED' | 'DEGRADED' | 'UNKNOWN';
     blockedRoles: string[];
     requiredRoles: string[];
     lastUpdated: string | null;

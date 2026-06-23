@@ -49,6 +49,14 @@ export interface ContextOSEvent {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  toolTokens: number;
+  reasoningTokens: number;
+  audioTokens: number;
+  serverToolUseCount: number;
+  usageSource: 'provider' | 'stream_final' | 'request_estimate' | 'char_estimate' | 'none';
   /** 是否携带真实 token 用量（journal `llm` 通道 raw.data.prompt/completion_tokens）。 */
   hasUsage: boolean;
   /** 该次 usage 是否为后端字符估算。journal usage 为真实计数，恒 false。 */
@@ -81,6 +89,16 @@ export interface ContextOSEvent {
   providerId: string | null;
   providerName: string | null;
   model: string | null;
+  bindingId: string | null;
+  taskId: string | null;
+  pmTaskId: string | null;
+  chiefBlueprintId: string | null;
+  errorCode: string | null;
+  errorCategory: string | null;
+  providerStatus: number | null;
+  retryAfterSeconds: number | null;
+  circuitOpenRemainingSeconds: number | null;
+  exceptionType: string | null;
   /** 是否为上下文装配 / 投影事件（按事件名/消息识别 context.build / prompt_context / projection）。 */
   isProjection: boolean;
   /** Stable identity used to count one context projection once across start/end/preview echoes. */
@@ -105,11 +123,29 @@ export interface ContextSnapshotDegraded {
 
 export interface ModeAggregate {
   totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  toolTokens: number;
+  reasoningTokens: number;
+  audioTokens: number;
+  serverToolUseCount: number;
   calls: number;
 }
 
 export interface ActorAggregate {
   totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  toolTokens: number;
+  reasoningTokens: number;
+  audioTokens: number;
+  serverToolUseCount: number;
   calls: number;
   events: number;
 }
@@ -118,6 +154,13 @@ export interface RoleAggregate {
   totalTokens: number;
   promptTokens: number;
   completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  toolTokens: number;
+  reasoningTokens: number;
+  audioTokens: number;
+  serverToolUseCount: number;
   calls: number;
   usageCalls: number;
   events: number;
@@ -132,10 +175,39 @@ export interface WorkerAggregate {
   workerId: string;
   role: string;
   totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  toolTokens: number;
+  reasoningTokens: number;
+  audioTokens: number;
+  serverToolUseCount: number;
   calls: number;
   events: number;
   lastEpoch: number | null;
   lastLatencyMs: number | null;
+}
+
+export interface ProviderModelAggregate {
+  key: string;
+  providerId: string | null;
+  providerName: string | null;
+  model: string | null;
+  totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  toolTokens: number;
+  reasoningTokens: number;
+  audioTokens: number;
+  serverToolUseCount: number;
+  calls: number;
+  events: number;
+  lastEpoch: number | null;
 }
 
 export interface ContextOSTelemetry {
@@ -155,6 +227,13 @@ export interface ContextOSTelemetry {
   totalTokens: number;
   promptTokens: number;
   completionTokens: number;
+  cachedTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  toolTokens: number;
+  reasoningTokens: number;
+  audioTokens: number;
+  serverToolUseCount: number;
   /** 上下文装配 / 投影事件数（按事件名识别，真实）。 */
   projectionCount: number;
   /** 落盘快照回执数（context.snapshot 的 snapshot_hash 签名计数）；后端未发时为 0。 */
@@ -175,6 +254,8 @@ export interface ContextOSTelemetry {
   byActor: Record<string, ActorAggregate>;
   /** Full-stream per-role aggregate. Unlike `events`, this is not truncated to MAX_EVENTS. */
   byRole: Record<string, RoleAggregate>;
+  /** Provider/model aggregate derived from live stream providerId/providerName/model evidence. */
+  byProviderModel: Record<string, ProviderModelAggregate>;
   /**
    * Phase 3+：按 worker_id 聚合的实时统计。
    * 无任何事件携带 worker_id 时为空对象（hasWorkers=false），UI 据实降级。
@@ -195,6 +276,13 @@ export const EMPTY_TELEMETRY: ContextOSTelemetry = {
   totalTokens: 0,
   promptTokens: 0,
   completionTokens: 0,
+  cachedTokens: 0,
+  cacheCreationTokens: 0,
+  cacheReadTokens: 0,
+  toolTokens: 0,
+  reasoningTokens: 0,
+  audioTokens: 0,
+  serverToolUseCount: 0,
   projectionCount: 0,
   receiptCount: 0,
   contextItemsCount: null,
@@ -206,6 +294,7 @@ export const EMPTY_TELEMETRY: ContextOSTelemetry = {
   byMode: {},
   byActor: {},
   byRole: {},
+  byProviderModel: {},
   byWorker: {},
   hasWorkers: false,
 };
@@ -291,6 +380,26 @@ function readContextSnapshotDegraded(meta: Record<string, unknown>): ContextSnap
 function readFinalRequestTokenEstimate(audit: Record<string, unknown> | null): number | null {
   if (!audit) return null;
   return toFiniteOrNull(audit['final_request_token_estimate']) ?? toFiniteOrNull(audit['finalRequestTokenEstimate']);
+}
+
+function readAuditToken(audit: Record<string, unknown> | null, snakeKey: string, camelKey: string): number {
+  if (!audit) return 0;
+  return toFiniteOrNull(audit[snakeKey]) ?? toFiniteOrNull(audit[camelKey]) ?? 0;
+}
+
+function firstRecord(...values: unknown[]): Record<string, unknown> | null {
+  for (const value of values) {
+    if (isRecord(value)) return value;
+  }
+  return null;
+}
+
+function sumNumericRecord(value: unknown): number {
+  if (!isRecord(value)) return 0;
+  return Object.values(value).reduce<number>((total, item) => {
+    const parsed = toFiniteOrNull(item);
+    return total + (parsed ?? 0);
+  }, 0);
 }
 
 function readContextOSAudit(meta: Record<string, unknown>): Record<string, unknown> | null {
@@ -399,10 +508,14 @@ function classifyStream(params: {
     streamEvent === 'llm_call_error' ||
     streamEvent === 'llm_error' ||
     streamEvent === 'call_end' ||
-    streamEvent === 'call_error';
+    streamEvent === 'call_error' ||
+    streamEvent === 'response.completed' ||
+    streamEvent === 'response.done' ||
+    streamEvent === 'response.failed' ||
+    streamEvent === 'message_stop';
 
   let category: ContextOSEvent['category'];
-  if (isError || streamEvent === 'invoke_error' || streamEvent === 'llm_failed' || streamEvent === 'llm_call_error' || streamEvent === 'llm_error' || streamEvent === 'call_error') category = 'error';
+  if (isError || streamEvent === 'invoke_error' || streamEvent === 'llm_failed' || streamEvent === 'llm_call_error' || streamEvent === 'llm_error' || streamEvent === 'call_error' || streamEvent === 'response.failed') category = 'error';
   else if (streamEvent === 'tool_call' || streamEvent === 'tool_result') category = 'tool';
   else if (isProjection) category = 'projection';
   else if (isCall) category = 'call';
@@ -573,20 +686,98 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const providerId = nonEmptyString(meta['provider_id']) || nonEmptyString(meta['providerId']) || null;
   const providerName = nonEmptyString(meta['provider_name']) || nonEmptyString(meta['providerName']) || nonEmptyString(meta['provider']) || null;
   const model = nonEmptyString(meta['model']) || nonEmptyString(meta['model_name']) || null;
+  const bindingId = nonEmptyString(meta['binding_id']) || nonEmptyString(meta['bindingId']) || null;
+  const taskId = nonEmptyString(meta['task_id']) || nonEmptyString(meta['taskId']) || null;
+  const pmTaskId = nonEmptyString(meta['pm_task_id']) || nonEmptyString(meta['pmTaskId']) || null;
+  const chiefBlueprintId = nonEmptyString(meta['chief_blueprint_id']) || nonEmptyString(meta['chiefBlueprintId']) || null;
+  const errorCode = nonEmptyString(meta['error_code']) || nonEmptyString(meta['errorCode']) || null;
+  const errorCategory = nonEmptyString(meta['error_category']) || nonEmptyString(meta['errorCategory']) || null;
+  const providerStatus = toFiniteOrNull(meta['provider_status']) ?? toFiniteOrNull(meta['providerStatus']);
+  const retryAfterSeconds = toFiniteOrNull(meta['retry_after']) ?? toFiniteOrNull(meta['retryAfter']);
+  const circuitOpenRemainingSeconds =
+    toFiniteOrNull(meta['circuit_open_remaining']) ??
+    toFiniteOrNull(meta['circuitOpenRemaining']);
+  const exceptionType = nonEmptyString(meta['exception_type']) || nonEmptyString(meta['exceptionType']) || null;
 
   // 真实 per-call 用量（来自 journal `llm` 通道 raw.data，经 parseLlmStreamLine 注入 meta）。
   // 兼容 snake_case（runtime_events 通道可能用 prompt_tokens/completion_tokens/total_tokens）。
   const nestedUsage = isRecord(meta['usage']) ? meta['usage'] : {};
-  const usagePromptTokens =
+  const inputTokenDetails = firstRecord(
+    meta['input_tokens_details'],
+    meta['prompt_tokens_details'],
+    nestedUsage['input_tokens_details'],
+    nestedUsage['prompt_tokens_details'],
+  );
+  const outputTokenDetails = firstRecord(
+    meta['output_tokens_details'],
+    meta['completion_tokens_details'],
+    nestedUsage['output_tokens_details'],
+    nestedUsage['completion_tokens_details'],
+  );
+  const promptTokenAlias =
     toFiniteOrNull(meta['promptTokens']) ??
     toFiniteOrNull(meta['prompt_tokens']) ??
+    toFiniteOrNull(nestedUsage['promptTokens']) ??
+    toFiniteOrNull(nestedUsage['prompt_tokens']);
+  const inputTokenAlias =
     toFiniteOrNull(meta['inputTokens']) ??
     toFiniteOrNull(meta['input_tokens']) ??
-    toFiniteOrNull(nestedUsage['promptTokens']) ??
-    toFiniteOrNull(nestedUsage['prompt_tokens']) ??
     toFiniteOrNull(nestedUsage['inputTokens']) ??
-    toFiniteOrNull(nestedUsage['input_tokens']) ??
+    toFiniteOrNull(nestedUsage['input_tokens']);
+  const usageCacheCreationTokens =
+    toFiniteOrNull(meta['cacheCreationInputTokens']) ??
+    toFiniteOrNull(meta['cache_creation_input_tokens']) ??
+    toFiniteOrNull(nestedUsage['cacheCreationInputTokens']) ??
+    toFiniteOrNull(nestedUsage['cache_creation_input_tokens']) ??
     0;
+  const usageCacheReadTokens =
+    toFiniteOrNull(meta['cacheReadInputTokens']) ??
+    toFiniteOrNull(meta['cache_read_input_tokens']) ??
+    toFiniteOrNull(nestedUsage['cacheReadInputTokens']) ??
+    toFiniteOrNull(nestedUsage['cache_read_input_tokens']) ??
+    0;
+  const usageCachedTokens =
+    toFiniteOrNull(meta['cachedTokens']) ??
+    toFiniteOrNull(meta['cached_tokens']) ??
+    toFiniteOrNull(meta['cachedPromptTokens']) ??
+    toFiniteOrNull(meta['cached_prompt_tokens']) ??
+    toFiniteOrNull(nestedUsage['cachedTokens']) ??
+    toFiniteOrNull(nestedUsage['cached_tokens']) ??
+    toFiniteOrNull(nestedUsage['cachedPromptTokens']) ??
+    toFiniteOrNull(nestedUsage['cached_prompt_tokens']) ??
+    toFiniteOrNull(inputTokenDetails?.['cached_tokens']) ??
+    toFiniteOrNull(inputTokenDetails?.['cachedTokens']) ??
+    usageCacheReadTokens;
+  const usageReasoningTokens =
+    toFiniteOrNull(meta['reasoningTokens']) ??
+    toFiniteOrNull(meta['reasoning_tokens']) ??
+    toFiniteOrNull(nestedUsage['reasoningTokens']) ??
+    toFiniteOrNull(nestedUsage['reasoning_tokens']) ??
+    toFiniteOrNull(outputTokenDetails?.['reasoning_tokens']) ??
+    toFiniteOrNull(outputTokenDetails?.['reasoningTokens']) ??
+    0;
+  const usageAudioTokens = (
+    toFiniteOrNull(meta['audioTokens']) ??
+    toFiniteOrNull(meta['audio_tokens']) ??
+    toFiniteOrNull(nestedUsage['audioTokens']) ??
+    toFiniteOrNull(nestedUsage['audio_tokens']) ??
+    0
+  ) + (
+    toFiniteOrNull(inputTokenDetails?.['audio_tokens']) ??
+    toFiniteOrNull(inputTokenDetails?.['audioTokens']) ??
+    0
+  ) + (
+    toFiniteOrNull(outputTokenDetails?.['audio_tokens']) ??
+    toFiniteOrNull(outputTokenDetails?.['audioTokens']) ??
+    0
+  );
+  const serverToolUse = firstRecord(meta['server_tool_use'], meta['serverToolUse'], nestedUsage['server_tool_use'], nestedUsage['serverToolUse']);
+  const usageServerToolUseCount = sumNumericRecord(serverToolUse);
+  const usagePromptTokens = promptTokenAlias ?? (
+    inputTokenAlias !== null
+      ? inputTokenAlias + usageCacheCreationTokens + usageCacheReadTokens
+      : 0
+  );
   const usageCompletionTokens =
     toFiniteOrNull(meta['completionTokens']) ??
     toFiniteOrNull(meta['completion_tokens']) ??
@@ -597,6 +788,19 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     toFiniteOrNull(nestedUsage['outputTokens']) ??
     toFiniteOrNull(nestedUsage['output_tokens']) ??
     0;
+  const usageToolTokens =
+    toFiniteOrNull(meta['toolTokens']) ??
+    toFiniteOrNull(meta['tool_tokens']) ??
+    toFiniteOrNull(nestedUsage['toolTokens']) ??
+    toFiniteOrNull(nestedUsage['tool_tokens']) ??
+    (
+      readAuditToken(finalRequestContextAudit, 'tool_schema_token_estimate', 'toolSchemaTokenEstimate') +
+      readAuditToken(finalRequestContextAudit, 'response_format_token_estimate', 'responseFormatTokenEstimate')
+    );
+  const streamFinalUsage = booleanValue(meta['_internal_provider_usage']) ||
+    booleanValue(meta['internalProviderUsage']) ||
+    (streamEvent === 'complete' && isRecord(meta['usage'])) ||
+    (streamEvent === 'message_delta' && isRecord(meta['usage']) && Boolean(nonEmptyString(meta['stop_reason'])));
   const usageEvent = streamEvent === 'invoke_done' ||
     streamEvent === 'invoke_error' ||
     streamEvent === 'llm_completed' ||
@@ -605,7 +809,13 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     streamEvent === 'llm_call_error' ||
     streamEvent === 'llm_error' ||
     streamEvent === 'call_end' ||
-    streamEvent === 'call_error';
+    streamEvent === 'call_error' ||
+    streamEvent === 'response.completed' ||
+    streamEvent === 'response.done' ||
+    streamEvent === 'response.failed' ||
+    streamEvent === 'message_stop' ||
+    streamFinalUsage ||
+    (streamEvent === 'complete' && isRecord(meta['usage']));
   const nonFinalUsageEvent = streamEvent === 'content_preview' ||
     streamEvent === 'content_chunk' ||
     streamEvent === 'thinking_preview' ||
@@ -625,6 +835,25 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
   const accountedPromptTokens = hasUsage ? usagePromptTokens : 0;
   const accountedCompletionTokens = hasUsage ? usageCompletionTokens : 0;
   const accountedTotalTokens = hasUsage ? usageTotalTokens : 0;
+  const accountedCachedTokens = hasUsage ? usageCachedTokens : 0;
+  const accountedCacheCreationTokens = hasUsage ? usageCacheCreationTokens : 0;
+  const accountedCacheReadTokens = hasUsage ? usageCacheReadTokens : 0;
+  const accountedToolTokens = (hasUsage || finalRequestTokenEstimate !== null) ? usageToolTokens : 0;
+  const accountedReasoningTokens = hasUsage ? usageReasoningTokens : 0;
+  const accountedAudioTokens = hasUsage ? usageAudioTokens : 0;
+  const accountedServerToolUseCount = hasUsage ? usageServerToolUseCount : 0;
+  const usageEstimated = booleanValue(meta['estimated']) ||
+    booleanValue(meta['estimated_usage']) ||
+    booleanValue(nestedUsage['estimated']);
+  const usageSource: ContextOSEvent['usageSource'] = hasUsage
+    ? streamFinalUsage
+      ? 'stream_final'
+      : usageEstimated
+        ? 'char_estimate'
+        : 'provider'
+    : finalRequestTokenEstimate !== null
+      ? 'request_estimate'
+      : 'none';
   const metaDurationMs = toFiniteOrNull(meta['durationMs']) ?? toFiniteOrNull(meta['elapsed_ms']);
   const hasFinalRequestProjectionEvidence = rawFinalRequestProjectionEvidence && !nonFinalUsageEvent;
 
@@ -690,7 +919,15 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     completionTokens: accountedCompletionTokens,
     totalTokens: accountedTotalTokens,
     hasUsage,
-    estimatedTokens: false,
+    cachedTokens: accountedCachedTokens,
+    cacheCreationTokens: accountedCacheCreationTokens,
+    cacheReadTokens: accountedCacheReadTokens,
+    toolTokens: accountedToolTokens,
+    reasoningTokens: accountedReasoningTokens,
+    audioTokens: accountedAudioTokens,
+    serverToolUseCount: accountedServerToolUseCount,
+    usageSource,
+    estimatedTokens: usageSource === 'char_estimate',
     durationMs,
     error: isError ? nonEmptyString(log.details) || nonEmptyString(log.message) || 'error' : null,
     hasReceipt,
@@ -708,6 +945,16 @@ function logEntryToEvent(log: LogEntry, index: number, channelFallback: string):
     providerId,
     providerName,
     model,
+    bindingId,
+    taskId,
+    pmTaskId,
+    chiefBlueprintId,
+    errorCode,
+    errorCategory,
+    providerStatus,
+    retryAfterSeconds,
+    circuitOpenRemainingSeconds,
+    exceptionType,
     isProjection,
     projectionKey: buildProjectionKey({
       isProjection,
@@ -739,8 +986,16 @@ function eventDedupeKey(event: ContextOSEvent): string {
       String(event.promptTokens),
       String(event.completionTokens),
       String(event.totalTokens),
+      String(event.cachedTokens),
+      String(event.cacheCreationTokens),
+      String(event.cacheReadTokens),
+      String(event.toolTokens),
+      String(event.reasoningTokens),
+      String(event.audioTokens),
+      String(event.serverToolUseCount),
       String(event.finalRequestTokenEstimate ?? ''),
       event.error ?? '',
+      event.errorCode ?? '',
     ].join('\u001f');
   }
   return [
@@ -755,11 +1010,19 @@ function eventDedupeKey(event: ContextOSEvent): string {
     String(event.promptTokens),
     String(event.completionTokens),
     String(event.totalTokens),
+    String(event.cachedTokens),
+    String(event.cacheCreationTokens),
+    String(event.cacheReadTokens),
+    String(event.toolTokens),
+    String(event.reasoningTokens),
+    String(event.audioTokens),
+    String(event.serverToolUseCount),
     String(event.finalRequestTokenEstimate ?? ''),
     String(event.durationMs ?? ''),
     String(event.contextItems ?? ''),
     String(event.contextTokens ?? ''),
     event.error ?? '',
+    event.errorCode ?? '',
   ].join('\u001f');
 }
 
@@ -791,6 +1054,13 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
   let totalTokens = 0;
   let promptTokens = 0;
   let completionTokens = 0;
+  let cachedTokens = 0;
+  let cacheCreationTokens = 0;
+  let cacheReadTokens = 0;
+  let toolTokens = 0;
+  let reasoningTokens = 0;
+  let audioTokens = 0;
+  let serverToolUseCount = 0;
   const projectionKeys = new Set<string>();
   let receiptCount = 0;
   let errorCount = 0;
@@ -799,6 +1069,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
   const byMode: Record<string, ModeAggregate> = {};
   const byActor: Record<string, ActorAggregate> = {};
   const byRole: Record<string, RoleAggregate> = {};
+  const byProviderModel: Record<string, ProviderModelAggregate> = {};
   const byWorker: Record<string, WorkerAggregate> = {};
   let hasWorkers = false;
 
@@ -816,23 +1087,116 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
     totalTokens += observedTokens;
     promptTokens += event.promptTokens;
     completionTokens += event.completionTokens;
+    cachedTokens += event.cachedTokens;
+    cacheCreationTokens += event.cacheCreationTokens;
+    cacheReadTokens += event.cacheReadTokens;
+    toolTokens += event.toolTokens;
+    reasoningTokens += event.reasoningTokens;
+    audioTokens += event.audioTokens;
+    serverToolUseCount += event.serverToolUseCount;
     if (event.estimatedTokens) estimatedCalls += 1;
 
     const actorKey = event.actor;
-    const actorAgg = byActor[actorKey] ?? { totalTokens: 0, calls: 0, events: 0 };
+    const actorAgg = byActor[actorKey] ?? {
+      totalTokens: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      cachedTokens: 0,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 0,
+      toolTokens: 0,
+      reasoningTokens: 0,
+      audioTokens: 0,
+      serverToolUseCount: 0,
+      calls: 0,
+      events: 0,
+    };
     actorAgg.events += 1;
     actorAgg.totalTokens += observedTokens;
+    actorAgg.promptTokens += event.promptTokens;
+    actorAgg.completionTokens += event.completionTokens;
+    actorAgg.cachedTokens += event.cachedTokens;
+    actorAgg.cacheCreationTokens += event.cacheCreationTokens;
+    actorAgg.cacheReadTokens += event.cacheReadTokens;
+    actorAgg.toolTokens += event.toolTokens;
+    actorAgg.reasoningTokens += event.reasoningTokens;
+    actorAgg.audioTokens += event.audioTokens;
+    actorAgg.serverToolUseCount += event.serverToolUseCount;
 
     if (event.isCall || event.hasUsage) {
       totalCalls += 1;
       const modeKey = event.mode || 'unknown';
-      const modeAgg = byMode[modeKey] ?? { totalTokens: 0, calls: 0 };
+      const modeAgg = byMode[modeKey] ?? {
+        totalTokens: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cachedTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        toolTokens: 0,
+        reasoningTokens: 0,
+        audioTokens: 0,
+        serverToolUseCount: 0,
+        calls: 0,
+      };
       modeAgg.calls += 1;
       modeAgg.totalTokens += observedTokens;
+      modeAgg.promptTokens += event.promptTokens;
+      modeAgg.completionTokens += event.completionTokens;
+      modeAgg.cachedTokens += event.cachedTokens;
+      modeAgg.cacheCreationTokens += event.cacheCreationTokens;
+      modeAgg.cacheReadTokens += event.cacheReadTokens;
+      modeAgg.toolTokens += event.toolTokens;
+      modeAgg.reasoningTokens += event.reasoningTokens;
+      modeAgg.audioTokens += event.audioTokens;
+      modeAgg.serverToolUseCount += event.serverToolUseCount;
       byMode[modeKey] = modeAgg;
       actorAgg.calls += 1;
     }
     byActor[actorKey] = actorAgg;
+
+    if (event.providerId || event.providerName || event.model) {
+      const providerKey = [
+        event.providerId ?? '',
+        event.providerName ?? '',
+        event.model ?? '',
+      ].join('\u001f') || 'unknown';
+      const providerAgg = byProviderModel[providerKey] ?? {
+        key: providerKey,
+        providerId: event.providerId,
+        providerName: event.providerName,
+        model: event.model,
+        totalTokens: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cachedTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        toolTokens: 0,
+        reasoningTokens: 0,
+        audioTokens: 0,
+        serverToolUseCount: 0,
+        calls: 0,
+        events: 0,
+        lastEpoch: null,
+      };
+      providerAgg.events += 1;
+      providerAgg.totalTokens += observedTokens;
+      providerAgg.promptTokens += event.promptTokens;
+      providerAgg.completionTokens += event.completionTokens;
+      providerAgg.cachedTokens += event.cachedTokens;
+      providerAgg.cacheCreationTokens += event.cacheCreationTokens;
+      providerAgg.cacheReadTokens += event.cacheReadTokens;
+      providerAgg.toolTokens += event.toolTokens;
+      providerAgg.reasoningTokens += event.reasoningTokens;
+      providerAgg.audioTokens += event.audioTokens;
+      providerAgg.serverToolUseCount += event.serverToolUseCount;
+      if (event.isCall || event.hasUsage) providerAgg.calls += 1;
+      if (event.epoch > 0 && (providerAgg.lastEpoch === null || event.epoch > providerAgg.lastEpoch)) {
+        providerAgg.lastEpoch = event.epoch;
+      }
+      byProviderModel[providerKey] = providerAgg;
+    }
 
     for (const roleId of Object.keys(ACTOR_ROLE_ALIASES)) {
       if (!eventMatchesRole(event, roleId)) continue;
@@ -840,6 +1204,13 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
         totalTokens: 0,
         promptTokens: 0,
         completionTokens: 0,
+        cachedTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        toolTokens: 0,
+        reasoningTokens: 0,
+        audioTokens: 0,
+        serverToolUseCount: 0,
         calls: 0,
         usageCalls: 0,
         events: 0,
@@ -848,6 +1219,13 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
       roleAgg.totalTokens += observedTokens;
       roleAgg.promptTokens += event.promptTokens;
       roleAgg.completionTokens += event.completionTokens;
+      roleAgg.cachedTokens += event.cachedTokens;
+      roleAgg.cacheCreationTokens += event.cacheCreationTokens;
+      roleAgg.cacheReadTokens += event.cacheReadTokens;
+      roleAgg.toolTokens += event.toolTokens;
+      roleAgg.reasoningTokens += event.reasoningTokens;
+      roleAgg.audioTokens += event.audioTokens;
+      roleAgg.serverToolUseCount += event.serverToolUseCount;
       if (event.isCall || event.hasUsage) roleAgg.calls += 1;
       if (event.hasUsage) roleAgg.usageCalls += 1;
       byRole[roleId] = roleAgg;
@@ -860,6 +1238,15 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
         workerId: event.workerId,
         role: event.actor,
         totalTokens: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cachedTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        toolTokens: 0,
+        reasoningTokens: 0,
+        audioTokens: 0,
+        serverToolUseCount: 0,
         calls: 0,
         events: 0,
         lastEpoch: null,
@@ -867,6 +1254,15 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
       };
       workerAgg.events += 1;
       workerAgg.totalTokens += observedTokens;
+      workerAgg.promptTokens += event.promptTokens;
+      workerAgg.completionTokens += event.completionTokens;
+      workerAgg.cachedTokens += event.cachedTokens;
+      workerAgg.cacheCreationTokens += event.cacheCreationTokens;
+      workerAgg.cacheReadTokens += event.cacheReadTokens;
+      workerAgg.toolTokens += event.toolTokens;
+      workerAgg.reasoningTokens += event.reasoningTokens;
+      workerAgg.audioTokens += event.audioTokens;
+      workerAgg.serverToolUseCount += event.serverToolUseCount;
       if (event.isCall || event.hasUsage) workerAgg.calls += 1;
       if (event.epoch > 0 && (workerAgg.lastEpoch === null || event.epoch > workerAgg.lastEpoch)) {
         workerAgg.lastEpoch = event.epoch;
@@ -907,6 +1303,13 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
     totalTokens,
     promptTokens,
     completionTokens,
+    cachedTokens,
+    cacheCreationTokens,
+    cacheReadTokens,
+    toolTokens,
+    reasoningTokens,
+    audioTokens,
+    serverToolUseCount,
     projectionCount: projectionKeys.size,
     receiptCount,
     contextItemsCount: lastContextBuild ? lastContextBuild.contextItems : null,
@@ -920,6 +1323,7 @@ function aggregateEvents(events: ContextOSEvent[], windowed: boolean): ContextOS
     byMode,
     byActor,
     byRole,
+    byProviderModel,
     byWorker,
     hasWorkers,
   };

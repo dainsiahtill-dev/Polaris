@@ -469,6 +469,146 @@ describe('buildContextOSModel with real WS telemetry', () => {
     expect(model.bindingBudgets.filter((row) => row.roleId === 'director')).toHaveLength(2);
   });
 
+  it('surfaces provider usage, cache tokens, and final-request tool overhead in role binding budgets', () => {
+    const directorCall = wsLog({
+      id: 'director-protocol-usage',
+      timestamp: '2026-06-22T10:00:02Z',
+      level: 'success',
+      source: 'Director',
+      message: 'director provider call',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        providerId: 'qwen-a',
+        providerName: 'Qwen A',
+        model: 'qwen3.6-27b-gpu0',
+        usage: {
+          input_tokens: 1000,
+          cache_read_input_tokens: 500,
+          output_tokens: 100,
+        },
+        final_request_context_audit: {
+          final_request_token_estimate: 1800,
+          tool_schema_token_estimate: 150,
+          response_format_token_estimate: 25,
+        },
+        context_tokens_after: 1800,
+        durationMs: 900,
+      },
+      tags: ['llm_completed'],
+    });
+
+    const model = buildContextOSModel(baseInput({
+      llmRuntimeState: READY_LLM_WITH_WINDOWS,
+      telemetry: telemetryOf([directorCall], []),
+    }));
+    const director = model.roles.find((r) => r.id === 'director');
+    const row = director?.internalContext.bindingBudgets.find((item) => item.providerId === 'qwen-a');
+
+    expect(model.totalTokens).toBe(1800);
+    expect(model.providerUsageTokens).toBe(1600);
+    expect(model.cacheReadTokens).toBe(500);
+    expect(model.cachedTokens).toBe(500);
+    expect(model.toolTokens).toBe(175);
+    expect(model.usageSourceLabel).toBe('provider usage · 实时');
+    expect(model.budget.map((slice) => slice.key)).toContain('cache_read');
+    expect(model.budget.map((slice) => slice.key)).toContain('tools');
+    expect(row).toMatchObject({
+      providerId: 'qwen-a',
+      model: 'qwen3.6-27b-gpu0',
+      totalTokens: 1800,
+      promptTokens: 1500,
+      completionTokens: 100,
+      cacheReadTokens: 500,
+      cachedTokens: 500,
+      toolTokens: 175,
+      usageSource: 'matched',
+      usageKind: 'provider',
+      windowOccupancyTokens: 1800,
+    });
+  });
+
+  it('does not model-only match usage into a provider-specific binding when providers differ', () => {
+    const sameModelRuntime: LlmRuntimeGateState = {
+      state: 'READY',
+      blockedRoles: [],
+      requiredRoles: ['director'],
+      lastUpdated: null,
+      roleDetails: {
+        director: {
+          providerId: 'provider-a',
+          providerName: 'Provider A',
+          providerType: 'openai_compat',
+          model: 'shared-model',
+          maxContextTokens: 32_768,
+          maxOutputTokens: 8_192,
+          bindings: [
+            {
+              bindingId: 'a',
+              providerId: 'provider-a',
+              providerName: 'Provider A',
+              providerType: 'openai_compat',
+              model: 'shared-model',
+              profile: '',
+              maxContextTokens: 32_768,
+              maxOutputTokens: 8_192,
+            },
+            {
+              bindingId: 'b',
+              providerId: 'provider-b',
+              providerName: 'Provider B',
+              providerType: 'openai_compat',
+              model: 'shared-model',
+              profile: '',
+              maxContextTokens: 32_768,
+              maxOutputTokens: 8_192,
+            },
+          ],
+          ready: true,
+          runtimeSupported: true,
+          runtimeIssue: '',
+          readinessIssue: '',
+          readinessSource: 'role_index',
+          testedProviderId: 'provider-a',
+          testedModel: 'shared-model',
+          testedTimestamp: null,
+          timestamp: null,
+        },
+      },
+    };
+    const modelOnlyEvent = wsLog({
+      id: 'model-only',
+      timestamp: '2026-06-22T10:00:06Z',
+      level: 'success',
+      source: 'Director',
+      message: 'call with model only',
+      meta: {
+        channel: 'llm',
+        streamEvent: 'llm_completed',
+        role: 'Director',
+        model: 'shared-model',
+        promptTokens: 100,
+        completionTokens: 20,
+        totalTokens: 120,
+      },
+      tags: ['llm_completed'],
+    });
+
+    const model = buildContextOSModel(baseInput({
+      llmRuntimeState: sameModelRuntime,
+      telemetry: telemetryOf([modelOnlyEvent], []),
+    }));
+    const directorRows = model.bindingBudgets.filter((row) => row.roleId === 'director');
+    expect(directorRows).toHaveLength(3);
+    expect(directorRows.find((row) => row.providerId === 'provider-a')?.totalTokens).toBe(0);
+    expect(directorRows.find((row) => row.providerId === 'provider-b')?.totalTokens).toBe(0);
+    expect(directorRows.find((row) => row.providerName === '角色聚合')).toMatchObject({
+      totalTokens: 120,
+      usageSource: 'role_aggregate',
+    });
+  });
+
   it('uses real context_tokens_after for global window occupancy before falling back to prompt averages', () => {
     const roleCall = wsLog({
       id: 'rt-pm-call',

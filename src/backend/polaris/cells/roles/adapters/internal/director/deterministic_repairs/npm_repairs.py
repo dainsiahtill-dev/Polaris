@@ -174,6 +174,15 @@ def _apply_deterministic_npm_test_script_repair(
         scripts["start"] = f"npm run build && node {entrypoint}"
         changed_scripts["start"] = str(scripts["start"])
 
+    missing_verify_entrypoint = _missing_npm_script_entrypoint(artifact_quality_errors, script_name="verify")
+    if missing_verify_entrypoint:
+        scripts["verify"] = "npm run build"
+        changed_scripts["verify"] = "npm run build"
+        test_script = str(scripts.get("test") or "").strip()
+        if missing_verify_entrypoint in test_script:
+            scripts["test"] = "npm run verify"
+            changed_scripts["test"] = "npm run verify"
+
     if not changed_scripts and not changed_metadata:
         return []
 
@@ -223,6 +232,7 @@ def _is_repairable_npm_test_script_error(error: Any) -> bool:
         or "npm package manifest script 'test' has invalid node eval syntax" in text
         or "npm package manifest script 'test' uses shell command substitution" in text
         or "npm package manifest script 'start' references missing local entrypoint" in text
+        or "npm package manifest script 'verify' references missing local entrypoint" in text
         or ("npm package manifest script" in text and "is a placeholder command" in text)
         or ("npm package manifest script" in text and "swallows command failures" in text)
         or _has_typescript_source_require_module_not_found([text])

@@ -33,7 +33,7 @@ export interface ResidentPageProps {
   directorRunning: boolean;
   /** LLM 运行时状态 */
   llmRuntimeState: {
-    state: 'READY' | 'BLOCKED' | 'UNKNOWN';
+    state: 'READY' | 'BLOCKED' | 'DEGRADED' | 'UNKNOWN';
     blockedRoles: string[];
     requiredRoles: string[];
     lastUpdated: string | null;
