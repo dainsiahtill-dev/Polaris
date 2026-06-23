@@ -1186,6 +1186,13 @@ def _should_preserve_materialization_quality_repair_batch(artifact_quality_error
     joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
     if _artifact_quality_failed_test_count(artifact_quality_errors) >= 2:
         return True
+    if (
+        "referenceerror: require is not defined" in joined_errors
+        or "module is not defined in es module scope" in joined_errors
+        or "is not defined in es module scope" in joined_errors
+        or "cannot use import statement outside a module" in joined_errors
+    ):
+        return True
     if "unresolved import symbol" in joined_errors or "has no exported member" in joined_errors:
         return True
     if "ts18046" in joined_errors or "is of type 'unknown'" in joined_errors or 'is of type "unknown"' in joined_errors:
@@ -1421,6 +1428,9 @@ _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS: tuple[str, ...] = (
     "syntaxerror",
     "syntax error",
     "parse error",
+    "referenceerror",
+    "is not defined in es module scope",
+    "cannot use import statement outside a module",
     "unterminated string literal",
     "unexpected token",
     "unexpected end of input",
@@ -1463,6 +1473,8 @@ def _explicit_artifact_quality_repair_target_files(
         if not any(hint in text.lower() for hint in _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS):
             continue
         candidates.extend(_failed_test_title_target_files(text, workspace_root, changed_source_files))
+        if _looks_like_javascript_module_system_failure(text) and "package.json" in changed_source_set:
+            candidates.append("package.json")
         for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(text):
             rel = _map_quality_error_path_to_changed_file(match.group("path"), changed_by_lower)
             if not rel:
@@ -1542,6 +1554,16 @@ def _artifact_quality_failed_test_count(artifact_quality_errors: list[str]) -> i
 def _looks_like_javascript_test_behavior_failure(text: str) -> bool:
     token = str(text or "").lower()
     return any(hint in token for hint in ("assertionerror", "failed tests", "test failed", "vitest", "jest"))
+
+
+def _looks_like_javascript_module_system_failure(text: str) -> bool:
+    token = str(text or "").lower()
+    return (
+        "referenceerror: require is not defined" in token
+        or "module is not defined in es module scope" in token
+        or "is not defined in es module scope" in token
+        or "cannot use import statement outside a module" in token
+    )
 
 
 def _is_test_like_javascript_path(rel_path: str) -> bool:

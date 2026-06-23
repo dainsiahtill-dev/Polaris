@@ -1095,6 +1095,10 @@ function AppContent() {
               processStreamEvents={combinedProcessStreamEvents}
               snapshot={displaySnapshot ?? snapshot}
               qualityGate={qualityGate}
+              controlPlaneProjection={
+                factoryBenchSession?.control_plane_projection
+                ?? factoryBench.sessions[0]?.control_plane_projection
+              }
             />
           </div>
         </div>

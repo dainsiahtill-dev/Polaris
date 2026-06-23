@@ -183,6 +183,232 @@ def _job_token_from_ledger_meta(value: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _merge_evidence_modality(
+    modalities: dict[str, dict[str, Any]],
+    name: str,
+    *,
+    present: bool,
+    ok: bool,
+    detail: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    clean_name = _clean_string(name)
+    if not clean_name:
+        return
+    current = modalities.get(clean_name)
+    if current is None:
+        modalities[clean_name] = {
+            "present": bool(present),
+            "ok": bool(ok),
+            "detail": detail,
+            "metadata": metadata or {},
+        }
+        return
+    current["present"] = bool(current.get("present")) or bool(present)
+    current["ok"] = bool(current.get("ok")) and bool(ok)
+    if detail:
+        current["detail"] = detail
+    if metadata:
+        existing = current.get("metadata")
+        current["metadata"] = {**(existing if isinstance(existing, dict) else {}), **metadata}
+
+
+def _normalize_declared_modalities(value: Any) -> dict[str, dict[str, Any]]:
+    modalities: dict[str, dict[str, Any]] = {}
+    entries: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(value, dict):
+        entries = [(str(name), raw) for name, raw in value.items() if isinstance(raw, dict)]
+    elif isinstance(value, list):
+        entries = [
+            (str(item.get("name") or item.get("modality") or ""), item)
+            for item in value
+            if isinstance(item, dict)
+        ]
+    else:
+        return modalities
+    for name, raw in entries:
+        nested_metadata = raw.get("metadata")
+        metadata = nested_metadata if isinstance(nested_metadata, dict) else {}
+        metadata = {
+            **metadata,
+            **{
+                key: raw[key]
+                for key in sorted(raw)
+                if key not in {"name", "modality", "present", "ok", "detail", "metadata"}
+            },
+        }
+        _merge_evidence_modality(
+            modalities,
+            str(name),
+            present=bool(raw.get("present", True)),
+            ok=bool(raw.get("ok")),
+            detail=_clean_string(raw.get("detail")),
+            metadata=metadata,
+        )
+    return modalities
+
+
+def _verifier_entries(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        if any(key in value for key in ("ok", "passed", "name", "modality", "kind", "script")):
+            return [value]
+        return [item for item in value.values() if isinstance(item, dict)]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Derive canonical evidence modalities from one physical evidence payload.
+
+    The multimodal QA path must append evidence here instead of becoming a
+    second source of truth. Future QA checks can attach domain verifier scripts,
+    screenshots, browser traces, and model judgements under one ledger event.
+    """
+
+    modalities = _normalize_declared_modalities(physical_evidence.get("modalities"))
+    requirements = physical_evidence.get("requirements")
+    requirement_map: dict[str, Any] = requirements if isinstance(requirements, dict) else {}
+    code_requirement_names = (
+        "artifact_landed",
+        "source_files_present",
+        "declared_source_targets_present",
+        "scaffolding_present",
+    )
+    code_requirements = [
+        item for name in code_requirement_names if isinstance((item := requirement_map.get(name)), dict)
+    ]
+    if code_requirements:
+        _merge_evidence_modality(
+            modalities,
+            "code",
+            present=True,
+            ok=all(bool(item.get("ok")) for item in code_requirements),
+            detail=", ".join(name for name in code_requirement_names if name in requirement_map),
+        )
+    build_requirement = requirement_map.get("build_test_lint_ran")
+    commands = physical_evidence.get("commands")
+    command_count = int(physical_evidence.get("command_count") or 0)
+    if isinstance(build_requirement, dict) or command_count > 0 or isinstance(commands, list):
+        if isinstance(build_requirement, dict):
+            command_ok = bool(build_requirement.get("ok"))
+            command_detail = _clean_string(build_requirement.get("detail"))
+        else:
+            sampled_commands = commands if isinstance(commands, list) else []
+            command_ok = bool(sampled_commands) and all(
+                bool(item.get("ok")) for item in sampled_commands if isinstance(item, dict)
+            )
+            command_detail = f"{command_count or len(sampled_commands)} command evidence item(s)"
+        _merge_evidence_modality(
+            modalities,
+            "command",
+            present=True,
+            ok=command_ok,
+            detail=command_detail,
+            metadata={"command_count": command_count},
+        )
+    verifier_payloads = (
+        physical_evidence.get("verifier_results"),
+        physical_evidence.get("custom_verifiers"),
+        physical_evidence.get("domain_verifiers"),
+        physical_evidence.get("script_verifiers"),
+        physical_evidence.get("user_verifiers"),
+        physical_evidence.get("qa_verifiers"),
+    )
+    for verifier in [entry for payload in verifier_payloads for entry in _verifier_entries(payload)]:
+        verifier_ok = bool(verifier.get("ok") or verifier.get("passed"))
+        verifier_name = _clean_string(verifier.get("name") or verifier.get("script") or verifier.get("id"))
+        verifier_modality = _clean_string(verifier.get("modality") or verifier.get("kind") or "domain")
+        verifier_detail = _clean_string(verifier.get("detail") or verifier.get("reason") or verifier_name)
+        verifier_metadata = {
+            "id": _clean_string(verifier.get("id")),
+            "name": verifier_name,
+            "script": _clean_string(verifier.get("script")),
+            "hash": _clean_string(verifier.get("hash") or verifier.get("evidence_hash")),
+            "exit_code": verifier.get("exit_code"),
+            "metric": verifier.get("metric"),
+            "threshold": verifier.get("threshold"),
+        }
+        _merge_evidence_modality(
+            modalities,
+            "verifier",
+            present=True,
+            ok=verifier_ok,
+            detail=verifier_detail,
+            metadata=verifier_metadata,
+        )
+        _merge_evidence_modality(
+            modalities,
+            verifier_modality,
+            present=True,
+            ok=verifier_ok,
+            detail=verifier_detail,
+            metadata=verifier_metadata,
+        )
+    entrypoint = physical_evidence.get("entrypoint")
+    entrypoint_map: dict[str, Any] = entrypoint if isinstance(entrypoint, dict) else {}
+    entrypoint_kind = _clean_string(entrypoint_map.get("kind"))
+    if entrypoint_kind in {"web_static", "web_playwright"}:
+        _merge_evidence_modality(
+            modalities,
+            "browser",
+            present=True,
+            ok=bool(entrypoint_map.get("ok")),
+            detail=_clean_string(entrypoint_map.get("detail")),
+            metadata={
+                "kind": entrypoint_kind,
+                "url": _clean_string(entrypoint_map.get("url")),
+                "http_status": entrypoint_map.get("http_status"),
+            },
+        )
+    visual_signal_present = bool(
+        entrypoint_map.get("has_canvas")
+        or "canvas_non_blank" in entrypoint_map
+        or "canvas_screenshot_non_blank" in entrypoint_map
+        or entrypoint_map.get("screenshot_hash")
+        or entrypoint_map.get("screenshot_path")
+    )
+    if entrypoint_kind == "web_playwright" or visual_signal_present:
+        visual_ok = bool(
+            entrypoint_map.get("canvas_non_blank")
+            or entrypoint_map.get("canvas_screenshot_non_blank")
+            or entrypoint_map.get("screenshot_hash")
+            or entrypoint_map.get("screenshot_path")
+        )
+        _merge_evidence_modality(
+            modalities,
+            "visual",
+            present=visual_signal_present,
+            ok=visual_ok,
+            detail=_clean_string(entrypoint_map.get("detail")),
+            metadata={
+                "has_canvas": bool(entrypoint_map.get("has_canvas")),
+                "canvas_non_blank": bool(entrypoint_map.get("canvas_non_blank")),
+                "screenshot_hash": _clean_string(entrypoint_map.get("screenshot_hash")),
+                "screenshot_path": _clean_string(entrypoint_map.get("screenshot_path")),
+            },
+        )
+    judgement = (
+        physical_evidence.get("llm_judge")
+        or physical_evidence.get("visual_judgement")
+        or physical_evidence.get("qa_visual_judgement")
+    )
+    if isinstance(judgement, dict):
+        _merge_evidence_modality(
+            modalities,
+            "llm_judge",
+            present=True,
+            ok=bool(judgement.get("ok") or judgement.get("passed")),
+            detail=_clean_string(judgement.get("detail") or judgement.get("reason")),
+            metadata={
+                "provider": _clean_string(judgement.get("provider")),
+                "model": _clean_string(judgement.get("model")),
+                "confidence": judgement.get("confidence"),
+            },
+        )
+    return modalities
+
+
 def _build_capability_audit(
     *,
     contract_sources: list[str],
@@ -463,6 +689,24 @@ def build_gate_ledger_event(
             "sampled_command_count": len(commands),
             "commands_truncated": bool(gate.get("commands_truncated")),
             "commands": commands,
+            "modalities": _evidence_modalities_from_physical_evidence(
+                {
+                    "modalities": gate.get("modalities"),
+                    "requirements": requirements,
+                    "entrypoint": entrypoint,
+                    "command_count": total_command_count,
+                    "commands": commands,
+                    "verifier_results": gate.get("verifier_results"),
+                    "custom_verifiers": gate.get("custom_verifiers"),
+                    "domain_verifiers": gate.get("domain_verifiers"),
+                    "script_verifiers": gate.get("script_verifiers"),
+                    "user_verifiers": gate.get("user_verifiers"),
+                    "qa_verifiers": gate.get("qa_verifiers"),
+                    "llm_judge": gate.get("llm_judge"),
+                    "visual_judgement": gate.get("visual_judgement"),
+                    "qa_visual_judgement": gate.get("qa_visual_judgement"),
+                }
+            ),
         },
     }
     event["content_id"] = stable_hash(_event_content_payload(event))
@@ -509,6 +753,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     command_count_total = 0
     sampled_command_count = 0
     truncated_command_events = 0
+    evidence_modalities: dict[str, dict[str, Any]] = {}
     for event in events:
         if not isinstance(event, dict) or event.get("event_type") != "gate_evaluated":
             continue
@@ -531,6 +776,22 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         sampled_command_count += int(physical_evidence.get("sampled_command_count") or 0)
         if physical_evidence.get("commands_truncated"):
             truncated_command_events += 1
+        gate_modalities = _evidence_modalities_from_physical_evidence(physical_evidence)
+        for modality_name, modality in gate_modalities.items():
+            summary = evidence_modalities.setdefault(
+                modality_name,
+                {"total": 0, "present": 0, "ok": 0, "failed": 0, "latest_detail": ""},
+            )
+            summary["total"] = int(summary["total"]) + 1
+            if modality.get("present"):
+                summary["present"] = int(summary["present"]) + 1
+            if modality.get("ok"):
+                summary["ok"] = int(summary["ok"]) + 1
+            else:
+                summary["failed"] = int(summary["failed"]) + 1
+            detail = _clean_string(modality.get("detail"))
+            if detail:
+                summary["latest_detail"] = detail
         gates.append(
             {
                 "name": _clean_string(gate.get("name")) or "unknown",
@@ -542,6 +803,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "job_token_id": token_id,
                 "capability_ok": bool(capability_audit.get("ok")),
                 "capability_issues": list(issues) if isinstance(issues, list) else [],
+                "evidence_modalities": gate_modalities,
             }
         )
     failed_gates = [gate for gate in gates if not gate["ok"]]
@@ -573,6 +835,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             "sampled_command_count": sampled_command_count,
             "truncated_command_events": truncated_command_events,
         },
+        "evidence_modalities": dict(sorted(evidence_modalities.items())),
     }
 
 

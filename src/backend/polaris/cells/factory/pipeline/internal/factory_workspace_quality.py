@@ -127,6 +127,17 @@ class WorkspaceQualityRunner:
             commands.append(["npm", "run", "build"])
         if "test" in scripts:
             commands.append(["npm", "test"])
+        if (
+            helpers.bool_from_context_or_env(
+                context,
+                "workspace_validation_entrypoint_smoke",
+                "qa_workspace_validation_entrypoint_smoke",
+                env_var="POLARIS_FACTORY_WORKSPACE_VALIDATION_ENTRYPOINT_SMOKE",
+                default=True,
+            )
+            and "start" in scripts
+        ):
+            commands.append(["npm", "run", "start"])
         return commands
 
     def run_command(self, command: list[str], timeout_seconds: float) -> dict[str, Any]:

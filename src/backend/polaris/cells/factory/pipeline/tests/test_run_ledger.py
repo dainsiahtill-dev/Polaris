@@ -261,3 +261,46 @@ def test_run_ledger_projection_is_canonical_read_model(tmp_path: Path) -> None:
     assert projection["capability"]["ok"] is True
     assert projection["capability"]["latest_token_id"] == ledger_meta["job_token_id"]
     assert projection["physical_evidence"]["command_count"] >= projection["physical_evidence"]["sampled_command_count"]
+
+
+def test_run_ledger_projection_tracks_user_verifier_modalities(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "target_files": ["src/physics.ts"],
+        "scope_paths": ["src/physics.ts", "tests/physics.test.ts"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "verify particle physics"},
+    }
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1")
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": True,
+            "summary": "domain verifier passed",
+            "user_verifiers": [
+                {
+                    "id": "physics-energy-conservation",
+                    "name": "Energy conservation",
+                    "modality": "physics",
+                    "script": "tests/physics.test.ts",
+                    "ok": True,
+                    "hash": "sha256:physics-evidence",
+                    "metric": "energy_delta",
+                    "threshold": 0.01,
+                    "detail": "energy drift within tolerance",
+                }
+            ],
+        },
+        gate_name="qa_domain_verifier",
+    )
+
+    RunLedger(tmp_path, run_id="bench_1").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+
+    assert projection["ok"] is True
+    assert projection["evidence_modalities"]["verifier"]["ok"] == 1
+    assert projection["evidence_modalities"]["physics"]["ok"] == 1
+    assert projection["gates"][0]["evidence_modalities"]["physics"]["metadata"]["script"] == "tests/physics.test.ts"

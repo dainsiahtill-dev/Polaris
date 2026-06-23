@@ -7290,6 +7290,45 @@ def test_node_tap_multi_failure_quality_repair_preserves_batch(tmp_path: Any) ->
     assert selected[:3] == ["package.json", "src/index.js", "tests/smoke.test.js"]
 
 
+def test_esmodule_commonjs_entrypoint_failure_preserves_repair_batch(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+        _select_materialization_quality_repair_target_batch,
+        _should_preserve_materialization_quality_repair_batch,
+    )
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (tmp_path / "package.json").write_text(
+        '{"type":"module","scripts":{"start":"node src/index.js"}}\n', encoding="utf-8"
+    )
+    (src / "index.js").write_text('const Note = require("./models/Note");\n', encoding="utf-8")
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm run start):\n"
+        f"file://{tmp_path}/src/index.js:3\n"
+        'const Note = require("./models/Note");\n'
+        "             ^\n"
+        "ReferenceError: require is not defined in ES module scope, you can use import instead\n"
+        "This file is being treated as an ES module because it has a '.js' file extension and "
+        f'\'{tmp_path}/package.json\' contains "type": "module".\n'
+    )
+
+    targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=["package.json", "src/index.js"],
+        workspace_full=str(tmp_path),
+    )
+    preserve_batch = _should_preserve_materialization_quality_repair_batch([error])
+    selected = _select_materialization_quality_repair_target_batch(
+        targets,
+        repair_attempt=2,
+        preserve_batch_after_first_attempt=preserve_batch,
+    )
+
+    assert preserve_batch is True
+    assert selected == ["package.json", "src/index.js"]
+
+
 def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any) -> None:
     """§8 regression: missing test files should not be masked by fabricated
     placeholder tests in production/director hot paths."""

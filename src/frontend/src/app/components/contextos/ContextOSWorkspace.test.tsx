@@ -155,6 +155,33 @@ describe('ContextOSWorkspace', () => {
     }
   });
 
+  it('renders control-plane projection from run ledger snapshot when provided', () => {
+    render(
+      <ContextOSWorkspace
+        {...baseProps()}
+        controlPlaneProjection={{
+          schema_version: 1,
+          source: 'run_ledger_projection',
+          available: true,
+          ok: true,
+          status: 'ready',
+          audit_path: '/tmp/demo/factory_audits.json',
+          total: 2,
+          projected: 2,
+          missing: 0,
+          failed: 0,
+          projects: [],
+          detail: 'run ledger projection 2/2 project(s) ready',
+        }}
+      />,
+    );
+
+    const chip = screen.getByTestId('contextos-control-plane-projection');
+    expect(chip.textContent).toContain('账本一致');
+    expect(chip.textContent).toContain('2/2 投影');
+    expect(chip.textContent).toContain('source=run_ledger_projection');
+  });
+
   it('opens a tailored detail modal for every ContextOS pipeline node', () => {
     render(
       <ContextOSWorkspace

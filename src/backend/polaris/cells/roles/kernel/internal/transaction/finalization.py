@@ -19,6 +19,7 @@ from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOL
 from polaris.cells.roles.kernel.internal.transaction.delivery_contract import BlockedReason
 from polaris.cells.roles.kernel.internal.transaction.intent_classifier import detect_inline_patch_escape
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger, VisibleOutput
+from polaris.cells.roles.kernel.internal.transaction.receipt_utils import merge_batch_receipts
 from polaris.cells.roles.kernel.internal.turn_state_machine import TurnState, TurnStateMachine
 from polaris.cells.roles.kernel.public.turn_contracts import (
     FinalizeMode,
@@ -30,6 +31,11 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 from polaris.cells.roles.kernel.public.turn_events import CompletionEvent, TurnEvent, TurnPhaseEvent
 
 logger = logging.getLogger(__name__)
+
+
+def _canonical_batch_receipt(receipts: list[dict]) -> dict[str, Any]:
+    """Return the canonical batch receipt used by result and completion events."""
+    return merge_batch_receipts(receipts) or {"results": []}
 
 
 class FinalizationHandler:
@@ -182,6 +188,7 @@ class FinalizationHandler:
             )
 
         # === Materialization gate（LLM_ONCE 收口阶段兜底）===
+        batch_receipt = _canonical_batch_receipt(receipts)
         phase_timeout = ledger.mutation_obligation.blocked_reason == BlockedReason.PHASE_TIMEOUT
         if (
             ledger.delivery_contract.must_materialize
@@ -244,6 +251,8 @@ class FinalizationHandler:
                     duration_ms=ledger.get_duration_ms(),
                     llm_calls=len(ledger.llm_calls),
                     tool_calls=len(ledger.tool_executions),
+                    turn_kind=final_kind,
+                    batch_receipt=batch_receipt,
                 )
             )
             _metrics: dict[str, float] = {
@@ -268,7 +277,7 @@ class FinalizationHandler:
                     else str(decision.get("finalize_mode", "")),
                 },
                 "metrics": _metrics,
-                "batch_receipt": {"results": [r for receipt in receipts for r in receipt.get("results", [])]},
+                "batch_receipt": batch_receipt,
                 "finalization": {
                     "turn_id": turn_id,
                     "mode": "blocked",
@@ -290,6 +299,8 @@ class FinalizationHandler:
                 duration_ms=ledger.get_duration_ms(),
                 llm_calls=len(ledger.llm_calls),
                 tool_calls=len(ledger.tool_executions),
+                turn_kind="tool_batch_with_receipt",
+                batch_receipt=batch_receipt,
             )
         )
         metrics: dict[str, float] = {
@@ -311,7 +322,7 @@ class FinalizationHandler:
                 else str(decision.get("finalize_mode", "")),
             },
             "metrics": metrics,
-            "batch_receipt": {"results": [r for receipt in receipts for r in receipt.get("results", [])]},
+            "batch_receipt": batch_receipt,
             "finalization": {
                 "turn_id": turn_id,
                 "mode": "llm_once",
@@ -336,6 +347,7 @@ class FinalizationHandler:
         ledger.finalize()
 
         content_lines: list[str] = []
+        batch_receipt = _canonical_batch_receipt(receipts)
         for receipt in receipts:
             for result in receipt.get("results", []):
                 tool_name = result.get("tool_name", "unknown")
@@ -364,6 +376,8 @@ class FinalizationHandler:
                 duration_ms=ledger.get_duration_ms(),
                 llm_calls=len(ledger.llm_calls),
                 tool_calls=len(ledger.tool_executions),
+                turn_kind="tool_batch_with_receipt",
+                batch_receipt=batch_receipt,
             )
         )
         metrics: dict[str, Any] = {
@@ -385,7 +399,7 @@ class FinalizationHandler:
                 else str(decision.get("finalize_mode", "")),
             },
             "metrics": metrics,
-            "batch_receipt": {"results": [r for receipt in receipts for r in receipt.get("results", [])]},
+            "batch_receipt": batch_receipt,
             "finalization": None,
         }
 
@@ -404,6 +418,7 @@ class FinalizationHandler:
         ledger.finalize()
 
         content = FinalizationHandler._render_local_template(receipts)
+        batch_receipt = _canonical_batch_receipt(receipts)
         emit_event(
             CompletionEvent(
                 turn_id=turn_id,
@@ -411,6 +426,8 @@ class FinalizationHandler:
                 duration_ms=ledger.get_duration_ms(),
                 llm_calls=len(ledger.llm_calls),
                 tool_calls=len(ledger.tool_executions),
+                turn_kind="tool_batch_with_receipt",
+                batch_receipt=batch_receipt,
             )
         )
         return {
@@ -430,7 +447,7 @@ class FinalizationHandler:
                 "llm_calls": len(ledger.llm_calls),
                 "tool_calls": len(ledger.tool_executions),
             },
-            "batch_receipt": {"results": [r for receipt in receipts for r in receipt.get("results", [])]},
+            "batch_receipt": batch_receipt,
             "finalization": {
                 "turn_id": turn_id,
                 "mode": "local",

@@ -381,6 +381,15 @@ class TestPackageJsonParsing:
         )
         assert executor._workspace_quality_commands({}) == [["npm", "run", "build"], ["npm", "test"]]
 
+    def test_workspace_quality_commands_include_entrypoint_smoke(self, tmp_path: Path) -> None:
+        executor = _executor(tmp_path)
+        (tmp_path / "package.json").write_text(
+            json.dumps({"scripts": {"test": "node --test", "start": "node src/index.js"}}),
+            encoding="utf-8",
+        )
+
+        assert executor._workspace_quality_commands({}) == [["npm", "test"], ["npm", "run", "start"]]
+
     def test_workspace_quality_commands_configured_override(self, tmp_path: Path) -> None:
         executor = _executor(tmp_path)
         commands = executor._workspace_quality_commands({"quality_commands": ["pytest -q", ["ruff", "check"]]})

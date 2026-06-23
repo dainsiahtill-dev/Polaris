@@ -45,6 +45,7 @@ import type { LogEntry } from '@/types/log';
 import type { LlmRuntimeGateState } from '@/app/hooks/useLlmRuntimeGate';
 import type { SnapshotPayload } from '@/app/types/appContracts';
 import type { QualityGateData } from '@/app/components/pm';
+import type { FactoryBenchControlPlaneProjection } from '@/services/benchService';
 
 import {
   buildContextOSModel,
@@ -84,6 +85,7 @@ export interface ContextOSWorkspaceProps {
   processStreamEvents: LogEntry[];
   snapshot: SnapshotPayload | null;
   qualityGate?: QualityGateData | null;
+  controlPlaneProjection?: FactoryBenchControlPlaneProjection;
 }
 
 const STAGE_ICONS: Record<string, LucideIcon> = {
@@ -136,6 +138,20 @@ function formatFreshness(epochMs: number): string {
   if (minutes < 60) return `${minutes}m 前`;
   const hours = Math.floor(minutes / 60);
   return `${hours}h 前`;
+}
+
+function controlPlaneProjectionLabel(projection: FactoryBenchControlPlaneProjection): string {
+  if (!projection.available) {
+    return projection.status === 'pending' ? '账本待生成' : '账本缺失';
+  }
+  return projection.ok ? '账本一致' : '账本异常';
+}
+
+function controlPlaneProjectionSummary(projection: FactoryBenchControlPlaneProjection): string {
+  if (!projection.available) {
+    return projection.detail || 'factory_audits.json 尚不可用';
+  }
+  return `${projection.projected}/${projection.total} 投影 · ${projection.failed} 异常`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1755,6 +1771,7 @@ export function ContextOSWorkspace({
   processStreamEvents,
   snapshot,
   qualityGate,
+  controlPlaneProjection,
 }: ContextOSWorkspaceProps) {
   // 真实 ContextOS 遥测：直接派生自 useRuntime 经 WebSocket(/v2/ws/runtime) 实时推送的运行时流。
   const telemetry = useMemo(
@@ -1943,6 +1960,25 @@ export function ContextOSWorkspace({
               )}
               title={`质量门 ${gatePassed ? 'PASS' : 'HOLD'}`}
             />
+          )}
+
+          {controlPlaneProjection && (
+            <div
+              className={cn(
+                'flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-mono text-[10px]',
+                controlPlaneProjection.ok
+                  ? 'border-cyan-400/30 bg-cyan-400/10 text-cyan-100'
+                  : 'border-amber-400/30 bg-amber-400/10 text-amber-100',
+              )}
+              data-testid="contextos-control-plane-projection"
+              title={controlPlaneProjection.detail}
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+              <span>{controlPlaneProjectionLabel(controlPlaneProjection)}</span>
+              <span className="text-text-dim/60">·</span>
+              <span>{controlPlaneProjectionSummary(controlPlaneProjection)}</span>
+              <span className="text-text-dim/70">source={controlPlaneProjection.source}</span>
+            </div>
           )}
 
           <Button
