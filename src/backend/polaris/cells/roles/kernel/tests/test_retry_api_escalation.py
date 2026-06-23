@@ -54,6 +54,10 @@ _STRICT_DEFS = [
     },
     {"type": "function", "function": {"name": "write_file"}},
 ]
+_STRICT_DEFS_WITH_VERIFY = [
+    *_STRICT_DEFS,
+    {"type": "function", "function": {"name": "execute_command"}},
+]
 
 
 class TestResolveRetryEscalation:
@@ -107,6 +111,18 @@ class TestResolveRetryEscalation:
         assert definitions == _STRICT_DEFS
         assert tool_choice == {"type": "function", "function": {"name": "write_file"}}
 
+    def test_final_attempt_removes_verification_tools_when_write_tool_is_forced(self) -> None:
+        definitions, tool_choice = resolve_retry_escalation(
+            attempt_index=3,
+            max_retry_attempts=4,
+            strict_tool_definitions=_STRICT_DEFS_WITH_VERIFY,
+            forced_write_tool_name="write_file",
+        )
+
+        assert tool_choice == {"type": "function", "function": {"name": "write_file"}}
+        assert definitions is not None
+        assert {d["function"]["name"] for d in definitions} == {"edit_blocks", "write_file"}
+
     def test_narrow_transform_preserves_other_tools(self) -> None:
         narrowed = narrow_edit_blocks_schema_to_line_range(_STRICT_DEFS)
 
@@ -153,7 +169,7 @@ class TestF16CreationModeEscalation:
         definitions, tool_choice = resolve_retry_escalation(
             attempt_index=0,
             max_retry_attempts=4,
-            strict_tool_definitions=_STRICT_DEFS,
+            strict_tool_definitions=_STRICT_DEFS_WITH_VERIFY,
             forced_write_tool_name="write_file",
             force_write_immediately=True,
         )

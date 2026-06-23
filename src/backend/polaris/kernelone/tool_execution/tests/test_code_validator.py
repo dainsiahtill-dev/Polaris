@@ -152,6 +152,45 @@ class TestMultiLanguageCodeValidator:
         assert "const flowerMood=1" in result.fixed_code
         assert "return this.mood" in result.fixed_code
 
+    def test_ts_comment_interval_brackets_do_not_false_reject(self, monkeypatch: pytest.MonkeyPatch):
+        """TS comments may contain interval notation such as [0, 1) without breaking writes."""
+
+        def _prettier_missing(*_args: object, **_kwargs: object) -> object:
+            raise FileNotFoundError
+
+        monkeypatch.setattr("subprocess.run", _prettier_missing)
+
+        code = (
+            "/** Relative humidity in range [0, 1). */\n"
+            "export interface EnvironmentSnapshot {\n"
+            "  readonly humidity: number;\n"
+            "}\n"
+            "export function normalize(value: number): number {\n"
+            "  // Clamp into [0, 1) for display.\n"
+            '  const label = "literal [still not code)";\n'
+            "  return Math.max(0, Math.min(0.999, value));\n"
+            "}\n"
+        )
+
+        result = MultiLanguageCodeValidator().validate(code, "src/models/environment.ts")
+
+        assert result.is_valid is True, format_validation_error(result, "src/models/environment.ts")
+
+    def test_ts_parser_rejects_invalid_numeric_literal(self):
+        """TS parser gate must catch invalid tokens that bracket balance cannot see."""
+        code = (
+            "function pseudoRandom(seed: number): () => number {\n"
+            "  return () => seed;\n"
+            "}\n"
+            "const rand = pseudoRandom(0xF10WER);\n"
+        )
+
+        result = MultiLanguageCodeValidator().validate(code, "src/engine/simulation.ts")
+
+        assert result.is_valid is False
+        assert result.errors
+        assert any("expected" in error.message.lower() for error in result.errors)
+
 
 class TestFormatValidationError:
     """Test error formatting."""

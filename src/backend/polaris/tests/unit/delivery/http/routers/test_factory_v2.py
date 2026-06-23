@@ -11,8 +11,10 @@ External services are mocked to avoid storage and orchestration dependencies.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -135,6 +137,112 @@ def _make_factory_run(
         "failure": None,
     }
     return run
+
+
+def _write_director_resume_evidence(workspace: Path) -> None:
+    from polaris.kernelone.storage import resolve_runtime_path
+
+    plan_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/plan.json"))
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(
+        json.dumps({"tasks": [{"id": "TASK-1", "goal": "Implement feature"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    task_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.json"))
+    task_path.write_text(
+        json.dumps({"id": 1, "status": "pending", "subject": "Implement feature"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    blueprint_path = workspace / ".polaris" / "blueprints" / "latest.review.json"
+    blueprint_path.parent.mkdir(parents=True, exist_ok=True)
+    blueprint_path.write_text(
+        json.dumps(
+            {"generated_blueprints": 1, "blueprints": [{"task_id": "TASK-1"}]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    snapshot_path = workspace / ".polaris" / "factory_snapshots" / "pre_director" / "manifest.json"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(
+        json.dumps({"snapshot_kind": "pre_director_workspace", "files": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def test_director_resume_evidence_rehydrates_legacy_taskboard(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from polaris.delivery.http.routers import factory
+
+    workspace = tmp_path / "resume-unit"
+    workspace.mkdir()
+    runtime_projects = tmp_path / "runtime-projects"
+    current_runtime = runtime_projects / "resume-unit-111111111111" / "runtime"
+    legacy_runtime = runtime_projects / "resume-unit-222222222222" / "runtime"
+
+    def _fake_resolve_runtime_path(_workspace: str, rel_path: str) -> str:
+        assert rel_path.startswith("runtime/")
+        return str(current_runtime / rel_path.removeprefix("runtime/"))
+
+    monkeypatch.setattr(factory, "resolve_runtime_path", _fake_resolve_runtime_path)
+    monkeypatch.setattr(
+        factory,
+        "resolve_storage_roots",
+        lambda _workspace: SimpleNamespace(
+            runtime_projects_root=str(runtime_projects),
+            workspace_key="resume-unit-111111111111",
+        ),
+    )
+
+    task_dir = legacy_runtime / "tasks"
+    task_dir.mkdir(parents=True)
+    (task_dir / "plan.json").write_text(
+        json.dumps({"tasks": [{"id": "TASK-1", "target_files": ["src/index.ts"]}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (task_dir / "task_1.json").write_text(
+        json.dumps(
+            {
+                "id": 1,
+                "status": "in_progress",
+                "metadata": {
+                    "runtime_execution": {"status": "active"},
+                    "workflow_run_id": "director-old",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (task_dir / "task_1.session.json").write_text(
+        json.dumps({"status": "active"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (legacy_runtime / "blueprints").mkdir(parents=True)
+    (legacy_runtime / "blueprints" / "ce_TASK-1.json").write_text("{}", encoding="utf-8")
+
+    blueprint_path = workspace / ".polaris" / "blueprints" / "latest.review.json"
+    blueprint_path.parent.mkdir(parents=True)
+    blueprint_path.write_text(
+        json.dumps({"generated_blueprints": 1, "blueprints": [{"task_id": "TASK-1"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    snapshot_path = workspace / ".polaris" / "factory_snapshots" / "pre_director" / "manifest.json"
+    snapshot_path.parent.mkdir(parents=True)
+    snapshot_path.write_text(
+        json.dumps({"snapshot_kind": "pre_director_workspace", "files": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    factory._ensure_director_resume_evidence_ready(str(workspace))
+
+    assert factory._taskboard_record_count(str(workspace)) == 1
+    assert not (current_runtime / "tasks" / "task_1.session.json").exists()
+    task_1 = json.loads((current_runtime / "tasks" / "task_1.json").read_text(encoding="utf-8"))
+    assert task_1["status"] == "pending"
+    assert "runtime_execution" not in task_1["metadata"]
 
 
 def test_execution_stages_for_recovery_after_checkpoint() -> None:
@@ -365,6 +473,108 @@ async def test_start_factory_run_from_architect_requires_architect_readiness(
     assert mock_roles_ready.call_args.kwargs["live_check"] is False
     scheduled_coro = create_task_with_context_mock.call_args.args[0]
     assert scheduled_coro.cr_frame is None
+
+
+@pytest.mark.asyncio
+async def test_start_factory_run_from_director_uses_director_only_stage_graph(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Director-only resume must not silently rerun PM or Chief Engineer."""
+    monkeypatch.delenv("POLARIS_FACTORY_LIVE_LLM_PREFLIGHT", raising=False)
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    _write_director_resume_evidence(workspace)
+    run = _make_factory_run(
+        run_id="factory_director123",
+        status="running",
+        stages=["director_dispatch", "quality_gate"],
+    )
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.factory.FactoryRunService",
+        ) as mock_svc_cls,
+        patch(
+            "polaris.delivery.http.routers.factory.sync_process_settings_environment",
+        ),
+        patch(
+            "polaris.delivery.http.routers.factory.save_persisted_settings",
+        ),
+        patch(
+            "polaris.delivery.http.routers.factory.create_task_with_context",
+        ) as create_task_with_context_mock,
+        patch("polaris.delivery.http.routers.factory.ensure_required_roles_ready") as mock_roles_ready,
+    ):
+        mock_svc = MagicMock()
+        mock_svc_cls.return_value = mock_svc
+        mock_svc.create_run = AsyncMock(return_value=run)
+        mock_svc.start_run = AsyncMock(return_value=run)
+
+        response = await client.post(
+            "/v2/factory/runs",
+            json={
+                "workspace": str(workspace),
+                "start_from": "director",
+                "directive": "Resume Director from trusted PM/CE evidence",
+                "run_director": True,
+                "director_iterations": 1,
+                "loop": False,
+                "persist_workspace": False,
+            },
+        )
+
+    assert response.status_code == 200
+    config = mock_svc.create_run.call_args.args[0]
+    assert config.name == "Factory Run - director"
+    assert config.stages == ["director_dispatch", "quality_gate"]
+    assert mock_roles_ready.call_args.kwargs["default_roles"] == ["director", "qa"]
+    assert mock_roles_ready.call_args.kwargs["force_roles"] == ["director", "qa"]
+    scheduled_coro = create_task_with_context_mock.call_args.args[0]
+    assert scheduled_coro.cr_frame is None
+
+
+@pytest.mark.asyncio
+async def test_start_factory_run_from_director_fails_closed_without_resume_evidence(
+    client: AsyncClient,
+    tmp_path: Path,
+) -> None:
+    """Director-only resume requires PM, CE, TaskBoard and snapshot evidence."""
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+
+    with (
+        patch(
+            "polaris.delivery.http.routers.factory.FactoryRunService",
+        ) as mock_svc_cls,
+        patch(
+            "polaris.delivery.http.routers.factory.sync_process_settings_environment",
+        ),
+        patch(
+            "polaris.delivery.http.routers.factory.save_persisted_settings",
+        ),
+        patch("polaris.delivery.http.routers.factory.ensure_required_roles_ready") as mock_roles_ready,
+    ):
+        response = await client.post(
+            "/v2/factory/runs",
+            json={
+                "workspace": str(workspace),
+                "start_from": "director",
+                "directive": "Resume Director",
+                "run_director": True,
+                "director_iterations": 1,
+                "loop": False,
+                "persist_workspace": False,
+            },
+        )
+
+    assert response.status_code == 409
+    data = response.json()
+    assert data["error"]["code"] == "DIRECTOR_RESUME_EVIDENCE_MISSING"
+    assert "runtime/tasks/plan.json" in data["error"]["details"]["missing_evidence"]
+    mock_svc_cls.return_value.create_run.assert_not_called()
+    mock_roles_ready.assert_not_called()
 
 
 @pytest.mark.asyncio

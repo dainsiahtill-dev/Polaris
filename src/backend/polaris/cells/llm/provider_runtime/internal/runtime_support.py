@@ -39,6 +39,15 @@ def _truthy_config_flag(provider_cfg: dict[str, Any], name: str) -> bool:
     return str(raw_flag).strip().lower() in {"1", "true", "yes", "on", "enabled", "enable"}
 
 
+def _minimax_director_contract_supported(provider_cfg: dict[str, Any]) -> bool:
+    if _truthy_config_flag(provider_cfg, "director_tool_contract_supported"):
+        return True
+
+    tool_schema_profile = str(provider_cfg.get("tool_schema_profile") or "").strip().lower()
+    execution_profile = str(provider_cfg.get("execution_profile") or "").strip().lower()
+    return tool_schema_profile == "full" and execution_profile == "full"
+
+
 def _tool_choice_disabled(provider_cfg: dict[str, Any]) -> bool:
     raw_flag = provider_cfg.get("disable_tool_choice")
     if isinstance(raw_flag, bool):
@@ -87,11 +96,12 @@ def role_runtime_support_issue(
         return "director_tool_choice_disabled"
 
     provider_type = _normalize_provider_type(provider_cfg)
-    if provider_type == "minimax" and not _truthy_config_flag(provider_cfg, "director_tool_contract_supported"):
+    if provider_type == "minimax" and not _minimax_director_contract_supported(provider_cfg):
         # MiniMax chat endpoints may be usable for planning roles, but current
         # configured M2.x responses do not expose enforceable native tool_calls.
         # Keep Director blocked unless an operator explicitly marks this
-        # provider/model as contract-verified after a tool-call probe.
+        # provider/model as contract-verified or assigns the full tool/execution
+        # profile after a tool-call probe.
         return "director_minimax_tool_contract_unverified"
 
     return ""

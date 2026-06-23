@@ -64,6 +64,39 @@ def test_director_accepts_contract_verified_minimax_runtime() -> None:
     )
 
 
+def test_director_accepts_full_profile_minimax_runtime() -> None:
+    assert (
+        is_role_runtime_supported(
+            "director",
+            "minimax-full",
+            {
+                "type": "minimax",
+                "base_url": "https://api.minimaxi.com/v1",
+                "model": "MiniMax-M3",
+                "tool_schema_profile": "full",
+                "execution_profile": "full",
+            },
+        )
+        is True
+    )
+
+
+def test_director_rejects_minimax_with_only_one_full_profile_marker() -> None:
+    assert (
+        is_role_runtime_supported(
+            "director",
+            "minimax-partial",
+            {
+                "type": "minimax",
+                "base_url": "https://api.minimaxi.com/v1",
+                "model": "MiniMax-M3",
+                "tool_schema_profile": "full",
+            },
+        )
+        is False
+    )
+
+
 def test_non_director_roles_keep_generic_runtime_support() -> None:
     assert (
         is_role_runtime_supported(

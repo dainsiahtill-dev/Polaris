@@ -8,6 +8,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -107,6 +108,128 @@ class TestMiniMaxProviderHappyPath:
         assert result.output == "The answer is 42."
         assert result.thinking is not None
         assert "calculate" in result.thinking
+
+    def test_invoke_json_tool_calls_without_visible_output(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        minimax_config: dict[str, Any],
+    ) -> None:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/json"}
+        mock_resp.json.return_value = {
+            "base_resp": {"status_code": 0, "status_msg": "Success"},
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call_write",
+                                "type": "function",
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": json.dumps(
+                                        {"path": "requirements.md", "content": "ok"},
+                                        ensure_ascii=False,
+                                    ),
+                                },
+                            }
+                        ],
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+        }
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.minimax_provider._blocking_http_post",
+            lambda _url, _headers, _payload, _timeout: mock_resp,
+        )
+
+        provider = MiniMaxProvider()
+        result = provider.invoke("Write file", "MiniMax-M3", minimax_config)
+
+        assert result.ok is True
+        assert result.output == ""
+        assert result.raw is not None
+        tool_calls = result.raw["tool_calls"]
+        assert tool_calls[0]["function"]["name"] == "write_file"
+        assert json.loads(tool_calls[0]["function"]["arguments"]) == {
+            "path": "requirements.md",
+            "content": "ok",
+        }
+
+    def test_invoke_streaming_sse_tool_calls_without_visible_output(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        minimax_config: dict[str, Any],
+    ) -> None:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "text/event-stream; charset=utf-8"}
+        chunks = [
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_write",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "write_file",
+                                        "arguments": '{"path":"requirements.md",',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {
+                                        "arguments": '"content":"ok"}',
+                                    },
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+        ]
+        mock_resp.iter_lines.return_value = [
+            f"data: {json.dumps(chunk, ensure_ascii=False)}".encode() for chunk in chunks
+        ] + [b"data: [DONE]"]
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.minimax_provider._blocking_http_post",
+            lambda _url, _headers, _payload, _timeout: mock_resp,
+        )
+
+        provider = MiniMaxProvider()
+        result = provider.invoke("Write file", "MiniMax-M3", {**minimax_config, "streaming": True})
+
+        assert result.ok is True
+        assert result.output == ""
+        assert result.streaming is True
+        assert result.raw is not None
+        tool_calls = result.raw["tool_calls"]
+        assert tool_calls[0]["id"] == "call_write"
+        assert tool_calls[0]["function"]["name"] == "write_file"
+        assert json.loads(tool_calls[0]["function"]["arguments"]) == {
+            "path": "requirements.md",
+            "content": "ok",
+        }
 
     def test_health_success(
         self,

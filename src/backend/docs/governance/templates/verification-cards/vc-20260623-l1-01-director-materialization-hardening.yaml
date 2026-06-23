@@ -1,0 +1,88 @@
+card_id: "vc-20260623-l1-01-director-materialization-hardening"
+bug_summary: >
+  Factory Bench L1-01 with Director bound to MiniMax-M3 improved from zero
+  materialization to real project files, but failed after Director emitted
+  invalid TypeScript and later returned execute_command during forced-write
+  retries. Polaris needed stronger write-path syntax gates and clearer staging
+  for execute_command in mutation retries.
+
+classification: pattern
+
+bug_path:
+  files:
+    - "polaris/kernelone/tool_execution/code_validator.py"
+    - "polaris/cells/roles/kernel/internal/transaction/retry_escalation_policy.py"
+    - "polaris/cells/roles/kernel/internal/transaction/contract_guards.py"
+    - "polaris/cells/roles/kernel/internal/transaction/forced_write_command_normalizer.py"
+  symptom: "L1-01 chain=partial, ts_syntax failed, QA missing, Director failed with director_no_materialized_changes."
+
+assumptions:
+  - id: "A1"
+    statement: "The rerun used the actual MiniMax-M3 Director binding."
+    status: verified_true
+    evidence: "factory_audits.json reported llm_route_audit ok and backend fresh fingerprint=6d77e60fdd8371f."
+  - id: "A2"
+    statement: "The project materially improved after MiniMax stream tool-call support."
+    status: verified_true
+    evidence: "L1-01 rerun produced 12 files and 7 source files, including package.json, tsconfig.json, index.html, data/garden-seed.json, src/models/*.ts, and src/engine/*.ts."
+  - id: "A3"
+    statement: "The TypeScript gate failed on syntax that pre-write bracket heuristics could not catch."
+    status: verified_true
+    evidence: "factory_audits.json check ts_syntax failed: src/engine/simulation.ts(173,36): TS1005 ',' expected; local file contained pseudoRandom(0xF10WER)."
+  - id: "A4"
+    statement: "execute_command must be supported only as materialization when it produces auditable writes."
+    status: verified_true
+    evidence: "Transaction tests distinguish execute_command with stdout redirection to a workspace file from plain npm test verification commands."
+
+pre_mortem:
+  failure_point: >
+    The fix is incomplete if providers still see execute_command in named
+    forced-write attempts, if TypeScript parser availability differs in runtime,
+    or if non-redirection command writes bypass materialization evidence.
+  risk_zone:
+    - "polaris/cells/roles/kernel/internal/transaction/**"
+    - "polaris/kernelone/tool_execution/code_validator.py"
+    - "polaris/kernelone/llm/toolkit/executor/handlers/command.py"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/kernelone/tool_execution/tests/test_code_validator.py"
+      description: "TS comments and strings with bracket-like interval notation are not false-rejected; invalid TS numeric literal is rejected."
+      expected: "Valid TS comments pass; pseudoRandom(0xF10WER) fails before write acceptance."
+      status: passed
+      command: "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/kernelone/tool_execution/tests/test_code_validator.py"
+    - file: "polaris/cells/roles/kernel/tests/test_retry_api_escalation.py"
+      description: "Named forced-write attempts remove verification-only execute_command from offered tool definitions."
+      expected: "Final/creation forced write exposes write tools only while earlier retry access still supports verification."
+      status: passed
+      command: "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/kernel/tests/test_retry_api_escalation.py"
+    - file: "polaris/tests/unit/cells/roles/kernel/internal/test_transaction_rollback_and_guards.py"
+      description: "Materializing execute_command redirects count as writes; plain verification commands do not; forced-write normalizer accepts Mapping decisions."
+      expected: "20 tests pass."
+      status: passed
+      command: "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/unit/cells/roles/kernel/internal/test_transaction_rollback_and_guards.py"
+  static_checks:
+    - description: "Ruff check and format over touched materialization files."
+      status: passed
+      command: "python -m ruff check <touched-files> --fix && python -m ruff format <touched-files>"
+    - description: "Mypy over touched production files."
+      status: passed
+      command: "PYTHONPATH=src/backend python -m mypy <touched-production-files> --ignore-missing-imports"
+  integration_tests:
+    - description: "Aggregated focused regression suite."
+      status: passed
+      command: "PYTHONPATH=src/backend python -m pytest -q <135 focused tests>"
+    - description: "Factory Bench L1-01 rerun after backend restart."
+      status: pending
+      command: "PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir <run-dir>"
+
+manual_check:
+  - "Factory Bench L1-01 before this hardening: 0/1 passed, wall clock 1089.3s, chain=partial, files=12, source=7, qa_ran=false."
+  - "No generated target-project code was manually edited; all changes are in Polaris platform and tests."
+
+related_adrs:
+  - "ADR-0090"
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-06-23"

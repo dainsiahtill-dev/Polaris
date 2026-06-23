@@ -878,7 +878,8 @@ class _TestStageExecutor(OrchestrationStageExecutor):
     def _build_orchestration_service(self, context: dict):
         return self._command_service
 
-    def _resolve_director_binding_fanout(self) -> list[dict[str, str]]:
+    def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+        del context
         return []
 
     def _validate_director_binding_coverage(self, additional_events=None):
@@ -1352,15 +1353,27 @@ class TestOrchestrationStageExecutor:
         assert ce_command.context["cognitive_runtime_mode"] == "off"
         assert ce_command.context["cognitive_runtime_enabled"] is False
         assert ce_command.context["cognitive_runtime_required"] is False
+        assert ce_command.timeout_seconds == 240
+        assert ce_command.context["chief_engineer_llm_timeout_seconds"] == 240
+        assert ce_command.context["llm_call_timeout_seconds"] == 240
+        assert ce_command.context["request_timeout_seconds"] == 240
         assert ce_command.metadata["cognitive_runtime_mode"] == "off"
         assert ce_command.metadata["cognitive_runtime_enabled"] is False
         assert ce_command.metadata["cognitive_runtime_required"] is False
+        assert ce_command.metadata["llm_call_timeout_seconds"] == 240
         blueprint_path = Path(resolve_runtime_path(str(temp_workspace), payload["blueprints"][0]["blueprint_path"]))
         assert blueprint_path.is_file()
         mirrored_review = Path(
             resolve_logical_path(str(temp_workspace), f"workspace/roles/chief_engineer/{run.id}/review.json")
         )
         assert json.loads(mirrored_review.read_text(encoding="utf-8"))["generated_blueprints"] == 1
+
+    def test_chief_engineer_stage_timeout_prefers_context_override(self, temp_workspace):
+        executor = _TestStageExecutor(temp_workspace, _CompletedCommandService())
+
+        timeout = executor._chief_engineer_llm_timeout_seconds({"chief_engineer_llm_timeout_seconds": "123"})
+
+        assert timeout == 123
 
     @pytest.mark.asyncio
     async def test_director_stage_fails_when_plan_lineage_missing(self, temp_workspace):
@@ -1381,6 +1394,34 @@ class TestOrchestrationStageExecutor:
         assert result.status == "failed"
         assert "error_code=director.task_lineage_missing" in str(result.output)
         assert "dispatch/log.json" in result.artifacts
+
+    def test_pre_director_snapshot_restore_removes_director_delivery_files(self, temp_workspace):
+        command_service = _CompletedCommandService()
+        executor = _TestStageExecutor(temp_workspace, command_service)
+        seed_file = temp_workspace / "requirements.md"
+        seed_file.write_text("Original requirement\n", encoding="utf-8")
+        platform_evidence = temp_workspace / ".polaris" / "blueprints" / "latest.review.json"
+        platform_evidence.parent.mkdir(parents=True, exist_ok=True)
+        platform_evidence.write_text('{"generated_blueprints":1}\n', encoding="utf-8")
+
+        manifest = executor._create_pre_director_snapshot(run_id="factory_snapshot_test")
+        assert manifest["snapshot_kind"] == "pre_director_workspace"
+
+        generated_source = temp_workspace / "src" / "index.ts"
+        generated_source.parent.mkdir(parents=True, exist_ok=True)
+        generated_source.write_text("export const generated = true;\n", encoding="utf-8")
+        generated_package = temp_workspace / "package.json"
+        generated_package.write_text('{"scripts":{"build":"tsc"}}\n', encoding="utf-8")
+        seed_file.write_text("Director polluted requirement\n", encoding="utf-8")
+
+        restored = executor._restore_pre_director_snapshot()
+
+        assert "src/index.ts" in restored["removed_files"]
+        assert "package.json" in restored["removed_files"]
+        assert seed_file.read_text(encoding="utf-8") == "Original requirement\n"
+        assert not generated_source.exists()
+        assert not generated_package.exists()
+        assert platform_evidence.is_file()
 
     @pytest.mark.asyncio
     async def test_director_stage_fails_when_upstream_run_non_success(self, temp_workspace):
@@ -2104,7 +2145,7 @@ class TestOrchestrationStageExecutor:
     @pytest.mark.asyncio
     async def test_quality_gate_fails_on_workspace_node_script_failure(self, temp_workspace):
         command_service = _CompletedCommandService()
-        executor = _WorkspaceValidationStageExecutor(temp_workspace, command_service, exit_codes=[1])
+        executor = _WorkspaceValidationStageExecutor(temp_workspace, command_service, exit_codes=[1, 1])
         run = FactoryRun(
             id="factory_test_quality_gate_workspace_failure",
             config=FactoryConfig(name="test-run", stages=["quality_gate"]),
@@ -2121,6 +2162,24 @@ class TestOrchestrationStageExecutor:
             json.dumps({"passed": True, "score": 95, "critical_issue_count": 0}, ensure_ascii=False),
             encoding="utf-8",
         )
+
+        async def _no_llm_repairs(
+            *,
+            run_id: str,
+            context: dict[str, Any],
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            del run_id, context, artifact_quality_errors, repair_attempt
+            return [], {
+                "attempted": False,
+                "repair_mode": "director_llm",
+                "reason": "unit_test_workspace_gate_failure",
+                "source_tools": [],
+                "tool_results": 0,
+            }
+
+        executor._apply_workspace_quality_llm_repairs = _no_llm_repairs
 
         result = await executor._execute_quality_gate(run, context={"qa_target": "Quality gate"})
 

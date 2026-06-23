@@ -1,0 +1,47 @@
+schema_version: "verification-card/v1"
+id: "vc-20260623-director-only-resume"
+title: "Factory Director-only resume freezes PM and Chief Engineer evidence"
+scope:
+  files:
+    - "src/backend/polaris/delivery/http/routers/factory.py"
+    - "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    - "src/backend/scripts/factory_bench/run_factory_bench.py"
+    - "src/backend/polaris/tests/unit/delivery/http/routers/test_factory_v2.py"
+    - "src/backend/polaris/tests/test_factory_run_service.py"
+    - "src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py"
+    - "src/backend/scripts/factory_bench/test_backend_client.py"
+defect:
+  id: "DEFECT-20260623-director-only-resume-missing-stage-snapshot"
+  category: "Director Execution / Bench Session"
+  symptom: "Trusted PM contracts and Chief Engineer blueprints could not be reused efficiently; reruns restarted PM/CE and could recreate project directories."
+  physical_error: "Factory start_from=director normalized to pm; bench work_dir guard allowed repository-root runs that created root L1-01 before quarantine."
+fix:
+  summary: "Make start_from=director a first-class Director/QA-only stage graph, require PM/TaskBoard/CE/pre-Director snapshot evidence, snapshot before normal Director dispatch, restore before Director-only resume, and guard bench work_dir."
+  guardrails:
+    - "Do not regenerate PM contracts or Chief Engineer blueprints during Director-only resume."
+    - "Do not modify generated target project code inside the Polaris repository."
+    - "Fail closed when trusted resume evidence is missing."
+    - "Restore the pre-Director workspace snapshot before Director-only dispatch."
+evidence:
+  commands:
+    - command: "python -m ruff check <7 Director-only resume touched Python files> --fix"
+      result: "PASS"
+    - command: "python -m ruff format <7 Director-only resume touched Python files>"
+      result: "PASS"
+    - command: "PYTHONPATH=src/backend python -m mypy src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py src/backend/scripts/factory_bench/run_factory_bench.py --ignore-missing-imports"
+      result: "PASS"
+    - command: "PYTHONPATH=src/backend pytest -q src/backend/polaris/tests/unit/delivery/http/routers/test_factory_v2.py src/backend/polaris/tests/test_factory_run_service.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py src/backend/scripts/factory_bench/test_backend_client.py"
+      result: "PASS: 243 passed, 2 warnings in 195.40s"
+    - command: "FACTORY_BENCH_RUN_ID=codex-l1-01-minimax-m3-director-resume-20260623165500 PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir /home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229 --start-from director --timeout 5400 --real-run-timeout 120 --max-failed 1"
+      result: "EXPECTED FAIL-CLOSED: Director-only resume missing evidence: runtime/tasks/plan.json, runtime/tasks/task_*.json"
+  bench:
+    - "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json"
+    - "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01.chain.log"
+  snapshots:
+    - ".polaris_runtime/defect_manifest.json"
+    - ".polaris_runtime/long_term_state.json"
+  quarantine:
+    - ".polaris_runtime/quarantine/bad-factory-bench-root-L1-01-20260623161234"
+next_gate:
+  command: "Run Factory Bench L1-01 with --start-from director against a workspace that has PM plan, runtime/tasks TaskBoard evidence, CE blueprints, and pre-Director snapshot."
+  expected: "Director/QA stages run without PM/CE, restoring the pre-Director snapshot before dispatch."

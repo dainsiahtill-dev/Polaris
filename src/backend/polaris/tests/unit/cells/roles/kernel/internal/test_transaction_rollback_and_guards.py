@@ -17,8 +17,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     _file_exists_in_workspace,
+    extract_target_file_from_invocation_args,
     filter_out_of_scope_write_invocations,
+    is_write_invocation,
     rollback_state_after_retry_batch_failure,
+    tool_batch_has_write_invocation,
 )
 from polaris.cells.roles.kernel.internal.transaction.ledger import TurnLedger
 from polaris.cells.roles.kernel.internal.transaction.retry_orchestrator import (
@@ -127,6 +130,26 @@ class TestMutationTargetDriftFiltering:
 
         assert dropped == ("pyproject.toml",)
         assert [item["arguments"]["file"] for item in filtered] == ["package.json"]
+
+    def test_execute_command_redirect_counts_as_materializing_write(self) -> None:
+        invocation = {
+            "tool_name": "execute_command",
+            "arguments": {"command": "node scripts/render.js > src/generated-scene.ts"},
+        }
+
+        assert extract_target_file_from_invocation_args(invocation) == "src/generated-scene.ts"
+        assert is_write_invocation(invocation) is True
+        assert tool_batch_has_write_invocation([invocation]) is True
+
+    def test_execute_command_without_redirect_stays_verification_only(self) -> None:
+        invocation = {
+            "tool_name": "execute_command",
+            "arguments": {"command": "npm test"},
+        }
+
+        assert extract_target_file_from_invocation_args(invocation) == ""
+        assert is_write_invocation(invocation) is False
+        assert tool_batch_has_write_invocation([invocation]) is False
 
 
 # ---------------------------------------------------------------------------

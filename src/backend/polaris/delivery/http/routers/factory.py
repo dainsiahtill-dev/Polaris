@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import hashlib
 import inspect
 import json
 import logging
 import os
+import re
+import shutil
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,7 +56,7 @@ from polaris.delivery.http.schemas import (
     FactoryRunEventsResponse,
 )
 from polaris.kernelone.constants import DEFAULT_DIRECTOR_MAX_PARALLELISM
-from polaris.kernelone.storage import resolve_logical_path
+from polaris.kernelone.storage import resolve_logical_path, resolve_runtime_path, resolve_storage_roots
 from polaris.kernelone.trace import create_task_with_context
 from pydantic import BaseModel, Field
 
@@ -449,12 +452,248 @@ def _check_docs_ready(workspace: str) -> bool:
     return any(doc.exists() for doc in docs_to_check)
 
 
+def _load_json_object(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _pm_plan_task_count(workspace: str) -> int:
+    payload = _load_json_object(Path(resolve_runtime_path(workspace, "runtime/tasks/plan.json")))
+    tasks = payload.get("tasks")
+    return len(tasks) if isinstance(tasks, list) else 0
+
+
+def _director_resume_task_files(task_dir: Path) -> list[Path]:
+    try:
+        return sorted(
+            path for path in task_dir.glob("task_*.json") if path.is_file() and not path.name.endswith(".session.json")
+        )
+    except OSError:
+        return []
+
+
+def _taskboard_record_count(workspace: str) -> int:
+    task_dir = Path(resolve_runtime_path(workspace, "runtime/tasks"))
+    return len(_director_resume_task_files(task_dir))
+
+
+_DIRECTOR_RESUME_ACTIVE_TASK_STATUSES = {
+    "active",
+    "claimed",
+    "executing",
+    "in_progress",
+    "leased",
+    "running",
+}
+
+
+def _director_resume_workspace_slug(workspace_key: str) -> str:
+    match = re.match(r"^(?P<slug>.+)-[0-9a-f]{12}$", workspace_key)
+    return str(match.group("slug")) if match else workspace_key
+
+
+def _director_resume_legacy_task_dirs(workspace: str) -> list[Path]:
+    roots = resolve_storage_roots(workspace)
+    current_task_dir = Path(resolve_runtime_path(workspace, "runtime/tasks")).resolve()
+    slug = _director_resume_workspace_slug(str(roots.workspace_key))
+    runtime_project_bases = [
+        Path(roots.runtime_projects_root),
+        Path(os.path.expanduser("~/.cache/polaris")) / ".polaris" / "projects",
+        Path(os.path.expanduser("~/.cache/kernelone")) / ".polaris" / "projects",
+    ]
+    candidates: list[Path] = []
+    with contextlib.suppress(OSError):
+        for runtime_projects_root in dict.fromkeys(runtime_project_bases):
+            if not runtime_projects_root.exists():
+                continue
+            for project_root in runtime_projects_root.glob(f"{slug}-*"):
+                task_dir = project_root / "runtime" / "tasks"
+                if task_dir.resolve() == current_task_dir:
+                    continue
+                if (task_dir / "plan.json").is_file() and _director_resume_task_files(task_dir):
+                    candidates.append(task_dir)
+    return sorted(candidates, key=lambda path: path.stat().st_mtime if path.exists() else 0.0, reverse=True)
+
+
+def _director_resume_taskboard_score(task_dir: Path) -> tuple[int, int, float]:
+    task_files = _director_resume_task_files(task_dir)
+    plan = _load_json_object(task_dir / "plan.json")
+    tasks = plan.get("tasks")
+    planned_count = len(tasks) if isinstance(tasks, list) else 0
+    blueprint_dir = task_dir.parent / "blueprints"
+    blueprint_count = 0
+    with contextlib.suppress(OSError):
+        blueprint_count = len([path for path in blueprint_dir.glob("ce_*.json") if path.is_file()])
+    mtime = max((path.stat().st_mtime for path in [task_dir / "plan.json", *task_files] if path.exists()), default=0.0)
+    return (blueprint_count, min(planned_count, len(task_files)), mtime)
+
+
+def _director_resume_reset_task_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    reset = dict(payload)
+    blocked_by = reset.get("blocked_by")
+    if not isinstance(blocked_by, list):
+        blocked_by = reset.get("blockedBy") if isinstance(reset.get("blockedBy"), list) else []
+    reset["status"] = "blocked" if blocked_by else "pending"
+    reset["claimed_by"] = None
+    reset["assignee"] = ""
+    reset["started_at"] = None
+    reset["completed_at"] = None
+    reset["claimed_at"] = None
+    reset["result_summary"] = ""
+    reset["error_message"] = None
+    metadata = reset.get("metadata")
+    if isinstance(metadata, dict):
+        cleaned_metadata = dict(metadata)
+        for key in (
+            "adapter_phase",
+            "claim_attempt",
+            "claimed_at",
+            "claimed_by",
+            "director_claimable_task_ids",
+            "factory_stage",
+            "last_claimed_by",
+            "last_context_summary",
+            "last_execution_error",
+            "last_execution_summary",
+            "resume_available",
+            "resume_count",
+            "resume_state",
+            "runtime_execution",
+            "workflow_run_id",
+        ):
+            cleaned_metadata.pop(key, None)
+        reset["metadata"] = cleaned_metadata
+    return reset
+
+
+def _rehydrate_director_resume_taskboard(workspace: str) -> str:
+    target_dir = Path(resolve_runtime_path(workspace, "runtime/tasks"))
+    if (
+        _pm_plan_task_count(workspace) > 0
+        and _taskboard_record_count(workspace) > 0
+        and not (target_dir / "director_resume_rehydration.json").is_file()
+    ):
+        return ""
+    candidates = sorted(
+        _director_resume_legacy_task_dirs(workspace),
+        key=_director_resume_taskboard_score,
+        reverse=True,
+    )
+    for source_dir in candidates:
+        plan_payload = _load_json_object(source_dir / "plan.json")
+        if not isinstance(plan_payload.get("tasks"), list) or not _director_resume_task_files(source_dir):
+            continue
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_dir / "plan.json", target_dir / "plan.json")
+        copied: list[str] = ["plan.json"]
+        for task_file in _director_resume_task_files(source_dir):
+            payload = _load_json_object(task_file)
+            if not payload:
+                continue
+            status = str(payload.get("status") or "").strip().lower()
+            normalized_payload = (
+                _director_resume_reset_task_payload(payload)
+                if status in _DIRECTOR_RESUME_ACTIVE_TASK_STATUSES
+                else payload
+            )
+            (target_dir / task_file.name).write_text(
+                json.dumps(normalized_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            copied.append(task_file.name)
+        max_id = source_dir / ".max_id"
+        if max_id.is_file():
+            shutil.copy2(max_id, target_dir / ".max_id")
+            copied.append(".max_id")
+        evidence = {
+            "schema_version": "factory.director_resume_taskboard_rehydration.v1",
+            "source": "factory_http",
+            "source_task_dir": str(source_dir),
+            "target_task_dir": str(target_dir),
+            "copied_files": copied,
+            "reset_active_statuses": sorted(_DIRECTOR_RESUME_ACTIVE_TASK_STATUSES),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        (target_dir / "director_resume_rehydration.json").write_text(
+            json.dumps(evidence, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return str(source_dir)
+    return ""
+
+
+def _chief_engineer_blueprint_count(workspace: str) -> int:
+    workspace_path = Path(workspace)
+    candidates = [
+        workspace_path / ".polaris" / "blueprints" / "latest.review.json",
+        Path(resolve_logical_path(workspace, "workspace/.polaris/blueprints/latest.review.json")),
+    ]
+    state_dir = Path(resolve_runtime_path(workspace, "runtime/state/blueprints"))
+    with contextlib.suppress(OSError):
+        candidates.extend(path for path in state_dir.glob("*.review.json") if path.is_file())
+    seen: set[Path] = set()
+    for path in candidates:
+        resolved = path.resolve()
+        if resolved in seen or not resolved.is_file():
+            continue
+        seen.add(resolved)
+        payload = _load_json_object(resolved)
+        raw_count = payload.get("generated_blueprints")
+        try:
+            count = int(str(raw_count or 0))
+        except (TypeError, ValueError):
+            count = 0
+        blueprints = payload.get("blueprints")
+        if count > 0 or (isinstance(blueprints, list) and bool(blueprints)):
+            return max(count, len(blueprints) if isinstance(blueprints, list) else 0)
+    return 0
+
+
+def _pre_director_snapshot_ready(workspace: str) -> bool:
+    manifest_path = Path(workspace) / ".polaris" / "factory_snapshots" / "pre_director" / "manifest.json"
+    if not manifest_path.is_file():
+        return False
+    payload = _load_json_object(manifest_path)
+    return str(payload.get("snapshot_kind") or "") == "pre_director_workspace"
+
+
+def _ensure_director_resume_evidence_ready(workspace: str) -> None:
+    if _chief_engineer_blueprint_count(workspace) > 0:
+        _rehydrate_director_resume_taskboard(workspace)
+    missing: list[str] = []
+    if _pm_plan_task_count(workspace) <= 0:
+        missing.append("runtime/tasks/plan.json")
+    if _taskboard_record_count(workspace) <= 0:
+        missing.append("runtime/tasks/task_*.json")
+    if _chief_engineer_blueprint_count(workspace) <= 0:
+        missing.append(".polaris/blueprints/latest.review.json")
+    if not _pre_director_snapshot_ready(workspace):
+        missing.append(".polaris/factory_snapshots/pre_director/manifest.json")
+    if missing:
+        raise StructuredHTTPException(
+            status_code=409,
+            code="DIRECTOR_RESUME_EVIDENCE_MISSING",
+            message="Director-only Factory run requires trusted PM, Chief Engineer, TaskBoard, and pre-Director snapshot evidence",
+            details={
+                "workspace": workspace,
+                "missing_evidence": missing,
+                "required_evidence": [
+                    "runtime/tasks/plan.json",
+                    "runtime/tasks/task_*.json",
+                    ".polaris/blueprints/latest.review.json",
+                    ".polaris/factory_snapshots/pre_director/manifest.json",
+                ],
+            },
+        )
+
+
 def _normalize_start_from(start_from: str, workspace: str) -> str:
     normalized = str(start_from or "auto").strip().lower()
     if normalized not in {"auto", "architect", "pm", "director"}:
         normalized = "auto"
-    if normalized == "director":
-        return "pm"
     if normalized != "auto":
         return normalized
     return "architect" if not _check_docs_ready(workspace) else "pm"
@@ -471,7 +710,12 @@ def _build_stage_list(start_from: str, run_director: bool) -> list[str]:
             "director_dispatch",
             "quality_gate",
         ]
-    if normalized in {"pm", "director"}:
+    if normalized == "director":
+        return [
+            "director_dispatch",
+            "quality_gate",
+        ]
+    if normalized == "pm":
         return [
             "pm_planning",
             "chief_engineer_review",
@@ -534,10 +778,13 @@ def _build_stage_context(
     *,
     run_id: str = "",
 ) -> dict[str, Any]:
+    metadata = dict(payload.metadata or {})
+    metadata["factory_start_from"] = str(payload.start_from or "").strip().lower()
     context: dict[str, Any] = {
         "settings": getattr(state, "settings", None),
         "factory_run_id": str(run_id or "").strip(),
-        "metadata": dict(payload.metadata or {}),
+        "factory_start_from": metadata["factory_start_from"],
+        "metadata": metadata,
     }
     if stage in {"docs_generation", "pm_planning"}:
         context["directive"] = payload.directive
@@ -1439,6 +1686,8 @@ async def _start_factory_run_core(
 
     start_from = _normalize_start_from(payload.start_from, workspace)
     stages = _build_stage_list(start_from, payload.run_director)
+    if start_from == "director":
+        _ensure_director_resume_evidence_ready(workspace)
     _ensure_factory_runtime_ready(state, stages)
 
     config = FactoryConfig(

@@ -1,0 +1,38 @@
+schema_version: "verification-card/v1"
+id: "vc-20260623-minimax-reasoning-exhaustion-fallback"
+title: "MiniMax reasoning exhaustion triggers decision re-ask fallback"
+scope:
+  files:
+    - "src/backend/polaris/cells/roles/kernel/internal/llm_caller/invoker.py"
+    - "src/backend/polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py"
+defect:
+  id: "DEFECT-20260623-minimax-reasoning-exhaustion-fallback-miss"
+  category: "Director Tool Execution / LLM Output"
+  symptom: "Director MiniMax-M3 spent output budget on thinking, emitted no visible output or tool calls, and failed with director_no_materialized_changes."
+  physical_error: "Empty visible output from MiniMax stream (thinking_chars=28642, chunks=146, finish_reason=length) — reasoning exhausted max_tokens even after budget doubling"
+fix:
+  summary: "Treat MiniMax reasoning exhaustion and finish_reason=length empty-visible errors as reasoning truncation, so the invoker emits the existing minimal-reasoning tool-call re-ask."
+  guardrails:
+    - "Keep native tools enabled; do not fall back to plain text unless explicitly allowed."
+    - "Do not mark no-materialized-change Director runs as success."
+    - "Do not modify generated target project code."
+evidence:
+  bench:
+    - "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json"
+    - "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-fe3ac22d8b38/results/director.result.json"
+    - "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-fe3ac22d8b38/logs/journal.enriched.jsonl"
+  opencode_audit:
+    - ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/request.json"
+    - ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/evidence_bundle.json"
+  commands:
+    - command: "python -m ruff check <15 touched Python files> --fix"
+      result: "PASS"
+    - command: "python -m ruff format <15 touched Python files>"
+      result: "PASS"
+    - command: "PYTHONPATH=src/backend python -m mypy <8 touched production files> --ignore-missing-imports"
+      result: "PASS"
+    - command: "PYTHONPATH=src/backend python -m pytest -q <focused suite including reasoning fallback>"
+      result: "PASS: 139 passed"
+next_gate:
+  command: "Restart backend and rerun Factory Bench L1-01 only."
+  expected: "MiniMax empty-visible reasoning exhaustion should produce a reasoning_truncation_retry request before Director task 1 is marked no_materialized_changes."

@@ -68,6 +68,27 @@ _LINE_RANGE_EDIT_BLOCKS_PARAMETERS: dict[str, Any] = {
     "required": ["file", "start", "end", "replace"],
 }
 
+_VERIFICATION_TOOLS_DURING_FORCED_WRITE = frozenset({"execute_command"})
+
+
+def remove_verification_tools_for_forced_write(tool_definitions: list[dict]) -> list[dict]:
+    """Drop verification-only tools once API-level tool_choice forces a write tool."""
+    narrowed: list[dict] = []
+    for definition in tool_definitions:
+        if not isinstance(definition, dict):
+            narrowed.append(definition)
+            continue
+        function_payload = definition.get("function")
+        name = (
+            str(function_payload.get("name") or "").strip()
+            if isinstance(function_payload, dict)
+            else str(definition.get("name") or "").strip()
+        )
+        if name in _VERIFICATION_TOOLS_DURING_FORCED_WRITE:
+            continue
+        narrowed.append(definition)
+    return narrowed
+
 
 def narrow_edit_blocks_schema_to_line_range(tool_definitions: list[dict]) -> list[dict]:
     """Rewrite the ``edit_blocks`` schema to the line-range-only form (ADR-0090).
@@ -291,6 +312,7 @@ def resolve_retry_escalation(
             "type": "function",
             "function": {"name": forced_write_tool_name},
         }
+        definitions_override = remove_verification_tools_for_forced_write(definitions_override)
         if forced_write_tool_name == "edit_blocks":
-            definitions_override = narrow_edit_blocks_schema_to_line_range(strict_tool_definitions)
+            definitions_override = narrow_edit_blocks_schema_to_line_range(definitions_override)
     return definitions_override, tool_choice_override

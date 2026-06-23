@@ -1,0 +1,96 @@
+card_id: "vc-20260623-minimax-director-runtime-support"
+bug_summary: >
+  Factory bench was blocked before execution when the active Director binding
+  was MiniMax-M3. The provider was configured as ready with full tool schema
+  and execution profiles, but the runtime support gate still required the stale
+  director_tool_contract_supported marker and reported
+  director_minimax_tool_contract_unverified.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
+  method: "role_runtime_support_issue"
+  symptom: "/v2/llm/status reported factory_state=BLOCKED for the current MiniMax-M3 Director binding"
+
+assumptions:
+  - id: "A1"
+    statement: "I assume the actual Director binding is MiniMax-M3 and not the earlier Qwen binding."
+    status: verified_true
+    evidence: >
+      GET /v2/llm/config and GET /v2/llm/status showed
+      roles.director.provider_id=minimax-1781012971065,
+      roles.director.model=MiniMax-M3, and ready=true.
+
+  - id: "A2"
+    statement: "I assume the current MiniMax-M3 binding has explicit full tool and execution profiles."
+    status: verified_true
+    evidence: >
+      GET /v2/llm/config showed providers.minimax-1781012971065 has
+      tool_schema_profile=full and execution_profile=full.
+
+  - id: "A3"
+    statement: "I assume unprofiled or partially profiled MiniMax Director bindings must remain blocked."
+    status: verified_true
+    evidence: >
+      test_director_rejects_unverified_minimax_runtime and
+      test_director_rejects_minimax_with_only_one_full_profile_marker both pass.
+
+  - id: "A4"
+    statement: "I assume a full-profile MiniMax Director binding is runtime-supported without the stale extra marker."
+    status: verified_true
+    evidence: >
+      test_director_accepts_full_profile_minimax_runtime passes, and after backend
+      restart GET /v2/llm/status reported roles.director.runtime_supported=true,
+      runtime_issue='', factory_state=READY, factory_blocked_roles=[], and
+      factory_unsupported_roles=[].
+
+pre_mortem:
+  failure_point: >
+    The fix is incomplete if MiniMax-M3 reaches factory execution but cannot
+    emit enforceable Director tool calls, or if a provider with only one full
+    profile marker is accidentally allowed.
+  risk_zone:
+    - "polaris/cells/llm/provider_runtime/internal/runtime_support.py"
+    - "polaris/cells/llm/provider_runtime/public/service.py"
+    - "scripts/factory_bench/run_factory_bench.py"
+    - "polaris/cells/factory/**"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/tests/unit/cells/llm/provider_runtime/test_runtime_support.py"
+      description: "Director runtime support accepts full-profile MiniMax and rejects unverified or partial MiniMax configs"
+      expected: "MiniMax-M3 full/full is supported; unverified and partial MiniMax remain blocked"
+      status: passed
+      command: "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/unit/cells/llm/provider_runtime/test_runtime_support.py"
+  static_checks:
+    - description: "Ruff check for the runtime support fix and focused tests"
+      status: passed
+      command: "python -m ruff check src/backend/polaris/cells/llm/provider_runtime/internal/runtime_support.py src/backend/polaris/tests/unit/cells/llm/provider_runtime/test_runtime_support.py --fix"
+    - description: "Ruff format for the runtime support fix and focused tests"
+      status: passed
+      command: "python -m ruff format src/backend/polaris/cells/llm/provider_runtime/internal/runtime_support.py src/backend/polaris/tests/unit/cells/llm/provider_runtime/test_runtime_support.py"
+    - description: "Mypy for the runtime support module"
+      status: passed
+      command: "PYTHONPATH=src/backend python -m mypy src/backend/polaris/cells/llm/provider_runtime/internal/runtime_support.py --ignore-missing-imports"
+  runtime_checks:
+    - description: "Backend health check after restart"
+      status: passed
+      command: "curl --noproxy '*' -fsS -H 'Authorization: Bearer polaris-local-dev' http://127.0.0.1:49977/health"
+    - description: "LLM runtime status after restart"
+      status: passed
+      command: "curl --noproxy '*' -fsS -H 'Authorization: Bearer polaris-local-dev' http://127.0.0.1:49977/v2/llm/status"
+    - description: "Factory bench L1-01 with the current MiniMax-M3 Director binding"
+      status: pending
+      command: "PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir <run-dir>"
+
+manual_check:
+  - "CodeGraph impact for role_runtime_support_issue only covered runtime_support.py and focused provider runtime tests."
+  - "No target project files were modified."
+  - "L1-01 real-run bench remains the required end-to-end proof for MiniMax-M3 Director tool-call behavior."
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-06-23"

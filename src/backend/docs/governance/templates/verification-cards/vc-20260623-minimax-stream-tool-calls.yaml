@@ -1,0 +1,107 @@
+card_id: "vc-20260623-minimax-stream-tool-calls"
+bug_summary: >
+  MiniMax-M3 Director reached native tool mode during Factory Bench L1-01, but
+  its streaming response ended with finish_reason=tool_calls while visible
+  content was empty. The MiniMax provider treated that as an empty-output
+  provider failure instead of preserving streamed tool_calls for the existing
+  LLMInvoker native tool parser, so Director executed zero tools and produced
+  no source files.
+
+classification: pattern
+
+bug_path:
+  file: "polaris/infrastructure/llm/providers/minimax_provider.py"
+  method: "MiniMaxProvider.invoke"
+  symptom: "director_no_materialized_changes with tools_executed=0 after MiniMax finish_reason=tool_calls"
+
+assumptions:
+  - id: "A1"
+    statement: "I assume the failing Director request reached the actual MiniMax-M3 binding with native tools."
+    status: verified_true
+    evidence: >
+      Factory audit llm_route_audit observed director binding
+      minimax-1781012971065|MiniMax-M3 twice. Runtime journal call_start showed
+      native_tool_mode=native_tools, tool_schema_count=17 for the initial call,
+      then tool_schema_count=2 with forced write_file on retry.
+
+  - id: "A2"
+    statement: "I assume context budget did not cause the failure."
+    status: verified_true
+    evidence: >
+      final_request_context_audit showed context_window_tokens=1000000,
+      utilization 0.0067 on the first Director call and 0.0024 on retry.
+
+  - id: "A3"
+    statement: "I assume the terminal provider failure was empty visible output with tool_calls finish reason."
+    status: verified_true
+    evidence: >
+      director.result.json recorded: Empty visible output from MiniMax stream
+      (thinking_chars=30612, chunks=208, finish_reason=tool_calls) — reasoning
+      exhausted max_tokens even after budget doubling.
+
+  - id: "A4"
+    statement: "I assume the existing downstream kernel can execute native tool calls without visible text."
+    status: verified_true
+    evidence: >
+      Focused roles-kernel tests for native tool calls without text output,
+      stream tool loop, and transaction facade all passed after provider
+      normalization.
+
+pre_mortem:
+  failure_point: >
+    The fix is incomplete if live MiniMax-M3 uses a provider-specific field
+    shape other than OpenAI-compatible delta.tool_calls/message.tool_calls, or
+    if the Director run receives tool calls but arguments remain fragmented or
+    unparsable.
+  risk_zone:
+    - "polaris/infrastructure/llm/providers/minimax_provider.py"
+    - "polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py"
+    - "polaris/kernelone/llm/toolkit/parsers/native_function.py"
+    - "polaris/cells/roles/kernel/internal/transaction/**"
+
+verification_plan:
+  unit_tests:
+    - file: "polaris/tests/integration/llm/providers/test_minimax_provider.py"
+      description: "MiniMax JSON and SSE responses with tool_calls and empty visible output return ok=True with raw.tool_calls"
+      expected: "write_file tool call is preserved with JSON-parsable arguments"
+      status: passed
+      command: "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/integration/llm/providers/test_minimax_provider.py"
+    - file: "polaris/tests/test_roles_kernel.py"
+      description: "Kernel accepts native tool calls without text output"
+      expected: "Native tool call is parsed and executed without a text wrapper"
+      status: passed
+      command: "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/test_roles_kernel.py::TestRoleExecutionKernel::test_kernel_accepts_native_tool_calls_without_text_output"
+    - file: "polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py"
+      description: "Stream loop executes native tool calls without text wrapper"
+      expected: "Streamed native tool calls materialize"
+      status: passed
+      command: "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py::test_stream_executes_native_tool_calls_without_text_wrapper"
+    - file: "polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py"
+      description: "Transaction facade materializes streamed provider tool events"
+      expected: "Provider stream tool events survive to native tool calls"
+      status: passed
+      command: "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py::test_stream_provider_tool_events_materialize_native_tool_calls"
+  static_checks:
+    - description: "Ruff check for MiniMax provider and focused tests"
+      status: passed
+      command: "python -m ruff check src/backend/polaris/infrastructure/llm/providers/minimax_provider.py src/backend/polaris/tests/integration/llm/providers/test_minimax_provider.py --fix"
+    - description: "Ruff format for MiniMax provider and focused tests"
+      status: passed
+      command: "python -m ruff format src/backend/polaris/infrastructure/llm/providers/minimax_provider.py src/backend/polaris/tests/integration/llm/providers/test_minimax_provider.py"
+    - description: "Mypy for MiniMax provider"
+      status: passed
+      command: "PYTHONPATH=src/backend python -m mypy src/backend/polaris/infrastructure/llm/providers/minimax_provider.py --ignore-missing-imports"
+  integration_tests:
+    - description: "Factory Bench L1-01 rerun with current MiniMax-M3 Director"
+      status: pending
+      command: "PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir <run-dir>"
+
+manual_check:
+  - "Factory Bench L1-01 failed before this fix with step success 0/1, runnable 0/1, wall clock 549.1s."
+  - "No target project code was modified; all changes are in Polaris provider/runtime tests and governance evidence."
+
+related_adrs: []
+
+sign_off:
+  completed_by: "codex-gpt-5"
+  completed_at: "2026-06-23"

@@ -1,0 +1,34 @@
+schema_version: "verification-card/v1"
+id: "vc-20260623-chief-engineer-factory-timeout"
+title: "Factory Chief Engineer review uses scoped long LLM timeout"
+scope:
+  files:
+    - "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+    - "src/backend/polaris/tests/test_factory_run_service.py"
+defect:
+  id: "DEFECT-20260623-chief-engineer-timeout-partial-blueprints"
+  category: "ChiefEngineer Blueprint / Model Health"
+  symptom: "L1-01 stopped in chief_engineer_review after generating 3/4 blueprints."
+  physical_error: "TransactionKernel execution failed: Request timeout (60.0s)"
+fix:
+  summary: "Factory CE review now injects a 240s scoped timeout into ExecuteRoleTaskCommandV1.timeout_seconds, context, and metadata."
+  guardrails:
+    - "Do not change the global non-Director timeout default."
+    - "Do not bypass CE blueprint validation or mark partial blueprints as success."
+    - "Do not modify generated target project code."
+evidence:
+  bench:
+    - "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-hardening-20260623153330/factory_audits.json"
+    - "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-hardening-20260623153330/audits/codex-l1-01-minimax-m3-hardening-20260623153330/L1-01.audit.json"
+  commands:
+    - command: "python -m ruff check src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py src/backend/polaris/tests/test_factory_run_service.py --fix"
+      result: "PASS"
+    - command: "python -m ruff format src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py src/backend/polaris/tests/test_factory_run_service.py"
+      result: "PASS"
+    - command: "PYTHONPATH=src/backend python -m mypy src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py --ignore-missing-imports"
+      result: "PASS"
+    - command: "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/test_factory_run_service.py::TestOrchestrationStageExecutor::test_chief_engineer_stage_generates_blueprint_artifacts src/backend/polaris/tests/test_factory_run_service.py::TestOrchestrationStageExecutor::test_chief_engineer_stage_timeout_prefers_context_override"
+      result: "PASS"
+next_gate:
+  command: "Restart backend and rerun Factory Bench L1-01 only."
+  expected: "chief_engineer_review should no longer fail from the 60s provider timeout before Director dispatch."

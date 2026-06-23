@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import json
 import logging
 import re
 import shutil
@@ -104,6 +105,77 @@ def _node_check_js_syntax(code: str) -> SyntaxValidationResult | None:
         [CodeSyntaxError(line=line_no, column=0, message=message, error_type="SyntaxError")],
         [f"node --check: {message}"],
     )
+
+
+def _node_check_ts_syntax(code: str, filepath: str | None = None) -> SyntaxValidationResult | None:
+    """Authoritative TypeScript parse-diagnostic check via the TS compiler API."""
+    node = _node_executable()
+    if not node:
+        return None
+    ext = Path(filepath or "input.ts").suffix.lower()
+    script_kind = "TSX" if ext == ".tsx" else "TS"
+    file_name = filepath or ("input.tsx" if script_kind == "TSX" else "input.ts")
+    script = r"""
+const ts = require("typescript");
+const kindName = process.argv[1] || "TS";
+const fileName = process.argv[2] || (kindName === "TSX" ? "input.tsx" : "input.ts");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => { input += chunk; });
+process.stdin.on("end", () => {
+  const kind = kindName === "TSX" ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const source = ts.createSourceFile(fileName, input, ts.ScriptTarget.Latest, true, kind);
+  const diagnostics = source.parseDiagnostics.map(diag => {
+    const position = source.getLineAndCharacterOfPosition(diag.start || 0);
+    return {
+      line: position.line + 1,
+      column: position.character + 1,
+      message: ts.flattenDiagnosticMessageText(diag.messageText, "\n")
+    };
+  });
+  process.stdout.write(JSON.stringify(diagnostics));
+});
+"""
+    try:
+        proc = subprocess.run(
+            [node, "-e", script, script_kind, file_name],
+            input=code,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("TypeScript parser unavailable/failed, falling back to heuristic: %s", exc)
+        return None
+    if proc.returncode != 0:
+        logger.debug("TypeScript parser unavailable, falling back to heuristic: %s", proc.stderr.strip())
+        return None
+    try:
+        diagnostics = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        logger.debug("TypeScript parser emitted invalid JSON, falling back to heuristic: %s", exc)
+        return None
+    if not isinstance(diagnostics, list):
+        return None
+
+    errors: list[CodeSyntaxError] = []
+    for item in diagnostics:
+        if not isinstance(item, dict):
+            continue
+        line = item.get("line", 0)
+        column = item.get("column", 0)
+        message = item.get("message", "TypeScript syntax error")
+        errors.append(
+            CodeSyntaxError(
+                line=line if isinstance(line, int) else 0,
+                column=column if isinstance(column, int) else 0,
+                message=str(message),
+                error_type="SyntaxError",
+            )
+        )
+    if errors:
+        return SyntaxValidationResult.failure(errors, [f"typescript parser: {e.message}" for e in errors])
+    return SyntaxValidationResult.success()
 
 
 @dataclass
@@ -921,7 +993,8 @@ class MultiLanguageCodeValidator:
         # Fallback: node unavailable, or a TypeScript/JSX dialect node cannot parse.
         fixed_code, fixes = self._fix_js_hallucinations(code)
 
-        errors = self._check_brackets(fixed_code, ["()", "[]", "{}"])
+        bracket_code = self._mask_js_like_non_code_for_brackets(fixed_code)
+        errors = self._check_brackets(bracket_code, ["()", "[]", "{}"])
         if errors:
             return SyntaxValidationResult.failure(errors)
 
@@ -930,9 +1003,95 @@ class MultiLanguageCodeValidator:
 
         return SyntaxValidationResult.success()
 
+    def _mask_js_like_non_code_for_brackets(self, code: str) -> str:
+        """Replace JS/TS comments and string literals with spaces before bracket scan."""
+        chars = list(code)
+        i = 0
+        state: str | None = None
+        quote = ""
+        escape = False
+
+        while i < len(chars):
+            char = chars[i]
+            nxt = chars[i + 1] if i + 1 < len(chars) else ""
+
+            if state is None:
+                if char == "/" and nxt == "/":
+                    chars[i] = " "
+                    chars[i + 1] = " "
+                    state = "line_comment"
+                    i += 2
+                    continue
+                if char == "/" and nxt == "*":
+                    chars[i] = " "
+                    chars[i + 1] = " "
+                    state = "block_comment"
+                    i += 2
+                    continue
+                if char in ("'", '"', "`"):
+                    quote = char
+                    chars[i] = " "
+                    state = "string"
+                    escape = False
+                i += 1
+                continue
+
+            if state == "line_comment":
+                if char == "\n":
+                    state = None
+                else:
+                    chars[i] = " "
+                i += 1
+                continue
+
+            if state == "block_comment":
+                if char == "*" and nxt == "/":
+                    chars[i] = " "
+                    chars[i + 1] = " "
+                    state = None
+                    i += 2
+                    continue
+                if char != "\n":
+                    chars[i] = " "
+                i += 1
+                continue
+
+            if state == "string":
+                if char == "\n" and quote != "`":
+                    state = None
+                    i += 1
+                    continue
+                if char != "\n":
+                    chars[i] = " "
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == quote:
+                    state = None
+                i += 1
+                continue
+
+        return "".join(chars)
+
     def _ts_validator(self, code: str, filepath: str | None) -> SyntaxValidationResult:
         """TypeScript验证器。"""
-        return self._js_validator(code, filepath)
+        fixed_code, fixes = self._fix_js_hallucinations(code)
+        ts_result = _node_check_ts_syntax(fixed_code, filepath)
+        if ts_result is not None:
+            if not ts_result.is_valid:
+                return ts_result
+            return SyntaxValidationResult.success(fixed_code=fixed_code if fixes else None)
+
+        bracket_code = self._mask_js_like_non_code_for_brackets(fixed_code)
+        errors = self._check_brackets(bracket_code, ["()", "[]", "{}"])
+        if errors:
+            return SyntaxValidationResult.failure(errors)
+
+        if fixes:
+            return SyntaxValidationResult.success(fixed_code=fixed_code)
+
+        return SyntaxValidationResult.success()
 
     def _jsx_validator(self, code: str, filepath: str | None) -> SyntaxValidationResult:
         """JSX验证器。"""
@@ -940,7 +1099,7 @@ class MultiLanguageCodeValidator:
 
     def _tsx_validator(self, code: str, filepath: str | None) -> SyntaxValidationResult:
         """TSX验证器。"""
-        return self._js_validator(code, filepath)
+        return self._ts_validator(code, filepath)
 
     def _fix_js_hallucinations(self, code: str) -> tuple[str, list[HallucinationFix]]:
         """修复 JS/TS 代码中的幻觉错误。"""

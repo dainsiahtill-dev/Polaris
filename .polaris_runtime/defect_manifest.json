@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-06-23T13:50:48+08:00",
+  "updated_at": "2026-06-23T16:56:46+08:00",
   "defects": [
     {
       "id": "DEFECT-director-idle-unresolved-taskboard-prevents-quality-handoff",
@@ -305,6 +305,263 @@
         "Runtime dispatch binding identity projection verified: roles.director.bindings[] and skipped_bindings[] now preserve binding_id from dispatch/log.json; PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/test_llm_phase0_regression.py -k runtime_dispatch -> 2 passed; ruff check/format --check and mypy llm_status.py passed."
       ],
       "next_action": "If Q6 endpoints recover, run provider readiness/deep test or wait for runtime skip TTL expiry before rerunning L1-01; otherwise L1-01 is correctly blocked as Runtime Environment. Current direct probe evidence: both Q6 /v1/models endpoints returned HTTP 502 in about 5s."
+    },
+    {
+      "id": "DEFECT-20260623-minimax-stream-tool-calls-empty-visible-output",
+      "status": "platform_fix_verified_real_bench_advanced_to_materialization",
+      "created_at": "2026-06-23T06:52:05.173122+00:00",
+      "updated_at": "2026-06-23T06:54:59.058519+00:00",
+      "project_id": "L1-01",
+      "bench_run_id": "codex-l1-01-minimax-m3-20260623143626",
+      "workspace": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-20260623143626/L1-01",
+      "symptom": "MiniMax-M3 streamed native tool_calls with empty visible content; provider returned failure so Director executed zero tools and produced no source files.",
+      "physical_error": "First L1-01 run: L1-01 FAIL chain=partial files=1 source=0; director.result.json: Empty visible output from MiniMax stream (thinking_chars=30612, chunks=208, finish_reason=tool_calls), tools_executed=0.",
+      "root_cause_category": "LLM Provider Streaming",
+      "root_cause": "MiniMax provider streaming invoke path merged content and reasoning_content but did not extract delta/message tool_calls into raw.tool_calls; finish_reason=tool_calls with empty visible text was treated as empty output and retried by token budget instead of materializing native tool calls.",
+      "evidence_paths": [
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-20260623143626/factory_audits.json",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-20260623143626/L1-01/.polaris/history/runs/director-db5148a8dc6b/results/director.result.json",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-20260623143626/L1-01/.polaris/history/runs/director-db5148a8dc6b/logs/journal.raw.jsonl",
+        ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-20260623143626/L1-01/evidence_bundle.json"
+      ],
+      "opencode_audit": {
+        "required": true,
+        "request_path": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-20260623143626/L1-01/request.json",
+        "evidence_bundle_path": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-20260623143626/L1-01/evidence_bundle.json",
+        "observed_status": "auto_agent_process_exited_without_report",
+        "agent_01_log": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-20260623143626/L1-01/agent_01.log"
+      },
+      "fix_strategy": "Merge streamed MiniMax tool_call fragments by id/index, preserve raw.tool_calls in OpenAI-compatible shape, and return ok=True when finish_reason=tool_calls without visible content.",
+      "fix_files": [
+        "src/backend/polaris/infrastructure/llm/providers/minimax_provider.py",
+        "src/backend/polaris/tests/integration/llm/providers/test_minimax_provider.py",
+        "src/backend/docs/governance/templates/verification-cards/vc-20260623-minimax-stream-tool-calls.yaml"
+      ],
+      "verification_commands": [
+        "python -m ruff check src/backend/polaris/infrastructure/llm/providers/minimax_provider.py src/backend/polaris/tests/integration/llm/providers/test_minimax_provider.py --fix",
+        "python -m ruff format src/backend/polaris/infrastructure/llm/providers/minimax_provider.py src/backend/polaris/tests/integration/llm/providers/test_minimax_provider.py",
+        "PYTHONPATH=src/backend python -m mypy src/backend/polaris/infrastructure/llm/providers/minimax_provider.py --ignore-missing-imports",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/integration/llm/providers/test_minimax_provider.py",
+        "Factory Bench L1-01 rerun after backend restart"
+      ],
+      "remaining_risks": [
+        "Live MiniMax-M3 SSE shape may differ from OpenAI-style delta.tool_calls; rerun bench is required.",
+        "PM had one recovered 60s timeout in the same run; not terminal but remains observable debt.",
+        "OpenCode auto audit request did not produce a usable report despite being scheduled."
+      ],
+      "verification_results": [
+        {
+          "command": "python -m ruff check src/backend/polaris/infrastructure/llm/providers/minimax_provider.py src/backend/polaris/tests/integration/llm/providers/test_minimax_provider.py --fix",
+          "exit_code": 0,
+          "result": "All checks passed"
+        },
+        {
+          "command": "python -m ruff format src/backend/polaris/infrastructure/llm/providers/minimax_provider.py src/backend/polaris/tests/integration/llm/providers/test_minimax_provider.py",
+          "exit_code": 0,
+          "result": "2 files left unchanged after final format"
+        },
+        {
+          "command": "PYTHONPATH=src/backend python -m mypy src/backend/polaris/infrastructure/llm/providers/minimax_provider.py --ignore-missing-imports",
+          "exit_code": 0,
+          "result": "Success: no issues found in 1 source file"
+        },
+        {
+          "command": "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/integration/llm/providers/test_minimax_provider.py",
+          "exit_code": 0,
+          "result": "33 passed"
+        },
+        {
+          "command": "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/test_roles_kernel.py::TestRoleExecutionKernel::test_kernel_accepts_native_tool_calls_without_text_output",
+          "exit_code": 0,
+          "result": "1 passed"
+        },
+        {
+          "command": "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py::test_stream_executes_native_tool_calls_without_text_wrapper src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py::test_stream_provider_tool_events_materialize_native_tool_calls",
+          "exit_code": 0,
+          "result": "2 passed"
+        }
+      ],
+      "verification_card": "src/backend/docs/governance/templates/verification-cards/vc-20260623-minimax-stream-tool-calls.yaml",
+      "platform_gap": "MiniMax streaming parser ignored delta.tool_calls/message.tool_calls and treated tool-call-only responses as provider empty output.",
+      "verification": [
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/integration/llm/providers/test_minimax_provider.py -> 33 passed before later aggregate, 34 provider tests in aggregate",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/test_roles_kernel.py::TestRoleExecutionKernel::test_kernel_accepts_native_tool_calls_without_text_output -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/kernel/tests/test_kernel_stream_tool_loop.py::test_stream_executes_native_tool_calls_without_text_wrapper src/backend/polaris/cells/roles/kernel/tests/test_transaction_kernel_facade.py::test_stream_provider_tool_events_materialize_native_tool_calls -> 2 passed",
+        "Real rerun codex-l1-01-minimax-m3-fix-20260623145628 advanced to 12 files / 7 source files and raw_native_tools write_file/execute_command evidence."
+      ],
+      "next_action": "Rerun L1-01 after current materialization hardening patches are loaded in a fresh backend."
+    },
+    {
+      "id": "DEFECT-20260623-minimax-director-runtime-profile-gate",
+      "status": "platform_fix_verified_real_status_ready",
+      "symptom": "Director binding MiniMax-M3 was configured and ready but factory/runtime status marked it unsupported and BLOCKED because the runtime support gate only trusted a stale director_tool_contract_supported flag.",
+      "physical_error": "/v2/llm/status before fix: director provider minimax-1781012971065 model MiniMax-M3 ready=true runtime_supported=false runtime_issue=director_minimax_tool_contract_unverified factory_state=BLOCKED.",
+      "root_cause_category": "LLM Runtime Configuration",
+      "platform_gap": "Runtime support evaluation ignored full tool_schema_profile and execution_profile on MiniMax providers.",
+      "fix_strategy": "Accept MiniMax Director runtime when explicit director_tool_contract_supported is true or both tool_schema_profile and execution_profile are full; keep partial-profile MiniMax blocked.",
+      "fix_files": [
+        "src/backend/polaris/cells/llm/provider_runtime/internal/runtime_support.py",
+        "src/backend/polaris/tests/unit/cells/llm/provider_runtime/test_runtime_support.py",
+        "src/backend/docs/governance/templates/verification-cards/vc-20260623-minimax-director-runtime-support.yaml"
+      ],
+      "verification": [
+        "python -m ruff check runtime_support.py test_runtime_support.py --fix -> All checks passed",
+        "python -m ruff format runtime_support.py test_runtime_support.py -> unchanged",
+        "PYTHONPATH=src/backend python -m mypy src/backend/polaris/cells/llm/provider_runtime/internal/runtime_support.py --ignore-missing-imports -> Success",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/unit/cells/llm/provider_runtime/test_runtime_support.py -> 12 passed",
+        "/v2/llm/status after backend restart: Director MiniMax-M3 runtime_supported=true factory_state=READY"
+      ],
+      "next_action": "Keep coverage in aggregated focused suite; no separate action unless provider profile semantics change."
+    },
+    {
+      "id": "DEFECT-20260623-ts-prewrite-syntax-gate-and-comment-bracket-false-positive",
+      "status": "platform_fix_verified_pending_real_bench_rerun",
+      "symptom": "L1-01 rerun produced TypeScript files but failed ts_syntax, and PreWriteGuard previously false-rejected valid TS comments containing interval notation [0, 1).",
+      "physical_error": "factory_audits.json: ts_syntax failed src/engine/simulation.ts(173,36): TS1005 comma expected; file contained pseudoRandom(0xF10WER). Runtime logs also showed PreWriteGuard BracketError on comments such as range [0, 1).",
+      "root_cause_category": "Director Tool Execution",
+      "platform_gap": "JS/TS fallback validator scanned comments/strings for brackets and did not run an authoritative TypeScript parser for .ts/.tsx syntax.",
+      "fix_strategy": "Mask JS-like comments and strings before bracket fallback; add TypeScript compiler API parseDiagnostics gate for .ts/.tsx, with heuristic fallback only when parser unavailable.",
+      "fix_files": [
+        "src/backend/polaris/kernelone/tool_execution/code_validator.py",
+        "src/backend/polaris/kernelone/tool_execution/tests/test_code_validator.py",
+        "src/backend/docs/governance/templates/verification-cards/vc-20260623-l1-01-director-materialization-hardening.yaml"
+      ],
+      "verification": [
+        "python -m ruff check code_validator.py test_code_validator.py --fix -> All checks passed",
+        "python -m ruff format code_validator.py test_code_validator.py -> unchanged",
+        "PYTHONPATH=src/backend python -m mypy src/backend/polaris/kernelone/tool_execution/code_validator.py --ignore-missing-imports -> Success",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/kernelone/tool_execution/tests/test_code_validator.py -> 35 passed"
+      ],
+      "next_action": "Restart backend and rerun L1-01; expected invalid TS write attempts are rejected before landing or repaired by Director retry."
+    },
+    {
+      "id": "DEFECT-20260623-forced-write-execute-command-stage-drift",
+      "status": "platform_fix_verified_pending_real_bench_rerun",
+      "symptom": "During forced write retries, MiniMax-M3 returned execute_command even when tool_choice forced write_file; Director exhausted retries with director_no_materialized_changes.",
+      "physical_error": "Runtime logs: mutation-contract retry attempt 1-4 raw_native_tools=[execute_command], deterministic bootstrap write fallback skipped: 2 viable targets, refusing to guess (tests/engine.test.ts, tests/models.test.ts), then RuntimeError single_batch_contract_violation no write tool invocation.",
+      "root_cause_category": "Director Tool Execution",
+      "platform_gap": "Forced-write escalation still exposed verification-only execute_command in named write attempts, and forced_write_command_normalizer crashed on dict-shaped decisions in tests. Contract guards also did not recognize explicit redirect execute_command as materializing write.",
+      "fix_strategy": "Remove verification tools from API-level named forced-write attempts; keep early retry verification support. Recognize execute_command stdout redirection to authoritative workspace paths as materializing write. Make forced-write command normalizer Mapping-compatible while preserving fail-closed heredoc parsing.",
+      "fix_files": [
+        "src/backend/polaris/cells/roles/kernel/internal/transaction/retry_escalation_policy.py",
+        "src/backend/polaris/cells/roles/kernel/internal/transaction/contract_guards.py",
+        "src/backend/polaris/cells/roles/kernel/internal/transaction/forced_write_command_normalizer.py",
+        "src/backend/polaris/cells/roles/kernel/tests/test_retry_api_escalation.py",
+        "src/backend/polaris/tests/unit/cells/roles/kernel/internal/test_transaction_rollback_and_guards.py",
+        "src/backend/docs/governance/templates/verification-cards/vc-20260623-l1-01-director-materialization-hardening.yaml"
+      ],
+      "verification": [
+        "python -m ruff check retry_escalation_policy.py contract_guards.py forced_write_command_normalizer.py and tests --fix -> All checks passed",
+        "python -m ruff format touched files -> unchanged",
+        "PYTHONPATH=src/backend python -m mypy retry_escalation_policy.py contract_guards.py forced_write_command_normalizer.py --ignore-missing-imports -> Success",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/kernel/tests/test_retry_api_escalation.py -> 32 passed",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/unit/cells/roles/kernel/internal/test_transaction_rollback_and_guards.py -> 20 passed",
+        "Aggregated focused suite: 135 passed in 21.93s"
+      ],
+      "opencode_audit": {
+        "request": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-fix-20260623145628/L1-01/request.json",
+        "evidence_bundle": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-fix-20260623145628/L1-01/evidence_bundle.json",
+        "status": "running_background_with_failures_no_machine_readable_report",
+        "note": "agent_01.log shows evidence inspection; ps shows no opencode process; no JSON audit report found, so not counted as completed external audit."
+      },
+      "next_action": "Restart backend to load retry/tool guard changes and rerun exactly L1-01 before moving to L1-02."
+    },
+    {
+      "id": "DEFECT-20260623-chief-engineer-timeout-partial-blueprints",
+      "status": "closed_by_real_bench_ce_review_4_of_4",
+      "symptom": "Fresh L1-01 after Director/MiniMax hardening did not reach Director; Factory stopped in chief_engineer_review after generating only 3 of 4 blueprints.",
+      "physical_error": "factory_audits.json and L1-01.audit.json show Chief Engineer review generated 3/4 blueprints; signals=1; error_code=chief_engineer.llm_review_failed; root_cause_hint=TransactionKernel execution failed: Request timeout (60.0s).",
+      "root_cause_category": "ChiefEngineer Blueprint / Model Health",
+      "platform_gap": "Factory CE review used the non-Director default 60s LLM timeout for multi-task blueprint generation. Strong Kimi CE calls can exceed 60s, and TransactionKernel timeout returns directly as an unrecoverable missing-blueprint stage error.",
+      "fix_strategy": "Inject a Factory-scoped Chief Engineer LLM timeout contract into ExecuteRoleTaskCommandV1.timeout_seconds, context, and metadata. Keep the change local to factory chief_engineer_review instead of globally changing non-Director defaults.",
+      "fix_files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/polaris/tests/test_factory_run_service.py"
+      ],
+      "verification": [
+        "CodeGraph inspected FactoryStageExecutor._execute_chief_engineer_review, RoleRuntimeService._build_task_request, execute_transaction_kernel_turn, and resolve_timeout_seconds before edit.",
+        "python -m ruff check src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py src/backend/polaris/tests/test_factory_run_service.py --fix -> All checks passed",
+        "python -m ruff format src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py src/backend/polaris/tests/test_factory_run_service.py -> 2 files left unchanged",
+        "PYTHONPATH=src/backend python -m mypy src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py --ignore-missing-imports -> Success",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/test_factory_run_service.py::TestOrchestrationStageExecutor::test_chief_engineer_stage_generates_blueprint_artifacts src/backend/polaris/tests/test_factory_run_service.py::TestOrchestrationStageExecutor::test_chief_engineer_stage_timeout_prefers_context_override -> 2 passed",
+        "Aggregate gate: PYTHONPATH=src/backend python -m pytest -q focused suite -> 137 passed; mypy 7 production files -> Success; ruff 13 Python files -> All checks passed/unchanged.",
+        "Real bench closure: /home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json shows chief_engineer_review success 4/4 before Director dispatch."
+      ],
+      "evidence_paths": [
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-hardening-20260623153330/factory_audits.json",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-hardening-20260623153330/audits/codex-l1-01-minimax-m3-hardening-20260623153330/L1-01.audit.json"
+      ],
+      "next_action": "Restart backend to load the CE timeout contract and rerun exactly L1-01. Do not proceed to L1-02 until L1-01 reaches Director, QA, and real_run_gate.",
+      "physical_closure": "Fresh L1-01 run codex-l1-01-minimax-m3-ce-timeout-20260623155229 reached Chief Engineer review generated 4/4 blueprints; signals=0; error_code=none; root_cause_hint=none."
+    },
+    {
+      "id": "DEFECT-20260623-minimax-reasoning-exhaustion-fallback-miss",
+      "status": "platform_fix_verified_locally_pending_fresh_bench",
+      "symptom": "After CE timeout fix, L1-01 reached Director but MiniMax-M3 consumed output budget in thinking and emitted no visible output or native tool call; task 1 failed with director_no_materialized_changes, blocking remaining tasks.",
+      "physical_error": "director.result.json primary_llm.error=TransactionKernel execution failed: Empty visible output from MiniMax stream (thinking_chars=28642, chunks=146, finish_reason=length) — reasoning exhausted max_tokens even after budget doubling; tools_executed=0; write_tool_evidence=false.",
+      "root_cause_category": "Director Tool Execution / LLM Output",
+      "platform_gap": "LLMInvoker fallback ladder only matched empty-visible errors containing \"reasoning truncated\". MiniMax provider returns \"reasoning exhausted\" / finish_reason=length after its internal max_tokens doubling, so the existing minimal-reasoning tool-call re-ask was skipped.",
+      "fix_strategy": "Broaden the reasoning-truncation fallback predicate to include \"reasoning exhausted\" and \"finish_reason=length\" while retaining the existing native-tool re-ask behavior.",
+      "fix_files": [
+        "src/backend/polaris/cells/roles/kernel/internal/llm_caller/invoker.py",
+        "src/backend/polaris/cells/roles/kernel/tests/test_llm_invoker_decomposition_characterization.py"
+      ],
+      "verification": [
+        "CodeGraph inspected DecisionCaller.call, LLMInvoker.call, _run_fallback_ladder, and _build_reasoning_truncation_retry_request before edit.",
+        "python -m ruff check <15 touched Python files> --fix -> All checks passed",
+        "python -m ruff format <15 touched Python files> -> 15 files left unchanged",
+        "PYTHONPATH=src/backend python -m mypy <8 touched production files> --ignore-missing-imports -> Success",
+        "PYTHONPATH=src/backend python -m pytest -q <focused suite including reasoning fallback> -> 139 passed"
+      ],
+      "evidence_paths": [
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-fe3ac22d8b38/results/director.result.json",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-fe3ac22d8b38/logs/journal.enriched.jsonl",
+        ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/request.json",
+        ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/evidence_bundle.json"
+      ],
+      "opencode_audit": {
+        "required": true,
+        "request_path": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/request.json",
+        "execution_status": "running_background_with_failures",
+        "agent_01_log": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/agent_01.log"
+      },
+      "next_action": "Restart backend to load invoker fallback predicate and rerun exactly L1-01. Confirm a reasoning_truncation_retry event/request appears before Director task 1 can fail no_materialized_changes."
+    },
+    {
+      "id": "DEFECT-20260623-director-only-resume-missing-stage-snapshot",
+      "status": "real_bench_verified_fail_closed_pending_workspace_with_taskboard_snapshot",
+      "symptom": "When PM contract and Chief Engineer blueprint are already trusted, Factory/bench could still restart from PM and recreate project directories instead of freezing PM/CE evidence and resuming only Director/QA from a pre-Director clean workspace.",
+      "physical_error": "Factory HTTP start_from=director was normalized to pm; bench runner previously purged/recreated work_dir even for reruns and did not reject repository root work_dir, which allowed an accidental root L1-01 directory later quarantined under .polaris_runtime/quarantine/bad-factory-bench-root-L1-01-20260623161234.",
+      "root_cause_category": "Director Execution / Bench Session",
+      "platform_gap": "No contract existed for Director-only resume evidence readiness: PM plan, TaskBoard rows, CE blueprint, and pre-Director workspace snapshot were not required before skipping PM/CE.",
+      "fix_strategy": "Add start_from=director as a first-class Factory stage graph containing director_dispatch + quality_gate only; require PM/TaskBoard/CE/pre-Director snapshot evidence before HTTP start; create/restore pre-Director snapshots around normal Director dispatch; make bench --start-from director preserve an existing workspace, fail closed when trusted evidence is missing, and reject empty or repository-root work_dir values.",
+      "fix_files": [
+        "src/backend/polaris/delivery/http/routers/factory.py",
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/scripts/factory_bench/run_factory_bench.py",
+        "src/backend/polaris/tests/unit/delivery/http/routers/test_factory_v2.py",
+        "src/backend/polaris/tests/test_factory_run_service.py",
+        "src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py",
+        "src/backend/scripts/factory_bench/test_backend_client.py"
+      ],
+      "verification": [
+        "CodeGraph inspected _execute_quality_gate, _run_workspace_quality_checks, _execute_director_dispatch, Factory HTTP start_from handling, and bench runner LLM role audit paths before edits.",
+        "python -m ruff check <7 Director-only resume touched Python files> --fix -> All checks passed after one automatic style fix",
+        "python -m ruff format <7 Director-only resume touched Python files> -> 7 files left unchanged",
+        "PYTHONPATH=src/backend python -m mypy src/backend/polaris/delivery/http/routers/factory.py src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py src/backend/scripts/factory_bench/run_factory_bench.py --ignore-missing-imports -> Success: no issues found in 3 source files",
+        "PYTHONPATH=src/backend pytest -q src/backend/polaris/tests/test_factory_run_service.py::TestOrchestrationStageExecutor::test_quality_gate_fails_on_workspace_node_script_failure src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py::test_runner_audits_llm_routes_for_llm_backed_roles_only -> 2 passed",
+        "PYTHONPATH=src/backend pytest -q src/backend/polaris/tests/unit/delivery/http/routers/test_factory_v2.py src/backend/polaris/tests/test_factory_run_service.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py src/backend/scripts/factory_bench/test_backend_client.py -> 243 passed, 2 warnings in 195.40s",
+        "FACTORY_BENCH_RUN_ID=codex-l1-01-minimax-m3-director-resume-20260623165500 PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir /home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229 --start-from director --timeout 5400 --real-run-timeout 120 --max-failed 1 -> FAIL closed in 0.0s: Director-only resume missing evidence: runtime/tasks/plan.json, runtime/tasks/task_*.json"
+      ],
+      "evidence_paths": [
+        ".polaris_runtime/quarantine/bad-factory-bench-root-L1-01-20260623161234",
+        ".polaris_runtime/defect_manifest.json",
+        ".polaris_runtime/long_term_state.json",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01.chain.log"
+      ],
+      "next_action": "Use a workspace that contains PM plan, TaskBoard runtime/tasks evidence, CE blueprints, and a pre-Director snapshot to verify the positive Director/QA-only path; do not rerun PM->CE for Director defects when those evidence gates are satisfied."
     }
   ],
   "latest_evidence": {
@@ -341,5 +598,6 @@
       ],
       "result": "runtime_dispatch skipped Director bindings preserve binding_id in role bindings and skipped_bindings projections"
     }
-  }
+  },
+  "last_updated_at": "2026-06-23T08:56:46+00:00"
 }

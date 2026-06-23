@@ -120,6 +120,144 @@ def _base_resp_error(data: Any) -> str | None:
     return f"MiniMax API Error {status_code}: {status_msg}"
 
 
+def _tool_call_keys(fragment: dict[str, Any], fallback_index: int) -> list[str]:
+    keys: list[str] = []
+    call_id = str(fragment.get("id") or fragment.get("call_id") or "").strip()
+    if call_id:
+        keys.append(f"id:{call_id}")
+    raw_index = fragment.get("index")
+    if raw_index is not None:
+        keys.append(f"index:{raw_index}")
+    if not keys:
+        keys.append(f"ordinal:{fallback_index}")
+    return keys
+
+
+def _json_argument_fragment(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _merge_stream_fragment(current: str, fragment: str) -> str:
+    if not fragment:
+        return current
+    if not current:
+        return fragment
+    if len(fragment) >= len(current) and fragment.startswith(current):
+        return fragment
+    if current.endswith(fragment) or current.startswith(fragment) or fragment in current:
+        return current
+    return current + fragment
+
+
+def _upsert_minimax_tool_call_fragment(
+    tool_calls: list[dict[str, Any]],
+    key_index: dict[str, int],
+    fragment: Any,
+) -> None:
+    if not isinstance(fragment, dict):
+        return
+
+    function = fragment.get("function")
+    if not isinstance(function, dict):
+        function = {}
+
+    keys = _tool_call_keys(fragment, len(tool_calls))
+    existing_index = next((key_index[key] for key in keys if key in key_index), None)
+    if existing_index is None:
+        existing_index = len(tool_calls)
+        tool_calls.append(
+            {
+                "id": str(fragment.get("id") or fragment.get("call_id") or f"minimax_tool_{existing_index}"),
+                "type": "function",
+                "function": {"name": "", "arguments": ""},
+            }
+        )
+    for key in keys:
+        key_index[key] = existing_index
+
+    target = tool_calls[existing_index]
+    if fragment.get("id") or fragment.get("call_id"):
+        target["id"] = str(fragment.get("id") or fragment.get("call_id"))
+    if fragment.get("type"):
+        target["type"] = str(fragment.get("type"))
+    elif "function" in fragment:
+        target["type"] = "function"
+
+    target_function = target.setdefault("function", {})
+    if not isinstance(target_function, dict):
+        target_function = {}
+        target["function"] = target_function
+
+    name = str(function.get("name") or fragment.get("name") or "").strip()
+    if name:
+        target_function["name"] = name
+
+    arguments = function.get("arguments")
+    if arguments is None:
+        arguments = fragment.get("arguments")
+    if arguments is None:
+        arguments = function.get("parameters")
+    if arguments is None:
+        arguments = fragment.get("parameters")
+    if arguments is not None:
+        if isinstance(arguments, (dict, list)):
+            target_function["arguments"] = _json_argument_fragment(arguments)
+        else:
+            target_function["arguments"] = _merge_stream_fragment(
+                str(target_function.get("arguments") or ""),
+                _json_argument_fragment(arguments),
+            )
+
+
+def _append_minimax_tool_calls_from_choice(
+    tool_calls: list[dict[str, Any]],
+    key_index: dict[str, int],
+    choice: Any,
+) -> None:
+    if not isinstance(choice, dict):
+        return
+    containers: list[Any] = [choice.get("delta"), choice.get("message"), choice]
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        container_calls = container.get("tool_calls")
+        if isinstance(container_calls, list):
+            for item in container_calls:
+                _upsert_minimax_tool_call_fragment(tool_calls, key_index, item)
+        function_call = container.get("function_call")
+        if isinstance(function_call, dict):
+            _upsert_minimax_tool_call_fragment(tool_calls, key_index, {"type": "function", "function": function_call})
+
+
+def _finalize_minimax_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    finalized: list[dict[str, Any]] = []
+    for call in tool_calls:
+        function = call.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = str(function.get("name") or "").strip()
+        if not name:
+            continue
+        arguments = function.get("arguments")
+        finalized.append(
+            {
+                "id": str(call.get("id") or f"minimax_tool_{len(finalized)}"),
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": _json_argument_fragment(arguments),
+                },
+            }
+        )
+    return finalized
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -447,6 +585,8 @@ class MiniMaxProvider(BaseProvider):
                     thinking_text = ""
                     output_is_cumulative = False
                     thinking_is_cumulative = False
+                    native_tool_calls: list[dict[str, Any]] = []
+                    native_tool_call_index: dict[str, int] = {}
 
                     def _merge_fragment(
                         current: str,
@@ -507,6 +647,12 @@ class MiniMaxProvider(BaseProvider):
 
                             choices = json_data.get("choices", [])
                             if choices:
+                                for choice in choices:
+                                    _append_minimax_tool_calls_from_choice(
+                                        native_tool_calls,
+                                        native_tool_call_index,
+                                        choice,
+                                    )
                                 message = choices[0].get("message", {})
                                 content = message.get("content", "") or ""
                                 reasoning = message.get("reasoning_content", "") or ""
@@ -564,6 +710,12 @@ class MiniMaxProvider(BaseProvider):
                                     if choices:
                                         choice = choices[0]
                                         matched = False
+                                        for item in choices:
+                                            _append_minimax_tool_calls_from_choice(
+                                                native_tool_calls,
+                                                native_tool_call_index,
+                                                item,
+                                            )
 
                                         delta = choice.get("delta", {})
                                         if delta:
@@ -612,28 +764,33 @@ class MiniMaxProvider(BaseProvider):
 
                     output = self._clean_content(output_text)
                     thinking = self._clean_content(thinking_text) if thinking_text else None
+                    finalized_tool_calls = _finalize_minimax_tool_calls(native_tool_calls)
+                    raw_payload: dict[str, Any] = {"chunks": full_response}
+                    if finalized_tool_calls:
+                        raw_payload["tool_calls"] = finalized_tool_calls
 
                     # ===== 调试日志：流式解析完成 =====
                     if debug_mode:
                         resp_type = "JSON (non-streaming)" if is_json_response else "data-line streaming"
                         logger.debug(
                             "MiniMax invoke: streaming parse complete - type=%s, line_count=%s, "
-                            "output_parts=%s, thinking_parts=%s, output_len=%s",
+                            "output_parts=%s, thinking_parts=%s, tool_calls=%s, output_len=%s",
                             resp_type,
                             line_count,
                             len(output_parts),
                             len(thinking_parts),
+                            len(finalized_tool_calls),
                             len(output),
                         )
 
-                    if output:
+                    if output or finalized_tool_calls:
                         circuit_breaker.on_success()
                         return InvokeResult(
                             ok=True,
                             output=output,
                             latency_ms=latency_ms,
                             usage=estimate_usage(prompt, output),
-                            raw={"chunks": full_response},
+                            raw=raw_payload,
                             streaming=True,
                             thinking=thinking,
                         )
@@ -660,7 +817,7 @@ class MiniMaxProvider(BaseProvider):
                                                 output=self._clean_content(content),
                                                 latency_ms=latency_ms,
                                                 usage=estimate_usage(prompt, content),
-                                                raw={"chunks": full_response},
+                                                raw=raw_payload,
                                                 streaming=True,
                                                 thinking=None,
                                             )
@@ -744,9 +901,17 @@ class MiniMaxProvider(BaseProvider):
 
                 output = ""
                 thinking = None
+                response_tool_calls: list[dict[str, Any]] = []
+                response_tool_call_index: dict[str, int] = {}
                 if isinstance(data, dict):
                     choices = data.get("choices")
                     if choices:
+                        for choice in choices:
+                            _append_minimax_tool_calls_from_choice(
+                                response_tool_calls,
+                                response_tool_call_index,
+                                choice,
+                            )
                         first_choice = choices[0]
                         if isinstance(first_choice, dict):
                             message = first_choice.get("message", {})
@@ -755,7 +920,8 @@ class MiniMaxProvider(BaseProvider):
                             reasoning = message.get("reasoning_content", "")
                             thinking = self._clean_content(reasoning) if reasoning else None
 
-                if not output:
+                finalized_tool_calls = _finalize_minimax_tool_calls(response_tool_calls)
+                if not output and not finalized_tool_calls:
                     circuit_breaker.on_failure()
                     return InvokeResult(
                         ok=False,
@@ -766,10 +932,18 @@ class MiniMaxProvider(BaseProvider):
                     )
 
                 usage = self._usage_from_response(prompt, output, data)
+                raw_payload = dict(data) if isinstance(data, dict) else {}
+                if finalized_tool_calls:
+                    raw_payload["tool_calls"] = finalized_tool_calls
 
                 circuit_breaker.on_success()
                 return InvokeResult(
-                    ok=True, output=output.strip(), latency_ms=latency_ms, usage=usage, raw=data, thinking=thinking
+                    ok=True,
+                    output=output.strip(),
+                    latency_ms=latency_ms,
+                    usage=usage,
+                    raw=raw_payload,
+                    thinking=thinking,
                 )
 
             except CircuitOpenError as exc:

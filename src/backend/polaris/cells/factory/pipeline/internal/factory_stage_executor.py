@@ -13,6 +13,7 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -77,10 +78,25 @@ _WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES = frozenset(
 _DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV = "KERNELONE_FACTORY_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT"
 _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT = 4
 _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS = 60
+_PRE_DIRECTOR_SNAPSHOT_RELATIVE_DIR = ".polaris/factory_snapshots/pre_director"
+_PRE_DIRECTOR_SNAPSHOT_KIND = "pre_director_workspace"
+_PRE_DIRECTOR_PLATFORM_PREFIXES = (
+    ".git/",
+    ".polaris/",
+    ".polaris.kernelone.tags.cache.v1/",
+    "runtime/",
+    "node_modules/",
+)
 _DIRECTOR_TIMEOUT_ENV_KEYS = (
     "KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS",
     "KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS",
     "KERNELONE_DIRECTOR_LLM_TIMEOUT_MAX_SECONDS",
+)
+_DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS = 240
+_CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS = (
+    "KERNELONE_FACTORY_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS",
+    "KERNELONE_FACTORY_CE_LLM_TIMEOUT_SECONDS",
+    "KERNELONE_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS",
 )
 
 _CE_BLUEPRINT_OUTPUT_CONTRACT = """
@@ -229,6 +245,115 @@ class OrchestrationStageExecutor:
     def _artifact_file_ready(target: Path) -> bool:
         """Return whether an expected stage artifact is present after upstream completion."""
         return helpers.artifact_file_ready(target)
+
+    @staticmethod
+    def _pre_director_snapshot_candidate(relative_path: str) -> bool:
+        normalized = relative_path.replace("\\", "/").strip("/")
+        if not normalized:
+            return False
+        if normalized in {".git", ".polaris", "runtime", "node_modules"}:
+            return False
+        return not any(normalized.startswith(prefix) for prefix in _PRE_DIRECTOR_PLATFORM_PREFIXES)
+
+    def _pre_director_snapshot_dir(self) -> Path:
+        return self.workspace / _PRE_DIRECTOR_SNAPSHOT_RELATIVE_DIR
+
+    def _iter_pre_director_snapshot_files(self) -> list[Path]:
+        files: list[Path] = []
+        for path in self.workspace.rglob("*"):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                relative = path.relative_to(self.workspace).as_posix()
+            except ValueError:
+                continue
+            if self._pre_director_snapshot_candidate(relative):
+                files.append(path)
+        return sorted(files)
+
+    def _create_pre_director_snapshot(self, *, run_id: str) -> dict[str, Any]:
+        snapshot_dir = self._pre_director_snapshot_dir()
+        files_dir = snapshot_dir / "files"
+        if snapshot_dir.exists():
+            shutil.rmtree(snapshot_dir, ignore_errors=True)
+        files_dir.mkdir(parents=True, exist_ok=True)
+        entries: list[dict[str, Any]] = []
+        for source in self._iter_pre_director_snapshot_files():
+            relative = source.relative_to(self.workspace).as_posix()
+            target = files_dir / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            entries.append({"path": relative, "size": source.stat().st_size})
+        manifest = {
+            "snapshot_kind": _PRE_DIRECTOR_SNAPSHOT_KIND,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "factory_run_id": str(run_id or "").strip(),
+            "file_count": len(entries),
+            "files": entries,
+            "platform_excluded_prefixes": list(_PRE_DIRECTOR_PLATFORM_PREFIXES),
+        }
+        (snapshot_dir / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return manifest
+
+    def _restore_pre_director_snapshot(self) -> dict[str, Any]:
+        snapshot_dir = self._pre_director_snapshot_dir()
+        manifest_path = snapshot_dir / "manifest.json"
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("pre-Director workspace snapshot is missing or invalid") from exc
+        if not isinstance(manifest, dict) or manifest.get("snapshot_kind") != _PRE_DIRECTOR_SNAPSHOT_KIND:
+            raise RuntimeError("pre-Director workspace snapshot manifest has invalid kind")
+        entries_raw = manifest.get("files")
+        entries = [item for item in entries_raw if isinstance(item, dict)] if isinstance(entries_raw, list) else []
+        expected_paths = {
+            str(item.get("path") or "").replace("\\", "/").strip("/")
+            for item in entries
+            if str(item.get("path") or "").strip()
+        }
+
+        removed: list[str] = []
+        restored: list[str] = []
+        for current in self._iter_pre_director_snapshot_files():
+            relative = current.relative_to(self.workspace).as_posix()
+            if relative not in expected_paths:
+                current.unlink(missing_ok=True)
+                removed.append(relative)
+
+        files_dir = snapshot_dir / "files"
+        for relative in sorted(expected_paths):
+            source = files_dir / relative
+            if not source.is_file():
+                raise RuntimeError(f"pre-Director snapshot content missing for {relative}")
+            target = self.workspace / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            restored.append(relative)
+
+        for directory in sorted(
+            [path for path in self.workspace.rglob("*") if path.is_dir()],
+            key=lambda path: len(path.parts),
+            reverse=True,
+        ):
+            try:
+                relative = directory.relative_to(self.workspace).as_posix().strip("/")
+            except ValueError:
+                continue
+            if not relative or not self._pre_director_snapshot_candidate(f"{relative}/placeholder"):
+                continue
+            with contextlib.suppress(OSError):
+                directory.rmdir()
+
+        return {
+            "snapshot_kind": _PRE_DIRECTOR_SNAPSHOT_KIND,
+            "removed_files": removed,
+            "restored_files": restored,
+            "file_count": len(restored),
+            "snapshot_created_at": manifest.get("created_at"),
+        }
 
     def _artifact_exists(self, relative_path: str, *, min_chars: int = 1) -> bool:
         target = self._artifact_path(relative_path)
@@ -670,6 +795,37 @@ class OrchestrationStageExecutor:
             return max(llm_timeout_candidates) + _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS
 
         return stage_timeout or 600
+
+    @staticmethod
+    def _chief_engineer_llm_timeout_seconds(context: dict[str, Any]) -> int:
+        def _parse_timeout(raw: Any) -> int | None:
+            if raw is None:
+                return None
+            try:
+                value = int(float(str(raw).strip()))
+            except (TypeError, ValueError):
+                return None
+            if value <= 0:
+                return None
+            return value
+
+        for key in (
+            "chief_engineer_llm_timeout_seconds",
+            "ce_llm_timeout_seconds",
+            "llm_call_timeout_seconds",
+            "request_timeout_seconds",
+            "timeout_seconds",
+        ):
+            value = _parse_timeout(context.get(key))
+            if value is not None:
+                return value
+
+        for env_key in _CHIEF_ENGINEER_LLM_TIMEOUT_ENV_KEYS:
+            value = _parse_timeout(os.getenv(env_key))
+            if value is not None:
+                return value
+
+        return _DEFAULT_CHIEF_ENGINEER_LLM_TIMEOUT_SECONDS
 
     @staticmethod
     def _director_binding_timeout_quarantine_count() -> int:
@@ -1824,7 +1980,6 @@ class OrchestrationStageExecutor:
 
     async def _execute_chief_engineer_review(self, run: FactoryRun, context: dict[str, Any]) -> StageResult:
         logger.info("Executing Chief Engineer review for run %s", run.id)
-        del context
 
         pm_tasks = self._load_pm_plan_tasks("tasks/plan.json")
         stage_signals: list[dict[str, Any]] = []
@@ -1841,6 +1996,7 @@ class OrchestrationStageExecutor:
 
         # Use RoleRuntimeService for real LLM invocation
         ce_service = RoleRuntimeService()
+        ce_timeout_seconds = self._chief_engineer_llm_timeout_seconds(context)
 
         for index, task in enumerate(pm_tasks, start=1):
             task_id = self._task_id(task, index)
@@ -1857,6 +2013,9 @@ class OrchestrationStageExecutor:
                         "disable_internal_tool_rounds": True,
                         "_transaction_kernel_forced_tool_definitions": [],
                         "_transaction_kernel_forced_tool_choice": "none",
+                        "chief_engineer_llm_timeout_seconds": ce_timeout_seconds,
+                        "llm_call_timeout_seconds": ce_timeout_seconds,
+                        "request_timeout_seconds": ce_timeout_seconds,
                     }
                 )
                 ce_objective = f"{objective.strip()}{_CE_BLUEPRINT_OUTPUT_CONTRACT}"
@@ -1869,12 +2028,14 @@ class OrchestrationStageExecutor:
                     objective=ce_objective,
                     run_id=run.id,
                     context=task_context,
+                    timeout_seconds=ce_timeout_seconds,
                     metadata={
                         "constraints": self._task_blueprint_constraints(task),
                         "source": "factory_stage_executor.chief_engineer_review",
                         "cognitive_runtime_mode": "off",
                         "cognitive_runtime_enabled": False,
                         "cognitive_runtime_required": False,
+                        "llm_call_timeout_seconds": ce_timeout_seconds,
                         "validate_output": True,
                         "max_retries": 1,
                     },
@@ -2093,6 +2254,52 @@ class OrchestrationStageExecutor:
 
         service = self._build_orchestration_service(context)
         stage_signals: list[dict[str, Any]] = []
+        snapshot_signals: list[dict[str, Any]] = []
+        raw_start_metadata = context.get("metadata")
+        start_metadata: dict[str, Any] = dict(raw_start_metadata) if isinstance(raw_start_metadata, dict) else {}
+        start_from_hint = str(context.get("factory_start_from") or start_metadata.get("factory_start_from") or "")
+        director_only_resume = start_from_hint.strip().lower() == "director" or str(run.config.name or "") == (
+            "Factory Run - director"
+        )
+        if director_only_resume:
+            try:
+                restore_payload = self._restore_pre_director_snapshot()
+                snapshot_signals.append(
+                    {
+                        "code": "director.pre_director_snapshot_restored",
+                        "severity": "info",
+                        "detail": "Restored workspace delivery files from pre-Director snapshot before resume",
+                        **restore_payload,
+                    }
+                )
+            except RuntimeError as exc:
+                stage_signals.append(
+                    {
+                        "code": "director.pre_director_snapshot_restore_failed",
+                        "severity": "error",
+                        "detail": str(exc),
+                    }
+                )
+        else:
+            try:
+                snapshot_payload = self._create_pre_director_snapshot(run_id=run.id)
+                snapshot_signals.append(
+                    {
+                        "code": "director.pre_director_snapshot_created",
+                        "severity": "info",
+                        "detail": "Captured workspace delivery-file snapshot before Director dispatch",
+                        "file_count": snapshot_payload.get("file_count"),
+                        "snapshot_path": _PRE_DIRECTOR_SNAPSHOT_RELATIVE_DIR,
+                    }
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                stage_signals.append(
+                    {
+                        "code": "director.pre_director_snapshot_create_failed",
+                        "severity": "error",
+                        "detail": str(exc),
+                    }
+                )
         initial_stats = self._read_taskboard_stats()
         attempts: list[dict[str, Any]] = []
         last_command_result: CommandResult | None = None
@@ -2506,6 +2713,7 @@ class OrchestrationStageExecutor:
 
         if fanout_quality_handoff:
             self._downgrade_quality_handoff_blocking_signals(stage_signals)
+        stage_signals.extend(snapshot_signals)
 
         stage_status = "success"
         if (

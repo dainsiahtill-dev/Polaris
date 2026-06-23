@@ -223,6 +223,14 @@ class TestBenchBackendClient(_BenchBackendClientTestBase):
         expected = Path("/home/dains/Documents/polaris/runtime/factory-bench/bench-x").resolve()
         self.assertEqual(resolved, expected)
 
+    def test_work_dir_rejects_empty_value(self) -> None:
+        with self.assertRaises(ValueError):
+            _resolve_bench_work_dir("")
+
+    def test_work_dir_rejects_repo_root(self) -> None:
+        with self.assertRaises(ValueError):
+            _resolve_bench_work_dir(".")
+
     def test_unreachable_backend_returns_none_silently(self) -> None:
         sid = _push_bench_session_to_backend(
             backend_url="http://127.0.0.1:1",

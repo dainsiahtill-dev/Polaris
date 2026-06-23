@@ -1030,8 +1030,11 @@ class LLMInvoker:
         # and emitted no visible output / tool call. Re-ask ONCE with a reserved
         # output budget + a "minimal reasoning, emit the tool call now" directive so
         # the write actually lands instead of dying as director_no_materialized_changes.
-        _is_reasoning_truncation = (
-            "empty visible output" in response_error.lower() and "reasoning truncated" in response_error.lower()
+        response_error_lower = response_error.lower()
+        _is_reasoning_truncation = "empty visible output" in response_error_lower and (
+            "reasoning truncated" in response_error_lower
+            or "reasoning exhausted" in response_error_lower
+            or "finish_reason=length" in response_error_lower
         )
         if not is_response_ok and _is_reasoning_truncation:
             active_request = caller._build_reasoning_truncation_retry_request(prepared=prepared, profile=profile)

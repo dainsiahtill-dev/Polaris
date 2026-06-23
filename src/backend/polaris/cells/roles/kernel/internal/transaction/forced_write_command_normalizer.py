@@ -57,10 +57,10 @@ class CommandWriteIntent:
 
 
 def normalize_forced_write_command_decision(
-    decision: TurnDecision,
+    decision: Any,
     *,
     allowed_tool_names: Set[str],
-) -> tuple[TurnDecision, tuple[dict[str, Any], ...]]:
+) -> tuple[Any, tuple[dict[str, Any], ...]]:
     """Convert safe execute_command heredoc writes to write_file invocations.
 
     The conversion is intentionally scoped to forced-write retry contexts. It
@@ -70,14 +70,16 @@ def normalize_forced_write_command_decision(
 
     if "write_file" not in {str(name) for name in allowed_tool_names}:
         return decision, ()
-    if decision.kind != TurnDecisionKind.TOOL_BATCH or decision.tool_batch is None:
+    decision_kind = _decision_kind(decision)
+    tool_batch = _decision_tool_batch(decision)
+    if decision_kind != TurnDecisionKind.TOOL_BATCH or tool_batch is None:
         return decision, ()
 
     converted: list[ToolInvocation] = []
     events: list[dict[str, Any]] = []
     changed = False
 
-    for invocation in decision.tool_batch.invocations:
+    for invocation in _tool_batch_invocations(tool_batch):
         if extract_invocation_tool_name(invocation) != "execute_command":
             converted.append(invocation)
             continue
@@ -109,8 +111,8 @@ def normalize_forced_write_command_decision(
     if not changed:
         return decision, ()
 
-    tool_batch = _rebuild_tool_batch(decision.tool_batch.batch_id, converted)
-    metadata = dict(decision.metadata or {})
+    rebuilt_tool_batch = _rebuild_tool_batch(_tool_batch_batch_id(tool_batch, decision), converted)
+    metadata = dict(_decision_metadata(decision))
     existing_events = metadata.get("tool_intent_normalizations")
     if isinstance(existing_events, list):
         metadata["tool_intent_normalizations"] = [*existing_events, *events]
@@ -118,16 +120,54 @@ def normalize_forced_write_command_decision(
         metadata["tool_intent_normalizations"] = events
 
     normalized_decision = TurnDecision(
-        turn_id=TurnId(str(decision.turn_id)),
-        kind=decision.kind,
-        visible_message=decision.visible_message,
-        reasoning_summary=decision.reasoning_summary,
-        tool_batch=tool_batch,
-        finalize_mode=decision.finalize_mode or FinalizeMode.NONE,
-        domain=decision.domain,
+        turn_id=TurnId(str(_decision_value(decision, "turn_id") or "normalized-forced-write")),
+        kind=decision_kind,
+        visible_message=str(_decision_value(decision, "visible_message") or ""),
+        reasoning_summary=_optional_str(_decision_value(decision, "reasoning_summary")),
+        tool_batch=rebuilt_tool_batch,
+        finalize_mode=_decision_value(decision, "finalize_mode") or FinalizeMode.NONE,
+        domain=_decision_value(decision, "domain") or "code",
         metadata=metadata,
     )
     return normalized_decision, tuple(events)
+
+
+def _decision_value(decision: Any, key: str) -> Any:
+    if isinstance(decision, Mapping):
+        return decision.get(key)
+    return getattr(decision, key, None)
+
+
+def _decision_kind(decision: Any) -> Any:
+    return _decision_value(decision, "kind")
+
+
+def _decision_tool_batch(decision: Any) -> Any:
+    return _decision_value(decision, "tool_batch")
+
+
+def _decision_metadata(decision: Any) -> Mapping[str, Any]:
+    metadata = _decision_value(decision, "metadata")
+    return metadata if isinstance(metadata, Mapping) else {}
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _tool_batch_invocations(tool_batch: Any) -> list[Any]:
+    if isinstance(tool_batch, Mapping):
+        return list(tool_batch.get("invocations", []) or [])
+    return list(getattr(tool_batch, "invocations", []) or [])
+
+
+def _tool_batch_batch_id(tool_batch: Any, decision: Any) -> BatchId:
+    raw = tool_batch.get("batch_id") if isinstance(tool_batch, Mapping) else getattr(tool_batch, "batch_id", None)
+    if raw:
+        return BatchId(str(raw))
+    return BatchId(f"{_decision_value(decision, 'turn_id') or 'normalized'}:forced-write-command")
 
 
 def extract_command_write_intent(invocation: Any) -> CommandWriteIntent | None:

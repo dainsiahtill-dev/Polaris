@@ -48,6 +48,8 @@ from polaris.cells.roles.kernel.public.turn_contracts import (
 
 logger = logging.getLogger(__name__)
 
+_EXECUTE_COMMAND_REDIRECT_TARGET_RE = re.compile(r"(?:^|[^2])>>?\s*[\"']?([^\"'\s|;&]+)[\"']?")
+
 # ---------------------------------------------------------------------------
 # 元数据提取
 # ---------------------------------------------------------------------------
@@ -85,7 +87,29 @@ def extract_target_file_from_invocation_args(invocation: Any) -> str:
         normalized = str(value).strip()
         if normalized:
             return normalized
+    if extract_invocation_tool_name(invocation) == "execute_command":
+        redirect_target = _extract_execute_command_redirect_target(raw_args)
+        if redirect_target:
+            return redirect_target
     return ""
+
+
+def _extract_execute_command_redirect_target(raw_args: Mapping[str, Any]) -> str:
+    raw_command = raw_args.get("command") or raw_args.get("cmd")
+    command = str(raw_command or "").strip()
+    if not command:
+        return ""
+    match = _EXECUTE_COMMAND_REDIRECT_TARGET_RE.search(command)
+    if not match:
+        return ""
+    return str(match.group(1) or "").strip()
+
+
+def _is_materializing_execute_command_invocation(invocation: Any) -> bool:
+    if extract_invocation_tool_name(invocation) != "execute_command":
+        return False
+    target_file = extract_target_file_from_invocation_args(invocation)
+    return bool(target_file and is_authoritative_write_path(target_file))
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +244,8 @@ def extract_read_targets_from_invocations(invocations: list[Any]) -> list[str]:
 def is_write_invocation(invocation: Any) -> bool:
     """判定 invocation 是否为写操作。"""
     tool_name = extract_invocation_tool_name(invocation)
+    if _is_materializing_execute_command_invocation(invocation):
+        return True
     if tool_name in WRITE_TOOLS:
         return True
     mode = extract_invocation_execution_mode(invocation)
@@ -610,6 +636,8 @@ def tool_batch_has_write_invocation(invocations: list[dict[str, Any]] | list[Any
     """判定工具批次中是否包含写 invocation。"""
     for invocation in invocations:
         tool_name = extract_invocation_tool_name(invocation)
+        if _is_materializing_execute_command_invocation(invocation):
+            return True
         if tool_name in WRITE_TOOLS:
             return True
         mode = extract_invocation_execution_mode(invocation)

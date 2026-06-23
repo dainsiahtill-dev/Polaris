@@ -553,7 +553,20 @@ async def test_response_format_fallback_rung(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.asyncio
-async def test_reasoning_truncation_reask_rung(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "response_error",
+    [
+        "Empty visible output (reasoning truncated)",
+        (
+            "Empty visible output from MiniMax stream (thinking_chars=28642, chunks=146, "
+            "finish_reason=length) — reasoning exhausted max_tokens even after budget doubling"
+        ),
+    ],
+)
+async def test_reasoning_truncation_reask_rung(
+    monkeypatch: pytest.MonkeyPatch,
+    response_error: str,
+) -> None:
     rec = _EventRecorder()
     rec.install(monkeypatch)
     profile = _profile()
@@ -561,7 +574,7 @@ async def test_reasoning_truncation_reask_rung(monkeypatch: pytest.MonkeyPatch) 
     _patch_prepare(monkeypatch, prepared)
     executor = _ScriptedExecutor(
         [
-            AIResponse(ok=False, error="Empty visible output (reasoning truncated)", raw={}),
+            AIResponse(ok=False, error=response_error, raw={}),
             AIResponse(ok=True, output="reask-ok", raw={"model": "m", "provider": "p"}),
         ]
     )
@@ -577,6 +590,9 @@ async def test_reasoning_truncation_reask_rung(monkeypatch: pytest.MonkeyPatch) 
     assert resp.error is None
     assert resp.content == "reask-ok"
     assert len(executor.requests) == 2
+    assert executor.requests[1].options["max_tokens"] == 8000
+    assert executor.requests[1].context["reasoning_truncation_retry"] is True
+    assert "最小化推理" in executor.requests[1].input
     assert len(rec.end) == 1
 
 

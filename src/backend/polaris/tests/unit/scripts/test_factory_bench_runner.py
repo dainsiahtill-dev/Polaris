@@ -9,6 +9,7 @@ import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from scripts.factory_bench import run_factory_bench as bench
@@ -69,10 +70,11 @@ def test_chain_failure_overrides_static_artifact_checks() -> None:
 def test_runner_audits_llm_routes_for_llm_backed_roles_only() -> None:
     source = Path(bench.__file__).read_text(encoding="utf-8")
 
-    assert bench.FACTORY_BENCH_REQUIRED_LLM_ROLES == ("pm", "director")
+    assert bench.FACTORY_BENCH_REQUIRED_LLM_ROLES == ("pm", "chief_engineer", "director", "qa")
     assert "require_all_director_routes=False" in source
     assert "require_all_director_routes=True" not in source
-    assert "required_roles=FACTORY_BENCH_REQUIRED_LLM_ROLES" in source
+    assert "FACTORY_BENCH_REQUIRED_LLM_ROLES" in source
+    assert "required_llm_roles_for_factory_record" in source
 
 
 def test_missing_qa_verdict_and_wrong_product_are_fail_closed() -> None:
@@ -828,7 +830,7 @@ def test_map_no_qa_gate_defaults() -> None:
     run_status = {"status": "failed", "phase": "build"}
     audit_bundle: dict[str, Any] = {}
     result = map_factory_run_to_chain_results(run_status, audit_bundle)
-    assert result["exit_class"] == "director_partial"
+    assert result["exit_class"] == "hard_failed"
     assert result["qa_ran"] is False
     assert result["qa_passed"] is False
     assert result["qa_reason"] == ""
@@ -1061,6 +1063,7 @@ def test_main_task_market_driver_uses_http_factory_chain_without_legacy_fallback
     monkeypatch.setattr(bench, "_push_bench_session_to_backend", lambda **_kwargs: "bench-task-market")
     monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
     monkeypatch.setattr(bench, "_push_bench_complete_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
 
     def _legacy_chain(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
         calls.append("legacy")
@@ -1105,6 +1108,7 @@ def test_main_marks_backend_session_failed_when_run_aborts(monkeypatch: Any, tmp
     monkeypatch.setattr(bench, "_push_bench_session_to_backend", lambda **_kwargs: "bench-abort")
     monkeypatch.setattr(bench, "_emit_bench_event", lambda **_kwargs: None)
     monkeypatch.setattr(bench, "_push_bench_progress_to_backend", lambda **_kwargs: True)
+    monkeypatch.setattr(bench, "_push_bench_workspace_to_backend", lambda **_kwargs: True)
 
     def _capture_complete(**kwargs: Any) -> bool:
         completed.append(kwargs)
@@ -1328,6 +1332,42 @@ def _setup_run_factory_chain_mocks(
     return workspace
 
 
+def _write_director_resume_evidence(workspace: Path) -> None:
+    from polaris.kernelone.storage import resolve_runtime_path
+
+    plan_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/plan.json"))
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "goal": "Implement feature",
+                        "target_files": ["src/index.ts"],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    task_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.json"))
+    task_path.write_text(
+        json.dumps({"id": 1, "status": "pending", "subject": "Implement feature"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    blueprint_path = workspace / ".polaris" / "blueprints" / "latest.review.json"
+    blueprint_path.parent.mkdir(parents=True, exist_ok=True)
+    blueprint_path.write_text(
+        json.dumps(
+            {"generated_blueprints": 1, "blueprints": [{"task_id": "TASK-1"}]},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_run_factory_chain_success(monkeypatch: Any, tmp_path: Path) -> None:
     workspace = _setup_run_factory_chain_mocks(
         monkeypatch,
@@ -1364,6 +1404,130 @@ def test_run_factory_chain_success(monkeypatch: Any, tmp_path: Path) -> None:
     assert _LAST_FACTORY_START_PAYLOAD["persist_workspace"] is False
     assert _LAST_FACTORY_START_PAYLOAD["director_workflow_execution_mode"] == "parallel"
     assert _LAST_FACTORY_START_PAYLOAD["director_dispatch_driver"] == "task-market"
+
+
+def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    workspace = _setup_run_factory_chain_mocks(
+        monkeypatch,
+        tmp_path,
+        start_response={"run_id": "run-director"},
+        terminal_status={"status": "completed", "phase": "qa_gate"},
+        audit_bundle={
+            "gates": [{"gate_name": "quality_gate", "passed": True, "message": "ok"}],
+            "summary_json": {"director": {"total": 1, "successes": 1, "failures": 0, "blocked": 0}},
+        },
+    )
+    _write_director_resume_evidence(workspace)
+
+    result = run_factory_chain(
+        {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
+        workspace,
+        backend_url="http://localhost:49977",
+        backend_token="",
+        timeout_s=30,
+        log_path=tmp_path / "L2-07.chain.log",
+        start_from="director",
+    )
+
+    assert result["exit_code"] == 0
+    assert _LAST_FACTORY_START_PAYLOAD["start_from"] == "director"
+    assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_start_from"] == "director"
+    snapshot_manifest = workspace / ".polaris" / "factory_snapshots" / "pre_director" / "manifest.json"
+    assert json.loads(snapshot_manifest.read_text(encoding="utf-8"))["snapshot_kind"] == "pre_director_workspace"
+
+
+def test_director_resume_rehydrates_taskboard_from_legacy_runtime(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "factory-bench" / "L1-01"
+    workspace.mkdir(parents=True)
+    (workspace / "requirements.md").write_text("bench input requirements", encoding="utf-8")
+    current_runtime_projects = tmp_path / "kernelone-projects"
+    legacy_runtime_projects = tmp_path / "polaris-projects"
+    current_runtime = current_runtime_projects / "l1-01-111111111111" / "runtime"
+    legacy_runtime = legacy_runtime_projects / "l1-01-222222222222" / "runtime"
+    stale_runtime = legacy_runtime_projects / "l1-01-333333333333" / "runtime"
+
+    def _fake_resolve_runtime_path(_workspace: str, rel_path: str) -> str:
+        assert rel_path.startswith("runtime/")
+        return str(current_runtime / rel_path.removeprefix("runtime/"))
+
+    monkeypatch.setattr(bench, "resolve_runtime_path", _fake_resolve_runtime_path)
+    monkeypatch.setattr(
+        bench,
+        "resolve_storage_roots",
+        lambda _workspace: SimpleNamespace(
+            runtime_projects_root=str(current_runtime_projects),
+            workspace_key="l1-01-111111111111",
+        ),
+    )
+    monkeypatch.setattr(bench, "_RUNTIME_PROJECT_BASES", (legacy_runtime_projects, current_runtime_projects))
+
+    for runtime, task_count, blueprint_count in (
+        (stale_runtime, 1, 0),
+        (legacy_runtime, 2, 2),
+    ):
+        task_dir = runtime / "tasks"
+        task_dir.mkdir(parents=True)
+        (task_dir / "plan.json").write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {"id": f"TASK-{index}", "target_files": [f"src/{index}.ts"]}
+                        for index in range(1, task_count + 1)
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        for index in range(1, task_count + 1):
+            (task_dir / f"task_{index}.json").write_text(
+                json.dumps(
+                    {
+                        "id": index,
+                        "status": "in_progress" if index == 1 else "blocked",
+                        "blocked_by": [] if index == 1 else [1],
+                        "metadata": {
+                            "runtime_execution": {"status": "active"},
+                            "workflow_run_id": "director-old",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+        (task_dir / "task_1.session.json").write_text(
+            json.dumps({"status": "active"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        blueprint_dir = runtime / "blueprints"
+        blueprint_dir.mkdir(parents=True)
+        for index in range(blueprint_count):
+            (blueprint_dir / f"ce_TASK-{index + 1}.json").write_text("{}", encoding="utf-8")
+
+    blueprint_path = workspace / ".polaris" / "blueprints" / "latest.review.json"
+    blueprint_path.parent.mkdir(parents=True)
+    blueprint_path.write_text(
+        json.dumps({"generated_blueprints": 2, "blueprints": [{"task_id": "TASK-1"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    bench._prepare_director_resume_workspace(workspace)
+
+    rehydration_path = current_runtime / "tasks" / "director_resume_rehydration.json"
+    rehydration = json.loads(rehydration_path.read_text(encoding="utf-8"))
+    assert rehydration["source_task_dir"] == str(legacy_runtime / "tasks")
+    assert not (current_runtime / "tasks" / "task_1.session.json").exists()
+    task_1 = json.loads((current_runtime / "tasks" / "task_1.json").read_text(encoding="utf-8"))
+    assert task_1["status"] == "pending"
+    assert "runtime_execution" not in task_1["metadata"]
+    snapshot_manifest = workspace / ".polaris" / "factory_snapshots" / "pre_director" / "manifest.json"
+    assert json.loads(snapshot_manifest.read_text(encoding="utf-8"))["snapshot_kind"] == "pre_director_workspace"
 
 
 def test_run_factory_chain_start_failure(monkeypatch: Any, tmp_path: Path) -> None:
