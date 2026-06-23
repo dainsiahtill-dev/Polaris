@@ -250,6 +250,7 @@ async def _run_empty_write_content_materialization_retry(
         _empty_write_retry_tool_definition(forced_tool_name, target_files)
     ]
     if len(target_files) == 1:
+        retry_context["_transaction_kernel_force_exact_tools"] = True
         retry_context["director_empty_write_retry"] = {
             "write_only_single_target": {
                 "tool": forced_tool_name,

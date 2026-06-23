@@ -91,17 +91,17 @@ class TestResolveFromScratchWriteTarget:
 
 
 class TestRestrictToolDefinitionsToWrite:
-    def test_keeps_minimal_read_locate_tools_with_write(self) -> None:
+    def test_keeps_only_mutation_execution_tools_with_write(self) -> None:
         kept = restrict_tool_definitions_to_write(
             _tools("read_file", "repo_tree", "repo_rg", "write_file", "execute_command", "glob", "scout_probe")
         )
         names = {d["function"]["name"] for d in kept}
-        assert names == {"read_file", "repo_tree", "repo_rg", "write_file", "execute_command", "glob"}
+        assert names == {"write_file", "execute_command"}
 
     def test_keeps_all_mutation_tools(self) -> None:
         kept = restrict_tool_definitions_to_write(_tools("write_file", "edit_file", "edit_blocks", "read_file"))
         names = {d["function"]["name"] for d in kept}
-        assert names == {"write_file", "edit_file", "edit_blocks", "read_file"}
+        assert names == {"write_file", "edit_file", "edit_blocks"}
 
     def test_returns_original_when_no_write_tool_survives(self) -> None:
         original = _tools("read_file", "repo_rg")

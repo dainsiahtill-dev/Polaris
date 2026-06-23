@@ -1152,6 +1152,50 @@ def test_deterministic_typescript_missing_member_repair_fills_returns_when_addin
     assert "    petalCount: 0," in repaired
 
 
+def test_deterministic_typescript_missing_member_repair_fills_return_methods(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_member_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "moon.ts").write_text(
+        "export type MoonPhase = 'new' | 'full';\n\n"
+        "export interface Moon {\n"
+        "  phase: MoonPhase;\n"
+        "}\n\n"
+        "export function createMoon(): Moon {\n"
+        "  return {\n"
+        "    phase: 'full',\n"
+        "  };\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "render.ts").write_text(
+        "import type { Moon } from './moon.js';\n"
+        "export function drawMoon(moon: Moon): number {\n"
+        "  return moon.getPhase();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/render.ts(3,15): error TS2339: Property 'getPhase' does not exist on type 'Moon'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_member_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "moon.ts").read_text(encoding="utf-8")
+    assert "  getPhase(): number;" in repaired
+    assert "    getPhase: () => 0," in repaired
+
+
 def test_deterministic_typescript_missing_member_repair_fills_required_object_literals(
     tmp_path: Any,
 ) -> None:
@@ -1466,6 +1510,89 @@ def test_deterministic_typescript_missing_export_repair_uses_ts2724_suggestion_a
     repaired = (model_dir / "humidity.ts").read_text(encoding="utf-8")
     assert "export { HumidityState as IHumidityState };" in repaired
     assert "export type IHumidityState = any;" not in repaired
+
+
+def test_deterministic_typescript_missing_export_repair_does_not_alias_constructed_symbol_to_enum(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_export_repair,
+    )
+
+    model_dir = tmp_path / "src" / "models"
+    model_dir.mkdir(parents=True)
+    (tmp_path / "src" / "index.ts").write_text(
+        "import { MoonPhaseModel } from './models/moonphase';\nconst moon = new MoonPhaseModel();\nmoon.getState();\n",
+        encoding="utf-8",
+    )
+    (model_dir / "moonphase.ts").write_text(
+        "export enum MoonPhase {\n  New,\n  Full,\n}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/index.ts(1,10): error TS2305: Module '\"./models/moonphase\"' has no exported member "
+        "'MoonPhaseModel'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_export_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (model_dir / "moonphase.ts").read_text(encoding="utf-8")
+    assert "export class MoonPhaseModel" in repaired
+    assert "public getState(..._args: unknown[]): any" in repaired
+    assert "export { MoonPhase as MoonPhaseModel };" not in repaired
+
+
+def test_deterministic_typescript_missing_export_repair_does_not_alias_local_declarations(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_missing_export_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "render.ts").write_text(
+        "import type { Flower, Moon } from './simulation';\n"
+        "export function render(flower: Flower, moon: Moon): string {\n"
+        "  return `${flower}:${moon}`;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "simulation.ts").write_text(
+        "export interface FlowerState { bloom: number; }\n"
+        "export interface MoonState { radius: number; }\n"
+        "export function createInitialState(): { flowers: FlowerState[]; moon: MoonState } {\n"
+        "  const flowers: FlowerState[] = [];\n"
+        "  const moonRadius = 16;\n"
+        "  return { flowers, moon: { radius: moonRadius } };\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/render.ts(1,15): error TS2305: Module '\"./simulation\"' has no exported member "
+        "'Flower'.\n"
+        "src/render.ts(1,23): error TS2305: Module '\"./simulation\"' has no exported member "
+        "'Moon'."
+    ]
+
+    results = _apply_deterministic_typescript_missing_export_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "simulation.ts").read_text(encoding="utf-8")
+    assert "export type Flower = any;" in repaired
+    assert "export type Moon = any;" in repaired
+    assert "export { flowers as Flower };" not in repaired
+    assert "export { moonRadius as Moon };" not in repaired
 
 
 def test_deterministic_typescript_missing_export_repair_avoids_unknown_type_property_trap(
@@ -2373,6 +2500,7 @@ async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_p
     }
     forced_defs = seen_contexts[1]["_transaction_kernel_forced_tool_definitions"]
     assert forced_defs and forced_defs[0]["function"]["name"] == "write_file"
+    assert seen_contexts[1]["_transaction_kernel_force_exact_tools"] is True
     assert seen_contexts[1]["director_empty_write_retry"]["write_only_single_target"] == {
         "tool": "write_file",
         "target_file": "src/app.py",
@@ -2459,6 +2587,7 @@ async def test_empty_write_retry_existing_target_forces_edit_blocks(tmp_path: An
     }
     forced_defs = adapter.retry_context["_transaction_kernel_forced_tool_definitions"]
     assert forced_defs and forced_defs[0]["function"]["name"] == "edit_blocks"
+    assert adapter.retry_context["_transaction_kernel_force_exact_tools"] is True
     assert adapter.retry_context["director_empty_write_retry"]["write_only_single_target"] == {
         "tool": "edit_blocks",
         "target_file": "calculator.py",
@@ -8005,6 +8134,7 @@ class TestQualityRepairMissingTargetContract:
         assert adapter.repair_context["_transaction_kernel_forced_tool_definitions"][0]["function"]["parameters"][
             "required"
         ] == ["file", "content"]
+        assert adapter.repair_context["_transaction_kernel_force_exact_tools"] is True
         assert adapter.repair_context["director_quality_repair"]["write_only_single_target"] == {
             "tool": "write_file",
             "target_file": "services/product_service/app.py",
@@ -8687,6 +8817,43 @@ class TestQualityRepairMissingTargetContract:
             preserve_batch_after_first_attempt=_should_preserve_materialization_quality_repair_batch(quality_errors),
         ) == ["src/domain/humidity.ts", "src/main.ts"]
 
+    def test_semantic_quality_repair_targets_type_only_exporter_and_usage_file(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _select_materialization_quality_repair_target_batch,
+            _semantic_quality_repair_target_files,
+            _should_preserve_materialization_quality_repair_batch,
+        )
+
+        src_dir = tmp_path / "src"
+        domain_dir = src_dir / "domain"
+        domain_dir.mkdir(parents=True)
+        (domain_dir / "moon.ts").write_text(
+            "export type MoonPhase = 'new' | 'full';\nexport interface Moon { phase: MoonPhase; }\n",
+            encoding="utf-8",
+        )
+        (src_dir / "index.ts").write_text(
+            "import { Moon } from './domain/moon';\nconst moon = new Moon();\nvoid moon;\n",
+            encoding="utf-8",
+        )
+        quality_errors = [
+            "Artifact quality scan failed: TypeScript project typecheck failed: "
+            "src/index.ts(2,18): error TS2693: 'Moon' only refers to a type, but is being used as a value here."
+        ]
+
+        targets = _semantic_quality_repair_target_files(
+            artifact_quality_errors=quality_errors,
+            changed_files=["src/index.ts", "src/domain/moon.ts"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/domain/moon.ts", "src/index.ts"]
+        assert _select_materialization_quality_repair_target_batch(
+            targets,
+            repair_attempt=2,
+            rotate_after_first_attempt=True,
+            preserve_batch_after_first_attempt=_should_preserve_materialization_quality_repair_batch(quality_errors),
+        ) == ["src/domain/moon.ts", "src/index.ts"]
+
     def test_explicit_quality_repair_targets_vitest_source_and_test_files(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (
             _explicit_artifact_quality_repair_target_files,
@@ -9233,6 +9400,34 @@ class TestSyntaxRepairDirective:
             missing_target_files=["readme.md"],
         )
         assert "SYNTAX REPAIR DIRECTIVE" not in message
+
+    def test_quality_repair_message_includes_existing_target_content(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _build_materialization_quality_repair_message,
+        )
+
+        source = tmp_path / "src" / "index.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            "export interface Moon { phase: 'full'; }\nexport const createMoon = (): Moon => ({ phase: 'full' });\n",
+            encoding="utf-8",
+        )
+
+        message = _build_materialization_quality_repair_message(
+            original_message="Repair TypeScript project.",
+            artifact_quality_errors=[
+                "Artifact quality scan failed: TypeScript project typecheck failed: "
+                "src/index.ts(3,18): error TS2693: 'Moon' only refers to a type, "
+                "but is being used as a value here."
+            ],
+            changed_files=["src/index.ts"],
+            repair_target_files=["src/index.ts"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert "CURRENT UTF-8 CONTENT OF REPAIR TARGETS" in message
+        assert "--- src/index.ts ---" in message
+        assert "export const createMoon" in message
 
 
 class TestTruncatedFileDirective:

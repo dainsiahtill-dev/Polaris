@@ -1859,6 +1859,154 @@ class TestDirectorDispatchLoop:
         assert "director.binding_fanout_all_failed" not in codes
 
     @pytest.mark.asyncio
+    async def test_single_binding_materialization_quality_handoff_stops_before_no_claim_retry(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        class _SingleBindingQualityHandoffExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.stats = [
+                    {
+                        "total": 3,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 2,
+                    },
+                    {
+                        "total": 3,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 2,
+                    },
+                    {
+                        "total": 3,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 1,
+                        "blocked": 2,
+                    },
+                    {
+                        "total": 3,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 1,
+                        "blocked": 2,
+                    },
+                ]
+                self.execute_calls = 0
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
+                del limit
+                return ["TASK-1"] if self.execute_calls == 0 else []
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                executor = self
+
+                class _Service:
+                    async def execute_director_run(self, **kwargs: object) -> CommandResult:
+                        del kwargs
+                        executor.execute_calls += 1
+                        return CommandResult(run_id="director-quality-single", status="running", message="submitted")
+
+                return _Service()
+
+            async def _wait_run_completion(
+                self,
+                service: Any,
+                initial_result: CommandResult,
+                timeout_seconds: int = 300,
+                *,
+                cancel_event: asyncio.Event | None = None,
+                abort_checker: Any = None,
+            ) -> CommandResult:
+                del service, timeout_seconds, cancel_event, abort_checker
+                return CommandResult(
+                    run_id=initial_result.run_id,
+                    status="failed",
+                    message=(
+                        "Run status: failed | failed_task=task-0-director "
+                        "| error=director_materialization_quality_failed"
+                    ),
+                    metadata={},
+                )
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"build":"tsc"},"devDependencies":{"typescript":"latest"}}',
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
+
+        executor = _SingleBindingQualityHandoffExecutor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {"id": "TASK-1", "target_files": ["package.json", "src/index.ts"]},
+                    {"id": "TASK-2", "target_files": ["src/engine.ts"], "depends_on": ["TASK-1"]},
+                    {"id": "TASK-3", "target_files": ["tests/verify.test.ts"], "depends_on": ["TASK-2"]},
+                ]
+            },
+        )
+        executor._write_json_artifact(
+            "tasks/task_1.json",
+            {
+                "id": "TASK-1",
+                "status": "failed",
+                "metadata": {
+                    "last_execution_error": "director_materialization_quality_failed",
+                    "adapter_result": {
+                        "materialization_error": "director_materialization_quality_failed",
+                        "materialization_mode": "write_tool_and_workspace_diff",
+                    },
+                },
+            },
+        )
+        run = FactoryRun(
+            id="factory-single-quality-handoff",
+            config=FactoryConfig(name="quality-handoff"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-23T00:00:00+00:00",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 3, "timeout": 1, "execution_mode": "serial", "max_workers": 1},
+        )
+
+        assert result.status == "success"
+        assert executor.execute_calls == 1
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        assert len(payload["attempts"]) == 1
+        assert payload["quality_gate_handoff"] is True
+        assert payload["failure_stage"] == ""
+        codes = [item.get("code") for item in payload["signals"]]
+        assert "director.materialization_quality_handoff_ready" in codes
+        assert "director.materialization_quality_handoff" in codes
+        assert "director.partial_failure_progress_continued" not in codes
+
+    @pytest.mark.asyncio
     async def test_missing_write_receipt_with_artifacts_enters_quality_gate_handoff(self, tmp_path: Path) -> None:
         class _MissingWriteReceiptHandoffExecutor(OrchestrationStageExecutor):
             def __init__(self, workspace: Path) -> None:

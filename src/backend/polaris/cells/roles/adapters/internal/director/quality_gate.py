@@ -1006,6 +1006,7 @@ async def _run_materialization_quality_repair_retry(
         changed_files=changed_files,
         missing_target_files=missing_repair_target_files,
         repair_target_files=existing_repair_target_files,
+        workspace_full=workspace_full,
     )
     repair_context = {
         **dict(context or {}),
@@ -1057,6 +1058,7 @@ async def _run_materialization_quality_repair_retry(
             # Single-missing: also name the specific target file in the
             # context, so any downstream code that special-cases a single
             # target can read it from director_quality_repair.
+            repair_context["_transaction_kernel_force_exact_tools"] = True
             repair_context["director_quality_repair"]["write_only_single_target"] = {
                 "tool": "write_file",
                 "target_file": repair_target_files[0],
@@ -1186,6 +1188,8 @@ def _should_preserve_materialization_quality_repair_batch(artifact_quality_error
         return True
     if "ts18046" in joined_errors or "is of type 'unknown'" in joined_errors or 'is of type "unknown"' in joined_errors:
         return True
+    if "ts2693" in joined_errors or "only refers to a type" in joined_errors:
+        return True
     coupled_hints = (
         "unresolved import symbol",
         "typescript project typecheck failed",
@@ -1224,6 +1228,12 @@ _TS_UNKNOWN_VALUE_QUALITY_RE = re.compile(
     r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.tsx?)\(\d+,\d+\):\s*"
     r"error\s+TS18046:\s*['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+of\s+type\s+"
     r"['\"]unknown['\"]",
+    re.IGNORECASE,
+)
+_TS_TYPE_ONLY_VALUE_QUALITY_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.tsx?)\(\d+,\d+\):\s*"
+    r"error\s+TS2693:\s*['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+only\s+refers\s+"
+    r"to\s+a\s+type,\s+but\s+is\s+being\s+used\s+as\s+a\s+value\s+here",
     re.IGNORECASE,
 )
 _TS_EXPORTED_DECLARATION_TEMPLATE = (
@@ -1598,10 +1608,11 @@ def _typescript_unknown_exporter_target_files(
 ) -> list[str]:
     symbols: list[str] = []
     for item in artifact_quality_errors:
-        for match in _TS_UNKNOWN_VALUE_QUALITY_RE.finditer(str(item or "")):
-            symbol = str(match.group("symbol") or "").strip()
-            if symbol and symbol not in symbols:
-                symbols.append(symbol)
+        for pattern in (_TS_UNKNOWN_VALUE_QUALITY_RE, _TS_TYPE_ONLY_VALUE_QUALITY_RE):
+            for match in pattern.finditer(str(item or "")):
+                symbol = str(match.group("symbol") or "").strip()
+                if symbol and symbol not in symbols:
+                    symbols.append(symbol)
     if not symbols:
         return []
 
@@ -1630,6 +1641,57 @@ def _typescript_unknown_exporter_target_files(
                 targets.append(rel)
                 break
     return _dedupe_preserve_order(targets)
+
+
+def _typescript_type_only_usage_files(artifact_quality_errors: list[str]) -> set[str]:
+    usage_files: set[str] = set()
+    for item in artifact_quality_errors:
+        for match in _TS_TYPE_ONLY_VALUE_QUALITY_RE.finditer(str(item or "")):
+            rel = _normalize_declared_task_path(match.group("path"))
+            if rel:
+                usage_files.add(rel)
+    return usage_files
+
+
+def _repair_target_context_block(
+    *,
+    workspace_full: str,
+    repair_target_files: list[str],
+) -> str:
+    workspace = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
+    if workspace is None or not workspace.is_dir() or not repair_target_files:
+        return ""
+
+    blocks: list[str] = []
+    total_budget = 12000
+    per_file_budget = 4000
+    used = 0
+    for rel_path in repair_target_files[:6]:
+        rel = _normalize_declared_task_path(rel_path)
+        if not rel or "node_modules" in Path(rel).parts:
+            continue
+        try:
+            target = (workspace / rel).resolve()
+            target.relative_to(workspace)
+            content = target.read_text(encoding="utf-8")
+        except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+            continue
+        remaining = max(0, total_budget - used)
+        if remaining <= 0:
+            break
+        excerpt = content[: min(per_file_budget, remaining)]
+        used += len(excerpt)
+        suffix = "\n[truncated]\n" if len(content) > len(excerpt) else ""
+        blocks.append(f"--- {rel} ---\n```text\n{excerpt}{suffix}```")
+    if not blocks:
+        return ""
+    return (
+        "CURRENT UTF-8 CONTENT OF REPAIR TARGETS:\n"
+        "Use these current file bodies as the source of truth for cross-file API coherence. "
+        "Preserve existing public contracts unless changing every dependent target in this repair batch.\n"
+        + "\n".join(blocks)
+        + "\n"
+    )
 
 
 def _is_typescript_command_config_path(rel_path: str) -> bool:
@@ -1700,6 +1762,7 @@ def _semantic_quality_repair_target_files(
         artifact_quality_errors,
         workspace_root,
     )
+    type_only_usage_files = _typescript_type_only_usage_files(artifact_quality_errors)
     diagnostic_targets = _typescript_diagnostic_target_files(artifact_quality_errors, workspace_root)
     candidates: list[str] = []
     for item in changed_files:
@@ -1740,8 +1803,21 @@ def _semantic_quality_repair_target_files(
             [*exporting_targets, *coupled_importers, *filtered_diagnostics, *filtered_explicit]
         )
     if unknown_exporter_targets:
-        filtered_explicit = [rel for rel in explicit_unique if not _is_typescript_command_config_path(rel)]
-        return _dedupe_preserve_order([*unknown_exporter_targets, *filtered_explicit, *diagnostic_targets])
+        type_only_importers = [
+            rel
+            for rel in type_only_usage_files
+            if Path(rel).suffix.lower() in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES
+            and _workspace_path_exists_case_insensitive(workspace_root, rel)
+        ]
+        filtered_explicit = [
+            rel
+            for rel in explicit_unique
+            if not _is_typescript_command_config_path(rel) and rel not in type_only_usage_files
+        ]
+        filtered_diagnostics = [rel for rel in diagnostic_targets if rel not in type_only_usage_files]
+        return _dedupe_preserve_order(
+            [*unknown_exporter_targets, *type_only_importers, *filtered_explicit, *filtered_diagnostics]
+        )
     if diagnostic_targets:
         filtered_explicit = [rel for rel in explicit_unique if not _is_typescript_command_config_path(rel)]
         return _dedupe_preserve_order([*filtered_explicit, *diagnostic_targets])
@@ -1880,6 +1956,7 @@ def _build_materialization_quality_repair_message(
     changed_files: list[str],
     missing_target_files: list[str] | None = None,
     repair_target_files: list[str] | None = None,
+    workspace_full: str = "",
 ) -> str:
     error_lines = "\n".join(
         f"- {_format_quality_error_for_repair_prompt(item)}" for item in artifact_quality_errors[:12]
@@ -1927,6 +2004,10 @@ def _build_materialization_quality_repair_message(
                 "- The write_file content must be the complete corrected UTF-8 file body.\n"
                 "- Do not read files first. Do not list directories. Do not explore. Do not explain.\n"
             )
+    repair_context_block = _repair_target_context_block(
+        workspace_full=workspace_full,
+        repair_target_files=[*(missing_target_files or []), *existing_repair_target_files],
+    )
     # C7-text W3 (2026-06-16 deliberation): cross-file coherence repair. An
     # unresolved relative import means the importer references a module that
     # does not exist yet; QA detects it, but the bare "MISSING TARGET FILES"
@@ -2048,6 +2129,7 @@ def _build_materialization_quality_repair_message(
         f"{single_missing_block}"
         f"{existing_repair_block}"
         f"{single_existing_repair_block}"
+        f"{repair_context_block}"
         f"{coherence_block}"
         f"{symbol_repair_block}"
         f"{syntax_block}"

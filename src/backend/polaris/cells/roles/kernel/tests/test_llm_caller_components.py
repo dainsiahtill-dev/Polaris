@@ -146,7 +146,16 @@ def test_final_provider_request_snapshot_summarizes_tools_and_choice() -> None:
     ai_request.role = "director"
     ai_request.provider_id = "qwen-director"
     ai_request.model = "qwen3.6-27b-q6-code-gpu1"
-    ai_request.context = {"chat_messages": messages}
+    ai_request.context = {
+        "chat_messages": messages,
+        "prompt_profile_audit": {
+            "selected_prompt_profile_ids": ["builtin.language.typescript", "builtin.task.implement"],
+            "inferred_language": "typescript",
+            "inferred_task_type": "implement",
+            "redline_clipped": [],
+        },
+        "selected_prompt_profile_ids": ["builtin.language.typescript", "builtin.task.implement"],
+    }
     ai_request.options = {"tools": [tool_schema], "tool_choice": "auto"}
     ai_request.input = ""
     prepared = PreparedLLMRequest(
@@ -169,6 +178,8 @@ def test_final_provider_request_snapshot_summarizes_tools_and_choice() -> None:
     assert snapshot["message_count"] == 1
     assert snapshot["tool_schema_count"] == 1
     assert snapshot["tool_choice"] == "auto"
+    assert snapshot["selected_prompt_profile_ids"] == ["builtin.language.typescript", "builtin.task.implement"]
+    assert snapshot["prompt_profile_selection"]["inferred_language"] == "typescript"
     assert snapshot["tools"] == [
         {
             "type": "function",
@@ -178,6 +189,10 @@ def test_final_provider_request_snapshot_summarizes_tools_and_choice() -> None:
         }
     ]
     assert snapshot["final_request_context_audit"]["tool_schema_count"] == 1
+    assert snapshot["final_request_context_audit"]["selected_prompt_profile_ids"] == [
+        "builtin.language.typescript",
+        "builtin.task.implement",
+    ]
 
 
 def test_final_request_context_audit_marks_complete_context_as_reasonable() -> None:

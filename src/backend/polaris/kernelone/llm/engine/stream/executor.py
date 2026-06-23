@@ -31,6 +31,7 @@ from .._executor_base import (
     build_final_request_observability_fields,
     build_final_request_trace_refs,
     build_invoke_config,
+    build_prompt_profile_observability_fields,
     build_safe_token_budget_payload,
     clamp_output_tokens_to_window,
     coerce_required_flag,
@@ -230,6 +231,7 @@ class StreamExecutor:
         effective_prompt_sha256 = self._sha256_text(clamp_prompt_text)
         tool_schema_sha256 = self._sha256_json(tools) if tool_count else ""
         token_budget = build_safe_token_budget_payload(budget_decision)
+        prompt_profile_fields = build_prompt_profile_observability_fields(context)
         observability_fields = build_final_request_observability_fields(
             context=context,
             trace_id=trace_id,
@@ -275,6 +277,7 @@ class StreamExecutor:
                 "cognitive_runtime_required": coerce_required_flag(context.get("cognitive_runtime_required")),
                 "context_os_expected": coerce_required_flag(context.get("context_os_expected")),
                 **observability_fields,
+                **prompt_profile_fields,
                 "role": request.role,
                 "task_type": request.task_type.value,
                 "provider_id": model_spec.provider_id,

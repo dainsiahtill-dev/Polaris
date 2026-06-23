@@ -260,20 +260,6 @@ def extract_declared_step_target_files(context_override: Any) -> tuple[str, ...]
 
 
 _WRITE_KEEP_TOOLS = _FILE_PARAM_WRITE_TOOLS | {"repo_apply_diff", "execute_command"}
-_READ_LOCATE_KEEP_TOOLS = frozenset(
-    {
-        "read_file",
-        "repo_read_head",
-        "repo_read_slice",
-        "repo_read_tail",
-        "repo_read_around",
-        "repo_tree",
-        "repo_rg",
-        "glob",
-        "file_exists",
-    }
-)
-_MINIMAL_EXECUTION_KEEP_TOOLS = _WRITE_KEEP_TOOLS | _READ_LOCATE_KEEP_TOOLS
 
 
 def _tool_name(definition: Any) -> str:
@@ -324,18 +310,17 @@ def resolve_from_scratch_write_target(context_override: Any, workspace: str) -> 
 
 
 def restrict_tool_definitions_to_write(tool_definitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep a minimal execution set while preserving required read/locate tools.
+    """Keep a minimal mutation execution set for materialization turns.
 
     Used for a from-scratch leaf step's first turn (see
-    :func:`resolve_from_scratch_write_target`). Historically this was write-only,
-    but that starved weak Directors of schema-backed `repo_tree`/`read_file`
-    calls while prompts still asked them to inspect the repo. The single-batch
-    mutation gates still require a write in the emitted batch; schema slimming
-    must not silently remove tools the prompt or task contract requires. If no
-    write tool would survive the filter, the original list is returned unchanged
-    so a turn is never stranded with zero usable mutation capability.
+    :func:`resolve_from_scratch_write_target`) and weak-Director materialize
+    slimming. Bootstrap/ContextOS must collect read context before this stage;
+    exposing read/locate tools here lets the model satisfy the turn with
+    exploration instead of the required write. If no write tool would survive the
+    filter, the original list is returned unchanged so a turn is never stranded
+    with zero usable mutation capability.
     """
-    kept = [d for d in tool_definitions if _tool_name(d) in _MINIMAL_EXECUTION_KEEP_TOOLS]
+    kept = [d for d in tool_definitions if _tool_name(d) in _WRITE_KEEP_TOOLS]
     if not any(_tool_name(d) in _FILE_PARAM_WRITE_TOOLS for d in kept):
         return tool_definitions
     return kept

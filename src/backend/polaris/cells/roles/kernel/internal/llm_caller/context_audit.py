@@ -254,6 +254,22 @@ def _summarize_response_format(response_format: Any) -> Any:
     return _json_safe(summary)
 
 
+def _prompt_profile_selection(ai_request: Any) -> dict[str, Any]:
+    ctx = getattr(ai_request, "context", None)
+    if not isinstance(ctx, dict):
+        return {}
+    raw_audit = ctx.get("prompt_profile_audit")
+    if isinstance(raw_audit, dict):
+        audit = _json_safe(raw_audit)
+        return audit if isinstance(audit, dict) else {}
+    raw_ids = ctx.get("selected_prompt_profile_ids")
+    if isinstance(raw_ids, (list, tuple, set)):
+        selected = [str(item).strip() for item in raw_ids if str(item or "").strip()]
+        if selected:
+            return {"selected_prompt_profile_ids": selected}
+    return {}
+
+
 def _non_empty_attr(*owners: Any, name: str) -> str:
     for owner in owners:
         if owner is None:
@@ -277,6 +293,7 @@ def build_final_provider_request_snapshot(
     tool_schema_payload, response_format_payload, tool_choice_payload = _request_option_payloads(ai_request, prepared)
     tools = tool_schema_payload if isinstance(tool_schema_payload, list) else []
     messages = _request_messages(ai_request, [dict(item) for item in prepared.messages if isinstance(item, dict)])
+    prompt_profile_selection = _prompt_profile_selection(ai_request)
     return {
         "schema_version": "llm.provider_request_snapshot.v1",
         "source": "roles.kernel.llm_caller.context_audit",
@@ -289,6 +306,8 @@ def build_final_provider_request_snapshot(
         "tools": [_summarize_tool_schema(tool) for tool in tools],
         "tool_choice": _json_safe(tool_choice_payload),
         "response_format": _summarize_response_format(response_format_payload),
+        "prompt_profile_selection": prompt_profile_selection,
+        "selected_prompt_profile_ids": prompt_profile_selection.get("selected_prompt_profile_ids", []),
         "final_request_context_audit": build_final_request_context_audit_for_request(
             ai_request=ai_request,
             prepared=prepared,
@@ -345,6 +364,7 @@ def build_final_request_context_audit_for_request(
         and final_request_token_estimate < int(window_tokens * _UNDERUTILIZED_RATIO)
     )
     coverage = _coverage_flags(message_text)
+    prompt_profile_selection = _prompt_profile_selection(ai_request)
     quality = _context_quality_findings(
         coverage=coverage,
         context_underutilized=context_underutilized,
@@ -369,4 +389,6 @@ def build_final_request_context_audit_for_request(
         "available_token_headroom": max(0, window_tokens - final_request_token_estimate),
         "coverage": coverage,
         "context_quality": quality,
+        "prompt_profile_selection": prompt_profile_selection,
+        "selected_prompt_profile_ids": prompt_profile_selection.get("selected_prompt_profile_ids", []),
     }

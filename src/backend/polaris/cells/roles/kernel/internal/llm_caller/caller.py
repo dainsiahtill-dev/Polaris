@@ -565,6 +565,24 @@ class LLMCaller:
             context_metadata.get("projection_id") or context_os_audit.get("prompt_digest") or ""
         ).strip()
         context_result_id = str(context_metadata.get("context_result_id") or "").strip()
+        prompt_profile_audit: dict[str, Any] = {}
+        selected_prompt_profile_ids: list[str] = []
+        prompt_profile_context_override = getattr(context, "context_override", None)
+        if isinstance(prompt_profile_context_override, dict):
+            raw_prompt_profile_audit = prompt_profile_context_override.get("prompt_profile_audit")
+            if isinstance(raw_prompt_profile_audit, dict):
+                prompt_profile_audit = dict(raw_prompt_profile_audit)
+            raw_selected_prompt_profile_ids = prompt_profile_context_override.get("selected_prompt_profile_ids")
+            if isinstance(raw_selected_prompt_profile_ids, (list, tuple, set)):
+                selected_prompt_profile_ids = [
+                    str(item).strip() for item in raw_selected_prompt_profile_ids if str(item or "").strip()
+                ]
+        if not selected_prompt_profile_ids and prompt_profile_audit:
+            raw_selected_prompt_profile_ids = prompt_profile_audit.get("selected_prompt_profile_ids")
+            if isinstance(raw_selected_prompt_profile_ids, (list, tuple, set)):
+                selected_prompt_profile_ids = [
+                    str(item).strip() for item in raw_selected_prompt_profile_ids if str(item or "").strip()
+                ]
         ai_request = AIRequest(
             task_type=TaskType.DIALOGUE,
             role=profile.role_id,
@@ -581,6 +599,8 @@ class LLMCaller:
                 "capability_profile_ref": capability_profile_ref if isinstance(capability_profile_ref, dict) else {},
                 "context_projection_id": context_projection_id,
                 "context_result_id": context_result_id,
+                "prompt_profile_audit": prompt_profile_audit,
+                "selected_prompt_profile_ids": selected_prompt_profile_ids,
                 # ADR-0090 W1.5: carry the STRUCTURED message array alongside the
                 # flattened input so OpenAI-compatible providers can preserve real
                 # chat-template role anchoring (weak local models lose system/user

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-06-23T21:41:28+08:00",
+  "updated_at": "2026-06-24T00:12:53+08:00",
   "defects": [
     {
       "id": "DEFECT-director-idle-unresolved-taskboard-prevents-quality-handoff",
@@ -727,41 +727,221 @@
         "The generated L1-01 project itself was not manually edited; fresh Director-only rerun is required to prove platform fix."
       ],
       "next_action": "Restart backend to load patched repair target logic, clean L1-01 generated artifacts while preserving PM/CE evidence, rerun Director-only bench, then inspect real_run_gate and QA verdict."
+    },
+    {
+      "id": "DEFECT-director-quality-repair-write-only-tools-leaked-read-tools",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "Director quality repair prompt declared write_only_single_target, but final provider request could still expose read/list/repo tools, allowing the model to satisfy the turn with exploration instead of the required write_file/edit_blocks call.",
+      "physical_error": "L1-01 director-8f9515d6f7b1 quality repair task called repo_read_head despite the repair prompt saying Do not read/list/explore and exactly one write_file. Kernel forced_tool_scope intentionally appended companion read tools unless _transaction_kernel_force_exact_tools was set.",
+      "root_cause_category": "Director Execution",
+      "platform_gap": "Prompt-only write constraints were not enforced at provider tool schema level for Director repair retries.",
+      "fix_strategy": "Set _transaction_kernel_force_exact_tools=True for Director single-target quality repair and empty-write retry contexts; add Kernel and Director adapter regression tests proving exact tool scope.",
+      "fix_files": [
+        "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py",
+        "src/backend/polaris/cells/roles/kernel/tests/test_role_kernel_transaction_wiring.py"
+      ],
+      "verification": [
+        "CodeGraph inspected Director role dialogue and forced tool scope before edits.",
+        "python -m ruff check touched role kernel/director files -> All checks passed",
+        "python -m ruff format --check touched role kernel/director files -> 10 files already formatted",
+        "PYTHONPATH=src/backend python -m mypy tool_helpers.py prompt_profiles.py core.py quality_gate.py execute_method.py -> Success",
+        "PYTHONPATH=src/backend python -m pytest -q test_role_kernel_transaction_wiring.py test_prompt_profiles.py test_kernel_prompt_builder_integration.py test_tool_helpers.py -> 73 passed",
+        "PYTHONPATH=src/backend python -m pytest -q test_director_adapter_pure.py -> 275 passed, 2 warnings"
+      ],
+      "next_action": "Restart backend and rerun L1-01 Director-only. Inspect the next write_only_single_target context_snapshot_ref; provider_request.tools should contain only the forced mutation tool."
+    },
+    {
+      "id": "DEFECT-weak-director-materialize-slim-tools-kept-read-locate",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "Weak/slow Director materialize mode still kept read_file/repo_rg/repo_tree in slim schema, contradicting the Kernel regression expectation and causing materialize turns to drift into reading during write stage.",
+      "physical_error": "Full test_role_kernel_transaction_wiring.py failed: expected tool_names {write_file, edit_file, execute_command}, actual included read_file and repo_rg.",
+      "root_cause_category": "Director Execution",
+      "platform_gap": "restrict_tool_definitions_to_write had drifted from mutation-only slimming to preserving read/locate tools, which conflicts with single-batch materialize/write-stage semantics.",
+      "fix_strategy": "Change restrict_tool_definitions_to_write to keep only mutation/diff/execute tools and update helper tests to make read/locate exclusion explicit.",
+      "fix_files": [
+        "src/backend/polaris/cells/roles/kernel/internal/llm_caller/tool_helpers.py",
+        "src/backend/polaris/cells/roles/kernel/internal/llm_caller/tests/test_tool_helpers.py"
+      ],
+      "verification": [
+        "PYTHONPATH=src/backend python -m pytest -q test_role_kernel_transaction_wiring.py test_tool_helpers.py test_prompt_profiles.py test_kernel_prompt_builder_integration.py -> 73 passed",
+        "python -m ruff check touched role kernel/director files -> All checks passed",
+        "python -m ruff format --check touched role kernel/director files -> 10 files already formatted",
+        "PYTHONPATH=src/backend python -m mypy tool_helpers.py prompt_profiles.py core.py quality_gate.py execute_method.py -> Success"
+      ],
+      "next_action": "Verify next L1-01 final provider request for Director materialize exposes a mutation-only schema when slim/exact write mode applies."
+    },
+    {
+      "id": "DEFECT-language-task-prompt-profile-matrix-missing",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "Platform lacked an auditable language/task/stage prompt profile selector with user-custom templates; role prompt quality depended on ad hoc prompt text instead of governed templates.",
+      "physical_error": "User requirement: platform must reserve many built-in templates for different languages/task types and allow user-defined additions/overrides; no selected_prompt_profile_ids audit existed for runtime role turns.",
+      "root_cause_category": "Context Budget",
+      "platform_gap": "Prompt specializations were embedded in role assets or free-form messages, not selected as first-class runtime evidence.",
+      "fix_strategy": "Add roles.kernel prompt_profiles selector with built-in language/task/role-stage/artifact profiles, .polaris/prompt_profiles JSON/YAML user profiles, red-line validation, skipped quality-repair default, prompt_profile_audit, and selected_prompt_profile_ids evidence.",
+      "fix_files": [
+        "src/backend/polaris/cells/roles/kernel/internal/prompt_profiles.py",
+        "src/backend/polaris/cells/roles/kernel/internal/kernel/core.py",
+        "src/backend/polaris/cells/roles/kernel/tests/test_prompt_profiles.py",
+        "src/backend/polaris/cells/roles/kernel/tests/test_kernel_prompt_builder_integration.py"
+      ],
+      "verification": [
+        "PYTHONPATH=src/backend python -m pytest -q test_prompt_profiles.py test_kernel_prompt_builder_integration.py -> covered builtin selection, user custom selection, red-line rejection, quality-repair skip, and prompt append audit.",
+        "PYTHONPATH=src/backend python -m pytest -q test_tool_helpers.py test_role_kernel_transaction_wiring.py test_prompt_profiles.py test_kernel_prompt_builder_integration.py -> 73 passed",
+        "python -m ruff check touched role kernel/director files -> All checks passed",
+        "python -m ruff format --check touched role kernel/director files -> 10 files already formatted",
+        "PYTHONPATH=src/backend python -m mypy tool_helpers.py prompt_profiles.py core.py quality_gate.py execute_method.py -> Success"
+      ],
+      "next_action": "During L1-01 rerun, inspect ContextOS/final request metadata for selected_prompt_profile_ids on normal materialize turns and skipped strict quality repair profiles."
+    },
+    {
+      "id": "DEFECT-director-only-resume-current-taskboard-not-reset",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "Director-only resume reused trusted PM/CE evidence but current runtime task files retained terminal Director state, so the next run started with completed/failed/blocked residue instead of a clean claimable TaskBoard.",
+      "physical_error": "bench-1782226779-5deaaf / factory_52f5fde73ea0 failed in director_dispatch. dispatch/latest.log.json initial taskboard had completed=1 blocked=2; final had failed=1 blocked=2. runtime/tasks/task_1.json status=failed and task_2/task_3 remained blocked, so subsequent Director dispatch had no claimable work.",
+      "root_cause_category": "Director Execution",
+      "platform_gap": "Director-only resume restored workspace delivery files but only reset task rows when rehydrating from a legacy runtime. If current runtime already had plan/task files, dirty terminal rows and session leases were kept.",
+      "fix_strategy": "Reset all current Director task rows to pending/blocked based on top-level dependencies, clear assignee/claimed/session/runtime metadata, delete task_*.session.json, and write director_resume_reset.json evidence before starting Director-only runs. Apply the same behavior in Factory HTTP and factory-bench entrypoints.",
+      "fix_files": [
+        "src/backend/scripts/factory_bench/run_factory_bench.py",
+        "src/backend/polaris/delivery/http/routers/factory.py",
+        "src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py",
+        "src/backend/polaris/tests/unit/delivery/http/routers/test_factory_v2.py"
+      ],
+      "verification": [
+        "PYTHONPATH=src/backend python -m pytest src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py -q -> 120 passed",
+        "PYTHONPATH=src/backend python -m pytest src/backend/polaris/tests/unit/delivery/http/routers/test_factory_v2.py -q -> 32 passed, 2 warnings",
+        "Focused regression: test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence + test_director_resume_evidence_resets_current_dirty_taskboard -> 2 passed",
+        "python -m ruff check touched resume files/tests -> All checks passed",
+        "python -m ruff format --check touched resume files/tests -> formatted/checked clean",
+        "python -m mypy run_factory_bench.py factory.py factory_stage_executor.py typescript_repairs.py -> Success"
+      ],
+      "next_action": "Restart backend and rerun L1-01 --start-from director. Expected evidence: runtime/tasks/director_resume_reset.json exists and first dispatch starts with pending/blocked rows, not completed/failed residue."
+    },
+    {
+      "id": "DEFECT-director-single-binding-quality-failure-overwritten-by-no-claim",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "A real materialization-quality failure with physical files was overwritten by a later no-claim retry error, obscuring the actionable root cause and stopping before quality_gate repair/QA.",
+      "physical_error": "dispatch/latest.log.json attempt 1 failed with error=director_materialization_quality_failed and progress_made=true; attempt 2 failed with error=Director must claim TaskBoard task before execution and progress_made=false. Final root_cause_hint reported only the no-claim error.",
+      "root_cause_category": "Director Execution",
+      "platform_gap": "The dispatch loop treated any failed round with progress as reason to continue even when materialized artifacts and failed task records already qualified for quality_gate handoff, allowing a later no-claim error to replace the primary quality failure.",
+      "fix_strategy": "If a non-success Director round made progress, wrote workspace artifacts, and failed with materialization quality markers while the taskboard is terminal/idle-unresolved, stop dispatch before no-claim retry and emit materialization_quality_handoff signals for quality_gate.",
+      "fix_files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py"
+      ],
+      "verification": [
+        "PYTHONPATH=src/backend python -m pytest src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py -q -> 96 passed",
+        "Focused regression: test_single_binding_materialization_quality_handoff_stops_before_no_claim_retry -> passed and execute_calls == 1",
+        "python -m ruff check factory_stage_executor.py test_factory_stage_executor_characterization.py -> All checks passed",
+        "python -m ruff format --check factory_stage_executor.py test_factory_stage_executor_characterization.py -> clean",
+        "python -m mypy factory_stage_executor.py -> Success"
+      ],
+      "next_action": "Fresh L1-01 rerun should no longer end with Director must claim TaskBoard task before execution after an earlier materialization quality failure; it should proceed to quality_gate or preserve the materialization root cause."
+    },
+    {
+      "id": "DEFECT-typescript-missing-export-repair-aliases-constructed-enum",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "Deterministic TypeScript missing-export repair could alias a constructed class-like missing symbol to a similar enum, then repeatedly append duplicate re-export lines instead of producing a usable class stub.",
+      "physical_error": "Workspace quality regression produced moonphase.ts with repeated `export { MoonPhase as MoonPhaseModel };`; fake tsc stayed TS2305 because importer used `new MoonPhaseModel().getState()` and no `export class MoonPhaseModel` existed.",
+      "root_cause_category": "Director Tool Execution",
+      "platform_gap": "Export-block detection parsed the source symbol instead of the aliased exported symbol, so alias exports were not recognized as satisfying the missing export. Suggested runtime alias also did not check declaration kind before aliasing constructed symbols.",
+      "fix_strategy": "Parse exported alias names in export blocks; add declaration-kind detection; only alias constructed missing symbols to class declarations and called missing symbols to callable value declarations. Fall back to generated class/function/type declarations otherwise.",
+      "fix_files": [
+        "src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/typescript_repairs.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+      ],
+      "verification": [
+        "PYTHONPATH=src/backend python -m pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -q -> 276 passed, 2 warnings",
+        "Focused regression: test_deterministic_typescript_missing_export_repair_does_not_alias_constructed_symbol_to_enum -> passed",
+        "PYTHONPATH=src/backend python -m pytest src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py::TestRunWorkspaceQualityChecks::test_repairs_typescript_failures_across_multiple_rounds -vv -> passed after fix as part of 96 passed suite",
+        "python -m ruff check typescript_repairs.py test_director_adapter_pure.py -> All checks passed",
+        "python -m ruff format test_director_adapter_pure.py -> 1 file reformatted; final format check clean",
+        "python -m mypy typescript_repairs.py -> Success"
+      ],
+      "next_action": "Fresh L1-01 quality repair should not repeatedly append invalid enum aliases for constructed model-like symbols; if TS still fails, inspect the next concrete diagnostic as a new root cause."
+    },
+    {
+      "id": "DEFECT-typescript-missing-export-repair-aliases-local-declarations",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "L1-01 Director-only rerun reached real build/test gates but Task 2 failed after deterministic TypeScript missing-export repair appended invalid module exports for function-local variables.",
+      "physical_error": "bench-1782230318 style run / factory_15b716da5fb2 failed real_run_gate: npm run build exit_code=2 with src/engine/simulation.ts(267,10) TS2552 Cannot find name 'flowers' and src/engine/simulation.ts(269,10) TS2304 Cannot find name 'moonRadius'. Current generated file showed `export { flowers as Flower };` and `export { moonRadius as Moon };` even though both identifiers were local declarations inside createInitialState.",
+      "root_cause_category": "Director Tool Execution",
+      "platform_gap": "TypeScript deterministic missing-export repair treated indented local declarations as module-level alias candidates because declaration detection used unanchored or leading-whitespace regexes. The repair then produced invalid export aliases instead of safe generated type aliases.",
+      "fix_strategy": "Restrict TypeScript module declaration-kind detection and similar-runtime-declaration search to column-zero module-level declarations only. Add regression coverage proving function-local `flowers` and `moonRadius` are not aliased as exported Flower/Moon symbols.",
+      "fix_files": [
+        "src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/typescript_repairs.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+      ],
+      "verification": [
+        "PYTHONPATH=src/backend python -m pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -q -k \"missing_export_repair\" -> 7 passed, 273 deselected",
+        "python -m ruff check typescript_repairs.py test_director_adapter_pure.py -> All checks passed",
+        "python -m ruff format --check typescript_repairs.py test_director_adapter_pure.py -> 2 files already formatted",
+        "python -m mypy typescript_repairs.py -> Success: no issues found in 1 source file",
+        "PYTHONPATH=src/backend python -m pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -q -> 280 passed, 2 warnings"
+      ],
+      "evidence_paths": [
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_15b716da5fb2.workspace-validation.json",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/results/director.result.json",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/logs/journal.raw.jsonl"
+      ],
+      "next_action": "Restart or reuse patched backend code path and rerun L1-01 --start-from director. Expected evidence: deterministic repair must no longer emit `export { flowers as Flower };` or `export { moonRadius as Moon };`; real_run_gate should either pass or expose the next concrete platform root cause."
+    },
+    {
+      "id": "DEFECT-opencode-director-claim-audit-timeout",
+      "status": "external_audit_blocked_after_three_attempts",
+      "symptom": "Required external OpenCode audit for the Director claim/tool failure was arranged, but OpenCode did not produce final machine-readable JSON within bounded runs.",
+      "physical_error": "Attempt 1 auto-rejected external runtime/cache path reads. Attempt 2 read AGENTS, backend rules, evidence_bundle, codegraph and source files but timed out at 240s without final JSON. Attempt 3 fast evidence-only audit read the scoped files but timed out at 90s without final JSON.",
+      "root_cause_category": "Runtime Environment",
+      "platform_gap": "External audit runner is too slow or blocked for this evidence package; the main agent must not forge an external audit result.",
+      "fix_strategy": "Evidence bundle is stored under .polaris_runtime/opencode_audits/director_resume_claim_20260623/evidence_bundle.json. Continue platform rerun with local gates, keep audit risk open, and revisit OpenCode audit runner/timeouts separately.",
+      "fix_files": [],
+      "verification": [
+        "OpenCode attempt 1: permission auto-rejected external_directory for runtime/tasks/task_1.json.",
+        "OpenCode attempt 2: invoked codegraph_codegraph_explore and read allowed source/evidence before timeout 240 exit_code=124.",
+        "OpenCode attempt 3: read AGENTS, evidence bundle, run_factory_bench.py, factory.py, factory_stage_executor.py before timeout 90 exit_code=124.",
+        "Evidence bundle JSON validated via python -m json.tool indirectly by loading/writing state files."
+      ],
+      "next_action": "Do not mark external audit completed. If next bench still records a role tool failure, rerun OpenCode with a narrower pre-digested evidence file or increase timeout after confirming no database lock contention."
     }
   ],
   "latest_evidence": {
-    "run_id": "codex-l1-01-anthropic-compat-minimax-m3-ts-targets-202606232027",
-    "factory_run_id": "factory_14b892be03e6",
-    "director_run_id": "director-867a0b1c4fa8",
+    "run_id": "codex-l1-01-minimax-m3-local-declaration-alias-202606240004",
+    "factory_run_id": "factory_15b716da5fb2",
+    "director_run_id": "director-92e354b2ffa0",
     "work_dir": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229",
     "project": "L1-01",
     "result": "FAIL",
-    "wall_clock_seconds": 193.3,
+    "wall_clock_seconds": 367.3,
     "step_success_rate": "0/1",
     "runnable_rate": "0/1",
     "chain": "partial",
-    "qa_ran": false,
+    "qa_ran": true,
     "qa_passed": false,
     "llm_route_audit": "PASS",
-    "source_files": 6,
-    "static_artifact_checks": "FAIL: package_scripts verify references missing scripts/verify.js",
-    "real_run_gate": "FAIL: build_test_lint_ran and entrypoint_smoke failed because package script references missing local entrypoint",
+    "source_files": 24,
+    "static_artifact_checks": "PASS: ts_syntax, package_scripts, min_files, content_any, source_target_coverage, plan/blueprint/QA artifacts, wrong_product_guard, stale_backend_guard, llm_route_audit",
+    "real_run_gate": "FAIL: build_test_lint_ran because npm run build failed with TS2552 flowers and TS2304 moonRadius; web Playwright entrypoint smoke passed",
     "primary_failure_category": "director_tool_execution",
-    "root_cause_signature": "director_tool_execution:npm_script_missing_local_entrypoint_after_repair",
-    "director_primary_error": "Task 1 failed director_materialization_quality_failed after 26 tool executions and write_tool_evidence=true; residual artifact quality error was package.json script 'verify' references missing local entrypoint 'scripts/verify.js'.",
-    "tool_failure_at_20260623_202912": "write_file failed for src/main.ts due to TypeScript syntax validation errors; this was fail-closed syntax validation after normalized write_file execution, and later src/main.ts write succeeded at 20:29:49.",
+    "root_cause_signature": "director_tool_execution:typescript_missing_export_repair_aliases_function_local_declarations",
+    "director_primary_error": "Task 2 failed director_materialization_quality_failed after missing-export repair appended invalid exports for local identifiers in src/engine/simulation.ts; QA then failed npm run build and npm test.",
+    "tool_failure_at_20260624_000148": "PreWriteGuard blocked an invalid src/engine/renderer.ts write with TypeScript syntax error, then later repair succeeded for renderer. The remaining build failure came from deterministic repair output in simulation.ts.",
     "positive_progress": [
       "Director/QA bindings stayed on anthropic_compat-1782212251463 | MiniMax-M3 and LLM route audit passed.",
-      "Provider/native tool path and tool normalization worked: write_file calls reached real execution and many writes succeeded.",
-      "The 20:29:12 write_file failure was syntax validation fail-closed, not missing tool normalization.",
-      "Remaining failure is package script/local entrypoint consistency after repair: scripts/verify.js was referenced but not created."
+      "Provider/native tool path reached real MiniMax-M3 calls despite runner startup logging a contradictory unreachable precheck.",
+      "Task 1 completed; Task 2 produced index.html, renderer.ts and simulation.ts with write_file evidence.",
+      "Static artifact checks and Playwright web entrypoint smoke passed; the remaining failure is the real TypeScript build gate.",
+      "Platform fix after run: missing-export repair now ignores function-local alias candidates and has full Director adapter regression coverage."
     ],
     "evidence_paths": [
-      "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-867a0b1c4fa8/results/director.result.json",
-      "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-867a0b1c4fa8/logs/journal.enriched.jsonl",
+      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/results/director.result.json",
+      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/logs/journal.enriched.jsonl",
+      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_15b716da5fb2.workspace-validation.json",
       "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json"
     ],
-    "platform_fix_after_run": "verified locally: deterministic_npm_script_contract_repair covers missing verify local entrypoint scripts/verify.js"
+    "platform_fix_after_run": "verified locally: deterministic TypeScript missing-export repair no longer aliases function-local declarations; full director_adapter_pure suite passes"
   },
-  "last_updated_at": "2026-06-23T20:37:17+08:00"
+  "last_updated_at": "2026-06-24T00:12:53+08:00"
 }

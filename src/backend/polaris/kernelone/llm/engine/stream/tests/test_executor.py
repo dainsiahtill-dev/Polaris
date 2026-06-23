@@ -255,6 +255,13 @@ class TestStreamExecutorInvokeStreamErrors:
                     "source": "roles.kernel.llm_caller.pre_projection",
                 },
                 "context_projection_id": "projection-1",
+                "prompt_profile_audit": {
+                    "selected_prompt_profile_ids": ["builtin.language.typescript", "builtin.task.implement"],
+                    "inferred_language": "typescript",
+                    "inferred_task_type": "implement",
+                    "content": "SECRET STREAM PROFILE TEMPLATE",
+                },
+                "selected_prompt_profile_ids": ["builtin.language.typescript", "builtin.task.implement"],
                 "chat_messages": [
                     {"role": "system", "content": "SECRET STREAM SYSTEM"},
                     {"role": "user", "content": "SECRET STREAM PROMPT"},
@@ -287,10 +294,16 @@ class TestStreamExecutorInvokeStreamErrors:
         assert len(payload["input_sha256"]) == 64
         assert len(payload["effective_prompt_sha256"]) == 64
         assert len(payload["tool_schema_sha256"]) == 64
+        assert payload["selected_prompt_profile_ids"] == [
+            "builtin.language.typescript",
+            "builtin.task.implement",
+        ]
+        assert payload["prompt_profile_selection"]["inferred_language"] == "typescript"
 
         serialized_receipt = json.dumps(receipts[0], ensure_ascii=False, sort_keys=True)
         assert "SECRET STREAM PROMPT" not in serialized_receipt
         assert "SECRET STREAM SYSTEM" not in serialized_receipt
+        assert "SECRET STREAM PROFILE TEMPLATE" not in serialized_receipt
 
     @pytest.mark.asyncio
     async def test_invoke_stream_traceability_ids_reach_telemetry_without_optional_sink(

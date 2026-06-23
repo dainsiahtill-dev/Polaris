@@ -2510,6 +2510,36 @@ class OrchestrationStageExecutor:
                 if director_status not in {"completed", "success"}:
                     if progress_made:
                         idle_rounds = 0
+                        if self._is_taskboard_converged(after_stats):
+                            stage_signals.append(
+                                {
+                                    "code": "director.dispatch_converged_after_partial_failure",
+                                    "severity": "info",
+                                    "detail": f"Director dispatch converged after partial failure in round {round_index}",
+                                    "round": round_index,
+                                    "upstream_status": director_status,
+                                }
+                            )
+                            break
+                        if self._fanout_quality_failure_can_enter_quality_gate(
+                            metadata=metadata_payload,
+                            final_stats=after_stats,
+                            pm_tasks=pm_tasks,
+                        ):
+                            stage_signals.append(
+                                {
+                                    "code": "director.materialization_quality_handoff_ready",
+                                    "severity": "warning",
+                                    "detail": (
+                                        "Director wrote materialized workspace artifacts but failed materialization "
+                                        "quality; stopping dispatch before a no-claim retry so quality_gate can "
+                                        "run on the physical workspace state"
+                                    ),
+                                    "upstream_status": director_status,
+                                    "round": round_index,
+                                }
+                            )
+                            break
                         stage_signals.append(
                             {
                                 "code": "director.partial_failure_progress_continued",
@@ -2522,17 +2552,6 @@ class OrchestrationStageExecutor:
                                 "round": round_index,
                             }
                         )
-                        if self._is_taskboard_converged(after_stats):
-                            stage_signals.append(
-                                {
-                                    "code": "director.dispatch_converged_after_partial_failure",
-                                    "severity": "info",
-                                    "detail": f"Director dispatch converged after partial failure in round {round_index}",
-                                    "round": round_index,
-                                    "upstream_status": director_status,
-                                }
-                            )
-                            break
                         continue
                     prior_successful_progress = any(
                         str(item.get("status") or "").strip().lower() in {"completed", "success"}
@@ -2710,6 +2729,22 @@ class OrchestrationStageExecutor:
                         "upstream_status": str((final_result.status if final_result else "") or "").strip(),
                     }
                 )
+        elif fanout_quality_handoff and not any(
+            str(item.get("code") or "") == "director.materialization_quality_handoff"
+            for item in stage_signals
+            if isinstance(item, dict)
+        ):
+            stage_signals.append(
+                {
+                    "code": "director.materialization_quality_handoff",
+                    "severity": "warning",
+                    "detail": (
+                        "Director materialization quality failed after writing workspace artifacts; "
+                        "continuing to quality_gate repair/QA harness"
+                    ),
+                    "upstream_status": str((final_result.status if final_result else "") or "").strip(),
+                }
+            )
 
         if fanout_quality_handoff:
             self._downgrade_quality_handoff_blocking_signals(stage_signals)
@@ -3076,8 +3111,6 @@ class OrchestrationStageExecutor:
         final_stats: dict[str, int],
         pm_tasks: list[dict[str, Any]],
     ) -> bool:
-        if not self._fanout_all_active_bindings_failed(metadata):
-            return False
         taskboard_terminal_enough = self._is_taskboard_converged(
             final_stats
         ) or self._taskboard_idle_with_unresolved_work(final_stats)
@@ -3085,6 +3118,8 @@ class OrchestrationStageExecutor:
             return False
         if not self._workspace_has_materialized_delivery_evidence(pm_tasks):
             return False
+        if not self._fanout_all_active_bindings_failed(metadata):
+            return self._failed_task_records_indicate_quality_handoff()
         return (
             self._fanout_failure_mentions_materialization_quality(metadata)
             or self._failed_task_records_indicate_quality_handoff()

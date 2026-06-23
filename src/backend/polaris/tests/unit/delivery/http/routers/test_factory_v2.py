@@ -245,6 +245,79 @@ def test_director_resume_evidence_rehydrates_legacy_taskboard(
     assert "runtime_execution" not in task_1["metadata"]
 
 
+def test_director_resume_evidence_resets_current_dirty_taskboard(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from polaris.delivery.http.routers import factory
+
+    workspace = tmp_path / "resume-current-unit"
+    workspace.mkdir()
+    runtime_projects = tmp_path / "runtime-projects"
+    current_runtime = runtime_projects / "resume-current-unit-111111111111" / "runtime"
+
+    def _fake_resolve_runtime_path(_workspace: str, rel_path: str) -> str:
+        assert rel_path.startswith("runtime/")
+        return str(current_runtime / rel_path.removeprefix("runtime/"))
+
+    monkeypatch.setattr(factory, "resolve_runtime_path", _fake_resolve_runtime_path)
+    monkeypatch.setattr(
+        factory,
+        "resolve_storage_roots",
+        lambda _workspace: SimpleNamespace(
+            runtime_projects_root=str(runtime_projects),
+            workspace_key="resume-current-unit-111111111111",
+        ),
+    )
+
+    task_dir = current_runtime / "tasks"
+    task_dir.mkdir(parents=True)
+    (task_dir / "plan.json").write_text(
+        json.dumps({"tasks": [{"id": "TASK-1", "target_files": ["src/index.ts"]}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (task_dir / "task_1.json").write_text(
+        json.dumps(
+            {
+                "id": 1,
+                "status": "failed",
+                "metadata": {
+                    "runtime_execution": {"status": "failed"},
+                    "workflow_run_id": "director-old",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (task_dir / "task_1.session.json").write_text(
+        json.dumps({"status": "failed"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    blueprint_path = workspace / ".polaris" / "blueprints" / "latest.review.json"
+    blueprint_path.parent.mkdir(parents=True)
+    blueprint_path.write_text(
+        json.dumps({"generated_blueprints": 1, "blueprints": [{"task_id": "TASK-1"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    snapshot_path = workspace / ".polaris" / "factory_snapshots" / "pre_director" / "manifest.json"
+    snapshot_path.parent.mkdir(parents=True)
+    snapshot_path.write_text(
+        json.dumps({"snapshot_kind": "pre_director_workspace", "files": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    factory._ensure_director_resume_evidence_ready(str(workspace))
+
+    assert not (task_dir / "task_1.session.json").exists()
+    task_1 = json.loads((task_dir / "task_1.json").read_text(encoding="utf-8"))
+    assert task_1["status"] == "pending"
+    assert "runtime_execution" not in task_1["metadata"]
+    evidence = json.loads((task_dir / "director_resume_reset.json").read_text(encoding="utf-8"))
+    assert evidence["reset_statuses"] == "all_task_records"
+
+
 def test_execution_stages_for_recovery_after_checkpoint() -> None:
     """Recovered checkpoint retries should resume after the saved checkpoint."""
     from polaris.delivery.http.routers.factory import _execution_stages_for_run

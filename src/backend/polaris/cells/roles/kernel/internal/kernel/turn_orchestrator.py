@@ -65,6 +65,14 @@ async def run(
     except (RuntimeError, ValueError) as e:
         return RoleTurnResult(error=f"参数处理失败: {e}", is_complete=True)
 
+    prompt_appendix = kernel._append_prompt_profiles_for_request(
+        profile=profile,
+        request=request,
+        prompt_appendix=prompt_appendix,
+        context_override=getattr(request, "context_override", None),
+        message=str(getattr(request, "message", "") or ""),
+    )
+
     # 3. 构建提示词指纹
     try:
         fingerprint = kernel._get_prompt_builder().build_fingerprint(profile, prompt_appendix)
@@ -403,6 +411,13 @@ async def run_stream(
 
         # 2. 处理废弃参数
         prompt_appendix = kernel._process_deprecated_params(request)
+        prompt_appendix = kernel._append_prompt_profiles_for_request(
+            profile=profile,
+            request=request,
+            prompt_appendix=prompt_appendix,
+            context_override=getattr(request, "context_override", None),
+            message=str(getattr(request, "message", "") or ""),
+        )
 
         # 3. 构建提示词指纹
         fingerprint = kernel._get_prompt_builder().build_fingerprint(profile, prompt_appendix)

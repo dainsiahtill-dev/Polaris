@@ -333,6 +333,26 @@ def build_final_request_trace_refs(
     return tuple(str(item).strip() for item in refs if str(item or "").strip())
 
 
+def build_prompt_profile_observability_fields(context: Any) -> dict[str, Any]:
+    """Build a prompt-free prompt-profile audit summary for final request receipts."""
+
+    payload = context if isinstance(context, Mapping) else {}
+    raw_audit = payload.get("prompt_profile_audit")
+    safe_audit = safe_observability_payload(raw_audit) if isinstance(raw_audit, Mapping) else {}
+    audit_payload: dict[str, Any] = dict(safe_audit) if isinstance(safe_audit, Mapping) else {}
+
+    selected_ids = _string_list(payload.get("selected_prompt_profile_ids"))
+    if not selected_ids:
+        selected_ids = _string_list(audit_payload.get("selected_prompt_profile_ids"))
+    if selected_ids:
+        audit_payload["selected_prompt_profile_ids"] = selected_ids
+
+    return {
+        "prompt_profile_selection": audit_payload,
+        "selected_prompt_profile_ids": selected_ids,
+    }
+
+
 def build_safe_token_budget_payload(budget_decision: Any) -> dict[str, Any]:
     """Serialize token budget metadata without prompt-visible compression text."""
     if isinstance(budget_decision, Mapping):
@@ -494,6 +514,17 @@ def _coerce_positive_int(value: Any) -> int:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list | tuple | set):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            result.append(text[:160])
+    return result[:32]
 
 
 def clamp_output_tokens_to_window(

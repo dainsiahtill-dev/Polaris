@@ -123,16 +123,6 @@ def _director_resume_has_taskboard(workspace: Path) -> bool:
     return bool(_director_resume_task_files(task_dir))
 
 
-_DIRECTOR_RESUME_ACTIVE_TASK_STATUSES = {
-    "active",
-    "claimed",
-    "executing",
-    "in_progress",
-    "leased",
-    "running",
-}
-
-
 def _director_resume_workspace_slug(workspace_key: str) -> str:
     match = re.match(r"^(?P<slug>.+)-[0-9a-f]{12}$", workspace_key)
     return str(match.group("slug")) if match else workspace_key
@@ -211,11 +201,8 @@ def _director_resume_reset_task_payload(payload: dict[str, Any]) -> dict[str, An
 
 def _rehydrate_director_resume_taskboard(workspace: Path) -> str:
     target_dir = Path(resolve_runtime_path(str(workspace), "runtime/tasks"))
-    if (
-        _director_resume_plan_tasks(workspace)
-        and _director_resume_has_taskboard(workspace)
-        and not (target_dir / "director_resume_rehydration.json").is_file()
-    ):
+    if _director_resume_plan_tasks(workspace) and _director_resume_has_taskboard(workspace):
+        _reset_current_director_resume_taskboard(workspace, target_dir=target_dir)
         return ""
     candidates = sorted(
         _director_resume_legacy_task_dirs(workspace),
@@ -233,12 +220,7 @@ def _rehydrate_director_resume_taskboard(workspace: Path) -> str:
             payload = _load_json_object(task_file)
             if not payload:
                 continue
-            status = str(payload.get("status") or "").strip().lower()
-            normalized_payload = (
-                _director_resume_reset_task_payload(payload)
-                if status in _DIRECTOR_RESUME_ACTIVE_TASK_STATUSES
-                else payload
-            )
+            normalized_payload = _director_resume_reset_task_payload(payload)
             (target_dir / task_file.name).write_text(
                 json.dumps(normalized_payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -254,7 +236,7 @@ def _rehydrate_director_resume_taskboard(workspace: Path) -> str:
             "source_task_dir": str(source_dir),
             "target_task_dir": str(target_dir),
             "copied_files": copied,
-            "reset_active_statuses": sorted(_DIRECTOR_RESUME_ACTIVE_TASK_STATUSES),
+            "reset_statuses": "all_task_records",
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         (target_dir / "director_resume_rehydration.json").write_text(
@@ -263,6 +245,54 @@ def _rehydrate_director_resume_taskboard(workspace: Path) -> str:
         )
         return str(source_dir)
     return ""
+
+
+def _reset_current_director_resume_taskboard(workspace: Path, *, target_dir: Path | None = None) -> dict[str, Any]:
+    """Reset existing Director task rows to a clean pre-Director claimable state."""
+    task_dir = target_dir or Path(resolve_runtime_path(str(workspace), "runtime/tasks"))
+    task_files = _director_resume_task_files(task_dir)
+    if not task_files:
+        return {}
+
+    reset_files: list[str] = []
+    skipped_files: list[str] = []
+    deleted_session_files: list[str] = []
+    for task_file in task_files:
+        payload = _load_json_object(task_file)
+        if not payload:
+            skipped_files.append(task_file.name)
+            continue
+        normalized_payload = _director_resume_reset_task_payload(payload)
+        task_file.write_text(
+            json.dumps(normalized_payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        reset_files.append(task_file.name)
+
+    with contextlib.suppress(OSError):
+        for session_file in sorted(task_dir.glob("task_*.session.json")):
+            if not session_file.is_file():
+                continue
+            session_file.unlink()
+            deleted_session_files.append(session_file.name)
+
+    evidence = {
+        "schema_version": "factory.director_resume_taskboard_reset.v1",
+        "source": "factory_bench",
+        "workspace": str(workspace),
+        "target_task_dir": str(task_dir),
+        "reset_files": reset_files,
+        "skipped_files": skipped_files,
+        "deleted_session_files": deleted_session_files,
+        "reset_statuses": "all_task_records",
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "director_resume_reset.json").write_text(
+        json.dumps(evidence, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return evidence
 
 
 def _director_resume_has_ce_blueprint(workspace: Path) -> bool:

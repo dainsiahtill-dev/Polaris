@@ -25,6 +25,7 @@ from ._executor_base import (
     build_final_request_observability_fields,
     build_final_request_trace_refs,
     build_invoke_config,
+    build_prompt_profile_observability_fields,
     build_safe_token_budget_payload,
     clamp_output_tokens_to_window,
     classify_error,
@@ -827,6 +828,7 @@ class AIExecutor:
         effective_prompt_sha256 = self._sha256_text(clamp_prompt_text)
         tool_schema_sha256 = self._sha256_json(tools) if tool_count else ""
         token_budget = build_safe_token_budget_payload(budget_decision)
+        prompt_profile_fields = build_prompt_profile_observability_fields(context)
         observability_fields = build_final_request_observability_fields(
             context=context,
             trace_id=trace_id,
@@ -872,6 +874,7 @@ class AIExecutor:
                 "cognitive_runtime_required": coerce_required_flag(context.get("cognitive_runtime_required")),
                 "context_os_expected": coerce_required_flag(context.get("context_os_expected")),
                 **observability_fields,
+                **prompt_profile_fields,
                 "role": request.role,
                 "task_type": request.task_type.value,
                 "provider_id": model_spec.provider_id,
@@ -950,6 +953,7 @@ class AIExecutor:
             and final_request_token_estimate < int(window_tokens * _UNDERUTILIZED_RATIO)
         )
         coverage = _coverage_flags(message_text)
+        prompt_profile_fields = build_prompt_profile_observability_fields(getattr(request, "context", None))
 
         return {
             "schema_version": "llm.provider_request_snapshot.v1",
@@ -963,6 +967,7 @@ class AIExecutor:
             "tools": [_summarize_tool_schema(tool) for tool in tools],
             "tool_choice": safe_observability_payload(invoke_cfg.get("tool_choice")),
             "response_format": _summarize_response_format(response_format_payload),
+            **prompt_profile_fields,
             "final_request_context_audit": {
                 "schema_version": "llm.final_request_context_audit.v1",
                 "message_count": len(normalized_messages),
@@ -979,6 +984,7 @@ class AIExecutor:
                 "context_underutilized": context_underutilized,
                 "available_token_headroom": max(0, window_tokens - final_request_token_estimate),
                 "coverage": coverage,
+                **prompt_profile_fields,
                 "context_quality": _context_quality_findings(
                     coverage=coverage,
                     context_underutilized=context_underutilized,

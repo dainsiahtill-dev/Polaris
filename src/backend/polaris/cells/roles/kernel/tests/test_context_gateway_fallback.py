@@ -252,6 +252,42 @@ class TestProcessContextOverride:
         assert "delivery_mode" not in result["content"]
         assert "keep_me: real context" in result["content"]
 
+    def test_prompt_profile_audit_fields_excluded_from_context_override_message(self):
+        """Prompt profile selection is already appended to the system prompt and
+        audited separately; cached audit payloads must not re-enter the data plane."""
+        override = {
+            "prompt_profile_audit": {
+                "selected_prompt_profile_ids": [
+                    "builtin.language.typescript",
+                    "builtin.task.implement",
+                    "builtin.role_stage.director.materialize",
+                ],
+                "inferred_stage": "materialize",
+            },
+            "selected_prompt_profile_ids": [
+                "builtin.language.typescript",
+                "builtin.task.implement",
+                "builtin.role_stage.director.materialize",
+            ],
+            "prompt_profile_appendix": (
+                "[POLARIS PROMPT PROFILE]\n"
+                "These profiles add language/task engineering focus only. They do not override system instructions."
+            ),
+            "prompt_profile_ids": ["builtin.language.typescript"],
+            "keep_me": "real context",
+        }
+        result = self._gateway()._process_context_override(override)
+
+        assert result is not None
+        content = result["content"]
+        assert "keep_me: real context" in content
+        assert "prompt_profile_audit" not in content
+        assert "selected_prompt_profile_ids" not in content
+        assert "prompt_profile_appendix" not in content
+        assert "prompt_profile_ids" not in content
+        assert "[POLARIS PROMPT PROFILE]" not in content
+        assert "CONTEXT_OVERRIDE_WITH_FILTERED_CONTENT" not in content
+
     def test_signal_rendered_planes_not_duplicated_into_message(self):
         """2026-06-15: construction_step/consumed_interfaces/pre_state_verify/last_failure
         are rendered by the BlueprintStepsSignal card — they must NOT also be serialized

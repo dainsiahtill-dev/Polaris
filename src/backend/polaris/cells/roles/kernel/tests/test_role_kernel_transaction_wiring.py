@@ -92,6 +92,36 @@ class TestForcedToolScopePolicy:
 
         assert _tool_schema_names(result) == ["write_file", "read_file", "repo_tree", "repo_rg"]
 
+    def test_quality_repair_exact_forced_scope_does_not_add_context_companion_tools(self) -> None:
+        forced_write_tool = _tool_schema("write_file")
+        tool_definitions = [
+            forced_write_tool,
+            _tool_schema("read_file"),
+            _tool_schema("repo_tree"),
+            _tool_schema("repo_rg"),
+            _tool_schema("scout_probe"),
+        ]
+        context_override = {
+            "_transaction_kernel_force_exact_tools": True,
+            "_transaction_kernel_forced_tool_definitions": [forced_write_tool],
+            "_transaction_kernel_forced_tool_choice": {
+                "type": "function",
+                "function": {"name": "write_file"},
+            },
+            "director_quality_repair": {
+                "missing_target_files": ["src/models/moon.ts"],
+                "repair_target_files": ["src/models/moon.ts"],
+                "write_only_single_target": {
+                    "tool": "write_file",
+                    "target_file": "src/models/moon.ts",
+                },
+            },
+        }
+
+        result = _apply_forced_transaction_tool_definitions(tool_definitions, context_override)
+
+        assert result == [forced_write_tool]
+
     def test_plain_forced_scope_stays_exact(self) -> None:
         forced_write_tool = _tool_schema("write_file")
         tool_definitions = [

@@ -126,6 +126,13 @@ async def test_final_request_receipt_records_provider_bound_shape_without_prompt
             },
             "context_projection_id": "projection-1",
             "context_result_id": "ctxres-1",
+            "prompt_profile_audit": {
+                "selected_prompt_profile_ids": ["builtin.language.typescript", "builtin.task.implement"],
+                "inferred_language": "typescript",
+                "inferred_task_type": "implement",
+                "content": "SECRET PROFILE TEMPLATE",
+            },
+            "selected_prompt_profile_ids": ["builtin.language.typescript", "builtin.task.implement"],
             "chat_messages": [
                 {"role": "system", "content": "SECRET SYSTEM TEXT"},
                 {"role": "user", "content": "SECRET PROMPT TEXT"},
@@ -169,10 +176,16 @@ async def test_final_request_receipt_records_provider_bound_shape_without_prompt
     assert payload["tool_count"] == 1
     assert len(payload["input_sha256"]) == 64
     assert len(payload["tool_schema_sha256"]) == 64
+    assert payload["selected_prompt_profile_ids"] == [
+        "builtin.language.typescript",
+        "builtin.task.implement",
+    ]
+    assert payload["prompt_profile_selection"]["inferred_language"] == "typescript"
 
     serialized_receipt = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
     assert "SECRET PROMPT TEXT" not in serialized_receipt
     assert "SECRET SYSTEM TEXT" not in serialized_receipt
+    assert "SECRET PROFILE TEMPLATE" not in serialized_receipt
 
     telemetry_events = executor.telemetry.get_events()
     invoke_end = [event for event in telemetry_events if event.event_type == "invoke_end"][-1]

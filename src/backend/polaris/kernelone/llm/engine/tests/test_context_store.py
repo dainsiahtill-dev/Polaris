@@ -502,6 +502,13 @@ class TestContextStoreInvokeFailure:
                 "content": "PM task contract: create src/app.ts. acceptance criteria: npm test.",
             },
         ]
+        request.context["prompt_profile_audit"] = {
+            "selected_prompt_profile_ids": ["builtin.language.typescript", "builtin.task.implement"],
+            "inferred_language": "typescript",
+            "inferred_task_type": "implement",
+            "content": "SECRET PROFILE TEMPLATE",
+        }
+        request.context["selected_prompt_profile_ids"] = ["builtin.language.typescript", "builtin.task.implement"]
         request.options["tools"] = [
             {
                 "type": "function",
@@ -549,6 +556,11 @@ class TestContextStoreInvokeFailure:
         assert provider_request["tool_schema_count"] == 2
         assert [tool["name"] for tool in provider_request["tools"]] == ["repo_tree", "read_file"]
         assert provider_request["tool_choice"] == "auto"
+        assert provider_request["selected_prompt_profile_ids"] == [
+            "builtin.language.typescript",
+            "builtin.task.implement",
+        ]
+        assert provider_request["prompt_profile_selection"]["inferred_language"] == "typescript"
         audit = provider_request["final_request_context_audit"]
         assert audit["schema_version"] == "llm.final_request_context_audit.v1"
         assert audit["message_count"] == 2
@@ -556,6 +568,12 @@ class TestContextStoreInvokeFailure:
         assert audit["final_request_token_estimate"] >= audit["message_token_estimate"]
         assert audit["coverage"]["has_pm_contract"] is True
         assert audit["coverage"]["has_chief_engineer_blueprint"] is True
+        assert audit["selected_prompt_profile_ids"] == [
+            "builtin.language.typescript",
+            "builtin.task.implement",
+        ]
+        serialized_provider_request = json.dumps(provider_request, ensure_ascii=False, sort_keys=True)
+        assert "SECRET PROFILE TEMPLATE" not in serialized_provider_request
 
     @pytest.mark.asyncio
     async def test_degraded_message_truncated_to_200_chars(self) -> None:

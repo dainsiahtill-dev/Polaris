@@ -121,7 +121,8 @@ def test_build_system_prompt_for_quality_repair_suppresses_working_memory_only(m
     result = kernel._build_system_prompt_for_request(profile, request, "quality repair appendix")  # type: ignore[arg-type]
 
     assert result == "system-prompt"
-    assert captured["appendix"] == "quality repair appendix"
+    assert str(captured["appendix"]).startswith("quality repair appendix")
+    assert "[POLARIS PROMPT PROFILE]" in str(captured["appendix"])
     assert captured["include_working_memory_contract"] is False
     assert captured["include_tool_policy"] is True
 
@@ -162,9 +163,146 @@ def test_build_system_prompt_for_factory_contract_suppresses_working_memory_only
     result = kernel._build_system_prompt_for_request(profile, request, "factory appendix")  # type: ignore[arg-type]
 
     assert result == "system-prompt"
-    assert captured["appendix"] == "factory appendix"
+    assert str(captured["appendix"]).startswith("factory appendix")
+    assert "[POLARIS PROMPT PROFILE]" in str(captured["appendix"])
+    assert "builtin.language.typescript" in str(captured["appendix"])
+    assert request.context_override["selected_prompt_profile_ids"]
     assert captured["include_working_memory_contract"] is False
     assert captured["include_tool_policy"] is True
+
+
+def test_build_system_prompt_recomputes_stale_empty_prompt_profile_audit(monkeypatch) -> None:
+    profile = SimpleNamespace(
+        role_id="director",
+        model="qwen3.6-27b-q6-code-gpu0",
+        version="1.0.0",
+        tool_policy=SimpleNamespace(policy_id="director-policy-v1", whitelist=["write_file"]),
+        prompt_policy=SimpleNamespace(core_template_id="director", tpl_version="1.0"),
+    )
+    kernel = RoleExecutionKernel(workspace=".", registry=_StubRegistry(profile))  # type: ignore[arg-type]
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.CHAT,
+        workspace=".",
+        message=(
+            "MATERIALIZATION QUALITY REPAIR MODE:\n"
+            "src/domain/humidity.ts(48,3): error TS2739. tests/verify.test.ts must pass."
+        ),
+        history=[],
+        context_override={
+            "delivery_mode": "materialize_changes",
+            "target_files": ["src/domain/humidity.ts", "tests/verify.test.ts"],
+            "prompt_profile_audit": {
+                "selected_prompt_profile_ids": [],
+                "inferred_language": "typescript",
+                "inferred_task_type": "bugfix",
+                "inferred_stage": "quality_repair",
+                "inferred_artifact": "test_suite",
+                "skipped_reason": "strict_quality_repair",
+            },
+            "selected_prompt_profile_ids": [],
+            "prompt_profile_appendix": "",
+        },
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_build_system_prompt(_profile, prompt_appendix, **kwargs: object) -> str:
+        captured["appendix"] = str(prompt_appendix or "")
+        captured.update(kwargs)
+        return "system-prompt"
+
+    prompt_builder = kernel._get_prompt_builder()
+    monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
+
+    result = kernel._build_system_prompt_for_request(profile, request, "")  # type: ignore[arg-type]
+
+    assert result == "system-prompt"
+    assert "[POLARIS PROMPT PROFILE]" in str(captured["appendix"])
+    selected_ids = request.context_override["selected_prompt_profile_ids"]
+    assert "builtin.language.typescript" in selected_ids
+    assert "builtin.task.bugfix" in selected_ids
+    assert "builtin.role_stage.director.quality_repair" in selected_ids
+    assert "builtin.artifact.test_suite" in selected_ids
+    assert request.context_override["prompt_profile_audit"]["skipped_reason"] == ""
+
+
+def test_build_system_prompt_recomputes_stale_cached_prompt_profile_appendix(monkeypatch) -> None:
+    profile = SimpleNamespace(
+        role_id="director",
+        model="qwen3.6-27b-q6-code-gpu0",
+        version="1.0.0",
+        tool_policy=SimpleNamespace(policy_id="director-policy-v1", whitelist=["write_file"]),
+        prompt_policy=SimpleNamespace(core_template_id="director", tpl_version="1.0"),
+    )
+    kernel = RoleExecutionKernel(workspace=".", registry=_StubRegistry(profile))  # type: ignore[arg-type]
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.CHAT,
+        workspace=".",
+        message=(
+            "PM Task Contract / 任务合同:\n"
+            "任务: 实现 发光昆虫花园模拟器 TypeScript 项目骨架与核心模块\n"
+            "目标文件: package.json, tsconfig.json, src/index.ts, src/main.ts, "
+            "src/domain/firefly.ts, src/domain/flower.ts, src/domain/moon.ts, src/domain/humidity.ts\n"
+            "目标文件覆盖硬门禁: 本任务列出的目标文件必须全部由本轮工具写入或编辑。\n"
+            "请通过运行时正式写入工具完成修改；若只能返回文本，输出可解析的文件块。"
+        ),
+        history=[],
+        context_override={
+            "target_files": [
+                "package.json",
+                "tsconfig.json",
+                "src/index.ts",
+                "src/main.ts",
+                "src/domain/firefly.ts",
+                "src/domain/flower.ts",
+                "src/domain/moon.ts",
+                "src/domain/humidity.ts",
+            ],
+            "prompt_profile_audit": {
+                "selected_prompt_profile_ids": [
+                    "builtin.language.typescript",
+                    "builtin.task.bugfix",
+                    "builtin.role_stage.director.default",
+                    "builtin.artifact.config",
+                ],
+                "inferred_stage": "default",
+                "inferred_artifact": "config",
+            },
+            "selected_prompt_profile_ids": [
+                "builtin.language.typescript",
+                "builtin.task.bugfix",
+                "builtin.role_stage.director.default",
+                "builtin.artifact.config",
+            ],
+            "prompt_profile_appendix": (
+                "[POLARIS PROMPT PROFILE]\n"
+                "selection=language:typescript; task:bugfix; stage:default; artifact:config\n"
+                "- builtin.artifact.config: stale"
+            ),
+        },
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_build_system_prompt(_profile, prompt_appendix, **kwargs: object) -> str:
+        captured["appendix"] = str(prompt_appendix or "")
+        captured.update(kwargs)
+        return "system-prompt"
+
+    prompt_builder = kernel._get_prompt_builder()
+    monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
+
+    result = kernel._build_system_prompt_for_request(profile, request, "")  # type: ignore[arg-type]
+
+    assert result == "system-prompt"
+    appendix = str(captured["appendix"])
+    assert "stage:materialize; artifact:library" in appendix
+    assert "builtin.role_stage.director.materialize" in appendix
+    assert "builtin.artifact.library" in appendix
+    assert "builtin.role_stage.director.default" not in appendix
+    assert "builtin.artifact.config" not in appendix
+    selected_ids = request.context_override["selected_prompt_profile_ids"]
+    assert "builtin.task.implement" in selected_ids
+    assert "builtin.role_stage.director.materialize" in selected_ids
+    assert "builtin.artifact.library" in selected_ids
 
 
 def test_build_system_prompt_for_forced_write_suppresses_working_memory_only(monkeypatch) -> None:

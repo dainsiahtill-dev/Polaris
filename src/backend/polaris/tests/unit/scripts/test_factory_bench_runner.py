@@ -1410,6 +1410,8 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
+    from polaris.kernelone.storage import resolve_runtime_path
+
     workspace = _setup_run_factory_chain_mocks(
         monkeypatch,
         tmp_path,
@@ -1421,6 +1423,24 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
         },
     )
     _write_director_resume_evidence(workspace)
+    task_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.json"))
+    task_path.write_text(
+        json.dumps(
+            {
+                "id": 1,
+                "status": "failed",
+                "subject": "Implement feature",
+                "metadata": {
+                    "runtime_execution": {"status": "failed"},
+                    "workflow_run_id": "director-old",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    session_path = Path(resolve_runtime_path(str(workspace), "runtime/tasks/task_1.session.json"))
+    session_path.write_text(json.dumps({"status": "failed"}, ensure_ascii=False), encoding="utf-8")
 
     result = run_factory_chain(
         {"id": "L2-07", "title": "Tetris", "brief": "Build Tetris", "test_focus": "runtime"},
@@ -1437,6 +1457,12 @@ def test_run_factory_chain_director_resume_uses_existing_pm_ce_evidence(
     assert _LAST_FACTORY_START_PAYLOAD["metadata"]["factory_bench_start_from"] == "director"
     snapshot_manifest = workspace / ".polaris" / "factory_snapshots" / "pre_director" / "manifest.json"
     assert json.loads(snapshot_manifest.read_text(encoding="utf-8"))["snapshot_kind"] == "pre_director_workspace"
+    reset_task = json.loads(task_path.read_text(encoding="utf-8"))
+    assert reset_task["status"] == "pending"
+    assert "runtime_execution" not in reset_task["metadata"]
+    assert not session_path.exists()
+    reset_evidence = task_path.parent / "director_resume_reset.json"
+    assert json.loads(reset_evidence.read_text(encoding="utf-8"))["reset_statuses"] == "all_task_records"
 
 
 def test_director_resume_rehydrates_taskboard_from_legacy_runtime(

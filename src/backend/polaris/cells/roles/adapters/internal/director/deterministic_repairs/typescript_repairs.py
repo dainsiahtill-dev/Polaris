@@ -2936,9 +2936,19 @@ def _typescript_line_bounds(text: str, line_no: int) -> tuple[int, int]:
 def _typescript_structural_member_type_map(declaration_text: str) -> dict[str, str]:
     member_types: dict[str, str] = {}
     for line in declaration_text.splitlines():
+        stripped = line.strip()
+        method_match = re.match(
+            r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\??\s*\((?P<params>[^)]*)\)\s*:\s*(?P<type>.+?)[;,]?$",
+            stripped,
+        )
+        if method_match:
+            name = str(method_match.group("name") or "").strip()
+            return_type = str(method_match.group("type") or "").strip().rstrip(";,").strip()
+            if name and return_type:
+                member_types[name] = f"() => {return_type}"
+            continue
         if ":" not in line:
             continue
-        stripped = line.strip()
         match = re.match(r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\??\s*:\s*(?P<type>.+?)[;,]?$", stripped)
         if not match:
             continue
@@ -3239,6 +3249,9 @@ def _typescript_param_with_default(param: str) -> str:
 
 def _typescript_default_value_for_type(ts_type: str) -> str:
     lowered = ts_type.strip().lower()
+    function_default = _typescript_default_function_value_for_type(ts_type)
+    if function_default:
+        return function_default
     if lowered.startswith("{") and lowered.endswith("}"):
         return _typescript_default_object_literal_for_type(ts_type)
     if lowered == "number":
@@ -3250,6 +3263,14 @@ def _typescript_default_value_for_type(ts_type: str) -> str:
     if lowered.endswith("[]") or lowered.startswith("array<"):
         return "[]"
     return f"undefined as unknown as {ts_type.strip()}"
+
+
+def _typescript_default_function_value_for_type(ts_type: str) -> str:
+    match = re.match(r"^\s*(?:\([^)]*\)|[A-Za-z_$][A-Za-z0-9_$]*)\s*=>\s*(?P<return>.+?)\s*$", ts_type.strip())
+    if not match:
+        return ""
+    return_type = str(match.group("return") or "unknown").strip()
+    return f"() => {_typescript_default_value_for_type(return_type)}"
 
 
 def _typescript_default_object_literal_for_type(ts_type: str) -> str:
@@ -4347,9 +4368,22 @@ def _typescript_module_runtime_exports_symbol(module_text: str, symbol: str) -> 
         return True
     export_block_re = re.compile(r"export\s*\{(?P<symbols>[^}]+)\}", re.DOTALL)
     for match in export_block_re.finditer(module_text):
-        if symbol in _parse_named_import_symbols(match.group("symbols")):
+        if symbol in _parse_named_export_symbols(match.group("symbols")):
             return True
     return False
+
+
+def _parse_named_export_symbols(symbols_text: str) -> list[str]:
+    symbols: list[str] = []
+    for raw in str(symbols_text or "").replace("\n", " ").split(","):
+        token = raw.strip()
+        if token.startswith("type "):
+            token = token[5:].strip()
+        parts = re.split(r"\s+as\s+", token, maxsplit=1)
+        exported = parts[-1].strip()
+        if _TS_IDENTIFIER_RE.fullmatch(exported):
+            symbols.append(exported)
+    return _dedupe_preserve_order(symbols)
 
 
 def _typescript_module_exports_symbol(module_text: str, symbol: str) -> bool:
@@ -4360,13 +4394,20 @@ def _typescript_module_exports_symbol(module_text: str, symbol: str) -> bool:
 
 
 def _typescript_module_declares_symbol(module_text: str, symbol: str) -> bool:
+    return bool(_typescript_module_declared_symbol_kind(module_text, symbol))
+
+
+def _typescript_module_declared_symbol_kind(module_text: str, symbol: str) -> str:
     if not _TS_IDENTIFIER_RE.fullmatch(symbol):
-        return False
+        return ""
     escaped = re.escape(symbol)
     declaration_re = re.compile(
-        rf"(?:export\s+)?(?:abstract\s+)?(?:enum|class|interface|type|const|let|var|function)\s+{escaped}\b"
+        rf"^(?:export\s+)?(?:abstract\s+)?(?:async\s+)?"
+        rf"(?P<kind>enum|class|interface|type|const|let|var|function)\s+{escaped}\b",
+        re.MULTILINE,
     )
-    return bool(declaration_re.search(module_text))
+    match = declaration_re.search(module_text)
+    return str(match.group("kind") or "").strip() if match else ""
 
 
 def _find_typescript_runtime_symbol_source(
@@ -4452,9 +4493,20 @@ def _build_typescript_suggested_export_alias_declaration(
         return "", ""
     if symbol == suggestion or not _typescript_module_declares_symbol(module_text, suggestion):
         return "", ""
-    if _typescript_symbol_is_constructed(importer_text, symbol) or _typescript_symbol_is_called(importer_text, symbol):
+    suggestion_kind = _typescript_module_declared_symbol_kind(module_text, suggestion)
+    if _typescript_symbol_is_constructed(importer_text, symbol):
+        if suggestion_kind == "class":
+            return "runtime_alias", f"export {{ {suggestion} as {symbol} }};"
+        return "", ""
+    if _typescript_symbol_is_called(importer_text, symbol):
+        if suggestion_kind in {"const", "function", "let", "var"}:
+            return "runtime_alias", f"export {{ {suggestion} as {symbol} }};"
+        return "", ""
+    if suggestion_kind in {"class", "enum", "interface", "type"}:
+        return "type_alias", f"export type {symbol} = {suggestion};"
+    if suggestion_kind in {"const", "let", "var", "function"}:
         return "runtime_alias", f"export {{ {suggestion} as {symbol} }};"
-    return "type_alias", f"export type {symbol} = {suggestion};"
+    return "", ""
 
 
 def _find_typescript_similar_runtime_declaration(module_text: str, symbol: str) -> str:
@@ -4464,7 +4516,7 @@ def _find_typescript_similar_runtime_declaration(module_text: str, symbol: str) 
     if not wanted:
         return ""
     declaration_re = re.compile(
-        r"^\s*(?:export\s+)?(?:async\s+)?(?:function|class|const|let|var|enum)\s+"
+        r"^(?:export\s+)?(?:async\s+)?(?:function|class|const|let|var|enum)\s+"
         r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\b",
         re.MULTILINE,
     )
