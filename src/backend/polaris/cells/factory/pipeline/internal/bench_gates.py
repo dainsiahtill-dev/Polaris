@@ -29,6 +29,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from .run_ledger import summarize_run_ledger_projection
+
 _REQUIRED_LLM_ROLES = ("pm", "chief_engineer", "qa", "director")
 _ROLE_ALIASES = {
     "ce": "chief_engineer",
@@ -56,6 +58,7 @@ _FAILURE_CATEGORIES = {
     "director_tool_execution",
     "llm_output",
     "context_budget",
+    "control_plane",
     "target_project_baseline",
     "runtime_environment",
     "unknown",
@@ -2443,9 +2446,12 @@ _ROLE_TOOL_FAILURE_AUDIT_TOKENS = (
     "unauthorized",
     "director binding fanout",
     "director_materialization_quality_failed",
+    "director_materialization_semantic_quality_failed",
     "director_missing_write_receipt",
     "director_no_materialized_changes",
     "no_write_tool_available",
+    "write_tool_evidence=false",
+    '"write_tool_evidence": false',
 )
 
 
@@ -2578,7 +2584,15 @@ def classify_factory_bench_failure(record: dict[str, Any]) -> dict[str, Any]:
     evidence: list[str] = []
     reasons: list[str] = []
     combined = json.dumps(record, ensure_ascii=False, default=str)
-    if _contains_context_budget_signal(combined):
+    run_ledger_gate_failed = any(
+        gate.get("gate") in {"run_ledger_projection", "run_ledger_event"} and not gate.get("ok")
+        for gate in _gate_failures(record)
+    )
+    if run_ledger_gate_failed:
+        ledger_status = summarize_run_ledger_projection(record.get("run_ledger_projection"))
+        category, reason = "control_plane", "run_ledger_projection_missing"
+        evidence.append(str(ledger_status.get("detail") or "run ledger projection missing"))
+    elif _contains_context_budget_signal(combined):
         category, reason = "context_budget", "context_or_token_budget"
     elif _record_has_runtime_environment_failure(record):
         category, reason = "runtime_environment", _runtime_environment_failure_reason(record)
@@ -2678,6 +2692,9 @@ def aggregate_goal_audit(records: list[dict[str, Any]]) -> dict[str, Any]:
     real_passed = sum(
         1 for record in records if isinstance(record.get("real_run_gate"), dict) and record["real_run_gate"].get("ok")
     )
+    ledger_projected = sum(
+        1 for record in records if summarize_run_ledger_projection(record.get("run_ledger_projection")).get("ok")
+    )
     route_passed = sum(
         1
         for record in records
@@ -2696,6 +2713,7 @@ def aggregate_goal_audit(records: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "total": total,
         "real_run_gate": {"passed": real_passed, "total": total},
+        "run_ledger": {"projected": ledger_projected, "total": total, "missing": total - ledger_projected},
         "llm_route_audit": {"passed": route_passed, "total": total},
         "failure_categories": dict(sorted(categories.items())),
         "root_cause_signatures": dict(sorted(signatures.items())),

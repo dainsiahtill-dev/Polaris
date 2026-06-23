@@ -50,7 +50,17 @@ class _MockRequest:
 
 
 def _tool_schema(name: str) -> dict[str, Any]:
-    return {"type": "function", "function": {"name": name}}
+    function_payload: dict[str, Any] = {"name": name}
+    if name == "write_file":
+        function_payload["parameters"] = {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string"},
+                "content": {"type": "string"},
+            },
+            "required": ["file", "content"],
+        }
+    return {"type": "function", "function": function_payload}
 
 
 def _tool_schema_names(tool_definitions: list[dict[str, Any]]) -> list[str]:
@@ -60,6 +70,25 @@ def _tool_schema_names(tool_definitions: list[dict[str, Any]]) -> list[str]:
         if isinstance(function_payload, dict):
             names.append(str(function_payload.get("name") or ""))
     return names
+
+
+def _file_param_enum(tool_definitions: list[dict[str, Any]], tool_name: str) -> list[str]:
+    for definition in tool_definitions:
+        function_payload = definition.get("function")
+        if not isinstance(function_payload, dict) or function_payload.get("name") != tool_name:
+            continue
+        parameters = function_payload.get("parameters")
+        if not isinstance(parameters, dict):
+            return []
+        properties = parameters.get("properties")
+        if not isinstance(properties, dict):
+            return []
+        file_property = properties.get("file")
+        if not isinstance(file_property, dict):
+            return []
+        enum = file_property.get("enum")
+        return [str(item) for item in enum] if isinstance(enum, list) else []
+    return []
 
 
 class TestForcedToolScopePolicy:
@@ -91,6 +120,7 @@ class TestForcedToolScopePolicy:
         result = _apply_forced_transaction_tool_definitions(tool_definitions, context_override)
 
         assert _tool_schema_names(result) == ["write_file", "read_file", "repo_tree", "repo_rg"]
+        assert _file_param_enum(result, "write_file") == ["src/models/moon.ts", "./src/models/moon.ts"]
 
     def test_quality_repair_exact_forced_scope_does_not_add_context_companion_tools(self) -> None:
         forced_write_tool = _tool_schema("write_file")
@@ -120,7 +150,8 @@ class TestForcedToolScopePolicy:
 
         result = _apply_forced_transaction_tool_definitions(tool_definitions, context_override)
 
-        assert result == [forced_write_tool]
+        assert _tool_schema_names(result) == ["write_file"]
+        assert _file_param_enum(result, "write_file") == ["src/models/moon.ts", "./src/models/moon.ts"]
 
     def test_plain_forced_scope_stays_exact(self) -> None:
         forced_write_tool = _tool_schema("write_file")

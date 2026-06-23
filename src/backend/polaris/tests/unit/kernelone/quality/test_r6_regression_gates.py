@@ -436,6 +436,25 @@ class TestFactoryRunServiceFailClosed:
             "real_run_gate": {"ok": True, "summary": "real run gate passed"},
             "llm_route_audit": {"ok": True, "summary": "LLM route audit passed"},
             "backend_freshness": {"ok": True, "detail": "backend fingerprint matches source"},
+            "run_ledger": {
+                "ledger_path": __file__,
+                "content_id": "content-id",
+                "event_id": "content-id",
+                "append_id": "append-id",
+                "job_token_id": "job-token-id",
+                "job_token": {"capability_audit": {"ok": True, "issues": []}},
+            },
+            "run_ledger_projection": {
+                "source": "run_ledger",
+                "integrity_ok": True,
+                "outcome_ok": True,
+                "ok": True,
+                "event_count": 1,
+                "gate_count": 1,
+                "failed_gates": [],
+                "capability": {"ok": True, "issues": [], "latest_token_id": "job-token-id"},
+                "physical_evidence": {},
+            },
         }
         apply_factory_bench_gates(record, chain={"exit_code": 0})
         assert record["static_checks_passed"] is True

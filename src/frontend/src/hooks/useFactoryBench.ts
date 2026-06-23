@@ -18,6 +18,7 @@ import {
   listBenchSessions,
   getBenchSession,
   type FactoryBenchEvent,
+  type FactoryBenchControlPlaneProjection,
   type FactoryBenchSessionDetail,
   type FactoryBenchSessionSummary,
 } from '@/services/benchService';
@@ -180,6 +181,9 @@ function mergeSessionSummary(
   const status = terminalStatus || readString(meta.status) || existing?.status || 'running';
   const eventTs = event.ts || new Date().toISOString();
   const metadata = readObject(meta.metadata) || existing?.metadata || {};
+  const controlPlaneProjection =
+    (readObject(meta.control_plane_projection) as FactoryBenchControlPlaneProjection | null)
+    || existing?.control_plane_projection;
   return {
     session_id: event.session_id || existing?.session_id || '',
     work_dir: readString(meta.work_dir) || existing?.work_dir || '',
@@ -192,6 +196,7 @@ function mergeSessionSummary(
     updated_at: readString(meta.updated_at) || eventTs,
     completed_at: readString(meta.completed_at) || existing?.completed_at,
     metadata,
+    control_plane_projection: controlPlaneProjection,
   };
 }
 

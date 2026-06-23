@@ -88,10 +88,63 @@ def test_apply_factory_bench_failure_taxonomy_exposes_top_level_fields() -> None
     assert record["goal_audit"] == {
         "total": 1,
         "real_run_gate": {"passed": 0, "total": 1},
+        "run_ledger": {"projected": 0, "total": 1, "missing": 1},
         "llm_route_audit": {"passed": 0, "total": 1},
         "failure_categories": {"llm_output": 1},
         "root_cause_signatures": {"llm_output:real_run_gate.build_test_lint_ran": 1},
     }
+
+
+def test_failure_taxonomy_classifies_missing_run_ledger_gate_as_control_plane() -> None:
+    record: dict[str, Any] = {
+        "all_checks_passed": False,
+        "checks": [],
+        "factory_gates": [
+            {
+                "gate": "run_ledger_projection",
+                "ok": False,
+                "detail": "run ledger projection missing",
+            }
+        ],
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "control_plane"
+    assert taxonomy["root_cause_signature"] == "control_plane:run_ledger_projection_missing"
+    assert taxonomy["evidence"] == ["run ledger projection missing"]
+
+
+def test_opencode_audit_required_for_director_semantic_materialization_failure() -> None:
+    record: dict[str, Any] = {
+        "project_id": "L1-02",
+        "level": 1,
+        "chain": {
+            "audit_bundle": {
+                "events_tail": [
+                    {
+                        "message": (
+                            "Director dispatch failed: Run status: failed | "
+                            "error=director_materialization_semantic_quality_failed"
+                        )
+                    }
+                ]
+            }
+        },
+    }
+    taxonomy = {
+        "ok": False,
+        "category": "control_plane",
+        "root_cause_signature": "control_plane:director_semantic_quality_failed",
+        "reasons": [],
+        "evidence": ["director_materialization_semantic_quality_failed"],
+    }
+
+    opencode_audit = bench_gates.build_role_tool_failure_opencode_audit_request(record, taxonomy)
+
+    assert opencode_audit["required"] is True
+    assert opencode_audit["reason"] == "role_tool_failure_detected"
+    assert opencode_audit["mode"] == "read_only_first"
 
 
 def test_failure_taxonomy_classifies_non_terminal_real_run_skip_as_runtime_environment() -> None:
@@ -2165,10 +2218,23 @@ def test_failure_taxonomy_classifies_missing_blueprint_as_chief_engineer_bluepri
     assert taxonomy["root_cause_signature"] == "chief_engineer_blueprint:missing_or_invalid_blueprint"
 
 
-def test_aggregate_goal_audit_counts_real_route_and_root_causes() -> None:
+def test_aggregate_goal_audit_counts_real_route_ledger_and_root_causes(tmp_path: Path) -> None:
+    ledger_file = tmp_path / "ledger.ndjson"
+    ledger_file.write_text('{"ok":true}\n', encoding="utf-8")
     records = [
         {
             "real_run_gate": {"ok": True},
+            "run_ledger_projection": {
+                "source": "run_ledger",
+                "integrity_ok": True,
+                "outcome_ok": True,
+                "ok": True,
+                "event_count": 1,
+                "gate_count": 1,
+                "failed_gates": [],
+                "capability": {"ok": True, "issues": [], "latest_token_id": "j1"},
+                "physical_evidence": {},
+            },
             "llm_route_audit": {"ok": True},
             "failure_taxonomy": {"ok": True},
         },
@@ -2186,6 +2252,7 @@ def test_aggregate_goal_audit_counts_real_route_and_root_causes() -> None:
     aggregate = aggregate_goal_audit(records)
 
     assert aggregate["real_run_gate"] == {"passed": 1, "total": 2}
+    assert aggregate["run_ledger"] == {"projected": 1, "total": 2, "missing": 1}
     assert aggregate["llm_route_audit"] == {"passed": 1, "total": 2}
     assert aggregate["failure_categories"]["target_project_baseline"] == 1
 

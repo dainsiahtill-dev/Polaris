@@ -682,7 +682,9 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
             if node_eval_error:
                 errors.append(node_eval_error)
                 continue
-            errors.extend(_scan_npm_script_node_test_directory_targets(root_full, tokens, str(script_name), relative_path))
+            errors.extend(
+                _scan_npm_script_node_test_directory_targets(root_full, tokens, str(script_name), relative_path)
+            )
             errors.extend(
                 _scan_npm_script_missing_local_entrypoints(root_full, script_text, str(script_name), relative_path)
             )

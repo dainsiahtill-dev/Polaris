@@ -47,6 +47,47 @@ def _record(**overrides: Any) -> dict[str, Any]:
         "chain_results": {"qa_ran": True, "qa_passed": True},
         "wrong_product_suspect": False,
         "backend_freshness": {"ok": True, "detail": "backend fresh"},
+        "run_ledger": {
+            "ledger_path": __file__,
+            "content_id": "content-id",
+            "event_id": "content-id",
+            "append_id": "append-id",
+            "job_token_id": "job-token-id",
+            "job_token": {"capability_audit": {"ok": True, "issues": []}},
+        },
+        "run_ledger_projection": {
+            "source": "run_ledger",
+            "integrity_ok": True,
+            "outcome_ok": True,
+            "ok": True,
+            "event_count": 1,
+            "gate_count": 1,
+            "failed_gates": [],
+            "capability": {"ok": True, "issues": [], "latest_token_id": "job-token-id"},
+            "physical_evidence": {},
+        },
+    }
+    record.update(overrides)
+    return record
+
+
+def _successful_audit_record(**overrides: Any) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "all_checks_passed": True,
+        "static_checks_passed": True,
+        "has_plan_doc": True,
+        "has_blueprint_doc": True,
+        "has_qa_verdict": True,
+        "code_file_count": 1,
+        "source_file_count": 1,
+        "code_files": ["src/index.js"],
+        "target_files": ["src/index.js"],
+        "allowed_paths": ["src/index.js"],
+        "required_artifacts": ["src/index.js"],
+        "project_brief": "Build something",
+        "blueprint_id": "bp-test",
+        "blueprints": [{"id": "bp-test"}],
+        "checks": [],
     }
     record.update(overrides)
     return record
@@ -1228,15 +1269,7 @@ def test_main_default_max_failed_zero_does_not_early_stop(monkeypatch: Any, tmp_
     monkeypatch.setattr(
         bench,
         "build_factory_audit_record",
-        lambda **_kwargs: {
-            "all_checks_passed": True,
-            "static_checks_passed": True,
-            "has_plan_doc": True,
-            "has_blueprint_doc": True,
-            "has_qa_verdict": True,
-            "code_file_count": 1,
-            "checks": [],
-        },
+        lambda **_kwargs: _successful_audit_record(),
     )
     monkeypatch.setattr(
         bench,
@@ -1807,15 +1840,7 @@ def test_main_run_id_shared_across_projects(monkeypatch: Any, tmp_path: Path) ->
     monkeypatch.setattr(
         bench,
         "build_factory_audit_record",
-        lambda **_kwargs: {
-            "all_checks_passed": True,
-            "static_checks_passed": True,
-            "has_plan_doc": True,
-            "has_blueprint_doc": True,
-            "has_qa_verdict": True,
-            "code_file_count": 1,
-            "checks": [],
-        },
+        lambda **_kwargs: _successful_audit_record(),
     )
     monkeypatch.setattr(
         bench,
@@ -1892,15 +1917,7 @@ def test_main_audit_path_points_to_conflict_when_same_id_reused(monkeypatch: Any
     monkeypatch.setattr(
         bench,
         "build_factory_audit_record",
-        lambda **_kwargs: {
-            "all_checks_passed": True,
-            "static_checks_passed": True,
-            "has_plan_doc": True,
-            "has_blueprint_doc": True,
-            "has_qa_verdict": True,
-            "code_file_count": 1,
-            "checks": [],
-        },
+        lambda **_kwargs: _successful_audit_record(),
     )
     monkeypatch.setattr(
         bench,
@@ -2831,18 +2848,10 @@ def test_main_completed_chain_marks_audit_as_terminal(
 
     def _capture_build(**kwargs: Any) -> dict[str, Any]:
         captured_records.append(kwargs)
-        return {
-            "all_checks_passed": True,
-            "static_checks_passed": True,
-            "has_plan_doc": True,
-            "has_blueprint_doc": True,
-            "has_qa_verdict": True,
-            "code_file_count": 1,
-            "source_file_count": 1,
-            "checks": [],
-            "audit_snapshot_kind": "terminal" if kwargs.get("chain_terminal", True) else "non_terminal",
-            "audit_terminal": kwargs.get("chain_terminal", True),
-        }
+        return _successful_audit_record(
+            audit_snapshot_kind="terminal" if kwargs.get("chain_terminal", True) else "non_terminal",
+            audit_terminal=kwargs.get("chain_terminal", True),
+        )
 
     monkeypatch.setattr(sys, "argv", ["run_factory_bench.py", "--project-ids", "L1-01", "--work-dir", str(tmp_path)])
     monkeypatch.setattr(
@@ -3141,15 +3150,7 @@ def test_runner_audit_includes_catalog_hash_and_schema_version(monkeypatch: Any,
     monkeypatch.setattr(
         bench,
         "build_factory_audit_record",
-        lambda **_kwargs: {
-            "all_checks_passed": True,
-            "static_checks_passed": True,
-            "has_plan_doc": True,
-            "has_blueprint_doc": True,
-            "has_qa_verdict": True,
-            "code_file_count": 1,
-            "checks": [],
-        },
+        lambda **_kwargs: _successful_audit_record(),
     )
     monkeypatch.setattr(
         bench,

@@ -11,10 +11,14 @@
  */
 
 import { useMemo } from 'react';
-import { Activity, CheckCircle2, CircleDashed, Hammer, Loader2, XCircle } from 'lucide-react';
+import { Activity, CheckCircle2, CircleDashed, Hammer, Loader2, ShieldCheck, XCircle } from 'lucide-react';
 import { cn } from '@/app/components/ui/utils';
 import { useFactoryBench, type UseFactoryBenchResult } from '@/hooks/useFactoryBench';
-import type { FactoryBenchEvent, FactoryBenchSessionSummary } from '@/services/benchService';
+import type {
+  FactoryBenchControlPlaneProjection,
+  FactoryBenchEvent,
+  FactoryBenchSessionSummary,
+} from '@/services/benchService';
 
 interface BenchStatusStripProps {
   className?: string;
@@ -50,6 +54,12 @@ function progressPct(session: FactoryBenchSessionSummary | null): number {
 function summarize(s: FactoryBenchSessionSummary): string {
   const total = s.total || s.project_ids?.length || 0;
   return `${s.completed || 0}/${total} 通过${s.failed ? ` · ${s.failed} 失败` : ''}`;
+}
+
+function summarizeControlPlane(projection: FactoryBenchControlPlaneProjection | undefined): string {
+  if (!projection) return '账本未装载';
+  if (!projection.available) return projection.status === 'pending' ? '账本待生成' : '账本缺失';
+  return `${projection.projected}/${projection.total} 账本投影${projection.failed ? ` · ${projection.failed} 异常` : ''}`;
 }
 
 function lastBenchEvent(events: FactoryBenchEvent[]): FactoryBenchEvent | null {
@@ -171,6 +181,20 @@ function BenchStatusStripView({
 
       <span className="shrink-0 font-mono text-[10px] text-slate-600">
         {active.session_id}
+      </span>
+
+      <span
+        className={cn(
+          'flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 font-mono text-[10px]',
+          active.control_plane_projection?.ok
+            ? 'border-cyan-400/30 bg-cyan-400/10 text-cyan-100'
+            : 'border-amber-400/30 bg-amber-400/10 text-amber-100',
+        )}
+        data-testid="bench-strip-control-plane"
+        title={active.control_plane_projection?.detail || 'run_ledger_projection'}
+      >
+        <ShieldCheck className="h-3 w-3" />
+        {summarizeControlPlane(active.control_plane_projection)}
       </span>
 
       {showWebsocketState ? (

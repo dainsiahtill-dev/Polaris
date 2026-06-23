@@ -103,6 +103,8 @@ class TestFactoryBenchService(unittest.TestCase):
         self.assertEqual(snapshot["total"], 2)
         self.assertEqual(len(snapshot["events"]), 3)
         self.assertEqual(snapshot["events"][0]["type"], "event.0")
+        self.assertEqual(snapshot["control_plane_projection"]["source"], "run_ledger_projection")
+        self.assertEqual(snapshot["control_plane_projection"]["status"], "pending")
 
     def test_list_sessions_returns_recent_first(self) -> None:
         sids: list[str] = []
@@ -113,6 +115,71 @@ class TestFactoryBenchService(unittest.TestCase):
             time.sleep(1.05)
         listed = self.svc.list_sessions()
         self.assertEqual([s["session_id"] for s in listed], list(reversed(sids)))
+
+    def test_session_snapshots_include_run_ledger_control_plane_projection(self) -> None:
+        work_dir = self.root / "bench-work"
+        work_dir.mkdir()
+        (work_dir / "factory_audits.json").write_text(
+            json.dumps(
+                {
+                    "goal_audit": {
+                        "run_ledger": {
+                            "projected": 1,
+                            "total": 1,
+                            "missing": 0,
+                        }
+                    },
+                    "records": [
+                        {
+                            "project_id": "L1-01",
+                            "run_ledger_projection": {
+                                "schema_version": 1,
+                                "source": "run_ledger",
+                                "ok": True,
+                                "integrity_ok": True,
+                                "outcome_ok": True,
+                                "event_count": 1,
+                                "gate_count": 1,
+                                "missing": [],
+                                "gates": [],
+                                "failed_gates": [],
+                                "capability": {
+                                    "ok": True,
+                                    "issues": [],
+                                    "latest_token_id": "job-token-1",
+                                },
+                                "physical_evidence": {
+                                    "command_count": 2,
+                                    "sampled_command_count": 2,
+                                    "truncated_command_events": 0,
+                                },
+                            },
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        sid = self.svc.register_session(
+            work_dir=str(work_dir), project_ids=["L1-01"], total=1, session_id="bench-ledger"
+        )
+
+        snapshot = self.svc.get_session(sid)
+        listed = self.svc.list_sessions()
+
+        assert snapshot is not None
+        projection = snapshot["control_plane_projection"]
+        self.assertTrue(projection["ok"])
+        self.assertEqual(projection["status"], "ready")
+        self.assertEqual(projection["source"], "run_ledger_projection")
+        self.assertEqual(projection["total"], 1)
+        self.assertEqual(projection["projected"], 1)
+        self.assertEqual(projection["missing"], 0)
+        self.assertEqual(projection["projects"][0]["project_id"], "L1-01")
+        self.assertEqual(projection["projects"][0]["latest_token_id"], "job-token-1")
+        self.assertEqual(projection["goal_audit"], {"projected": 1, "total": 1, "missing": 0})
+        self.assertEqual(listed[0]["control_plane_projection"], projection)
 
     def test_read_events_from_returns_all_events_from_offset(self) -> None:
         sid = self.svc.register_session(work_dir="/tmp/ws", project_ids=["L1-01"], total=1)

@@ -231,6 +231,22 @@ _FILE_PARAM_WRITE_TOOLS = frozenset(
 )
 
 
+def _single_relative_target_variants(target: Any) -> tuple[str, ...]:
+    """Return enum-ready variants for one clean relative target path."""
+
+    token = str(target or "").strip()
+    if not token:
+        return ()
+    if any(ch in token for ch in ("*", "?", "[", "]", ",", " ", "\t", "\n", "\\")):
+        return ()
+    if token.startswith("/") or token.startswith("~") or ".." in token.split("/"):
+        return ()
+    variants = [token]
+    if not token.startswith("./"):
+        variants.append(f"./{token}")
+    return tuple(dict.fromkeys(variants))
+
+
 def extract_declared_step_target_files(context_override: Any) -> tuple[str, ...]:
     """Return the construction step's declared target file as enum-ready variants.
 
@@ -246,17 +262,35 @@ def extract_declared_step_target_files(context_override: Any) -> tuple[str, ...]
     step = context_override.get("construction_step")
     if not isinstance(step, dict):
         return ()
-    target = str(step.get("target_file") or "").strip()
-    if not target:
+    return _single_relative_target_variants(step.get("target_file"))
+
+
+def extract_director_quality_repair_target_files(context_override: Any) -> tuple[str, ...]:
+    """Return the single Director quality-repair target as enum-ready variants."""
+
+    if not isinstance(context_override, dict):
         return ()
-    if any(ch in target for ch in ("*", "?", "[", "]", ",", " ", "\t", "\n", "\\")):
+    repair = context_override.get("director_quality_repair")
+    if not isinstance(repair, dict):
         return ()
-    if target.startswith("/") or target.startswith("~") or ".." in target.split("/"):
-        return ()
-    variants = [target]
-    if not target.startswith("./"):
-        variants.append(f"./{target}")
-    return tuple(dict.fromkeys(variants))
+    single_target = repair.get("write_only_single_target")
+    if isinstance(single_target, dict):
+        variants = _single_relative_target_variants(single_target.get("target_file"))
+        if variants:
+            return variants
+    repair_targets = repair.get("repair_target_files")
+    if isinstance(repair_targets, list) and len(repair_targets) == 1:
+        return _single_relative_target_variants(repair_targets[0])
+    return ()
+
+
+def extract_write_tool_pin_target_files(context_override: Any) -> tuple[str, ...]:
+    """Return the active single-file target for write-tool schema pinning."""
+
+    declared_targets = extract_declared_step_target_files(context_override)
+    if declared_targets:
+        return declared_targets
+    return extract_director_quality_repair_target_files(context_override)
 
 
 _WRITE_KEEP_TOOLS = _FILE_PARAM_WRITE_TOOLS | {"repo_apply_diff", "execute_command"}

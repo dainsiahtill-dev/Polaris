@@ -657,7 +657,9 @@ def test_scan_detects_type_module_commonjs_runtime_mismatch(tmp_path: Path) -> N
 
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
 
-    assert any("declares type=module but workspace JavaScript uses CommonJS runtime syntax" in error for error in errors)
+    assert any(
+        "declares type=module but workspace JavaScript uses CommonJS runtime syntax" in error for error in errors
+    )
 
 
 def test_scan_allows_type_module_with_esm_source(tmp_path: Path) -> None:

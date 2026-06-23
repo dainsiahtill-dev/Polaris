@@ -30,6 +30,8 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
+from .run_ledger import summarize_run_ledger_projection
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SESSIONS_ROOT = Path(os.path.expanduser("~/.cache/polaris/factory_bench/sessions"))
@@ -57,6 +59,101 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     os.replace(tmp, path)
+
+
+def _empty_control_plane_projection(*, session_status: str, audit_path: Path | None = None) -> dict[str, Any]:
+    state = "pending" if session_status == "running" else "missing"
+    return {
+        "schema_version": 1,
+        "source": "run_ledger_projection",
+        "available": False,
+        "ok": False,
+        "status": state,
+        "audit_path": str(audit_path) if audit_path is not None else "",
+        "total": 0,
+        "projected": 0,
+        "missing": 0,
+        "failed": 0,
+        "projects": [],
+        "detail": "factory audit ledger projection is not available yet",
+    }
+
+
+def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, Any]:
+    """Build a read-only control-plane projection from factory_audits.json."""
+
+    work_dir = str(status.get("work_dir") or "").strip()
+    session_status = str(status.get("status") or "").strip().lower()
+    if not work_dir:
+        return _empty_control_plane_projection(session_status=session_status)
+    audit_path = Path(work_dir) / "factory_audits.json"
+    if not audit_path.is_file():
+        return _empty_control_plane_projection(session_status=session_status, audit_path=audit_path)
+    try:
+        payload = json.loads(audit_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {
+            **_empty_control_plane_projection(session_status=session_status, audit_path=audit_path),
+            "status": "invalid",
+            "detail": f"factory audit ledger projection could not be read: {exc}",
+        }
+    records = payload.get("records") if isinstance(payload, dict) else None
+    if not isinstance(records, list):
+        return {
+            **_empty_control_plane_projection(session_status=session_status, audit_path=audit_path),
+            "status": "invalid",
+            "detail": "factory audit ledger projection missing records",
+        }
+
+    projects: list[dict[str, Any]] = []
+    projected = 0
+    failed = 0
+    for index, item in enumerate(records):
+        record: dict[str, Any] = item if isinstance(item, dict) else {}
+        projection = record.get("run_ledger_projection")
+        projection_status = summarize_run_ledger_projection(projection)
+        projection_map: dict[str, Any] = projection if isinstance(projection, dict) else {}
+        ok = bool(projection_status.get("ok"))
+        if ok:
+            projected += 1
+        else:
+            failed += 1
+        capability = projection_map.get("capability")
+        capability_map: dict[str, Any] = capability if isinstance(capability, dict) else {}
+        projects.append(
+            {
+                "project_id": str(record.get("project_id") or record.get("id") or f"record-{index + 1}"),
+                "ok": ok,
+                "integrity_ok": bool(projection_map.get("integrity_ok")),
+                "outcome_ok": bool(projection_map.get("outcome_ok")),
+                "gate_count": int(projection_map.get("gate_count") or 0),
+                "failed_gate_count": int(projection_status.get("failed_gate_count") or 0),
+                "latest_token_id": str(capability_map.get("latest_token_id") or ""),
+                "detail": str(projection_status.get("detail") or ""),
+                "missing": list(projection_status.get("missing") or []),
+            }
+        )
+
+    total = len(records)
+    missing = max(0, total - projected)
+    ready = total > 0 and projected == total and failed == 0
+    goal_audit = payload.get("goal_audit") if isinstance(payload, dict) else {}
+    goal_ledger = goal_audit.get("run_ledger") if isinstance(goal_audit, dict) else None
+    return {
+        "schema_version": 1,
+        "source": "run_ledger_projection",
+        "available": True,
+        "ok": ready,
+        "status": "ready" if ready else "degraded",
+        "audit_path": str(audit_path),
+        "total": total,
+        "projected": projected,
+        "missing": missing,
+        "failed": failed,
+        "projects": projects,
+        "goal_audit": goal_ledger if isinstance(goal_ledger, dict) else {},
+        "detail": f"run ledger projection {projected}/{total} project(s) ready",
+    }
 
 
 class FactoryBenchService:
@@ -219,6 +316,7 @@ class FactoryBenchService:
         except (OSError, ValueError) as exc:
             logger.warning("get_session: status parse failed for %s: %s", session_id, exc)
             return None
+        status["control_plane_projection"] = _control_plane_projection_from_audit(status)
         status["events_path"] = str(sdir / "events.jsonl")
         status["events"] = list(self.tail_events(session_id, max_lines=200))
         return status
@@ -245,6 +343,7 @@ class FactoryBenchService:
                 status = json.loads(status_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
+            status["control_plane_projection"] = _control_plane_projection_from_audit(status)
             out.append(status)
         return out
 

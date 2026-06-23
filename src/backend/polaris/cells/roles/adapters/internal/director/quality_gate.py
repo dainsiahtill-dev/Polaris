@@ -1184,6 +1184,8 @@ def _should_rotate_materialization_quality_repair_targets(artifact_quality_error
 
 def _should_preserve_materialization_quality_repair_batch(artifact_quality_errors: list[str]) -> bool:
     joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
+    if _artifact_quality_failed_test_count(artifact_quality_errors) >= 2:
+        return True
     if "unresolved import symbol" in joined_errors or "has no exported member" in joined_errors:
         return True
     if "ts18046" in joined_errors or "is of type 'unknown'" in joined_errors or 'is of type "unknown"' in joined_errors:
@@ -1215,6 +1217,12 @@ _SEMANTIC_QUALITY_EXPLICIT_PATH_RE = re.compile(
     r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:c|cc|cpp|cxx|go|h|hpp|html|java|js|jsx|json|md|py|rs|ts|tsx|css))(?=[:\s(]|$)",
     re.IGNORECASE,
 )
+_FAILED_TEST_TITLE_RE = re.compile(
+    r"^\s*(?:not\s+ok\s+\d+|failed|fail)\s*(?:[-:]\s*)?(?P<title>.+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_TAP_FAILED_TEST_RE = re.compile(r"^\s*not\s+ok\s+\d+\b", re.IGNORECASE | re.MULTILINE)
+_TEST_SUMMARY_FAIL_RE = re.compile(r"^\s*#?\s*fail\s+(?P<count>\d+)\s*$", re.IGNORECASE | re.MULTILINE)
 _TS_NO_EXPORTED_MEMBER_QUALITY_RE = re.compile(
     r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.tsx?)\(\d+,\d+\):\s*"
     r"error\s+TS2305:\s*Module\s+['\"](?P<module>.+?)['\"]\s+has no exported member",
@@ -1439,30 +1447,96 @@ def _explicit_artifact_quality_repair_target_files(
     if workspace_root is None or not workspace_root.is_dir():
         return []
 
-    changed_source_files = {
-        rel
-        for item in changed_files
-        if (rel := _normalize_declared_task_path(str(item or "")))
-        and Path(rel).suffix.lower() in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES
-    }
+    changed_source_files = _dedupe_preserve_order(
+        [
+            rel
+            for item in changed_files
+            if (rel := _normalize_declared_task_path(str(item or "")))
+            and Path(rel).suffix.lower() in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES
+        ]
+    )
+    changed_source_set = set(changed_source_files)
+    changed_by_lower = {item.lower(): item for item in changed_source_files}
     candidates: list[str] = []
     for item in artifact_quality_errors:
         text = str(item or "")
         if not any(hint in text.lower() for hint in _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS):
             continue
+        candidates.extend(_failed_test_title_target_files(text, workspace_root, changed_source_files))
         for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(text):
-            rel = _normalize_declared_task_path(match.group("path"))
+            rel = _map_quality_error_path_to_changed_file(match.group("path"), changed_by_lower)
             if not rel:
                 continue
             if Path(rel).suffix.lower() not in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES:
                 continue
-            if changed_source_files and rel not in changed_source_files:
+            if changed_source_set and rel not in changed_source_set:
                 continue
             if _workspace_path_exists_case_insensitive(workspace_root, rel):
                 if _is_test_like_javascript_path(rel) and _looks_like_javascript_test_behavior_failure(text):
                     candidates.extend(_javascript_test_imported_source_target_files(rel, workspace_root))
                 candidates.append(rel)
-    return _dedupe_preserve_order(candidates)
+    deduped_candidates = _dedupe_preserve_order(candidates)
+    if not changed_source_files:
+        return deduped_candidates
+    changed_order = {item.lower(): index for index, item in enumerate(changed_source_files)}
+    original_order = {item.lower(): index for index, item in enumerate(deduped_candidates)}
+    return sorted(
+        deduped_candidates,
+        key=lambda item: (
+            changed_order.get(item.lower(), len(changed_order)),
+            original_order.get(item.lower(), len(original_order)),
+        ),
+    )
+
+
+def _failed_test_title_target_files(text: str, workspace_root: Path, changed_source_files: list[str]) -> list[str]:
+    """Prefer artifacts named by the failed test title over stack frames."""
+
+    changed_by_lower = {item.lower(): item for item in changed_source_files}
+    targets: list[str] = []
+    for match in _FAILED_TEST_TITLE_RE.finditer(str(text or "")):
+        title = str(match.group("title") or "")
+        for path_match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(title):
+            rel = _map_quality_error_path_to_changed_file(path_match.group("path"), changed_by_lower)
+            if not rel:
+                continue
+            if changed_by_lower and rel.lower() not in changed_by_lower:
+                continue
+            if Path(rel).suffix.lower() not in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES:
+                continue
+            if _workspace_path_exists_case_insensitive(workspace_root, rel):
+                targets.append(rel)
+    return _dedupe_preserve_order(targets)
+
+
+def _map_quality_error_path_to_changed_file(raw_path: str, changed_by_lower: dict[str, str]) -> str:
+    """Map relative or workspace-absolute quality-log paths to changed files."""
+
+    rel = _normalize_declared_task_path(raw_path)
+    if rel and (not changed_by_lower or rel.lower() in changed_by_lower):
+        return changed_by_lower.get(rel.lower(), rel)
+
+    normalized = str(raw_path or "").strip().strip("'\"`").replace("\\", "/").strip("/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    normalized_lower = normalized.lower()
+    for candidate_lower, candidate in changed_by_lower.items():
+        if normalized_lower == candidate_lower or normalized_lower.endswith(f"/{candidate_lower}"):
+            return candidate
+    return rel
+
+
+def _artifact_quality_failed_test_count(artifact_quality_errors: list[str]) -> int:
+    """Return the physical test failure count reported by common CLI formats."""
+
+    text = "\n".join(str(item or "") for item in artifact_quality_errors)
+    failed_count = len(_TAP_FAILED_TEST_RE.findall(text))
+    for match in _TEST_SUMMARY_FAIL_RE.finditer(text):
+        try:
+            failed_count = max(failed_count, int(match.group("count")))
+        except (TypeError, ValueError):
+            continue
+    return failed_count
 
 
 def _looks_like_javascript_test_behavior_failure(text: str) -> bool:
@@ -1776,6 +1850,13 @@ def _semantic_quality_repair_target_files(
 
     unique_candidates = _dedupe_preserve_order(candidates)
     explicit_candidates: list[str] = []
+    explicit_candidates.extend(
+        _failed_test_title_target_files(
+            "\n".join(str(item or "") for item in artifact_quality_errors),
+            workspace_root,
+            unique_candidates,
+        )
+    )
     for item in artifact_quality_errors:
         for match in _SEMANTIC_QUALITY_EXPLICIT_PATH_RE.finditer(str(item or "")):
             rel = _normalize_declared_task_path(match.group("path"))

@@ -199,8 +199,17 @@ def _apply_forced_transaction_tool_definitions(
     forced_definitions = _extract_forced_transaction_tool_definitions(context_override)
     if forced_definitions is None:
         return tool_definitions
-    return augment_forced_transaction_tool_definitions(
+    scoped_definitions = augment_forced_transaction_tool_definitions(
         tool_definitions=tool_definitions,
         forced_definitions=forced_definitions,
         context_override=context_override,
     )
+    from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
+        extract_write_tool_pin_target_files,
+        pin_write_tool_file_param_to_targets,
+    )
+
+    pin_targets = extract_write_tool_pin_target_files(context_override)
+    if not pin_targets:
+        return scoped_definitions
+    return pin_write_tool_file_param_to_targets(scoped_definitions, pin_targets)

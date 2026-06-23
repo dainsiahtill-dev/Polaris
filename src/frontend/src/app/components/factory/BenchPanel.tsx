@@ -14,6 +14,7 @@ import {
   Clock,
   Loader2,
   RefreshCw,
+  ShieldCheck,
   XCircle,
 } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
@@ -24,7 +25,11 @@ import {
   type UseFactoryBenchOptions,
   type UseFactoryBenchResult,
 } from '@/hooks/useFactoryBench';
-import type { FactoryBenchEvent, FactoryBenchSessionSummary } from '@/services/benchService';
+import type {
+  FactoryBenchControlPlaneProjection,
+  FactoryBenchEvent,
+  FactoryBenchSessionSummary,
+} from '@/services/benchService';
 
 interface BenchPanelProps {
   className?: string;
@@ -67,6 +72,25 @@ function summarizeSession(session: FactoryBenchSessionSummary): string {
   const completed = session.completed || 0;
   const failed = session.failed || 0;
   return `${completed}/${total} 已完成${failed > 0 ? ` · ${failed} 失败` : ''}`;
+}
+
+function controlPlaneColor(
+  projection: FactoryBenchControlPlaneProjection | undefined,
+): 'info' | 'success' | 'error' {
+  if (!projection?.available) return 'info';
+  return projection.ok ? 'success' : 'error';
+}
+
+function controlPlaneLabel(projection: FactoryBenchControlPlaneProjection | undefined): string {
+  if (!projection) return '账本待装载';
+  if (!projection.available) return projection.status === 'pending' ? '账本待生成' : '账本缺失';
+  return projection.ok ? '账本一致' : '账本异常';
+}
+
+function summarizeControlPlane(projection: FactoryBenchControlPlaneProjection | undefined): string {
+  if (!projection) return 'run_ledger_projection 未装载';
+  if (!projection.available) return projection.detail || 'factory_audits.json 尚不可用';
+  return `${projection.projected}/${projection.total} 投影 · ${projection.failed} 异常`;
 }
 
 export function BenchPanel({ className, onWorkspaceChange }: BenchPanelProps): JSX.Element {
@@ -145,6 +169,10 @@ export function BenchPanel({ className, onWorkspaceChange }: BenchPanelProps): J
                 <div className="text-[11px] text-slate-400">
                   {summarizeSession(session)}
                 </div>
+                <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                  <ShieldCheck className="h-3 w-3 text-cyan-300" />
+                  <span className="truncate">{summarizeControlPlane(session.control_plane_projection)}</span>
+                </div>
                 <div className="flex w-full items-center justify-between text-[10px] text-slate-500">
                   <span>{formatTime(session.updated_at)}</span>
                   <span className="truncate">{session.work_dir}</span>
@@ -180,6 +208,22 @@ export function BenchPanel({ className, onWorkspaceChange }: BenchPanelProps): J
                   data-testid="bench-progress"
                   data-progress={progress}
                 />
+              </div>
+              <div
+                className="flex flex-wrap items-center gap-2 rounded border border-cyan-500/20 bg-cyan-950/20 px-2 py-1.5 text-[11px] text-slate-300"
+                data-testid="bench-control-plane-projection"
+                title={currentSession.control_plane_projection?.detail}
+              >
+                <ShieldCheck className="h-3.5 w-3.5 text-cyan-300" />
+                <StatusBadge color={controlPlaneColor(currentSession.control_plane_projection)} variant="soft">
+                  {controlPlaneLabel(currentSession.control_plane_projection)}
+                </StatusBadge>
+                <span className="font-mono text-cyan-100">
+                  {summarizeControlPlane(currentSession.control_plane_projection)}
+                </span>
+                <span className="text-slate-500">
+                  source={currentSession.control_plane_projection?.source || 'run_ledger_projection'}
+                </span>
               </div>
               <div className="mt-1 flex flex-1 flex-col gap-1 overflow-y-auto rounded border border-slate-800 bg-slate-950/60 p-2 font-mono text-[11px] leading-5">
                 {events.length === 0 ? (

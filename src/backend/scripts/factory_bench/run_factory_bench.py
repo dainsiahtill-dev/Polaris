@@ -44,7 +44,11 @@ from polaris.cells.factory.pipeline.internal.bench_gates import (
     collect_llm_events,
     resolve_expected_llm_bindings,
 )
-from polaris.cells.factory.pipeline.public.service import persist_real_run_gate_ledger
+from polaris.cells.factory.pipeline.public.service import (
+    load_run_ledger_projection,
+    persist_real_run_gate_ledger,
+    summarize_run_ledger_projection,
+)
 from polaris.kernelone.benchmark.factory_audit import (
     aggregate_factory_audits,
     build_factory_audit_record,
@@ -2435,6 +2439,14 @@ def build_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
         )
     else:
         gates.append(_bench_gate("real_run_gate", False, "real run gate missing"))
+    run_ledger_status = summarize_run_ledger_projection(record.get("run_ledger_projection"))
+    gates.append(
+        _bench_gate(
+            "run_ledger_projection",
+            bool(run_ledger_status.get("ok")),
+            str(run_ledger_status.get("detail") or "run ledger status missing detail"),
+        )
+    )
     llm_route_audit = record.get("llm_route_audit")
     if isinstance(llm_route_audit, dict):
         gates.append(
@@ -2483,6 +2495,7 @@ def apply_factory_bench_gates(record: dict[str, Any], chain: dict[str, Any]) -> 
     """Fold full-chain gates into ``all_checks_passed`` in-place."""
 
     static_checks_passed = bool(record.get("static_checks_passed", record.get("all_checks_passed")))
+    record["run_ledger_projection_status"] = summarize_run_ledger_projection(record.get("run_ledger_projection"))
     gates = build_factory_bench_gates(record, chain)
     record["static_checks_passed"] = static_checks_passed
     record["factory_gates"] = gates
@@ -3657,6 +3670,7 @@ def main() -> int:
                 stage=chain_phase_raw or chain_status_raw or "chain_non_terminal",
                 gate_name="chain_non_terminal",
             )
+        record["run_ledger_projection"] = load_run_ledger_projection(workspace, run_id=run_id)
         required_llm_roles = required_llm_roles_for_factory_record(chain=chain, record=record)
         record["required_llm_roles"] = list(required_llm_roles)
         record["llm_route_audit"] = build_llm_route_audit(

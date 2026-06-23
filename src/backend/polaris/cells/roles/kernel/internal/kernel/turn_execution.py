@@ -64,7 +64,7 @@ async def execute_transaction_kernel_turn(
     """Execute a single turn via TransactionKernel and map to RoleTurnResult."""
     from polaris.cells.roles.kernel.internal.llm_caller.tool_helpers import (
         build_native_tool_schemas,
-        extract_declared_step_target_files,
+        extract_write_tool_pin_target_files,
         pin_write_tool_file_param_to_targets,
         resolve_from_scratch_write_target,
         resolve_repair_edit_target,
@@ -119,9 +119,9 @@ async def execute_transaction_kernel_turn(
     # pin write tools' file-param enum to the declared target. Strict guided
     # decoding (named tool forcing) makes a wrong-file write ungenerable;
     # schema-advisory providers still see the strongest possible signal.
-    declared_step_targets = extract_declared_step_target_files(getattr(request, "context_override", None))
-    if declared_step_targets:
-        tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, declared_step_targets)
+    write_pin_targets = extract_write_tool_pin_target_files(getattr(request, "context_override", None))
+    if write_pin_targets:
+        tool_definitions = pin_write_tool_file_param_to_targets(tool_definitions, write_pin_targets)
     # Prong A (I3-r23): a from-scratch leaf step writes on turn 1. Keep a
     # minimal execution schema so weak Directors still receive schema-backed
     # read/locate tools referenced by the prompt, while mutation gates require

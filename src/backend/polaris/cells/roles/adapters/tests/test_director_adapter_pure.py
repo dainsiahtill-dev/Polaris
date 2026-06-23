@@ -7216,6 +7216,80 @@ def test_materialization_quality_errors_keep_pinned_step_single_file_scope(tmp_p
     assert not any("src/other.ts" in error for error in errors)
 
 
+def test_explicit_quality_repair_prefers_failed_test_named_artifact(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+    )
+
+    (tmp_path / "README.md").write_text("# Dream Note\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text('{"scripts":{"test":"node --test tests/smoke.test.js"}}\n', encoding="utf-8")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "smoke.test.js").write_text("import test from 'node:test';\n", encoding="utf-8")
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm test):\n"
+        "not ok 5 - README.md documents how to install and run the project\n"
+        f"  location: '{tmp_path / 'tests' / 'smoke.test.js'}:83:1'\n"
+        "  error: 'README must document npm install'\n"
+        "  name: 'AssertionError'\n"
+    )
+
+    targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=["package.json", "README.md", "tests/smoke.test.js"],
+        workspace_full=str(tmp_path),
+    )
+
+    assert targets[0] == "README.md"
+
+
+def test_node_tap_multi_failure_quality_repair_preserves_batch(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.quality_gate import (
+        _explicit_artifact_quality_repair_target_files,
+        _select_materialization_quality_repair_target_batch,
+        _should_preserve_materialization_quality_repair_batch,
+    )
+
+    src = tmp_path / "src"
+    src.mkdir()
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tmp_path / "package.json").write_text(
+        '{"name":"wrong","scripts":{"test":"node tests/smoke.test.js"}}\n', encoding="utf-8"
+    )
+    (src / "index.js").write_text("console.log('wrong')\n", encoding="utf-8")
+    (tests / "smoke.test.js").write_text("import test from 'node:test';\n", encoding="utf-8")
+    error = (
+        "Artifact quality scan failed: workspace validation command failed (npm test):\n"
+        "not ok 1 - package.json declares package name and module type\n"
+        "  error: 'package name mismatch'\n"
+        "not ok 2 - npm start launches src/index.js and prints product banner\n"
+        "  error: 'banner missing'\n"
+        "not ok 3 - JSON persistence is handled by src/index.js add/list commands\n"
+        "  error: 'store file missing'\n"
+        f"  location: '{tests / 'smoke.test.js'}:42:1'\n"
+        "  name: 'AssertionError'\n"
+        "# tests 3\n"
+        "# pass 0\n"
+        "# fail 3\n"
+    )
+
+    targets = _explicit_artifact_quality_repair_target_files(
+        artifact_quality_errors=[error],
+        changed_files=["package.json", "src/index.js", "tests/smoke.test.js"],
+        workspace_full=str(tmp_path),
+    )
+    preserve_batch = _should_preserve_materialization_quality_repair_batch([error])
+    selected = _select_materialization_quality_repair_target_batch(
+        targets,
+        repair_attempt=2,
+        preserve_batch_after_first_attempt=preserve_batch,
+    )
+
+    assert preserve_batch is True
+    assert selected[:3] == ["package.json", "src/index.js", "tests/smoke.test.js"]
+
+
 def test_placeholder_node_test_synthesis_default_off(monkeypatch, tmp_path: Any) -> None:
     """§8 regression: missing test files should not be masked by fabricated
     placeholder tests in production/director hot paths."""
