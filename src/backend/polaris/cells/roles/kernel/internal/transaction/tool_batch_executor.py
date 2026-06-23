@@ -21,10 +21,12 @@ from polaris.cells.roles.kernel.internal.speculative_flags import is_adoption_au
 from polaris.cells.roles.kernel.internal.tool_batch_runtime import ToolBatchRuntime, ToolExecutionContext
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     batch_write_results_all_failed_on_argument_shape,
+    extract_allowed_scope_paths_from_message,
     extract_invocation_tool_name,
     extract_target_file_from_invocation_args,
     extract_target_files_from_message,
     filter_out_of_scope_write_invocations,
+    filter_scope_paths_for_explicit_targets,
     receipts_have_stale_edit_failure,
     resolve_mutation_target_guard_violation,
     tool_batch_has_authoritative_write_invocation,
@@ -688,11 +690,16 @@ class ToolBatchExecutor:
 
         latest_user_request = extract_latest_user_message(context)
         single_target_candidates = extract_target_files_from_message(latest_user_request)
+        single_scope_candidates = extract_allowed_scope_paths_from_message(latest_user_request)
         modification_contract = getattr(ledger, "modification_contract", None)
         if modification_contract is not None:
             contract_targets = getattr(modification_contract, "target_files", None)
             if isinstance(contract_targets, (list, tuple)):
                 single_target_candidates.extend(str(item) for item in contract_targets)
+        single_scope_candidates = filter_scope_paths_for_explicit_targets(
+            single_scope_candidates,
+            single_target_candidates,
+        )
         invocations = fill_single_target_line_range_edit_blocks(
             invocations,
             target_files=tuple(single_target_candidates),
@@ -701,6 +708,7 @@ class ToolBatchExecutor:
             latest_user_request,
             invocations,
             additional_allowed_targets=tuple(single_target_candidates),
+            additional_allowed_scopes=tuple(single_scope_candidates),
         )
         if dropped_out_of_scope_writes:
             reason = (
@@ -1084,6 +1092,7 @@ class ToolBatchExecutor:
                 latest_user_request,
                 invocations,
                 additional_allowed_targets=tuple(single_target_candidates),
+                additional_allowed_scopes=tuple(single_scope_candidates),
             )
             if violation:
                 if guard_mode == "strict":

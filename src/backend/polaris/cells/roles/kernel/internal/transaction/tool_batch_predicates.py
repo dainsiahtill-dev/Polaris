@@ -527,7 +527,7 @@ def compute_mutation_guard_plan(
         target_guard_violation = resolve_mutation_target_guard_violation(
             latest_user_request,
             invocations,
-            allowed_target_files=contract_target_files,
+            additional_allowed_targets=contract_target_files,
         )
 
     return MutationGuardPlan(

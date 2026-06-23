@@ -2416,6 +2416,15 @@ def test_empty_write_retry_uses_concrete_scope_path_when_target_files_missing() 
     assert "Allowed target files: main.py." in message
 
 
+def test_target_candidates_include_explicit_scope_directories_with_target_files() -> None:
+    task = {
+        "target_files": ["package.json", "README.md"],
+        "scope_paths": ["package.json", "README.md", "src", "tests"],
+    }
+
+    assert _extract_task_target_path_candidates(task) == ["package.json", "README.md", "src", "tests"]
+
+
 @pytest.mark.asyncio
 async def test_execute_retries_blank_write_content_with_materialize_prompt(tmp_path: Any) -> None:
     adapter = _make_adapter(tmp_path)
@@ -7295,6 +7304,58 @@ class TestDeclaredPathCaseInsensitiveMatching:
         )
         assert new_files == []
         assert modified_files == []
+
+    def test_filter_allows_declared_scope_directory_outputs_with_target_files(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _filter_diff_to_task_declared_paths,
+        )
+
+        new_files, modified_files = _filter_diff_to_task_declared_paths(
+            task={
+                "target_files": ["package.json", "README.md"],
+                "scope_paths": ["package.json", "README.md", "src", "tests"],
+            },
+            new_files=["src/index.js", "tests/smoke.test.js", "outside.js"],
+            modified_files=["README.md"],
+        )
+
+        assert new_files == ["src/index.js", "tests/smoke.test.js"]
+        assert modified_files == ["README.md"]
+
+    def test_filter_does_not_broaden_parent_scope_when_specific_target_exists(self) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _filter_diff_to_task_declared_paths,
+        )
+
+        new_files, modified_files = _filter_diff_to_task_declared_paths(
+            task={
+                "target_files": ["src/client/network-client.ts"],
+                "scope_paths": ["src"],
+            },
+            new_files=["src/server/moderation.ts", "src/client/network-client.ts"],
+            modified_files=[],
+        )
+
+        assert new_files == ["src/client/network-client.ts"]
+        assert modified_files == []
+
+    def test_missing_declared_target_files_ignores_scope_directories(self, tmp_path: Any) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _missing_declared_target_files,
+        )
+
+        (tmp_path / "package.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "README.md").write_text("# Run\n", encoding="utf-8")
+
+        missing = _missing_declared_target_files(
+            {
+                "target_files": ["package.json", "README.md"],
+                "scope_paths": ["package.json", "README.md", "src", "tests"],
+            },
+            str(tmp_path),
+        )
+
+        assert missing == []
 
     def test_out_of_scope_diff_reports_filtered_real_output(self) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

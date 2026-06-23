@@ -743,6 +743,130 @@ class TestRunWorkspaceQualityChecks:
         assert payload["repair"]["rounds"][0]["source_tools"] == ["director_materialization_quality_repair"]
 
     @pytest.mark.asyncio
+    async def test_workspace_quality_ignores_deterministic_results_without_write_evidence(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-deterministic-no-write",
+            config=FactoryConfig(name="quality-deterministic-no-write"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-23T00:00:00+00:00",
+        )
+        state = {"repaired": False}
+        llm_repair_calls = 0
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            if state["repaired"]:
+                return {
+                    "command": command,
+                    "exit_code": 0,
+                    "passed": True,
+                    "stdout_tail": "test passed",
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": "> node tests/run-tests.js",
+                "stderr_tail": "Error: Cannot find module 'tests/run-tests.js'",
+                "error": "",
+            }
+
+        def fake_apply_workspace_quality_repairs(
+            *,
+            run_id: str,
+            artifact_quality_errors: list[str],
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            assert run_id == "factory-quality-deterministic-no-write"
+            assert artifact_quality_errors
+            return (
+                [
+                    {
+                        "tool": "inspect_package_script",
+                        "success": False,
+                        "result": {
+                            "source_tool": "director_materialization_quality_repair",
+                            "reason": "missing target remains unresolved",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": False,
+                    "source_tools": ["director_materialization_quality_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": False,
+                },
+            )
+
+        async def fake_apply_workspace_quality_llm_repairs(
+            *,
+            run_id: str,
+            context: dict[str, Any],
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            nonlocal llm_repair_calls
+            assert run_id == "factory-quality-deterministic-no-write"
+            assert context["workspace_quality_repair_max_rounds"] == 1
+            assert artifact_quality_errors
+            assert repair_attempt == 1
+            llm_repair_calls += 1
+            state["repaired"] = True
+            return (
+                [
+                    {
+                        "tool": "write_file",
+                        "tool_name": "write_file",
+                        "success": True,
+                        "result": {
+                            "source_tool": "director_materialization_quality_repair",
+                            "file": "tests/run-tests.js",
+                            "operation": "create",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "repair_mode": "director_llm",
+                    "source_tools": ["director_materialization_quality_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_llm_repairs",
+            fake_apply_workspace_quality_llm_repairs,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 1},
+        )
+
+        assert passed is True
+        assert llm_repair_calls == 1
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["repair"]["success"] is True
+        assert payload["repair"]["write_tool_evidence"] is True
+        assert payload["repair"]["rounds"][0]["evidence"] == [
+            "repair_write:tool=director_materialization_quality_repair;file=tests/run-tests.js;operation=create"
+        ]
+
+    @pytest.mark.asyncio
     async def test_workspace_quality_reruns_prepare_after_successful_repair(
         self,
         tmp_path: Path,

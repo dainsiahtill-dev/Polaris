@@ -17,8 +17,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     _file_exists_in_workspace,
+    extract_allowed_scope_paths_from_message,
     extract_target_file_from_invocation_args,
     filter_out_of_scope_write_invocations,
+    filter_scope_paths_for_explicit_targets,
     is_write_invocation,
     resolve_mutation_target_guard_violation,
     rollback_state_after_retry_batch_failure,
@@ -71,6 +73,16 @@ class TestFileExistsInWorkspace:
 
 
 class TestMutationTargetDriftFiltering:
+    def test_extracts_only_structured_directory_scope_paths(self) -> None:
+        message = """
+        {
+          "scope_paths": ["package.json", "README.md", "src", "tests", "../outside", "src/*"],
+          "target_files": ["package.json", "README.md"]
+        }
+        """
+
+        assert extract_allowed_scope_paths_from_message(message) == ["src", "tests"]
+
     def test_drops_extra_out_of_scope_write_when_valid_target_write_exists(self) -> None:
         invocations: list[dict[str, Any]] = [
             {
@@ -131,6 +143,81 @@ class TestMutationTargetDriftFiltering:
 
         assert dropped == ("pyproject.toml",)
         assert [item["arguments"]["file"] for item in filtered] == ["package.json"]
+
+    def test_directory_scope_allows_scaffold_entrypoint_and_tests(self) -> None:
+        message = """
+        {
+          "scope_paths": ["package.json", "README.md", "src", "tests"],
+          "target_files": ["package.json", "README.md"]
+        }
+        """
+        scope_paths = filter_scope_paths_for_explicit_targets(
+            extract_allowed_scope_paths_from_message(message),
+            ("package.json", "README.md"),
+        )
+        invocations: list[dict[str, Any]] = [
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "package.json", "content": "{}"},
+            },
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "src/index.js", "content": "console.log('ok');"},
+            },
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "tests/run-tests.js", "content": "console.log('ok');"},
+            },
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "pyproject.toml", "content": "[project]"},
+            },
+        ]
+
+        filtered, dropped = filter_out_of_scope_write_invocations(
+            message,
+            invocations,
+            additional_allowed_targets=("package.json", "README.md"),
+            additional_allowed_scopes=scope_paths,
+        )
+        violation = resolve_mutation_target_guard_violation(
+            message,
+            filtered,
+            additional_allowed_targets=("package.json", "README.md"),
+            additional_allowed_scopes=scope_paths,
+        )
+
+        assert scope_paths == ["src", "tests"]
+        assert dropped == ("pyproject.toml",)
+        assert [item["arguments"]["file"] for item in filtered] == [
+            "package.json",
+            "src/index.js",
+            "tests/run-tests.js",
+        ]
+        assert violation is None
+
+    def test_scope_filter_does_not_broaden_specific_target_file(self) -> None:
+        scope_paths = filter_scope_paths_for_explicit_targets(
+            ["src"],
+            ("src/client/network-client.ts",),
+        )
+        invocations: list[dict[str, Any]] = [
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "src/server/moderation.ts", "content": "export {};"},
+            }
+        ]
+
+        violation = resolve_mutation_target_guard_violation(
+            "target_files: src/client/network-client.ts",
+            invocations,
+            additional_allowed_targets=("src/client/network-client.ts",),
+            additional_allowed_scopes=scope_paths,
+        )
+
+        assert scope_paths == []
+        assert isinstance(violation, str)
+        assert "src/server/moderation.ts" in violation
 
     def test_execute_command_redirect_counts_as_materializing_write(self) -> None:
         invocation = {

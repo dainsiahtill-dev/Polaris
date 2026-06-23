@@ -1847,6 +1847,8 @@ def _missing_declared_target_files(task: dict[str, Any], workspace_full: str) ->
         rel = _normalize_declared_task_path(candidate)
         if not rel or any(ch in rel for ch in ("*", "?")):
             continue
+        if not Path(rel).suffix:
+            continue
         if not _workspace_path_exists_case_insensitive(root, rel):
             missing.append(rel)
     return missing

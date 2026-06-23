@@ -1,13 +1,30 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-06-24T00:12:53+08:00",
+  "updated_at": "2026-06-24T00:21:35+08:00",
   "objective": "Factory Bench L1-L12 generated projects must truly run with code on disk, environment/dependency readiness, at least one real build/test/lint gate, at least one real CLI/Web/API entry execution, evidence-backed failure attribution, and repeated batches with no new general root causes.",
   "current_position": {
     "level": "L1",
-    "project": "L1-01",
-    "status": "l1_01_minimax_m3_reached_real_build_gate_local_alias_repair_verified_pending_rerun",
+    "project": "L1-02",
+    "status": "l1_01_completed_real_run_gate_passed_ready_for_l1_02",
     "ordering_rule": "Run one project at a time in order L1-01..L12; do not proceed to L1-02 until L1-01 is runnable."
   },
+  "completed_projects": [
+    {
+      "project": "L1-01",
+      "completed_at": "2026-06-24T00:20:38+08:00",
+      "factory_run_id": "factory_3094341038b1",
+      "director_run_id": "director-0228faf64dbb",
+      "evidence": {
+        "chain_clean": true,
+        "integration_qa_passed": true,
+        "real_run_gate": true,
+        "llm_route_audit": true,
+        "build": "npm run build exit_code=0",
+        "test": "npm test exit_code=0",
+        "entrypoint": "web_playwright smoke passed"
+      }
+    }
+  ],
   "latest_llm_binding_update": {
     "updated_at": "2026-06-23T19:28:40+08:00",
     "provider_id": "anthropic_compat-1782212251463",
@@ -55,18 +72,18 @@
     ]
   },
   "latest_real_bench": {
-    "run_id": "codex-l1-01-minimax-m3-local-declaration-alias-202606240004",
-    "factory_run_id": "factory_15b716da5fb2",
-    "bench_session_id": "bench-1782230318-local",
+    "run_id": "codex-l1-01-minimax-m3-pass-202606240020",
+    "factory_run_id": "factory_3094341038b1",
+    "bench_session_id": "bench-1782231414-current",
     "work_dir": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229",
     "project": "L1-01",
-    "result": "FAIL",
-    "wall_clock_seconds": 367.3,
-    "step_success_rate": "0/1",
-    "runnable_rate": "0/1",
-    "chain": "partial",
+    "result": "PASS",
+    "wall_clock_seconds": 224.3,
+    "step_success_rate": "1/1",
+    "runnable_rate": "1/1",
+    "chain": "clean",
     "qa_ran": true,
-    "qa_passed": false,
+    "qa_passed": true,
     "llm_route_audit": "PASS",
     "artifact_static_checks": {
       "ts_syntax": "PASS",
@@ -80,35 +97,28 @@
       "wrong_product_guard": "PASS",
       "stale_backend_or_unknown": "PASS",
       "llm_route_audit": "PASS",
-      "entrypoint_smoke": "PASS:web_playwright"
+      "entrypoint_smoke": "PASS:web_playwright",
+      "real_run_gate": "PASS",
+      "integration_qa_passed": "PASS",
+      "chain_clean": "PASS"
     },
-    "failed_gates": [
-      "chain_clean",
-      "integration_qa_passed: qa_ran=true qa_passed=false",
-      "real_run_gate: build_test_lint_ran"
-    ],
-    "primary_failure_category": "director_tool_execution",
-    "root_cause_signature": "typescript_missing_export_repair_aliases_function_local_declarations",
-    "physical_errors": [
-      "factory_15b716da5fb2 workspace validation: npm run build exit_code=2 with src/engine/simulation.ts(267,10) TS2552 Cannot find name 'flowers' and src/engine/simulation.ts(269,10) TS2304 Cannot find name 'moonRadius'.",
-      "Task 2 failed director_materialization_quality_failed; Task 1 completed and Task 3 was blocked by dependency.",
-      "Current target src/engine/simulation.ts contained `export { flowers as Flower };` and `export { moonRadius as Moon };` after deterministic missing-export repair.",
-      "Backend final request evidence showed MiniMax-M3 calls succeeded over anthropic_compat; failure is not provider unreachability."
-    ],
+    "failed_gates": [],
+    "primary_failure_category": null,
+    "root_cause_signature": null,
+    "physical_errors": [],
     "positive_progress": [
-      "Director-only resume no longer failed with stale TaskBoard/no-claim; it reached Task 2 materialization and QA.",
-      "Static artifact checks passed and Playwright web entrypoint smoke passed.",
-      "L1-01 now fails at a concrete real TypeScript build gate, which is the intended audit depth.",
-      "Platform repair now verified locally: missing-export repair ignores function-local alias candidates."
+      "Director-only resume completed L1-01 without rerunning PM/CE.",
+      "Static artifact checks passed: ts_syntax, package_scripts, min_files, content_any, source_target_coverage, plan/blueprint/QA artifacts.",
+      "Physical gates passed: npm run build, npm test, and Playwright web entrypoint smoke.",
+      "factory_audits.json reports no failure_categories and no root_cause_signatures."
     ],
     "evidence_paths": [
       "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json",
-      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_15b716da5fb2.workspace-validation.json",
-      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_15b716da5fb2.report.json",
-      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/results/director.result.json",
-      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/logs/journal.raw.jsonl"
+      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_3094341038b1.workspace-validation.json",
+      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_3094341038b1.report.json",
+      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-0228faf64dbb/logs/journal.raw.jsonl"
     ],
-    "platform_fix_after_run": "verified locally: deterministic TypeScript missing-export repair now only treats column-zero module declarations as alias candidates and will not export function-local flowers/moonRadius"
+    "platform_fix_after_run": "verified by real L1-01 bench: local-declaration alias guard enabled chain_clean, integration_qa_passed, real_run_gate, and llm_route_audit PASS"
   },
   "completed_platform_fixes_this_loop": [
     "Bench LLM route audit is now stage-aware for --start-from director and no longer falsely requires PM/Chief Engineer calls in Director-only resume.",
@@ -187,34 +197,34 @@
       "PYTHONPATH=src/backend python -m pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -q -k \"missing_export_repair\" -> 7 passed, 273 deselected",
       "PYTHONPATH=src/backend python -m pytest src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -q -> 280 passed, 2 warnings"
     ],
-    "real_bench": "Latest real bench factory_15b716da5fb2 still FAIL at real build gate; platform local declaration alias fix is locally verified and requires fresh Director-only rerun."
+    "real_bench": "Latest real bench factory_3094341038b1 PASS: L1-01 chain_clean, integration_qa_passed, real_run_gate, llm_route_audit all passed."
   },
   "open_risks": [
-    "L1-01 remains unproven until a fresh Director-only rerun with the patched backend shows real_run_gate and integration QA pass.",
-    "The next L1-01 rerun may expose another TypeScript semantic repair gap; do not proceed to L1-02 until build/test and QA pass.",
+    "L1-02 is now the next ordered project; do not skip ahead if it fails.",
     "Runner startup logged Director pool skipping MiniMax-M3 as unreachable, but backend runtime evidence showed actual MiniMax-M3 calls returned HTTP 200; this health-precheck/logging inconsistency remains a platform audit risk.",
     "Quality repair retry showed a provider/tool-choice mismatch case where a forced write_file request still saw a read tool attempt in a retry path; if it recurs, fix exact-tool pruning at final provider request assembly.",
     "superpowers is not available in the current tool/PATH discovery; CodeGraph was used as required and the missing capability is recorded as environment evidence.",
-    "Prompt Profile and exact write-tool enforcement are locally verified but not yet fully proven by a passing L1-01 Director-only bench run.",
+    "Prompt Profile and exact write-tool enforcement are now proven enough for L1-01 but still need broader L1-02..L1-10 coverage.",
+    "L1-01 QA passed but recorded non-blocking quality debt: npm test delegates to verify/build and independent behavioral test coverage is weak.",
     "External OpenCode audit for the latest Director claim/tool failure is arranged but blocked by permission/timeout; do not treat it as completed evidence."
   ],
   "next_deterministic_entrypoint": {
-    "action": "restart backend or ensure backend is running patched code, then rerun L1-01 --start-from director before any L1-02 work",
+    "action": "run L1-02 next with the current patched backend; only use Director-only resume if L1-02 already has trusted PM/CE evidence, otherwise run the normal ordered project flow",
     "backend_command": "PYTHONPATH=src/backend python src/backend/server.py --host 127.0.0.1 --port 49977",
-    "bench_command_template": "FACTORY_BENCH_BACKEND_URL=http://127.0.0.1:49977 FACTORY_BENCH_BACKEND_TOKEN=polaris-local-dev PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir /home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229 --timeout 900 --real-run-timeout 180 --max-failed 1 --director-workflow-execution-mode serial --director-dispatch-driver task-market --start-from director"
+    "bench_command_template": "FACTORY_BENCH_BACKEND_URL=http://127.0.0.1:49977 FACTORY_BENCH_BACKEND_TOKEN=polaris-local-dev PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-02 --work-dir /home/dains/Temp/factory-bench-l1-02-minimax-m3-codex-20260624 --timeout 900 --real-run-timeout 180 --max-failed 1 --director-workflow-execution-mode serial --director-dispatch-driver task-market"
   },
   "evidence_paths": {
     "defect_manifest": ".polaris_runtime/defect_manifest.json",
     "latest_factory_audit": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json",
-    "latest_director_journal": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/logs/journal.enriched.jsonl",
-    "latest_director_result": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/results/director.result.json",
+    "latest_director_journal": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-0228faf64dbb/logs/journal.enriched.jsonl",
+    "latest_director_result": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-0228faf64dbb/manifest.json",
     "latest_opencode_request": ".polaris/opencode-audit-requests/codex-l1-01-anthropic-compat-minimax-m3-repair-targets-202606231955/L1-01/request.json",
     "latest_opencode_evidence_bundle": ".polaris/opencode-audit-requests/codex-l1-01-anthropic-compat-minimax-m3-repair-targets-202606231955/L1-01/evidence_bundle.json",
     "latest_opencode_agent_log": ".polaris/opencode-audit-requests/codex-l1-01-anthropic-compat-minimax-m3-repair-targets-202606231955/L1-01/agent_01.log",
     "latest_chain_log": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01.chain.log",
     "latest_dispatch_log": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/dispatch/latest.log.json",
-    "latest_workspace_validation": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_15b716da5fb2.workspace-validation.json",
-    "latest_qa_report": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_15b716da5fb2.report.json",
+    "latest_workspace_validation": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_3094341038b1.workspace-validation.json",
+    "latest_qa_report": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_3094341038b1.report.json",
     "latest_prompt_profile_tests": "src/backend/polaris/cells/roles/kernel/tests/test_prompt_profiles.py",
     "latest_failed_task": "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/tasks/task_1.json",
     "director_resume_reset_tests": "src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py and src/backend/polaris/tests/unit/delivery/http/routers/test_factory_v2.py",

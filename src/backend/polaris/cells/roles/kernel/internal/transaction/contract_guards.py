@@ -121,6 +121,72 @@ _DECLARED_TARGET_LINE_RE = re.compile(
     r"^\s*(?:allowed\s+target\s+files|target\s+files|target_files|targets|目标文件|范围|scope)\s*[:：]\s*(?P<value>.+)$",
     flags=re.IGNORECASE,
 )
+_STRUCTURED_SCOPE_ARRAY_RE = re.compile(
+    r'"(?:scope_paths|allowed_scope_paths|write_scopes|scope_dirs)"\s*:\s*(?P<value>\[[^\]]*\])',
+    flags=re.IGNORECASE | re.DOTALL,
+)
+
+_COMMON_SCOPE_DIR_NAMES: frozenset[str] = frozenset(
+    {
+        "app",
+        "apps",
+        "asset",
+        "assets",
+        "component",
+        "components",
+        "config",
+        "configs",
+        "controller",
+        "controllers",
+        "core",
+        "data",
+        "domain",
+        "engine",
+        "engines",
+        "fixture",
+        "fixtures",
+        "lib",
+        "libs",
+        "model",
+        "models",
+        "module",
+        "modules",
+        "page",
+        "pages",
+        "package",
+        "packages",
+        "public",
+        "route",
+        "routes",
+        "script",
+        "scripts",
+        "service",
+        "services",
+        "src",
+        "test",
+        "tests",
+        "util",
+        "utils",
+        "view",
+        "views",
+    }
+)
+_COMMON_SCOPE_ROOTS: frozenset[str] = frozenset(
+    {
+        "app",
+        "apps",
+        "lib",
+        "libs",
+        "package",
+        "packages",
+        "public",
+        "script",
+        "scripts",
+        "src",
+        "test",
+        "tests",
+    }
+)
 
 
 def _dedupe_normalized_paths(tokens: list[str]) -> list[str]:
@@ -136,6 +202,51 @@ def _dedupe_normalized_paths(tokens: list[str]) -> list[str]:
         seen.add(lowered)
         deduped.append(normalized)
     return deduped
+
+
+def _safe_relative_scope_path(path: str) -> str:
+    """Return a safe relative scope path or an empty string.
+
+    Scope paths are stronger than target files because they authorize path
+    prefixes. Keep them strictly relative and free of glob/path-traversal
+    syntax.
+    """
+    normalized = normalize_path_token(path).rstrip("/")
+    if not normalized:
+        return ""
+    if normalized in {".", "/"} or normalized.startswith(("/", "~")):
+        return ""
+    parts = [part for part in normalized.split("/") if part]
+    if not parts or any(part == ".." for part in parts):
+        return ""
+    if any(ch in normalized for ch in ("*", "?", "[", "]", "{", "}", "\n", "\t")):
+        return ""
+    return normalized
+
+
+def _looks_like_scope_directory(path: str) -> bool:
+    normalized = _safe_relative_scope_path(path)
+    if not normalized:
+        return False
+    suffix = Path(normalized).suffix
+    if suffix:
+        return False
+    parts = normalized.lower().split("/")
+    if len(parts) == 1:
+        return parts[0] in _COMMON_SCOPE_DIR_NAMES
+    return parts[0] in _COMMON_SCOPE_ROOTS or parts[-1] in _COMMON_SCOPE_DIR_NAMES
+
+
+def _parse_json_string_array(raw_array: str) -> list[str]:
+    import json
+
+    try:
+        parsed = json.loads(raw_array)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item).strip() for item in parsed if isinstance(item, str) and item.strip()]
 
 
 def _extract_file_tokens_from_text(text: str) -> list[str]:
@@ -175,6 +286,26 @@ def extract_target_files_from_message(message: str) -> list[str]:
     return _extract_file_tokens_from_text(raw)
 
 
+def extract_allowed_scope_paths_from_message(message: str) -> list[str]:
+    """Extract trusted directory scopes from structured scope arrays.
+
+    Unlike ``extract_target_files_from_message``, this deliberately ignores
+    prose and only accepts JSON-style ``scope_paths`` arrays. Natural-language
+    scope text is too broad to use as a write authorization prefix.
+    """
+    raw = str(message or "")
+    if not raw:
+        return []
+
+    scopes: list[str] = []
+    for match in _STRUCTURED_SCOPE_ARRAY_RE.finditer(raw):
+        for item in _parse_json_string_array(match.group("value")):
+            normalized = _safe_relative_scope_path(item)
+            if normalized and _looks_like_scope_directory(normalized):
+                scopes.append(normalized)
+    return _dedupe_normalized_paths(scopes)
+
+
 def normalize_path_token(path: str) -> str:
     """归一化路径 token（去反斜杠、去前导 ./，保留点文件）。
 
@@ -207,6 +338,56 @@ def build_path_match_candidates(paths: list[str]) -> set[str]:
         if basename and "/" not in normalized:
             candidates.add(basename)
     return candidates
+
+
+def build_scope_match_candidates(paths: Sequence[str]) -> set[str]:
+    """Build safe directory-scope candidates for prefix authorization."""
+    candidates: set[str] = set()
+    for raw_path in paths:
+        normalized = _safe_relative_scope_path(str(raw_path or ""))
+        if not normalized or not _looks_like_scope_directory(normalized):
+            continue
+        candidates.add(normalized.lower())
+    return candidates
+
+
+def _path_matches_allowed_scope(normalized_path: str, allowed_scopes: set[str]) -> bool:
+    normalized = normalize_path_token(normalized_path).lower().rstrip("/")
+    if not normalized:
+        return False
+    return any(normalized == scope or normalized.startswith(f"{scope}/") for scope in allowed_scopes)
+
+
+def filter_scope_paths_for_explicit_targets(
+    scope_paths: Sequence[str],
+    explicit_targets: Sequence[str],
+) -> list[str]:
+    """Keep directory scopes that do not broaden a more specific target file.
+
+    ``scope_paths=["src"]`` is useful when a scaffold task only declares
+    ``target_files=["package.json", "README.md"]`` but acceptance also requires
+    creating ``src/index.js``. The same broad ``src`` scope is unsafe when the
+    task already pins ``target_files=["src/client/network-client.ts"]``.
+    """
+    target_candidates = [
+        normalize_path_token(str(target or "")).lower().rstrip("/")
+        for target in explicit_targets
+        if normalize_path_token(str(target or "")).strip()
+    ]
+    filtered: list[str] = []
+    seen: set[str] = set()
+    for raw_scope in scope_paths:
+        normalized = _safe_relative_scope_path(str(raw_scope or ""))
+        if not normalized or not _looks_like_scope_directory(normalized):
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        if any(target != lowered and target.startswith(f"{lowered}/") for target in target_candidates):
+            continue
+        seen.add(lowered)
+        filtered.append(normalized)
+    return filtered
 
 
 def expand_bootstrap_read_candidates(target_file: str) -> list[str]:
@@ -382,6 +563,7 @@ def resolve_mutation_target_guard_violation(
     *,
     workspace: str = ".",
     additional_allowed_targets: Sequence[str] = (),
+    additional_allowed_scopes: Sequence[str] = (),
 ) -> MutationTargetGuardViolation | str | None:
     """检测 mutation 目标漂移：LLM 写入的文件不在用户明确提到的目标范围内。
 
@@ -429,7 +611,13 @@ def resolve_mutation_target_guard_violation(
 
     read_targets = extract_read_targets_from_invocations(invocations)
     allowed_candidates = build_path_match_candidates(allowed_targets + read_targets)
-    if not allowed_candidates:
+    allowed_scope_candidates = build_scope_match_candidates(
+        [
+            *extract_allowed_scope_paths_from_message(latest_user_request),
+            *additional_allowed_scopes,
+        ]
+    )
+    if not allowed_candidates and not allowed_scope_candidates:
         return None
 
     mismatched_targets = []
@@ -439,6 +627,8 @@ def resolve_mutation_target_guard_violation(
             continue
         basename = normalized.rsplit("/", 1)[-1].strip().lower()
         if normalized in allowed_candidates or basename in allowed_candidates:
+            continue
+        if _path_matches_allowed_scope(normalized, allowed_scope_candidates):
             continue
         mismatched_targets.append(write_target)
 
@@ -460,6 +650,7 @@ def filter_out_of_scope_write_invocations(
     invocations: list[Any],
     *,
     additional_allowed_targets: Sequence[str] = (),
+    additional_allowed_scopes: Sequence[str] = (),
 ) -> tuple[list[Any], tuple[str, ...]]:
     """Drop out-of-scope writes when a batch also contains valid target writes.
 
@@ -476,7 +667,13 @@ def filter_out_of_scope_write_invocations(
 
     read_targets = extract_read_targets_from_invocations(invocations)
     allowed_candidates = build_path_match_candidates(allowed_targets + read_targets)
-    if not allowed_candidates:
+    allowed_scope_candidates = build_scope_match_candidates(
+        [
+            *extract_allowed_scope_paths_from_message(latest_user_request),
+            *additional_allowed_scopes,
+        ]
+    )
+    if not allowed_candidates and not allowed_scope_candidates:
         return invocations, ()
 
     kept: list[Any] = []
@@ -490,7 +687,12 @@ def filter_out_of_scope_write_invocations(
         target_file = extract_target_file_from_invocation_args(invocation)
         normalized = normalize_path_token(target_file).lower()
         basename = normalized.rsplit("/", 1)[-1].strip().lower() if normalized else ""
-        if normalized and normalized not in allowed_candidates and basename not in allowed_candidates:
+        if (
+            normalized
+            and normalized not in allowed_candidates
+            and basename not in allowed_candidates
+            and not _path_matches_allowed_scope(normalized, allowed_scope_candidates)
+        ):
             dropped_write_count += 1
             dropped.append(target_file)
             continue

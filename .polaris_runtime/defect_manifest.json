@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-06-24T00:12:53+08:00",
+  "updated_at": "2026-06-24T00:21:35+08:00",
   "defects": [
     {
       "id": "DEFECT-director-idle-unresolved-taskboard-prevents-quality-handoff",
@@ -61,7 +61,7 @@
     },
     {
       "id": "DEFECT-qa-runtime-hard-gate-downgrades-placeholder-tests",
-      "status": "platform_fix_verified_pending_real_bench",
+      "status": "platform_fix_real_bench_verified",
       "symptom": "L1-01 reached workspace quality, QA, and real-run gate, but QA adapter converted an LLM FAIL into PASS because runtime hard gate passed while the generated project had zero test files and npm test was only tsc --noEmit.",
       "physical_error": "QA report passed=true/verdict=PASS/score=16 with evidence qa_llm_verdict_downgraded=FAIL:factory_runtime_hard_gate_passed; major issues included '测试脚本为占位符' and 'test_file_count=0'.",
       "root_cause_category": "QA / Quality Gate",
@@ -887,7 +887,19 @@
         "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/results/director.result.json",
         "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/logs/journal.raw.jsonl"
       ],
-      "next_action": "Restart or reuse patched backend code path and rerun L1-01 --start-from director. Expected evidence: deterministic repair must no longer emit `export { flowers as Flower };` or `export { moonRadius as Moon };`; real_run_gate should either pass or expose the next concrete platform root cause."
+      "bench_verification": {
+        "factory_run_id": "factory_3094341038b1",
+        "director_run_id": "director-0228faf64dbb",
+        "wall_clock_seconds": 224.3,
+        "result": "PASS",
+        "evidence": [
+          "factory-bench L1-01 PASS: chain=clean, qa_ran=True, qa_passed=True, chain_exit=0",
+          "gate:real_run_gate ok",
+          "workspace validation: npm run build exit_code=0 and npm test exit_code=0",
+          "Playwright web entrypoint smoke passed"
+        ]
+      },
+      "next_action": "Advance sequentially to L1-02. Keep runner MiniMax-M3 reachability precheck/log mismatch and weak independent test coverage as open quality risks."
     },
     {
       "id": "DEFECT-opencode-director-claim-audit-timeout",
@@ -908,40 +920,40 @@
     }
   ],
   "latest_evidence": {
-    "run_id": "codex-l1-01-minimax-m3-local-declaration-alias-202606240004",
-    "factory_run_id": "factory_15b716da5fb2",
-    "director_run_id": "director-92e354b2ffa0",
+    "run_id": "codex-l1-01-minimax-m3-pass-202606240020",
+    "factory_run_id": "factory_3094341038b1",
+    "director_run_id": "director-0228faf64dbb",
     "work_dir": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229",
     "project": "L1-01",
-    "result": "FAIL",
-    "wall_clock_seconds": 367.3,
-    "step_success_rate": "0/1",
-    "runnable_rate": "0/1",
-    "chain": "partial",
+    "result": "PASS",
+    "wall_clock_seconds": 224.3,
+    "step_success_rate": "1/1",
+    "runnable_rate": "1/1",
+    "chain": "clean",
     "qa_ran": true,
-    "qa_passed": false,
+    "qa_passed": true,
     "llm_route_audit": "PASS",
-    "source_files": 24,
+    "source_files": 28,
     "static_artifact_checks": "PASS: ts_syntax, package_scripts, min_files, content_any, source_target_coverage, plan/blueprint/QA artifacts, wrong_product_guard, stale_backend_guard, llm_route_audit",
-    "real_run_gate": "FAIL: build_test_lint_ran because npm run build failed with TS2552 flowers and TS2304 moonRadius; web Playwright entrypoint smoke passed",
-    "primary_failure_category": "director_tool_execution",
-    "root_cause_signature": "director_tool_execution:typescript_missing_export_repair_aliases_function_local_declarations",
-    "director_primary_error": "Task 2 failed director_materialization_quality_failed after missing-export repair appended invalid exports for local identifiers in src/engine/simulation.ts; QA then failed npm run build and npm test.",
-    "tool_failure_at_20260624_000148": "PreWriteGuard blocked an invalid src/engine/renderer.ts write with TypeScript syntax error, then later repair succeeded for renderer. The remaining build failure came from deterministic repair output in simulation.ts.",
+    "real_run_gate": "PASS: npm run build exit_code=0, npm run test exit_code=0, Playwright web entrypoint smoke passed",
+    "primary_failure_category": null,
+    "root_cause_signature": null,
+    "director_primary_error": "",
+    "tool_failure_at_20260624_000148": "Resolved by local-declaration alias guard; latest L1-01 run no longer failed TypeScript build.",
     "positive_progress": [
       "Director/QA bindings stayed on anthropic_compat-1782212251463 | MiniMax-M3 and LLM route audit passed.",
       "Provider/native tool path reached real MiniMax-M3 calls despite runner startup logging a contradictory unreachable precheck.",
-      "Task 1 completed; Task 2 produced index.html, renderer.ts and simulation.ts with write_file evidence.",
-      "Static artifact checks and Playwright web entrypoint smoke passed; the remaining failure is the real TypeScript build gate.",
-      "Platform fix after run: missing-export repair now ignores function-local alias candidates and has full Director adapter regression coverage."
+      "L1-01 completed with chain=clean and integration QA passed.",
+      "Physical gates passed: npm run build, npm test, and Playwright web entrypoint smoke.",
+      "No new failure category or root cause signature was recorded in factory_audits.json."
     ],
     "evidence_paths": [
-      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/results/director.result.json",
-      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-92e354b2ffa0/logs/journal.enriched.jsonl",
-      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_15b716da5fb2.workspace-validation.json",
+      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-0228faf64dbb/logs/journal.enriched.jsonl",
+      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_3094341038b1.workspace-validation.json",
+      "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/qa/factory_3094341038b1.report.json",
       "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json"
     ],
-    "platform_fix_after_run": "verified locally: deterministic TypeScript missing-export repair no longer aliases function-local declarations; full director_adapter_pure suite passes"
+    "platform_fix_after_run": "verified by real L1-01 bench: chain_clean, integration_qa_passed, real_run_gate, and llm_route_audit all passed"
   },
-  "last_updated_at": "2026-06-24T00:12:53+08:00"
+  "last_updated_at": "2026-06-24T00:21:35+08:00"
 }

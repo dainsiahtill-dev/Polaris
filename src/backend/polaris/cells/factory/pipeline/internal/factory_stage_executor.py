@@ -3451,7 +3451,23 @@ class OrchestrationStageExecutor:
                     run_id=run.id,
                     artifact_quality_errors=repair_errors,
                 )
-                if not round_repair_results:
+                round_repair_evidence = self._workspace_quality_repair_evidence(round_repair_results)
+                round_write_tool_evidence = any(
+                    bool(item.get("success")) and str(item.get("tool") or item.get("tool_name") or "") == "write_file"
+                    for item in round_repair_results
+                )
+                if round_repair_results and not round_write_tool_evidence and not round_repair_evidence:
+                    deterministic_noop_summary = dict(round_summary)
+                    round_repair_results, round_summary = await self._apply_workspace_quality_llm_repairs(
+                        run_id=run.id,
+                        context=context,
+                        artifact_quality_errors=repair_errors,
+                        repair_attempt=round_index + 1,
+                    )
+                    if not round_repair_results:
+                        round_summary = dict(round_summary)
+                        round_summary["deterministic_no_materialized_evidence"] = deterministic_noop_summary
+                elif not round_repair_results:
                     round_repair_results, round_summary = await self._apply_workspace_quality_llm_repairs(
                         run_id=run.id,
                         context=context,

@@ -51,21 +51,40 @@ def _filter_diff_to_task_declared_paths(
 def _extract_task_target_path_candidates(task: dict[str, Any]) -> list[str]:
     metadata = task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
     candidates: list[str] = []
+    scope_candidates: list[str] = []
     for record in (task, metadata):
         if not isinstance(record, dict):
             continue
         for key in ("target_files", "target_file", "targets"):
             candidates.extend(_coerce_path_candidate_list(record.get(key)))
+        for key in ("scope_paths", "scope", "file_paths", "files", "paths"):
+            for candidate in _coerce_path_candidate_list(record.get(key)):
+                if _looks_like_task_path_candidate(candidate) or _looks_like_task_scope_directory_candidate(candidate):
+                    scope_candidates.append(candidate)
     if not candidates:
-        for record in (task, metadata):
-            if not isinstance(record, dict):
-                continue
-            for key in ("scope_paths", "scope", "file_paths", "files", "paths"):
-                for candidate in _coerce_path_candidate_list(record.get(key)):
-                    normalized = _normalize_declared_task_path(candidate)
-                    if normalized and Path(normalized).suffix:
-                        candidates.append(candidate)
-    return _dedupe_preserve_order([candidate for candidate in candidates if _looks_like_task_path_candidate(candidate)])
+        candidates.extend(scope_candidates)
+    else:
+        explicit_targets = [
+            normalized
+            for candidate in candidates
+            if (normalized := _normalize_declared_task_path(candidate)) and Path(normalized).suffix
+        ]
+        candidates.extend(
+            candidate
+            for candidate in scope_candidates
+            if (
+                _looks_like_task_scope_directory_candidate(candidate)
+                and not _scope_directory_covers_explicit_target(candidate, explicit_targets)
+            )
+            or Path(_normalize_declared_task_path(candidate)).suffix
+        )
+    return _dedupe_preserve_order(
+        [
+            candidate
+            for candidate in candidates
+            if _looks_like_task_path_candidate(candidate) or _looks_like_task_scope_directory_candidate(candidate)
+        ]
+    )
 
 
 def _path_matches_any_declared_candidate(path: str, candidates: list[str]) -> bool:
@@ -241,6 +260,58 @@ def _looks_like_task_path_candidate(value: str) -> bool:
     if "/" in token:
         return True
     return bool(Path(token).suffix)
+
+
+_COMMON_TASK_SCOPE_DIRECTORIES = {
+    "app",
+    "apps",
+    "assets",
+    "bin",
+    "client",
+    "cmd",
+    "components",
+    "core",
+    "docs",
+    "engine",
+    "lib",
+    "models",
+    "pages",
+    "public",
+    "scripts",
+    "server",
+    "src",
+    "test",
+    "tests",
+    "utils",
+    "web",
+}
+
+
+def _looks_like_task_scope_directory_candidate(value: str) -> bool:
+    token = _normalize_declared_task_path(value)
+    if not token or token.startswith("-"):
+        return False
+    if any(ch in token for ch in ("<", ">", "|", "*", "?")):
+        return False
+    if Path(token).suffix:
+        return False
+    parts = [part for part in token.split("/") if part]
+    if not parts:
+        return False
+    if len(parts) > 1:
+        return all(re.match(r"^[A-Za-z0-9._-]+$", part) for part in parts)
+    return parts[0].casefold() in _COMMON_TASK_SCOPE_DIRECTORIES
+
+
+def _scope_directory_covers_explicit_target(scope_candidate: str, explicit_targets: list[str]) -> bool:
+    scope = _normalize_declared_task_path(scope_candidate).rstrip("/")
+    if not scope:
+        return False
+    scope_folded = scope.casefold()
+    return any(
+        target.casefold() == scope_folded or target.casefold().startswith(f"{scope_folded}/")
+        for target in explicit_targets
+    )
 
 
 def _normalize_declared_task_path(value: str, *, workspace_name: str = "") -> str:

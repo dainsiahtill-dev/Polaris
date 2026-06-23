@@ -11,15 +11,19 @@ import json
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import zlib
 from collections import Counter
 from collections.abc import Iterable
+from contextlib import suppress
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -278,6 +282,178 @@ class _QuietStaticHandler(SimpleHTTPRequestHandler):
         return
 
 
+def _html_local_resource_refs(workspace: Path, html_rel: str, html: str) -> list[str]:
+    """Return local resources explicitly referenced by an HTML entrypoint."""
+    resource_refs: list[str] = []
+    html_parent = Path(html_rel).parent
+    workspace_root = workspace.resolve()
+    tag_re = re.compile(r"<(?P<tag>script|link|img|source|video|audio|iframe)\b(?P<attrs>[^>]*)>", re.IGNORECASE)
+    attr_re = re.compile(
+        r"(?P<name>[a-zA-Z_:][-.\w:]*)\s*=\s*(?P<quote>['\"])(?P<value>.*?)(?P=quote)",
+        re.DOTALL,
+    )
+    ignored_schemes = {"http", "https", "data", "blob", "mailto", "tel", "javascript"}
+
+    def srcset_urls(value: str) -> list[str]:
+        output: list[str] = []
+        for candidate in str(value or "").split(","):
+            token = candidate.strip().split()
+            if token:
+                output.append(token[0])
+        return output
+
+    for tag_match in tag_re.finditer(html):
+        tag = tag_match.group("tag").lower()
+        attrs = {
+            attr_match.group("name").lower(): attr_match.group("value").strip()
+            for attr_match in attr_re.finditer(tag_match.group("attrs") or "")
+        }
+        raw_refs = [attrs[key] for key in ("src", "href") if attrs.get(key)]
+        if tag in {"img", "source"} and attrs.get("srcset"):
+            raw_refs.extend(srcset_urls(attrs["srcset"]))
+        if tag == "link":
+            rel = attrs.get("rel", "").lower()
+            if "icon" in rel:
+                continue
+            if not any(marker in rel for marker in ("stylesheet", "preload", "modulepreload", "manifest")):
+                continue
+        for raw_ref in raw_refs:
+            if not raw_ref or raw_ref.startswith("#") or raw_ref.startswith("//"):
+                continue
+            parsed = urllib.parse.urlparse(raw_ref)
+            if parsed.scheme.lower() in ignored_schemes:
+                continue
+            resource_path = parsed.path
+            if not resource_path:
+                continue
+            if Path(resource_path).name.lower() == "favicon.ico":
+                continue
+            rel_path = Path(resource_path.lstrip("/")) if resource_path.startswith("/") else html_parent / resource_path
+            try:
+                candidate = (workspace / rel_path).resolve()
+                candidate.relative_to(workspace_root)
+            except ValueError:
+                resource_refs.append(raw_ref)
+                continue
+            if not candidate.is_file():
+                resource_refs.append(raw_ref)
+    return resource_refs
+
+
+def _missing_html_local_resources(workspace: Path, html_rel: str) -> list[str]:
+    try:
+        html = (workspace / html_rel).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [html_rel]
+    return _html_local_resource_refs(workspace, html_rel, html)
+
+
+def _is_local_web_resource_failure(page_url: str, resource_url: str) -> bool:
+    page = urllib.parse.urlparse(page_url)
+    resource = urllib.parse.urlparse(resource_url)
+    if resource.scheme not in {"http", "https"}:
+        return False
+    if (resource.scheme, resource.hostname, resource.port) != (page.scheme, page.hostname, page.port):
+        return False
+    return not resource.path.lower().endswith("/favicon.ico")
+
+
+def _is_ignorable_web_console_error(message: str) -> bool:
+    lowered = str(message or "").lower()
+    return (
+        "failed to load resource" in lowered
+        or "net::err_" in lowered
+        or "favicon.ico" in lowered
+        or "source map" in lowered
+        or "sourcemap" in lowered
+    )
+
+
+def _canvas_smoke_ok(canvas_states: list[dict[str, Any]]) -> bool:
+    if not canvas_states:
+        return True
+    return any(bool(item.get("non_blank")) for item in canvas_states)
+
+
+def _paeth_predictor(left: int, above: int, upper_left: int) -> int:
+    estimate = left + above - upper_left
+    left_distance = abs(estimate - left)
+    above_distance = abs(estimate - above)
+    upper_left_distance = abs(estimate - upper_left)
+    if left_distance <= above_distance and left_distance <= upper_left_distance:
+        return left
+    if above_distance <= upper_left_distance:
+        return above
+    return upper_left
+
+
+def _png_has_nonblank_pixels(data: bytes) -> bool:
+    """Return True when an 8-bit PNG contains visible non-transparent pixels."""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return False
+    offset = 8
+    width = height = bit_depth = color_type = 0
+    idat = bytearray()
+    while offset + 8 <= len(data):
+        chunk_len = struct.unpack(">I", data[offset : offset + 4])[0]
+        chunk_type = data[offset + 4 : offset + 8]
+        chunk_data = data[offset + 8 : offset + 8 + chunk_len]
+        offset += 12 + chunk_len
+        if chunk_type == b"IHDR" and len(chunk_data) >= 13:
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk_data[:10])
+        elif chunk_type == b"IDAT":
+            idat.extend(chunk_data)
+        elif chunk_type == b"IEND":
+            break
+    if width <= 0 or height <= 0 or bit_depth != 8 or not idat:
+        return False
+    channels_by_type = {0: 1, 2: 3, 4: 2, 6: 4}
+    channels = channels_by_type.get(color_type)
+    if channels is None:
+        return False
+    try:
+        raw = zlib.decompress(bytes(idat))
+    except zlib.error:
+        return False
+    stride = width * channels
+    previous = bytearray(stride)
+    cursor = 0
+    for _row in range(height):
+        if cursor >= len(raw):
+            return False
+        filter_type = raw[cursor]
+        cursor += 1
+        row = bytearray(raw[cursor : cursor + stride])
+        cursor += stride
+        if len(row) != stride:
+            return False
+        for index in range(stride):
+            left = row[index - channels] if index >= channels else 0
+            above = previous[index]
+            upper_left = previous[index - channels] if index >= channels else 0
+            if filter_type == 1:
+                row[index] = (row[index] + left) & 0xFF
+            elif filter_type == 2:
+                row[index] = (row[index] + above) & 0xFF
+            elif filter_type == 3:
+                row[index] = (row[index] + ((left + above) // 2)) & 0xFF
+            elif filter_type == 4:
+                row[index] = (row[index] + _paeth_predictor(left, above, upper_left)) & 0xFF
+            elif filter_type != 0:
+                return False
+        for pixel in range(0, stride, channels):
+            if color_type == 0 and row[pixel] != 0:
+                return True
+            if color_type == 2 and any(row[pixel : pixel + 3]):
+                return True
+            if color_type == 4 and row[pixel + 1] != 0:
+                return True
+            if color_type == 6 and row[pixel + 3] != 0:
+                return True
+        previous = row
+    return False
+
+
 def _smoke_static_web(workspace: Path, html_rel: str, *, timeout_s: int) -> dict[str, Any]:
     """Smoke-test a static HTML entrypoint using Playwright for real browser verification.
 
@@ -310,16 +486,22 @@ def _smoke_static_web(workspace: Path, html_rel: str, *, timeout_s: int) -> dict
         url = f"http://127.0.0.1:{port}/{path}"
         with urllib.request.urlopen(url, timeout=max(1, min(10, int(timeout_s)))) as response:
             body = response.read(4096).decode("utf-8", errors="replace")
-        ok = response.status == 200 and "<html" in body.lower()
+        missing_resources = _missing_html_local_resources(workspace, html_rel)
+        ok = response.status == 200 and "<html" in body.lower() and not missing_resources
+        if missing_resources:
+            detail = f"static web entrypoint references missing local resources: {', '.join(missing_resources[:5])}"
+        elif ok:
+            detail = "static web entrypoint served over local HTTP"
+        else:
+            detail = "static web response did not look like HTML"
         return {
             "kind": "web_static",
             "ok": ok,
             "url": url,
             "entrypoint": html_rel,
             "duration_s": round(time.time() - started, 3),
-            "detail": "static web entrypoint served over local HTTP"
-            if ok
-            else "static web response did not look like HTML",
+            "missing_resources": missing_resources,
+            "detail": detail,
         }
     except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
         return {
@@ -349,44 +531,171 @@ def _smoke_static_web_playwright(workspace: Path, html_rel: str, *, timeout_s: i
         port = int(server.server_address[1])
         path = urllib.request.pathname2url(html_rel)
         url = f"http://127.0.0.1:{port}/{path}"
+        missing_resources = _missing_html_local_resources(workspace, html_rel)
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             console_errors: list[str] = []
+            browser_resource_failures: list[str] = []
             page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+
+            def record_response(response: Any) -> None:
+                try:
+                    status = int(response.status)
+                    resource_url = str(response.url)
+                except (TypeError, ValueError, AttributeError):
+                    return
+                if status >= 400 and _is_local_web_resource_failure(url, resource_url):
+                    browser_resource_failures.append(f"{status} {resource_url}")
+
+            def record_request_failure(request: Any) -> None:
+                try:
+                    resource_url = str(request.url)
+                    failure = request.failure
+                    error_text = str(failure.get("errorText") if isinstance(failure, dict) else failure)
+                except (TypeError, AttributeError):
+                    return
+                if _is_local_web_resource_failure(url, resource_url):
+                    browser_resource_failures.append(f"request_failed {resource_url} {error_text}")
+
+            page.on("response", record_response)
+            page.on("requestfailed", record_request_failure)
 
             response = page.goto(url, timeout=max(1, min(10, int(timeout_s))) * 1000)
             page.wait_for_load_state("networkidle", timeout=5000)
             http_status = int(response.status) if response is not None else 0
+            page.wait_for_timeout(750)
 
-            # Check for canvas elements
-            canvas = page.query_selector("canvas")
+            canvas_states = page.evaluate(
+                """
+                () => Array.from(document.querySelectorAll('canvas')).map((canvas) => {
+                  const rect = canvas.getBoundingClientRect();
+                  const state = {
+                    width: canvas.width,
+                    height: canvas.height,
+                    clientWidth: Math.round(rect.width),
+                    clientHeight: Math.round(rect.height),
+                    context_type: '',
+                    non_blank: false,
+                    sample_error: ''
+                  };
+                  try {
+                    const ctx = canvas.getContext('2d');
+                    if (ctx && canvas.width > 0 && canvas.height > 0) {
+                      state.context_type = '2d';
+                      const width = Math.min(canvas.width, 96);
+                      const height = Math.min(canvas.height, 96);
+                      const data = ctx.getImageData(0, 0, width, height).data;
+                      for (let i = 0; i < data.length; i += 4) {
+                        if (data[i] !== 0 || data[i + 1] !== 0 || data[i + 2] !== 0 || data[i + 3] !== 0) {
+                          state.non_blank = true;
+                          break;
+                        }
+                      }
+                      return state;
+                    }
+                    const gl =
+                      canvas.getContext('webgl2') ||
+                      canvas.getContext('webgl') ||
+                      canvas.getContext('experimental-webgl');
+                    if (gl && canvas.width > 0 && canvas.height > 0) {
+                      state.context_type = 'webgl';
+                      const width = Math.min(canvas.width, 96);
+                      const height = Math.min(canvas.height, 96);
+                      const pixels = new Uint8Array(width * height * 4);
+                      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+                      for (let i = 0; i < pixels.length; i += 4) {
+                        if (pixels[i] !== 0 || pixels[i + 1] !== 0 || pixels[i + 2] !== 0 || pixels[i + 3] !== 0) {
+                          state.non_blank = true;
+                          break;
+                        }
+                      }
+                    }
+                    if (!state.non_blank && canvas.width > 0 && canvas.height > 0) {
+                      const snapshot = canvas.toDataURL('image/png');
+                      const blank = document.createElement('canvas');
+                      blank.width = canvas.width;
+                      blank.height = canvas.height;
+                      state.non_blank = snapshot !== blank.toDataURL('image/png');
+                    }
+                  } catch (error) {
+                    state.sample_error = String(error);
+                    if (state.sample_error.toLowerCase().includes('taint')) {
+                      state.non_blank = true;
+                    }
+                  }
+                  return state;
+                })
+                """
+            )
+            canvas_screenshot_non_blank = False
+            canvas_screenshot_errors: list[str] = []
+            if isinstance(canvas_states, list) and canvas_states and not _canvas_smoke_ok(canvas_states):
+                for canvas_handle in page.query_selector_all("canvas"):
+                    blank_handle: Any | None = None
+                    try:
+                        canvas_png = canvas_handle.screenshot(timeout=2000)
+                        blank_handle = page.evaluate_handle(
+                            """
+                            (canvas) => {
+                              const rect = canvas.getBoundingClientRect();
+                              const blank = document.createElement('canvas');
+                              blank.width = canvas.width;
+                              blank.height = canvas.height;
+                              blank.style.width = `${Math.round(rect.width)}px`;
+                              blank.style.height = `${Math.round(rect.height)}px`;
+                              blank.style.position = 'fixed';
+                              blank.style.left = '0px';
+                              blank.style.top = '0px';
+                              blank.style.pointerEvents = 'none';
+                              blank.setAttribute('data-polaris-canvas-probe', 'blank');
+                              document.body.appendChild(blank);
+                              return blank;
+                            }
+                            """,
+                            canvas_handle,
+                        )
+                        blank_element = blank_handle.as_element()
+                        blank_png = blank_element.screenshot(timeout=2000) if blank_element is not None else b""
+                    except (OSError, RuntimeError, ValueError) as exc:
+                        canvas_screenshot_errors.append(str(exc))
+                        continue
+                    finally:
+                        if blank_handle is not None:
+                            with suppress(OSError, RuntimeError, ValueError):
+                                blank_handle.evaluate("(blank) => blank.remove()")
+                    canvas_bytes = bytes(canvas_png)
+                    blank_bytes = bytes(blank_png)
+                    if (blank_bytes and canvas_bytes != blank_bytes) or (
+                        not blank_bytes and _png_has_nonblank_pixels(canvas_bytes)
+                    ):
+                        canvas_screenshot_non_blank = True
+                        break
 
             browser.close()
 
-        # Filter out non-critical resource loading errors (CSS, JS, images, favicon, network errors)
-        non_critical_patterns = [
-            "Failed to load resource",
-            "favicon.ico",
-            "net::ERR_",
-            "404 (Not Found)",
-            "CORS policy",
-            "Cross-Origin",
-            "Mixed Content",
-            "The resource at",
-            "was preloaded using link preload",
-            "was requested but not retrieved",
-        ]
-        critical_errors = [
-            err for err in console_errors if not any(pattern in err for pattern in non_critical_patterns)
-        ]
+        critical_errors = [err for err in console_errors if not _is_ignorable_web_console_error(err)]
         status_ok = 200 <= http_status < 400
-        ok = status_ok and len(critical_errors) == 0
+        canvas_ok = _canvas_smoke_ok(canvas_states if isinstance(canvas_states, list) else [])
+        canvas_ok = canvas_ok or canvas_screenshot_non_blank
+        ok = (
+            status_ok
+            and len(critical_errors) == 0
+            and len(missing_resources) == 0
+            and len(browser_resource_failures) == 0
+            and canvas_ok
+        )
         if not status_ok:
             detail = f"HTTP status {http_status} for static web entrypoint"
+        elif missing_resources:
+            detail = f"HTML references missing local resources: {', '.join(missing_resources[:5])}"
+        elif browser_resource_failures:
+            detail = f"Browser resource failures: {'; '.join(browser_resource_failures[:3])}"
         elif critical_errors:
             detail = f"Console errors: {'; '.join(critical_errors[:3])}"
+        elif not canvas_ok:
+            detail = "Canvas entrypoint did not render non-empty pixels"
         else:
             detail = "Playwright verification passed"
         return {
@@ -397,7 +706,13 @@ def _smoke_static_web_playwright(workspace: Path, html_rel: str, *, timeout_s: i
             "duration_s": round(time.time() - started, 3),
             "http_status": http_status,
             "console_errors": console_errors,
-            "has_canvas": canvas is not None,
+            "resource_failures": browser_resource_failures,
+            "missing_resources": missing_resources,
+            "canvas_states": canvas_states,
+            "has_canvas": bool(canvas_states),
+            "canvas_non_blank": canvas_ok,
+            "canvas_screenshot_non_blank": canvas_screenshot_non_blank,
+            "canvas_screenshot_errors": canvas_screenshot_errors,
             "detail": detail,
         }
     finally:
