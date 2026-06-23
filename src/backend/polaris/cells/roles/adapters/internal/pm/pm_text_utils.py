@@ -104,6 +104,16 @@ _PM_TEST_CONTRACT_HINT_RE = re.compile(
     re.IGNORECASE,
 )
 _PM_README_HINT_RE = re.compile(r"(?:\breadme(?:\.md)?\b|运行说明|说明如何运行)", re.IGNORECASE)
+_PM_DOCUMENTATION_CONTRACT_HINT_RE = re.compile(
+    r"(?:\breadme(?:\.md)?\b|\bdocs?\b|\bdocumentation\b|运行文档|运行说明|说明文档|项目简介|使用说明)",
+    re.IGNORECASE,
+)
+_PM_TEST_AUTHORING_HINT_RE = re.compile(
+    r"(?:编写|创建|实现|新增|补充|添加|完善).{0,24}(?:测试文件|测试用例|单元测试|集成测试|验收脚本|pytest|unittest|\.test\.)|"
+    r"(?:write|create|implement|add).{0,32}(?:test file|unit test|integration test|pytest|unittest|\\.test\\.)",
+    re.IGNORECASE,
+)
+_PM_GENERIC_PRODUCT_TEST_PATHS = frozenset({"tests/test_product.py", "test_product.py"})
 _PM_SOURCE_FILE_HINT_RE = re.compile(
     r"(?:源码|代码文件|真实代码文件|source\s+file|code\s+file|implementation|可运行)",
     re.IGNORECASE,
@@ -542,6 +552,27 @@ def _pm_target_files_include_tests(target_files: list[str]) -> bool:
         if filename.startswith("test_") or ".test." in filename or filename.endswith("_test.py"):
             return True
     return False
+
+
+def _pm_is_generic_product_test_path(path: str) -> bool:
+    lowered = str(path or "").replace("\\", "/").strip().lstrip("./").lower()
+    return lowered in _PM_GENERIC_PRODUCT_TEST_PATHS
+
+
+def _pm_should_drop_generic_product_test_for_documentation_contract(
+    *,
+    title: str,
+    goal: str,
+    description: str,
+    steps: list[str],
+    acceptance: list[str],
+    phase: str,
+) -> bool:
+    contract_text = "\n".join([title, goal, description, phase, *steps, *acceptance])
+    core_text = "\n".join([title, goal, description, phase])
+    if not _PM_DOCUMENTATION_CONTRACT_HINT_RE.search(core_text):
+        return False
+    return not bool(_PM_TEST_AUTHORING_HINT_RE.search(contract_text))
 
 
 def _pm_infer_test_target_file_for_contract(

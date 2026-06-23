@@ -67,6 +67,22 @@ _TS_TOO_FEW_ARGUMENTS_ERROR_RE = re.compile(
     r"Expected\s+(?P<expected>\d+)\s+arguments?,\s+but\s+got\s+(?P<got>\d+)",
     re.IGNORECASE,
 )
+_TS_POSSIBLY_NULL_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS18047:\s*"
+    r"['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+possibly\s+['\"]null['\"]",
+    re.IGNORECASE,
+)
+_TS_NULLABLE_CANVAS_CONTEXT_ARGUMENT_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2345:\s*"
+    r"Argument\s+of\s+type\s+['\"]CanvasRenderingContext2D\s*\|\s*null['\"]\s+is\s+not\s+assignable\s+"
+    r"to\s+parameter\s+of\s+type\s+['\"]CanvasRenderingContext2D['\"]",
+    re.IGNORECASE,
+)
+_TS_CANNOT_FIND_TEST_GLOBAL_ERROR_RE = re.compile(
+    r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS(?:2304|2582):\s*"
+    r"Cannot\s+find\s+name\s+['\"](?P<symbol>describe|it|test|expect|beforeEach|afterEach|beforeAll|afterAll)['\"]",
+    re.IGNORECASE,
+)
 _TS_UNINITIALIZED_PROPERTY_ERROR_RE = re.compile(
     r"(?P<file>[^:\n]+\.tsx?)\((?P<line>\d+),(?P<col>\d+)\):\s*error\s+TS2564:\s*"
     r"Property\s+['\"](?P<member>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+has\s+no\s+initializer",
@@ -110,9 +126,21 @@ _TS_ARROW_FUNCTION_DECLARATION_LINE_RE = re.compile(
     r"^\s*(?:export\s+)?(?:const|let|var)\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*"
     r"(?:async\s*)?\((?P<params>[^)]*)\)\s*=>\s*{"
 )
+_TS_CANVAS_CONTEXT_DECLARATION_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)(?:const|let|var)\s+(?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)"
+    r"(?:\s*:\s*[^=]+)?\s*=\s*[^;\n]*\.getContext\(\s*['\"]2d['\"]\s*\)\s*;?\s*$"
+)
+_TS_VITEST_IMPORT_RE = re.compile(
+    r"import\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*from\s*['\"]vitest['\"]\s*;?",
+    re.MULTILINE,
+)
 _TS_EXPORTED_CLASS_RE_TEMPLATE = r"export\s+(?:abstract\s+)?class\s+{type_name}\b[^{{]*{{"
 _TS_STRUCTURAL_TYPE_RE_TEMPLATE = r"(?:export\s+)?(?:interface\s+{type_name}\b[^{{]*{{|type\s+{type_name}\b\s*=\s*{{)"
 _TS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+_TS_TEST_GLOBAL_NAMES = frozenset(
+    {"describe", "it", "test", "expect", "beforeEach", "afterEach", "beforeAll", "afterAll"}
+)
+_VITEST_DEV_DEPENDENCY_VERSION = "^2.1.8"
 _TS_STRINGISH_MEMBER_NAMES = {"color", "colour", "id", "key", "label", "name", "title"}
 _TS_NUMERIC_MEMBER_NAMES = {
     "amplitude",
@@ -618,6 +646,101 @@ def _apply_deterministic_typescript_tsconfig_lib_repair(
     ]
 
 
+def _apply_deterministic_typescript_nullable_canvas_context_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    nullable_contexts = _parse_typescript_nullable_canvas_context_errors(artifact_quality_errors)
+    if not nullable_contexts:
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired: list[dict[str, str]] = []
+    by_file: dict[str, set[str]] = {}
+    for item in nullable_contexts:
+        by_file.setdefault(item["file"], set()).add(item.get("symbol") or "")
+
+    for rel_file, raw_symbols in by_file.items():
+        path = (workspace_path / rel_file).resolve()
+        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
+            continue
+        try:
+            original = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        symbols = {symbol for symbol in raw_symbols if _TS_IDENTIFIER_RE.fullmatch(symbol)}
+        repaired_text, guarded_symbols = _repair_typescript_nullable_canvas_context_guards(original, symbols)
+        if repaired_text == original or not guarded_symbols:
+            continue
+        updated_by_path[path] = repaired_text
+        repaired.extend({"file": rel_file, "symbol": symbol} for symbol in guarded_symbols)
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_nullable_canvas_context_repair",
+        metadata_key="guards",
+        metadata_value=repaired,
+    )
+
+
+def _apply_deterministic_typescript_vitest_globals_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    missing_globals = _parse_typescript_missing_test_global_errors(artifact_quality_errors)
+    if not missing_globals:
+        return []
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired: list[dict[str, str]] = []
+    by_file: dict[str, set[str]] = {}
+    for item in missing_globals:
+        by_file.setdefault(item["file"], set()).add(item["symbol"])
+
+    for rel_file, symbols in by_file.items():
+        path = (workspace_path / rel_file).resolve()
+        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
+            continue
+        try:
+            original = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        repaired_text = _add_vitest_import_to_typescript_test(original, symbols)
+        if repaired_text == original:
+            continue
+        updated_by_path[path] = repaired_text
+        repaired.extend({"file": rel_file, "symbol": symbol} for symbol in sorted(symbols))
+
+    manifest_path = workspace_path / "package.json"
+    manifest_text = _typescript_vitest_manifest_repair_content(manifest_path)
+    if manifest_text:
+        updated_by_path[manifest_path] = manifest_text
+        repaired.append({"file": "package.json", "symbol": "vitest"})
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_vitest_globals_repair",
+        metadata_key="test_globals",
+        metadata_value=repaired,
+    )
+
+
 def _typescript_errors_require_dom_lib(errors: list[str]) -> bool:
     joined = "\n".join(str(error or "").lower() for error in errors)
     if "include 'dom'" not in joined:
@@ -1079,6 +1202,48 @@ def _parse_typescript_too_few_arguments_errors(errors: list[str]) -> list[dict[s
     return parsed
 
 
+def _parse_typescript_nullable_canvas_context_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for error in errors:
+        text = str(error or "")
+        for match in _TS_POSSIBLY_NULL_ERROR_RE.finditer(text):
+            item = {
+                "file": _normalize_declared_task_path(match.group("file")),
+                "symbol": str(match.group("symbol") or "").strip(),
+            }
+            key = (item["file"], item["symbol"])
+            if not item["file"] or not _TS_IDENTIFIER_RE.fullmatch(item["symbol"]) or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+        for match in _TS_NULLABLE_CANVAS_CONTEXT_ARGUMENT_ERROR_RE.finditer(text):
+            item = {"file": _normalize_declared_task_path(match.group("file")), "symbol": ""}
+            key = (item["file"], item["symbol"])
+            if not item["file"] or key in seen:
+                continue
+            seen.add(key)
+            parsed.append(item)
+    return parsed
+
+
+def _parse_typescript_missing_test_global_errors(errors: list[str]) -> list[dict[str, str]]:
+    parsed: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for error in errors:
+        for match in _TS_CANNOT_FIND_TEST_GLOBAL_ERROR_RE.finditer(str(error or "")):
+            file_name = _normalize_declared_task_path(match.group("file"))
+            symbol = str(match.group("symbol") or "").strip()
+            if not _is_typescript_test_path(file_name) or symbol not in _TS_TEST_GLOBAL_NAMES:
+                continue
+            key = (file_name, symbol)
+            if key in seen:
+                continue
+            seen.add(key)
+            parsed.append({"file": file_name, "symbol": symbol})
+    return parsed
+
+
 def _parse_typescript_enum_member_separator_errors(errors: list[str]) -> list[dict[str, str]]:
     parsed: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -1202,6 +1367,121 @@ def _typescript_repair_diff_excerpt(rel_path: str, before: str, after: str, *, m
         n=3,
     )
     return "\n".join(diff)[:max_chars]
+
+
+def _repair_typescript_nullable_canvas_context_guards(
+    text: str,
+    symbols: set[str],
+) -> tuple[str, list[str]]:
+    lines = text.splitlines()
+    repaired_lines: list[str] = []
+    guarded: list[str] = []
+    for index, line in enumerate(lines):
+        match = _TS_CANVAS_CONTEXT_DECLARATION_LINE_RE.match(line)
+        if not match:
+            repaired_lines.append(line)
+            continue
+        symbol = str(match.group("symbol") or "").strip()
+        if symbols and symbol not in symbols:
+            repaired_lines.append(line)
+            continue
+        repaired_line = _typescript_canvas_context_non_null_assertion_line(line)
+        line_changed = repaired_line != line
+        repaired_lines.append(repaired_line)
+        if _typescript_nullable_guard_follows(lines, index, symbol):
+            if line_changed:
+                guarded.append(symbol)
+            continue
+        indent = str(match.group("indent") or "")
+        repaired_lines.append(f"{indent}if (!{symbol}) {{")
+        repaired_lines.append(f'{indent}  throw new Error("Canvas 2D context unavailable");')
+        repaired_lines.append(f"{indent}}}")
+        guarded.append(symbol)
+    if not guarded:
+        return text, []
+    return "\n".join(repaired_lines) + ("\n" if text.endswith("\n") else ""), _dedupe_preserve_order(guarded)
+
+
+def _typescript_canvas_context_non_null_assertion_line(line: str) -> str:
+    if re.search(r"\.getContext\(\s*['\"]2d['\"]\s*\)!", line):
+        return line
+    return re.sub(r"(\.getContext\(\s*['\"]2d['\"]\s*\))(\s*;?\s*)$", r"\1!\2", line)
+
+
+def _typescript_nullable_guard_follows(lines: list[str], index: int, symbol: str) -> bool:
+    window = "\n".join(lines[index + 1 : index + 7])
+    compact = re.sub(r"\s+", "", window)
+    return (
+        f"if(!{symbol})" in compact
+        or f"if({symbol}===null)" in compact
+        or f"if({symbol}==null)" in compact
+        or f"if(null==={symbol})" in compact
+        or f"if(null=={symbol})" in compact
+    )
+
+
+def _add_vitest_import_to_typescript_test(text: str, symbols: set[str]) -> str:
+    requested = sorted(symbol for symbol in symbols if symbol in _TS_TEST_GLOBAL_NAMES)
+    if not requested:
+        return text
+    match = _TS_VITEST_IMPORT_RE.search(text)
+    if match:
+        existing = {
+            token.strip()
+            for token in str(match.group("symbols") or "").split(",")
+            if token.strip() in _TS_TEST_GLOBAL_NAMES
+        }
+        merged = sorted(existing | set(requested))
+        replacement = f"import {{ {', '.join(merged)} }} from 'vitest';"
+        return text[: match.start()] + replacement + text[match.end() :]
+
+    insertion = f"import {{ {', '.join(requested)} }} from 'vitest';\n"
+    if text.startswith("#!"):
+        first_newline = text.find("\n")
+        if first_newline >= 0:
+            return text[: first_newline + 1] + insertion + text[first_newline + 1 :]
+    return insertion + text
+
+
+def _typescript_vitest_manifest_repair_content(package_path: Path) -> str:
+    if not package_path.is_file():
+        return ""
+    try:
+        payload = json.loads(package_path.read_text(encoding="utf-8"))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    changed = False
+    scripts_raw = payload.get("scripts")
+    scripts: dict[str, Any] = dict(scripts_raw) if isinstance(scripts_raw, dict) else {}
+    test_script = str(scripts.get("test") or "").strip()
+    if "vitest" not in test_script:
+        scripts["test"] = "vitest run"
+        payload["scripts"] = dict(sorted((str(key), value) for key, value in scripts.items()))
+        changed = True
+
+    dev_dependencies_raw = payload.get("devDependencies")
+    dev_dependencies: dict[str, Any] = dict(dev_dependencies_raw) if isinstance(dev_dependencies_raw, dict) else {}
+    if not _package_manifest_declares_dependency(payload, "vitest"):
+        dev_dependencies["vitest"] = _VITEST_DEV_DEPENDENCY_VERSION
+        payload["devDependencies"] = dict(sorted(dev_dependencies.items()))
+        changed = True
+
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n" if changed else ""
+
+
+def _package_manifest_declares_dependency(payload: dict[str, Any], package_name: str) -> bool:
+    for dependency_key in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        dependencies = payload.get(dependency_key)
+        if isinstance(dependencies, dict) and package_name in dependencies:
+            return True
+    return False
+
+
+def _is_typescript_test_path(path: str) -> bool:
+    normalized = str(path or "").replace("\\", "/").lower()
+    return normalized.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx")) or normalized.startswith("tests/")
 
 
 def _find_typescript_class_declaration(

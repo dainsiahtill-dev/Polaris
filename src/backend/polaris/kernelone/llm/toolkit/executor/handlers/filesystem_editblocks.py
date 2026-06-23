@@ -253,6 +253,88 @@ def _unwrap_weak_replace_marker(blocks_text: str, default_file: str | None) -> t
     return target_file, replacement
 
 
+_WEAK_FILE_MARKER_RE = re.compile(
+    r"^(?:file|filepath|filename|file_path|path|target_file)\s*[:=]\s*(?P<path>.*?)\s*$",
+    flags=re.IGNORECASE,
+)
+_WEAK_BARE_PATH_RE = re.compile(r"^(?P<path>[\w./ -]+\.[A-Za-z0-9]{1,12})\s*$")
+
+
+def _clean_weak_marker_path(raw_path: str) -> str:
+    path = str(raw_path or "").strip().strip("`'\"")
+    path = re.sub(r"\s+(?://|#).*$", "", path).strip()
+    return path.strip("`'\"")
+
+
+def _looks_like_weak_file_body(body: str) -> bool:
+    lines = [line for line in str(body or "").splitlines() if line.strip()]
+    if len(lines) < 3:
+        return False
+    first_line = lines[0].lstrip("\ufeff").strip()
+    if first_line.startswith(("```", "<<<<", ">>>>", "====")):
+        return False
+    if first_line in {"{", "["} or re.match(r"^[{\[]\s*[{\[]?\"?(blocks|file|path|content|edits)\b", first_line):
+        return False
+    return bool(
+        re.search(
+            r"^\s*(#|'''|\"\"\"|import|export|type|interface|class|function|const|let|var|def|from|<!doctype|<html|describe\()",
+            first_line,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+    )
+
+
+def _unwrap_weak_file_marker(blocks_text: str, default_file: str | None) -> tuple[str | None, str | None]:
+    """Extract whole-file content from weak ``FILE: path`` wrappers.
+
+    Qwen-class local models commonly emit:
+
+    ``FILE: src/module.ts``
+    ``<complete file content>``
+
+    when they intend a file create/write through ``edit_blocks``. Treat only a
+    first-line marker as structural; prose that merely mentions "file:" later
+    remains rejected by the normal parser.
+    """
+
+    lines = str(blocks_text or "").splitlines(keepends=True)
+    if not lines:
+        return None, None
+    header = lines[0].rstrip("\r\n").strip()
+    match = _WEAK_FILE_MARKER_RE.match(header)
+    body_start = 1
+    target_file = ""
+    matched_marker = False
+    if match:
+        matched_marker = True
+        target_file = _clean_weak_marker_path(match.group("path"))
+        if not target_file and len(lines) > 1:
+            next_line = lines[1].rstrip("\r\n").strip()
+            target_file = _clean_weak_marker_path(next_line)
+            body_start = 2
+    else:
+        bare_match = _WEAK_BARE_PATH_RE.match(header)
+        if bare_match:
+            candidate = _clean_weak_marker_path(bare_match.group("path"))
+            candidate_body = "".join(lines[1:])
+            if _looks_like_weak_file_body(candidate_body):
+                matched_marker = True
+                target_file = candidate
+                body_start = 1
+        elif default_file and _looks_like_weak_file_body("".join(lines)):
+            matched_marker = True
+            target_file = str(default_file).strip()
+            body_start = 0
+
+    if not matched_marker:
+        return None, None
+    target_file = target_file or str(default_file or "").strip()
+    replacement = "".join(lines[body_start:])
+    if not target_file or not replacement.strip():
+        return None, None
+    return target_file, replacement
+
+
 def _coerce_line_no(value: Any) -> int | None:
     try:
         return int(str(value).strip())
@@ -313,26 +395,36 @@ def _synthesize_line_range_block(
             ),
             "suggestion": "Pass the actual replacement source for the range; an empty replacement is rejected.",
         }
+    requested_removed_lines = end_no - start_no + 1
+    if (
+        total > requested_removed_lines
+        and requested_removed_lines <= 3
+        and _looks_like_complete_file_replacement(repl, rel)
+    ):
+        if start_no == 1:
+            end_no = total
+            search_text = "".join(lines)
+        else:
+            return None, {
+                "ok": False,
+                "error": (
+                    f"line-range edit for {file}[{start_no}:{end_no}] looks like a whole-file replacement, "
+                    f"but the selected range covers only {requested_removed_lines} of {total} lines."
+                ),
+                "suggestion": (
+                    f"If replacing the full existing file, use start=1 and end={total}; otherwise set "
+                    "replace to only the new source for the selected line range. Use write_file when the "
+                    "intent is a whole-file overwrite."
+                ),
+                "error_type": "line_range_whole_file_mismatch",
+                "retryable": True,
+            }
+
     # Preserve the trailing-newline shape of the replaced slice.
     if search_text.endswith("\n") and not repl.endswith("\n"):
         repl = repl + "\n"
     removed_lines = end_no - start_no + 1
     added_lines = len(repl.splitlines())
-    if total > removed_lines and removed_lines <= 3 and _looks_like_complete_file_replacement(repl, rel):
-        return None, {
-            "ok": False,
-            "error": (
-                f"line-range edit for {file}[{start_no}:{end_no}] looks like a whole-file replacement, "
-                f"but the selected range covers only {removed_lines} of {total} lines."
-            ),
-            "suggestion": (
-                f"If replacing the full existing file, use start=1 and end={total}; otherwise set "
-                "replace to only the new source for the selected line range. Use write_file when the "
-                "intent is a whole-file overwrite."
-            ),
-            "error_type": "line_range_whole_file_mismatch",
-            "retryable": True,
-        }
     if (
         removed_lines >= _DESTRUCTIVE_SHRINK_MIN_REMOVED_LINES
         and added_lines <= removed_lines * _DESTRUCTIVE_SHRINK_MAX_ADD_RATIO

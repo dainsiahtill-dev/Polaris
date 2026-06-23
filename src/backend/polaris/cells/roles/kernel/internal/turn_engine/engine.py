@@ -37,6 +37,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _as_mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _truthy_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _first_non_empty(*values: Any) -> str:
+    for value in values:
+        token = str(value or "").strip()
+        if token:
+            return token
+    return ""
+
+
 class TurnEngine(TurnEngineCompatMixin):
     """Deprecated turn-engine API reduced to a TransactionKernel facade.
 
@@ -75,6 +95,67 @@ class TurnEngine(TurnEngineCompatMixin):
     def _request_metadata(request: RoleTurnRequest) -> dict[str, Any]:
         raw_metadata = getattr(request, "metadata", None)
         return dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+
+    @staticmethod
+    def _assert_task_runtime_guard_allows_tool(request: RoleTurnRequest) -> None:
+        context_override = _as_mapping(getattr(request, "context_override", None))
+        metadata = _as_mapping(getattr(request, "metadata", None))
+        guard_enabled = _truthy_flag(
+            _first_non_empty(
+                context_override.get("task_runtime_guard"),
+                metadata.get("task_runtime_guard"),
+            )
+        )
+        session_id = _first_non_empty(
+            context_override.get("task_runtime_session_id"),
+            metadata.get("task_runtime_session_id"),
+            context_override.get("session_id"),
+            metadata.get("session_id"),
+        )
+        if not guard_enabled and not session_id:
+            return
+
+        workspace = _first_non_empty(
+            context_override.get("workspace"),
+            metadata.get("workspace"),
+            getattr(request, "workspace", ""),
+        )
+        task_id = _first_non_empty(
+            context_override.get("task_id"),
+            context_override.get("pm_task_id"),
+            context_override.get("target_task_id"),
+            metadata.get("task_id"),
+            metadata.get("pm_task_id"),
+            metadata.get("target_task_id"),
+            getattr(request, "task_id", ""),
+        )
+        missing = [
+            name
+            for name, value in (
+                ("workspace", workspace),
+                ("task_id", task_id),
+                ("task_runtime_session_id", session_id),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError("director_tool_execution_guard_misconfigured: missing " + ",".join(missing))
+
+        from polaris.cells.runtime.task_runtime.internal.service import TaskRuntimeService
+
+        result = TaskRuntimeService(workspace).heartbeat_execution(
+            task_id,
+            session_id=session_id,
+            lease_ttl_seconds=120,
+            context_summary="transaction_kernel_tool_guard",
+        )
+        if result.get("success") is True:
+            return
+        reason = str(result.get("reason") or "task_runtime_guard_blocked").strip()
+        raise RuntimeError(
+            "director_tool_execution_cancelled: task_runtime_guard_blocked "
+            f"reason={reason} task_id={task_id} session_id={session_id}"
+        )
 
     @staticmethod
     def _normalize_receipt_ids(receipt_ids: list[str] | tuple[str, ...] | None) -> tuple[str, ...]:
@@ -445,6 +526,7 @@ class TurnEngine(TurnEngineCompatMixin):
 
         async def tool_runtime(tool_name: str, arguments: dict[str, Any]) -> Any:
             try:
+                self._assert_task_runtime_guard_allows_tool(request)
                 return await self._kernel._execute_single_tool(
                     tool_name=tool_name,
                     args=arguments,

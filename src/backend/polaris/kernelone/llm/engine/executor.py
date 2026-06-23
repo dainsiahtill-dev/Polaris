@@ -58,6 +58,196 @@ logger = logging.getLogger(__name__)
 
 FinalRequestReceiptSink = Callable[[dict[str, Any]], None]
 
+_UNDERUTILIZED_WINDOW_THRESHOLD = 8000
+_UNDERUTILIZED_RATIO = 0.2
+
+
+def _estimate_tokens_from_chars(chars: int) -> int:
+    return max(1, (int(chars or 0) + 3) // 4) if chars > 0 else 0
+
+
+def _json_chars(value: Any) -> int:
+    if value is None:
+        return 0
+    try:
+        return len(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str))
+    except (TypeError, ValueError):
+        return len(str(value))
+
+
+def _normalized_messages_for_snapshot(value: Any, *, fallback_prompt: Any = None) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    if isinstance(value, list):
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            messages.append(
+                {
+                    "role": str(item.get("role") or ""),
+                    "content": str(item.get("content") or ""),
+                }
+            )
+    if messages:
+        return messages
+    text = str(fallback_prompt or "")
+    return [{"role": "user", "content": text}] if text else []
+
+
+def _message_chars(messages: list[dict[str, str]]) -> int:
+    return sum(len(message.get("role", "")) + len(message.get("content", "")) for message in messages)
+
+
+def _coverage_flags(text: str) -> dict[str, bool]:
+    lowered = text.lower()
+    return {
+        "has_pm_contract": any(
+            needle in lowered
+            for needle in (
+                "task-",
+                "acceptance",
+                "acceptance criteria",
+                "depends_on",
+                "pm task contract",
+                "quality gates",
+                "verification commands",
+                "任务:",
+                "任务合同",
+                "执行步骤",
+                "验收标准",
+            )
+        ),
+        "has_chief_engineer_blueprint": any(
+            needle in lowered
+            for needle in (
+                "chief engineer",
+                "chief_engineer",
+                "blueprint",
+                "blueprint_id",
+                "ce handoff",
+                "ce 蓝图",
+                "construction signatures",
+                "construction target",
+                "construction verify",
+                "scope_for_apply",
+                "construction_plan",
+                "蓝图交接",
+            )
+        ),
+        "has_target_files": any(
+            needle in lowered
+            for needle in (
+                "target_files",
+                "scope_paths",
+                "src/",
+                "tests/",
+            )
+        ),
+        "has_failure_feedback": any(
+            needle in lowered
+            for needle in (
+                "exit_code",
+                "stderr",
+                "stdout",
+                "failed",
+                "error",
+                "retry",
+                "工具执行返回失败",
+            )
+        ),
+        "has_workspace_quality_evidence": any(
+            needle in lowered
+            for needle in (
+                "factory_workspace_quality",
+                "workspace quality",
+                "npm run build",
+                "npm test",
+                "real_run_gate",
+            )
+        ),
+    }
+
+
+def _context_quality_findings(
+    *,
+    coverage: dict[str, bool],
+    context_underutilized: bool,
+    final_request_token_estimate: int,
+    context_window_tokens: int,
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    missing = sorted(key for key, value in coverage.items() if not value)
+    if missing:
+        findings.append(
+            {
+                "severity": "warn",
+                "code": "coverage_flags_missing",
+                "missing": missing,
+            }
+        )
+    if context_underutilized:
+        findings.append(
+            {
+                "severity": "info",
+                "code": "context_underutilized",
+                "final_request_token_estimate": final_request_token_estimate,
+                "context_window_tokens": context_window_tokens,
+            }
+        )
+    return findings
+
+
+def _tool_schema_name(tool: Any) -> str:
+    if not isinstance(tool, dict):
+        return ""
+    function_payload = tool.get("function")
+    if isinstance(function_payload, dict):
+        return str(function_payload.get("name") or "").strip()
+    return str(tool.get("name") or tool.get("tool") or "").strip()
+
+
+def _tool_schema_parameters(tool: Any) -> dict[str, Any]:
+    if not isinstance(tool, dict):
+        return {}
+    function_payload = tool.get("function")
+    if isinstance(function_payload, dict) and isinstance(function_payload.get("parameters"), dict):
+        return dict(function_payload.get("parameters") or {})
+    if isinstance(tool.get("parameters"), dict):
+        return dict(tool.get("parameters") or {})
+    if isinstance(tool.get("input_schema"), dict):
+        return dict(tool.get("input_schema") or {})
+    return {}
+
+
+def _summarize_tool_schema(tool: Any) -> dict[str, Any]:
+    parameters = _tool_schema_parameters(tool)
+    raw_properties = parameters.get("properties")
+    properties: dict[Any, Any] = raw_properties if isinstance(raw_properties, dict) else {}
+    raw_required = parameters.get("required")
+    required: list[Any] = raw_required if isinstance(raw_required, list) else []
+    tool_type = str(tool.get("type") or "function") if isinstance(tool, dict) else "function"
+    return {
+        "type": tool_type,
+        "name": _tool_schema_name(tool),
+        "argument_keys": sorted(str(key) for key in properties),
+        "required": [str(item) for item in required],
+    }
+
+
+def _summarize_response_format(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    summary: dict[str, Any] = {"type": str(value.get("type") or "")}
+    json_schema = value.get("json_schema")
+    if isinstance(json_schema, dict):
+        summary["json_schema_name"] = str(json_schema.get("name") or "")
+        schema = json_schema.get("schema")
+        if isinstance(schema, dict):
+            properties = schema.get("properties")
+            if isinstance(properties, dict):
+                summary["json_schema_keys"] = sorted(str(key) for key in properties)
+    return summary
+
+
 # ─── Global concurrency and timeout configuration ───────────────────────────────
 # Now unified via _timeout_config module
 
@@ -425,21 +615,6 @@ class AIExecutor:
             request.context.pop("context_snapshot_degraded", None)
             request.context.pop("contextSnapshotDegraded", None)
 
-        self._record_final_request_receipt(
-            request=request,
-            trace_id=trace_id,
-            model_spec=model_spec,
-            invoke_cfg=invoke_cfg,
-            budget_decision=budget_decision,
-            requested_output_tokens=requested_output_tokens,
-            max_tokens_before_clamp=max_tokens_before_clamp,
-            payload_overhead=payload_overhead,
-            prompt_input=prompt_input,
-            chat_messages_before=chat_messages,
-            chat_messages_after=effective_chat_messages,
-            clamp_prompt_text=clamp_prompt_text,
-        )
-
         # ContextOS full-context viewer: store post-compression messages by hash.
         # Use the async variant so the disk write runs in the thread pool and
         # does not block the event loop on every LLM call.
@@ -450,13 +625,23 @@ class AIExecutor:
         # back to context_store_hash=None so the gating below never injects a
         # partial/stale hash into request.context.
         context_store_hash: str | None = None
-        if effective_chat_messages:
+        snapshot_messages: list[Any] | None = effective_chat_messages
+        if not snapshot_messages and prompt_input:
+            snapshot_messages = [{"role": "user", "content": str(prompt_input)}]
+        if snapshot_messages:
             try:
                 context_store_hash = await self._store_context_messages(
                     workspace=self.workspace,
-                    messages=effective_chat_messages,
+                    messages=snapshot_messages,
                     trace_id=trace_id,
                     call_id=request.context.get("call_id") if isinstance(request.context, dict) else None,
+                    provider_request=self._build_context_snapshot_provider_request(
+                        request=request,
+                        messages=snapshot_messages,
+                        invoke_cfg=invoke_cfg,
+                        model_spec=model_spec,
+                        prompt_input=prompt_input,
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001 — disk failure must not abort the LLM call
                 logger.warning(
@@ -484,6 +669,21 @@ class AIExecutor:
         # falsy-but-set key into request.context.
         if isinstance(request.context, dict) and context_store_hash:
             request.context["context_snapshot_ref"] = context_store_hash
+
+        self._record_final_request_receipt(
+            request=request,
+            trace_id=trace_id,
+            model_spec=model_spec,
+            invoke_cfg=invoke_cfg,
+            budget_decision=budget_decision,
+            requested_output_tokens=requested_output_tokens,
+            max_tokens_before_clamp=max_tokens_before_clamp,
+            payload_overhead=payload_overhead,
+            prompt_input=prompt_input,
+            chat_messages_before=chat_messages,
+            chat_messages_after=effective_chat_messages,
+            clamp_prompt_text=clamp_prompt_text,
+        )
 
         # Propagate worker_id from caller (request.context) or environment
         # (KERNELONE_WORKER_ID, set by Director's WorkerPool at spawn time) so
@@ -709,6 +909,85 @@ class AIExecutor:
             if receipt_required:
                 raise
 
+    def _build_context_snapshot_provider_request(
+        self,
+        *,
+        request: AIRequest,
+        messages: list[Any] | None,
+        invoke_cfg: dict[str, Any],
+        model_spec: ModelSpec,
+        prompt_input: Any,
+    ) -> dict[str, Any]:
+        """Build the durable final-provider-request audit stored with ContextOS snapshots.
+
+        This lives in KernelOne so low-level executor snapshots remain truthful even
+        when callers do not go through the role-cell invoker. The full prompt content
+        already lives in the sibling ``messages`` field; this payload records the
+        provider-bound request shape and token audit without duplicating content.
+        """
+
+        normalized_messages = _normalized_messages_for_snapshot(messages, fallback_prompt=prompt_input)
+        message_chars = _message_chars(normalized_messages)
+        message_token_estimate = _estimate_tokens_from_chars(message_chars)
+
+        tool_schema_payload = invoke_cfg.get("tools")
+        tools = tool_schema_payload if isinstance(tool_schema_payload, list) else []
+        tool_schema_chars = _json_chars(tools)
+        tool_schema_token_estimate = _estimate_tokens_from_chars(tool_schema_chars)
+
+        response_format_payload = invoke_cfg.get("response_format")
+        response_format_chars = _json_chars(response_format_payload)
+        response_format_token_estimate = _estimate_tokens_from_chars(response_format_chars)
+
+        final_request_token_estimate = (
+            message_token_estimate + tool_schema_token_estimate + response_format_token_estimate
+        )
+        window_tokens = int(model_spec.max_context_tokens or 0)
+        utilization = (final_request_token_estimate / window_tokens) if window_tokens > 0 else None
+        message_text = "\n".join(message.get("content", "") for message in normalized_messages)
+        context_underutilized = bool(
+            window_tokens >= _UNDERUTILIZED_WINDOW_THRESHOLD
+            and final_request_token_estimate < int(window_tokens * _UNDERUTILIZED_RATIO)
+        )
+        coverage = _coverage_flags(message_text)
+
+        return {
+            "schema_version": "llm.provider_request_snapshot.v1",
+            "source": "kernelone.llm.engine.executor",
+            "role": str(request.role or ""),
+            "provider_id": str(model_spec.provider_id or ""),
+            "provider_type": str(model_spec.provider_type or ""),
+            "model": str(model_spec.model or ""),
+            "message_count": len(normalized_messages),
+            "tool_schema_count": len(tools),
+            "tools": [_summarize_tool_schema(tool) for tool in tools],
+            "tool_choice": safe_observability_payload(invoke_cfg.get("tool_choice")),
+            "response_format": _summarize_response_format(response_format_payload),
+            "final_request_context_audit": {
+                "schema_version": "llm.final_request_context_audit.v1",
+                "message_count": len(normalized_messages),
+                "message_chars": message_chars,
+                "message_token_estimate": message_token_estimate,
+                "tool_schema_count": len(tools),
+                "tool_schema_chars": tool_schema_chars,
+                "tool_schema_token_estimate": tool_schema_token_estimate,
+                "response_format_chars": response_format_chars,
+                "response_format_token_estimate": response_format_token_estimate,
+                "final_request_token_estimate": final_request_token_estimate,
+                "context_window_tokens": window_tokens,
+                "context_window_utilization": round(utilization, 4) if utilization is not None else None,
+                "context_underutilized": context_underutilized,
+                "available_token_headroom": max(0, window_tokens - final_request_token_estimate),
+                "coverage": coverage,
+                "context_quality": _context_quality_findings(
+                    coverage=coverage,
+                    context_underutilized=context_underutilized,
+                    final_request_token_estimate=final_request_token_estimate,
+                    context_window_tokens=window_tokens,
+                ),
+            },
+        }
+
     @staticmethod
     def _normalize_chat_messages_for_receipt(value: Any) -> list[dict[str, str]]:
         if not isinstance(value, list):
@@ -787,17 +1066,15 @@ class AIExecutor:
         :func:`polaris.kernelone.llm.engine.internal.context_hash.validate_context_hash`
         (the same single source of truth the consumer uses), so the producer
         can never emit a key the consumer will refuse to read.  The on-disk
-        path is also routed through ``StorageLayout.resolve_artifact_path``
-        so any future loosening of ``get_path`` cannot bypass the
-        ``normalize_logical_rel_path`` + ``_join_under`` guards.
+        path is written directly under the resolved workspace runtime root,
+        matching the HTTP ContextOS reader and retention sweeper.
         """
         from datetime import datetime, timezone
 
         from polaris.kernelone.llm.engine.internal.context_hash import (
             validate_context_hash,
         )
-        from polaris.kernelone.storage import StorageLayout
-        from polaris.kernelone.storage.io_paths import build_cache_root
+        from polaris.kernelone.storage.io_paths import resolve_storage_roots
 
         payload = {
             "schema_version": 1,
@@ -817,25 +1094,20 @@ class AIExecutor:
         hash_key = validate_context_hash(full_hash[:24])
 
         ws = AIExecutor._resolve_context_store_workspace(workspace)
-        cache_root = build_cache_root("", ws)
-        layout = StorageLayout(workspace=ws, runtime_base=cache_root)
+        runtime_root = os.path.abspath(resolve_storage_roots(ws).runtime_root)
         # Shard to avoid directory explosion: runtime/contexts/ab/abcdef...
         shard = hash_key[:2]
-        dir_rel = f"runtime/contexts/{shard}"
-        file_rel = f"{dir_rel}/{hash_key}"
-        # resolve_artifact_path rejects path traversal / unsupported prefixes
-        # via normalize_logical_rel_path + _join_under.
-        file_path = layout.resolve_artifact_path(file_rel)
-        dir_path = layout.resolve_artifact_path(dir_rel)
-        os.makedirs(str(dir_path), exist_ok=True)
+        dir_path = os.path.join(runtime_root, "contexts", shard)
+        file_path = os.path.join(dir_path, hash_key)
+        os.makedirs(dir_path, exist_ok=True)
 
         # Atomic write-then-rename to avoid partial reads. The .tmp sibling
         # is the standard pattern; the round-trip test asserts no .tmp is
         # left behind after a successful write.
-        tmp_path = str(file_path) + ".tmp"
+        tmp_path = file_path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(content)
-        os.replace(tmp_path, str(file_path))
+        os.replace(tmp_path, file_path)
         # Opportunistic retention sweep — cheap gate first, full sweep only
         # when the gate says it's needed and the throttle has elapsed.
         # This call MUST never raise to the caller; on_read_gate() is fail-closed.

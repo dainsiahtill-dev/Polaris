@@ -129,19 +129,22 @@ def build_contract_retry_context(
                 "directly with args.file and args.content; do not emit execute_command/read/list-only batches."
             )
     if target_file_tokens:
+        target_files_text = ", ".join(target_file_tokens)
         retry_lines.append(
             "Mutation target files detected from user request: "
-            + ", ".join(target_file_tokens)
-            + ". Ensure one write call touches at least one target file. "
+            + target_files_text
+            + ". The emitted tool batch must cover every listed target file required by the current task; "
+            "for multi-file create tasks, emit one write/edit call per target file instead of stopping after "
+            "the first successful write. "
             "Only write these target files; acceptance criteria, verification commands, test names, and command "
             "output paths are not authorization to create or modify extra files."
         )
         if forced_write_tool_name == "write_file" and len(target_file_tokens) > 1:
             retry_lines.append(
-                "MULTI-TARGET WRITE CONVERGENCE: choose exactly one still-missing target file from the list above "
-                "and call write_file for that file in this retry. Prefer the first missing source, entrypoint, "
-                "test, README, or HTML target required by the current task. Do not modify package.json, tsconfig.json, "
-                "or an already-created sibling unless that exact file is the selected missing target."
+                "MULTI-TARGET WRITE CONVERGENCE: call write_file once for each still-missing target file from "
+                "the list above in this same tool batch. Prefer source, entrypoint, test, README, or HTML targets "
+                "named by the current task, but do not stop after only one sibling file. Do not modify package.json, "
+                "tsconfig.json, or an already-created sibling unless that exact file is one of the listed targets."
             )
 
     retry_mode_guard = (

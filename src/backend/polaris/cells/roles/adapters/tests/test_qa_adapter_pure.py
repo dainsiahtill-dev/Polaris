@@ -698,6 +698,44 @@ class TestMergeReviewResult:
         assert "qa_llm_verdict_downgraded=FAIL:factory_runtime_hard_gate_passed" in merged["evidence"]
         assert finalized["passed"] is True
 
+    def test_factory_runtime_hard_gate_keeps_placeholder_test_critical(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        base = {
+            "verdict": "PASS",
+            "score": 100,
+            "critical_issues": [],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": ["factory_runtime_hard_gate_passed=True"],
+            "suggestions": [],
+        }
+        llm = {
+            "parsed_json": True,
+            "verdict": "FAIL",
+            "score": 42,
+            "critical_issues": [
+                "测试脚本为占位符: npm test 实际执行 tsc --noEmit && echo TypeScript compilation passed",
+                "测试文件计数为 0 (test_file_count=0): 完全没有行为级验证",
+            ],
+            "major_issues": [],
+            "warnings": [],
+            "evidence": ["factory_runtime_hard_gate_passed=True"],
+            "suggestions": [],
+        }
+
+        merged = adapter._merge_review_result(base, llm)
+        finalized = adapter._finalize_review_result(merged)
+
+        assert merged["verdict"] == "FAIL"
+        assert (
+            "测试脚本为占位符: npm test 实际执行 tsc --noEmit && echo TypeScript compilation passed"
+            in merged["critical_issues"]
+        )
+        assert "测试文件计数为 0 (test_file_count=0): 完全没有行为级验证" in merged["critical_issues"]
+        assert "qa_llm_quality_risk_not_runtime_blocker" not in merged["warnings"]
+        assert "qa_llm_verdict_downgraded=FAIL:factory_runtime_hard_gate_passed" not in merged["evidence"]
+        assert finalized["passed"] is False
+
     def test_factory_runtime_hard_gate_keeps_llm_runtime_blocker_critical(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         base = {

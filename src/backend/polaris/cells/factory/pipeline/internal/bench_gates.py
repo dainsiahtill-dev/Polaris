@@ -1374,7 +1374,25 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
         "error",
         "llm_route_terminal",
     }
-    invocation = terminal or "llm" in lowered_event or lowered_event.startswith("invoke")
+    raw_invocation = raw.get("invocation")
+    if isinstance(raw_invocation, bool):
+        invocation = raw_invocation
+    else:
+        invocation = terminal or "llm" in lowered_event or lowered_event.startswith("invoke")
+    skipped = bool(raw.get("skipped") or data.get("skipped") or metadata.get("skipped") or data_metadata.get("skipped"))
+    fail_closed = bool(
+        raw.get("fail_closed")
+        or data.get("fail_closed")
+        or metadata.get("fail_closed")
+        or data_metadata.get("fail_closed")
+    )
+    skip_reason = _first_string(
+        raw.get("skip_reason"),
+        data.get("skip_reason"),
+        metadata.get("skip_reason"),
+        data_metadata.get("skip_reason"),
+        extra_fields.get("skip_reason"),
+    )
     return {
         "event": event_name,
         "role": role,
@@ -1388,6 +1406,9 @@ def _normalize_llm_event(raw: dict[str, Any], *, source_path: str = "") -> dict[
         "total_tokens": total_tokens,
         "terminal": terminal,
         "invocation": invocation,
+        "skipped": skipped,
+        "skip_reason": skip_reason,
+        "fail_closed": fail_closed,
         "source_path": source_path,
         "raw": raw,
     }
@@ -1614,6 +1635,8 @@ def _is_real_llm_route_event(event: dict[str, Any]) -> bool:
     if not model:
         model = _norm_text(data.get("model"))
     cache_hit = bool(event.get("cache_hit") or data_meta.get("cached"))
+    if event.get("skipped") or event.get("fail_closed"):
+        return False
     return bool(event.get("invocation") and source.lower() == "llm" and not cache_hit and provider and model)
 
 
@@ -1725,7 +1748,7 @@ def build_llm_route_audit(
         multi_route_ok = True
         if normalized == "director":
             configured_routes = configured_loose
-            multi_route_ok = bool(configured_routes) and not missing
+            multi_route_ok = bool(observed) and bool(configured_routes) and not missing
             if require_all_director_routes:
                 binding_ok = binding_ok and multi_route_ok
             else:
@@ -1947,6 +1970,14 @@ def _record_has_runtime_environment_failure(record: dict[str, Any]) -> bool:
         return True
     if "cognitive_runtime_mainline_unavailable" in text:
         return True
+    if "no available director binding after readiness filtering" in text:
+        return True
+    if (
+        "active_binding_count" in text
+        and "provider_unreachable" in text
+        and re.search(r'"active_binding_count"\s*:\s*0', text)
+    ):
+        return True
     return "filenotfounderror" in text and (
         "pm.run_status_non_success" in text or "pm.runtime.exception" in text or "mainline_unavailable" in text
     )
@@ -1960,6 +1991,10 @@ def _runtime_environment_failure_reason(record: dict[str, Any]) -> str:
         return "runtime_roles_not_ready"
     if "cognitive_runtime_mainline_unavailable" in text:
         return "cognitive_runtime_mainline_unavailable"
+    if "no available director binding after readiness filtering" in text or (
+        "provider_unreachable" in text and re.search(r'"active_binding_count"\s*:\s*0', text)
+    ):
+        return "director_bindings_unavailable"
     if "filenotfounderror" in text:
         return "file_not_found"
     return "runtime_environment_failed"

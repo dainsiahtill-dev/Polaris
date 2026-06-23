@@ -37,6 +37,8 @@ _CONTROL_PLANE_CONTEXT_KEYS = {
     # message and, alongside an uncapped value, were the dominant BudgetExceededError.
     "disable_internal_tool_rounds",
     "llm_call_timeout_seconds",
+    "request_timeout_seconds",
+    "timeout_seconds",
     # Signal-rendered planes (2026-06-15): these are injected for the Director's
     # BlueprintStepsSignal card (_get_blueprint_step renders them concisely) and must
     # NOT be ALSO serialized verbatim into the context_override message — that was a
@@ -47,6 +49,8 @@ _CONTROL_PLANE_CONTEXT_KEYS = {
     "consumed_interfaces",
     "pre_state_verify",
     "last_failure",
+    "delivery_mode",
+    "director_quality_repair",
     "domain",
     "factory_run_id",
     "host_kind",
@@ -61,11 +65,16 @@ _CONTROL_PLANE_CONTEXT_KEYS = {
     "run_id",
     "runtime_session_id",
     "session_context_config",
+    "session_turn_events",
     "session_id",
     "state_first_context_os",
     "strategy_override",
     "stream_options",
     "task_id",
+    "target_task_id",
+    "pm_task_id",
+    "task_runtime_guard",
+    "task_runtime_session_id",
     "workspace",
     "workspace_root",
 }

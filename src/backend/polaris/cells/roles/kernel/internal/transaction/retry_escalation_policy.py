@@ -235,11 +235,11 @@ def resolve_retry_temperature_override(*, attempt_index: int, force_write_immedi
     tools freely and benefit from exploration. From the escalation phase on
     (write-only set / forced tool name) the task is deterministic transcription.
 
-    F16: from-scratch creates (``force_write_immediately``) start the escalation
-    one attempt earlier, so the low-temp transcription phase shifts with it to
-    stay aligned with the forced-write phase in ``resolve_retry_escalation``.
+    F16/F37: from-scratch creates (``force_write_immediately``) start the
+    escalation immediately, so the low-temp transcription phase starts at the
+    first retry and stays aligned with ``resolve_retry_escalation``.
     """
-    escalation_start = 1 if force_write_immediately else _ESCALATION_START_ATTEMPT_INDEX
+    escalation_start = 0 if force_write_immediately else _ESCALATION_START_ATTEMPT_INDEX
     if attempt_index < escalation_start:
         return None
     return resolve_escalation_temperature()
@@ -269,19 +269,18 @@ def resolve_retry_escalation(
       ``edit_blocks``, its schema is simultaneously narrowed to the line-range
       form so guided decoding can only produce a concrete replacement.
 
-    F16 (2026-06-15): a from-scratch create (``force_write_immediately``) never
-    gets the weak model to emit the write tool spontaneously — live, qwen burned
-    three ``execute_command`` retries per turn before the forced rung, tripping
-    the circuit breaker into a dead-letter. Creation steps bring the escalation
-    phase forward one attempt: narrow to write-only AND force the selected tool
-    by name from the FIRST retry escalation (index 1), keeping retry attempt 1
-    (index 0) as the single free exploration shot. Edit-existing steps are
-    byte-for-byte unchanged (``force_write_immediately`` defaults False).
+    F16/F37: a from-scratch create (``force_write_immediately``) never gets weak
+    local models to emit the write tool spontaneously. Live L1-01 Q6 forensics
+    showed the previous "one free exploration retry" still returning natural
+    language/read-first intent after several minutes and no code landed. Creation
+    retries therefore narrow to write-only AND force the selected write tool from
+    the first retry attempt (index 0). Edit-existing steps are byte-for-byte
+    unchanged (``force_write_immediately`` defaults False).
 
     Returns ``(tool_definitions_override, tool_choice_override)`` — ``None``
     members mean "keep the attempt's defaults".
     """
-    escalation_start = 1 if force_write_immediately else _ESCALATION_START_ATTEMPT_INDEX
+    escalation_start = 0 if force_write_immediately else _ESCALATION_START_ATTEMPT_INDEX
     if attempt_index < escalation_start or not strict_tool_definitions:
         return None, None
     definitions_override = strict_tool_definitions

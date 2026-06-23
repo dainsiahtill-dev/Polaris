@@ -50,6 +50,30 @@ from .factory_workspace_quality import WorkspaceQualityRunner
 logger = logging.getLogger(__name__)
 
 _WORKSPACE_QUALITY_REPAIR_MAX_ROUNDS = 3
+_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_ENV = "KERNELONE_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS"
+_DEFAULT_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS = 1200.0
+_WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES = frozenset(
+    {
+        ".css",
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cxx",
+        ".go",
+        ".h",
+        ".hpp",
+        ".html",
+        ".java",
+        ".js",
+        ".jsx",
+        ".json",
+        ".md",
+        ".py",
+        ".rs",
+        ".ts",
+        ".tsx",
+    }
+)
 _DIRECTOR_BINDING_TIMEOUT_QUARANTINE_ENV = "KERNELONE_FACTORY_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT"
 _DEFAULT_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT = 4
 _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS = 60
@@ -513,6 +537,42 @@ class OrchestrationStageExecutor:
                 baseline[key] = 0
         return baseline
 
+    def _read_claimable_director_task_ids(self, *, limit: int) -> list[str]:
+        """Return TaskBoard PM/external ids that can be claimed in this round."""
+        if limit <= 0:
+            return []
+        try:
+            rows = TaskRuntimeService(str(self.workspace)).list_task_rows(include_terminal=False)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return []
+
+        ids: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            status = str(row.get("status") or "").strip().lower()
+            if status not in {"pending", "ready"}:
+                continue
+            blocked_by = row.get("blocked_by") if isinstance(row.get("blocked_by"), list) else row.get("blockedBy")
+            if blocked_by:
+                continue
+            metadata_raw = row.get("metadata")
+            metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+            task_id = str(
+                metadata.get("external_task_id")
+                or metadata.get("pm_task_id")
+                or metadata.get("source_task_id")
+                or metadata.get("task_id")
+                or row.get("id")
+                or ""
+            ).strip()
+            if not task_id or task_id in seen:
+                continue
+            seen.add(task_id)
+            ids.append(task_id)
+            if len(ids) >= limit:
+                break
+        return ids
+
     @staticmethod
     def _terminal_status_from_task_counts(counts: Any) -> str:
         if not isinstance(counts, dict):
@@ -524,10 +584,9 @@ class OrchestrationStageExecutor:
             except (TypeError, ValueError):
                 return 0
 
-        active = (
-            _count("pending")
-            + _count("ready")
-            + _count("in_progress")
+        unresolved = _count("pending") + _count("ready")
+        running = (
+            _count("in_progress")
             + _count("in_design")
             + _count("in_execution")
             + _count("in_qa")
@@ -536,11 +595,13 @@ class OrchestrationStageExecutor:
             + _count("executing")
             + _count("waiting_human")
         )
-        if active > 0:
+        if running > 0:
             return ""
         failed = _count("failed") + _count("blocked") + _count("cancelled") + _count("timeout")
         if failed > 0:
             return "failed"
+        if unresolved > 0:
+            return ""
         completed = _count("completed") + _count("success")
         total = _count("total") or sum(_count(key) for key in counts)
         if total > 0 and completed >= total:
@@ -595,11 +656,7 @@ class OrchestrationStageExecutor:
                 return None
             return value
 
-        candidates: list[int] = []
         stage_timeout = _parse_timeout(context.get("timeout"))
-        if stage_timeout is not None:
-            candidates.append(stage_timeout)
-
         llm_timeout_candidates: list[int] = []
         for key in ("director_llm_timeout_seconds", "llm_call_timeout_seconds"):
             value = _parse_timeout(context.get(key))
@@ -610,12 +667,9 @@ class OrchestrationStageExecutor:
             if value is not None:
                 llm_timeout_candidates.append(value)
         if llm_timeout_candidates:
-            candidates.append(max(llm_timeout_candidates) + _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS)
+            return max(llm_timeout_candidates) + _DIRECTOR_DISPATCH_TIMEOUT_GRACE_SECONDS
 
-        try:
-            return max(candidates or [600])
-        except (TypeError, ValueError):
-            return max(600, *(llm_timeout_candidates or []))
+        return stage_timeout or 600
 
     @staticmethod
     def _director_binding_timeout_quarantine_count() -> int:
@@ -692,6 +746,9 @@ class OrchestrationStageExecutor:
             model = str(item.get("model") or "").strip()
             binding_id = str(item.get("binding_id") or "").strip()
             reason = str(item.get("reason") or "readiness_skipped").strip()
+            readiness_source = str(item.get("readiness_source") or item.get("source") or "").strip()
+            if readiness_source == "runtime_dispatch":
+                continue
             if not provider_id or not model:
                 continue
             reasons[self._director_binding_identity(provider_id, model, binding_id)] = reason
@@ -822,6 +879,7 @@ class OrchestrationStageExecutor:
         terminal_statuses = {"completed", "success", "failed", "cancelled", "timeout", "partial"}
         submitted: list[tuple[dict[str, str], CommandResult]] = []
         readiness_skipped = [dict(item) for item in list(skipped_bindings or []) if isinstance(item, dict)]
+        external_readiness_skipped_count = len(readiness_skipped)
 
         def _binding_key(binding: dict[str, str]) -> str:
             return f"{binding['provider_id']}:{binding['model']}:{binding.get('binding_id', '')}"
@@ -864,7 +922,26 @@ class OrchestrationStageExecutor:
             else:
                 active_bindings.append(binding)
 
+        requested_tasks = [str(item or "").strip() for item in list(tasks or []) if str(item or "").strip()]
+        partition_tasks = bool(requested_tasks) and len(active_bindings) > 1
+        assigned_tasks_by_key: dict[str, list[str] | None] = {}
+        submission_bindings: list[dict[str, str]] = []
+        if partition_tasks:
+            for idx, binding in enumerate(active_bindings):
+                assigned_tasks = requested_tasks[idx :: len(active_bindings)]
+                if not assigned_tasks:
+                    readiness_skipped.append({**binding, "reason": "no_assigned_tasks"})
+                    continue
+                assigned_tasks_by_key[_binding_key(binding)] = assigned_tasks
+                submission_bindings.append(binding)
+        else:
+            for binding in active_bindings:
+                assigned_tasks_by_key[_binding_key(binding)] = tasks
+                submission_bindings.append(binding)
+        active_bindings = submission_bindings
+
         async def _run_binding(binding: dict[str, str]) -> CommandResult:
+            binding_tasks = assigned_tasks_by_key.get(_binding_key(binding))
             binding_opts = dict(base_options)
             binding_opts.setdefault("llm_call_timeout_seconds", int(timeout_seconds))
             binding_opts.setdefault("director_llm_timeout_seconds", int(timeout_seconds))
@@ -879,8 +956,10 @@ class OrchestrationStageExecutor:
                     "model": binding["model"],
                     "binding_id": binding.get("binding_id", ""),
                 },
+                "fanout_assigned_tasks": list(binding_tasks or []),
+                "fanout_assigned_task_count": len(binding_tasks or []),
             }
-            return await service.execute_director_run(workspace=workspace, tasks=tasks, options=binding_opts)
+            return await service.execute_director_run(workspace=workspace, tasks=binding_tasks, options=binding_opts)
 
         gathered = await asyncio.gather(*[_run_binding(b) for b in active_bindings], return_exceptions=True)
         for idx, item in enumerate(gathered):
@@ -904,6 +983,35 @@ class OrchestrationStageExecutor:
             if sub_result.status in terminal_statuses or not str(sub_result.run_id or "").strip():
                 return binding, sub_result
             run_id = str(sub_result.run_id or "").strip()
+
+            def _workspace_taskboard_terminal_result(*, queried_status: str = "") -> CommandResult | None:
+                """Fail-closed when the shared taskboard is already terminal.
+
+                A slow Director binding can keep its own run row as ``running``
+                after another binding has already completed or failed the
+                claimed task set.  When the taskboard contains no active tasks
+                and at least one failure, continuing to wait only hides the
+                real failure behind a long fanout timeout.
+                """
+                with contextlib.suppress(RuntimeError, OSError, TypeError, ValueError):
+                    taskboard_stats = self._read_taskboard_stats()
+                    count_status = self._terminal_status_from_task_counts(taskboard_stats)
+                    if count_status and count_status != "completed":
+                        return CommandResult(
+                            run_id=run_id,
+                            status=count_status,
+                            message=(
+                                "Director binding stopped because workspace taskboard reached "
+                                f"terminal counts before binding run status converged: {taskboard_stats}"
+                            ),
+                            metadata={
+                                "terminal_source": "workspace_taskboard_counts",
+                                "queried_status": queried_status,
+                                "task_status_counts": dict(taskboard_stats),
+                            },
+                        )
+                return None
+
             wait_task = asyncio.create_task(
                 self._wait_run_completion(
                     service,
@@ -936,6 +1044,10 @@ class OrchestrationStageExecutor:
                     with contextlib.suppress(AttributeError, OSError, RuntimeError, TypeError, ValueError):
                         status_probe = await service.query_run_status(run_id)
                     if status_probe is None:
+                        taskboard_terminal = _workspace_taskboard_terminal_result(queried_status="unavailable")
+                        if taskboard_terminal is not None:
+                            wait_task.cancel()
+                            return binding, taskboard_terminal
                         continue
 
                     probed_status = str(status_probe.status or "").strip().lower()
@@ -960,6 +1072,11 @@ class OrchestrationStageExecutor:
                                 "queried_status": probed_status,
                             },
                         )
+
+                    taskboard_terminal = _workspace_taskboard_terminal_result(queried_status=probed_status)
+                    if taskboard_terminal is not None:
+                        wait_task.cancel()
+                        return binding, taskboard_terminal
             except (RuntimeError, OSError, ValueError, TypeError) as exc:
                 logger.warning("Director binding fanout wait failed for run %s: %s", sub_result.run_id, exc)
                 return binding, CommandResult(run_id=sub_result.run_id, status="failed", message=f"Wait failed: {exc}")
@@ -1021,6 +1138,10 @@ class OrchestrationStageExecutor:
                 "message": result.message or "",
             }
             result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+            entry_assigned_tasks = assigned_tasks_by_key.get(key)
+            if entry_assigned_tasks is not None:
+                entry["assigned_tasks"] = list(entry_assigned_tasks)
+                entry["assigned_task_count"] = len(entry_assigned_tasks)
             for evidence_key in (
                 "cancel_signal_sent",
                 "terminal_source",
@@ -1071,6 +1192,8 @@ class OrchestrationStageExecutor:
                     "message": "Skipped by Director binding readiness filter",
                     "skipped": True,
                     "skip_reason": str(binding.get("reason") or "binding_unavailable").strip(),
+                    "assigned_tasks": [],
+                    "assigned_task_count": 0,
                 }
             )
 
@@ -1080,7 +1203,7 @@ class OrchestrationStageExecutor:
             1 for entry in per_binding if entry.get("skipped") and not entry.get("quarantined")
         )
         merged_status = "completed" if success_count > 0 and fail_count == 0 else "failed"
-        total_binding_count = len(bindings) + readiness_skipped_count
+        total_binding_count = len(bindings) + external_readiness_skipped_count
         return CommandResult(
             run_id=first_run_id,
             status=merged_status,
@@ -1098,6 +1221,8 @@ class OrchestrationStageExecutor:
                 "timeout_quarantine_threshold": quarantine_threshold,
                 "readiness_skipped_count": readiness_skipped_count,
                 "per_binding": per_binding,
+                "task_assignment_mode": "partitioned" if partition_tasks else "shared",
+                "requested_task_ids": requested_tasks,
                 "execution_mode": str(base_options.get("execution_mode", "")).strip(),
                 "max_workers": int(base_options.get("max_workers", 0)),
             },
@@ -2077,11 +2202,15 @@ class OrchestrationStageExecutor:
                     or context.get("llm_call_timeout_seconds")
                     or director_timeout_seconds
                 )
+                round_requested_task_ids = self._read_claimable_director_task_ids(limit=max_workers)
+                if not round_requested_task_ids:
+                    round_requested_task_ids = list(requested_task_ids or [])
+                base_options["metadata"]["director_claimable_task_ids"] = list(round_requested_task_ids)
                 if director_binding_fanout:
                     command_result = await self._execute_director_binding_fanout(
                         service=service,
                         workspace=str(self.workspace),
-                        tasks=requested_task_ids,
+                        tasks=round_requested_task_ids,
                         base_options=base_options,
                         bindings=director_binding_fanout,
                         timeout_seconds=director_timeout_seconds,
@@ -2126,7 +2255,7 @@ class OrchestrationStageExecutor:
                 else:
                     command_result = await service.execute_director_run(
                         workspace=str(self.workspace),
-                        tasks=requested_task_ids,
+                        tasks=round_requested_task_ids,
                         options=base_options,
                     )
                     last_command_result = command_result
@@ -2375,6 +2504,9 @@ class OrchestrationStageExecutor:
                     }
                 )
 
+        if fanout_quality_handoff:
+            self._downgrade_quality_handoff_blocking_signals(stage_signals)
+
         stage_status = "success"
         if (
             str((final_result or CommandResult(run_id="", status="", message="")).status or "").strip().lower()
@@ -2406,14 +2538,26 @@ class OrchestrationStageExecutor:
                 }
             )
         elif requires_taskboard_convergence and not converged:
-            stage_status = "failed"
-            stage_signals.append(
-                {
-                    "code": "director.taskboard_not_converged",
-                    "severity": "error",
-                    "detail": f"TaskBoard not converged after dispatch rounds; final_stats={final_stats}",
-                }
-            )
+            if fanout_quality_handoff:
+                stage_signals.append(
+                    {
+                        "code": "director.taskboard_unresolved_quality_handoff",
+                        "severity": "warning",
+                        "detail": (
+                            "TaskBoard retained unresolved work after Director materialization failure, "
+                            f"but workspace artifacts exist and will enter quality gate; final_stats={final_stats}"
+                        ),
+                    }
+                )
+            else:
+                stage_status = "failed"
+                stage_signals.append(
+                    {
+                        "code": "director.taskboard_not_converged",
+                        "severity": "error",
+                        "detail": f"TaskBoard not converged after dispatch rounds; final_stats={final_stats}",
+                    }
+                )
 
         # Generate per-binding terminal route events from fanout results
         per_binding_route_events: list[dict[str, Any]] = []
@@ -2591,6 +2735,87 @@ class OrchestrationStageExecutor:
                 return True
         return False
 
+    def _failed_task_records_indicate_quality_handoff(self) -> bool:
+        """Return true when failed task records show artifacts that should enter QA.
+
+        Director weak-model fanout can write files but fail the strict write-tool
+        receipt contract. That is still a real, inspectable workspace state, so
+        Factory should let workspace quality and QA decide whether it is runnable
+        instead of stopping before gates run.
+        """
+        tasks_dir = self._artifact_path("tasks/plan.json").parent
+        if not tasks_dir.exists():
+            return False
+        markers = (
+            "director_missing_write_receipt",
+            "director_no_materialized_changes",
+            "single_batch_contract_violation",
+            "director_materialization_quality_failed",
+            "director_materialization_semantic_quality_failed",
+        )
+        modes = {
+            "workspace_diff_without_write_tool",
+            "no_materialized_changes",
+        }
+        for task_path in sorted(tasks_dir.glob("task_*.json")):
+            try:
+                payload = json.loads(task_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            status = str(payload.get("status") or "").strip().lower()
+            if status not in {"failed", "blocked"}:
+                continue
+            metadata = payload.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            adapter_result = metadata.get("adapter_result")
+            if not isinstance(adapter_result, dict):
+                adapter_result = {}
+            runtime_execution = metadata.get("runtime_execution")
+            if not isinstance(runtime_execution, dict):
+                runtime_execution = {}
+            texts = [
+                payload.get("last_execution_error"),
+                metadata.get("last_execution_error"),
+                metadata.get("error"),
+                metadata.get("error_code"),
+                runtime_execution.get("last_error"),
+                runtime_execution.get("error"),
+                adapter_result.get("materialization_error"),
+                adapter_result.get("last_execution_error"),
+                adapter_result.get("error"),
+                adapter_result.get("error_code"),
+                adapter_result.get("direct_fallback", {}).get("skipped_reason")
+                if isinstance(adapter_result.get("direct_fallback"), dict)
+                else "",
+            ]
+            haystack = "\n".join(str(item or "") for item in texts).lower()
+            mode = str(adapter_result.get("materialization_mode") or "").strip().lower()
+            if mode in modes or any(marker in haystack for marker in markers):
+                return True
+        return False
+
+    @staticmethod
+    def _taskboard_idle_with_unresolved_work(stats: dict[str, int]) -> bool:
+        """Return true when no work is active but terminal/pending residue remains."""
+        active_keys = (
+            "in_progress",
+            "in_design",
+            "in_execution",
+            "in_qa",
+            "running",
+            "processing",
+            "executing",
+            "waiting_human",
+        )
+        if any(int(stats.get(key) or 0) > 0 for key in active_keys):
+            return False
+        unresolved = int(stats.get("pending") or 0) + int(stats.get("ready") or 0) + int(stats.get("blocked") or 0)
+        terminal = int(stats.get("completed") or 0) + int(stats.get("failed") or 0)
+        return unresolved > 0 and terminal > 0
+
     def _workspace_has_materialized_delivery_evidence(self, tasks: list[dict[str, Any]]) -> bool:
         workspace_root = self.workspace.resolve()
         declared_targets = self._collect_declared_delivery_targets(tasks)
@@ -2645,11 +2870,35 @@ class OrchestrationStageExecutor:
     ) -> bool:
         if not self._fanout_all_active_bindings_failed(metadata):
             return False
-        if not self._is_taskboard_converged(final_stats):
+        taskboard_terminal_enough = self._is_taskboard_converged(
+            final_stats
+        ) or self._taskboard_idle_with_unresolved_work(final_stats)
+        if not taskboard_terminal_enough:
             return False
-        if not self._fanout_failure_mentions_materialization_quality(metadata):
+        if not self._workspace_has_materialized_delivery_evidence(pm_tasks):
             return False
-        return self._workspace_has_materialized_delivery_evidence(pm_tasks)
+        return (
+            self._fanout_failure_mentions_materialization_quality(metadata)
+            or self._failed_task_records_indicate_quality_handoff()
+        )
+
+    @staticmethod
+    def _downgrade_quality_handoff_blocking_signals(stage_signals: list[dict[str, Any]]) -> None:
+        handoff_codes = {
+            "director.dispatch_timeout",
+            "director.run_status_non_success",
+            "director.taskboard_not_converged",
+            "director.binding_fanout_all_failed",
+        }
+        for signal in stage_signals:
+            if not isinstance(signal, dict):
+                continue
+            code = str(signal.get("code") or "").strip()
+            severity = str(signal.get("severity") or "").strip().lower()
+            if code in handoff_codes and severity == "error":
+                signal["severity"] = "warning"
+                signal["handoff_suppressed_error"] = True
+                signal["handoff_reason"] = "materialized_artifacts_enter_quality_gate"
 
     @staticmethod
     def _bool_from_context_or_env(
@@ -2742,13 +2991,124 @@ class OrchestrationStageExecutor:
             ) -> None:
                 del task_id, phase, current_file, event_code, event_status, event_reason, event_detail, event_refs
 
-        target_files = self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json"))
+        target_files = self._workspace_quality_repair_target_files()
         return _apply_deterministic_materialization_quality_repairs(
             _QualityRepairAdapter(self.workspace),
             task={"target_files": target_files, "metadata": {"target_files": target_files}},
             task_id=f"factory-quality-gate:{run_id}",
             artifact_quality_errors=artifact_quality_errors,
         )
+
+    def _workspace_quality_repair_target_files(self) -> list[str]:
+        return self._collect_declared_delivery_targets(self._load_pm_plan_tasks("tasks/plan.json"))
+
+    def _workspace_quality_repair_changed_files(self) -> list[str]:
+        workspace_root = self.workspace.resolve()
+        if not workspace_root.is_dir():
+            return []
+        ignored_parts = {".git", ".polaris", ".pytest_cache", "dist", "build", "coverage", "node_modules"}
+        changed: list[str] = []
+        for path in sorted(workspace_root.rglob("*"), key=lambda item: item.as_posix()):
+            if not path.is_file():
+                continue
+            try:
+                rel_path = path.relative_to(workspace_root)
+            except ValueError:
+                continue
+            if any(part in ignored_parts for part in rel_path.parts):
+                continue
+            if path.suffix.lower() not in _WORKSPACE_QUALITY_REPAIR_SOURCE_SUFFIXES:
+                continue
+            changed.append(rel_path.as_posix())
+            if len(changed) >= 120:
+                break
+        return changed
+
+    def _workspace_quality_repair_original_message(self, *, run_id: str, target_files: list[str]) -> str:
+        tasks = self._load_pm_plan_tasks("tasks/plan.json")
+        payload = {
+            "source": "factory_workspace_quality_repair",
+            "factory_run_id": run_id,
+            "target_files": target_files[:80],
+            "pm_tasks": tasks[:20],
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)[:12000]
+
+    @staticmethod
+    def _workspace_quality_llm_repair_timeout_seconds(context: dict[str, Any]) -> float:
+        raw = context.get("workspace_quality_repair_llm_timeout_seconds")
+        if raw is None:
+            raw = os.environ.get(_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_ENV)
+        try:
+            value = float(str(raw))
+        except (TypeError, ValueError):
+            value = _DEFAULT_WORKSPACE_QUALITY_REPAIR_LLM_TIMEOUT_SECONDS
+        return max(30.0, min(value, 3600.0))
+
+    async def _apply_workspace_quality_llm_repairs(
+        self,
+        *,
+        run_id: str,
+        context: dict[str, Any],
+        artifact_quality_errors: list[str],
+        repair_attempt: int,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        changed_files = self._workspace_quality_repair_changed_files()
+        if not changed_files:
+            return [], {
+                "attempted": False,
+                "repair_mode": "director_llm",
+                "reason": "no_workspace_source_files_for_repair",
+                "source_tools": [],
+                "tool_results": 0,
+            }
+        target_files = self._workspace_quality_repair_target_files()
+        task = {"target_files": target_files or changed_files, "metadata": {"target_files": target_files}}
+        repair_context = {
+            **dict(context or {}),
+            "run_id": run_id,
+            "factory_workspace_quality_repair": {
+                "run_id": run_id,
+                "changed_files": changed_files[:80],
+                "target_files": target_files[:80],
+            },
+        }
+        try:
+            from polaris.cells.roles.adapters.public.service import run_director_materialization_quality_repair
+
+            results, summary = await run_director_materialization_quality_repair(
+                str(self.workspace),
+                task=task,
+                target_task_id=f"factory-quality-gate:{run_id}:llm-repair",
+                run_id=run_id,
+                context=repair_context,
+                original_message=self._workspace_quality_repair_original_message(
+                    run_id=run_id,
+                    target_files=target_files,
+                ),
+                llm_call_timeout=self._workspace_quality_llm_repair_timeout_seconds(context),
+                artifact_quality_errors=artifact_quality_errors,
+                changed_files=changed_files,
+                repair_attempt=repair_attempt,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail closed around external LLM repair boundary.
+            return [], {
+                "attempted": True,
+                "repair_mode": "director_llm",
+                "success": False,
+                "error": str(exc),
+                "source_tools": ["director_materialization_quality_repair_error"],
+                "tool_results": 0,
+            }
+        normalized_summary = dict(summary)
+        normalized_summary["repair_mode"] = "director_llm"
+        source_tools = [str(item) for item in normalized_summary.get("source_tools", []) if str(item or "").strip()]
+        if results and "director_materialization_quality_repair" not in source_tools:
+            source_tools.append("director_materialization_quality_repair")
+        normalized_summary["source_tools"] = source_tools
+        normalized_summary.setdefault("tool_results", len(results))
+        normalized_summary.setdefault("attempted", True)
+        return [dict(item) for item in results], normalized_summary
 
     @staticmethod
     def _workspace_quality_repair_evidence(repair_results: list[dict[str, Any]]) -> list[str]:
@@ -2848,6 +3208,13 @@ class OrchestrationStageExecutor:
                     run_id=run.id,
                     artifact_quality_errors=repair_errors,
                 )
+                if not round_repair_results:
+                    round_repair_results, round_summary = await self._apply_workspace_quality_llm_repairs(
+                        run_id=run.id,
+                        context=context,
+                        artifact_quality_errors=repair_errors,
+                        repair_attempt=round_index + 1,
+                    )
                 repair_results.extend(round_repair_results)
                 normalized_round_summary = dict(round_summary)
                 round_source_tools = [

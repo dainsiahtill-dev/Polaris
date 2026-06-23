@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import json
 import os
 import py_compile
@@ -10,6 +11,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -667,6 +669,10 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
                     f"Python command in script {str(script_name)!r} in {relative_path}"
                 )
                 break
+            node_eval_error = _scan_npm_script_node_eval_syntax(tokens, str(script_name), relative_path)
+            if node_eval_error:
+                errors.append(node_eval_error)
+                continue
             errors.extend(
                 _scan_npm_script_missing_local_entrypoints(root_full, script_text, str(script_name), relative_path)
             )
@@ -696,6 +702,63 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
                 )
                 return errors
     return errors
+
+
+def _scan_npm_script_node_eval_syntax(tokens: list[str], script_name: str, relative_path: str) -> str:
+    for source in _iter_node_eval_sources(tokens):
+        detail = _check_javascript_snippet_syntax(source)
+        if detail:
+            return (
+                "Artifact quality scan failed: npm package manifest script "
+                f"{script_name!r} has invalid node eval syntax in {relative_path}: {detail[:200]}"
+            )
+    return ""
+
+
+def _iter_node_eval_sources(tokens: list[str]) -> Iterable[str]:
+    for index, token in enumerate(tokens):
+        normalized = os.path.basename(str(token or "").strip().lower())
+        if normalized not in {"node", "node.exe"}:
+            continue
+        next_index = index + 1
+        if next_index >= len(tokens):
+            continue
+        eval_flag = str(tokens[next_index] or "").strip()
+        if eval_flag in {"-e", "--eval"}:
+            source_index = next_index + 1
+            if source_index < len(tokens):
+                source = str(tokens[source_index] or "")
+                if source.strip():
+                    yield source
+            continue
+        for prefix in ("-e=", "--eval="):
+            if eval_flag.startswith(prefix):
+                source = eval_flag[len(prefix) :]
+                if source.strip():
+                    yield source
+
+
+def _check_javascript_snippet_syntax(source: str) -> str:
+    node = shutil.which("node")
+    if not node:
+        return ""
+    temp_path = ""
+    try:
+        fd, temp_path = tempfile.mkstemp(prefix="polaris-node-eval-", suffix=".js")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(source)
+            if not source.endswith("\n"):
+                handle.write("\n")
+        proc = subprocess.run([node, "--check", temp_path], capture_output=True, text=True, timeout=20, check=False)
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        return f"syntax check could not run: {exc}"
+    finally:
+        if temp_path:
+            with contextlib.suppress(OSError):
+                os.unlink(temp_path)
+    if proc.returncode == 0:
+        return ""
+    return _compress_node_syntax_error(proc.stderr or proc.stdout, temp_path)
 
 
 def _placeholder_package_script_reason(script_name: str, command: str, tokens: list[str]) -> str:

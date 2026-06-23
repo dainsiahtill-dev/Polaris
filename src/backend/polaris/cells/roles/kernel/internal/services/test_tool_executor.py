@@ -125,6 +125,28 @@ class TestExecuteSingleNormal:
         assert result.result is None
 
     @pytest.mark.asyncio
+    async def test_execute_single_preserves_structured_retryable_flag(
+        self,
+        executor,
+        mock_backend,
+        mock_profile,
+    ) -> None:
+        """Tool handlers can mark teaching errors retryable without keyword hacks."""
+        mock_backend.execute.return_value = {
+            "success": False,
+            "error": "edit_blocks received prose/narration instead of edit content",
+            "error_type": "prose_narration_in_edit_blocks",
+            "retryable": True,
+        }
+        call = ToolCall(tool="edit_blocks", args={"blocks": "I'll read the file first."})
+
+        result = await executor.execute_single(call, mock_profile)
+
+        assert result.success is False
+        assert result.error == "edit_blocks received prose/narration instead of edit content"
+        assert result.retryable is True
+
+    @pytest.mark.asyncio
     async def test_execute_single_with_call_id(self, executor, mock_backend, mock_profile) -> None:
         """Test that call_id is preserved in result."""
         # Arrange

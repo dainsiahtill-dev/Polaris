@@ -35,6 +35,14 @@ export interface ContextStoreSweepReport {
   triggers: string[] | null;
 }
 
+export interface ContextStorePathStats {
+  contexts_root: string;
+  file_count: number;
+  total_bytes: number;
+  oldest_mtime: number | null;
+  newest_mtime: number | null;
+}
+
 export interface ContextStoreStatsResponse {
   workspace: string;
   contexts_root: string;
@@ -42,6 +50,8 @@ export interface ContextStoreStatsResponse {
   total_bytes: number;
   oldest_mtime: number | null;
   newest_mtime: number | null;
+  primary_store?: ContextStorePathStats | null;
+  legacy_store?: ContextStorePathStats | null;
   config: ContextStoreStatsConfig;
   last_sweep_at: number;
   last_sweep_report: ContextStoreSweepReport | null;

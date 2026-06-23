@@ -59,6 +59,9 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
         for contract in task_contracts:
             _raw_contract_meta = contract.get("metadata")
             contract_metadata: dict[str, Any] = dict(_raw_contract_meta) if isinstance(_raw_contract_meta, dict) else {}
+            contract_token = str(
+                contract.get("id") or contract.get("task_id") or contract.get("pm_task_id") or ""
+            ).strip()
             metadata = {
                 "goal": contract.get("goal"),
                 "scope": contract.get("scope"),
@@ -75,6 +78,11 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
             }
             # Merge validation metadata (contract_metadata takes precedence)
             metadata = {**validation_metadata, **contract_metadata, **metadata}
+            if contract_token:
+                metadata["task_id"] = contract_token
+                metadata["pm_task_id"] = contract_token
+                metadata["source_task_id"] = contract_token
+                metadata["external_task_id"] = contract_token
             subject = str(contract.get("title") or "").strip() or "Untitled task"
             description = str(contract.get("description") or "").strip()
             matched_id = self._find_existing_task_match(
@@ -125,6 +133,7 @@ class PMBoardTaskMixin(_PMAdapterMixinBase):
             if blocked_by and self._board_task_exists(board_task_id):
                 self.task_board.update(
                     board_task_id,
+                    blocked_by=blocked_by,
                     metadata={"resolved_depends_on_task_ids": blocked_by},
                 )
                 refreshed = self.task_board.get(board_task_id)

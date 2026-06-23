@@ -1743,6 +1743,65 @@ def test_llm_route_audit_treats_readiness_skipped_director_as_diagnostic() -> No
     assert audit["roles"]["director"]["fail_closed_count"] == 1
 
 
+def test_llm_route_audit_fails_when_all_director_routes_are_readiness_skipped() -> None:
+    expected = {
+        "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": ""}],
+        "chief_engineer": [{"role": "chief_engineer", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": ""}],
+        "qa": [{"role": "qa", "provider_id": "minimax-a", "model": "MiniMax-M3", "binding_id": ""}],
+        "director": [
+            {"role": "director", "provider_id": "qwen-gpu0", "model": "qwen3.6-27b", "binding_id": "d0"},
+            {"role": "director", "provider_id": "qwen-gpu1", "model": "qwen3.6-27b", "binding_id": "d1"},
+        ],
+    }
+    skipped = [
+        {
+            "event": "llm_route_terminal",
+            "role": "director",
+            "provider_id": "qwen-gpu0",
+            "model": "qwen3.6-27b",
+            "binding_id": "d0",
+            "source": "llm",
+            "cache_hit": False,
+            "invocation": False,
+            "terminal": True,
+            "fail_closed": True,
+            "skipped": True,
+            "skip_reason": "provider_unreachable",
+        },
+        {
+            "event": "llm_route_terminal",
+            "role": "director",
+            "provider_id": "qwen-gpu1",
+            "model": "qwen3.6-27b",
+            "binding_id": "d1",
+            "source": "llm",
+            "cache_hit": False,
+            "invocation": False,
+            "terminal": True,
+            "fail_closed": True,
+            "skipped": True,
+            "skip_reason": "provider_unreachable",
+        },
+    ]
+    events = [
+        _real_llm_event("pm", "kimi-a", "kimi-k2"),
+        _real_llm_event("chief_engineer", "kimi-a", "kimi-k2"),
+        _real_llm_event("qa", "minimax-a", "MiniMax-M3"),
+        *skipped,
+    ]
+
+    audit = build_llm_route_audit(events, expected_bindings=expected)
+
+    assert audit["ok"] is False
+    assert audit["roles"]["director"]["observed_count"] == 0
+    assert audit["roles"]["director"]["fail_closed_count"] == 2
+    assert audit["roles"]["director"]["multi_route_ok"] is False
+    assert audit["roles"]["director"]["skipped_bindings"] == [
+        "qwen-gpu0|qwen3.6-27b",
+        "qwen-gpu1|qwen3.6-27b",
+    ]
+
+
 def test_llm_route_audit_accepts_single_live_director_route() -> None:
     expected = {
         "pm": [{"role": "pm", "provider_id": "kimi-a", "model": "kimi-k2", "binding_id": ""}],
@@ -1950,6 +2009,65 @@ def test_failure_taxonomy_classifies_workspace_switch_before_real_run_gate() -> 
     assert taxonomy["category"] == "runtime_environment"
     assert taxonomy["root_cause_signature"] == "runtime_environment:workspace_switch_failed"
     assert taxonomy["evidence"] == ["/tmp/factory-bench/L1-01"]
+
+
+def test_failure_taxonomy_classifies_all_director_bindings_unavailable_as_runtime_environment() -> None:
+    record = {
+        "all_checks_passed": False,
+        "factory_gates": [
+            {"gate": "chain_clean", "ok": False, "detail": "chain_state=partial exit_code=1"},
+            {"gate": "real_run_gate", "ok": False, "detail": "real run gate failed: artifact_landed"},
+            {"gate": "llm_route_audit", "ok": False, "detail": "LLM route audit failed: director"},
+        ],
+        "chain": {
+            "audit_bundle": {
+                "failure": {
+                    "detail": "Director dispatch failed: No available Director binding after readiness filtering",
+                }
+            },
+            "factory_terminal_status": {
+                "event_payload": {
+                    "result": {
+                        "metadata": {
+                            "binding_count": 2,
+                            "active_binding_count": 0,
+                            "readiness_skipped_count": 2,
+                            "per_binding": [
+                                {
+                                    "provider_id": "qwen-gpu0",
+                                    "model": "qwen3.6-27b",
+                                    "status": "skipped",
+                                    "skip_reason": "provider_unreachable",
+                                },
+                                {
+                                    "provider_id": "qwen-gpu1",
+                                    "model": "qwen3.6-27b",
+                                    "status": "skipped",
+                                    "skip_reason": "provider_unreachable",
+                                },
+                            ],
+                        }
+                    }
+                }
+            },
+        },
+        "real_run_gate": {
+            "ok": False,
+            "summary": "real run gate failed: artifact_landed",
+            "requirements": {"artifact_landed": {"ok": False, "detail": "no generated source files"}},
+        },
+        "llm_route_audit": {"ok": False, "summary": "LLM route audit failed: director"},
+        "chain_state": "partial",
+        "checks": [],
+        "has_plan_doc": True,
+        "wrong_product_suspect": False,
+    }
+
+    taxonomy = classify_factory_bench_failure(record)
+
+    assert taxonomy["category"] == "runtime_environment"
+    assert taxonomy["root_cause_signature"] == "runtime_environment:director_bindings_unavailable"
+    assert taxonomy["evidence"] == ["Director dispatch failed: No available Director binding after readiness filtering"]
 
 
 def test_failure_taxonomy_classifies_generated_typescript_syntax_failure_as_llm_output() -> None:

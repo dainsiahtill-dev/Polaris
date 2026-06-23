@@ -78,13 +78,20 @@ _FACTORY_RUNTIME_HARD_GATE_EVIDENCE = "factory_runtime_hard_gate_passed=True"
 _FACTORY_WORKSPACE_QUALITY_EVIDENCE = "factory_workspace_quality_passed=True"
 
 _FACTORY_HARD_GATE_BLOCKER_RE = re.compile(
+    r"(?:"
     r"\b("
     r"build\s+fail|test\s+fail|lint\s+fail|install\s+fail|dependency\s+fail|"
     r"runtime\s+fail|entry\s+(?:failed|missing)|missing\s+(?:code|source|artifact)|"
     r"no\s+(?:code|source|artifact|workspace\s+validation)|placeholder|"
     r"command\s+(?:failed|exit(?:ed)?\s+[1-9])|exit[_\s-]?code\s*[:=]\s*[1-9]|"
     r"cannot\s+(?:run|start|execute)|not\s+(?:runnable|executable)"
-    r")\b",
+    r")\b|"
+    r"test_file_count\s*[:=]\s*0|tests?_not_detected|"
+    r"测试文件计数\s*(?:为|=|:)?\s*0|"
+    r"测试脚本.{0,80}占位(?:符)?|占位(?:符)?测试|"
+    r"未运行任何测试用例|没有(?:任何)?行为级验证|"
+    r"核心(?:领域)?规则.{0,80}未(?:被)?验证"
+    r")",
     re.IGNORECASE,
 )
 _FACTORY_QUALITY_RISK_RE = re.compile(

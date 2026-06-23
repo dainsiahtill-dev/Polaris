@@ -377,3 +377,93 @@ class TestTransactionKernelTemperatureChannel:
         context_override = getattr(captured_contexts[0], "context_override", None)
         assert isinstance(context_override, dict)
         assert _CHANNEL_KEY not in context_override
+
+
+class TestTransactionKernelTaskRuntimeGuard:
+    @pytest.mark.asyncio
+    async def test_tool_runtime_allows_active_task_runtime_session(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        workspace = str(tmp_path)
+        kernel = RoleExecutionKernel.create_default(workspace=workspace)
+        profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
+        request = SimpleNamespace(
+            message="hello",
+            run_id="run_123",
+            task_id="1",
+            workspace=workspace,
+            metadata={},
+            context_override={
+                "task_runtime_guard": True,
+                "task_runtime_session_id": "session-1",
+            },
+        )
+        executed: list[tuple[str, dict[str, Any]]] = []
+
+        def _heartbeat(self: Any, task_id: Any, *, session_id: str, **_kwargs: Any) -> dict[str, Any]:
+            assert task_id == "1"
+            assert session_id == "session-1"
+            return {"success": True, "reason": "heartbeat_renewed"}
+
+        async def _execute_single_tool(
+            *, tool_name: str, args: dict[str, Any], context: dict[str, Any]
+        ) -> dict[str, Any]:
+            del context
+            executed.append((tool_name, args))
+            return {"success": True, "result": {"ok": True}}
+
+        monkeypatch.setattr(
+            "polaris.cells.runtime.task_runtime.internal.service.TaskRuntimeService.heartbeat_execution",
+            _heartbeat,
+        )
+        monkeypatch.setattr(kernel, "_execute_single_tool", _execute_single_tool)
+
+        tk = kernel._create_transaction_kernel("director", profile, request)
+        result = await tk.tool_runtime("write_file", {"file": "src/index.ts", "content": "ok"})
+
+        assert result == {"success": True, "result": {"ok": True}}
+        assert executed == [("write_file", {"file": "src/index.ts", "content": "ok"})]
+
+    @pytest.mark.asyncio
+    async def test_tool_runtime_blocks_inactive_task_runtime_session(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    ) -> None:
+        workspace = str(tmp_path)
+        kernel = RoleExecutionKernel.create_default(workspace=workspace)
+        profile = SimpleNamespace(role_id="director", version="1.0", model="test-model", provider_id="openai")
+        request = SimpleNamespace(
+            message="hello",
+            run_id="run_123",
+            task_id="1",
+            workspace=workspace,
+            metadata={},
+            context_override={
+                "task_runtime_guard": True,
+                "task_runtime_session_id": "session-1",
+            },
+        )
+        executed: list[str] = []
+
+        def _heartbeat(self: Any, task_id: Any, *, session_id: str, **_kwargs: Any) -> dict[str, Any]:
+            assert task_id == "1"
+            assert session_id == "session-1"
+            return {"success": False, "reason": "session_not_active"}
+
+        async def _execute_single_tool(
+            *, tool_name: str, args: dict[str, Any], context: dict[str, Any]
+        ) -> dict[str, Any]:
+            del args, context
+            executed.append(tool_name)
+            return {"success": True}
+
+        monkeypatch.setattr(
+            "polaris.cells.runtime.task_runtime.internal.service.TaskRuntimeService.heartbeat_execution",
+            _heartbeat,
+        )
+        monkeypatch.setattr(kernel, "_execute_single_tool", _execute_single_tool)
+
+        tk = kernel._create_transaction_kernel("director", profile, request)
+        with pytest.raises(RuntimeError, match="director_tool_execution_cancelled"):
+            await tk.tool_runtime("write_file", {"file": "src/index.ts", "content": "ok"})
+
+        assert executed == []

@@ -67,6 +67,7 @@ class RoleToolGateway:
         session_id: str | None = None,
         session_memory_provider: Any | None = None,
         run_id: str | None = None,
+        task_id: str | None = None,
         iteration: int = 0,
     ) -> None:
         """初始化工具网关
@@ -77,6 +78,7 @@ class RoleToolGateway:
             session_id: 会话ID
             session_memory_provider: 会话内存提供者
             run_id: 运行时ID（用于事件追踪）
+            task_id: 当前角色任务ID（用于工具事件归因）
             iteration: 当前 turn 内的工具调用轮次（用于日志审计）
         """
         self.profile = profile
@@ -86,6 +88,7 @@ class RoleToolGateway:
         self.session_memory_provider = session_memory_provider
         self._execution_count = 0
         self._run_id = str(run_id or "").strip() or None
+        self._task_id = str(task_id or "").strip() or None
         self.iteration = iteration
         # FailureBudget: 跨工具调用持久化失败预算状态（HALLUCINATION_LOOP 检测）
         from polaris.kernelone.tool_execution.failure_budget import FailureBudget
@@ -287,6 +290,8 @@ class RoleToolGateway:
                 "tool": tool_name,
                 "iteration": self.iteration,
             }
+            if self._task_id:
+                data["task_id"] = self._task_id
             if arguments is not None:
                 data["args"] = arguments
             if result is not None:
@@ -308,6 +313,8 @@ class RoleToolGateway:
                 "event": event_type,
                 "data": data,
             }
+            if self._task_id:
+                journal_entry["task_id"] = self._task_id
 
             with open(journal_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(journal_entry, ensure_ascii=False) + "\n")
@@ -337,6 +344,9 @@ class RoleToolGateway:
             return
         workspace = str(self.workspace or "").strip() or ""
         role = str(self.profile.role_id or "unknown")
+        enriched_payload = dict(payload)
+        if self._task_id:
+            enriched_payload.setdefault("task_id", self._task_id)
 
         try:
             loop = __import__("asyncio").get_running_loop()
@@ -355,7 +365,7 @@ class RoleToolGateway:
                     run_id=run_id,
                     role=role,
                     event_type=event_type,
-                    payload=payload,
+                    payload=enriched_payload,
                 )
 
             loop.call_soon_threadsafe(loop.create_task, _emit())

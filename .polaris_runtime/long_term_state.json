@@ -1,0 +1,695 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-06-23T14:00:17+08:00",
+  "ultimate_goal": "Harden Polaris Factory Bench L1-L12 into a neutral, evidence-driven runnable-project evaluation platform: each generated project must land artifacts, prepare dependencies or environment, run at least one real build/test/lint gate, start or execute at least one CLI/Web/API entry, attribute failures to the approved taxonomy, and converge across N batches with no new generic root cause.",
+  "single_source_of_truth": {
+    "workspace": "/home/dains/Documents/polaris",
+    "active_bench_session_id": "not_serialized_in_latest_factory_audits",
+    "active_project": "L1-01",
+    "active_project_workspace": "/home/dains/Temp/factory-bench-l1-01-route-audit-taxonomy-verify-20260623131652/L1-01",
+    "backend_url": "http://127.0.0.1:49977",
+    "backend_token": "polaris-local-dev",
+    "last_failed_bench_workspace": "/home/dains/Temp/factory-bench-l1-01-handoff-rerun-20260623101031/L1-01",
+    "last_sample_repair_workspace": "/tmp/polaris-l101-ts-repair-sample",
+    "last_successful_bench_session_id": "bench-1782189319-a7f673",
+    "last_successful_bench_workspace": "/home/dains/Temp/factory-bench-l1-01-post-fanout-partition-20260623123500/L1-01",
+    "last_successful_factory_run_id": "factory_01e42caf13a2",
+    "last_successful_bench_note": "Strict L1-01 PASS: artifacts landed, build/test gate ran, npm start entrypoint executed, QA passed, real_run_gate passed, LLM route audit observed both Q6 Director bindings.",
+    "backend_needs_restart": false,
+    "backend_restart_reason": "Backend restarted after status/route audit/fanout runtime_dispatch filtering fixes; active PID 28871 started 2026-06-23T13:36:24+08:00.",
+    "last_interrupted_bench_session_id": "bench-1782187004-83a418",
+    "last_interrupted_bench_workspace": "/home/dains/Temp/factory-bench-l1-01-fanout-residue-rerun-20260623120000/L1-01",
+    "last_interrupted_factory_run_id": "factory_a1c2b8f26cec",
+    "last_interrupted_reason": "Stopped after platform evidence showed upstream failed tasks did not block downstream TaskBoard rows and exact Director fanout claims could fall back to unrelated tasks."
+  },
+  "completed_modules": [
+    {
+      "module": "weak_model_edit_blocks_normalization",
+      "status": "verified",
+      "files": [
+        "src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py",
+        "src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem_editblocks.py",
+        "src/backend/polaris/kernelone/llm/toolkit/executor/handlers/tests/test_edit_blocks_weak_model_compat.py",
+        "src/backend/polaris/kernelone/llm/toolkit/tool_normalization/normalizers/_edit_blocks.py",
+        "src/backend/polaris/kernelone/llm/toolkit/tests/test_edit_blocks_normalizer.py",
+        "src/backend/polaris/cells/roles/kernel/internal/services/tool_executor.py",
+        "src/backend/polaris/cells/roles/kernel/internal/services/test_tool_executor.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/test_quality_gate_recoverable_no_write.py"
+      ],
+      "evidence": [
+        "python -m ruff check changed backend files -> passed",
+        "python -m ruff format --check changed backend files -> passed",
+        "PYTHONPATH=src/backend python -m mypy changed backend implementation files --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q context_store.py test_edit_blocks_weak_model_compat.py test_edit_blocks_normalizer.py test_tool_executor.py test_quality_gate_recoverable_no_write.py -q -> 174 passed",
+        "OpenCode audit agent_02/agent_04 identified FILE marker, retryable receipt, and failure-feedback gaps; FILE marker + retryable + recoverable gate were fixed in Polaris platform code"
+      ]
+    },
+    {
+      "module": "kernelone_context_snapshot_provider_request",
+      "status": "verified",
+      "files": [
+        "src/backend/polaris/kernelone/llm/engine/executor.py",
+        "src/backend/polaris/kernelone/llm/engine/tests/test_context_store.py"
+      ],
+      "evidence": [
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/kernelone/llm/engine/tests/test_context_store.py -q -> 34 passed",
+        "python -m ruff check changed files -> passed",
+        "python -m ruff format --check changed files -> passed",
+        "PYTHONPATH=src/backend python -m mypy executor.py filesystem_editblocks.py --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q context_store.py test_edit_blocks_weak_model_compat.py -q -> 99 passed"
+      ]
+    },
+    {
+      "module": "context_store_stats_primary_legacy_breakdown",
+      "status": "verified",
+      "files": [
+        "src/backend/polaris/delivery/http/v2/context.py",
+        "src/backend/polaris/delivery/http/schemas/context.py",
+        "src/backend/polaris/kernelone/llm/engine/tests/test_context_store.py",
+        "src/frontend/src/app/components/contextos/contextosStoreStats.ts",
+        "src/frontend/src/app/components/contextos/ContextStoreStatsPanel.tsx"
+      ],
+      "evidence": [
+        "python -m ruff check context.py context schema context_store.py -> passed",
+        "python -m ruff format --check context.py context schema context_store.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy context.py context schema --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/kernelone/llm/engine/tests/test_context_store.py -q -> 34 passed",
+        "npm test -- --run contextosStoreStats.test.ts ContextStoreStatsPanel.test.tsx -> 37 passed",
+        "npx eslint contextosStoreStats.ts ContextStoreStatsPanel.tsx -> passed",
+        "npm run typecheck -> passed"
+      ]
+    },
+    {
+      "module": "director_fanout_timeout_budget",
+      "status": "verified",
+      "files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py"
+      ],
+      "evidence": [
+        "codegraph identified _director_dispatch_timeout_seconds using generic bench --timeout as Director dispatch wait budget",
+        "python -m ruff check factory_stage_executor.py test_director_binding_fanout.py -> passed",
+        "python -m ruff format --check factory_stage_executor.py test_director_binding_fanout.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy factory_stage_executor.py --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q test_director_binding_fanout.py -> 58 passed",
+        "combined regression: PYTHONPATH=src/backend python -m pytest -q fanout/quality/context/kernel suites -> 545 passed"
+      ]
+    },
+    {
+      "module": "artifact_quality_node_eval_and_director_repair_harness",
+      "status": "verified",
+      "files": [
+        "src/backend/polaris/kernelone/quality/artifact_quality.py",
+        "src/backend/polaris/tests/unit/kernelone/quality/test_artifact_quality.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/npm_repairs.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+      ],
+      "evidence": [
+        "L1-01 target package.json exposed invalid node -e inline JavaScript in npm test script; target code was not modified",
+        "artifact quality now detects invalid node eval syntax through node --check on UTF-8 temp files",
+        "Director deterministic npm repair now treats invalid node eval test scripts as repairable and rewrites test to npm run build",
+        "python -m ruff check changed quality/repair files -> passed",
+        "python -m ruff format --check changed quality/repair files -> passed",
+        "PYTHONPATH=src/backend python -m mypy artifact_quality.py npm_repairs.py --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q test_artifact_quality.py test_director_adapter_pure.py -> 344 passed, 2 warnings",
+        "combined regression: PYTHONPATH=src/backend python -m pytest -q fanout/quality/context/kernel suites -> 545 passed"
+      ]
+    },
+    {
+      "module": "director_context_window_and_single_batch_prompt_hygiene",
+      "status": "verified",
+      "files": [
+        "src/backend/polaris/cells/roles/kernel/internal/llm_caller/context_audit.py",
+        "src/backend/polaris/cells/roles/kernel/internal/kernel/core.py",
+        "src/backend/polaris/cells/roles/kernel/internal/transaction/retry_escalation_policy.py",
+        "src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py",
+        "src/backend/polaris/cells/roles/kernel/tests/test_kernel_prompt_builder_integration.py",
+        "src/backend/polaris/cells/roles/kernel/tests/test_retry_api_escalation.py"
+      ],
+      "evidence": [
+        "Context audit now prefers actual model capability profile window, so Qwen3.6 Q6 24k is not reported as an 8k default",
+        "Factory PM-contract + CE-blueprint Director materialization prompts suppress unused SESSION_PATCH working-memory contract in first single-batch turn",
+        "from-scratch forced-write retry escalates immediately on first retry attempt instead of waiting one extra failed attempt",
+        "python -m ruff check changed kernel files -> passed",
+        "python -m ruff format --check changed kernel files -> passed",
+        "PYTHONPATH=src/backend python -m mypy kernel context/retry/core files --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q kernel prompt/retry/context suites -> 109 passed",
+        "combined regression: PYTHONPATH=src/backend python -m pytest -q fanout/quality/context/kernel suites -> 545 passed"
+      ]
+    },
+    {
+      "module": "context_snapshot_primary_store_alignment",
+      "status": "verified",
+      "files": [
+        "src/backend/polaris/kernelone/llm/engine/executor.py",
+        "src/backend/polaris/delivery/http/v2/context.py",
+        "src/backend/polaris/kernelone/llm/engine/tests/test_context_store.py"
+      ],
+      "evidence": [
+        "codegraph and OpenCode audit found context snapshot writer passed an already-resolved runtime root back into StorageLayout, causing nested runtime/projects/.../runtime/contexts writes",
+        "AIExecutor._store_context_messages_sync now writes directly under resolve_storage_roots(workspace).runtime_root/contexts",
+        "HTTP context reader now reads from the same resolve_storage_roots(workspace).runtime_root/contexts path",
+        "python -m ruff check executor.py context.py test_context_store.py -> passed",
+        "python -m ruff format --check executor.py context.py test_context_store.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy executor.py context.py --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q test_context_store.py -> 34 passed",
+        "combined regression: PYTHONPATH=src/backend python -m pytest -q fanout/quality/context/kernel suites -> 545 passed"
+      ]
+    },
+    {
+      "module": "director_fanout_terminal_taskboard_fail_closed",
+      "status": "real_bench_verified_failed_fast",
+      "files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py"
+      ],
+      "evidence": [
+        "Live L1-01 bench session bench-1782168576-45a777: taskboard had task_1 completed, task_2 failed, task_3 failed while Factory run stayed director_dispatch running with stage_heartbeat until external cancel.",
+        "Director result: status=failed, successes=1, failures=2; task 2 director_materialization_quality_failed missing index.html and src/engine/renderer.ts; task 3 director_missing_write_receipt / single_batch_contract_violation.",
+        "Patch adds workspace_taskboard_counts fail-closed branch in Director binding fanout wait for terminal failed taskboard counts.",
+        "python -m ruff check factory_stage_executor.py test_director_binding_fanout.py -> passed",
+        "python -m ruff format --check factory_stage_executor.py test_director_binding_fanout.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy factory_stage_executor.py --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q test_director_binding_fanout.py -> 59 passed",
+        "OpenCode evidence bundle: .polaris/opencode-audit-requests/codex-l101-fanout-terminal-20260623071338/evidence_bundle.json; retry_summary.json records 5-agent read-only audit with 2 useful completions and 3 timeouts.",
+        "Live L1-01 rerun7 factory_de25cffbff07 failed at director_dispatch with director.binding_fanout_all_failed instead of staying in heartbeat loop; run.json completed_at=2026-06-23T00:11:38.553964+00:00."
+      ]
+    },
+    {
+      "module": "factory_bench_opencode_audit_background_harvest",
+      "status": "verified",
+      "files": [
+        "src/backend/scripts/factory_bench/run_factory_bench.py",
+        "src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py"
+      ],
+      "evidence": [
+        "codegraph located _materialize_role_tool_failure_opencode_audit waiting synchronously up to POLARIS_FACTORY_BENCH_OPENCODE_AUDIT_TIMEOUT_SECONDS=900 and killing timed-out OpenCode agents.",
+        "Patch preserves audit materialization/execution but adds POLARIS_FACTORY_BENCH_OPENCODE_AUDIT_BLOCKING_SECONDS default 30; unfinished agents are recorded as running_background with pid/log_path and are not killed.",
+        "python -m ruff check src/backend/scripts/factory_bench/run_factory_bench.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py -> passed",
+        "python -m ruff format --check src/backend/scripts/factory_bench/run_factory_bench.py src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy src/backend/scripts/factory_bench/run_factory_bench.py --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py -k opencode_audit -> 5 passed",
+        "Focused regression: PYTHONPATH=src/backend python -m pytest -q fanout/director-message/weak-model/task-runtime/opencode suites -k selected -> 84 passed"
+      ]
+    },
+    {
+      "module": "director_selected_task_identity_propagation",
+      "status": "verified_pending_real_bench",
+      "files": [
+        "src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+      ],
+      "evidence": [
+        "Runtime evidence from rerun7 showed task_runtime.execution.jsonl had task ids 1/2/3 while director.llm.events.jsonl had data.task_id=null for all sampled LLM events.",
+        "codegraph traced RoleTurnRequest.task_id as the source for LLMInvoker.call task_id, and DirectorAdapter._invoke_role_runtime_session extracts it from context/metadata.",
+        "Patch writes selected target_task_id back into context.task_id/context.target_task_id and metadata.task_id/metadata.target_task_id immediately after Director task selection.",
+        "PYTHONPATH=src/backend python -m pytest -q test_director_adapter_pure.py::test_execute_director_task_propagates_selected_task_identity_to_role_runtime_context -> passed",
+        "python -m ruff check execute_method.py test_director_adapter_pure.py run_factory_bench.py test_factory_bench_runner.py -> passed",
+        "python -m ruff format --check execute_method.py test_director_adapter_pure.py run_factory_bench.py test_factory_bench_runner.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy execute_method.py run_factory_bench.py --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q test_factory_bench_runner.py -k opencode_audit -> 5 passed"
+      ]
+    },
+    {
+      "module": "factory_workspace_typescript_gate_deterministic_repairs",
+      "status": "verified_sample_gate_partial",
+      "files": [
+        "src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/typescript_repairs.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/generic_repairs.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/__init__.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+      ],
+      "evidence": [
+        "codegraph located Factory workspace quality repair as deterministic-only via _apply_workspace_quality_repairs.",
+        "L1-01 failure evidence: latest.workspace-validation.json had npm install PASS, npm run build FAIL on TS18047/TS2345 ctx null and TS2582/TS2304 test globals; repair source_tools=[].",
+        "Added deterministic_typescript_nullable_canvas_context_repair for CanvasRenderingContext2D | null, including existing-guard closure narrowing case via non-null assertion plus runtime guard preservation.",
+        "Added deterministic_typescript_vitest_globals_repair to import vitest globals in TS tests and install real vitest runner in package.json.",
+        "Added Vitest/Jest assertion failure target extraction so repair harness can target imported source file plus failing test file.",
+        "python -m ruff check quality_gate.py deterministic TS repair files and test_director_adapter_pure.py -> passed",
+        "python -m ruff format --check same files -> passed",
+        "PYTHONPATH=src/backend python -m mypy quality_gate.py typescript_repairs.py generic_repairs.py --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q test_director_adapter_pure.py -k 'deterministic_typescript or vitest_globals or nullable_canvas_context or vitest_source_and_test_files or semantic_quality_repair or explicit_artifact_quality_repair' -> 30 passed",
+        "Copied failed L1-01 sample to /tmp/polaris-l101-ts-repair-sample; repair generated files src/index.ts, tests/index.test.ts, package.json; npm install PASS; npm run build PASS; npm test reached real Vitest and failed 1/6 behavior assertion."
+      ]
+    },
+    {
+      "module": "factory_workspace_residual_behavior_llm_repair_harness",
+      "status": "real_bench_verified",
+      "files": [
+        "src/backend/polaris/cells/roles/adapters/public/service.py",
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+      ],
+      "evidence": [
+        "CodeGraph verified _run_workspace_quality_checks -> _apply_workspace_quality_llm_repairs -> run_director_materialization_quality_repair -> _run_materialization_quality_repair_retry -> _explicit_artifact_quality_repair_target_files.",
+        "Factory workspace QA now calls Director materialization-quality repair through roles public service after deterministic repair returns no write results, then reruns the real workspace gate only if repair write evidence exists.",
+        "Vitest/Jest behavioral assertion failures now target imported JS/TS source files plus failing test files so Director receives the implementation file instead of only the assertion site.",
+        "python -m ruff check service.py factory_stage_executor.py factory characterization test quality_gate.py deterministic repair files director pure test -> passed",
+        "python -m ruff format --check same files -> passed",
+        "PYTHONPATH=src/backend python -m mypy service.py factory_stage_executor.py quality_gate.py deterministic repair files --ignore-missing-imports -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q test_factory_stage_executor_characterization.py -k workspace_quality_escalates_to_director_llm_repair_after_deterministic_noop -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q test_director_adapter_pure.py -k deterministic_typescript/vitest/quality repair subsets -> passed"
+      ]
+    },
+    {
+      "module": "director_fanout_receipt_failure_quality_handoff",
+      "status": "platform_fix_verified_pending_real_bench",
+      "files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py"
+      ],
+      "evidence": [
+        "Live L1-01 rerun bench-1782178328-3611f6 produced real artifacts but stopped before QA: qa_ran=false, qa_verdict_artifact_present=false, integration_qa_passed=false.",
+        "runtime/tasks/task_1.json showed last_execution_error=director_missing_write_receipt and materialization_mode=workspace_diff_without_write_tool with new files including package.json and src/*.ts.",
+        "Manual target gate evidence: npm --prefix /home/dains/Temp/factory-bench-l1-01-after-harness-20260623093202/L1-01 run build exited 2 with TS2551 Flasching typo, proving the generated project needed real quality-gate inspection rather than pre-QA termination.",
+        "CodeGraph inspected _fanout_quality_failure_can_enter_quality_gate and confirmed only explicit materialization_quality fanout markers were allowed to hand off.",
+        "Factory handoff now accepts failed task records with write-receipt/no-change materialization errors only when all active bindings failed, taskboard converged, and workspace delivery evidence exists.",
+        "python -m ruff check factory_stage_executor.py test_factory_stage_executor_characterization.py -> passed",
+        "python -m ruff format --check factory_stage_executor.py test_factory_stage_executor_characterization.py -> passed",
+        "python -m mypy factory_stage_executor.py --ignore-missing-imports -> passed",
+        "python -m pytest -q test_factory_stage_executor_characterization.py -k \"quality_gate_handoff or missing_write_receipt or all_director_bindings_fail\" -> 3 passed"
+      ]
+    },
+    {
+      "module": "director_idle_unresolved_quality_handoff",
+      "status": "real_bench_verified_handoff_reached",
+      "files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py"
+      ],
+      "evidence": [
+        "Live L1-01 bench session bench-1782180639-0ca2ad failed after 2400.3s with event_wait_timeout; files=9, source=6, plan=True, blueprint=True, verdict=False, qa_ran=None, real_run_gate skipped because chain was non-terminal.",
+        "Dispatch evidence showed final TaskBoard total=4 pending=1 ready=1 completed=1 failed=2, no active work, quality_gate_handoff=false, error_code=director.run_status_non_success, and director.binding_fanout_all_failed.",
+        "Root cause: Factory required full TaskBoard convergence before quality_gate handoff, so an idle unresolved residue with real artifacts was treated as pre-QA failure instead of a real gate-inspectable workspace.",
+        "Patch adds _taskboard_idle_with_unresolved_work and allows fanout quality handoff when all active bindings failed, workspace artifacts exist, failed task records indicate materialization/receipt quality evidence, and no work remains active.",
+        "Patch downgrades handoff-blocking Director errors to warnings only inside the strict materialized-artifacts handoff path; QA, workspace quality and real-run gates remain mandatory downstream.",
+        "CodeGraph inspected _execute_director_dispatch and handoff flow before state update.",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/factory/pipeline/tests/test_factory_stage_executor_characterization.py -> 95 passed",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py -> 59 passed",
+        "python -m ruff check factory_stage_executor.py test_factory_stage_executor_characterization.py test_director_binding_fanout.py -> passed",
+        "python -m ruff format --check factory_stage_executor.py test_factory_stage_executor_characterization.py test_director_binding_fanout.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy factory_stage_executor.py --ignore-missing-imports -> passed",
+        "Real L1-01 rerun bench-1782183738-3cdfdf completed in 1101.2s and reached quality_gate/QA/real_run_gate instead of stopping at director_dispatch.",
+        "factory_audits.json aggregate all_checks_passed=1; goal_audit real_run_gate passed 1/1 and llm_route_audit passed 1/1.",
+        "Dispatch log factory_e8ef366c6953 recorded quality_gate_handoff=true with director.materialization_quality_handoff warning; no director_dispatch timeout remained."
+      ]
+    },
+    {
+      "module": "qa_runtime_hard_gate_placeholder_tests_fail_closed",
+      "status": "platform_fix_verified_pending_real_bench",
+      "files": [
+        "src/backend/polaris/cells/roles/adapters/internal/qa_adapter.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py"
+      ],
+      "evidence": [
+        "Real L1-01 rerun bench-1782183738-3cdfdf reached quality_gate and completed with factory_audits aggregate all_checks_passed=1; this verified the previous Director handoff fix but exposed QA strictness weakness.",
+        "QA report evidence: /home/dains/Temp/factory-bench-l1-01-idle-handoff-rerun-20260623110211/L1-01/.polaris/qa/factory_e8ef366c6953.report.json had passed=true/verdict=PASS/score=16 but retained qa_llm_verdict_downgraded=FAIL:factory_runtime_hard_gate_passed and test_file_count=0.",
+        "Raw QA findings identified npm test as placeholder/type-check-only: 'tsc --noEmit && echo TypeScript compilation passed'.",
+        "CodeGraph inspected _merge_review_result, _FACTORY_HARD_GATE_BLOCKER_RE, and factory_runtime_hard_gate_passed demotion path.",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py -> 73 passed",
+        "PYTHONPATH=src/backend python -m mypy src/backend/polaris/cells/roles/adapters/internal/qa_adapter.py --ignore-missing-imports -> Success",
+        "python -m ruff check src/backend/polaris/cells/roles/adapters/internal/qa_adapter.py src/backend/polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py -> passed",
+        "python -m ruff format --check src/backend/polaris/cells/roles/adapters/internal/qa_adapter.py src/backend/polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py -> passed"
+      ]
+    },
+    {
+      "module": "director_fanout_dead_ended_pending_residue_terminal_counts",
+      "status": "platform_fix_verified_pending_real_bench",
+      "files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py"
+      ],
+      "evidence": [
+        "Live QA-strict L1-01 rerun exposed new residue shape after Q6 Director wrote partial artifacts.",
+        "Observed counts: COMPLETED=2, FAILED=1, PENDING=4, RUNNING=0 while chain log continued director_dispatch.",
+        "Observed files: package.json, tsconfig.json, src/index.ts, src/models/{Environment,Firefly,Flower,Moon}.ts, tests/test_product.py.",
+        "package.json still had test=npm run build, so downstream QA strictness remains necessary after fanout unblocks.",
+        "CodeGraph inspected _execute_director_binding_fanout and _terminal_status_from_task_counts before patch.",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py -> 60 passed",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py -k 'terminal or workspace_terminal' -> 6 passed",
+        "python -m ruff check factory_stage_executor.py test_director_binding_fanout.py -> passed",
+        "python -m ruff format --check factory_stage_executor.py test_director_binding_fanout.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy factory_stage_executor.py --ignore-missing-imports -> Success"
+      ]
+    },
+    {
+      "module": "taskboard_dependency_and_exact_director_claim_fail_closed",
+      "status": "verified_pending_real_bench",
+      "files": [
+        "src/backend/polaris/cells/roles/adapters/internal/pm/board_tasks.py",
+        "src/backend/polaris/cells/roles/adapters/internal/pm/synthesis.py",
+        "src/backend/polaris/cells/runtime/task_runtime/internal/task_board.py",
+        "src/backend/polaris/cells/runtime/task_runtime/internal/service.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py",
+        "src/backend/polaris/tests/test_role_adapters_taskboard_alignment.py",
+        "src/backend/polaris/cells/runtime/task_runtime/tests/test_service.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+      ],
+      "evidence": [
+        "Real evidence: runtime/tasks/task_4.json had metadata.resolved_depends_on_task_ids=[3] but blocked_by=[] and status=in_progress after task_3 failed.",
+        "Real evidence: task_4/task_8 subject and metadata PM IDs diverged, proving exact Director fanout fallback could claim unrelated tasks.",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/test_role_adapters_taskboard_alignment.py src/backend/polaris/cells/runtime/task_runtime/tests/test_service.py -> 69 passed, 2 xfailed",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -> 256 passed",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py -> 60 passed",
+        "python -m ruff check/format --check changed files -> passed",
+        "PYTHONPATH=src/backend python -m mypy changed source files --ignore-missing-imports -> Success"
+      ]
+    },
+    {
+      "module": "director_fanout_ready_task_partitioning",
+      "status": "verified_pending_real_bench",
+      "files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py"
+      ],
+      "evidence": [
+        "CodeGraph inspected _execute_director_binding_fanout, _execute_director_dispatch, _director_requested_task_ids, and TaskRuntimeService.list_task_rows.",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py -> 60 passed",
+        "python -m ruff check factory_stage_executor.py test_director_binding_fanout.py -> passed",
+        "python -m ruff format --check factory_stage_executor.py test_director_binding_fanout.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy factory_stage_executor.py --ignore-missing-imports -> Success",
+        "Combined related regression: fanout 60 passed; PM/TaskRuntime 69 passed, 2 xfailed; Director adapter pure 256 passed"
+      ]
+    },
+    {
+      "module": "l1_01_dependency_exact_handoff_fanout_and_real_run_gate",
+      "status": "real_bench_verified",
+      "files": [
+        "src/backend/polaris/cells/roles/adapters/internal/pm/board_tasks.py",
+        "src/backend/polaris/cells/runtime/task_runtime/internal/task_board.py",
+        "src/backend/polaris/cells/runtime/task_runtime/internal/service.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/execute_method.py",
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py"
+      ],
+      "evidence": [
+        "bench-1782189319-a7f673 L1-01 PASS in 799.4s",
+        "/home/dains/Temp/factory-bench-l1-01-post-fanout-partition-20260623123500/factory_audits.json real_run_gate ok",
+        "npm run build passed; npm run test passed; npm run start passed",
+        "LLM route audit observed openai_compat-1781448696751|qwen3.6-27b-q6-code-gpu0 and openai_compat-1781448928833|qwen3.6-27b-q6-code-gpu1"
+      ]
+    },
+    {
+      "module": "llm_status_runtime_dispatch_binding_identity",
+      "status": "verified",
+      "files": [
+        "src/backend/polaris/cells/runtime/projection/internal/llm_status.py",
+        "src/backend/polaris/tests/test_llm_phase0_regression.py"
+      ],
+      "evidence": [
+        "codegraph located _role_bindings_payload, _load_runtime_dispatch_director_skips, build_llm_status, and skipped_bindings projection before edit",
+        "runtime/dispatch/log.json contained binding_id values for both skipped Q6 Director bindings",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/test_llm_phase0_regression.py -k runtime_dispatch -> 2 passed",
+        "python -m ruff check src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/tests/test_llm_phase0_regression.py -> passed",
+        "python -m ruff format --check src/backend/polaris/cells/runtime/projection/internal/llm_status.py src/backend/polaris/tests/test_llm_phase0_regression.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy src/backend/polaris/cells/runtime/projection/internal/llm_status.py --ignore-missing-imports -> Success"
+      ]
+    },
+    {
+      "module": "kernelone_toolkit_file_edit_durable_evidence",
+      "status": "verified",
+      "files": [
+        "src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py",
+        "src/backend/polaris/tests/test_llm_toolkit_executor_file_events.py"
+      ],
+      "evidence": [
+        "codegraph located AgentAccelToolExecutor, _emit_file_written_event, broadcast_file_written, process_local file edit fanout, and existing realtime file event tests before edit",
+        "Root cause: KernelOne AgentAccelToolExecutor _emit_file_written_event returned early when no message_bus/global bus existed, so write_file/search_replace/edit_blocks paths could write files without durable .polaris/runtime/file-edits/events.jsonl evidence",
+        "Fix: always call broadcast_file_written with event_log_workspace=self.workspace; message_bus remains optional and no realtime polling/SSE path is introduced",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/tests/test_llm_toolkit_executor_file_events.py -> 6 passed",
+        "python -m ruff check src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py src/backend/polaris/tests/test_llm_toolkit_executor_file_events.py -> passed",
+        "python -m ruff format --check src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py src/backend/polaris/tests/test_llm_toolkit_executor_file_events.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy src/backend/polaris/kernelone/llm/toolkit/executor/handlers/filesystem.py --ignore-missing-imports -> Success"
+      ]
+    },
+    {
+      "module": "role_cell_provider_request_identity_snapshot",
+      "status": "verified",
+      "files": [
+        "src/backend/polaris/cells/roles/kernel/internal/llm_caller/context_audit.py",
+        "src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py"
+      ],
+      "evidence": [
+        "codegraph located build_final_provider_request_snapshot, AIExecutor._build_context_snapshot_provider_request, /v2/context reader, and ContextViewerModal before edit",
+        "Root cause: Role-cell final provider request snapshot omitted source/role/provider_id/provider_type/model while KernelOne executor snapshots included them, so ContextOS could display provider role as null or drift depending on snapshot producer",
+        "Fix: role-cell snapshot now emits stable source plus role/provider/model identity from AIRequest/Profile without guessing absent fields",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py -k final_provider_request_snapshot -> passed",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/kernel/tests/test_llm_caller_components.py -> 73 passed",
+        "ruff check/format --check context_audit.py test_llm_caller_components.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy src/backend/polaris/cells/roles/kernel/internal/llm_caller/context_audit.py --ignore-missing-imports -> Success"
+      ]
+    }
+  ],
+  "active_defects": [
+    {
+      "id": "DEFECT-workspace-switch-race",
+      "status": "platform_fix_verified_pending_role_tool_failure_rerun",
+      "symptom": "Factory bench initial /settings workspace switch can 404 before the target project directory exists, then later recovers.",
+      "root_cause_category": "Runtime Environment",
+      "next_action": "Ensure bench creates target workspace before settings switch, or make settings switch accept an explicit bench-created workspace with evidence."
+    },
+    {
+      "id": "DEFECT-factory-audit-opencode-field",
+      "status": "background_harvest_verified",
+      "symptom": "Factory role tool failure records include machine-readable opencode_audit, but external OpenCode agents may outlive the bench runner.",
+      "root_cause_category": "Director Execution",
+      "next_action": "After the next L1-01 rerun, verify factory_audits.json records execution_status=running_background or completed* with request_path, log_path and pids."
+    },
+    {
+      "id": "DEFECT-provider-health-taxonomy",
+      "status": "open",
+      "symptom": "Provider failures such as circuit_open, call_cancelled, executor shutdown, and cannot schedule new futures after shutdown need deterministic Runtime Environment/provider_health attribution.",
+      "root_cause_category": "Runtime Environment",
+      "next_action": "Align bench_gates and director failure reason classifiers with provider health tokens."
+    },
+    {
+      "id": "DEFECT-contextos-failure-feedback-reinjection",
+      "status": "open",
+      "symptom": "OpenCode audit found has_failure_feedback=false/raw_tool_failure_receipt_absent=true in some Director retry contexts, so prior tool failure receipts may not be reinjected into the next final provider request.",
+      "root_cause_category": "Context Budget",
+      "next_action": "Audit ContextOS projection and prompt assembly so tool failure receipt text flips final_request_context_audit coverage.has_failure_feedback=true before retry."
+    },
+    {
+      "id": "DEFECT-director-q6-timeout-and-window-policy",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "Qwen3.6-27b Q6 Director bindings are slow; old L1-01 runs stayed in director_dispatch because Director fanout used the generic 7200s bench timeout as dispatch wait budget.",
+      "root_cause_category": "Runtime Environment",
+      "next_action": "Restart backend to load current source and rerun exactly L1-01. Expected dispatch wait budget is llm_call_timeout_seconds + 60s, not the full bench --timeout."
+    },
+    {
+      "id": "DEFECT-native-tool-normalization-bypass",
+      "status": "open",
+      "symptom": "OpenCode Agent 05 found native tool-call parsing and text fallback paths can bypass or under-report ToolSpecRegistry alias normalization and parse errors.",
+      "root_cause_category": "Director Execution",
+      "next_action": "Audit TurnDecisionDecoder, native provider tool handling, parser fallback, and ToolSpecRegistry path. Add regression that malformed/natural tool calls are normalized or fail-closed with events."
+    },
+    {
+      "id": "DEFECT-director-fanout-terminal-taskboard-hang",
+      "status": "closed_by_rerun7_failed_fast",
+      "symptom": "L1-01 taskboard reached terminal failed counts (1 completed, 2 failed) but Factory run continued director_dispatch heartbeats and bench stayed on L1-01.",
+      "root_cause_category": "Director Execution",
+      "fix": "Fanout wait now checks workspace taskboard counts and fail-closes slow binding waits when counts are terminal failed.",
+      "next_action": "No further fanout-heartbeat fix pending; next L1-01 work should target the underlying task2/task3 Director materialization failures."
+    },
+    {
+      "id": "DEFECT-director-quality-repair-timeout-missing-targets",
+      "status": "open",
+      "symptom": "Task 2 wrote only src/engine/simulation.ts; artifact quality detected missing index.html and src/engine/renderer.ts; quality_repair attempted but ended director_quality_repair_llm_timeout with no write evidence.",
+      "root_cause_category": "Director Execution",
+      "next_action": "Audit Director quality repair LLM timeout path and prompt/tool_choice for missing target file repair; it should get a bounded repair chance with required target files and fail with evidence if model cannot comply."
+    },
+    {
+      "id": "DEFECT-director-single-batch-missing-write-receipt-task3",
+      "status": "platform_handoff_fix_verified_pending_root_repair",
+      "symptom": "Task 3 failed before LLM call with director_missing_write_receipt / single_batch_contract_violation; changed_files recorded package.json from workspace diff without a write tool receipt.",
+      "root_cause_category": "Director Execution",
+      "fix": "Factory director_dispatch no longer stops before QA solely because failed task records show missing write receipts when real workspace artifacts exist; it hands off to workspace quality/QA under strict convergence and evidence guards.",
+      "next_action": "Still audit final request/tool-choice/retry path so the root write-receipt/tool-normalization cause is reduced, but the bench should now reach real quality gates instead of stopping at director_dispatch."
+    },
+    {
+      "id": "DEFECT-director-idle-unresolved-taskboard-prevents-quality-handoff",
+      "status": "closed_by_real_bench_handoff_reached",
+      "symptom": "Previous idle unresolved TaskBoard residue no longer blocks downstream workspace quality/QA handoff.",
+      "root_cause_category": "Director Execution",
+      "fix": "Factory strict materialized-artifacts handoff path was validated by L1-01 rerun bench-1782183738-3cdfdf reaching QA and real_run_gate.",
+      "next_action": "Keep regression coverage; current blocker has moved to QA strictness for placeholder/no-test outputs."
+    },
+    {
+      "id": "DEFECT-opencode-audit-database-lock",
+      "status": "open",
+      "symptom": "The 5 OpenCode audits materialized for bench-1782180639-0ca2ad, but four logs ended with 'database is locked' and no agent JSON report; no opencode process remained running.",
+      "root_cause_category": "Runtime Environment",
+      "fix": "Factory-bench OpenCode role-tool-failure audit execution now defaults to serial mode, records execution_mode, and marks later agents not_started when a previous serial agent consumes the blocking budget instead of launching all agents into the same shared OpenCode database.",
+      "next_action": "After Director providers are available, rerun a role-tool-failure audit path and verify request.json execution_mode=serial with no database is locked logs."
+    },
+    {
+      "id": "DEFECT-contextos-ui-evidence-provider-role-and-file-edit-gaps",
+      "status": "platform_fix_verified_pending_real_snapshot_rerun",
+      "symptom": "OpenCode audit found provider_role null/director drift across Director snapshots and target .polaris/runtime/file-edits/events.jsonl recorded only package.json despite multiple write_file tool results.",
+      "root_cause_category": "Context Budget",
+      "next_action": "After at least one Director Q6 binding recovers, rerun exactly L1-01 and open the latest context_snapshot_ref; expected provider_request.role/provider_id/model populated and file-edits/events.jsonl covering KernelOne toolkit write paths.",
+      "fix": "Two-part fix verified locally: KernelOne toolkit writes now persist durable file-edit events without MessageBus, and role-cell provider_request snapshots now include source/role/provider_id/provider_type/model identity. Real bench rerun is still blocked by Q6 HTTP 502."
+    },
+    {
+      "id": "DEFECT-opencode-audit-record-missing-after-interrupted-bench",
+      "status": "fixed_verified",
+      "symptom": "The interrupted L1-01 session did not reach factory_audits.json/opencode_audit materialization because the runner could block on external OpenCode execution during failure finalization.",
+      "root_cause_category": "Director Execution",
+      "fix": "OpenCode audit request/evidence are materialized before execution and external audit execution now has a short blocking budget with background evidence instead of synchronous 900s wait.",
+      "next_action": "Rerun exactly L1-01 once backend is restarted or known fresh; verify factory_audits.json is written even if OpenCode agents remain running."
+    },
+    {
+      "id": "DEFECT-director-task-local-repair-harness-missing",
+      "status": "open",
+      "symptom": "L1-01 rerun7 task2/task3 generated partial artifacts, then failed quality/materialization without a clearly bounded Director-local repair/resume harness that can continue from failed target files before escalating back to PM/CE.",
+      "root_cause_category": "Director Execution",
+      "next_action": "Design and implement a Director-local harness: consume quality/tool failure receipts, keep PM/CE contract fixed, retry only missing/invalid target files with normalized tools, then run a real gate."
+    },
+    {
+      "id": "DEFECT-director-llm-events-task-id-null",
+      "status": "platform_fix_verified_pending_l1_01_rerun",
+      "symptom": "L1-01 rerun7 director.llm.events.jsonl contains many LLM/tool events with task_id=null even while task runtime metadata exists, weakening ContextOS and failure attribution.",
+      "root_cause_category": "Context Budget",
+      "fix": "Director execute_method now propagates the selected target task identity into context and metadata before RoleRuntime/standard LLM flow starts.",
+      "next_action": "Rerun exactly L1-01 and verify new director.llm.events.jsonl entries have data.task_id matching task_runtime.execution.jsonl."
+    },
+    {
+      "id": "DEFECT-factory-workspace-quality-behavior-repair-harness",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "After deterministic TS repairs, L1-01 sample passes npm install and npm run build, but npm test fails a real Vitest assertion: expected firefly.vx to be less than 0.",
+      "physical_error": "Vitest: tests/index.test.ts should bounce firefly off walls -> expected 3 to be less than 0; 5 passed, 1 failed.",
+      "root_cause_category": "LLM Output",
+      "platform_gap": "Factory workspace QA used to stop after deterministic no-action residuals instead of escalating a behavior failure into a bounded Director materialization-quality repair.",
+      "fix_strategy": "Expose a Roles public service for Director materialization quality repair and let Factory workspace quality repair call it after deterministic no-action residuals with final provider request/context evidence.",
+      "fix": "Factory workspace QA residual behavior failures now invoke Director materialization-quality repair through roles public service and rerun the same real gate if write evidence exists.",
+      "next_action": "Restart backend with current source and rerun exactly L1-01 to verify the platform fix against real Q6 Director models."
+    },
+    {
+      "id": "DEFECT-director-fanout-receipt-failure-prevents-quality-handoff",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "L1-01 bench-1782178328-3611f6 produced package/src files, but all active Director bindings failed and Factory ended before workspace quality/QA because failed task records used receipt/no-change errors rather than materialization_quality markers.",
+      "physical_error": "factory_audits.json qa_ran=false; runtime/tasks/task_1.json last_execution_error=director_missing_write_receipt materialization_mode=workspace_diff_without_write_tool; manual npm run build failed with TS2551 Flasching.",
+      "root_cause_category": "Director Execution",
+      "fix": "Handoff now reads failed task records and allows QA when write-receipt/no-change materialization errors coexist with real workspace delivery evidence.",
+      "next_action": "Rerun exactly L1-01; expected next stop is workspace quality/QA evidence, not director.binding_fanout_all_failed."
+    },
+    {
+      "id": "DEFECT-qa-runtime-hard-gate-downgrades-placeholder-tests",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "L1-01 reached workspace quality, QA, and real-run gate, but QA adapter converted an LLM FAIL into PASS because runtime hard gate passed while the generated project had zero test files and npm test was only tsc --noEmit.",
+      "physical_error": "QA report passed=true/verdict=PASS/score=16 with evidence qa_llm_verdict_downgraded=FAIL:factory_runtime_hard_gate_passed; major issues included '测试脚本为占位符' and 'test_file_count=0'.",
+      "root_cause_category": "QA / Quality Gate",
+      "platform_gap": "Factory runtime hard gate demotion treated placeholder/no-test findings as quality-only risks instead of hard blockers for the platform runnable-project Definition of Done.",
+      "fix_strategy": "Extend QA hard-gate blocker detection to retain Chinese and structured no-test/placeholder-test criticals even when deterministic runtime hard gate passed; the final verdict must stay FAIL until real behavior tests or an equivalent accepted gate exist.",
+      "fix_files": [
+        "src/backend/polaris/cells/roles/adapters/internal/qa_adapter.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py"
+      ],
+      "verification": [
+        "CodeGraph inspected _merge_review_result, _FACTORY_HARD_GATE_BLOCKER_RE, and factory_runtime_hard_gate_passed demotion path.",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py -> 73 passed",
+        "PYTHONPATH=src/backend python -m mypy src/backend/polaris/cells/roles/adapters/internal/qa_adapter.py --ignore-missing-imports -> Success",
+        "python -m ruff check src/backend/polaris/cells/roles/adapters/internal/qa_adapter.py src/backend/polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py -> passed",
+        "python -m ruff format --check src/backend/polaris/cells/roles/adapters/internal/qa_adapter.py src/backend/polaris/cells/roles/adapters/tests/test_qa_adapter_pure.py -> passed"
+      ],
+      "next_action": "Restart backend because QA adapter source changed, then rerun exactly L1-01. Expected behavior: if generated output again has placeholder tests/test_file_count=0, QA remains FAIL and bench attributes the failure instead of reporting PASS."
+    },
+    {
+      "id": "DEFECT-next-real-bench-validation",
+      "status": "pending_after_qa_patch",
+      "symptom": "QA hard-gate blocker patch has passed local gates but has not yet been exercised by a fresh backend process and real bound-model L1-01 bench run.",
+      "root_cause_category": "Runtime Environment",
+      "next_action": "Restart backend session 79484 or current backend process, then rerun exactly L1-01 and collect factory_audits.json, QA report, workspace-validation, real_run_gate and ContextOS snapshot evidence."
+    },
+    {
+      "id": "DEFECT-director-fanout-dead-ended-pending-residue-waits-full-timeout",
+      "status": "platform_fix_verified_pending_real_bench",
+      "symptom": "Fresh L1-01 QA-strict rerun reached Director dispatch, produced partial artifacts, then sat in director_dispatch with COMPLETED=2, FAILED=1, PENDING=4, RUNNING=0 and no quality_gate handoff.",
+      "physical_error": "Interrupted run bench-1782185530-e99405 after repeated observations: /v2/director/tasks counts={COMPLETED:2, FAILED:1, PENDING:4}; task 3 failed director_no_materialized_changes; target files present package.json, tsconfig.json, src/models/*.ts, src/index.ts, tests/test_product.py; chain log remained phase=director_dispatch.",
+      "root_cause_category": "Director Execution",
+      "platform_gap": "Director fanout wait only treated task counts as terminal when pending/ready were zero. Dead-ended residue with no running work but failed/completed terminal records kept binding wait open until the long LLM timeout instead of returning to the outer dispatch/quality handoff path.",
+      "fix_strategy": "Change _terminal_status_from_task_counts so pending/ready alone are not terminal, but failed/blocked/cancelled/timeout with no running/in_progress/executing work is terminal failed even when pending/ready residue remains. Add regression for completed=2, failed=1, pending=4.",
+      "fix_files": [
+        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
+        "src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py"
+      ],
+      "verification": [
+        "CodeGraph inspected _execute_director_binding_fanout and _terminal_status_from_task_counts before patch.",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py -> 60 passed",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/factory/pipeline/tests/test_director_binding_fanout.py -k 'terminal or workspace_terminal' -> 6 passed",
+        "python -m ruff check factory_stage_executor.py test_director_binding_fanout.py -> passed",
+        "python -m ruff format --check factory_stage_executor.py test_director_binding_fanout.py -> passed",
+        "PYTHONPATH=src/backend python -m mypy factory_stage_executor.py --ignore-missing-imports -> Success"
+      ],
+      "next_action": "No active wait-loop blocker observed in latest run; current blocker is Director Q6 provider_unreachable before task execution."
+    },
+    {
+      "id": "DEFECT-llm-route-audit-readiness-skip-false-positive",
+      "status": "real_bench_verified",
+      "symptom": "When both Director Q6 bindings were provider_unreachable, dispatch failed correctly but factory_audits.json still reported llm_route_audit ok=true and failure_category=director_tool_execution.",
+      "physical_error": "bench-1782190834-8257e3 / factory_14ec660ebe6b: dispatch/log.json active_binding_count=0 readiness_skipped_count=2, runtime/signals/director_dispatch.signals.json director.no_real_llm_evidence observed_count=0 fail_closed_count=2; factory_audits.json llm_route_audit incorrectly passed.",
+      "root_cause_category": "Runtime Environment",
+      "fix": "bench_gates now preserves skipped/fail_closed route metadata, excludes skipped routes from real invocation evidence, requires at least one observed Director route, and classifies all-Director-binding-unavailable as runtime_environment:director_bindings_unavailable.",
+      "next_action": "Closed: latest factory_audits.json reports llm_route_audit passed=0/1 and runtime_environment:director_bindings_unavailable when both Q6 bindings are provider_unreachable."
+    },
+    {
+      "id": "DEFECT-llm-status-runtime-dispatch-readiness-overlay",
+      "status": "real_api_verified",
+      "symptom": "/v2/llm/status showed both Director Q6 bindings ready from stale provider_index even after runtime dispatch skipped both as provider_unreachable.",
+      "root_cause_category": "Runtime Environment",
+      "fix": "LLM status now overlays recent runtime/dispatch/log.json Director skip evidence onto binding/provider readiness when newer than provider_index, with a TTL and readiness_source marker. Factory execution ignores runtime_dispatch-derived skipped_bindings so recovered providers are not blocked by old UI evidence after live reachability succeeds.",
+      "next_action": "If providers recover, run provider readiness/deep test or wait for skip TTL expiry before rerunning L1-01; otherwise status correctly blocks Director as runtime_environment."
+    }
+  ],
+  "current_iteration": {
+    "focus": "ContextOS evidence hygiene platform fixes are locally verified; L1-01 remains externally blocked by Director Q6 HTTP 502.",
+    "bench_status": "No new L1-01 bench run attempted because provider health is failing before Director inference.",
+    "latest_observation": "Fixed runtime_dispatch binding_id projection, KernelOne toolkit durable file-edit evidence, and role-cell provider_request identity fields. OpenCode read-only provider_role audit is running for independent review.",
+    "next_cut": "Harvest OpenCode audit, then continue with native tool normalization bypass or Director quality repair target/timeout while waiting for Q6 provider recovery."
+  },
+  "guardrails": {
+    "ignore_headroom_and_rtk": true,
+    "product_realtime_single_rail": "Nats-JetStream + /v2/ws/runtime only",
+    "task_flow": "PM -> Chief Engineer -> Director only",
+    "repair_scope": "Polaris platform only; no target project business code in main repo",
+    "tooling": "Use codegraph before code edits; use OpenCode for independent role-tool-failure audits"
+  },
+  "next_iteration": {
+    "entrypoint": "Restore or verify at least one Director Q6 binding. If healthy, rerun exactly one project L1-01. If still HTTP 502, continue closing platform evidence/context/tool-chain gaps that do not require live Director inference.",
+    "must_not_weaken": [
+      "PM -> Chief Engineer -> Director full chain",
+      "single WS realtime rail",
+      "ContextOS final provider request is the truth source",
+      "Director Q6 timeout floor must not be reduced by context_override",
+      "target project isolation",
+      "skipped Director bindings must remain diagnostics, not fake LLM route success",
+      "runtime_dispatch provider_unreachable must surface in /v2/llm/status instead of stale provider_index ready",
+      "OpenCode role-tool-failure audits must not parallel-launch multiple agents into the same shared CLI database by default"
+    ],
+    "recommended_first_files": [
+      "src/backend/scripts/factory_bench/run_factory_bench.py",
+      "src/backend/polaris/tests/unit/scripts/test_factory_bench_runner.py",
+      "src/backend/polaris/cells/runtime/projection/internal/llm_status.py",
+      "src/backend/polaris/tests/test_llm_phase0_regression.py",
+      "src/backend/polaris/cells/factory/pipeline/internal/bench_gates.py",
+      "src/backend/polaris/cells/factory/pipeline/tests/test_bench_gates.py",
+      "src/backend/polaris/cells/roles/kernel/internal/context_gateway/gateway_helpers.py",
+      "src/backend/polaris/cells/roles/kernel/internal/llm_caller/helpers.py",
+      "src/backend/polaris/cells/roles/adapters/internal/director/execution.py"
+    ]
+  },
+  "next_deterministic_entrypoint": {
+    "focus": "Provider availability first, then fresh L1-01 real bench. Inspect runtime event, route audit, failure taxonomy, ContextOS provider request, taskboard rows, fanout assigned_tasks, QA, and real-run gate.",
+    "reason": "Route-audit/taxonomy and /v2/llm/status projection are now physically verified. Latest blocker is external provider health: both Director Q6 endpoints are unreachable.",
+    "must_use": [
+      "fresh backend process",
+      "single project L1-01",
+      "runtime/contexts snapshots",
+      "factory_audits.json",
+      "chain log"
+    ]
+  }
+}

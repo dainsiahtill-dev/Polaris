@@ -63,6 +63,9 @@ def _context_window_tokens(prepared: PreparedLLMRequest, profile: Any) -> int:
     capability_profile = getattr(prepared, "capability_profile", None)
     context_policy = getattr(profile, "context_policy", None)
     raw_candidates = [
+        capability_profile.get("model_window_tokens") if isinstance(capability_profile, dict) else None,
+        capability_profile.get("max_context_tokens") if isinstance(capability_profile, dict) else None,
+        capability_profile.get("context_window_tokens") if isinstance(capability_profile, dict) else None,
         getattr(profile, "max_context_tokens", None),
         getattr(context_policy, "max_context_tokens", None),
         profile.get("max_context_tokens") if isinstance(profile, dict) else None,
@@ -70,8 +73,6 @@ def _context_window_tokens(prepared: PreparedLLMRequest, profile: Any) -> int:
         profile.get("context_policy", {}).get("max_context_tokens")
         if isinstance(profile, dict) and isinstance(profile.get("context_policy"), dict)
         else None,
-        capability_profile.get("max_context_tokens") if isinstance(capability_profile, dict) else None,
-        capability_profile.get("context_window_tokens") if isinstance(capability_profile, dict) else None,
     ]
     for raw in raw_candidates:
         if isinstance(raw, bool):
@@ -253,6 +254,19 @@ def _summarize_response_format(response_format: Any) -> Any:
     return _json_safe(summary)
 
 
+def _non_empty_attr(*owners: Any, name: str) -> str:
+    for owner in owners:
+        if owner is None:
+            continue
+        value = getattr(owner, name, None)
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if text:
+            return text
+    return ""
+
+
 def build_final_provider_request_snapshot(
     *,
     ai_request: Any,
@@ -265,6 +279,11 @@ def build_final_provider_request_snapshot(
     messages = _request_messages(ai_request, [dict(item) for item in prepared.messages if isinstance(item, dict)])
     return {
         "schema_version": "llm.provider_request_snapshot.v1",
+        "source": "roles.kernel.llm_caller.context_audit",
+        "role": _non_empty_attr(ai_request, name="role") or _non_empty_attr(profile, name="role_id"),
+        "provider_id": _non_empty_attr(ai_request, profile, name="provider_id"),
+        "provider_type": _non_empty_attr(ai_request, profile, name="provider_type"),
+        "model": _non_empty_attr(ai_request, profile, name="model"),
         "message_count": len(messages),
         "tool_schema_count": len(tools),
         "tools": [_summarize_tool_schema(tool) for tool in tools],

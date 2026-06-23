@@ -118,11 +118,26 @@ class DirectorPatchExecutor:
         """解析 LLM 调用超时时间"""
         from .helpers import _DEFAULT_LLM_CALL_TIMEOUT_SECONDS
 
+        timeout_max = DirectorPatchExecutor._llm_call_timeout_max_seconds()
+        explicit_default = float(_DEFAULT_LLM_CALL_TIMEOUT_SECONDS)
+        env_candidates = (
+            os.environ.get("KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS"),
+            os.environ.get("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS"),
+        )
+        for raw in env_candidates:
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                explicit_default = max(0.1, min(value, timeout_max))
+                break
+
         raw_candidates: list[Any] = []
         if isinstance(context, dict):
             raw_candidates.append(context.get("llm_call_timeout_seconds"))
-        raw_candidates.append(os.environ.get("KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS"))
-        raw_candidates.append(os.environ.get("KERNELONE_DIRECTOR_LLM_TIMEOUT_SECONDS"))
 
         for raw in raw_candidates:
             if raw is None:
@@ -133,8 +148,8 @@ class DirectorPatchExecutor:
                 continue
             if value <= 0:
                 continue
-            return max(0.1, min(value, DirectorPatchExecutor._llm_call_timeout_max_seconds()))
-        return _DEFAULT_LLM_CALL_TIMEOUT_SECONDS
+            return max(explicit_default, min(value, timeout_max))
+        return explicit_default
 
     @staticmethod
     def resolve_direct_fallback_timeout_seconds(

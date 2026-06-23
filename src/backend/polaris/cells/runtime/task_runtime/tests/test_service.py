@@ -135,6 +135,25 @@ def test_task_runtime_service_wakes_ready_waiters_when_dependency_unblocks(tmp_p
     assert child_row["status"] == "pending"
 
 
+def test_task_runtime_service_blocks_missing_dependency_fail_closed(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    service = TaskRuntimeService(str(workspace))
+
+    child = service.create(subject="child with missing dependency", blocked_by=[999])
+
+    claim = service.claim_execution(
+        child.id,
+        worker_id="director",
+        role_id="director",
+        run_id="run-missing-dependency",
+        selection_source="unit",
+    )
+
+    assert claim["success"] is False
+    assert claim["reason"] == "task_blocked"
+
+
 def test_task_runtime_reset_records_clears_rows_sessions_and_events(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
@@ -359,7 +378,7 @@ def test_task_runtime_service_emits_execution_events_via_fact_stream(tmp_path: P
     assert '"event_type":"completed"' in content
 
 
-def test_task_runtime_factory_event_normalizes_payload_run_id(
+def test_task_runtime_factory_event_preserves_payload_director_run_id(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -399,5 +418,6 @@ def test_task_runtime_factory_event_normalizes_payload_run_id(
     assert envelope["channel"] == "event.factory:factory_123456789abc"
     payload = envelope["payload"]
     assert isinstance(payload, dict)
-    assert payload["run_id"] == "factory_123456789abc"
+    assert payload["run_id"] == "director-123456789abc"
+    assert payload["factory_run_id"] == "factory_123456789abc"
     assert payload["director_run_id"] == "director-123456789abc"

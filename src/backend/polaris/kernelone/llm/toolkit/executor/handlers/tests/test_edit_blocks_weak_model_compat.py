@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from polaris.kernelone.llm.toolkit.executor import AgentAccelToolExecutor
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem import (
     _coerce_line_no,
@@ -117,11 +118,101 @@ def test_line_range_missing_file_rejected(tmp_path: Path) -> None:
     assert "not found" in result.get("error", "").lower()
 
 
-def test_tiny_line_range_whole_file_replacement_rejected(tmp_path: Path) -> None:
+def test_file_marker_blocks_create_new_file_via_write_file_gate(tmp_path: Path) -> None:
+    ex = _executor(tmp_path)
+    blocks = """FILE: src/engine/simulation.ts
+export interface Firefly {
+  x: number;
+  y: number;
+  brightness: number;
+}
+
+export function fireflyCount(items: Firefly[]): number {
+  return items.length;
+}
+"""
+
+    result = _handle_edit_blocks(ex, blocks=blocks)
+
+    assert result.get("ok") is True, result
+    assert result.get("normalized_from_edit_blocks_file_marker") is True
+    assert (tmp_path / "src" / "engine" / "simulation.ts").read_text(encoding="utf-8") == blocks.split("\n", 1)[1]
+
+
+@pytest.mark.parametrize(
+    ("header", "expected_file"),
+    [
+        ("file: src/engine/simulation.ts", "src/engine/simulation.ts"),
+        ("FILE = src/engine/simulation.ts", "src/engine/simulation.ts"),
+        ("path: src/engine/simulation.ts // whole module", "src/engine/simulation.ts"),
+        ("FILE:\nsrc/engine/simulation.ts", "src/engine/simulation.ts"),
+        ("src/engine/simulation.ts", "src/engine/simulation.ts"),
+    ],
+)
+def test_file_marker_variants_create_new_file_via_write_file_gate(
+    tmp_path: Path,
+    header: str,
+    expected_file: str,
+) -> None:
+    ex = _executor(tmp_path)
+    body = """export interface Firefly {
+  x: number;
+  y: number;
+  brightness: number;
+}
+
+export function createFirefly(): Firefly {
+  return { x: 1, y: 2, brightness: 0.8 };
+}
+"""
+    result = _handle_edit_blocks(ex, blocks=f"{header}\n{body}")
+
+    assert result.get("ok") is True, result
+    assert result.get("normalized_from_edit_blocks_file_marker") is True
+    assert (tmp_path / expected_file).read_text(encoding="utf-8") == body
+
+
+def test_default_file_with_whole_file_body_routes_to_write_file_gate(tmp_path: Path) -> None:
+    ex = _executor(tmp_path)
+    body = """export interface Flower {
+  id: string;
+  nectar: number;
+}
+
+export function flowerNectar(flower: Flower): number {
+  return flower.nectar;
+}
+"""
+    result = _handle_edit_blocks(ex, file="src/models/flower.ts", blocks=body)
+
+    assert result.get("ok") is True, result
+    assert result.get("normalized_from_edit_blocks_file_marker") is True
+    assert (tmp_path / "src" / "models" / "flower.ts").read_text(encoding="utf-8") == body
+
+
+def test_file_marker_blocks_replace_existing_file(tmp_path: Path) -> None:
     ex = _executor(tmp_path)
     replacement = """class HttpResponse:
     def __init__(self, content=b""):
         self.content = bytes(content)
+
+    def serialize(self):
+        return bytes(self.content)
+"""
+    blocks = f"FILE: response.py\n{replacement}"
+
+    result = _handle_edit_blocks(ex, blocks=blocks)
+
+    assert result.get("ok") is True, result
+    assert (tmp_path / "response.py").read_text(encoding="utf-8") == replacement
+
+
+def test_tiny_line_range_whole_file_replacement_from_file_start_is_normalized(tmp_path: Path) -> None:
+    ex = _executor(tmp_path)
+    replacement = """class HttpResponse:
+    def __init__(self, content=b""):
+        self.content = bytes(content)
+        self.headers = {}
 
     def serialize(self):
         return bytes(self.content)
@@ -136,6 +227,31 @@ def build_response(content):
     return HttpResponse(content)
 """
     result = _handle_edit_blocks(ex, file="response.py", start=1, end=1, replace=replacement)
+
+    assert result.get("ok") is True, result
+    assert (tmp_path / "response.py").read_text(encoding="utf-8") == replacement
+
+
+def test_tiny_line_range_whole_file_replacement_from_middle_rejected(tmp_path: Path) -> None:
+    ex = _executor(tmp_path)
+    replacement = """class HttpResponse:
+    def __init__(self, content=b""):
+        self.content = bytes(content)
+        self.headers = {}
+
+    def serialize(self):
+        return bytes(self.content)
+
+
+def add_header(response, name, value):
+    response.headers[name] = value
+    return response
+
+
+def build_response(content):
+    return HttpResponse(content)
+"""
+    result = _handle_edit_blocks(ex, file="response.py", start=2, end=2, replace=replacement)
 
     assert result.get("ok") is False
     assert result.get("error_type") == "line_range_whole_file_mismatch"
@@ -171,6 +287,9 @@ def test_prose_blocks_returns_teaching_error(tmp_path: Path) -> None:
     suggestion = result.get("suggestion", "")
     assert '"start"' in suggestion and '"replace"' in suggestion  # line-range form
     assert "<<<< SEARCH" in suggestion and ">>>> REPLACE" in suggestion  # block form
+    assert result.get("error_type") == "prose_narration_in_edit_blocks"
+    assert result.get("retryable") is True
+    assert result.get("tool") == "edit_blocks"
 
 
 def test_malformed_markers_keep_generic_error(tmp_path: Path) -> None:
@@ -180,6 +299,8 @@ def test_malformed_markers_keep_generic_error(tmp_path: Path) -> None:
     assert result.get("ok") is False
     error = result.get("error", "")
     assert "prose/narration" not in error
+    assert result.get("error_type") == "no_valid_edit_blocks"
+    assert result.get("retryable") is True
 
 
 def test_update_marker_blocks_are_normalized_and_applied(tmp_path: Path) -> None:

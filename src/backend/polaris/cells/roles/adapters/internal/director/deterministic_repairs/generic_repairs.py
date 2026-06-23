@@ -55,6 +55,7 @@ from .typescript_repairs import (
     _apply_deterministic_typescript_missing_closing_brace_repair,
     _apply_deterministic_typescript_missing_export_repair,
     _apply_deterministic_typescript_missing_member_repair,
+    _apply_deterministic_typescript_nullable_canvas_context_repair,
     _apply_deterministic_typescript_number_to_string_argument_repair,
     _apply_deterministic_typescript_relative_import_case_repair,
     _apply_deterministic_typescript_return_object_semicolon_repair,
@@ -62,6 +63,7 @@ from .typescript_repairs import (
     _apply_deterministic_typescript_tsconfig_lib_repair,
     _apply_deterministic_typescript_uninitialized_property_repair,
     _apply_deterministic_typescript_unresolved_identifier_repair,
+    _apply_deterministic_typescript_vitest_globals_repair,
 )
 from .zod_repairs import (
     _apply_deterministic_typescript_zod_type_class_collision_repair,
@@ -420,6 +422,20 @@ def _apply_deterministic_materialization_quality_repairs(
     )
     results.extend(
         _apply_deterministic_typescript_tsconfig_lib_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_typescript_nullable_canvas_context_repair(
+            adapter,
+            task_id=task_id,
+            artifact_quality_errors=artifact_quality_errors,
+        )
+    )
+    results.extend(
+        _apply_deterministic_typescript_vitest_globals_repair(
             adapter,
             task_id=task_id,
             artifact_quality_errors=artifact_quality_errors,

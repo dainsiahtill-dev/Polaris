@@ -1017,6 +1017,13 @@ class DirectorAdapter(BaseRoleAdapter):
             f"目标: {goal}" if goal else "",
             f"范围: {', '.join(scope_items)}" if scope_items else "",
             f"目标文件: {', '.join(target_file_items)}" if target_file_items else "",
+            (
+                "目标文件覆盖硬门禁: 本任务列出的目标文件必须全部由本轮工具写入或编辑；"
+                "多文件创建任务必须为每个目标文件分别发出 write/edit 工具调用，"
+                "不得只写第一个 sibling 文件后结束。"
+                if len(target_file_items) > 1
+                else ""
+            ),
             "",
             "执行步骤:",
             *[f"- {item}" for item in step_items],

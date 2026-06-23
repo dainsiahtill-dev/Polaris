@@ -25,6 +25,14 @@ if TYPE_CHECKING:
     from polaris.bootstrap.config import Settings
 
 FACTORY_REQUIRED_ROLE_ORDER = ("architect", "pm", "director", "qa")
+RUNTIME_DISPATCH_SKIP_TTL_SECONDS = 3600
+RUNTIME_DISPATCH_SKIP_REASONS = frozenset(
+    {
+        "provider_connectivity_unavailable",
+        "provider_readiness_failed",
+        "provider_unreachable",
+    }
+)
 
 
 def load_interview_history_summary(settings: Settings) -> dict[str, Any]:
@@ -289,6 +297,115 @@ def _dedupe_index_candidates(candidates: list[dict[str, Any]]) -> list[dict[str,
     return deduped or [{}]
 
 
+def _runtime_dispatch_skip_ttl_seconds() -> int:
+    raw = str(os.getenv("POLARIS_LLM_STATUS_RUNTIME_SKIP_TTL_SECONDS") or "").strip()
+    if not raw:
+        return RUNTIME_DISPATCH_SKIP_TTL_SECONDS
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return RUNTIME_DISPATCH_SKIP_TTL_SECONDS
+    return max(0, parsed)
+
+
+def _load_runtime_dispatch_director_skips(*, workspace: str, ramdisk_root: str | None) -> list[dict[str, Any]]:
+    if not workspace:
+        return []
+    try:
+        path = Path(resolve_runtime_path(workspace, "runtime/dispatch/log.json", ramdisk_root=ramdisk_root))
+        stat = path.stat()
+    except (OSError, RuntimeError, ValueError):
+        return []
+
+    timestamp = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+    ttl_seconds = _runtime_dispatch_skip_ttl_seconds()
+    if ttl_seconds and (datetime.now(timezone.utc) - timestamp).total_seconds() > ttl_seconds:
+        return []
+
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+
+    metadata = payload.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    raw_per_binding = metadata.get("per_binding") or payload.get("per_binding")
+    if not isinstance(raw_per_binding, list):
+        return []
+
+    evidence: list[dict[str, Any]] = []
+    timestamp_text = timestamp.isoformat()
+    for item in raw_per_binding:
+        if not isinstance(item, dict):
+            continue
+        provider_id = str(item.get("provider_id") or "").strip()
+        model = str(item.get("model") or "").strip()
+        skip_reason = str(item.get("skip_reason") or item.get("reason") or "").strip()
+        status = str(item.get("status") or "").strip().lower()
+        skipped = bool(item.get("skipped")) or status == "skipped"
+        if not provider_id or not model or not skipped or skip_reason not in RUNTIME_DISPATCH_SKIP_REASONS:
+            continue
+        evidence.append(
+            {
+                "provider_id": provider_id,
+                "model": model,
+                "binding_id": str(item.get("binding_id") or "").strip(),
+                "ready": False,
+                "issue": skip_reason,
+                "source": "runtime_dispatch",
+                "tested_provider_id": provider_id,
+                "tested_model": model,
+                "tested_timestamp": timestamp_text,
+                "skip_allowed": True,
+                "skip_reason": skip_reason,
+                "evidence_path": str(path),
+            }
+        )
+    return evidence
+
+
+def _runtime_dispatch_skip_matches_binding(
+    evidence: dict[str, Any],
+    *,
+    provider_id: str,
+    model: str,
+) -> bool:
+    if str(evidence.get("provider_id") or "").strip() != provider_id:
+        return False
+    tested_model = str(evidence.get("model") or evidence.get("tested_model") or "").strip()
+    return bool(tested_model and model and model_identity_equal(tested_model, model))
+
+
+def _runtime_dispatch_skip_is_newer(
+    evidence: dict[str, Any],
+    readiness: dict[str, Any] | None,
+) -> bool:
+    evidence_time = _parse_status_timestamp(evidence.get("tested_timestamp"))
+    if evidence_time is None:
+        return True
+    readiness_time = _parse_status_timestamp((readiness or {}).get("tested_timestamp"))
+    return readiness_time is None or evidence_time > readiness_time
+
+
+def _runtime_dispatch_readiness_for_binding(
+    evidence_items: list[dict[str, Any]],
+    *,
+    provider_id: str,
+    model: str,
+    readiness: dict[str, Any],
+) -> dict[str, Any] | None:
+    for evidence in evidence_items:
+        if not _runtime_dispatch_skip_matches_binding(evidence, provider_id=provider_id, model=model):
+            continue
+        if not _runtime_dispatch_skip_is_newer(evidence, readiness):
+            continue
+        return dict(evidence)
+    return None
+
+
 def _provider_status_from_index(index: dict[str, Any], provider_id: str) -> dict[str, Any] | None:
     provider_index = index.get("providers") if isinstance(index.get("providers"), dict) else {}
     provider_status = provider_index.get(provider_id) if isinstance(provider_index, dict) else None
@@ -459,12 +576,8 @@ def _binding_readiness_payload(
     )
 
 
-def _binding_status_issue(binding: dict[str, Any], readiness: dict[str, Any]) -> str:
-    provider_id = str(binding.get("provider_id") or "").strip()
-    model = str(binding.get("model") or "").strip()
+def _binding_status_issue(readiness: dict[str, Any]) -> str:
     issue = str(readiness.get("issue") or "role_readiness_missing").strip() or "role_readiness_missing"
-    if provider_id or model:
-        return f"{provider_id}/{model}: {issue}"
     return issue
 
 
@@ -529,12 +642,17 @@ def _latest_status_update(
     config_path: str,
     index: Any,
     interview_summary: dict[str, Any],
+    extra_timestamps: list[Any] | None = None,
 ) -> str | None:
     candidates = _iter_index_timestamps(index)
 
     interview_updated = _parse_status_timestamp(interview_summary.get("lastUpdated"))
     if interview_updated is not None:
         candidates.append(interview_updated)
+    for value in extra_timestamps or []:
+        parsed = _parse_status_timestamp(value)
+        if parsed is not None:
+            candidates.append(parsed)
 
     if os.path.isfile(config_path):
         try:
@@ -550,10 +668,15 @@ def _latest_status_update(
 
 def build_llm_status(settings: Settings) -> dict[str, Any]:
     workspace = _active_workspace(settings)
-    cache_root = build_cache_root(str(getattr(settings, "ramdisk_root", "") or ""), workspace)
+    ramdisk_root = str(getattr(settings, "ramdisk_root", "") or "")
+    cache_root = build_cache_root(ramdisk_root, workspace)
     config = llm_config.load_llm_config(workspace, cache_root, settings=settings)
     index = load_llm_test_index(workspace)
     index_candidates = _dedupe_index_candidates([index, *load_llm_test_index_candidates(workspace)])
+    runtime_dispatch_skips = _load_runtime_dispatch_director_skips(
+        workspace=workspace,
+        ramdisk_root=ramdisk_root or None,
+    )
 
     roles_cfg = config.get("roles", {}) if isinstance(config.get("roles"), dict) else {}
     providers_cfg = config.get("providers", {}) if isinstance(config.get("providers"), dict) else {}
@@ -586,8 +709,18 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
                 provider_id=binding_provider_id,
                 model=binding_model,
             )
+            runtime_readiness = _runtime_dispatch_readiness_for_binding(
+                runtime_dispatch_skips if role_key == "director" else [],
+                provider_id=binding_provider_id,
+                model=binding_model,
+                readiness=readiness,
+            )
+            if runtime_readiness is not None:
+                readiness = runtime_readiness
+            readiness_binding_id = str(readiness.get("binding_id") or "").strip()
             binding.update(
                 {
+                    "binding_id": str(binding.get("binding_id") or readiness_binding_id),
                     "ready": readiness["ready"],
                     "readiness_issue": readiness["issue"],
                     "readiness_source": readiness["source"],
@@ -628,14 +761,15 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
                         {
                             "provider_id": str(binding.get("provider_id") or "").strip(),
                             "model": str(binding.get("model") or "").strip(),
-                            "binding_id": str(binding.get("binding_id") or "").strip(),
+                            "binding_id": str(binding.get("binding_id") or readiness.get("binding_id") or "").strip(),
                             "reason": str(readiness.get("skip_reason") or readiness.get("issue") or "").strip(),
+                            "readiness_source": str(readiness.get("source") or "").strip(),
                         }
                     )
                     continue
                 blocking_binding_count += 1
                 if not failed_binding_issue:
-                    failed_binding_issue = _binding_status_issue(binding, readiness)
+                    failed_binding_issue = _binding_status_issue(readiness)
         all_bindings_ready = all(bool(item.get("ready")) for item in binding_readiness_items)
         any_binding_ready = any(bool(item.get("ready")) for item in binding_readiness_items)
         role_degraded = bool(
@@ -647,6 +781,14 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
         )
         if role_degraded and not failed_binding_issue:
             failed_binding_issue = "degraded: skipped unavailable Director binding(s)"
+        elif (
+            role_key == "director"
+            and skipped_bindings
+            and not any_binding_ready
+            and blocking_binding_count == 0
+            and not failed_binding_issue
+        ):
+            failed_binding_issue = "all Director bindings unavailable after runtime dispatch readiness filtering"
         role_ready = bool((all_bindings_ready and binding_readiness_items) or role_degraded)
         roles_status[role_key] = {
             "provider_id": provider_id,
@@ -677,19 +819,59 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
         if not isinstance(provider_cfg, dict):
             continue
         test_info = provider_index.get(provider_id) if isinstance(provider_index, dict) else None
+        runtime_provider_skip = next(
+            (
+                evidence
+                for evidence in runtime_dispatch_skips
+                if str(evidence.get("provider_id") or "").strip() == str(provider_id)
+                and _runtime_dispatch_skip_is_newer(
+                    evidence,
+                    {
+                        "tested_timestamp": test_info.get("timestamp") if isinstance(test_info, dict) else None,
+                    },
+                )
+            ),
+            None,
+        )
         providers_status[provider_id] = {
-            "ready": test_info.get("ready") if isinstance(test_info, dict) else None,
-            "grade": test_info.get("grade") if isinstance(test_info, dict) else "UNKNOWN",
+            "ready": False
+            if runtime_provider_skip is not None
+            else test_info.get("ready")
+            if isinstance(test_info, dict)
+            else None,
+            "grade": "FAIL"
+            if runtime_provider_skip is not None
+            else test_info.get("grade")
+            if isinstance(test_info, dict)
+            else "UNKNOWN",
             "last_run_id": test_info.get("last_run_id") if isinstance(test_info, dict) else None,
-            "timestamp": test_info.get("timestamp") if isinstance(test_info, dict) else None,
-            "suites": test_info.get("suites") if isinstance(test_info, dict) else None,
+            "timestamp": runtime_provider_skip.get("tested_timestamp")
+            if runtime_provider_skip is not None
+            else test_info.get("timestamp")
+            if isinstance(test_info, dict)
+            else None,
+            "suites": {"connectivity": {"ok": False, "reason": runtime_provider_skip.get("skip_reason")}}
+            if runtime_provider_skip is not None
+            else test_info.get("suites")
+            if isinstance(test_info, dict)
+            else None,
             "name": _provider_name(str(provider_id), provider_cfg),
             "type": _provider_type(provider_cfg),
             "max_context_tokens": _positive_int_or_none(provider_cfg.get("max_context_tokens")),
             "max_output_tokens": _positive_int_or_none(provider_cfg.get("max_output_tokens"))
             or _positive_int_or_none(provider_cfg.get("max_tokens")),
-            "model": test_info.get("model") if isinstance(test_info, dict) else None,
-            "role": test_info.get("role") if isinstance(test_info, dict) else None,
+            "model": runtime_provider_skip.get("tested_model")
+            if runtime_provider_skip is not None
+            else test_info.get("model")
+            if isinstance(test_info, dict)
+            else None,
+            "role": "director"
+            if runtime_provider_skip is not None
+            else test_info.get("role")
+            if isinstance(test_info, dict)
+            else None,
+            "readiness_source": runtime_provider_skip.get("source") if runtime_provider_skip is not None else None,
+            "skip_reason": runtime_provider_skip.get("skip_reason") if runtime_provider_skip is not None else "",
         }
 
     policies = config.get("policies", {}) if isinstance(config.get("policies"), dict) else {}
@@ -724,6 +906,7 @@ def build_llm_status(settings: Settings) -> dict[str, Any]:
         config_path=config_path,
         index=index,
         interview_summary=interview_summary,
+        extra_timestamps=[item.get("tested_timestamp") for item in runtime_dispatch_skips],
     )
 
     return {

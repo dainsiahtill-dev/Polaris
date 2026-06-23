@@ -97,6 +97,39 @@ def get_supported_roles() -> list[str]:
     return list(_ADAPTERS.keys())
 
 
+async def run_director_materialization_quality_repair(
+    workspace: str,
+    *,
+    task: dict[str, object],
+    target_task_id: str,
+    run_id: str,
+    context: dict[str, object],
+    original_message: str,
+    llm_call_timeout: float,
+    artifact_quality_errors: list[str],
+    changed_files: list[str],
+    repair_attempt: int = 1,
+) -> tuple[list[dict[str, object]], dict[str, object]]:
+    """Run Director's materialization-quality repair through the roles public boundary."""
+
+    from ..internal.director.quality_gate import _run_materialization_quality_repair_retry
+    from ..internal.director_adapter import DirectorAdapter
+
+    adapter = DirectorAdapter(str(workspace))
+    return await _run_materialization_quality_repair_retry(
+        adapter,
+        task=dict(task),
+        target_task_id=target_task_id,
+        run_id=run_id,
+        context=dict(context),
+        original_message=original_message,
+        llm_call_timeout=llm_call_timeout,
+        artifact_quality_errors=list(artifact_quality_errors),
+        changed_files=list(changed_files),
+        repair_attempt=repair_attempt,
+    )
+
+
 _logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -117,7 +150,6 @@ except (RuntimeError, ValueError) as exc:
 
 __all__ = [
     "ROLE_OUTPUT_SCHEMAS",
-    "apply_deterministic_materialization_quality_repairs",
     "ArchitectAdapter",
     "BaseRoleAdapter",
     "BaseToolEnabledOutput",
@@ -135,9 +167,11 @@ __all__ = [
     "ToolCall",
     "WorkflowRoleAdapter",
     "WorkflowRoleResult",
+    "apply_deterministic_materialization_quality_repairs",
     "create_role_adapter",
     "execute_workflow_role",
     "get_schema_for_role",
     "get_supported_roles",
     "register_all_adapters",
+    "run_director_materialization_quality_repair",
 ]

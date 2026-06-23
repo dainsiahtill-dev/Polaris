@@ -429,6 +429,12 @@ class ToolExecutor:
             # 如果 error 存在但 success 为 True，调整为失败状态
             if error_msg and success and isinstance(error_msg, str) and error_msg.strip():
                 success = False
+            explicit_retryable = raw_result.get("retryable")
+            retryable = (
+                bool(explicit_retryable)
+                if isinstance(explicit_retryable, bool)
+                else self._is_retryable_from_message(error_msg)
+            )
 
             return ToolResult(
                 success=success,
@@ -436,7 +442,7 @@ class ToolExecutor:
                 result=result_data if success else None,
                 error=error_msg if not success else None,
                 error_category=ErrorCategory.UNKNOWN if success else self._classify_error_from_message(error_msg),
-                retryable=False if success else self._is_retryable_from_message(error_msg),
+                retryable=False if success else retryable,
                 execution_time_ms=execution_time_ms,
                 call_id=call_id,
             )

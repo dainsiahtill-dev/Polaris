@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from polaris.cells.roles.adapters.internal import runtime_dialogue
 from polaris.cells.roles.adapters.public.service import WorkflowRoleAdapter
 from polaris.cells.roles.kernel.internal.kernel.helpers import extract_structured_tool_calls
+from polaris.cells.roles.kernel.internal.kernel.tool_executor import KernelToolExecutor
 from polaris.cells.roles.runtime.public.contracts import RoleExecutionResultV1
 from polaris.cells.roles.runtime.public.service import (
     RoleExecutionKernel,
@@ -300,6 +301,77 @@ class TestRoleToolGateway:
         gateway.reset_execution_count()
         retry_result = gateway.execute_tool("write_file", {"file": "src/c.py", "content": "c=3\n"})
         assert retry_result.get("success") is True
+
+    def test_kernel_gateway_carries_request_task_id(
+        self,
+        kernel: RoleExecutionKernel,
+        registry: RoleProfileRegistry,
+        temp_workspace: str,
+    ) -> None:
+        """Per-request gateway must preserve task identity for tool telemetry."""
+        director_profile = registry.get_profile("director")
+        executor = KernelToolExecutor(kernel, temp_workspace)
+
+        gateway = executor.create_gateway(
+            director_profile,
+            RoleTurnRequest(
+                mode=RoleExecutionMode.CHAT,
+                message="run task",
+                run_id="run-task-id",
+                task_id="task-77",
+                metadata={"session_id": "session-77"},
+            ),
+        )
+
+        assert isinstance(gateway, RoleToolGateway)
+        assert getattr(gateway, "_task_id", None) == "task-77"
+
+    def test_tool_journal_events_include_task_id(
+        self,
+        registry: RoleProfileRegistry,
+        temp_workspace: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Tool call/result events must be attributable to the selected task."""
+        runtime_root = tmp_path / "runtime"
+
+        import polaris.cells.storage.layout as storage_layout
+
+        monkeypatch.setattr(
+            storage_layout,
+            "resolve_polaris_roots",
+            lambda _workspace: SimpleNamespace(runtime_root=runtime_root),
+        )
+
+        class _FakeExecutor:
+            def __init__(self, workspace: str, **_kwargs: object) -> None:
+                self.workspace = workspace
+
+            def execute(self, tool_name: str, tool_args: dict[str, object]) -> dict[str, object]:
+                return {"ok": True, "result": {"tool": tool_name, "args": tool_args}}
+
+        import polaris.kernelone.llm.toolkit as llm_toolkit_module
+
+        monkeypatch.setattr(llm_toolkit_module, "AgentAccelToolExecutor", _FakeExecutor)
+
+        director_profile = registry.get_profile("director")
+        gateway = RoleToolGateway(
+            director_profile,
+            temp_workspace,
+            run_id="run-tool-task",
+            task_id="task-99",
+        )
+
+        result = gateway.execute_tool("write_file", {"file": "src/a.py", "content": "a=1\n"})
+
+        assert result["success"] is True
+        journal_path = runtime_root / "events" / "director.llm.events.jsonl"
+        events = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()]
+        tool_events = [event for event in events if event["event"] in {"tool_call", "tool_result"}]
+        assert {event["event"] for event in tool_events} == {"tool_call", "tool_result"}
+        assert all(event.get("task_id") == "task-99" for event in tool_events)
+        assert all(event["data"].get("task_id") == "task-99" for event in tool_events)
 
 
 class TestPromptFingerprint:

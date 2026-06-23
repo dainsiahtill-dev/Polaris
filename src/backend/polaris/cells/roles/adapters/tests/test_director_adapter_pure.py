@@ -45,6 +45,7 @@ from polaris.cells.roles.adapters.internal.director.execute_method import (
     _run_empty_write_content_materialization_retry,
     _task_requires_fresh_materialization,
     _task_runtime_finalization_failed_result,
+    execute_director_task,
 )
 from polaris.cells.roles.adapters.internal.director.execution import DirectorPatchExecutor
 from polaris.cells.roles.runtime.public.contracts import ExecuteRoleSessionCommandV1, RoleExecutionResultV1
@@ -73,6 +74,207 @@ def _write_substantive_node_test_script(tmp_path: Any) -> None:
         "console.log('node smoke test passed');\n",
         encoding="utf-8",
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_director_task_propagates_selected_task_identity_to_role_runtime_context(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = {"id": "selected-task-2", "subject": "Implement selected task"}
+    captured: dict[str, Any] = {}
+
+    class FakeStateTracker:
+        def build_taskboard_observation_snapshot(self, task_runtime: Any) -> dict[str, Any]:
+            del task_runtime
+            return {}
+
+        def collect_workspace_code_files(self) -> list[str]:
+            return []
+
+        def mark_rework_round_started(self, task_id: str, get_task: Any, update_task: Any) -> None:
+            del task_id, get_task, update_task
+
+    class FakeExecution:
+        def resolve_llm_call_timeout_seconds(self, context: dict[str, Any]) -> float:
+            del context
+            return 1.0
+
+    class FakeAdapter:
+        workspace = str(tmp_path)
+        task_runtime = object()
+        _state_tracker = FakeStateTracker()
+        _execution = FakeExecution()
+
+        def _get_task(self, task_id: str) -> dict[str, Any] | None:
+            return task if task_id == "requested-task" else None
+
+        def _materialize_runtime_task(self, task_id: str, input_data: dict[str, Any]) -> dict[str, Any]:
+            del task_id, input_data
+            return task
+
+        def _select_pending_board_task(self) -> dict[str, Any] | None:
+            return None
+
+        def _update_task_progress(self, task_id: str, status: str) -> None:
+            captured.setdefault("progress", []).append((task_id, status))
+
+        def _update_board_task(self, task_id: str, updates: dict[str, Any]) -> None:
+            del task_id, updates
+
+        def _resolve_execution_backend_request(
+            self,
+            *,
+            task_id: str,
+            task: dict[str, Any],
+            input_data: dict[str, Any],
+            context: dict[str, Any],
+        ) -> dict[str, Any]:
+            captured["backend_context"] = dict(context)
+            return {"task_id": task_id, "task": task, "input_data": input_data}
+
+        def _persist_execution_backend_metadata(self, task_id: str, request: dict[str, Any]) -> None:
+            captured["persisted"] = {"task_id": task_id, "request": request}
+
+        def _get_sequential_config(self, context: dict[str, Any]) -> None:
+            del context
+            return None
+
+    async def fake_claim_task_with_retry(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        del args, kwargs
+        return (
+            task,
+            "selected-task-2",
+            "task_id_lookup",
+            True,
+            {},
+            [],
+            {"session": {"session_id": "lease-selected-task-2"}},
+        )
+
+    async def fake_standard_flow(
+        adapter: Any,
+        task_arg: dict[str, Any],
+        target_task_id: str,
+        run_id: str,
+        context: dict[str, Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del adapter, task_arg, args, kwargs
+        captured["flow"] = {
+            "target_task_id": target_task_id,
+            "run_id": run_id,
+            "context": dict(context),
+        }
+        return {"success": True, "task_id": target_task_id}
+
+    monkeypatch.setattr(execute_method_module, "_claim_task_with_retry", fake_claim_task_with_retry)
+    monkeypatch.setattr(execute_method_module, "_execute_standard_llm_flow", fake_standard_flow)
+
+    result = await execute_director_task(
+        FakeAdapter(),
+        "requested-task",
+        {"task_id": "requested-task"},
+        {"run_id": "director-run-1"},
+    )
+
+    assert result["success"] is True
+    flow_context = captured["flow"]["context"]
+    assert flow_context["task_id"] == "selected-task-2"
+    assert flow_context["target_task_id"] == "selected-task-2"
+    assert flow_context["pm_task_id"] == "requested-task"
+    assert flow_context["task_runtime_session_id"] == "lease-selected-task-2"
+    assert flow_context["task_runtime_guard"] is True
+    assert flow_context["metadata"]["task_id"] == "selected-task-2"
+    assert flow_context["metadata"]["target_task_id"] == "selected-task-2"
+    assert flow_context["metadata"]["pm_task_id"] == "requested-task"
+    assert flow_context["metadata"]["task_runtime_session_id"] == "lease-selected-task-2"
+    assert captured["backend_context"]["task_id"] == "selected-task-2"
+
+
+@pytest.mark.asyncio
+async def test_execute_director_task_does_not_call_llm_when_exact_claim_conflicts(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = {"id": "1", "subject": "Implement exact PM task"}
+    captured: dict[str, Any] = {}
+
+    class FakeStateTracker:
+        def build_taskboard_observation_snapshot(self, task_runtime: Any) -> dict[str, Any]:
+            del task_runtime
+            return {"pending": 1}
+
+        def collect_workspace_code_files(self) -> list[str]:
+            return []
+
+    class FakeExecution:
+        def resolve_llm_call_timeout_seconds(self, context: dict[str, Any]) -> float:
+            del context
+            return 1.0
+
+    class FakeAdapter:
+        workspace = str(tmp_path)
+        role_id = "director"
+        task_runtime = object()
+        _state_tracker = FakeStateTracker()
+        _execution = FakeExecution()
+
+        def _get_task(self, task_id: str) -> dict[str, Any] | None:
+            return task if task_id == "TASK-1" else None
+
+        def _materialize_runtime_task(self, task_id: str, input_data: dict[str, Any]) -> dict[str, Any]:
+            del task_id, input_data
+            raise AssertionError("exact handoff task already exists and should not materialize")
+
+        def _select_pending_board_task(self) -> dict[str, Any] | None:
+            raise AssertionError("exact handoff claim must not fall back to another ready task")
+
+        def _update_task_progress(self, task_id: str, status: str) -> None:
+            captured.setdefault("progress", []).append((task_id, status))
+
+    async def fake_claim_task_with_retry(*args: Any, **kwargs: Any) -> tuple[Any, ...]:
+        del args, kwargs
+        return (
+            task,
+            "1",
+            "task_id_lookup",
+            False,
+            {"pending": 1},
+            [{"task_id": "1", "claimed": False, "reason": "lease_conflict"}],
+            {"success": False, "reason": "lease_conflict", "task": task},
+        )
+
+    async def fake_handle_claim_required(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        captured["claim_required_args"] = args
+        return {"success": False, "error_code": "director.task_claim_required"}
+
+    async def unexpected_standard_flow(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        raise AssertionError("LLM flow must not run without a TaskBoard claim")
+
+    monkeypatch.setattr(execute_method_module, "_claim_task_with_retry", fake_claim_task_with_retry)
+    monkeypatch.setattr(execute_method_module, "_handle_claim_required", fake_handle_claim_required)
+    monkeypatch.setattr(execute_method_module, "_execute_standard_llm_flow", unexpected_standard_flow)
+
+    result = await execute_director_task(
+        FakeAdapter(),
+        "task-0-director",
+        {
+            "metadata": {
+                "task_id": "TASK-1",
+                "pm_task_id": "TASK-1",
+                "chief_engineer_handoff_id": "ce-TASK-1",
+            }
+        },
+        {"run_id": "director-run-conflict"},
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "director.task_claim_required"
+    assert captured["claim_required_args"][2] == "director-run-conflict"
 
 
 def test_deterministic_npm_script_repair_builds_before_missing_dist_entrypoint(tmp_path: Any) -> None:
@@ -216,6 +418,48 @@ def test_deterministic_npm_script_repair_removes_shell_substitution_test(tmp_pat
     )
     errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
     assert any("uses shell command substitution" in error for error in errors)
+
+    results = _apply_deterministic_npm_test_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["scripts"]["test"] == "npm run build"
+
+
+def test_deterministic_npm_script_repair_removes_invalid_node_eval_test(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_npm_test_script_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("console.log('hello');\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"target": "ES2020"}, "include": ["src/**/*.ts"]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "typescript-project",
+                "version": "1.0.0",
+                "scripts": {
+                    "build": "tsc",
+                    "test": 'node -e "const ok = ;"',
+                },
+                "devDependencies": {"typescript": "^5.4.0"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert any("has invalid node eval syntax" in error for error in errors)
 
     results = _apply_deterministic_npm_test_script_repair(
         _make_adapter(tmp_path),
@@ -1269,6 +1513,125 @@ def test_deterministic_typescript_tsconfig_lib_repair_adds_dom_for_window(
     assert repaired["compilerOptions"]["lib"] == ["ES2020", "DOM"]
 
 
+def test_deterministic_typescript_nullable_canvas_context_repair_adds_guard(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_nullable_canvas_context_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.ts").write_text(
+        "const canvas = document.querySelector('canvas') as HTMLCanvasElement;\n"
+        "const ctx = canvas.getContext('2d');\n"
+        "ctx.fillStyle = '#fff';\n"
+        "function draw(target: CanvasRenderingContext2D) {}\n"
+        "draw(ctx);\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/index.ts(3,1): error TS18047: 'ctx' is possibly 'null'.\n"
+        "src/index.ts(5,6): error TS2345: Argument of type 'CanvasRenderingContext2D | null' "
+        "is not assignable to parameter of type 'CanvasRenderingContext2D'."
+    ]
+
+    results = _apply_deterministic_typescript_nullable_canvas_context_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "index.ts").read_text(encoding="utf-8")
+    assert "const ctx = canvas.getContext('2d')!;" in repaired
+    assert "if (!ctx) {" in repaired
+    assert 'throw new Error("Canvas 2D context unavailable");' in repaired
+    assert repaired.index("if (!ctx) {") < repaired.index("ctx.fillStyle")
+
+
+def test_deterministic_typescript_nullable_canvas_context_repair_handles_existing_guard(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_nullable_canvas_context_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "index.ts").write_text(
+        "const canvas = document.querySelector('canvas') as HTMLCanvasElement;\n"
+        'const ctx = canvas.getContext("2d");\n'
+        "if (!ctx) {\n"
+        "  console.error('missing context');\n"
+        "  throw new Error('missing context');\n"
+        "}\n"
+        "function animate(): void {\n"
+        "  ctx.fillRect(0, 0, 1, 1);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/index.ts(8,3): error TS18047: 'ctx' is possibly 'null'."
+    ]
+
+    results = _apply_deterministic_typescript_nullable_canvas_context_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "index.ts").read_text(encoding="utf-8")
+    assert 'const ctx = canvas.getContext("2d")!;' in repaired
+    assert repaired.count("if (!ctx) {") == 1
+
+
+def test_deterministic_materialization_repair_routes_vitest_globals(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.generic_repairs import (
+        _apply_deterministic_materialization_quality_repairs,
+    )
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "index.test.ts").write_text(
+        "describe('garden', () => {\n  it('runs', () => {\n    expect(true).toBe(true);\n  });\n});\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "typescript-application",
+                "scripts": {"build": "tsc", "test": "npm run build"},
+                "devDependencies": {"typescript": "^5.6.0"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "tests/index.test.ts(1,1): error TS2582: Cannot find name 'describe'.\n"
+        "tests/index.test.ts(2,3): error TS2582: Cannot find name 'it'.\n"
+        "tests/index.test.ts(3,5): error TS2304: Cannot find name 'expect'."
+    ]
+
+    results, summary = _apply_deterministic_materialization_quality_repairs(
+        _make_adapter(tmp_path),
+        task={"target_files": ["tests/index.test.ts"]},
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    assert "deterministic_typescript_vitest_globals_repair" in summary["source_tools"]
+    repaired_test = (tests_dir / "index.test.ts").read_text(encoding="utf-8")
+    assert "import { describe, expect, it } from 'vitest';" in repaired_test
+    repaired_package = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired_package["scripts"]["test"] == "vitest run"
+    assert repaired_package["devDependencies"]["vitest"] == "^2.1.8"
+
+
 @pytest.mark.asyncio
 async def test_phase_quality_repair_loop_continues_after_deterministic_progress_when_llm_empty(
     tmp_path: Any,
@@ -2030,6 +2393,27 @@ class TestBuildDirectorMessage:
         assert "目标文件: src/client/three-scene.ts" in msg
         assert "- Modify the existing Three.js scene file" in msg
         assert "- Run `npm run build` passes" in msg
+
+    def test_multi_target_message_requires_all_target_files(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        msg = adapter._build_director_message(
+            {
+                "subject": "Implement model files",
+                "metadata": {
+                    "scope_paths": ["src/models"],
+                    "target_files": [
+                        "src/models/flower.ts",
+                        "src/models/moon.ts",
+                        "src/models/firefly.ts",
+                    ],
+                },
+            }
+        )
+
+        assert "目标文件: src/models/flower.ts, src/models/moon.ts, src/models/firefly.ts" in msg
+        assert "目标文件覆盖硬门禁" in msg
+        assert "每个目标文件分别发出 write/edit 工具调用" in msg
+        assert "不得只写第一个 sibling 文件后结束" in msg
 
     def test_includes_ce_blueprint_and_factory_context(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
@@ -7542,6 +7926,37 @@ class TestQualityRepairMissingTargetContract:
         )
 
         assert targets == ["tests/test_product.py"]
+
+    def test_explicit_quality_repair_targets_vitest_source_and_test_files(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _explicit_artifact_quality_repair_target_files,
+        )
+
+        source = tmp_path / "src" / "index.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export function updateFirefly() {}\n", encoding="utf-8")
+        test_file = tmp_path / "tests" / "index.test.ts"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text(
+            "import { updateFirefly } from '../src/index';\n"
+            "import { describe, expect, it } from 'vitest';\n"
+            "describe('updateFirefly', () => {\n"
+            "  it('bounces', () => expect(updateFirefly()).toBe(true));\n"
+            "});\n",
+            encoding="utf-8",
+        )
+
+        targets = _explicit_artifact_quality_repair_target_files(
+            artifact_quality_errors=[
+                "FAIL tests/index.test.ts > Firefly Garden Simulator > updateFirefly > should bounce firefly off walls\n"
+                "AssertionError: expected 3 to be less than 0\n"
+                " ❯ tests/index.test.ts:80:26"
+            ],
+            changed_files=["src/index.ts", "tests/index.test.ts"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/index.ts", "tests/index.test.ts"]
 
     def test_explicit_artifact_quality_repair_targets_prettier_syntax_path(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (

@@ -223,6 +223,15 @@ def _has_calculator_bootstrap_hints(text: str) -> bool:
     )
 
 
+def _has_static_web_bootstrap_hints(text: str) -> bool:
+    lowered = str(text or "").lower()
+    if any(hint in lowered for hint in ("resume", "简历", "个人简历")):
+        return True
+    if "静态" in lowered and any(hint in lowered for hint in ("html", "css", "页面", "网页")):
+        return True
+    return "static" in lowered and any(hint in lowered for hint in ("html", "css", "page", "site", "web"))
+
+
 def _is_calculator_support_bootstrap_target(relative_path: str, latest_user: str) -> bool:
     if not _has_calculator_bootstrap_hints(latest_user):
         return False
@@ -353,6 +362,8 @@ def _synthesize_deterministic_bootstrap_write_content(relative_path: str, latest
             'description = "Generated workspace package for Polaris execution validation."\n'
         )
     if lowered == "index.html":
+        if not _has_static_web_bootstrap_hints(latest_user):
+            return ""
         return (
             "<!doctype html>\n"
             '<html lang="zh-CN">\n'
@@ -421,6 +432,8 @@ def _synthesize_deterministic_bootstrap_write_content(relative_path: str, latest
             "</html>\n"
         )
     if lowered in {"styles.css", "style.css"}:
+        if not _has_static_web_bootstrap_hints(latest_user):
+            return ""
         return (
             ":root {\n"
             "  color-scheme: light;\n"
@@ -511,6 +524,8 @@ def _synthesize_deterministic_bootstrap_write_content(relative_path: str, latest
     if lowered == "readme.md":
         if _has_calculator_bootstrap_hints(latest_user):
             return _synthesize_calculator_readme_content()
+        if not _has_static_web_bootstrap_hints(latest_user):
+            return ""
         return (
             "# Personal Resume Page\n\n"
             "A static HTML5/CSS3 resume page with semantic markup, responsive layout, and no runtime dependencies.\n\n"
@@ -532,9 +547,7 @@ def _synthesize_deterministic_bootstrap_write_content(relative_path: str, latest
     if _is_safe_test_bootstrap_target(lowered):
         if _has_calculator_bootstrap_hints(latest_user):
             return _synthesize_calculator_unittest_content()
-        if any(
-            hint in lowered_user for hint in ("index.html", "styles.css", "html", "css", "resume", "简历", "静态页面")
-        ):
+        if _has_static_web_bootstrap_hints(latest_user):
             return _synthesize_static_web_pytest_content()
         return ""
     if lowered == "tests/qa_report.md" and _has_calculator_bootstrap_hints(latest_user):

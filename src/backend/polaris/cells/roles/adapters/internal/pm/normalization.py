@@ -34,8 +34,10 @@ from .pm_text_utils import (
     _pm_extract_inline_list_field,
     _pm_extract_requirement_subject,
     _pm_infer_test_target_file_for_contract,
+    _pm_is_generic_product_test_path,
     _pm_is_placeholder_task_title,
     _pm_root_workspace_target_files_from_context,
+    _pm_should_drop_generic_product_test_for_documentation_contract,
     _pm_split_concrete_targets_and_scopes,
     _pm_title_fragment,
 )
@@ -167,12 +169,23 @@ class PMContractNormalizationMixin(_PMAdapterMixinBase):
             ]
 
         phase = str(raw.get("phase") or _DEFAULT_PHASE_SEQUENCE[(index - 1) % len(_DEFAULT_PHASE_SEQUENCE)]).strip()
+        drop_generic_product_test_for_documentation = _pm_should_drop_generic_product_test_for_documentation_contract(
+            title=title,
+            goal=goal,
+            description=description,
+            steps=steps,
+            acceptance=acceptance,
+            phase=phase,
+        )
+        if drop_generic_product_test_for_documentation:
+            target_files = [path for path in target_files if not _pm_is_generic_product_test_path(path)]
+            scope_items = [path for path in scope_items if not _pm_is_generic_product_test_path(path)]
         raw_metadata_value = raw.get("metadata")
         raw_metadata_for_test_inference: dict[str, Any] = (
             raw_metadata_value if isinstance(raw_metadata_value, dict) else {}
         )
         inferred_test_target = ""
-        if not raw_metadata_for_test_inference.get("qa_rework_reason"):
+        if not raw_metadata_for_test_inference.get("qa_rework_reason") and not drop_generic_product_test_for_documentation:
             inferred_test_target = _pm_infer_test_target_file_for_contract(
                 title=title,
                 goal=goal,

@@ -155,7 +155,8 @@ def test_forced_write_file_retry_context_converges_multi_target_creates() -> Non
 
     system = next(m["content"] for m in out if m["role"] == "system")
     assert "MULTI-TARGET WRITE CONVERGENCE" in system
-    assert "choose exactly one still-missing target file" in system
+    assert "write_file once for each still-missing target file" in system
+    assert "do not stop after only one sibling file" in system
     assert "Do not modify package.json" in system
     assert "index.html, src/engine/simulation.ts, src/engine/renderer.ts" in system
 
@@ -333,6 +334,8 @@ def test_contract_retry_context_does_not_expand_scoped_target_to_bare_basename()
 
     system = next(m["content"] for m in out if m["role"] == "system")
     assert "Mutation target files detected from user request: src/main.py, tests/test_cli.py." in system
+    assert "must cover every listed target file required by the current task" in system
+    assert "one write/edit call per target file" in system
     assert "src/main.py, tests/test_cli.py, main.py" not in system
 
 

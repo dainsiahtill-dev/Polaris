@@ -774,6 +774,7 @@ class TaskBoard:
         status: TaskStatus | str | None = None,
         assignee: str | None = None,
         owner: str | None = None,
+        blocked_by: list[int] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Task | None:
         """Compatibility update API (delegates to update_status)."""
@@ -791,6 +792,18 @@ class TaskBoard:
                 task.assignee = str(assignee or "").strip()
             if owner is not None:
                 task.owner = str(owner or "").strip()
+            if blocked_by is not None:
+                normalized_blockers: list[int] = []
+                for dep_id in blocked_by:
+                    try:
+                        dep_id_int = int(dep_id)
+                    except (TypeError, ValueError):
+                        continue
+                    if dep_id_int != int(task_id) and dep_id_int not in normalized_blockers:
+                        normalized_blockers.append(dep_id_int)
+                task.blocked_by = normalized_blockers
+                if task.status in (TaskStatus.PENDING, TaskStatus.READY, TaskStatus.BLOCKED):
+                    task.status = TaskStatus.BLOCKED if task.blocked_by else TaskStatus.PENDING
             if isinstance(metadata, dict) and metadata:
                 task.metadata.update(metadata)
             # Keep in-memory cache in sync when `task` comes from update_status()
@@ -819,9 +832,8 @@ class TaskBoard:
                 return False
             # Check dependencies are satisfied
             blocked = any(
-                self._cache.get(dep_id) is not None and self._cache[dep_id].status != TaskStatus.COMPLETED
+                self._cache.get(dep_id) is None or self._cache[dep_id].status != TaskStatus.COMPLETED
                 for dep_id in task.blocked_by
-                if dep_id in self._cache
             )
             if blocked:
                 return False

@@ -419,9 +419,13 @@ def test_role_tool_failure_opencode_audit_marks_partial_agent_failure(
     class FakeProcess:
         def __init__(self, exit_code: int) -> None:
             self._exit_code = exit_code
+            self.pid = 4242
 
         def wait(self, timeout: float | None = None) -> int:
             del timeout
+            return self._exit_code
+
+        def poll(self) -> int | None:
             return self._exit_code
 
         def kill(self) -> None:
@@ -465,6 +469,152 @@ def test_role_tool_failure_opencode_audit_marks_partial_agent_failure(
     assert [item["exit_code"] for item in request_payload["executions"]] == [0, 1]
 
 
+def test_role_tool_failure_opencode_audit_backgrounds_long_running_agents(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(bench, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(bench, "_OPENCODE_AUDIT_REQUEST_ROOT", tmp_path / ".polaris" / "opencode-audit-requests")
+    monkeypatch.setattr(bench, "_opencode_audit_execution_enabled", lambda: True)
+    monkeypatch.setattr(bench.shutil, "which", lambda name: "/usr/bin/opencode" if name == "opencode" else None)
+    monkeypatch.setenv("POLARIS_FACTORY_BENCH_OPENCODE_AUDIT_BLOCKING_SECONDS", "0")
+    processes: list[FakeBackgroundProcess] = []
+
+    class FakeBackgroundProcess:
+        def __init__(self) -> None:
+            self.pid = 6789
+            self.killed = False
+            self.wait_called = False
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            self.wait_called = True
+            raise AssertionError("backgrounded OpenCode audit must not be synchronously waited")
+
+        def poll(self) -> int | None:
+            return None
+
+        def kill(self) -> None:
+            self.killed = True
+
+    def fake_popen(*args: Any, **kwargs: Any) -> FakeBackgroundProcess:
+        del args, kwargs
+        process = FakeBackgroundProcess()
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(bench.subprocess, "Popen", fake_popen)
+    workspace_root = tmp_path / "factory-bench"
+    (workspace_root / "L1-01").mkdir(parents=True)
+    record = {
+        "project_id": "L1-01",
+        "level": 1,
+        "backend_metadata": {"workspace": str(workspace_root)},
+        "opencode_audit": {
+            "required": True,
+            "reason": "role_tool_failure_detected",
+            "trigger_category": "director_tool_execution",
+            "root_cause_signature": "director_tool_execution:tool_failed",
+            "must_review": ["runtime_event_tool_call_and_tool_result"],
+            "forbidden": ["target_project_code_changes"],
+            "recommended_agent_count": 1,
+            "prompt": "audit",
+        },
+    }
+
+    result = bench._materialize_role_tool_failure_opencode_audit(
+        base=tmp_path / "external-base",
+        run_id="run-background",
+        project_id="L1-01",
+        record=record,
+    )
+
+    assert result is not None
+    assert result["execution_status"] == "running_background"
+    assert result["blocking_seconds"] == 0
+    execution = result["executions"][0]
+    assert execution["background"] is True
+    assert execution["blocking_timed_out"] is True
+    assert execution["exit_code"] is None
+    assert execution["pid"] == 6789
+    assert processes and not processes[0].wait_called
+    assert not processes[0].killed
+    request_payload = json.loads(Path(result["request_path"]).read_text(encoding="utf-8"))
+    assert request_payload["execution_status"] == "running_background"
+    assert request_payload["execution_mode"] == "serial"
+
+
+def test_role_tool_failure_opencode_audit_serial_mode_does_not_start_remaining_agents_after_timeout(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(bench, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(bench, "_OPENCODE_AUDIT_REQUEST_ROOT", tmp_path / ".polaris" / "opencode-audit-requests")
+    monkeypatch.setattr(bench, "_opencode_audit_execution_enabled", lambda: True)
+    monkeypatch.setattr(bench.shutil, "which", lambda name: "/usr/bin/opencode" if name == "opencode" else None)
+    monkeypatch.setenv("POLARIS_FACTORY_BENCH_OPENCODE_AUDIT_BLOCKING_SECONDS", "1")
+    monkeypatch.delenv("POLARIS_FACTORY_BENCH_OPENCODE_AUDIT_EXECUTION_MODE", raising=False)
+    started: list[str] = []
+
+    class FakeSlowProcess:
+        def __init__(self) -> None:
+            self.pid = 9876
+
+        def wait(self, timeout: float | None = None) -> int:
+            raise bench.subprocess.TimeoutExpired(cmd=["opencode"], timeout=timeout)
+
+        def poll(self) -> int | None:
+            return None
+
+        def kill(self) -> None:
+            return None
+
+    def fake_popen(args: Any, **kwargs: Any) -> FakeSlowProcess:
+        del kwargs
+        started.append(str(args[-1]))
+        return FakeSlowProcess()
+
+    monkeypatch.setattr(bench.subprocess, "Popen", fake_popen)
+    workspace_root = tmp_path / "factory-bench"
+    (workspace_root / "L1-01").mkdir(parents=True)
+    record = {
+        "project_id": "L1-01",
+        "level": 1,
+        "backend_metadata": {"workspace": str(workspace_root)},
+        "opencode_audit": {
+            "required": True,
+            "reason": "role_tool_failure_detected",
+            "trigger_category": "director_tool_execution",
+            "root_cause_signature": "director_tool_execution:tool_failed",
+            "must_review": ["runtime_event_tool_call_and_tool_result"],
+            "forbidden": ["target_project_code_changes"],
+            "recommended_agent_count": 3,
+            "prompt": "audit",
+        },
+    }
+
+    result = bench._materialize_role_tool_failure_opencode_audit(
+        base=tmp_path / "external-base",
+        run_id="run-serial-timeout",
+        project_id="L1-01",
+        record=record,
+    )
+
+    assert result is not None
+    assert result["execution_mode"] == "serial"
+    assert result["execution_status"] == "running_background_with_failures"
+    assert len(started) == 1
+    executions = result["executions"]
+    assert len(executions) == 3
+    assert executions[0]["background"] is True
+    assert executions[1]["not_started"] is True
+    assert executions[1]["reason"] == "serial_blocking_budget_exhausted"
+    assert executions[2]["not_started"] is True
+    request_payload = json.loads(Path(result["request_path"]).read_text(encoding="utf-8"))
+    assert request_payload["execution_mode"] == "serial"
+    assert [item.get("not_started", False) for item in request_payload["executions"]] == [False, True, True]
+
+
 def test_role_tool_failure_opencode_audit_retries_codegraph_database_lock(
     monkeypatch: Any,
     tmp_path: Path,
@@ -478,9 +628,13 @@ def test_role_tool_failure_opencode_audit_retries_codegraph_database_lock(
     class FakeProcess:
         def __init__(self, exit_code: int) -> None:
             self._exit_code = exit_code
+            self.pid = 4343
 
         def wait(self, timeout: float | None = None) -> int:
             del timeout
+            return self._exit_code
+
+        def poll(self) -> int | None:
             return self._exit_code
 
         def kill(self) -> None:

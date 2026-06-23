@@ -87,6 +87,7 @@ class KernelToolExecutor:
             session_id=session_id,
             session_memory_provider=memory_provider,
             run_id=getattr(request, "run_id", None),
+            task_id=getattr(request, "task_id", None),
         )
 
     async def execute_tools(

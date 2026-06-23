@@ -1164,6 +1164,18 @@ class TestSourceSyntaxInQualityScan:
         errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
         assert any("syntax error in package.json" in e for e in errors), errors
 
+    def test_package_node_eval_syntax_error_is_quality_error(self, tmp_path) -> None:
+        from polaris.kernelone.quality import scan_workspace_artifact_quality
+
+        (tmp_path / "package.json").write_text(
+            '{"name":"app","scripts":{"test":"node -e \\"const ok = ;\\""}}\n',
+            encoding="utf-8",
+        )
+
+        errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+        assert any("script 'test' has invalid node eval syntax" in e for e in errors), errors
+
     def test_check_source_file_syntax_unknown_extension_none(self, tmp_path) -> None:
         from polaris.kernelone.quality import check_source_file_syntax
 

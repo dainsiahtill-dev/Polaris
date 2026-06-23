@@ -6,6 +6,8 @@ import json
 import os
 import tempfile
 from contextlib import ExitStack
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
@@ -14,6 +16,13 @@ from polaris.kernelone.llm.engine.executor import AIExecutor
 from polaris.kernelone.llm.engine.internal.context_hash import (
     CONTEXT_HASH_PATTERN,
 )
+
+
+def _context_snapshot_path(workspace: str | os.PathLike[str], hash_key: str) -> Path:
+    from polaris.kernelone.storage.io_paths import resolve_storage_roots
+
+    runtime_root = Path(resolve_storage_roots(str(workspace)).runtime_root)
+    return runtime_root / "contexts" / hash_key[:2] / hash_key
 
 
 class TestStoreContextMessages:
@@ -51,14 +60,8 @@ class TestStoreContextMessages:
                 trace_id="trace-abc",
                 call_id="call-123",
             )
-            from polaris.kernelone.storage import StorageLayout
-            from polaris.kernelone.storage.io_paths import build_cache_root
-
-            cache_root = build_cache_root("", tmpdir)
-            layout = StorageLayout(workspace=tmpdir, runtime_base=cache_root)
-            shard = hash_key[:2]
-            expected_path = str(layout.get_path("runtime", f"contexts/{shard}/{hash_key}"))
-            assert os.path.isfile(expected_path), f"Expected file not found: {expected_path}"
+            expected_path = _context_snapshot_path(tmpdir, hash_key)
+            assert expected_path.is_file(), f"Expected file not found: {expected_path}"
 
     def test_payload_schema_version(self) -> None:
         """Payload must contain schema_version 1 and required fields."""
@@ -70,14 +73,8 @@ class TestStoreContextMessages:
                 trace_id="trace-abc",
                 call_id="call-123",
             )
-            from polaris.kernelone.storage import StorageLayout
-            from polaris.kernelone.storage.io_paths import build_cache_root
-
-            cache_root = build_cache_root("", tmpdir)
-            layout = StorageLayout(workspace=tmpdir, runtime_base=cache_root)
-            shard = hash_key[:2]
-            file_path = str(layout.get_path("runtime", f"contexts/{shard}/{hash_key}"))
-            assert os.path.isfile(file_path), f"Expected file not found: {file_path}"
+            file_path = _context_snapshot_path(tmpdir, hash_key)
+            assert file_path.is_file(), f"Expected file not found: {file_path}"
             with open(file_path, encoding="utf-8") as f:
                 payload = json.load(f)
         assert payload["schema_version"] == 1
@@ -96,14 +93,8 @@ class TestStoreContextMessages:
                 trace_id="trace-abc",
                 call_id=None,
             )
-            from polaris.kernelone.storage import StorageLayout
-            from polaris.kernelone.storage.io_paths import build_cache_root
-
-            cache_root = build_cache_root("", tmpdir)
-            layout = StorageLayout(workspace=tmpdir, runtime_base=cache_root)
-            shard = hash_key[:2]
-            file_path = str(layout.get_path("runtime", f"contexts/{shard}/{hash_key}"))
-            assert os.path.isfile(file_path), f"Expected file not found: {file_path}"
+            file_path = _context_snapshot_path(tmpdir, hash_key)
+            assert file_path.is_file(), f"Expected file not found: {file_path}"
             with open(file_path, encoding="utf-8") as f:
                 payload = json.load(f)
         assert payload["call_id"] is None
@@ -136,20 +127,8 @@ class TestStoreContextMessages:
             call_id="call-env-workspace",
         )
 
-        from polaris.kernelone.storage import StorageLayout
-        from polaris.kernelone.storage.io_paths import build_cache_root
-
-        active_layout = StorageLayout(
-            workspace=str(active_workspace),
-            runtime_base=build_cache_root("", str(active_workspace)),
-        )
-        cwd_layout = StorageLayout(
-            workspace=str(worker_cwd),
-            runtime_base=build_cache_root("", str(worker_cwd)),
-        )
-        shard = hash_key[:2]
-        active_file = active_layout.resolve_artifact_path(f"runtime/contexts/{shard}/{hash_key}")
-        cwd_file = cwd_layout.resolve_artifact_path(f"runtime/contexts/{shard}/{hash_key}")
+        active_file = _context_snapshot_path(active_workspace, hash_key)
+        cwd_file = _context_snapshot_path(worker_cwd, hash_key)
 
         assert active_file.is_file(), f"Expected context snapshot under active workspace: {active_file}"
         assert not cwd_file.exists(), f"Context snapshot must not be written under worker cwd: {cwd_file}"
@@ -165,14 +144,8 @@ class TestStoreContextMessages:
                 trace_id="trace-abc",
                 call_id="call-123",
             )
-            from polaris.kernelone.storage import StorageLayout
-            from polaris.kernelone.storage.io_paths import build_cache_root
-
-            cache_root = build_cache_root("", tmpdir)
-            layout = StorageLayout(workspace=tmpdir, runtime_base=cache_root)
-            shard = hash_key[:2]
-            file_path = str(layout.get_path("runtime", f"contexts/{shard}/{hash_key}"))
-            assert os.path.isfile(file_path), f"Expected file not found: {file_path}"
+            file_path = _context_snapshot_path(tmpdir, hash_key)
+            assert file_path.is_file(), f"Expected file not found: {file_path}"
             with open(file_path, encoding="utf-8") as f:
                 payload = json.load(f)
         assert payload["messages"] == []
@@ -201,13 +174,7 @@ class TestStoreContextMessages:
                 call_id="call-123",
                 provider_request=provider_request,
             )
-            from polaris.kernelone.storage import StorageLayout
-            from polaris.kernelone.storage.io_paths import build_cache_root
-
-            cache_root = build_cache_root("", tmpdir)
-            layout = StorageLayout(workspace=tmpdir, runtime_base=cache_root)
-            shard = hash_key[:2]
-            file_path = str(layout.get_path("runtime", f"contexts/{shard}/{hash_key}"))
+            file_path = _context_snapshot_path(tmpdir, hash_key)
             with open(file_path, encoding="utf-8") as f:
                 payload = json.load(f)
 
@@ -237,11 +204,6 @@ class TestStoreContextMessages:
 
     def test_atomic_write_no_tmp_left(self, tmp_path) -> None:
         """After a successful store there must be no .tmp sibling on disk."""
-        from pathlib import Path
-
-        from polaris.kernelone.storage import StorageLayout
-        from polaris.kernelone.storage.io_paths import build_cache_root
-
         messages = [{"role": "user", "content": "atomic"}]
         workspace = str(tmp_path)
         hash_key = AIExecutor._store_context_messages_sync(
@@ -250,11 +212,7 @@ class TestStoreContextMessages:
             trace_id="trace-abc",
             call_id="call-123",
         )
-        # The producer routes through StorageLayout, which uses build_cache_root
-        # for the runtime base — mirror that layout here.
-        cache_root = build_cache_root("", workspace)
-        layout = StorageLayout(workspace=workspace, runtime_base=cache_root)
-        final_file = layout.resolve_artifact_path(f"runtime/contexts/{hash_key[:2]}/{hash_key}")
+        final_file = _context_snapshot_path(workspace, hash_key)
         assert final_file.is_file(), f"final context file missing: {final_file}"
         # The .tmp sibling must have been renamed away by os.replace.
         tmp_sibling = Path(str(final_file) + ".tmp")
@@ -383,14 +341,8 @@ class TestStoreContextMessagesNonBlocking:
             # the contract preserved by ``asyncio.to_thread`` is "synchronous
             # return of the worker function" which means ``os.replace`` has
             # already finished.
-            from polaris.kernelone.storage import StorageLayout
-            from polaris.kernelone.storage.io_paths import build_cache_root
-
-            cache_root = build_cache_root("", tmpdir)
-            layout = StorageLayout(workspace=tmpdir, runtime_base=cache_root)
-            shard = hash_key[:2]
-            file_path = str(layout.get_path("runtime", f"contexts/{shard}/{hash_key}"))
-            assert os.path.isfile(file_path), f"Async store did not durably land file at {file_path}"
+            file_path = _context_snapshot_path(tmpdir, hash_key)
+            assert file_path.is_file(), f"Async store did not durably land file at {file_path}"
             with open(file_path, encoding="utf-8") as f:
                 payload = json.load(f)
             assert payload["messages"] == messages
@@ -533,6 +485,77 @@ class TestContextStoreInvokeFailure:
         # context_snapshot_ref should be present on success
         assert ctx.get("context_snapshot_ref") is not None
         assert ctx.get("context_snapshot_ref") != "stale-ref-that-must-be-replaced"
+
+    @pytest.mark.asyncio
+    async def test_execute_invoke_snapshot_persists_final_provider_request(self) -> None:
+        """The emitted context_snapshot_ref must point at a provider-request snapshot."""
+        from polaris.kernelone.llm.engine import executor as executor_module
+
+        request = self._build_request()
+        request.context["chat_messages"] = [
+            {
+                "role": "system",
+                "content": "You are Polaris Director. Chief Engineer blueprint_id=ce-1.",
+            },
+            {
+                "role": "user",
+                "content": "PM task contract: create src/app.ts. acceptance criteria: npm test.",
+            },
+        ]
+        request.options["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "repo_tree",
+                    "parameters": {"type": "object", "properties": {}, "required": []},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"file": {"type": "string"}},
+                        "required": ["file"],
+                    },
+                },
+            },
+        ]
+        request.options["tool_choice"] = "auto"
+        executor = self._make_executor_with_mock_catalog()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            executor.workspace = tmpdir
+            with ExitStack() as stack:
+                for p in self._patch_provider(executor_module):
+                    stack.enter_context(p)
+                stack.enter_context(patch.object(executor, "_get_provider_config", return_value={"type": "mock"}))
+                response = await executor._execute_invoke(request, trace_id="trace-provider-request")
+
+            assert response.ok is True
+            ctx = request.context if isinstance(request.context, dict) else {}
+            snapshot_ref = str(ctx.get("context_snapshot_ref") or "")
+            assert len(snapshot_ref) == 24
+
+            snapshot_path = _context_snapshot_path(tmpdir, snapshot_ref)
+            with open(snapshot_path, encoding="utf-8") as f:
+                payload = json.load(f)
+
+        provider_request = payload.get("provider_request")
+        assert provider_request is not None
+        assert provider_request["schema_version"] == "llm.provider_request_snapshot.v1"
+        assert provider_request["message_count"] == 2
+        assert provider_request["tool_schema_count"] == 2
+        assert [tool["name"] for tool in provider_request["tools"]] == ["repo_tree", "read_file"]
+        assert provider_request["tool_choice"] == "auto"
+        audit = provider_request["final_request_context_audit"]
+        assert audit["schema_version"] == "llm.final_request_context_audit.v1"
+        assert audit["message_count"] == 2
+        assert audit["tool_schema_count"] == 2
+        assert audit["final_request_token_estimate"] >= audit["message_token_estimate"]
+        assert audit["coverage"]["has_pm_contract"] is True
+        assert audit["coverage"]["has_chief_engineer_blueprint"] is True
 
     @pytest.mark.asyncio
     async def test_degraded_message_truncated_to_200_chars(self) -> None:
@@ -877,6 +900,16 @@ class TestContextViewerRouter:
         assert merged["total_bytes"] == legacy_file.stat().st_size
         assert merged["oldest_mtime"] is not None
         assert merged["newest_mtime"] is not None
+        assert merged["primary_store"] == {
+            "contexts_root": str(active_contexts_root),
+            "file_count": 0,
+            "total_bytes": 0,
+            "oldest_mtime": None,
+            "newest_mtime": None,
+        }
+        assert merged["legacy_store"]["file_count"] == 1
+        assert merged["legacy_store"]["total_bytes"] == legacy_file.stat().st_size
+        assert merged["legacy_store"]["contexts_root"] == str(legacy_contexts_dir.parent)
         assert merged["config"]["legacy_file_count"] == 1
         assert str(legacy_contexts_dir.parent) == merged["config"]["legacy_contexts_root"]
 
@@ -909,17 +942,9 @@ class TestContextViewerRouter:
         }
         (contexts_dir / hash_key).write_text(json.dumps(payload), encoding="utf-8")
 
-        # Patch workspace resolution to use tmp_path
         with patch(
-            "polaris.delivery.http.v2.context.StorageLayout",
-            return_value=type(
-                "MockLayout",
-                (),
-                {
-                    "get_path": lambda _self, _kind, rel: str(tmp_path / ".polaris" / "runtime" / rel),
-                    "resolve_artifact_path": lambda _self, rel: tmp_path / ".polaris" / rel,
-                },
-            )(),
+            "polaris.delivery.http.v2.context.resolve_storage_roots",
+            return_value=SimpleNamespace(runtime_root=str(tmp_path / ".polaris" / "runtime")),
         ):
             response = client.get(f"/v2/context/{hash_key}")
 
@@ -954,15 +979,8 @@ class TestContextViewerRouter:
         (contexts_dir / hash_key).write_text('{"trace_id": "x"', encoding="utf-8")
 
         with patch(
-            "polaris.delivery.http.v2.context.StorageLayout",
-            return_value=type(
-                "MockLayout",
-                (),
-                {
-                    "get_path": lambda _self, _kind, rel: str(tmp_path / ".polaris" / "runtime" / rel),
-                    "resolve_artifact_path": lambda _self, rel: tmp_path / ".polaris" / rel,
-                },
-            )(),
+            "polaris.delivery.http.v2.context.resolve_storage_roots",
+            return_value=SimpleNamespace(runtime_root=str(tmp_path / ".polaris" / "runtime")),
         ):
             response = client.get(f"/v2/context/{hash_key}")
 

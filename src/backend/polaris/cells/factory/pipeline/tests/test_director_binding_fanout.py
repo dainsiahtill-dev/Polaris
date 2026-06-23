@@ -154,6 +154,48 @@ class TestResolveDirectorBindingFanout:
             }
         ]
 
+    def test_runtime_dispatch_skips_do_not_poison_future_recovered_bindings(self) -> None:
+        executor = self._make_executor()
+
+        with patch(
+            "polaris.cells.runtime.projection.internal.llm_status.build_llm_status",
+            return_value={
+                "roles": {
+                    "director": {
+                        "skipped_bindings": [
+                            {
+                                "provider_id": "qwen-a",
+                                "model": "qwen3.6-27b-q6-code-gpu0",
+                                "binding_id": "director:0:qwen-a:qwen3.6-27b-q6-code-gpu0",
+                                "reason": "provider_unreachable",
+                                "readiness_source": "runtime_dispatch",
+                            },
+                            {
+                                "provider_id": "qwen-b",
+                                "model": "qwen3.6-27b-q6-code-gpu1",
+                                "binding_id": "director:1:qwen-b:qwen3.6-27b-q6-code-gpu1",
+                                "reason": "provider_connectivity_unavailable",
+                                "readiness_source": "provider_index",
+                            },
+                        ]
+                    }
+                }
+            },
+        ):
+            reasons = executor._director_readiness_skip_reasons({})
+
+        assert executor._director_binding_identity("qwen-a", "qwen3.6-27b-q6-code-gpu0", "") not in reasons
+        assert (
+            reasons[
+                executor._director_binding_identity(
+                    "qwen-b",
+                    "qwen3.6-27b-q6-code-gpu1",
+                    "director:1:qwen-b:qwen3.6-27b-q6-code-gpu1",
+                )
+            ]
+            == "provider_connectivity_unavailable"
+        )
+
     def test_cooldown_cannot_starve_all_ready_bindings(self) -> None:
         executor = self._make_executor()
         slots = []
@@ -355,11 +397,13 @@ class TestExecuteDirectorBindingFanout:
 
         call_count = 0
         captured_options: list[dict[str, Any]] = []
+        captured_tasks: list[list[str]] = []
 
         async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
             nonlocal call_count
             call_count += 1
             captured_options.append(dict(options))
+            captured_tasks.append(list(tasks or []))
             return CommandResult(
                 run_id=f"run-{call_count}",
                 status="completed",
@@ -372,7 +416,7 @@ class TestExecuteDirectorBindingFanout:
         result = await executor._execute_director_binding_fanout(
             service=mock_service,
             workspace=".",
-            tasks=["task-1"],
+            tasks=["task-1", "task-2", "task-3"],
             base_options={"execution_mode": "parallel"},
             bindings=bindings,
             timeout_seconds=1800,
@@ -384,6 +428,8 @@ class TestExecuteDirectorBindingFanout:
         assert result.metadata["binding_fanout"] is True
         assert result.metadata["binding_count"] == 3
         assert len(result.metadata["per_binding"]) == 3
+        assert captured_tasks == [["task-1"], ["task-2"], ["task-3"]]
+        assert result.metadata["task_assignment_mode"] == "partitioned"
 
         for opts in captured_options:
             assert "binding_override" in opts.get("metadata", {})
@@ -559,6 +605,27 @@ class TestExecuteDirectorBindingFanout:
 
             assert OrchestrationStageExecutor._terminal_status_from_task_counts(counts) == ""
 
+        assert OrchestrationStageExecutor._terminal_status_from_task_counts({"total": 4, "pending": 4}) == ""
+        assert OrchestrationStageExecutor._terminal_status_from_task_counts({"total": 4, "ready": 4}) == ""
+
+    def test_dead_ended_pending_task_counts_are_failed_terminal(self) -> None:
+        from polaris.cells.factory.pipeline.internal.factory_run_service import (
+            OrchestrationStageExecutor,
+        )
+
+        assert (
+            OrchestrationStageExecutor._terminal_status_from_task_counts(
+                {"total": 7, "completed": 2, "failed": 1, "pending": 4}
+            )
+            == "failed"
+        )
+        assert (
+            OrchestrationStageExecutor._terminal_status_from_task_counts(
+                {"total": 7, "completed": 2, "failed": 1, "ready": 4}
+            )
+            == "failed"
+        )
+
     @pytest.mark.asyncio
     async def test_running_task_counts_do_not_cancel_active_binding(self) -> None:
         executor = self._make_executor()
@@ -658,6 +725,63 @@ class TestExecuteDirectorBindingFanout:
         assert result.metadata["per_binding"][0]["queried_status"] == "running"
         assert wait_cancelled is True
 
+    @pytest.mark.asyncio
+    async def test_workspace_terminal_failed_taskboard_ends_binding_wait(self) -> None:
+        executor = self._make_executor()
+        executor._binding_status_probe_seconds = 0.001
+        bindings = [{"provider_id": "openai", "model": "gpt-4", "binding_id": "b0"}]
+
+        from polaris.cells.orchestration.pm_dispatch.public.service import CommandResult
+
+        async def mock_execute(workspace: str, tasks: Any, options: Any) -> CommandResult:
+            del workspace, tasks, options
+            return CommandResult(run_id="run-1", status="running", message="submitted")
+
+        wait_cancelled = False
+
+        async def mock_wait(
+            service: Any,
+            initial: Any,
+            timeout_seconds: int = 300,
+            *,
+            cancel_event: Any = None,
+            abort_checker: Any = None,
+        ) -> CommandResult:
+            del service, initial, timeout_seconds, cancel_event, abort_checker
+            nonlocal wait_cancelled
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                wait_cancelled = True
+                raise
+            return CommandResult(run_id="run-1", status="completed", message="late")
+
+        mock_service = MagicMock()
+        mock_service.execute_director_run = AsyncMock(side_effect=mock_execute)
+        mock_service.query_run_status = AsyncMock(
+            return_value=CommandResult(
+                run_id="run-1",
+                status="running",
+                message="run row has not converged yet",
+                metadata={},
+            )
+        )
+        executor._wait_run_completion = mock_wait  # type: ignore[assignment]
+        executor._read_taskboard_stats = MagicMock(return_value={"total": 7, "completed": 2, "failed": 1, "pending": 4})
+
+        result = await executor._execute_director_binding_fanout(
+            service=mock_service,
+            workspace=".",
+            tasks=None,
+            base_options={},
+            bindings=bindings,
+        )
+
+        assert result.status == "failed"
+        assert result.metadata["per_binding"][0]["terminal_source"] == "workspace_taskboard_counts"
+        assert result.metadata["per_binding"][0]["queried_status"] == "running"
+        assert wait_cancelled is True
+
     def test_director_dispatch_timeout_uses_stage_budget(self, monkeypatch: pytest.MonkeyPatch) -> None:
         executor = self._make_executor()
         for key in (
@@ -676,6 +800,16 @@ class TestExecuteDirectorBindingFanout:
 
         timeout = executor._director_dispatch_timeout_seconds(
             {"timeout": 300, "llm_call_timeout_seconds": 1800},
+            task_count=5,
+        )
+
+        assert timeout == 1860
+
+    def test_director_dispatch_timeout_does_not_expand_to_batch_budget(self) -> None:
+        executor = self._make_executor()
+
+        timeout = executor._director_dispatch_timeout_seconds(
+            {"timeout": 7200, "llm_call_timeout_seconds": 1800},
             task_count=5,
         )
 
@@ -773,7 +907,7 @@ class TestThreeReachableBindingsAllExecuted:
         result = await executor._execute_director_binding_fanout(
             service=mock_service,
             workspace=".",
-            tasks=["task-1"],
+            tasks=["task-1", "task-2", "task-3"],
             base_options={"execution_mode": "parallel"},
             bindings=bindings,
         )
@@ -783,9 +917,10 @@ class TestThreeReachableBindingsAllExecuted:
         assert result.metadata is not None
         per_binding = result.metadata["per_binding"]
         assert len(per_binding) == 3
-        for entry in per_binding:
+        for idx, entry in enumerate(per_binding, start=1):
             assert entry["status"] == "completed"
             assert entry["run_id"].startswith("run-")
+            assert entry["assigned_tasks"] == [f"task-{idx}"]
 
 
 class TestOneExecutedTwoNotExecutedFails:
@@ -822,7 +957,7 @@ class TestOneExecutedTwoNotExecutedFails:
         result = await executor._execute_director_binding_fanout(
             service=mock_service,
             workspace=".",
-            tasks=["task-1"],
+            tasks=["task-1", "task-2", "task-3"],
             base_options={},
             bindings=bindings,
         )
@@ -1068,7 +1203,7 @@ class TestFanoutBindingMetadata:
         result = await executor._execute_director_binding_fanout(
             service=mock_service,
             workspace=".",
-            tasks=["task-1"],
+            tasks=["task-1", "task-2", "task-3"],
             base_options={},
             bindings=bindings,
         )
@@ -1086,6 +1221,7 @@ class TestFanoutBindingMetadata:
             assert entry["run_id"] == f"run-{idx + 1}"
             assert entry["status"] == "completed"
             assert entry["message"] == f"ok-{idx + 1}"
+            assert entry["assigned_tasks"] == [f"task-{idx + 1}"]
 
     @pytest.mark.asyncio
     async def test_per_binding_records_failure_details(self) -> None:
@@ -1279,7 +1415,7 @@ class TestFanoutPartialFailureNotCompleted:
         result = await executor._execute_director_binding_fanout(
             service=mock_service,
             workspace=".",
-            tasks=["task-1"],
+            tasks=["task-1", "task-2", "task-3"],
             base_options={"execution_mode": "parallel"},
             bindings=bindings,
         )

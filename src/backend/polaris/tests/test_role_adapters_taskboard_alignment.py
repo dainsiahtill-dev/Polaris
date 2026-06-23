@@ -659,6 +659,12 @@ def test_pm_adapter_create_board_tasks_deduplicates_existing_semantic_tasks(tmp_
     resolved_dep = (dependent.metadata or {}).get("resolved_depends_on_task_ids")
     assert isinstance(resolved_dep, list)
     assert int(existing.id) in [int(item) for item in resolved_dep]
+    assert dependent.blocked_by == [int(existing.id)]
+    assert dependent.status.value == "blocked"
+
+    reused_metadata = reused.metadata or {}
+    assert reused_metadata["external_task_id"] == "TASK-3"
+    assert reused_metadata["pm_task_id"] == "TASK-3"
 
 
 def test_pm_adapter_create_board_tasks_preserves_execution_contract_paths(tmp_path: Path) -> None:

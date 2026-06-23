@@ -22,8 +22,7 @@ from polaris.kernelone.llm.engine.context_store_retention import (
 from polaris.kernelone.llm.engine.internal.context_hash import (
     validate_context_hash,
 )
-from polaris.kernelone.storage import StorageLayout
-from polaris.kernelone.storage.io_paths import build_cache_root
+from polaris.kernelone.storage.io_paths import resolve_storage_roots
 
 from ._shared import StructuredHTTPException, get_state, require_auth
 from .workspace_acl import check_advisory_workspace_acl
@@ -103,6 +102,17 @@ def _scan_context_tree(root: Path) -> dict[str, Any]:
     }
 
 
+def _context_store_breakdown(root: str | Path, stats: dict[str, Any]) -> dict[str, Any]:
+    """Return a JSON-friendly per-root store breakdown."""
+    return {
+        "contexts_root": str(root),
+        "file_count": int(stats.get("file_count") or 0),
+        "total_bytes": int(stats.get("total_bytes") or 0),
+        "oldest_mtime": stats.get("oldest_mtime"),
+        "newest_mtime": stats.get("newest_mtime"),
+    }
+
+
 def _merge_legacy_context_stats(stats: dict[str, Any]) -> dict[str, Any]:
     """Merge active stats with the legacy nested factory context tree.
 
@@ -112,16 +122,20 @@ def _merge_legacy_context_stats(stats: dict[str, Any]) -> dict[str, Any]:
     it too; otherwise ContextOS reports zero snapshots while individual refs are
     readable.
     """
+    merged = dict(stats)
+    contexts_root = str(stats.get("contexts_root") or "")
+    merged["primary_store"] = _context_store_breakdown(contexts_root, stats)
     legacy_root = _legacy_contexts_root_for_stats(str(stats.get("contexts_root") or ""))
     if legacy_root is None:
-        return stats
+        merged["legacy_store"] = None
+        return merged
 
     legacy = _scan_context_tree(legacy_root)
     legacy_file_count = int(legacy["file_count"])
+    merged["legacy_store"] = _context_store_breakdown(legacy_root, legacy)
     if legacy_file_count <= 0:
-        return stats
+        return merged
 
-    merged = dict(stats)
     merged["file_count"] = int(stats.get("file_count") or 0) + legacy_file_count
     merged["total_bytes"] = int(stats.get("total_bytes") or 0) + int(legacy["total_bytes"])
 
@@ -195,6 +209,8 @@ def get_context_stats(request: Request) -> dict[str, Any]:
         "total_bytes": stats["total_bytes"],
         "oldest_mtime": stats["oldest_mtime"],
         "newest_mtime": stats["newest_mtime"],
+        "primary_store": stats.get("primary_store"),
+        "legacy_store": stats.get("legacy_store"),
         "config": stats["config"],
         "last_sweep_at": stats["last_sweep_at"],
         "last_sweep_report": None,
@@ -239,12 +255,8 @@ def get_context_by_hash(request: Request, hash: str) -> dict[str, Any]:
 
     workspace = _resolve_workspace(request)
 
-    layout = StorageLayout(workspace=workspace, runtime_base=build_cache_root("", workspace))
     shard = canonical_hash[:2]
-    # Defence in depth: route through StorageLayout.resolve_artifact_path so
-    # normalize_logical_rel_path + _join_under reject any path traversal or
-    # unsupported prefix — even if get_path is later loosened.
-    file_path = layout.resolve_artifact_path(f"runtime/contexts/{shard}/{canonical_hash}")
+    file_path = Path(resolve_storage_roots(workspace).runtime_root) / "contexts" / shard / canonical_hash
 
     storage_source = "active_workspace"
     if os.path.isfile(file_path):
@@ -362,6 +374,8 @@ def get_context_admin_stats(request: Request) -> dict[str, Any]:
         "total_bytes": stats["total_bytes"],
         "oldest_mtime": stats["oldest_mtime"],
         "newest_mtime": stats["newest_mtime"],
+        "primary_store": stats.get("primary_store"),
+        "legacy_store": stats.get("legacy_store"),
         "config": stats["config"],
         "last_sweep_at": stats["last_sweep_at"],
         "last_sweep_report": last_report,

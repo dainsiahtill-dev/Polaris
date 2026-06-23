@@ -226,12 +226,30 @@ class TestProcessContextOverride:
         override = {
             "disable_internal_tool_rounds": True,
             "llm_call_timeout_seconds": 300,
+            "request_timeout_seconds": 180,
+            "timeout_seconds": 180,
+            "target_task_id": "2",
+            "pm_task_id": "TASK-2",
+            "task_runtime_guard": True,
+            "task_runtime_session_id": "tx-abc",
+            "session_turn_events": [{"role": "user", "content": "raw transcript"}],
+            "director_quality_repair": {"missing_target_files": ["src/models/firefly.ts"]},
+            "delivery_mode": "materialize_changes",
             "keep_me": "real context",
         }
         result = self._gateway()._process_context_override(override)
         assert result is not None
         assert "disable_internal_tool_rounds" not in result["content"]
         assert "llm_call_timeout_seconds" not in result["content"]
+        assert "request_timeout_seconds" not in result["content"]
+        assert "timeout_seconds" not in result["content"]
+        assert "target_task_id" not in result["content"]
+        assert "pm_task_id" not in result["content"]
+        assert "task_runtime_guard" not in result["content"]
+        assert "task_runtime_session_id" not in result["content"]
+        assert "session_turn_events" not in result["content"]
+        assert "director_quality_repair" not in result["content"]
+        assert "delivery_mode" not in result["content"]
         assert "keep_me: real context" in result["content"]
 
     def test_signal_rendered_planes_not_duplicated_into_message(self):

@@ -141,6 +141,25 @@ def _opencode_audit_retry_enabled() -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off", "skip", "disable", "disabled"}
 
 
+def _opencode_audit_execution_mode() -> str:
+    raw = os.getenv("POLARIS_FACTORY_BENCH_OPENCODE_AUDIT_EXECUTION_MODE", "serial")
+    normalized = raw.strip().lower()
+    if normalized in {"parallel", "concurrent", "fanout"}:
+        return "parallel"
+    return "serial"
+
+
+def _opencode_audit_int_env(name: str, default: int, *, minimum: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        return default
+    return max(minimum, value)
+
+
 def _opencode_log_has_database_lock(log_path: Path) -> bool:
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
@@ -634,6 +653,7 @@ def _materialize_role_tool_failure_opencode_audit(
     base_prompt = str(audit.get("prompt") or "").strip()
     recommended_count = int(audit.get("recommended_agent_count") or len(_OPENCODE_AUDIT_AGENT_FOCI))
     agent_count = max(1, min(recommended_count, len(_OPENCODE_AUDIT_AGENT_FOCI)))
+    execution_mode = _opencode_audit_execution_mode()
 
     prompt_paths: list[str] = []
     command_plan: list[list[str]] = []
@@ -679,6 +699,7 @@ def _materialize_role_tool_failure_opencode_audit(
         "command_plan": command_plan,
         "shell_commands": shell_commands,
         "execution_enabled": _opencode_audit_execution_enabled(),
+        "execution_mode": execution_mode,
     }
     request_path = request_dir / "request.json"
     request_path.write_text(json.dumps(request_payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
@@ -694,6 +715,7 @@ def _materialize_role_tool_failure_opencode_audit(
         "role_tool_failure_event_count": role_tool_failure_event_count,
         "role_tool_failure_unit_ids": role_tool_failure_unit_ids,
         "execution_enabled": request_payload["execution_enabled"],
+        "execution_mode": execution_mode,
     }
     audit.update(result)
 
@@ -707,59 +729,105 @@ def _materialize_role_tool_failure_opencode_audit(
         result["execution_status"] = "opencode_cli_missing"
         return result
 
-    timeout_seconds = int(os.getenv("POLARIS_FACTORY_BENCH_OPENCODE_AUDIT_TIMEOUT_SECONDS", "900") or "900")
-    processes: list[tuple[int, Path, subprocess.Popen[str]]] = []
-    for index, prompt_path_text in enumerate(prompt_paths, start=1):
+    timeout_seconds = _opencode_audit_int_env("POLARIS_FACTORY_BENCH_OPENCODE_AUDIT_TIMEOUT_SECONDS", 900, minimum=1)
+    blocking_seconds = _opencode_audit_int_env("POLARIS_FACTORY_BENCH_OPENCODE_AUDIT_BLOCKING_SECONDS", 30)
+
+    def _start_agent(index: int, prompt_path_text: str, log_path: Path) -> subprocess.Popen[str]:
         prompt_text = Path(prompt_path_text).read_text(encoding="utf-8")
-        log_path = request_dir / f"agent_{index:02d}.log"
         log_handle = log_path.open("w", encoding="utf-8")
         try:
-            process = subprocess.Popen(
+            return subprocess.Popen(
                 [opencode_bin, "run", prompt_text],
                 cwd=str(_REPO_ROOT),
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
                 text=True,
             )
-            processes.append((index, log_path, process))
         finally:
             log_handle.close()
 
-    executions: list[dict[str, Any]] = []
-    deadline = time.monotonic() + max(1, timeout_seconds)
-    for index, log_path, process in processes:
-        remaining = max(1.0, deadline - time.monotonic())
+    def _execution_for_background(index: int, log_path: Path, process: subprocess.Popen[str]) -> dict[str, Any]:
+        return {
+            "agent": index,
+            "exit_code": process.poll(),
+            "timed_out": False,
+            "background": True,
+            "blocking_timed_out": True,
+            "pid": process.pid,
+            "log_path": str(log_path),
+        }
+
+    def _wait_agent(
+        index: int,
+        log_path: Path,
+        process: subprocess.Popen[str],
+        *,
+        deadline: float,
+    ) -> dict[str, Any]:
+        remaining = deadline - time.monotonic()
+        if blocking_seconds <= 0 or remaining <= 0:
+            return _execution_for_background(index, log_path, process)
         try:
-            exit_code = process.wait(timeout=remaining)
+            exit_code = process.wait(timeout=max(0.001, remaining))
         except subprocess.TimeoutExpired:
-            process.kill()
-            exit_code = process.wait(timeout=5)
-            executions.append(
-                {
-                    "agent": index,
-                    "exit_code": exit_code,
-                    "timed_out": True,
-                    "log_path": str(log_path),
-                }
-            )
-            continue
-        executions.append(
-            {
-                "agent": index,
-                "exit_code": exit_code,
-                "timed_out": False,
-                "log_path": str(log_path),
-            }
-        )
+            return _execution_for_background(index, log_path, process)
+        return {
+            "agent": index,
+            "exit_code": exit_code,
+            "timed_out": False,
+            "background": False,
+            "blocking_timed_out": False,
+            "pid": process.pid,
+            "log_path": str(log_path),
+        }
+
+    executions: list[dict[str, Any]] = []
+    deadline = time.monotonic() + blocking_seconds
+    if execution_mode == "parallel":
+        processes: list[tuple[int, Path, subprocess.Popen[str]]] = []
+        for index, prompt_path_text in enumerate(prompt_paths, start=1):
+            log_path = request_dir / f"agent_{index:02d}.log"
+            processes.append((index, log_path, _start_agent(index, prompt_path_text, log_path)))
+        for index, log_path, process in processes:
+            executions.append(_wait_agent(index, log_path, process, deadline=deadline))
+    else:
+        for index, prompt_path_text in enumerate(prompt_paths, start=1):
+            log_path = request_dir / f"agent_{index:02d}.log"
+            process = _start_agent(index, prompt_path_text, log_path)
+            execution = _wait_agent(index, log_path, process, deadline=deadline)
+            executions.append(execution)
+            if execution.get("background"):
+                for pending_index in range(index + 1, len(prompt_paths) + 1):
+                    pending_log_path = request_dir / f"agent_{pending_index:02d}.log"
+                    executions.append(
+                        {
+                            "agent": pending_index,
+                            "exit_code": None,
+                            "timed_out": False,
+                            "background": False,
+                            "blocking_timed_out": True,
+                            "not_started": True,
+                            "reason": "serial_blocking_budget_exhausted",
+                            "pid": None,
+                            "log_path": str(pending_log_path),
+                        }
+                    )
+                break
 
     if _opencode_audit_retry_enabled():
         for execution in executions:
-            if execution.get("exit_code") == 0 or execution.get("timed_out"):
+            if (
+                execution.get("exit_code") == 0
+                or execution.get("timed_out")
+                or execution.get("background")
+                or execution.get("not_started")
+            ):
                 continue
             index = int(execution.get("agent") or 0)
             log_path = Path(str(execution.get("log_path") or ""))
             if index <= 0 or not _opencode_log_has_database_lock(log_path):
                 continue
+            retry_remaining = deadline - time.monotonic()
             retry_log_path = request_dir / f"agent_{index:02d}_retry_01.log"
             prompt_text = Path(prompt_paths[index - 1]).read_text(encoding="utf-8")
             retry_handle = retry_log_path.open("w", encoding="utf-8")
@@ -773,34 +841,67 @@ def _materialize_role_tool_failure_opencode_audit(
                 )
             finally:
                 retry_handle.close()
-            retry_deadline = time.monotonic() + max(1, timeout_seconds)
             retry_timed_out = False
-            try:
-                retry_exit_code = retry_process.wait(timeout=max(1.0, retry_deadline - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                retry_process.kill()
-                retry_exit_code = retry_process.wait(timeout=5)
-                retry_timed_out = True
+            retry_background = False
+            if blocking_seconds <= 0 or retry_remaining <= 0:
+                retry_exit_code = retry_process.poll()
+                retry_background = True
+            else:
+                try:
+                    retry_exit_code = retry_process.wait(timeout=max(0.001, retry_remaining))
+                except subprocess.TimeoutExpired:
+                    retry_exit_code = retry_process.poll()
+                    retry_background = True
+                    retry_timed_out = True
             execution["initial_exit_code"] = execution.get("exit_code")
             execution["initial_log_path"] = execution.get("log_path")
             execution["retry"] = {
                 "reason": "codegraph_database_locked",
                 "exit_code": retry_exit_code,
                 "timed_out": retry_timed_out,
+                "background": retry_background,
+                "blocking_timed_out": retry_background,
+                "pid": retry_process.pid,
                 "log_path": str(retry_log_path),
             }
             execution["exit_code"] = retry_exit_code
             execution["timed_out"] = retry_timed_out
+            execution["background"] = retry_background
+            execution["blocking_timed_out"] = retry_background
+            execution["pid"] = retry_process.pid
             execution["log_path"] = str(retry_log_path)
 
-    all_executions_ok = all(item.get("exit_code") == 0 and not item.get("timed_out") for item in executions)
-    execution_status = "completed" if all_executions_ok else "completed_with_failures"
+    has_background = any(item.get("background") for item in executions)
+    has_failures = any(
+        item.get("exit_code") not in (0, None) or bool(item.get("timed_out")) or bool(item.get("not_started"))
+        for item in executions
+    )
+    all_executions_ok = all(
+        item.get("exit_code") == 0
+        and not item.get("timed_out")
+        and not item.get("background")
+        and not item.get("not_started")
+        for item in executions
+    )
+    if has_background:
+        execution_status = "running_background_with_failures" if has_failures else "running_background"
+    else:
+        execution_status = "completed" if all_executions_ok else "completed_with_failures"
     audit["execution_status"] = execution_status
     audit["executions"] = executions
+    audit["timeout_seconds"] = timeout_seconds
+    audit["blocking_seconds"] = blocking_seconds
+    audit["execution_mode"] = execution_mode
     result["execution_status"] = execution_status
     result["executions"] = executions
+    result["timeout_seconds"] = timeout_seconds
+    result["blocking_seconds"] = blocking_seconds
+    result["execution_mode"] = execution_mode
     request_payload["execution_status"] = execution_status
     request_payload["executions"] = executions
+    request_payload["timeout_seconds"] = timeout_seconds
+    request_payload["blocking_seconds"] = blocking_seconds
+    request_payload["execution_mode"] = execution_mode
     request_path.write_text(json.dumps(request_payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     return result
 

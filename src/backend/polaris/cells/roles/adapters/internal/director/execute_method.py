@@ -540,12 +540,22 @@ async def execute_director_task(
     task_market_exact_claim = bool(str(input_metadata.get("task_market_task_id") or "").strip()) or str(
         input_metadata.get("source") or ""
     ).strip().startswith("runtime.task_market")
+    exact_handoff_claim = any(
+        str(input_metadata.get(key) or "").strip()
+        for key in (
+            "chief_engineer_blueprint_id",
+            "chief_engineer_handoff_id",
+            "pm_task_id",
+            "source_task_id",
+            "external_task_id",
+        )
+    )
 
     task = adapter._get_task(target_task_id)
     if task:
         selected_from_board = True
     if not task:
-        if task_market_exact_claim:
+        if task_market_exact_claim or exact_handoff_claim:
             selection_source = "materialized_orchestration_task"
             task = adapter._materialize_runtime_task(requested_task_id, input_data)
             selected_from_board = True
@@ -563,6 +573,15 @@ async def execute_director_task(
     selected_task_id = str(task.get("id") or "").strip()
     if selected_task_id:
         target_task_id = selected_task_id
+    context = dict(context or {})
+    metadata = dict(context.get("metadata") or {})
+    context["task_id"] = target_task_id
+    context["target_task_id"] = target_task_id
+    context.setdefault("pm_task_id", requested_task_id or target_task_id)
+    metadata["task_id"] = target_task_id
+    metadata["target_task_id"] = target_task_id
+    metadata.setdefault("pm_task_id", requested_task_id or target_task_id)
+    context["metadata"] = metadata
     baseline_files = adapter._state_tracker.collect_workspace_code_files()
     run_id = str(context.get("run_id") or "").strip()
 
@@ -589,6 +608,19 @@ async def execute_director_task(
     session_raw = task_claim_result.get("session")
     task_claim_session: dict[str, Any] = session_raw if isinstance(session_raw, dict) else {}
     task_claim_session_id = str(task_claim_session.get("session_id") or "").strip()
+    if board_claim_applied and task_claim_session_id:
+        # Propagate the physical task-runtime lease into RoleRuntime/TransactionKernel.
+        # The kernel checks this immediately before executing tools, so a late LLM
+        # response from a cancelled/suspended Director claim cannot still write files.
+        context = dict(context or {})
+        context["session_id"] = task_claim_session_id
+        context["task_runtime_session_id"] = task_claim_session_id
+        context["task_runtime_guard"] = True
+        metadata = dict(context.get("metadata") or {})
+        metadata.setdefault("session_id", task_claim_session_id)
+        metadata["task_runtime_session_id"] = task_claim_session_id
+        metadata["task_runtime_guard"] = True
+        context["metadata"] = metadata
 
     if selection_source in {"claim_retry_ready_queue_fallback", "claim_retry_resumable_queue_fallback"}:
         selected_from_board = True
@@ -635,6 +667,20 @@ async def execute_director_task(
         heartbeat_task = asyncio.create_task(_run_task_claim_heartbeat())
 
     try:
+        if not board_claim_applied:
+            return await _handle_claim_required(
+                adapter,
+                target_task_id,
+                run_id,
+                requested_task_id,
+                selection_source,
+                selected_from_board,
+                selected_subject,
+                board_snapshot_before,
+                board_snapshot_after_claim,
+                claim_attempts,
+            )
+
         # 执行后端解析
         execution_backend_request = adapter._resolve_execution_backend_request(
             task_id=target_task_id,
@@ -791,6 +837,17 @@ async def _claim_task_with_retry(
     active_source = str(selection_source or "").strip() or "task_id_lookup"
     claim_metadata = dict(input_metadata or {})
     claim_metadata["adapter_phase"] = "claimed"
+    exact_handoff_claim = any(
+        str(claim_metadata.get(key) or "").strip()
+        for key in (
+            "chief_engineer_blueprint_id",
+            "chief_engineer_handoff_id",
+            "pm_task_id",
+            "source_task_id",
+            "external_task_id",
+            "task_market_task_id",
+        )
+    )
 
     # If a specific task was requested, try to claim it first
     if active_task_id:
@@ -838,6 +895,9 @@ async def _claim_task_with_retry(
         # If lease_conflict or other failure, fall through to atomic claim_next_execution
         # to try other candidates deterministically
         reason = str(last_claim_result.get("reason") or "").strip()
+        if exact_handoff_claim and reason in ("lease_conflict", "task_terminal", "task_blocked"):
+            snapshot = adapter._state_tracker.build_taskboard_observation_snapshot(adapter.task_runtime)
+            return active_task, active_task_id, active_source, False, snapshot, attempts, last_claim_result
         if reason not in ("lease_conflict", "task_terminal", "task_blocked"):
             # For non-retriable failures, return immediately
             snapshot = adapter._state_tracker.build_taskboard_observation_snapshot(adapter.task_runtime)

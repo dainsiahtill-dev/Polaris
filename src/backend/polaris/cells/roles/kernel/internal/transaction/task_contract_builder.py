@@ -439,7 +439,9 @@ def build_single_batch_task_contract_hint(
             lines.append(
                 "Mutation target files detected from user request: "
                 + ", ".join(dedup_target_files[:6])
-                + ". Ensure the write step touches at least one target file."
+                + ". The write step must cover every listed target file required by the current task; "
+                "for multi-file create tasks, emit one write/edit call per target file instead of stopping "
+                "after the first successful write."
             )
     if _requires_verify:
         if selected_verify:

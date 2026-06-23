@@ -1542,9 +1542,15 @@ class RoleExecutionKernel:
         is_director_codegen_bridge = bool(context_override.get("director_runtime_codegen")) and (
             delivery_mode == "propose_patch" or codegen_mode == "proposal_then_apply"
         )
+        is_factory_contract_materialization = (
+            "pm task contract /" in message_lower
+            and "chief engineer blueprint" in message_lower
+            and "请通过运行时正式写入工具完成修改" in message_text
+        )
         is_single_batch_execution = (
             delivery_mode in {"materialize_changes", "propose_patch"}
             or "[Benchmark Tool Contract]" in message_text
+            or is_factory_contract_materialization
             or "materialization quality repair mode" in message_lower
             or "[director_quality_repair:" in message_lower
             or ("artifact quality scan failed" in message_lower and "do not read files first" in message_lower)

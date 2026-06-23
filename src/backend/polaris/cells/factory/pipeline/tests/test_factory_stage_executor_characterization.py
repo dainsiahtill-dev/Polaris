@@ -627,6 +627,122 @@ class TestRunWorkspaceQualityChecks:
         assert "TS2305" in payload["repair"]["residual_errors"][0]
 
     @pytest.mark.asyncio
+    async def test_workspace_quality_escalates_to_director_llm_repair_after_deterministic_noop(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        executor = _executor(tmp_path)
+        run = FactoryRun(
+            id="factory-quality-llm-repair",
+            config=FactoryConfig(name="quality-llm-repair"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-21T00:00:00+00:00",
+        )
+        state = {"repaired": False}
+        calls: list[list[str]] = []
+
+        def fake_run_workspace_quality_command(command: list[str], timeout_seconds: float) -> dict[str, object]:
+            del timeout_seconds
+            calls.append(command)
+            if state["repaired"]:
+                return {
+                    "command": command,
+                    "exit_code": 0,
+                    "passed": True,
+                    "stdout_tail": "build passed",
+                    "stderr_tail": "",
+                    "error": "",
+                }
+            return {
+                "command": command,
+                "exit_code": 1,
+                "passed": False,
+                "stdout_tail": (
+                    "FAIL tests/index.test.ts > updateFirefly > should bounce\n"
+                    "AssertionError: expected 3 to be less than 0\n"
+                    " ❯ tests/index.test.ts:80:26"
+                ),
+                "stderr_tail": "",
+                "error": "",
+            }
+
+        def fake_apply_workspace_quality_repairs(
+            *,
+            run_id: str,
+            artifact_quality_errors: list[str],
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            assert run_id == "factory-quality-llm-repair"
+            assert artifact_quality_errors
+            return (
+                [],
+                {
+                    "attempted": False,
+                    "success": False,
+                    "source_tools": [],
+                    "tool_results": 0,
+                },
+            )
+
+        async def fake_apply_workspace_quality_llm_repairs(
+            *,
+            run_id: str,
+            context: dict[str, Any],
+            artifact_quality_errors: list[str],
+            repair_attempt: int,
+        ) -> tuple[list[dict[str, object]], dict[str, object]]:
+            assert run_id == "factory-quality-llm-repair"
+            assert context["workspace_quality_repair_max_rounds"] == 1
+            assert artifact_quality_errors
+            assert repair_attempt == 1
+            state["repaired"] = True
+            return (
+                [
+                    {
+                        "tool": "write_file",
+                        "tool_name": "write_file",
+                        "success": True,
+                        "result": {
+                            "source_tool": "director_materialization_quality_repair",
+                            "file": "src/index.ts",
+                            "operation": "modify",
+                        },
+                    }
+                ],
+                {
+                    "attempted": True,
+                    "success": True,
+                    "repair_mode": "director_llm",
+                    "source_tools": ["director_materialization_quality_repair"],
+                    "tool_results": 1,
+                    "write_tool_evidence": True,
+                },
+            )
+
+        monkeypatch.setattr(executor, "_workspace_quality_commands", lambda context: [["npm", "test"]])
+        monkeypatch.setattr(executor, "_workspace_quality_prepare_commands", lambda commands, context: [])
+        monkeypatch.setattr(executor, "_run_workspace_quality_command", fake_run_workspace_quality_command)
+        monkeypatch.setattr(executor, "_apply_workspace_quality_repairs", fake_apply_workspace_quality_repairs)
+        monkeypatch.setattr(
+            executor,
+            "_apply_workspace_quality_llm_repairs",
+            fake_apply_workspace_quality_llm_repairs,
+        )
+
+        passed, artifact = await executor._run_workspace_quality_checks(
+            run,
+            {"workspace_quality_repair_max_rounds": 1},
+        )
+
+        assert passed is True
+        assert calls == [["npm", "test"], ["npm", "test"]]
+        payload = json.loads(executor._artifact_path(artifact).read_text(encoding="utf-8"))
+        assert payload["passed"] is True
+        assert payload["repair"]["success"] is True
+        assert payload["repair"]["source_tools"] == ["director_materialization_quality_repair"]
+        assert payload["repair"]["rounds"][0]["source_tools"] == ["director_materialization_quality_repair"]
+
+    @pytest.mark.asyncio
     async def test_workspace_quality_reruns_prepare_after_successful_repair(
         self,
         tmp_path: Path,
@@ -1166,7 +1282,7 @@ class TestDirectorDispatchLoop:
         assert [item["status"] for item in per_binding] == ["completed", "completed"]
 
     @pytest.mark.asyncio
-    async def test_director_binding_fanout_ignores_terminal_counts_while_run_status_running(
+    async def test_director_binding_fanout_terminal_counts_end_wait_even_when_run_status_running(
         self,
         tmp_path: Path,
     ) -> None:
@@ -1227,14 +1343,16 @@ class TestDirectorDispatchLoop:
         )
 
         assert service.queries >= 1
-        assert result.status == "completed"
+        assert result.status == "failed"
         per_binding = (result.metadata or {}).get("per_binding")
         assert isinstance(per_binding, list)
-        assert per_binding[0]["status"] == "completed"
+        assert per_binding[0]["status"] == "failed"
+        assert per_binding[0]["terminal_source"] == "task_status_counts"
+        assert per_binding[0]["queried_status"] == "running"
         assert "cancel_signal_sent" not in per_binding[0]
 
     @pytest.mark.asyncio
-    async def test_director_binding_fanout_ignores_shared_workspace_taskboard_stats(
+    async def test_director_binding_fanout_workspace_terminal_failed_taskboard_ends_wait(
         self,
         tmp_path: Path,
     ) -> None:
@@ -1306,14 +1424,22 @@ class TestDirectorDispatchLoop:
         )
 
         assert service.queries >= 1
-        assert result.status == "completed"
+        assert result.status == "failed"
         per_binding = (result.metadata or {}).get("per_binding")
         assert isinstance(per_binding, list)
-        assert per_binding[0]["status"] == "completed"
+        assert per_binding[0]["status"] == "failed"
+        assert per_binding[0]["terminal_source"] == "workspace_taskboard_counts"
+        assert per_binding[0]["queried_status"] == "running"
         assert "cancel_signal_sent" not in per_binding[0]
 
     @pytest.mark.asyncio
-    async def test_director_binding_fanout_counts_newly_quarantined_timeouts(self, tmp_path: Path) -> None:
+    async def test_director_binding_fanout_counts_newly_quarantined_timeouts(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("KERNELONE_FACTORY_DIRECTOR_BINDING_TIMEOUT_QUARANTINE_COUNT", "2")
+
         class _FanoutService:
             counter = 0
 
@@ -1730,6 +1856,346 @@ class TestDirectorDispatchLoop:
         assert payload["error_code"] is None
         codes = [item.get("code") for item in payload["signals"]]
         assert "director.materialization_quality_handoff" in codes
+        assert "director.binding_fanout_all_failed" not in codes
+
+    @pytest.mark.asyncio
+    async def test_missing_write_receipt_with_artifacts_enters_quality_gate_handoff(self, tmp_path: Path) -> None:
+        class _MissingWriteReceiptHandoffExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.stats = [
+                    {
+                        "total": 3,
+                        "pending": 3,
+                        "ready": 3,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 3,
+                        "pending": 3,
+                        "ready": 3,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 3,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 3,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 3,
+                        "pending": 0,
+                        "ready": 0,
+                        "in_progress": 0,
+                        "completed": 0,
+                        "failed": 3,
+                        "blocked": 0,
+                    },
+                ]
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                return object()
+
+            def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+                del context
+                return [
+                    {"provider_id": "p1", "model": "qwen-q6-a", "binding_id": "b1"},
+                    {"provider_id": "p2", "model": "qwen-q6-b", "binding_id": "b2"},
+                ]
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(
+                    run_id="director-receipt-failed",
+                    status="failed",
+                    message="Director binding fanout: 2 bindings, 0 succeeded, 2 failed",
+                    metadata={
+                        "binding_fanout": True,
+                        "active_binding_count": 2,
+                        "per_binding": [
+                            {
+                                "provider_id": "p1",
+                                "model": "qwen-q6-a",
+                                "binding_id": "b1",
+                                "run_id": "r1",
+                                "status": "failed",
+                                "message": "Run status: failed | failed_task=task-1",
+                            },
+                            {
+                                "provider_id": "p2",
+                                "model": "qwen-q6-b",
+                                "binding_id": "b2",
+                                "run_id": "r2",
+                                "status": "failed",
+                                "message": "Run status: failed | failed_task=task-2",
+                            },
+                        ],
+                    },
+                )
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"build":"tsc"},"devDependencies":{"typescript":"latest"}}',
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
+
+        executor = _MissingWriteReceiptHandoffExecutor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "target_files": ["package.json", "src/index.ts", "index.html"],
+                    }
+                ]
+            },
+        )
+        executor._write_json_artifact(
+            "tasks/task_1.json",
+            {
+                "id": "TASK-1",
+                "status": "failed",
+                "last_execution_error": "director_missing_write_receipt",
+                "metadata": {
+                    "adapter_result": {
+                        "materialization_mode": "workspace_diff_without_write_tool",
+                        "new_files": ["package.json", "src/index.ts"],
+                    }
+                },
+            },
+        )
+        executor._write_json_artifact(
+            "tasks/task_2.json",
+            {
+                "id": "TASK-2",
+                "status": "failed",
+                "metadata": {
+                    "adapter_result": {
+                        "materialization_mode": "no_materialized_changes",
+                        "materialization_error": "director_no_materialized_changes",
+                    }
+                },
+            },
+        )
+        run = FactoryRun(
+            id="factory-receipt-handoff",
+            config=FactoryConfig(name="receipt-handoff"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-23T00:00:00+00:00",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
+        )
+
+        assert result.status == "success"
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        assert payload["quality_gate_handoff"] is True
+        assert payload["failure_stage"] == ""
+        assert payload["error_code"] is None
+        codes = [item.get("code") for item in payload["signals"]]
+        assert "director.materialization_quality_handoff" in codes
+        assert "director.binding_fanout_all_failed" not in codes
+
+    @pytest.mark.asyncio
+    async def test_idle_unresolved_artifacts_enter_quality_gate_handoff(self, tmp_path: Path) -> None:
+        class _IdleUnresolvedHandoffExecutor(OrchestrationStageExecutor):
+            def __init__(self, workspace: Path) -> None:
+                super().__init__(workspace)
+                self.stats = [
+                    {
+                        "total": 4,
+                        "pending": 4,
+                        "ready": 4,
+                        "in_progress": 0,
+                        "in_design": 0,
+                        "in_execution": 0,
+                        "in_qa": 0,
+                        "running": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 4,
+                        "pending": 4,
+                        "ready": 4,
+                        "in_progress": 0,
+                        "in_design": 0,
+                        "in_execution": 0,
+                        "in_qa": 0,
+                        "running": 0,
+                        "completed": 0,
+                        "failed": 0,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 4,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "in_design": 0,
+                        "in_execution": 0,
+                        "in_qa": 0,
+                        "running": 0,
+                        "completed": 1,
+                        "failed": 2,
+                        "blocked": 0,
+                    },
+                    {
+                        "total": 4,
+                        "pending": 1,
+                        "ready": 1,
+                        "in_progress": 0,
+                        "in_design": 0,
+                        "in_execution": 0,
+                        "in_qa": 0,
+                        "running": 0,
+                        "completed": 1,
+                        "failed": 2,
+                        "blocked": 0,
+                    },
+                ]
+
+            def _build_orchestration_service(self, context: dict) -> object:
+                del context
+                return object()
+
+            def _resolve_director_binding_fanout(self, context: dict[str, Any] | None = None) -> list[dict[str, str]]:
+                del context
+                return [
+                    {"provider_id": "p1", "model": "qwen-q6-a", "binding_id": "b1"},
+                    {"provider_id": "p2", "model": "qwen-q6-b", "binding_id": "b2"},
+                ]
+
+            def _read_taskboard_stats(self) -> dict[str, int]:
+                if len(self.stats) > 1:
+                    return dict(self.stats.pop(0))
+                return dict(self.stats[0])
+
+            async def _execute_director_binding_fanout(self, **kwargs: object) -> CommandResult:
+                del kwargs
+                return CommandResult(
+                    run_id="director-idle-unresolved",
+                    status="failed",
+                    message="Director binding fanout: 2 bindings, 0 succeeded, 2 failed",
+                    metadata={
+                        "binding_fanout": True,
+                        "active_binding_count": 2,
+                        "per_binding": [
+                            {
+                                "provider_id": "p1",
+                                "model": "qwen-q6-a",
+                                "binding_id": "b1",
+                                "run_id": "r1",
+                                "status": "cancelled",
+                                "message": "Run cancelled: factory-bench event wait timeout after 2400s",
+                            },
+                            {
+                                "provider_id": "p2",
+                                "model": "qwen-q6-b",
+                                "binding_id": "b2",
+                                "run_id": "r2",
+                                "status": "cancelled",
+                                "message": "Run cancelled: factory-bench event wait timeout after 2400s",
+                            },
+                        ],
+                    },
+                )
+
+            def _validate_director_binding_coverage(self, additional_events=None):  # type: ignore[no-untyped-def]
+                del additional_events
+                return True, []
+
+        (tmp_path / "src").mkdir()
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"build":"tsc"},"devDependencies":{"typescript":"latest"}}',
+            encoding="utf-8",
+        )
+        (tmp_path / "src" / "index.ts").write_text("export const value = 1;\n", encoding="utf-8")
+
+        executor = _IdleUnresolvedHandoffExecutor(tmp_path)
+        executor._write_json_artifact(
+            "tasks/plan.json",
+            {
+                "tasks": [
+                    {
+                        "id": "TASK-1",
+                        "target_files": ["package.json", "src/index.ts", "index.html", "README.md"],
+                    }
+                ]
+            },
+        )
+        executor._write_json_artifact(
+            "tasks/task_1.json",
+            {
+                "id": "TASK-1",
+                "status": "failed",
+                "metadata": {
+                    "adapter_result": {
+                        "materialization_mode": "workspace_diff_without_write_tool",
+                        "materialization_error": "director_missing_write_receipt",
+                    }
+                },
+            },
+        )
+        executor._write_json_artifact(
+            "tasks/task_2.json",
+            {
+                "id": "TASK-2",
+                "status": "failed",
+                "metadata": {
+                    "runtime_execution": {"last_error": "director_materialization_quality_failed"},
+                    "adapter_result": {
+                        "materialization_error": "director_materialization_quality_failed",
+                    },
+                },
+            },
+        )
+        run = FactoryRun(
+            id="factory-idle-unresolved-handoff",
+            config=FactoryConfig(name="idle-unresolved-handoff"),
+            status=FactoryRunStatus.RUNNING,
+            created_at="2026-06-23T00:00:00+00:00",
+        )
+
+        result = await executor._execute_director_dispatch(
+            run,
+            {"director_max_rounds": 1, "timeout": 1, "execution_mode": "parallel", "max_workers": 2},
+        )
+
+        assert result.status == "success"
+        payload = json.loads(executor._artifact_path("dispatch/log.json").read_text(encoding="utf-8"))
+        assert payload["quality_gate_handoff"] is True
+        assert payload["failure_stage"] == ""
+        assert payload["error_code"] is None
+        assert payload["taskboard"]["converged"] is False
+        codes = [item.get("code") for item in payload["signals"]]
+        assert "director.materialization_quality_handoff" in codes
+        assert "director.taskboard_unresolved_quality_handoff" in codes
+        assert "director.taskboard_not_converged" not in codes
         assert "director.binding_fanout_all_failed" not in codes
 
     @pytest.mark.asyncio

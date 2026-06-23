@@ -295,7 +295,35 @@ def _stage_summary_has_recoverable_no_write_mutation_contract_exception(
 ) -> bool:
     if not isinstance(summary, dict):
         return False
-    return _is_recoverable_no_write_mutation_contract_error_text(str(summary.get("error") or ""))
+    return any(
+        _is_recoverable_no_write_mutation_contract_error_text(text) for text in _iter_stage_summary_error_texts(summary)
+    )
+
+
+def _iter_stage_summary_error_texts(value: Any, *, depth: int = 0) -> list[str]:
+    if depth > 5:
+        return []
+    if isinstance(value, dict):
+        texts: list[str] = []
+        for key, raw in value.items():
+            key_text = str(key or "").lower()
+            if key_text in {"error", "error_message", "message", "detail", "details"} and isinstance(raw, str):
+                texts.append(raw)
+            elif key_text in {
+                "primary_llm",
+                "adapter_result",
+                "stage_summary",
+                "summary",
+                "raw_response",
+            } or isinstance(raw, (dict, list, tuple)):
+                texts.extend(_iter_stage_summary_error_texts(raw, depth=depth + 1))
+        return texts
+    if isinstance(value, (list, tuple)):
+        texts = []
+        for item in value:
+            texts.extend(_iter_stage_summary_error_texts(item, depth=depth + 1))
+        return texts
+    return []
 
 
 def _is_recoverable_no_write_mutation_contract_exception(exc: BaseException) -> bool:
@@ -1294,6 +1322,11 @@ _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES: frozenset[str] = frozenset(
 )
 
 _EXPLICIT_ARTIFACT_QUALITY_TARGET_HINTS: tuple[str, ...] = (
+    "assertionerror",
+    "failed tests",
+    "test failed",
+    "vitest",
+    "jest",
     "prettier",
     "syntaxerror",
     "syntax error",
@@ -1344,8 +1377,87 @@ def _explicit_artifact_quality_repair_target_files(
             if changed_source_files and rel not in changed_source_files:
                 continue
             if _workspace_path_exists_case_insensitive(workspace_root, rel):
+                if _is_test_like_javascript_path(rel) and _looks_like_javascript_test_behavior_failure(text):
+                    candidates.extend(_javascript_test_imported_source_target_files(rel, workspace_root))
                 candidates.append(rel)
     return _dedupe_preserve_order(candidates)
+
+
+def _looks_like_javascript_test_behavior_failure(text: str) -> bool:
+    token = str(text or "").lower()
+    return any(hint in token for hint in ("assertionerror", "failed tests", "test failed", "vitest", "jest"))
+
+
+def _is_test_like_javascript_path(rel_path: str) -> bool:
+    normalized = str(rel_path or "").replace("\\", "/").lower()
+    name = Path(normalized).name
+    return normalized.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")) and (
+        ".test." in name or ".spec." in name or "/tests/" in normalized
+    )
+
+
+def _javascript_test_imported_source_target_files(rel_path: str, workspace_root: Path) -> list[str]:
+    rel = _normalize_declared_task_path(rel_path)
+    if not _is_test_like_javascript_path(rel):
+        return []
+    try:
+        root = workspace_root.resolve()
+        test_path = (root / rel).resolve()
+        test_path.relative_to(root)
+        text = test_path.read_text(encoding="utf-8")
+    except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+        return []
+
+    candidates: list[str] = []
+    for import_ref in _javascript_relative_import_refs(text):
+        target = _resolve_javascript_relative_import_target(test_path.parent, import_ref, root)
+        if target is None:
+            continue
+        target_rel = target.relative_to(root).as_posix()
+        if _is_test_like_javascript_path(target_rel):
+            continue
+        candidates.append(target_rel)
+    return _dedupe_preserve_order(candidates)
+
+
+def _javascript_relative_import_refs(text: str) -> list[str]:
+    refs: list[str] = []
+    patterns = (
+        re.compile(r"\bfrom\s+['\"](?P<ref>\.{1,2}/[^'\"]+)['\"]"),
+        re.compile(r"\brequire\(\s*['\"](?P<ref>\.{1,2}/[^'\"]+)['\"]\s*\)"),
+    )
+    for pattern in patterns:
+        for match in pattern.finditer(str(text or "")):
+            refs.append(str(match.group("ref") or "").strip())
+    return _dedupe_preserve_order([ref for ref in refs if ref])
+
+
+def _resolve_javascript_relative_import_target(
+    importer_dir: Path, import_ref: str, workspace_root: Path
+) -> Path | None:
+    raw = str(import_ref or "").strip()
+    if not raw.startswith(("./", "../")):
+        return None
+    try:
+        base = (importer_dir / raw).resolve()
+        base.relative_to(workspace_root)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    candidates: list[Path] = []
+    if base.suffix:
+        candidates.append(base)
+    else:
+        candidates.extend(base.with_suffix(suffix) for suffix in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"))
+        candidates.extend(base / f"index{suffix}" for suffix in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"))
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+            resolved.relative_to(workspace_root)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if resolved.is_file():
+            return resolved
+    return None
 
 
 def _semantic_quality_repair_target_files(

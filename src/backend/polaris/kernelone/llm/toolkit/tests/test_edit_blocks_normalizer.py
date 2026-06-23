@@ -50,6 +50,30 @@ class TestEditBlocksNormalizer:
         text = "<<<< SEARCH:f.py\nx\n====\ny\n>>>> REPLACE"
         assert normalize_edit_blocks_args({"blocks": text})["blocks"] == text
 
+    def test_file_marker_text_shape_populates_file_and_blocks(self) -> None:
+        body = "export const firefly = 1;\nexport const flower = 2;\n"
+        args = normalize_edit_blocks_args({"blocks": f"FILE: src/engine/simulation.ts\n{body}"})
+
+        assert args["file"] == "src/engine/simulation.ts"
+        assert args["blocks"] == body
+        assert args["normalized_from_file_marker"] is True
+
+    def test_file_marker_two_line_header_populates_file_and_blocks(self) -> None:
+        body = "export const moon = 'full';\nexport const humidity = 0.7;\n"
+        args = normalize_tool_arguments("edit_blocks", {"blocks": f"FILE:\nsrc/engine/simulation.ts\n{body}"})
+
+        assert args["file"] == "src/engine/simulation.ts"
+        assert args["blocks"] == body
+        assert args["normalized_from_file_marker"] is True
+
+    def test_file_marker_inside_fence_populates_file_and_blocks(self) -> None:
+        body = "export const firefly = true;\n"
+        args = normalize_tool_arguments("edit_blocks", {"blocks": f"```typescript\nfile: src/main.ts\n{body}```"})
+
+        assert args["file"] == "src/main.ts"
+        assert args["blocks"].strip() == body.strip()
+        assert args["normalized_from_file_marker"] is True
+
     def test_python_tuple_line_range_string_maps_to_canonical_args(self) -> None:
         args = normalize_edit_blocks_args(
             {

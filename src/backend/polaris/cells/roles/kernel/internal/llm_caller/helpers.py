@@ -114,16 +114,19 @@ def resolve_timeout_seconds(profile: Any, context_override: Any | None = None) -
     Returns:
         Timeout seconds (60 for non-director, configurable for director)
     """
-    context_timeout = _resolve_context_timeout_override(context_override)
-    if context_timeout is not None:
-        return context_timeout
-
     role_id = str(getattr(profile, "role_id", "") or "").strip().lower()
 
     if role_id != _DIRECTOR_ROLE_ID:
+        context_timeout = _resolve_context_timeout_override(context_override)
+        if context_timeout is not None:
+            return context_timeout
         return 60
 
-    return _get_cached_director_timeout()
+    director_timeout = _get_cached_director_timeout()
+    context_timeout = _resolve_context_timeout_override(context_override)
+    if context_timeout is not None:
+        return max(director_timeout, context_timeout)
+    return director_timeout
 
 
 def resolve_max_tokens(requested: Any, context_override: Any | None = None) -> int:

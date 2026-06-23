@@ -123,6 +123,9 @@ def test_final_request_context_audit_counts_tools_and_coverage() -> None:
 def test_final_provider_request_snapshot_summarizes_tools_and_choice() -> None:
     profile = Mock()
     profile.max_context_tokens = 32768
+    profile.role_id = "director"
+    profile.provider_id = "qwen-director"
+    profile.model = "qwen3.6-27b-q6-code-gpu1"
     tool_schema = {
         "type": "function",
         "function": {
@@ -140,6 +143,9 @@ def test_final_provider_request_snapshot_summarizes_tools_and_choice() -> None:
     }
     messages = [{"role": "user", "content": "TASK-1 target_files src/index.ts Chief Engineer blueprint"}]
     ai_request = Mock()
+    ai_request.role = "director"
+    ai_request.provider_id = "qwen-director"
+    ai_request.model = "qwen3.6-27b-q6-code-gpu1"
     ai_request.context = {"chat_messages": messages}
     ai_request.options = {"tools": [tool_schema], "tool_choice": "auto"}
     ai_request.input = ""
@@ -156,6 +162,10 @@ def test_final_provider_request_snapshot_summarizes_tools_and_choice() -> None:
     snapshot = build_final_provider_request_snapshot(ai_request=ai_request, prepared=prepared, profile=profile)
 
     assert snapshot["schema_version"] == "llm.provider_request_snapshot.v1"
+    assert snapshot["source"] == "roles.kernel.llm_caller.context_audit"
+    assert snapshot["role"] == "director"
+    assert snapshot["provider_id"] == "qwen-director"
+    assert snapshot["model"] == "qwen3.6-27b-q6-code-gpu1"
     assert snapshot["message_count"] == 1
     assert snapshot["tool_schema_count"] == 1
     assert snapshot["tool_choice"] == "auto"
@@ -337,6 +347,32 @@ def test_final_request_context_audit_reads_role_context_policy_window() -> None:
 
     assert audit["context_window_tokens"] == 32768
     assert audit["context_window_utilization"] is not None
+
+
+def test_final_request_context_audit_prefers_bound_model_window_over_role_default() -> None:
+    profile = Mock()
+    profile.max_context_tokens = 8000
+    profile.context_policy = Mock(max_context_tokens=8000)
+    prepared = PreparedLLMRequest(
+        messages=[
+            {
+                "role": "user",
+                "content": "TASK-1 target_files src/index.ts Chief Engineer blueprint",
+            },
+        ],
+        input_text="",
+        context_result=Mock(),
+        context_summary="summary",
+        request_options={},
+        ai_request=Mock(),
+        native_tool_schemas=[],
+        capability_profile={"model_window_tokens": 24576},
+    )
+
+    audit = build_final_request_context_audit(prepared=prepared, profile=profile)
+
+    assert audit["context_window_tokens"] == 24576
+    assert audit["available_token_headroom"] > 8000
 
 
 # ============ DecisionCaller Tests ============

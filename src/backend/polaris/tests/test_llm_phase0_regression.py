@@ -470,6 +470,7 @@ class TestLLMStatusLastUpdated:
                 "model": "qwen3.6-27b-gpu1",
                 "binding_id": "",
                 "reason": "provider_readiness_failed",
+                "readiness_source": "provider_index",
             }
         ]
         assert director_status["readiness_issue"] == "degraded: skipped unavailable Director binding(s)"
@@ -549,6 +550,246 @@ class TestLLMStatusLastUpdated:
         assert response["state"] == "BLOCKED"
         assert response["blocked_roles"] == ["director"]
         assert len(director_status["skipped_bindings"]) == 2
+
+    def test_llm_status_overlays_new_runtime_dispatch_skips_over_stale_provider_success(self, tmp_path):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = str(tmp_path)
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = False
+
+        stale_timestamp = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        config_payload = {
+            "schema_version": 2,
+            "providers": {
+                "kimi": {"type": "anthropic_compat", "model": "kimi-for-coding"},
+                "qwen-a": {"type": "openai_compat", "model": "qwen3.6-27b-q6-code-gpu0"},
+                "qwen-b": {"type": "openai_compat", "model": "qwen3.6-27b-q6-code-gpu1"},
+            },
+            "roles": {
+                "architect": {"provider_id": "kimi", "model": "kimi-for-coding"},
+                "pm": {"provider_id": "kimi", "model": "kimi-for-coding"},
+                "director": {
+                    "provider_id": "qwen-a",
+                    "model": "qwen3.6-27b-q6-code-gpu0",
+                    "bindings": [
+                        {"provider_id": "qwen-a", "model": "qwen3.6-27b-q6-code-gpu0"},
+                        {"provider_id": "qwen-b", "model": "qwen3.6-27b-q6-code-gpu1"},
+                    ],
+                },
+            },
+            "policies": {"required_ready_roles": ["director"]},
+        }
+        index_payload = {
+            "roles": {
+                role: {
+                    "ready": True,
+                    "grade": "PASS",
+                    "provider_id": "kimi",
+                    "model": "kimi-for-coding",
+                    "timestamp": stale_timestamp,
+                }
+                for role in ("architect", "pm")
+            },
+            "providers": {
+                provider_id: {
+                    "ready": True,
+                    "grade": "PASS",
+                    "role": "connectivity",
+                    "model": model,
+                    "timestamp": stale_timestamp,
+                }
+                for provider_id, model in {
+                    "qwen-a": "qwen3.6-27b-q6-code-gpu0",
+                    "qwen-b": "qwen3.6-27b-q6-code-gpu1",
+                }.items()
+            },
+        }
+        dispatch_path = Path(resolve_runtime_path(str(tmp_path), "runtime/dispatch/log.json"))
+        dispatch_path.parent.mkdir(parents=True, exist_ok=True)
+        dispatch_path.write_text(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "metadata": {
+                        "active_binding_count": 0,
+                        "readiness_skipped_count": 2,
+                        "per_binding": [
+                            {
+                                "provider_id": "qwen-a",
+                                "model": "qwen3.6-27b-q6-code-gpu0",
+                                "binding_id": "director:0:qwen-a:qwen3.6-27b-q6-code-gpu0",
+                                "status": "skipped",
+                                "skipped": True,
+                                "skip_reason": "provider_unreachable",
+                            },
+                            {
+                                "provider_id": "qwen-b",
+                                "model": "qwen3.6-27b-q6-code-gpu1",
+                                "binding_id": "director:1:qwen-b:qwen3.6-27b-q6-code-gpu1",
+                                "status": "skipped",
+                                "skipped": True,
+                                "skip_reason": "provider_unreachable",
+                            },
+                        ],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index_candidates",
+                return_value=[],
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={"lastUpdated": None},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value=str(tmp_path / "cache"),
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        director_status = response["roles"]["director"]
+        assert director_status["ready"] is False
+        assert director_status["degraded"] is False
+        assert director_status["readiness_source"] == "runtime_dispatch"
+        assert director_status["readiness_issue"] == (
+            "all Director bindings unavailable after runtime dispatch readiness filtering"
+        )
+        assert response["state"] == "BLOCKED"
+        assert response["factory_state"] == "BLOCKED"
+        assert response["blocked_roles"] == ["director"]
+        assert response["factory_blocked_roles"] == ["director"]
+        assert [binding["readiness_source"] for binding in director_status["bindings"]] == [
+            "runtime_dispatch",
+            "runtime_dispatch",
+        ]
+        assert [binding["binding_id"] for binding in director_status["bindings"]] == [
+            "director:0:qwen-a:qwen3.6-27b-q6-code-gpu0",
+            "director:1:qwen-b:qwen3.6-27b-q6-code-gpu1",
+        ]
+        assert {binding["skip_reason"] for binding in director_status["bindings"]} == {"provider_unreachable"}
+        assert director_status["skipped_bindings"] == [
+            {
+                "provider_id": "qwen-a",
+                "model": "qwen3.6-27b-q6-code-gpu0",
+                "binding_id": "director:0:qwen-a:qwen3.6-27b-q6-code-gpu0",
+                "reason": "provider_unreachable",
+                "readiness_source": "runtime_dispatch",
+            },
+            {
+                "provider_id": "qwen-b",
+                "model": "qwen3.6-27b-q6-code-gpu1",
+                "binding_id": "director:1:qwen-b:qwen3.6-27b-q6-code-gpu1",
+                "reason": "provider_unreachable",
+                "readiness_source": "runtime_dispatch",
+            },
+        ]
+        assert response["providers"]["qwen-a"]["ready"] is False
+        assert response["providers"]["qwen-a"]["readiness_source"] == "runtime_dispatch"
+        assert response["providers"]["qwen-a"]["skip_reason"] == "provider_unreachable"
+
+    def test_llm_status_ignores_runtime_dispatch_skip_older_than_provider_success(self, tmp_path):
+        from polaris.cells.runtime.projection.internal.llm_status import build_llm_status
+
+        mock_settings = MagicMock()
+        mock_settings.workspace = str(tmp_path)
+        mock_settings.ramdisk_root = None
+        mock_settings.qa_enabled = False
+
+        now = datetime.now(timezone.utc)
+        index_timestamp = now.isoformat()
+        old_dispatch_time = now - timedelta(minutes=5)
+        config_payload = {
+            "schema_version": 2,
+            "providers": {
+                "qwen-a": {"type": "openai_compat", "model": "qwen3.6-27b-q6-code-gpu0"},
+            },
+            "roles": {
+                "director": {"provider_id": "qwen-a", "model": "qwen3.6-27b-q6-code-gpu0"},
+            },
+            "policies": {"required_ready_roles": ["director"]},
+        }
+        index_payload = {
+            "roles": {},
+            "providers": {
+                "qwen-a": {
+                    "ready": True,
+                    "grade": "PASS",
+                    "role": "connectivity",
+                    "model": "qwen3.6-27b-q6-code-gpu0",
+                    "timestamp": index_timestamp,
+                },
+            },
+        }
+        dispatch_path = Path(resolve_runtime_path(str(tmp_path), "runtime/dispatch/log.json"))
+        dispatch_path.parent.mkdir(parents=True, exist_ok=True)
+        dispatch_path.write_text(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "metadata": {
+                        "active_binding_count": 0,
+                        "per_binding": [
+                            {
+                                "provider_id": "qwen-a",
+                                "model": "qwen3.6-27b-q6-code-gpu0",
+                                "status": "skipped",
+                                "skipped": True,
+                                "skip_reason": "provider_unreachable",
+                            }
+                        ],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        os.utime(dispatch_path, (old_dispatch_time.timestamp(), old_dispatch_time.timestamp()))
+
+        with (
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.llm_config.load_llm_config",
+                return_value=config_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index",
+                return_value=index_payload,
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_llm_test_index_candidates",
+                return_value=[],
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.load_interview_history_summary",
+                return_value={"lastUpdated": None},
+            ),
+            patch(
+                "polaris.cells.runtime.projection.internal.llm_status.build_cache_root",
+                return_value=str(tmp_path / "cache"),
+            ),
+        ):
+            response = build_llm_status(mock_settings)
+
+        director_status = response["roles"]["director"]
+        assert director_status["ready"] is True
+        assert director_status["readiness_source"] == "provider_index"
+        assert director_status["skipped_bindings"] == []
+        assert response["providers"]["qwen-a"]["ready"] is True
+        assert response["providers"]["qwen-a"]["readiness_source"] is None
 
 
 class TestRoleRuntimeSupportConsistency:

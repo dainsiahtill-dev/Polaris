@@ -82,8 +82,16 @@ class TestResolveTimeoutSeconds:
         timeout = resolve_timeout_seconds(cast("RoleProfile", profile))
         assert timeout == 60
 
-    def test_context_timeout_override_wins_over_role_default(self) -> None:
+    def test_director_context_timeout_cannot_reduce_role_default(self) -> None:
         profile = MockProfile(role_id="director")
+        timeout = resolve_timeout_seconds(
+            cast("RoleProfile", profile),
+            {"llm_call_timeout_seconds": 45},
+        )
+        assert timeout == 660
+
+    def test_non_director_context_timeout_override_wins(self) -> None:
+        profile = MockProfile(role_id="pm")
         timeout = resolve_timeout_seconds(
             cast("RoleProfile", profile),
             {"llm_call_timeout_seconds": 45},
@@ -783,7 +791,7 @@ class TestPreparedRequestArchitecture:
             stream=False,
         )
 
-        assert prepared.request_options["timeout"] == 45
+        assert prepared.request_options["timeout"] == 660
 
     @pytest.mark.asyncio
     async def test_prepare_llm_request_honors_context_max_tokens_override(self, monkeypatch) -> None:
@@ -796,10 +804,7 @@ class TestPreparedRequestArchitecture:
                 pass
 
             async def build_context(self, _context, *, system_prompt=None):
-                return SimpleNamespace(
-                    messages=[{"role": "user", "content": "hello"}],
-                    token_estimate=12,
-                )
+                return _turn_context_result("hello")
 
         monkeypatch.setattr(
             "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
@@ -835,10 +840,7 @@ class TestPreparedRequestArchitecture:
                 pass
 
             async def build_context(self, _context, *, system_prompt=None):
-                return SimpleNamespace(
-                    messages=[{"role": "user", "content": "hello"}],
-                    token_estimate=12,
-                )
+                return _turn_context_result("hello")
 
         monkeypatch.setattr(
             "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
@@ -1079,10 +1081,7 @@ class TestPreparedRequestArchitecture:
                 pass
 
             async def build_context(self, _context, *, system_prompt=None):
-                return SimpleNamespace(
-                    messages=[{"role": "user", "content": "hello"}],
-                    token_estimate=12,
-                )
+                return _turn_context_result("hello")
 
         monkeypatch.setattr(
             "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",
@@ -1122,10 +1121,7 @@ class TestPreparedRequestArchitecture:
                 pass
 
             async def build_context(self, _context, *, system_prompt=None):
-                return SimpleNamespace(
-                    messages=[{"role": "user", "content": "hello"}],
-                    token_estimate=12,
-                )
+                return _turn_context_result("hello")
 
         monkeypatch.setattr(
             "polaris.cells.roles.kernel.internal.context_gateway.RoleContextGateway",

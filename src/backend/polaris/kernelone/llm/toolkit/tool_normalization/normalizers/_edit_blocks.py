@@ -89,6 +89,10 @@ _JSONISH_LINE_RANGE_RE = re.compile(
     r"[\"']?(?:replace|new_text|newText|new_content|newContent|new_code|newCode|replacement|replacement_text|"
     r"replacementText|code)[\"']?\s*:\s*(?P<replace>.+?)\s*\}?\s*$"
 )
+_WEAK_FILE_MARKER_RE = re.compile(
+    r"^(?:file|filepath|filename|file_path|path|target_file)\s*[:=]\s*(?P<path>.*?)\s*$",
+    flags=re.IGNORECASE,
+)
 
 
 def _first_str(entry: dict[str, Any], keys: tuple[str, ...]) -> str | None:
@@ -183,6 +187,48 @@ def _strip_jsonish_replace(value: str) -> str:
         if token.endswith(quote):
             token = token[:-1]
     return token
+
+
+def _strip_optional_code_fence(value: str) -> str:
+    token = str(value or "").strip()
+    if not token.startswith("```"):
+        return str(value or "")
+    lines = token.splitlines()
+    if lines and lines[0].lstrip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines)
+
+
+def _clean_weak_file_marker_path(value: str) -> str:
+    path = str(value or "").strip().strip("`'\"")
+    path = re.sub(r"\s+(?://|#).*$", "", path).strip()
+    return path.strip("`'\"")
+
+
+def _coerce_file_marker_blocks(value: str, default_file: str | None) -> dict[str, Any] | None:
+    lines = _strip_optional_code_fence(value).splitlines(keepends=True)
+    if not lines:
+        return None
+    header = lines[0].rstrip("\r\n").strip()
+    match = _WEAK_FILE_MARKER_RE.match(header)
+    if match is None:
+        return None
+    target_file = _clean_weak_file_marker_path(match.group("path"))
+    body_start = 1
+    if not target_file and len(lines) > 1:
+        target_file = _clean_weak_file_marker_path(lines[1].rstrip("\r\n").strip())
+        body_start = 2
+    target_file = target_file or str(default_file or "").strip()
+    body = "".join(lines[body_start:])
+    if not target_file or not body.strip():
+        return None
+    return {
+        "file": target_file,
+        "blocks": body,
+        "normalized_from_file_marker": True,
+    }
 
 
 def _coerce_tuple_line_range_args(value: str) -> dict[str, Any] | None:
@@ -291,6 +337,10 @@ def normalize_edit_blocks_args(tool_args: dict[str, Any]) -> dict[str, Any]:
             if line_range_args is not None:
                 args.update(line_range_args)
                 args.pop(key, None)
+                continue
+            file_marker_args = _coerce_file_marker_blocks(value, default_file)
+            if file_marker_args is not None:
+                args.update(file_marker_args)
                 continue
         if isinstance(value, (list, dict)):
             line_range_args = _coerce_blocks_line_range_args(value)

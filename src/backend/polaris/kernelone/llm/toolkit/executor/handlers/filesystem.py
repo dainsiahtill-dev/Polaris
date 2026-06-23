@@ -49,6 +49,7 @@ from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_editblocks impor
     _synthesize_blocks_from_update_markers,
     _synthesize_line_range_block,
     _synthesize_whole_file_replacement_block,
+    _unwrap_weak_file_marker,
     _unwrap_weak_replace_marker,
 )
 from polaris.kernelone.llm.toolkit.executor.handlers.filesystem_guards import (
@@ -856,6 +857,28 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
             return err
         blocks_text = synth or ""
     elif blocks_text and not _has_search_replace_markers(blocks_text):
+        marker_file, marker_body = _unwrap_weak_file_marker(blocks_text, default_file=file)
+        if marker_body is not None:
+            rel, resolve_error = _resolve_workspace_rel(self, str(marker_file or file or ""))
+            if rel is None:
+                return resolve_error or {"ok": False, "error": f"Invalid path: {marker_file or file}"}
+            if self._kernel_fs.workspace_exists(rel):
+                whole_file_blocks, whole_file_err = _synthesize_whole_file_replacement_block(
+                    self,
+                    marker_file or file,
+                    marker_body,
+                    force=True,
+                )
+                if whole_file_err is not None:
+                    return whole_file_err
+                if whole_file_blocks is not None:
+                    blocks_text = whole_file_blocks
+            else:
+                result = _handle_write_file(self, file=marker_file or file, content=marker_body)
+                if result.get("ok"):
+                    result["normalized_from_edit_blocks_file_marker"] = True
+                return result
+
         replace_file, replace_body = _unwrap_weak_replace_marker(blocks_text, default_file=file)
         if replace_body is not None:
             whole_file_blocks, whole_file_err = _synthesize_whole_file_replacement_block(
@@ -875,7 +898,7 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
         )
         if update_blocks is not None:
             blocks_text = update_blocks
-        else:
+        elif not _has_search_replace_markers(blocks_text):
             whole_file_blocks, whole_file_err = _synthesize_whole_file_replacement_block(self, file, blocks_text)
             if whole_file_err is not None:
                 return whole_file_err
@@ -981,8 +1004,10 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
                 f"(got: '{preview}'). The 'blocks' argument must contain ONLY the edit itself — "
                 "never explanations, plans, or intentions."
             )
+            error_type = "prose_narration_in_edit_blocks"
         else:
             error = "No valid edit blocks found in input"
+            error_type = "no_valid_edit_blocks"
         return {
             "ok": False,
             "error": error,
@@ -999,6 +1024,9 @@ def _handle_edit_blocks(self: AgentAccelToolExecutor, **kwargs) -> dict[str, Any
                 "If you have not read the file yet, call read_file first, then transcribe the edit. "
                 "Prose descriptions are NOT executable."
             ),
+            "error_type": error_type,
+            "retryable": True,
+            "tool": "edit_blocks",
         }
 
     # Validate blocks
@@ -1659,8 +1687,6 @@ def _emit_file_written_event(
 ) -> None:
     """Emit FILE_WRITTEN event for observer diff projection."""
     bus = _resolve_message_bus(self)
-    if bus is None:
-        return
 
     try:
         from polaris.kernelone.events.file_event_broadcaster import (
@@ -1685,6 +1711,7 @@ def _emit_file_written_event(
             patch=patch,
             message_bus=bus,
             worker_id=self._worker_id,
+            event_log_workspace=self.workspace,
         )
     except (ImportError, AttributeError, TypeError) as exc:
         logger.debug("file edit event emit failed for %s: %s", file_path, exc)

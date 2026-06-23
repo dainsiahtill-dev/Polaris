@@ -74,15 +74,8 @@ def _pascal_identifier_token(value: str, *, fallback: str) -> str:
 
 def _typescript_model_target_from_keyword(keyword: str, *, fallback: str) -> str:
     normalized = str(keyword or "").strip().lower()
-    explicit_names = {
-        "firefly": "Firefly",
-        "flower": "Flower",
-        "moon": "MoonPhase",
-        "moonphase": "MoonPhase",
-        "humidity": "Humidity",
-    }
-    name = explicit_names.get(normalized) or _pascal_identifier_token(normalized, fallback=fallback)
-    return f"src/models/{name}.ts"
+    name = _pascal_identifier_token(normalized, fallback=fallback)
+    return f"src/domain/{name}.ts"
 
 
 def _typescript_model_targets_from_keywords(keywords: list[str], *, domain_token: str) -> list[str]:
@@ -313,7 +306,7 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                             "非占位 package 脚本和需求驱动的核心模块。"
                         ),
                         "description": (
-                            "创建 package.json、tsconfig.json、src/index.ts、src/main.ts 与 src/models 领域模型，"
+                            "创建 package.json、tsconfig.json、src/index.ts、src/main.ts 与需求派生的领域模块，"
                             f"覆盖需求关键词和确定性检查：{keyword_summary}。"
                         ),
                         "scope": model_targets,
@@ -321,11 +314,11 @@ class PMContractSynthesisMixin(_PMAdapterMixinBase):
                         "steps": [
                             "创建 package.json，声明真实 build/test/start 脚本，禁止 echo-only 或 manifest-only 脚本",
                             "创建 tsconfig.json，启用 strict、DOM/ES2020 lib、outDir=dist、rootDir=src",
-                            "实现 src/index.ts、src/main.ts 与 src/models 下的领域实体，暴露可运行入口和核心需求状态",
+                            "实现 src/index.ts、src/main.ts 与需求派生领域模块，暴露可运行入口和核心需求状态",
                             "`npm start` 必须先 build 或引用当前存在的源码入口，不能指向未生成的 dist 文件",
                         ],
                         "acceptance": [
-                            "`package.json`、`tsconfig.json`、`src/index.ts`、`src/main.ts` 与 `src/models/` 领域模块存在且非空",
+                            "`package.json`、`tsconfig.json`、`src/index.ts`、`src/main.ts` 与需求派生领域模块存在且非空",
                             "`npm run build`、`npm run test` 与 `npm start` 对真实入口执行检查",
                             f"源码或测试覆盖需求关键词：{keyword_summary}",
                         ],

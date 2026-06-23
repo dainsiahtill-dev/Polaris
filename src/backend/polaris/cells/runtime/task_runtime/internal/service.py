@@ -227,6 +227,7 @@ class TaskRuntimeService:
         status: TaskStatus | str | None = None,
         assignee: str | None = None,
         owner: str | None = None,
+        blocked_by: list[int] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Task | None:
         normalized = self.normalize_task_id(task_id)
@@ -237,6 +238,7 @@ class TaskRuntimeService:
             status=status,
             assignee=assignee,
             owner=owner,
+            blocked_by=blocked_by,
             metadata=metadata,
         )
 
@@ -836,10 +838,10 @@ class TaskRuntimeService:
                 dep_id_int = int(dependency_id)
             except ValueError:
                 logger.warning("Skipping non-integer dependency_id: %r", dependency_id)
-                continue
+                return True
             dependency = self._board.get(dep_id_int)
             if dependency is None:
-                continue
+                return True
             if dependency.status != TaskStatus.COMPLETED:
                 return True
         return False
@@ -943,7 +945,6 @@ class TaskRuntimeService:
 
             event_payload = dict(payload)
             director_run_id = str(event_payload.get("run_id") or "").strip()
-            event_payload["run_id"] = factory_run_id
             if director_run_id and director_run_id != factory_run_id:
                 event_payload["director_run_id"] = director_run_id
             event_payload["type"] = "task_runtime_execution"

@@ -126,6 +126,47 @@ def test_build_system_prompt_for_quality_repair_suppresses_working_memory_only(m
     assert captured["include_tool_policy"] is True
 
 
+def test_build_system_prompt_for_factory_contract_suppresses_working_memory_only(monkeypatch) -> None:
+    profile = SimpleNamespace(
+        role_id="director",
+        model="qwen3.6-27b-q6-code-gpu0",
+        version="1.0.0",
+        tool_policy=SimpleNamespace(policy_id="director-policy-v1", whitelist=["write_file", "execute_command"]),
+        prompt_policy=SimpleNamespace(core_template_id="director", tpl_version="1.0"),
+    )
+    kernel = RoleExecutionKernel(workspace=".", registry=_StubRegistry(profile))  # type: ignore[arg-type]
+    request = RoleTurnRequest(
+        mode=RoleExecutionMode.CHAT,
+        workspace=".",
+        message=(
+            "PM Task Contract / 任务合同:\n"
+            "任务: 实现 发光昆虫花园模拟器 TypeScript 项目骨架与核心模块\n"
+            "目标文件: package.json, tsconfig.json, src/index.ts\n"
+            "Chief Engineer Blueprint / CE 蓝图交接:\n"
+            "- blueprint_id: ce_TASK-1\n"
+            "请通过运行时正式写入工具完成修改；若只能返回文本，输出可解析的文件块。"
+        ),
+        history=[],
+        context_override={},
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_build_system_prompt(_profile, prompt_appendix, **kwargs: object) -> str:
+        captured["appendix"] = str(prompt_appendix or "")
+        captured.update(kwargs)
+        return "system-prompt"
+
+    prompt_builder = kernel._get_prompt_builder()
+    monkeypatch.setattr(prompt_builder, "build_system_prompt", _fake_build_system_prompt)
+
+    result = kernel._build_system_prompt_for_request(profile, request, "factory appendix")  # type: ignore[arg-type]
+
+    assert result == "system-prompt"
+    assert captured["appendix"] == "factory appendix"
+    assert captured["include_working_memory_contract"] is False
+    assert captured["include_tool_policy"] is True
+
+
 def test_build_system_prompt_for_forced_write_suppresses_working_memory_only(monkeypatch) -> None:
     profile = SimpleNamespace(
         role_id="director",

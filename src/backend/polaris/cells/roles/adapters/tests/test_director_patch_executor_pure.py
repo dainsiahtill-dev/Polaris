@@ -26,13 +26,13 @@ class TestResolveLlmCallTimeoutSeconds:
         assert isinstance(result, float)
         assert result > 0
 
-    def test_context_value_used(self) -> None:
+    def test_context_value_cannot_reduce_default(self) -> None:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 30.0})
-        assert result == 30.0
+        assert result >= 600.0
 
-    def test_context_string_coerced(self) -> None:
+    def test_context_string_cannot_reduce_default(self) -> None:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": "45"})
-        assert result == 45.0
+        assert result >= 600.0
 
     def test_context_invalid_ignored(self) -> None:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": "abc"})
@@ -59,10 +59,15 @@ class TestResolveLlmCallTimeoutSeconds:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds(None)
         assert result == 90.0
 
-    def test_context_takes_precedence_over_env(self, monkeypatch: Any) -> None:
+    def test_env_sets_explicit_floor_for_context(self, monkeypatch: Any) -> None:
         monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS", "60")
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 30.0})
-        assert result == 30.0
+        assert result == 60.0
+
+    def test_context_can_raise_above_env_floor(self, monkeypatch: Any) -> None:
+        monkeypatch.setenv("KERNELONE_DIRECTOR_LLM_CALL_TIMEOUT_SECONDS", "60")
+        result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 120.0})
+        assert result == 120.0
 
     def test_clamped_to_maximum(self) -> None:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 9999.0})
@@ -75,7 +80,7 @@ class TestResolveLlmCallTimeoutSeconds:
 
     def test_clamped_to_minimum(self) -> None:
         result = DirectorPatchExecutor.resolve_llm_call_timeout_seconds({"llm_call_timeout_seconds": 0.01})
-        assert result == 0.1
+        assert result >= 600.0
 
 
 class TestResolveDirectFallbackTimeoutSeconds:

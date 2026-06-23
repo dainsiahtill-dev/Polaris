@@ -855,7 +855,7 @@ def test_non_leaf_support_files_multitarget_fallback_writes_readme_and_tests(tmp
                 "role": "user",
                 "content": (
                     "范围: README.md, index.html, styles.css, tests/test_product.py\n"
-                    "编写 README.md 并创建 tests/test_product.py 验证 HTML/CSS 产物"
+                    "编写 README.md 并创建 tests/test_product.py 验证 HTML/CSS 静态页面产物"
                 ),
             }
         ],
@@ -887,7 +887,7 @@ def test_non_leaf_static_web_multitarget_fallback_writes_resume_files(tmp_path: 
                 "role": "user",
                 "content": (
                     "范围: requirements.md, index.html, styles.css, README.md\n"
-                    "完整可运行的实现落盘到工作区根，并附 README.md 说明如何运行。"
+                    "完整可运行的个人简历静态页面实现落盘到工作区根，并附 README.md 说明如何运行。"
                 ),
             }
         ],
@@ -921,7 +921,8 @@ def test_static_web_fallback_does_not_rewrite_requirements_input_doc(tmp_path: P
                 "role": "user",
                 "content": (
                     "Mutation target files detected from user request: requirements.md, index.html, styles.css. "
-                    "Ensure the write step touches at least one target file."
+                    "This is a static HTML/CSS page task. "
+                    "The write step must cover every listed target file required by the current task."
                 ),
             }
         ],
@@ -935,6 +936,27 @@ def test_static_web_fallback_does_not_rewrite_requirements_input_doc(tmp_path: P
     invocations = decision.tool_batch.invocations
     assert [item["arguments"]["file"] for item in invocations] == ["index.html", "styles.css"]
     assert all(item["arguments"]["file"] != "requirements.md" for item in invocations)
+
+
+def test_generic_html_app_does_not_synthesize_resume_pytest(tmp_path: Path) -> None:
+    decision = build_deterministic_bootstrap_followup_write_decision(
+        turn_id="t-generic-html-app-test",
+        original_context=[
+            {
+                "role": "user",
+                "content": (
+                    "任务: 实现README 与运行文档\n"
+                    "描述: 发光昆虫花园模拟器需要 README.md 和 tests/test_product.py。"
+                    "说明如何打开 index.html 以及如何执行 npm run test。"
+                ),
+            }
+        ],
+        bootstrap_receipt=_failed_read_receipt("tests/test_product.py"),
+        allowed_tool_names={"write_file"},
+        workspace=str(tmp_path),
+    )
+
+    assert decision is None
 
 
 def test_non_leaf_unknown_single_target_suppressed(tmp_path: Path) -> None:

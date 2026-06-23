@@ -771,6 +771,29 @@ class TestNormalizeTaskContract:
         assert result["scope_paths"][:2] == ["README.md", "tests/test_calculator.py"]
         assert result["target_files"] == ["README.md", "tests/test_calculator.py"]
 
+    def test_documentation_task_drops_generic_product_test_target(self, tmp_path: Any) -> None:
+        adapter = _make_adapter(tmp_path)
+        raw = {
+            "title": "实现README 与运行文档",
+            "description": "编写 README.md，包含项目简介、安装步骤、运行命令、核心功能说明。",
+            "goal": "提供完整运行说明，确保用户能独立启动和验证项目",
+            "target_files": ["README.md", "tests/test_product.py"],
+            "scope_paths": ["README.md", "tests/test_product.py"],
+            "steps": [
+                "撰写项目概述，说明发光昆虫花园模拟器的创意钩子",
+                "说明如何运行测试（npm run test）",
+            ],
+            "acceptance": [
+                "README.md 存在且非空",
+                "README 包含 npm run build 说明",
+            ],
+        }
+
+        result = adapter._normalize_task_contract(raw, 6, "Product Requirements — 发光昆虫花园模拟器")
+
+        assert result["target_files"] == ["README.md"]
+        assert "tests/test_product.py" not in result["scope_paths"]
+
     def test_preserves_more_than_four_explicit_target_files(self, tmp_path: Any) -> None:
         adapter = _make_adapter(tmp_path)
         raw = {

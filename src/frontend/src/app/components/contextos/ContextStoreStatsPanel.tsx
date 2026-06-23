@@ -242,6 +242,9 @@ function ReadyView({ data, sweepPending, sweepError, onTriggerSweep, errorMessag
     ? formatElapsedShort(data.config.sweep_min_interval_seconds * 1000)
     : null;
   const enabled = data.config.enabled !== false;
+  const primaryStore = data.primary_store ?? null;
+  const legacyStore = data.legacy_store ?? null;
+  const hasStoreBreakdown = Boolean(primaryStore || legacyStore);
 
   const filesRatio = useMemo(() => {
     if (!data.config.max_files || data.config.max_files <= 0) return null;
@@ -293,6 +296,23 @@ function ReadyView({ data, sweepPending, sweepError, onTriggerSweep, errorMessag
           { k: '年龄（秒）', v: oldestAgeSec !== null ? oldestAgeSec.toLocaleString() : '—' },
         ]} />
       </div>
+
+      {hasStoreBreakdown && (
+        <InfoCard title="存储根" entries={[
+          {
+            k: 'primary',
+            v: primaryStore
+              ? `${primaryStore.file_count.toLocaleString()} · ${compactPath(primaryStore.contexts_root)}`
+              : '—',
+          },
+          {
+            k: 'legacy',
+            v: legacyStore
+              ? `${legacyStore.file_count.toLocaleString()} · ${compactPath(legacyStore.contexts_root)}`
+              : '—',
+          },
+        ]} />
+      )}
 
       {/* 最近 sweep 报告 */}
       {data.last_sweep_report && (
@@ -488,4 +508,10 @@ function classifyStatusFromStats(data: ContextStoreStatsResponse): StatsStatus {
     max_total_bytes: data.config.max_total_bytes,
     enabled: data.config.enabled,
   });
+}
+
+function compactPath(path: string): string {
+  const text = String(path || '').trim();
+  if (text.length <= 54) return text || '—';
+  return `${text.slice(0, 20)}…${text.slice(-30)}`;
 }
