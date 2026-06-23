@@ -143,6 +143,26 @@ _QUALITY_SYNTAX_ERROR_PATH_RE = re.compile(
     r"syntax error in (?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9_.-]+):",
     re.IGNORECASE,
 )
+_NPM_SCRIPT_MISSING_LOCAL_ENTRYPOINT_RE = re.compile(
+    r"npm package manifest script '(?P<script>[^']+)' references missing local entrypoint '(?P<path>[^']+)'",
+    re.IGNORECASE,
+)
+_NPM_SCRIPT_REPAIRABLE_SOURCE_PREFIXES = (
+    "__tests__/",
+    "scripts/",
+    "spec/",
+    "src/",
+    "test/",
+    "tests/",
+)
+_NPM_SCRIPT_GENERATED_OUTPUT_PREFIXES = (
+    ".cache/",
+    "build/",
+    "coverage/",
+    "dist/",
+    "node_modules/",
+    "out/",
+)
 
 
 def _quality_error_path_safe_for_repair_prompt(path: str) -> bool:
@@ -921,6 +941,11 @@ async def _run_materialization_quality_repair_retry(
         workspace_full,
         repair_quality_errors,
     )
+    missing_script_entrypoint_files = _missing_npm_script_entrypoint_repair_target_files(
+        artifact_quality_errors=repair_quality_errors,
+        workspace_full=workspace_full,
+    )
+    missing_target_files = _dedupe_preserve_order([*missing_target_files, *missing_script_entrypoint_files])
     runtime_smoke_target_files = _python_runtime_smoke_repair_target_files(
         artifact_quality_errors=repair_quality_errors,
         changed_files=changed_files,
@@ -944,6 +969,7 @@ async def _run_materialization_quality_repair_retry(
                 if (rel := _normalize_declared_task_path(item))
             ],
             *_em._missing_unresolved_relative_import_target_files(repair_quality_errors, workspace_full),
+            *missing_script_entrypoint_files,
         ]
     )
     should_merge_missing_targets = bool(explicit_missing_quality_targets) or not (
@@ -1661,6 +1687,85 @@ def _missing_materialization_quality_repair_target_files(
     missing.extend(_em._missing_unresolved_relative_import_target_files(artifact_quality_errors, workspace_full))
     missing.extend(declared_missing_now)
     return _dedupe_preserve_order(missing)
+
+
+def _missing_npm_script_entrypoint_repair_target_files(
+    *,
+    artifact_quality_errors: list[str],
+    workspace_full: str,
+) -> list[str]:
+    workspace = Path(str(workspace_full or "")).resolve() if str(workspace_full or "").strip() else None
+    if workspace is None or not workspace.is_dir():
+        return []
+
+    missing: list[str] = []
+    for error in artifact_quality_errors:
+        match = _NPM_SCRIPT_MISSING_LOCAL_ENTRYPOINT_RE.search(str(error or ""))
+        if not match:
+            continue
+        script_name = str(match.group("script") or "").strip().lower()
+        entrypoint = str(match.group("path") or "").strip()
+        for candidate in _npm_script_entrypoint_repair_target_candidates(script_name, entrypoint):
+            if not _workspace_path_exists_case_insensitive(workspace, candidate):
+                missing.append(candidate)
+    return _dedupe_preserve_order(missing)
+
+
+def _npm_script_entrypoint_repair_target_candidates(script_name: str, entrypoint: str) -> list[str]:
+    normalized = _normalize_declared_task_path(entrypoint)
+    if not normalized:
+        return []
+    if any(marker in normalized for marker in ("*", "?")):
+        concrete = _concrete_npm_test_glob_repair_target(script_name, normalized)
+        return [concrete] if concrete else []
+    if not _npm_script_entrypoint_repair_target_allowed(script_name, normalized):
+        return []
+    return [normalized]
+
+
+def _concrete_npm_test_glob_repair_target(script_name: str, pattern: str) -> str:
+    if script_name != "test":
+        return ""
+    prefix = re.split(r"[*?]", pattern, maxsplit=1)[0].rstrip("/")
+    directory = _normalize_declared_task_path(prefix) or "tests"
+    if not directory:
+        return ""
+    if directory.startswith(_NPM_SCRIPT_GENERATED_OUTPUT_PREFIXES) or directory == "node_modules":
+        return ""
+    if not directory.startswith(("__tests__", "spec", "test", "tests")):
+        return ""
+
+    lower = pattern.lower()
+    suffix_pairs = (
+        (".test.tsx", ".test.tsx"),
+        (".test.ts", ".test.ts"),
+        (".spec.tsx", ".spec.tsx"),
+        (".spec.ts", ".spec.ts"),
+        (".test.jsx", ".test.jsx"),
+        (".test.js", ".test.js"),
+        (".spec.jsx", ".spec.jsx"),
+        (".spec.js", ".spec.js"),
+        (".tsx", ".test.tsx"),
+        (".ts", ".test.ts"),
+        (".jsx", ".test.jsx"),
+        (".js", ".test.js"),
+    )
+    suffix = next((target_suffix for source_suffix, target_suffix in suffix_pairs if lower.endswith(source_suffix)), "")
+    if not suffix:
+        return ""
+    return _normalize_declared_task_path(f"{directory}/generated{suffix}")
+
+
+def _npm_script_entrypoint_repair_target_allowed(script_name: str, target: str) -> bool:
+    if any(marker in target for marker in ("*", "?", "\x00")):
+        return False
+    if target.startswith(_NPM_SCRIPT_GENERATED_OUTPUT_PREFIXES):
+        return False
+    if Path(target).suffix.lower() not in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES:
+        return False
+    if target.startswith(_NPM_SCRIPT_REPAIRABLE_SOURCE_PREFIXES):
+        return True
+    return script_name in {"test", "verify"} and "/" not in target
 
 
 def _build_materialization_quality_repair_message(

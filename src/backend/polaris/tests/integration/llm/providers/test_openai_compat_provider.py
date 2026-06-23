@@ -15,6 +15,7 @@ import pytest
 from polaris.infrastructure.llm.providers.openai_compat_provider import (
     OpenAICompatProvider,
 )
+from polaris.kernelone.llm.providers import THINKING_PREFIX
 from polaris.kernelone.llm.types import InvokeResult
 
 
@@ -69,6 +70,120 @@ class TestOpenAICompatProviderHappyPath:
         assert result.error is None
         assert result.usage.prompt_tokens == 10
         assert result.usage.completion_tokens == 8
+
+    def test_invoke_responses_api_uses_latest_payload_and_usage(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        openai_compat_config: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "id": "resp_test",
+            "object": "response",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Response hello", "annotations": []}],
+                }
+            ],
+            "usage": {"input_tokens": 12, "output_tokens": 5, "total_tokens": 17},
+        }
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = OpenAICompatProvider()
+        config = {
+            **openai_compat_config,
+            "api_path": "/v1/responses",
+            "chat_messages": [{"role": "user", "content": "Hello"}],
+            "max_output_tokens": 2048,
+            "reasoning": {"effort": "medium", "summary": "auto"},
+            "text": {"format": {"type": "json_schema", "name": "Answer", "schema": {"type": "object"}}},
+            "tool_choice": "auto",
+            "tools": [{"type": "function", "name": "repo_search", "description": "Search", "parameters": {}}],
+            "parallel_tool_calls": False,
+            "service_tier": "auto",
+            "prompt_cache_key": "bench-run",
+            "safety_identifier": "user-opaque-id",
+            "metadata": {"run_id": "r1"},
+            "store": False,
+        }
+        result = provider.invoke("Hello", "gpt-4.1", config)
+
+        assert result.ok is True
+        assert result.output == "Response hello"
+        assert result.usage.prompt_tokens == 12
+        assert result.usage.completion_tokens == 5
+        payload = captured["payload"]
+        assert payload["input"] == [{"role": "user", "content": "Hello"}]
+        assert "messages" not in payload
+        assert payload["max_output_tokens"] == 2048
+        assert payload["reasoning"] == {"effort": "medium", "summary": "auto"}
+        assert payload["text"]["format"]["type"] == "json_schema"
+        assert payload["parallel_tool_calls"] is False
+        assert payload["service_tier"] == "auto"
+        assert payload["prompt_cache_key"] == "bench-run"
+        assert payload["safety_identifier"] == "user-opaque-id"
+
+    def test_invoke_chat_completions_copies_latest_chat_fields(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        openai_compat_config: dict[str, Any],
+        sample_openai_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_openai_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, _headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = OpenAICompatProvider()
+        config = {
+            **openai_compat_config,
+            "max_completion_tokens": 123,
+            "reasoning_effort": "medium",
+            "response_format": {"type": "json_schema", "json_schema": {"name": "Answer", "schema": {}}},
+            "verbosity": "low",
+            "metadata": {"run_id": "chat"},
+            "service_tier": "auto",
+            "prompt_cache_key": "chat-cache",
+            "safety_identifier": "safety-id",
+            "store": False,
+            "parallel_tool_calls": True,
+        }
+        result = provider.invoke("Hello", "gpt-4", config)
+
+        assert result.ok is True
+        payload = captured["payload"]
+        assert payload["max_completion_tokens"] == 123
+        assert "max_tokens" not in payload
+        assert payload["reasoning_effort"] == "medium"
+        assert payload["response_format"]["type"] == "json_schema"
+        assert payload["verbosity"] == "low"
+        assert payload["parallel_tool_calls"] is True
 
     def test_health_success(
         self,
@@ -371,6 +486,39 @@ class TestOpenAICompatProviderExceptions:
 
         assert len(chunks) >= 1
         assert "".join(chunks) == "Hello! How can I help you today?"
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_handles_openai_responses_events(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        openai_compat_config: dict[str, Any],
+    ) -> None:
+        """Responses API SSE uses typed response.* events, not choices deltas."""
+        from polaris.tests.integration.llm.providers.conftest import _make_mock_stream_session
+
+        async def _mock_get_stream_session(*_args: Any, **_kwargs: Any) -> Any:
+            return _make_mock_stream_session(
+                [
+                    {"type": "response.reasoning_summary_text.delta", "delta": "checking"},
+                    {"type": "response.output_text.delta", "delta": "Hello"},
+                    {"type": "response.output_text.delta", "delta": " world"},
+                ]
+            )
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.openai_compat_provider.get_stream_session",
+            _mock_get_stream_session,
+        )
+
+        provider = OpenAICompatProvider()
+        chunks: list[str] = []
+        async for chunk in provider.invoke_stream(
+            "Hello", "gpt-4.1", {**openai_compat_config, "api_path": "/v1/responses"}
+        ):
+            chunks.append(chunk)
+
+        assert chunks[0] == f"{THINKING_PREFIX}checking"
+        assert "".join(chunk for chunk in chunks if not chunk.startswith(THINKING_PREFIX)) == "Hello world"
 
 
 class TestOpenAICompatProviderModelResolution:

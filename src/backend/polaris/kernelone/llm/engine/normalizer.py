@@ -20,7 +20,14 @@ class ResponseNormalizer:
     """
 
     _REASONING_KEYS = ("reasoning_content", "reasoning", "thinking", "analysis")
-    _LENGTH_FINISH_REASONS = {"length", "max_tokens", "token_limit", "output_token_limit"}
+    _LENGTH_FINISH_REASONS = {
+        "length",
+        "max_tokens",
+        "max_output_tokens",
+        "model_context_window_exceeded",
+        "token_limit",
+        "output_token_limit",
+    }
 
     @classmethod
     def extract_text(cls, payload: Any) -> str:
@@ -189,8 +196,14 @@ class ResponseNormalizer:
         if not isinstance(usage_data, dict):
             usage_data = {}
 
-        cached_tokens = usage_data.get("cached_tokens") or usage_data.get("cached_prompt_tokens") or 0
-        prompt_tokens = usage_data.get("prompt_tokens") or usage_data.get("input_tokens") or 0
+        cache_creation_tokens = int(usage_data.get("cache_creation_input_tokens") or 0)
+        cache_read_tokens = int(usage_data.get("cache_read_input_tokens") or 0)
+        cached_tokens = (
+            usage_data.get("cached_tokens") or usage_data.get("cached_prompt_tokens") or cache_read_tokens or 0
+        )
+        prompt_tokens = usage_data.get("prompt_tokens") or (
+            int(usage_data.get("input_tokens") or 0) + cache_creation_tokens + cache_read_tokens
+        )
         completion_tokens = usage_data.get("completion_tokens") or usage_data.get("output_tokens") or 0
 
         return Usage(

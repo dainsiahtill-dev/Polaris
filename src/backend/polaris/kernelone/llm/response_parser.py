@@ -27,7 +27,14 @@ class LLMResponseParser:
     """Normalize provider responses into plain text/metadata for downstream callers."""
 
     _REASONING_KEYS = ("reasoning_content", "reasoning", "thinking", "analysis")
-    _LENGTH_FINISH_REASONS = {"length", "max_tokens", "token_limit", "output_token_limit"}
+    _LENGTH_FINISH_REASONS = {
+        "length",
+        "max_tokens",
+        "max_output_tokens",
+        "model_context_window_exceeded",
+        "token_limit",
+        "output_token_limit",
+    }
 
     @classmethod
     def extract_text(cls, payload: Any) -> str:
@@ -60,6 +67,11 @@ class LLMResponseParser:
         if text:
             return text
 
+        output = payload.get("output")
+        text = cls._stringify_content(output)
+        if text:
+            return text
+
         for key in ("text", "response", "output"):
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
@@ -85,6 +97,14 @@ class LLMResponseParser:
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+            if isinstance(value, (list, dict)):
+                text = cls._stringify_content(value)
+                if text:
+                    return text
+        output = payload.get("output")
+        reasoning = cls._extract_reasoning_from_output(output)
+        if reasoning:
+            return reasoning
         return ""
 
     @classmethod
@@ -99,6 +119,11 @@ class LLMResponseParser:
         value = payload.get("finish_reason") or payload.get("stop_reason")
         if isinstance(value, str) and value.strip():
             return value.strip().lower()
+        incomplete = payload.get("incomplete_details")
+        if isinstance(incomplete, dict):
+            reason = incomplete.get("reason")
+            if isinstance(reason, str) and reason.strip():
+                return reason.strip().lower()
         return ""
 
     @classmethod
@@ -181,6 +206,34 @@ class LLMResponseParser:
                 value = message.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
+                if isinstance(value, (list, dict)):
+                    text = cls._stringify_content(value)
+                    if text:
+                        return text
+        return ""
+
+    @classmethod
+    def _extract_reasoning_from_output(cls, output: Any) -> str:
+        if isinstance(output, list):
+            items: list[str] = []
+            for item in output:
+                text = cls._extract_reasoning_from_output(item)
+                if text:
+                    items.append(text)
+            return "\n".join(items).strip()
+        if isinstance(output, dict):
+            item_type = str(output.get("type") or "").strip().lower()
+            if "reasoning" in item_type or "thinking" in item_type:
+                for key in ("summary", "text", "content"):
+                    value = output.get(key)
+                    text = cls._stringify_content(value)
+                    if text:
+                        return text
+            for key in cls._REASONING_KEYS:
+                value = output.get(key)
+                text = cls._stringify_content(value)
+                if text:
+                    return text
         return ""
 
     @classmethod

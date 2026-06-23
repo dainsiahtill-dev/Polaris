@@ -31,6 +31,7 @@ from polaris.kernelone.llm.provider_adapters.base import (
     DecodedProviderOutput,
     ProviderAdapter,
     ReasoningSummary,
+    decode_common_stream_error,
     decode_common_stream_transcript_items,
     serialize_input_payload,
     serialize_transcript_for_prompt,
@@ -111,6 +112,192 @@ def _extract_content_items(delta: dict[str, Any]) -> tuple[list[Any], list[dict[
                     "index": tc.get("index"),
                 }
             )
+
+    function_call = delta.get("function_call")
+    if isinstance(function_call, dict):
+        arguments, arguments_text, arguments_complete = serialize_input_payload(function_call.get("arguments"))
+        tool_calls_out.append(
+            {
+                "tool": str(function_call.get("name") or ""),
+                "arguments": arguments,
+                "arguments_text": arguments_text,
+                "arguments_complete": arguments_complete,
+                "call_id": str(delta.get("id") or function_call.get("id") or ""),
+            }
+        )
+
+    return transcript_items, tool_calls_out
+
+
+def _coerce_token_count(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _extract_usage_dict(raw: dict[str, Any]) -> dict[str, Any]:
+    usage = raw.get("usage")
+    if not isinstance(usage, dict):
+        response = raw.get("response")
+        if isinstance(response, dict):
+            usage = response.get("usage")
+    if not isinstance(usage, dict):
+        return {}
+
+    prompt_tokens = _coerce_token_count(usage.get("prompt_tokens") or usage.get("input_tokens"))
+    completion_tokens = _coerce_token_count(usage.get("completion_tokens") or usage.get("output_tokens"))
+    total_tokens = _coerce_token_count(usage.get("total_tokens"))
+    if total_tokens <= 0:
+        total_tokens = prompt_tokens + completion_tokens
+
+    usage_dict: dict[str, Any] = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+    prompt_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details")
+    if isinstance(prompt_details, dict):
+        cached_tokens = _coerce_token_count(prompt_details.get("cached_tokens"))
+        if cached_tokens:
+            usage_dict["cached_tokens"] = cached_tokens
+    for key in (
+        "prompt_tokens_details",
+        "completion_tokens_details",
+        "input_tokens_details",
+        "output_tokens_details",
+    ):
+        value = usage.get(key)
+        if isinstance(value, dict):
+            usage_dict[key] = dict(value)
+    return usage_dict
+
+
+def _extract_responses_content_block(block: dict[str, Any]) -> tuple[list[Any], list[dict[str, Any]]]:
+    block_type = str(block.get("type") or "").strip().lower()
+    transcript_items: list[Any] = []
+    tool_calls_out: list[dict[str, Any]] = []
+
+    if block_type in {"output_text", "text", "refusal"}:
+        for text in _flatten_text(block.get("text") or block.get("content")):
+            transcript_items.append(AssistantMessage(content=text))
+    elif "reason" in block_type or "think" in block_type or block_type == "summary_text":
+        for text in _flatten_text(block.get("text") or block.get("content") or block.get("summary")):
+            transcript_items.append(ReasoningSummary(content=text))
+    elif block_type in {"function_call", "tool_call"}:
+        arguments, arguments_text, arguments_complete = serialize_input_payload(block.get("arguments"))
+        tool_calls_out.append(
+            {
+                "tool": str(block.get("name") or block.get("tool") or ""),
+                "arguments": arguments,
+                "arguments_text": arguments_text,
+                "arguments_complete": arguments_complete,
+                "call_id": str(block.get("call_id") or block.get("id") or ""),
+                "index": block.get("index"),
+            }
+        )
+    else:
+        for text in _flatten_text(block):
+            transcript_items.append(AssistantMessage(content=text))
+
+    return transcript_items, tool_calls_out
+
+
+def _extract_responses_output_item(item: dict[str, Any]) -> tuple[list[Any], list[dict[str, Any]]]:
+    item_type = str(item.get("type") or "").strip().lower()
+    transcript_items: list[Any] = []
+    tool_calls_out: list[dict[str, Any]] = []
+
+    if item_type == "message":
+        content = item.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                nested_items, nested_tools = _extract_responses_content_block(block)
+                transcript_items.extend(nested_items)
+                tool_calls_out.extend(nested_tools)
+        elif content:
+            for text in _flatten_text(content):
+                transcript_items.append(AssistantMessage(content=text))
+    elif item_type == "reasoning":
+        for key in ("summary", "content", "text", "reasoning"):
+            value = item.get(key)
+            if isinstance(value, list):
+                for block in value:
+                    if isinstance(block, dict):
+                        nested_items, _ = _extract_responses_content_block(block)
+                        transcript_items.extend(
+                            ReasoningSummary(content=nested.content) if isinstance(nested, AssistantMessage) else nested
+                            for nested in nested_items
+                        )
+                    else:
+                        for text in _flatten_text(block):
+                            transcript_items.append(ReasoningSummary(content=text))
+            else:
+                for text in _flatten_text(value):
+                    transcript_items.append(ReasoningSummary(content=text))
+    elif item_type in {"function_call", "tool_call"}:
+        nested_items, nested_tools = _extract_responses_content_block(item)
+        transcript_items.extend(nested_items)
+        tool_calls_out.extend(nested_tools)
+    else:
+        content = item.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    nested_items, nested_tools = _extract_responses_content_block(block)
+                    transcript_items.extend(nested_items)
+                    tool_calls_out.extend(nested_tools)
+
+    return transcript_items, tool_calls_out
+
+
+def _extract_responses_output(raw: dict[str, Any]) -> tuple[list[Any], list[dict[str, Any]]]:
+    transcript_items: list[Any] = []
+    tool_calls_out: list[dict[str, Any]] = []
+
+    output = raw.get("output")
+    if isinstance(output, list):
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            nested_items, nested_tools = _extract_responses_output_item(item)
+            transcript_items.extend(nested_items)
+            tool_calls_out.extend(nested_tools)
+
+    for text in _flatten_text(raw.get("output_text")):
+        transcript_items.append(AssistantMessage(content=text))
+
+    return transcript_items, tool_calls_out
+
+
+def _extract_responses_stream_event(raw_event: dict[str, Any]) -> tuple[list[Any], list[dict[str, Any]]]:
+    event_type = str(raw_event.get("type") or raw_event.get("event") or "").strip().lower()
+    transcript_items: list[Any] = []
+    tool_calls_out: list[dict[str, Any]] = []
+
+    if event_type in {"response.output_item.added", "response.output_item.done"}:
+        item = raw_event.get("item")
+        if isinstance(item, dict):
+            return _extract_responses_output_item(item)
+    elif event_type in {"response.content_part.added", "response.content_part.done"}:
+        part = raw_event.get("part")
+        if isinstance(part, dict):
+            return _extract_responses_content_block(part)
+    elif event_type in {"response.function_call_arguments.delta", "response.function_call_arguments.done"}:
+        arguments_text = str(raw_event.get("delta") or raw_event.get("arguments") or "")
+        arguments, parsed_text, arguments_complete = serialize_input_payload(arguments_text)
+        tool_calls_out.append(
+            {
+                "tool": str(raw_event.get("name") or ""),
+                "arguments": arguments,
+                "arguments_text": parsed_text or arguments_text,
+                "arguments_complete": event_type.endswith(".done") and arguments_complete,
+                "call_id": str(raw_event.get("call_id") or raw_event.get("item_id") or ""),
+                "index": raw_event.get("output_index"),
+            }
+        )
 
     return transcript_items, tool_calls_out
 
@@ -302,20 +489,16 @@ class OpenAIResponsesAdapter(ProviderAdapter):
         choices = raw.get("choices", []) if isinstance(raw, dict) else []
         if choices and isinstance(choices[0], dict):
             choice = choices[0]
-            delta = choice.get("delta", {})
+            delta = choice.get("message") or choice.get("delta") or {}
 
             if isinstance(delta, dict):
                 transcript_items, tool_calls_out = _extract_content_items(delta)
 
-        usage_dict: dict[str, Any] = {}
         if isinstance(raw, dict):
-            usage = raw.get("usage")
-            if isinstance(usage, dict):
-                usage_dict = {
-                    "prompt_tokens": int(usage.get("prompt_tokens") or 0),
-                    "completion_tokens": int(usage.get("completion_tokens") or 0),
-                    "total_tokens": int(usage.get("total_tokens") or 0),
-                }
+            responses_items, responses_tools = _extract_responses_output(raw)
+            transcript_items.extend(responses_items)
+            tool_calls_out.extend(responses_tools)
+        usage_dict = _extract_usage_dict(raw) if isinstance(raw, dict) else {}
 
         return DecodedProviderOutput(
             transcript_items=transcript_items,
@@ -342,6 +525,25 @@ class OpenAIResponsesAdapter(ProviderAdapter):
         event_type = str(raw_event.get("event") or "").strip().lower()
         if event_type in ("ping", "session.complete"):
             return None
+        error = decode_common_stream_error(raw_event)
+        if error:
+            return DecodedProviderOutput(
+                transcript_items=[],
+                tool_calls=[],
+                usage=_extract_usage_dict(raw_event),
+                raw=raw_event,
+                error=error,
+            )
+
+        usage_dict = _extract_usage_dict(raw_event)
+        responses_items, responses_tools = _extract_responses_stream_event(raw_event)
+        if responses_items or responses_tools or usage_dict:
+            return DecodedProviderOutput(
+                transcript_items=responses_items,
+                tool_calls=responses_tools,
+                usage=usage_dict,
+                raw=raw_event,
+            )
 
         choices = raw_event.get("choices")
         if not isinstance(choices, list) or not choices:
@@ -351,7 +553,7 @@ class OpenAIResponsesAdapter(ProviderAdapter):
             return DecodedProviderOutput(
                 transcript_items=common_items,
                 tool_calls=[],
-                usage={},
+                usage=usage_dict,
                 raw=raw_event,
             )
 
@@ -366,7 +568,7 @@ class OpenAIResponsesAdapter(ProviderAdapter):
             return DecodedProviderOutput(
                 transcript_items=common_items,
                 tool_calls=[],
-                usage={},
+                usage=usage_dict,
                 raw=raw_event,
             )
 
@@ -383,7 +585,7 @@ class OpenAIResponsesAdapter(ProviderAdapter):
         return DecodedProviderOutput(
             transcript_items=transcript_items,
             tool_calls=tool_calls_out,
-            usage={},
+            usage=usage_dict,
             raw=raw_event,
         )
 
@@ -428,11 +630,4 @@ class OpenAIResponsesAdapter(ProviderAdapter):
         else:
             return {}
 
-        usage = raw.get("usage", {}) if isinstance(raw, dict) else {}
-        if not isinstance(usage, dict):
-            return {}
-        return {
-            "prompt_tokens": int(usage.get("prompt_tokens") or 0),
-            "completion_tokens": int(usage.get("completion_tokens") or 0),
-            "total_tokens": int(usage.get("total_tokens") or 0),
-        }
+        return _extract_usage_dict(raw)

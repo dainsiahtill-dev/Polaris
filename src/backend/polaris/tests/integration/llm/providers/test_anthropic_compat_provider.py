@@ -17,6 +17,7 @@ from polaris.infrastructure.llm.providers.anthropic_compat_provider import (
     _convert_tool_choice_to_anthropic,
     _convert_tools_to_anthropic,
 )
+from polaris.kernelone.llm.providers import THINKING_PREFIX
 from polaris.kernelone.llm.types import InvokeResult
 
 
@@ -154,8 +155,14 @@ class TestAnthropicCompatProviderToolConversion:
         assert result == {"type": "tool", "name": "get_weather"}
 
     def test_convert_tool_choice_none(self) -> None:
-        assert _convert_tool_choice_to_anthropic("none") is None
+        assert _convert_tool_choice_to_anthropic("none") == {"type": "none"}
         assert _convert_tool_choice_to_anthropic("") is None
+
+    def test_convert_tool_choice_disable_parallel_tool_use(self) -> None:
+        assert _convert_tool_choice_to_anthropic("auto", disable_parallel_tool_use=True) == {
+            "type": "auto",
+            "disable_parallel_tool_use": True,
+        }
 
     def test_invoke_sends_tool_choice_for_standard_anthropic_endpoint(
         self,
@@ -260,6 +267,74 @@ class TestAnthropicCompatProviderToolConversion:
         assert "tools" in captured["payload"]
         assert "tool_choice" not in captured["payload"]
 
+    def test_invoke_sends_latest_messages_api_fields(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+        sample_anthropic_response: dict[str, Any],
+    ) -> None:
+        captured: dict[str, Any] = {}
+        mock_resp = MagicMock()
+        mock_resp.ok = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = sample_anthropic_response
+        mock_resp.raise_for_status.return_value = None
+
+        def fake_post(_url: str, headers: dict[str, str], payload: dict[str, Any], _timeout: int) -> Any:
+            captured["headers"] = headers
+            captured["payload"] = payload
+            return mock_resp
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.provider_helpers._blocking_http_post",
+            fake_post,
+        )
+
+        provider = AnthropicCompatProvider()
+        config = {
+            **anthropic_compat_config,
+            "anthropic_beta": "structured-outputs-2025-11-13",
+            "system": [{"type": "text", "text": "You output JSON."}],
+            "cache_control": {"type": "ephemeral", "ttl": "1h"},
+            "container": "container_123",
+            "metadata": {"user_id": "opaque-user"},
+            "output_config": {"format": {"type": "json_schema", "schema": {"type": "object"}}},
+            "service_tier": "auto",
+            "stop_sequences": ["</done>"],
+            "thinking": {"type": "enabled", "budget_tokens": 2048, "display": "summarized"},
+            "top_k": 5,
+            "top_p": 0.7,
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "edit_file",
+                        "parameters": {"type": "object"},
+                        "strict": True,
+                    },
+                }
+            ],
+            "tool_choice": "none",
+        }
+        result = provider.invoke("Hello", "claude-opus-4-6", config)
+
+        assert result.ok is True
+        headers = captured["headers"]
+        assert headers["anthropic-version"] == "2023-06-01"
+        assert headers["anthropic-beta"] == "structured-outputs-2025-11-13"
+        payload = captured["payload"]
+        assert payload["system"] == [{"type": "text", "text": "You output JSON."}]
+        assert payload["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+        assert payload["container"] == "container_123"
+        assert payload["output_config"]["format"]["type"] == "json_schema"
+        assert payload["thinking"]["type"] == "enabled"
+        assert payload["service_tier"] == "auto"
+        assert payload["stop_sequences"] == ["</done>"]
+        assert payload["top_k"] == 5
+        assert payload["top_p"] == 0.7
+        assert payload["tool_choice"] == {"type": "none"}
+        assert payload["tools"][0]["strict"] is True
+
 
 class TestAnthropicCompatProviderEdgeCases:
     """Tests for edge cases and boundary conditions."""
@@ -296,6 +371,13 @@ class TestAnthropicCompatProviderEdgeCases:
         assert any("max_tokens" in w.lower() for w in result.warnings)
         assert result.normalized_config is not None
         assert result.normalized_config["max_tokens"] == 256
+
+    def test_validate_config_allows_zero_max_tokens_for_cache_prewarm(self) -> None:
+        config = {"base_url": "https://api.anthropic.com", "api_path": "/v1/messages", "max_tokens": 0}
+        result = AnthropicCompatProvider.validate_config(config)
+        assert result.valid is True
+        assert result.normalized_config is not None
+        assert result.normalized_config["max_tokens"] == 0
 
     def test_validate_config_invalid_headers_type(self) -> None:
         config = {"base_url": "https://api.anthropic.com", "api_path": "/v1/messages", "headers": "bad"}
@@ -486,3 +568,28 @@ class TestAnthropicCompatProviderExceptions:
 
         assert len(chunks) >= 1
         assert "".join(chunks) == "Hello! How can I help you today?"
+
+    @pytest.mark.asyncio
+    async def test_invoke_stream_handles_anthropic_thinking_delta_and_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        anthropic_compat_config: dict[str, Any],
+    ) -> None:
+        async def _mock_invoke_stream_with_retry(*_args: Any, **_kwargs: Any) -> Any:
+            yield {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "reason"}}
+            yield {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "answer"}}
+            yield {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
+
+        monkeypatch.setattr(
+            "polaris.infrastructure.llm.providers.anthropic_compat_provider.invoke_stream_with_retry",
+            _mock_invoke_stream_with_retry,
+        )
+
+        provider = AnthropicCompatProvider()
+        chunks: list[str] = []
+        async for chunk in provider.invoke_stream("Hello", "claude-3-haiku", anthropic_compat_config):
+            chunks.append(chunk)
+
+        assert chunks[0] == f"{THINKING_PREFIX}reason"
+        assert "answer" in chunks
+        assert chunks[-1] == "Error: Overloaded"

@@ -819,7 +819,18 @@ def invoke_with_retry(
                             f"{status_code} Server Error from {url}: {error_body[:500] if error_body else '(empty)'}"
                         ),
                     )
-                    response.raise_for_status()
+                if isinstance(status_code, int) and 400 <= status_code < 500:
+                    breaker.on_failure()
+                    latency_ms = int((_clock.time() - start) * 1000)
+                    usage = estimate_usage(prompt, "")
+                    return InvokeResult(
+                        ok=False,
+                        output="",
+                        latency_ms=latency_ms,
+                        usage=usage,
+                        error=f"{status_code} Client Error from {url}: {error_body[:500] if error_body else '(empty)'}",
+                    )
+                response.raise_for_status()
             data = response.json()
             latency_ms = int((_clock.time() - start) * 1000)
             output = extract_output(data)

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-06-23T18:29:21+08:00",
+  "updated_at": "2026-06-23T19:47:00+08:00",
   "defects": [
     {
       "id": "DEFECT-director-idle-unresolved-taskboard-prevents-quality-handoff",
@@ -565,19 +565,27 @@
     },
     {
       "id": "DEFECT-20260623-l1-01-director-repair-partial-and-taskboard-claim",
-      "status": "open",
+      "status": "platform_fix_verified_locally_pending_fresh_bench",
       "symptom": "L1-01 Director-only resume with trusted PM contract and CE blueprints reached real Director execution but did not produce a runnable project or QA verdict.",
-      "physical_error": "Factory bench run codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230 ended 0/1 passed after 859.3s. Static artifact checks passed, LLM route audit passed, and 6 TypeScript source files were generated, but chain_state=partial, qa_ran=false, npm run build failed, npm start was not executed, and Director dispatch failed with task-2 error: Director must claim TaskBoard task before execution.",
+      "physical_error": "Factory bench run codex-l1-01-anthropic-compat-minimax-m3-director-resume-202606231934 ended 0/1 passed after 94.7s. LLM route audit observed 30 Director calls on anthropic_compat-1782212251463|MiniMax-M3. Director generated 9 code/config files and 6 TypeScript source files; npm install, npm run build, and npm run test ran, but npm start failed because package.json type=module conflicts with tsconfig module=commonjs. Director task 1 failed director_materialization_quality_failed after package.json scripts.test referenced missing tests/**/*.test.ts and scripts.verify referenced missing scripts/verify.ts; task 2 remained blocked by task 1 and exact TaskBoard claim correctly failed closed.",
       "root_cause_category": "Director Execution",
-      "platform_gap": "Director materialization repair now reaches write tools, but multi-error repair does not reliably converge across package scripts, cross-file exports, type-shape consistency, and subsequent TaskBoard task claiming. ContextOS also reports raw tool-result metadata in the projected data plane during repair.",
-      "fix_strategy": "Harden materialization repair batching so coupled package/index/main/type errors are repaired as one coherent source-level batch or deterministically transformed without another slow LLM turn; fix TaskBoard claim state after partial repair; keep Director-only resume from PM/CE frozen evidence; ensure ContextOS repair projection uses prompt-safe summaries instead of raw director_policy/package_diff receipts; rerun L1-01 Director-only resume on the same workspace.",
+      "platform_gap": "Director materialization quality repair treated npm package script missing local entrypoint errors as package.json-only semantic failures. For test/verify scripts, this forced five repair attempts to rewrite package.json while the real missing source entrypoints were never added to missing_target_files or the forced write_file repair batch. The TaskBoard claim error was a correct dependency fail-closed result after task 1 failed.",
+      "fix_strategy": "Parse npm package manifest script missing local entrypoint errors during quality repair target selection. Convert test globs such as tests/**/*.test.ts into concrete safe source targets such as tests/generated.test.ts, allow scripts/verify.ts and src/tests sources, filter generated outputs such as dist/build/out/node_modules, merge these missing script entrypoints into explicit missing targets, and keep the existing forced write_file batch mechanism.",
       "fix_files": [
         "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
-        "src/backend/polaris/cells/roles/adapters/internal/director/execution.py",
-        "src/backend/polaris/cells/factory/pipeline/internal/factory_stage_executor.py",
-        "src/backend/scripts/factory_bench/run_factory_bench.py"
+        "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
       ],
       "verification": [
+        "FACTORY_BENCH_RUN_ID=codex-l1-01-anthropic-compat-minimax-m3-director-resume-202606231934 PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir /home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229 --start-from director --timeout 5400 --real-run-timeout 120 --max-failed 1 -> FAIL: 0/1 passed, wall clock 94.7s",
+        "factory_audits.json: llm_route_audit ok with observed_bindings=[anthropic_compat-1782212251463|MiniMax-M3]; real_run_gate failed at entrypoint_smoke; QA verdict missing; integration_qa_passed failed",
+        "TaskBoard evidence: task_1.json status=failed last_execution_error=director_materialization_quality_failed; task_2.json status=blocked blocked_by=[1]; task_3.json status=blocked blocked_by=[2]",
+        "CodeGraph inspected execute_director_task, _claim_task_with_retry, TaskRuntimeService.claim_execution, _run_materialization_quality_repair_retry, _missing_materialization_quality_repair_target_files, _semantic_quality_repair_target_files before patch.",
+        "python -m ruff check src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -> All checks passed",
+        "python -m ruff format src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -> 1 file reformatted; rerun format --check quality_gate.py test_director_adapter_pure.py -> 2 files already formatted",
+        "PYTHONPATH=src/backend python -m mypy src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py --ignore-missing-imports -> Success",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -k 'package_manifest_quality_error_preserves_missing_targets or package_manifest_missing_test_and_verify_scripts_create_entrypoint_targets or package_manifest_quality_error_targets_existing_path_when_changed_files_empty' -> 3 passed",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -> 259 passed, 2 warnings in 37.62s",
         "FACTORY_BENCH_RUN_ID=codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230 PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir /home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229 --start-from director --timeout 5400 --real-run-timeout 120 --max-failed 1 -> FAIL: 0/1 passed, wall clock 859.3s",
         "factory_audits.json: llm_route_audit ok; real_run_gate failed because npm run build returned code 2; QA verdict missing; integration_qa_passed failed",
         "Runtime journal director-9cf16c939272: write_file materialized package.json, tsconfig.json, src/index.ts, src/main.ts, firefly.ts, flower.ts, moon.ts, humidity.ts; later repair call 52b45655 ended call_cancelled after 179957 ms",
@@ -585,28 +593,47 @@
       ],
       "evidence_paths": [
         "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json",
+        "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/tasks/task_1.json",
+        "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/tasks/task_2.json",
+        "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/tasks/task_3.json",
         "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-9cf16c939272/logs/journal.enriched.jsonl",
+        "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-06415a7bceac/results/director.result.json",
+        "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-b859dfc75673/results/director.result.json",
         "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01/.polaris/history/runs/director-9cf16c939272/results/director.result.json",
         ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230/L1-01/evidence_bundle.json",
         ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230/L1-01/agent_01.log"
       ],
-      "next_action": "Use CodeGraph to inspect the Director repair target selection, tool-result projection hygiene, and TaskBoard claim path; patch only Polaris platform code; run ruff, mypy, focused pytest, then rerun L1-01 with --start-from director against the same PM/CE evidence workspace."
+      "next_action": "Restart backend to load quality_gate.py, delete only generated L1-01 code artifacts while preserving PM/CE evidence, then rerun L1-01 with --start-from director against the same workspace. Expected next check: quality_repair.summary.missing_target_files includes tests/generated.test.ts and scripts/verify.ts rather than package.json-only repair loops."
     }
   ],
   "latest_evidence": {
     "latest_bench_root": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229",
     "latest_bench_workspace": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/L1-01",
-    "bench_session_id": "bench-1782209562-8640ba",
-    "factory_run_id": "factory_5ced2775ee44",
-    "platform_fix_result": "Latest real L1-01 Director-only resume no longer reruns PM/CE and passes LLM route audit with MiniMax-M3, but still fails Director dispatch after partial materialization repair; real_run_gate fails because npm run build fails, QA is not reached, and task-2 cannot be claimed.",
+    "bench_session_id": "bench-1782214491-04ab55",
+    "factory_run_id": "factory_a6fc6bb25b09",
+    "platform_fix_result": "Latest real L1-01 Director-only resume uses AnthropicCompat MiniMax-M3 and passes LLM route audit. It materializes 9 files and runs npm install/build/test, but task 1 fails materialization quality because package scripts reference missing test/verify entrypoints; task 2 remains dependency-blocked, and npm start fails on ESM/CommonJS mismatch. Platform fix now locally verifies that missing npm script entrypoints enter the forced write_file repair batch.",
     "last_real_bench_session_id": "bench-1782189319-a7f673",
     "last_real_bench_workspace": "/home/dains/Temp/factory-bench-l1-01-post-fanout-partition-20260623123500/L1-01",
     "last_real_bench_audit": "/home/dains/Temp/factory-bench-l1-01-post-fanout-partition-20260623123500/factory_audits.json",
     "last_real_bench_result": "L1-01 PASS in 799.4s; real_run_gate ok; npm run build/test/start passed; LLM route audit observed both Q6 Director bindings.",
     "last_context_snapshot_with_control_leak": "/home/dains/.cache/polaris/.polaris/projects/l1-01-dd081ca0afa0/runtime/contexts/2b/2bdf025d509eeb687b747376",
     "last_updated_by": "codex",
-    "latest_director_run_id": "director-9cf16c939272",
-    "latest_director_journal": "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-9cf16c939272/logs/journal.enriched.jsonl",
+    "latest_director_run_id": "director-06415a7bceac",
+    "latest_director_journal": "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-06415a7bceac/logs/journal.enriched.jsonl",
+    "latest_director_result": "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-b859dfc75673/results/director.result.json",
+    "latest_taskboard_evidence": [
+      "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/tasks/task_1.json",
+      "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/tasks/task_2.json",
+      "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/tasks/task_3.json"
+    ],
+    "latest_local_platform_fix": {
+      "checked_at": "2026-06-23T19:47:00+08:00",
+      "files": [
+        "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+      ],
+      "result": "npm package script missing local entrypoints are parsed into missing repair targets; tests/**/*.test.ts maps to tests/generated.test.ts; scripts/verify.ts is preserved; dist/build/out/node_modules are filtered."
+    },
     "latest_opencode_evidence_bundle": ".polaris/opencode-audit-requests/codex-l1-01-minimax-m3-director-resume-repair-pin-20260623181230/L1-01/evidence_bundle.json",
     "latest_provider_probe": {
       "checked_at": "2026-06-23T13:50:48+08:00",
@@ -622,6 +649,41 @@
       },
       "classification": "Runtime Environment / provider gateway error, not Director prompt/tool failure"
     },
+    "latest_llm_binding_update": {
+      "checked_at": "2026-06-23T19:28:40+08:00",
+      "provider_id": "anthropic_compat-1782212251463",
+      "provider_name": "anthropic_compat - MiniMax-M3",
+      "provider_type": "anthropic_compat",
+      "model": "MiniMax-M3",
+      "roles_switched": [
+        "director",
+        "qa"
+      ],
+      "runtime_status": {
+        "state": "READY",
+        "factory_state": "READY",
+        "blocked_roles": [],
+        "factory_blocked_roles": []
+      },
+      "readiness_verification": [
+        "POST /v2/llm/test role=director suites=[connectivity] -> PASS, test_run_id=3ea745a1, latency_ms=887",
+        "POST /v2/llm/test role=qa suites=[connectivity] -> PASS, test_run_id=0121338d, latency_ms=912",
+        "GET /v2/llm/status -> state=READY, factory_state=READY"
+      ],
+      "gate_failure_closed": {
+        "symptom": "ruff format --check failed after the AnthropicCompat/OpenAICompat protocol update.",
+        "physical_error": "Would reformat: src/backend/polaris/tests/integration/llm/providers/test_openai_compat_provider.py",
+        "root_cause_category": "Runtime Environment",
+        "fix_strategy": "Run ruff format on the single affected test file and rerun format, ruff check, mypy, and pytest.",
+        "verification": [
+          "PYTHONPATH=src/backend python -m ruff format src/backend/polaris/tests/integration/llm/providers/test_openai_compat_provider.py -> 1 file reformatted",
+          "PYTHONPATH=src/backend python -m ruff format --check protocol provider/parser files and tests -> 8 files already formatted",
+          "PYTHONPATH=src/backend python -m ruff check protocol provider/parser files and tests -> All checks passed",
+          "PYTHONPATH=src/backend python -m mypy protocol provider/parser source files --ignore-missing-imports -> Success",
+          "PYTHONPATH=src/backend python -m pytest -q provider protocol integration tests and response parser tests -> 66 passed"
+        ]
+      }
+    },
     "latest_projection_fix": {
       "checked_at": "2026-06-23T13:50:48+08:00",
       "files": [
@@ -631,5 +693,5 @@
       "result": "runtime_dispatch skipped Director bindings preserve binding_id in role bindings and skipped_bindings projections"
     }
   },
-  "last_updated_at": "2026-06-23T10:29:21+00:00"
+  "last_updated_at": "2026-06-23T11:47:00+00:00"
 }

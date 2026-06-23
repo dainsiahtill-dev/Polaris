@@ -81,6 +81,83 @@ def test_openai_adapter_decodes_common_provider_stream_shapes(
     assert item.content == expected_text
 
 
+def test_openai_adapter_decodes_responses_api_payload_and_usage() -> None:
+    """Responses API non-stream payloads should produce text, reasoning, tools, and usage."""
+
+    decoded = OpenAIResponsesAdapter().decode_response(
+        {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "final answer"}],
+                },
+                {"type": "reasoning", "summary": [{"type": "summary_text", "text": "checked constraints"}]},
+                {
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "repo_tree",
+                    "arguments": '{"path":"."}',
+                },
+            ],
+            "usage": {
+                "input_tokens": 12,
+                "output_tokens": 5,
+                "input_tokens_details": {"cached_tokens": 4},
+            },
+        }
+    )
+
+    assert any(
+        isinstance(item, AssistantMessage) and item.content == "final answer" for item in decoded.transcript_items
+    )
+    assert any(
+        isinstance(item, ReasoningSummary) and item.content == "checked constraints"
+        for item in decoded.transcript_items
+    )
+    assert decoded.tool_calls == [
+        {
+            "tool": "repo_tree",
+            "arguments": {"path": "."},
+            "arguments_text": '{"path":"."}',
+            "arguments_complete": True,
+            "call_id": "call-1",
+            "index": None,
+        }
+    ]
+    assert decoded.usage["prompt_tokens"] == 12
+    assert decoded.usage["completion_tokens"] == 5
+    assert decoded.usage["total_tokens"] == 17
+    assert decoded.usage["cached_tokens"] == 4
+
+
+def test_openai_adapter_decodes_responses_stream_usage_and_function_args() -> None:
+    """Responses stream function-call and final usage events should not be dropped."""
+
+    args_delta = OpenAIResponsesAdapter().decode_stream_event(
+        {
+            "type": "response.function_call_arguments.delta",
+            "call_id": "call-1",
+            "name": "read_file",
+            "delta": '{"path"',
+            "output_index": 0,
+        }
+    )
+    completed = OpenAIResponsesAdapter().decode_stream_event(
+        {
+            "type": "response.completed",
+            "response": {"usage": {"input_tokens": 21, "output_tokens": 7, "total_tokens": 28}},
+        }
+    )
+
+    assert args_delta is not None
+    assert args_delta.tool_calls[0]["tool"] == "read_file"
+    assert args_delta.tool_calls[0]["arguments_text"] == '{"path"'
+    assert args_delta.tool_calls[0]["arguments_complete"] is False
+    assert completed is not None
+    assert completed.usage["prompt_tokens"] == 21
+    assert completed.usage["completion_tokens"] == 7
+
+
 @pytest.mark.parametrize(
     ("raw_event", "expected_text", "expected_item_type"),
     [
@@ -108,6 +185,63 @@ def test_anthropic_adapter_decodes_common_compat_stream_shapes(
     item = decoded.transcript_items[0]
     assert isinstance(item, expected_item_type)
     assert item.content == expected_text
+
+
+def test_anthropic_adapter_decodes_thinking_and_cache_usage() -> None:
+    """Anthropic usage must include cache creation/read tokens in prompt cost."""
+
+    decoded = AnthropicMessagesAdapter().decode_response(
+        {
+            "content": [
+                {"type": "thinking", "thinking": "private chain summary"},
+                {"type": "redacted_thinking", "data": "opaque"},
+                {"type": "text", "text": "visible"},
+            ],
+            "usage": {
+                "input_tokens": 10,
+                "cache_creation_input_tokens": 3,
+                "cache_read_input_tokens": 5,
+                "output_tokens": 2,
+            },
+        }
+    )
+
+    assert any(
+        isinstance(item, ReasoningSummary) and item.content == "private chain summary"
+        for item in decoded.transcript_items
+    )
+    assert any(isinstance(item, AssistantMessage) and item.content == "visible" for item in decoded.transcript_items)
+    assert all(getattr(item, "content", "") != "opaque" for item in decoded.transcript_items)
+    assert decoded.usage["prompt_tokens"] == 18
+    assert decoded.usage["completion_tokens"] == 2
+    assert decoded.usage["total_tokens"] == 20
+    assert decoded.usage["cached_tokens"] == 5
+
+
+def test_anthropic_adapter_decodes_message_delta_usage_and_error() -> None:
+    """Anthropic stream final usage and error events should be structured."""
+
+    usage_event = AnthropicMessagesAdapter().decode_stream_event(
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {
+                "input_tokens": 6,
+                "cache_creation_input_tokens": 2,
+                "cache_read_input_tokens": 1,
+                "output_tokens": 4,
+            },
+        }
+    )
+    error_event = AnthropicMessagesAdapter().decode_stream_event(
+        {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}
+    )
+
+    assert usage_event is not None
+    assert usage_event.usage["prompt_tokens"] == 9
+    assert usage_event.usage["completion_tokens"] == 4
+    assert error_event is not None
+    assert error_event.error == "Overloaded"
 
 
 @pytest.mark.asyncio
@@ -166,3 +300,49 @@ async def test_stream_executor_tool_call_event_does_not_crash_on_length_audit(mo
 
     assert StreamEventType.TOOL_CALL in observed
     assert StreamEventType.COMPLETE in observed
+
+
+@pytest.mark.asyncio
+async def test_stream_executor_uses_provider_stream_usage(monkeypatch) -> None:
+    """Provider final usage from structured stream should reach the public complete event."""
+
+    class _FakeProvider:
+        async def invoke_stream_events(self, prompt_input: str, model: str, invoke_cfg: dict[str, Any]):
+            yield {"type": "response.output_text.delta", "delta": "ok"}
+            yield {
+                "type": "response.completed",
+                "response": {"usage": {"input_tokens": 11, "output_tokens": 3, "total_tokens": 14}},
+            }
+
+    class _FakeProviderManager:
+        def get_provider_instance(self, provider_type: str) -> _FakeProvider:
+            return _FakeProvider()
+
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.providers.get_provider_manager",
+        _FakeProviderManager,
+    )
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.engine.model_catalog.ModelCatalog._resolve_context_window",
+        lambda self, *a, **kw: 128000,
+    )
+    monkeypatch.setattr(
+        "polaris.kernelone.llm.engine.model_catalog.ModelCatalog._resolve_output_limit",
+        lambda self, *a, **kw: 4096,
+    )
+
+    executor = StreamExecutor(workspace=".")
+    monkeypatch.setattr(executor, "_resolve_provider_model", lambda request: ("fake_provider", "fake-model"))
+    monkeypatch.setattr(executor, "_get_provider_config", lambda provider_id: {"type": "openai_compat"})
+    monkeypatch.setattr(executor, "_build_invoke_config", lambda provider_cfg, options: {"timeout": 5})
+
+    request = AIRequest(task_type=TaskType.GENERATION, role="director", input="hello")
+    complete_meta: dict[str, Any] | None = None
+    async for event in executor.invoke_stream(request):
+        if event.type == StreamEventType.COMPLETE:
+            complete_meta = event.meta
+
+    assert complete_meta is not None
+    assert complete_meta["usage"]["prompt_tokens"] == 11
+    assert complete_meta["usage"]["completion_tokens"] == 3
+    assert complete_meta["usage"]["total_tokens"] == 14

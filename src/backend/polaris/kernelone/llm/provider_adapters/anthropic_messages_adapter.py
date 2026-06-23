@@ -39,6 +39,7 @@ from polaris.kernelone.llm.provider_adapters.base import (
     DecodedProviderOutput,
     ProviderAdapter,
     ReasoningSummary,
+    decode_common_stream_error,
     decode_common_stream_transcript_items,
     serialize_input_payload,
     serialize_transcript_for_prompt,
@@ -46,6 +47,46 @@ from polaris.kernelone.llm.provider_adapters.base import (
 from polaris.kernelone.llm.types import InvokeResult
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_token_count(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _extract_usage_dict(raw: dict[str, Any]) -> dict[str, Any]:
+    usage = raw.get("usage")
+    if not isinstance(usage, dict):
+        message = raw.get("message")
+        if isinstance(message, dict):
+            usage = message.get("usage")
+    if not isinstance(usage, dict):
+        return {}
+
+    input_tokens = _coerce_token_count(usage.get("input_tokens") or usage.get("prompt_tokens"))
+    cache_creation_input_tokens = _coerce_token_count(usage.get("cache_creation_input_tokens"))
+    cache_read_input_tokens = _coerce_token_count(usage.get("cache_read_input_tokens"))
+    output_tokens = _coerce_token_count(usage.get("output_tokens") or usage.get("completion_tokens"))
+    prompt_tokens = input_tokens + cache_creation_input_tokens + cache_read_input_tokens
+    total_tokens = _coerce_token_count(usage.get("total_tokens"))
+    if total_tokens <= 0:
+        total_tokens = prompt_tokens + output_tokens
+
+    usage_dict: dict[str, Any] = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "input_tokens": input_tokens,
+        "cache_creation_input_tokens": cache_creation_input_tokens,
+        "cache_read_input_tokens": cache_read_input_tokens,
+        "cached_tokens": cache_read_input_tokens,
+    }
+    server_tool_use = usage.get("server_tool_use")
+    if isinstance(server_tool_use, dict):
+        usage_dict["server_tool_use"] = dict(server_tool_use)
+    return usage_dict
 
 
 def _build_anthropic_messages_from_transcript(
@@ -280,6 +321,15 @@ class AnthropicMessagesAdapter(ProviderAdapter):
                 if text:
                     transcript_items.append(AssistantMessage(content=text))
 
+            elif block_type == "thinking":
+                thinking = str(block.get("thinking") or block.get("text") or "")
+                if thinking:
+                    transcript_items.append(ReasoningSummary(content=thinking))
+
+            elif block_type == "redacted_thinking":
+                # Anthropic redacted thinking carries encrypted provider data; keep it out of UI text.
+                continue
+
             elif block_type == "tool_use":
                 # Tool call from assistant
                 tool_calls_out.append(
@@ -290,18 +340,7 @@ class AnthropicMessagesAdapter(ProviderAdapter):
                     }
                 )
 
-        # Usage: Anthropic uses input_tokens / output_tokens / total_tokens
-        usage_dict: dict[str, Any] = {}
-        usage = raw.get("usage")
-        if isinstance(usage, dict):
-            usage_dict = {
-                "prompt_tokens": int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0),
-                "completion_tokens": int(usage.get("output_tokens") or usage.get("completion_tokens") or 0),
-                "total_tokens": int(
-                    usage.get("total_tokens")
-                    or (int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0))
-                ),
-            }
+        usage_dict = _extract_usage_dict(raw)
 
         return DecodedProviderOutput(
             transcript_items=transcript_items,
@@ -332,14 +371,36 @@ class AnthropicMessagesAdapter(ProviderAdapter):
 
         if event_type == "ping":
             return None
+        error = decode_common_stream_error(raw_event)
+        if error:
+            return DecodedProviderOutput(
+                transcript_items=[],
+                tool_calls=[],
+                usage=_extract_usage_dict(raw_event),
+                raw=raw_event,
+                error=error,
+            )
+
+        usage_dict = _extract_usage_dict(raw_event)
 
         if event_type in ("message_stop", "content_block_stop"):
-            return None
+            if not usage_dict:
+                return None
+            return DecodedProviderOutput(
+                transcript_items=[],
+                tool_calls=[],
+                usage=usage_dict,
+                raw=raw_event,
+            )
 
         transcript_items: list[Any] = []
         tool_calls_out: list[dict[str, Any]] = []
 
-        if event_type == "content_block_delta":
+        if event_type in {"message_start", "message_delta"}:
+            if not usage_dict:
+                return None
+
+        elif event_type == "content_block_delta":
             delta = raw_event.get("delta", {})
             if not isinstance(delta, dict):
                 delta = {}
@@ -370,6 +431,8 @@ class AnthropicMessagesAdapter(ProviderAdapter):
                             "content_block_index": raw_event.get("index"),
                         }
                     )
+            elif delta_type in {"signature_delta", "redacted_thinking"}:
+                return None
 
         elif event_type == "content_block_start":
             block = raw_event.get("content_block", {})
@@ -387,20 +450,22 @@ class AnthropicMessagesAdapter(ProviderAdapter):
                             "content_block_index": raw_event.get("index"),
                         }
                     )
-
-        elif event_type == "message_delta":
-            # Final message data (e.g., stop reason)
-            pass
+                elif block_type == "thinking":
+                    thinking = str(block.get("thinking") or "")
+                    if thinking:
+                        transcript_items.append(ReasoningSummary(content=thinking))
+                elif block_type == "redacted_thinking":
+                    return None
 
         if not transcript_items and not tool_calls_out:
             transcript_items = decode_common_stream_transcript_items(raw_event)
-            if not transcript_items:
+            if not transcript_items and not usage_dict:
                 return None
 
         return DecodedProviderOutput(
             transcript_items=transcript_items,
             tool_calls=tool_calls_out,
-            usage={},
+            usage=usage_dict,
             raw=raw_event,
         )
 
@@ -454,14 +519,4 @@ class AnthropicMessagesAdapter(ProviderAdapter):
         else:
             return {}
 
-        usage = raw.get("usage", {}) if isinstance(raw, dict) else {}
-        if not isinstance(usage, dict):
-            return {}
-
-        input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
-        output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
-        return {
-            "prompt_tokens": input_tokens,
-            "completion_tokens": output_tokens,
-            "total_tokens": int(usage.get("total_tokens") or (input_tokens + output_tokens)),
-        }
+        return _extract_usage_dict(raw)

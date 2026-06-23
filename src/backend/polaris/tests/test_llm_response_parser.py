@@ -35,6 +35,43 @@ def test_parser_handles_anthropic_style_payload():
     assert LLMResponseParser.extract_finish_reason(payload) == "end_turn"
 
 
+def test_parser_handles_openai_responses_payload():
+    payload = {
+        "object": "response",
+        "status": "completed",
+        "output": [
+            {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "checked"}],
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": '{"reply":"ok"}', "annotations": []}],
+            },
+        ],
+        "usage": {"input_tokens": 20, "output_tokens": 3, "total_tokens": 23},
+    }
+
+    assert LLMResponseParser.extract_text(payload) == '{"reply":"ok"}'
+    assert LLMResponseParser.extract_reasoning(payload) == "checked"
+
+
+def test_parser_handles_openai_responses_incomplete_reason():
+    payload = {
+        "object": "response",
+        "status": "incomplete",
+        "incomplete_details": {"reason": "max_output_tokens"},
+    }
+
+    assert LLMResponseParser.extract_finish_reason(payload) == "max_output_tokens"
+    assert LLMResponseParser.is_length_finish_reason("max_output_tokens") is True
+
+
+def test_parser_treats_context_window_exceeded_as_length_finish():
+    assert LLMResponseParser.is_length_finish_reason("model_context_window_exceeded") is True
+
+
 def test_parser_extracts_json_from_wrapped_text():
     text = 'before```json\n{"a":1,"b":[2,3]}\n```after'
     parsed = LLMResponseParser.extract_json_object(text)

@@ -231,6 +231,41 @@ def decode_common_stream_transcript_items(raw_event: Any) -> list[Any]:
     return items
 
 
+def decode_common_stream_error(raw_event: Any) -> str | None:
+    """Extract provider-native stream errors without turning them into text."""
+
+    if not isinstance(raw_event, dict):
+        return None
+
+    event_type = str(raw_event.get("type") or raw_event.get("event") or "").strip().lower()
+    error_value = raw_event.get("error")
+    if event_type == "error" or error_value:
+        if isinstance(error_value, dict):
+            message = str(error_value.get("message") or error_value.get("type") or error_value.get("code") or "")
+            return message.strip() or "Provider stream error"
+        message = str(error_value or raw_event.get("message") or "")
+        return message.strip() or "Provider stream error"
+
+    if event_type in {"response.failed", "response.incomplete"}:
+        response = raw_event.get("response")
+        if not isinstance(response, dict):
+            response = raw_event
+        response_error = response.get("error")
+        if isinstance(response_error, dict):
+            message = str(response_error.get("message") or response_error.get("code") or "")
+            if message.strip():
+                return message.strip()
+        incomplete = response.get("incomplete_details")
+        if isinstance(incomplete, dict):
+            reason = str(incomplete.get("reason") or "")
+            if reason.strip():
+                return f"Response incomplete: {reason.strip()}"
+        status = str(response.get("status") or event_type)
+        return status.strip() or "Provider stream error"
+
+    return None
+
+
 class ConversationStateLike(Protocol):
     """Minimal state shape required by provider adapters."""
 
@@ -251,6 +286,7 @@ class DecodedProviderOutput:
     tool_calls: list[Any] = field(default_factory=list)
     usage: dict[str, Any] = field(default_factory=dict)
     raw: Any = None
+    error: str | None = None
 
 
 class ProviderAdapter(ABC):

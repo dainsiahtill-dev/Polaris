@@ -92,8 +92,14 @@ def _stream_collection_limit_from_env() -> int:
 def normalize_stream_usage(raw_usage: dict[str, Any] | None) -> Usage:
     """Normalize stream usage payload with cached token support."""
     payload = dict(raw_usage or {})
-    cached_tokens = int(payload.get("cached_tokens") or payload.get("cached_prompt_tokens") or 0)
-    prompt_tokens = int(payload.get("prompt_tokens") or payload.get("input_tokens") or 0)
+    cache_creation_tokens = int(payload.get("cache_creation_input_tokens") or 0)
+    cache_read_tokens = int(payload.get("cache_read_input_tokens") or 0)
+    cached_tokens = int(payload.get("cached_tokens") or payload.get("cached_prompt_tokens") or cache_read_tokens or 0)
+    prompt_tokens = int(
+        payload.get("prompt_tokens")
+        or (int(payload.get("input_tokens") or 0) + cache_creation_tokens + cache_read_tokens)
+        or 0
+    )
     completion_tokens = int(payload.get("completion_tokens") or payload.get("output_tokens") or 0)
     total_tokens = int(payload.get("total_tokens") or 0)
     if total_tokens <= 0:
@@ -678,6 +684,7 @@ class StreamExecutor:
         collected_reasoning = ""
         chunk_count = 0
         emitted_tool_calls: list[dict[str, Any]] = []
+        stream_usage: Usage | None = None
 
         stream_overall_timeout = self._config.timeout_sec
         stream_start_time = time.time()
@@ -708,6 +715,13 @@ class StreamExecutor:
                 )
                 async for event in upstream_stream:
                     _check_overall_timeout()
+                    if (
+                        event.type == StreamEventType.COMPLETE
+                        and event.meta
+                        and event.meta.get("_internal_provider_usage")
+                    ):
+                        stream_usage = normalize_stream_usage(event.meta.get("usage"))
+                        continue
                     chunk_count += 1
                     if event.type == StreamEventType.CHUNK and event.chunk:
                         collected_output = _append_bounded_stream_text(
@@ -861,9 +875,10 @@ class StreamExecutor:
                 logger.warning("[stream-executor] telemetry record_stream_end failed (unexpected): %s", exc)
 
         structured = ResponseNormalizer.extract_json_object(collected_output)
+        final_usage = stream_usage or Usage.estimate(prompt_input, collected_output)
         response = AIResponse.success(
             output=collected_output,
-            usage=Usage.estimate(prompt_input, collected_output),
+            usage=final_usage,
             latency_ms=latency_ms,
             structured=structured,
             trace_id=trace_id,
@@ -889,6 +904,7 @@ class StreamExecutor:
                 "tool_calls": safe_observability_payload(emitted_tool_calls),
                 "structured": safe_observability_payload(structured),
                 "latency_ms": latency_ms,
+                "usage": final_usage.to_dict(),
                 "model_spec": model_spec.to_dict(),
                 "token_budget": safe_token_budget,
             }
@@ -1011,6 +1027,7 @@ class StreamExecutor:
         tool_call_ordinal = 0
         raw_tool_delta_ordinal = 0
         stream_timeout = max(1, float(invoke_cfg.get("timeout", 300)))
+        stream_usage_payload: dict[str, Any] | None = None
 
         async def stream_generator() -> Any:
             async for raw_event in provider_instance.invoke_stream_events(prompt_input, model, invoke_cfg):
@@ -1030,6 +1047,13 @@ class StreamExecutor:
                 decoded = adapter.decode_stream_event(raw_event)
                 if decoded is None:
                     continue
+                decoded_error = getattr(decoded, "error", None)
+                if decoded_error:
+                    yield AIStreamEvent.error_event(str(decoded_error))
+                    return
+                decoded_usage = getattr(decoded, "usage", None)
+                if decoded_usage:
+                    stream_usage_payload = dict(decoded_usage)
 
                 for item in decoded.transcript_items:
                     item_type = type(item).__name__
@@ -1116,6 +1140,16 @@ class StreamExecutor:
                 emitted, meta={"provider": provider_type, "trace_id": trace_id, "finalized": True}
             )
 
+        if stream_usage_payload:
+            yield AIStreamEvent.complete(
+                {
+                    "_internal_provider_usage": True,
+                    "provider": provider_type,
+                    "trace_id": trace_id,
+                    "usage": stream_usage_payload,
+                }
+            )
+
 
 async def stream_to_response(stream_gen: AIStreamGenerator, timeout: float | None = None) -> AIResponse:
     """Convert stream generator to complete response."""
@@ -1123,6 +1157,7 @@ async def stream_to_response(stream_gen: AIStreamGenerator, timeout: float | Non
     collected_reasoning = ""
     error: str | None = None
     structured: dict[str, Any] | None = None
+    stream_usage: Usage | None = None
     start_time = time.time()
     stream_collection_limit = _stream_collection_limit_from_env()
 
@@ -1147,6 +1182,9 @@ async def stream_to_response(stream_gen: AIStreamGenerator, timeout: float | Non
                 )
             elif event.type == StreamEventType.COMPLETE and event.meta:
                 structured = event.meta.get("structured")
+                usage_payload = event.meta.get("usage")
+                if isinstance(usage_payload, dict):
+                    stream_usage = normalize_stream_usage(usage_payload)
             elif event.type == StreamEventType.ERROR:
                 error = event.error
 
@@ -1169,7 +1207,7 @@ async def stream_to_response(stream_gen: AIStreamGenerator, timeout: float | Non
 
     return AIResponse.success(
         output=collected_output,
-        usage=Usage.estimate("", collected_output),
+        usage=stream_usage or Usage.estimate("", collected_output),
         latency_ms=latency_ms,
         structured=structured,
         thinking=collected_reasoning if collected_reasoning else None,

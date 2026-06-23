@@ -116,6 +116,16 @@ def _extract_tokens_from_anthropic_stream_event(
     if not isinstance(raw_event, dict):
         return out, has_seen_native_reasoning
 
+    event_type = str(raw_event.get("type") or "").strip()
+    if event_type == "error":
+        error_obj = raw_event.get("error")
+        if isinstance(error_obj, dict):
+            message = error_obj.get("message") or error_obj.get("type") or "stream_error"
+        else:
+            message = raw_event.get("message") or "stream_error"
+        out.append(f"Error: {message}")
+        return out, has_seen_native_reasoning
+
     delta = raw_event.get("delta", {})
     if not isinstance(delta, dict):
         delta = {}
@@ -138,11 +148,9 @@ def _extract_tokens_from_anthropic_stream_event(
 
     if text:
         if has_seen_native_reasoning:
-            for parsed_kind, parsed_text in think_parser.feed_sync(text):
-                if not parsed_text:
-                    continue
-                if parsed_kind in ("content", "answer"):
-                    out.append(parsed_text)
+            cleaned = _strip_structured_tags(str(text))
+            if cleaned:
+                out.append(cleaned)
         else:
             for parsed_kind, parsed_text in think_parser.feed_sync(text):
                 if not parsed_text:
@@ -158,6 +166,18 @@ def _extract_tokens_from_anthropic_stream_event(
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MODELS_PATH = "/v1/models"
 DEFAULT_MESSAGES_PATH = "/v1/messages"
+_ANTHROPIC_OPTION_KEYS = (
+    "cache_control",
+    "container",
+    "inference_geo",
+    "metadata",
+    "output_config",
+    "service_tier",
+    "stop_sequences",
+    "thinking",
+    "top_k",
+    "top_p",
+)
 
 
 def _timeout_seconds(config: dict[str, Any], default: int) -> int:
@@ -174,7 +194,28 @@ def _resolve_max_tokens(config: dict[str, Any], default: int) -> int:
         parsed = int(value)
     except (TypeError, ValueError):
         return default
-    return parsed if parsed > 0 else default
+    return parsed if parsed >= 0 else default
+
+
+def _copy_present(payload: dict[str, Any], config: dict[str, Any], keys: tuple[str, ...]) -> None:
+    for key in keys:
+        value = config.get(key)
+        if value is not None:
+            payload[key] = value
+
+
+def _coerce_disable_parallel_tool_use(config: dict[str, Any]) -> bool | None:
+    value = config.get("disable_parallel_tool_use")
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    token = str(value).strip().lower()
+    if token in {"1", "true", "yes", "on"}:
+        return True
+    if token in {"0", "false", "no", "off"}:
+        return False
+    return None
 
 
 def _convert_tools_to_anthropic(tools: Any) -> list[dict[str, Any]]:
@@ -188,7 +229,7 @@ def _convert_tools_to_anthropic(tools: Any) -> list[dict[str, Any]]:
 
         # 已经是 Anthropic 格式
         if isinstance(item.get("name"), str) and isinstance(item.get("input_schema"), dict):
-            converted.append(item)
+            converted.append(dict(item))
             continue
 
         # OpenAI function calling 格式 -> Anthropic 格式
@@ -201,13 +242,17 @@ def _convert_tools_to_anthropic(tools: Any) -> list[dict[str, Any]]:
                 continue
             parameters = function_block.get("parameters")
             input_schema = parameters if isinstance(parameters, dict) else {"type": "object", "properties": {}}
-            converted.append(
-                {
-                    "name": name,
-                    "description": str(function_block.get("description") or ""),
-                    "input_schema": input_schema,
-                }
-            )
+            tool: dict[str, Any] = {
+                "name": name,
+                "description": str(function_block.get("description") or ""),
+                "input_schema": input_schema,
+            }
+            for key in ("cache_control", "defer_loading", "strict"):
+                if function_block.get(key) is not None:
+                    tool[key] = function_block[key]
+                elif item.get(key) is not None:
+                    tool[key] = item[key]
+            converted.append(tool)
             continue
 
         # 宽松兜底：支持 {name, description, parameters}
@@ -216,18 +261,30 @@ def _convert_tools_to_anthropic(tools: Any) -> list[dict[str, Any]]:
             continue
         parameters = item.get("parameters")
         input_schema = parameters if isinstance(parameters, dict) else {"type": "object", "properties": {}}
-        converted.append(
-            {
-                "name": name,
-                "description": str(item.get("description") or ""),
-                "input_schema": input_schema,
-            }
-        )
+        tool = {
+            "name": name,
+            "description": str(item.get("description") or ""),
+            "input_schema": input_schema,
+        }
+        for key in ("cache_control", "defer_loading", "strict"):
+            if item.get(key) is not None:
+                tool[key] = item[key]
+        converted.append(tool)
 
     return converted
 
 
-def _convert_tool_choice_to_anthropic(tool_choice: Any) -> dict[str, Any] | None:
+def _convert_tool_choice_to_anthropic(
+    tool_choice: Any,
+    *,
+    disable_parallel_tool_use: bool | None = None,
+) -> dict[str, Any] | None:
+    def with_parallel_flag(value: dict[str, Any]) -> dict[str, Any]:
+        if disable_parallel_tool_use is not None and value.get("type") in {"auto", "any", "tool"}:
+            value = dict(value)
+            value["disable_parallel_tool_use"] = disable_parallel_tool_use
+        return value
+
     if isinstance(tool_choice, dict):
         # 兼容 OpenAI 样式: {"type": "function", "function": {"name": "..."}}
         if str(tool_choice.get("type") or "").strip().lower() == "function":
@@ -235,19 +292,24 @@ def _convert_tool_choice_to_anthropic(tool_choice: Any) -> dict[str, Any] | None
             if isinstance(function_block, dict):
                 name = str(function_block.get("name") or "").strip()
                 if name:
-                    return {"type": "tool", "name": name}
+                    return with_parallel_flag({"type": "tool", "name": name})
         if isinstance(tool_choice.get("type"), str):
-            return dict(tool_choice)
+            converted = dict(tool_choice)
+            if str(converted.get("type") or "").strip().lower() == "function":
+                converted["type"] = "tool"
+            return with_parallel_flag(converted)
         return None
 
     token = str(tool_choice or "").strip().lower()
-    if not token or token == "none":
+    if not token:
         return None
+    if token == "none":
+        return {"type": "none"}
     if token == "auto":
-        return {"type": "auto"}
+        return with_parallel_flag({"type": "auto"})
     if token == "required":
-        return {"type": "any"}
-    return {"type": "tool", "name": str(tool_choice)}
+        return with_parallel_flag({"type": "any"})
+    return with_parallel_flag({"type": "tool", "name": str(tool_choice)})
 
 
 def _supports_tool_choice(config: dict[str, Any], model: str) -> bool:
@@ -293,10 +355,36 @@ def _headers(config: dict[str, Any], api_key: str | None) -> dict[str, str]:
     version = config.get("anthropic_version") or headers.get("anthropic-version") or DEFAULT_ANTHROPIC_VERSION
     if version and "anthropic-version" not in headers:
         headers["anthropic-version"] = str(version)
+    beta = config.get("anthropic_beta") or config.get("anthropic-beta")
+    if beta and "anthropic-beta" not in headers:
+        headers["anthropic-beta"] = str(beta)
     if api_key:
         header_name = str(config.get("api_key_header") or "x-api-key")
         headers[header_name] = str(api_key)
     return headers
+
+
+def _apply_anthropic_options(payload: dict[str, Any], config: dict[str, Any]) -> None:
+    _copy_present(payload, config, _ANTHROPIC_OPTION_KEYS)
+    system_prompt = config.get("system")
+    if system_prompt is None:
+        system_prompt = config.get("system_prompt")
+    if system_prompt:
+        payload["system"] = system_prompt
+
+
+def _apply_anthropic_tools(payload: dict[str, Any], config: dict[str, Any], model: str) -> None:
+    anthropic_tools = _convert_tools_to_anthropic(config.get("tools"))
+    if not anthropic_tools:
+        return
+    payload["tools"] = anthropic_tools
+    if _supports_tool_choice(config, model):
+        tool_choice = _convert_tool_choice_to_anthropic(
+            config.get("tool_choice"),
+            disable_parallel_tool_use=_coerce_disable_parallel_tool_use(config),
+        )
+        if isinstance(tool_choice, dict) and tool_choice:
+            payload["tool_choice"] = tool_choice
 
 
 class AnthropicCompatProvider(BaseProvider):
@@ -316,6 +404,12 @@ class AnthropicCompatProvider(BaseProvider):
                 "model_listing",
                 "messages_api",
                 "custom_headers",
+                "anthropic_beta_headers",
+                "structured_outputs",
+                "native_tools",
+                "extended_thinking",
+                "prompt_caching",
+                "service_tiers",
                 "retries",
             ],
             cost_class="METERED",
@@ -374,7 +468,7 @@ class AnthropicCompatProvider(BaseProvider):
             normalized["retries"] = 0
 
         temperature = config.get("temperature", 0.2)
-        if not isinstance(temperature, (int, float)) or temperature < 0 or temperature > 2:
+        if not isinstance(temperature, (int, float)) or temperature < 0 or temperature > 1:
             warnings.append("Invalid temperature, using default 0.2")
             normalized["temperature"] = 0.2
 
@@ -388,7 +482,7 @@ class AnthropicCompatProvider(BaseProvider):
                 max_tokens = int(max_tokens_raw)
             except (TypeError, ValueError):
                 max_tokens = 0
-            if max_tokens <= 0:
+            if max_tokens < 0:
                 warnings.append("Invalid max_tokens, using default 256")
                 normalized["max_tokens"] = 256
             else:
@@ -446,17 +540,8 @@ class AnthropicCompatProvider(BaseProvider):
             "messages": messages,
             "temperature": float(config.get("temperature") or 0.2),
         }
-        anthropic_tools = _convert_tools_to_anthropic(config.get("tools"))
-        if anthropic_tools:
-            payload["tools"] = anthropic_tools
-            if _supports_tool_choice(config, model):
-                tool_choice = _convert_tool_choice_to_anthropic(config.get("tool_choice"))
-                if isinstance(tool_choice, dict) and tool_choice:
-                    payload["tool_choice"] = tool_choice
-        # FIXED: Prefer adapter-provided system prompt from config['system']
-        system_prompt = config.get("system") or config.get("system_prompt")
-        if system_prompt:
-            payload["system"] = str(system_prompt)
+        _apply_anthropic_options(payload, config)
+        _apply_anthropic_tools(payload, config, model)
         overrides = config.get("request_overrides")
         if isinstance(overrides, dict):
             payload.update(overrides)
@@ -499,6 +584,8 @@ class AnthropicCompatProvider(BaseProvider):
                 )
                 for token in tokens:
                     yield token
+                    if token.startswith("Error:"):
+                        return
 
             for kind, text in think_parser.flush():
                 if not text:
@@ -532,8 +619,6 @@ class AnthropicCompatProvider(BaseProvider):
         adapter_messages = _CONTRACT.extract_messages({"config": config})
         messages = adapter_messages or [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
 
-        # FIXED: Prefer adapter-provided system prompt from config['system']
-        system_prompt = config.get("system") or config.get("system_prompt")
         payload: dict[str, Any] = {
             "model": model,
             "max_tokens": _resolve_max_tokens(config, 256),
@@ -541,22 +626,15 @@ class AnthropicCompatProvider(BaseProvider):
             "temperature": float(config.get("temperature") or 0.2),
             "stream": True,
         }
-        anthropic_tools = _convert_tools_to_anthropic(config.get("tools"))
-        if anthropic_tools:
-            payload["tools"] = anthropic_tools
-            if _supports_tool_choice(config, model):
-                tool_choice = _convert_tool_choice_to_anthropic(config.get("tool_choice"))
-                if isinstance(tool_choice, dict) and tool_choice:
-                    payload["tool_choice"] = tool_choice
-        if system_prompt:
-            payload["system"] = str(system_prompt)
+        _apply_anthropic_options(payload, config)
+        _apply_anthropic_tools(payload, config, model)
 
         overrides = config.get("request_overrides")
         if isinstance(overrides, dict):
             payload.update(overrides)
 
         headers = _headers(config, api_key)
-        headers["Accept"] = "application/json"
+        headers["Accept"] = "text/event-stream"
 
         # Use invoke_stream_with_retry for automatic network jitter handling
         async for payload_obj in invoke_stream_with_retry(

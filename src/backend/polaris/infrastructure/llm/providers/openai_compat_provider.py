@@ -49,6 +49,65 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODELS_PATH = "/v1/models"
 DEFAULT_CHAT_PATH = "/v1/chat/completions"
+DEFAULT_RESPONSES_PATH = "/v1/responses"
+
+_OPENAI_CHAT_OPTION_KEYS = (
+    "audio",
+    "frequency_penalty",
+    "function_call",
+    "functions",
+    "logit_bias",
+    "logprobs",
+    "metadata",
+    "modalities",
+    "n",
+    "parallel_tool_calls",
+    "prediction",
+    "presence_penalty",
+    "prompt_cache_key",
+    "prompt_cache_retention",
+    "reasoning_effort",
+    "response_format",
+    "safety_identifier",
+    "seed",
+    "service_tier",
+    "stop",
+    "store",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_logprobs",
+    "top_p",
+    "user",
+    "verbosity",
+    "web_search_options",
+)
+_OPENAI_RESPONSES_OPTION_KEYS = (
+    "background",
+    "context_management",
+    "conversation",
+    "include",
+    "instructions",
+    "max_tool_calls",
+    "metadata",
+    "parallel_tool_calls",
+    "previous_response_id",
+    "prompt",
+    "prompt_cache_key",
+    "prompt_cache_retention",
+    "reasoning",
+    "safety_identifier",
+    "service_tier",
+    "store",
+    "temperature",
+    "text",
+    "tool_choice",
+    "tools",
+    "top_logprobs",
+    "top_p",
+    "truncation",
+    "user",
+)
 
 
 def _strip_structured_tags(text: str) -> str:
@@ -89,6 +148,122 @@ def _resolve_max_tokens(config: dict[str, Any]) -> int | None:
     except (TypeError, ValueError):
         return _DEFAULT_MAX_TOKENS
     return parsed if parsed > 0 else _DEFAULT_MAX_TOKENS
+
+
+def _copy_present(payload: dict[str, Any], config: dict[str, Any], keys: tuple[str, ...]) -> None:
+    for key in keys:
+        value = config.get(key)
+        if value is not None:
+            payload[key] = value
+
+
+def _is_responses_api_path(api_path: str) -> bool:
+    normalized = "/" + str(api_path or "").strip().lstrip("/")
+    return normalized.rstrip("/") == DEFAULT_RESPONSES_PATH
+
+
+def _build_openai_responses_input(prompt: str, config: dict[str, Any]) -> Any:
+    explicit_input = config.get("input")
+    if explicit_input is not None:
+        return explicit_input
+    return _build_chat_messages_payload(
+        config.get("chat_messages"),
+        prompt,
+        system_prompt=config.get("system_prompt"),
+    )
+
+
+def _build_openai_chat_payload(
+    *,
+    prompt: str,
+    model: str,
+    config: dict[str, Any],
+    messages: list[dict[str, Any]] | None = None,
+    stream: bool,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages
+        if messages is not None
+        else _build_chat_messages_payload(
+            config.get("chat_messages"),
+            prompt,
+            system_prompt=config.get("system_prompt"),
+        ),
+    }
+    _copy_present(payload, config, _OPENAI_CHAT_OPTION_KEYS)
+    if "temperature" not in payload:
+        payload["temperature"] = float(config.get("temperature") or 0.2)
+    if stream:
+        payload["stream"] = True
+        stream_options = config.get("stream_options")
+        if isinstance(stream_options, dict) and stream_options:
+            payload["stream_options"] = stream_options
+    if config.get("max_completion_tokens") is not None:
+        payload["max_completion_tokens"] = int(config["max_completion_tokens"])
+    else:
+        max_tokens = _resolve_max_tokens(config)
+        if max_tokens is not None:
+            payload["max_tokens"] = int(max_tokens)
+    return payload
+
+
+def _build_openai_responses_payload(
+    *,
+    prompt: str,
+    model: str,
+    config: dict[str, Any],
+    stream: bool,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "input": _build_openai_responses_input(prompt, config),
+    }
+    _copy_present(payload, config, _OPENAI_RESPONSES_OPTION_KEYS)
+    if "temperature" not in payload:
+        payload["temperature"] = float(config.get("temperature") or 0.2)
+    if stream:
+        payload["stream"] = True
+        stream_options = config.get("stream_options")
+        if isinstance(stream_options, dict) and stream_options:
+            payload["stream_options"] = stream_options
+    if config.get("max_output_tokens") is not None:
+        payload["max_output_tokens"] = int(config["max_output_tokens"])
+    else:
+        max_tokens = _resolve_max_tokens(config)
+        if max_tokens is not None:
+            payload["max_output_tokens"] = int(max_tokens)
+    return payload
+
+
+def _build_openai_payload(
+    *,
+    prompt: str,
+    model: str,
+    config: dict[str, Any],
+    api_path: str,
+    stream: bool,
+    messages: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if _is_responses_api_path(api_path):
+        payload = _build_openai_responses_payload(
+            prompt=prompt,
+            model=model,
+            config=config,
+            stream=stream,
+        )
+    else:
+        payload = _build_openai_chat_payload(
+            prompt=prompt,
+            model=model,
+            config=config,
+            messages=messages,
+            stream=stream,
+        )
+    overrides = config.get("request_overrides")
+    if isinstance(overrides, dict):
+        payload.update(overrides)
+    return payload
 
 
 def _flatten_text(value: Any) -> list[str]:
@@ -159,6 +334,32 @@ def _extract_tokens_from_openai_stream_event(
     if not isinstance(raw_event, dict):
         return out, has_seen_native_reasoning
 
+    event_type = str(raw_event.get("type") or "").strip()
+    if event_type in {
+        "response.reasoning_text.delta",
+        "response.reasoning_summary_text.delta",
+    }:
+        delta_text = raw_event.get("delta")
+        if isinstance(delta_text, str) and delta_text:
+            out.append(f"{THINKING_PREFIX}{delta_text}")
+            has_seen_native_reasoning = True
+        return out, has_seen_native_reasoning
+
+    if event_type == "response.output_text.delta":
+        delta_text = raw_event.get("delta")
+        if isinstance(delta_text, str) and delta_text:
+            out.append(delta_text)
+        return out, has_seen_native_reasoning
+
+    if event_type in {"response.failed", "response.incomplete", "error"}:
+        error_obj = raw_event.get("error")
+        if isinstance(error_obj, dict):
+            message = error_obj.get("message") or error_obj.get("code") or event_type
+        else:
+            message = raw_event.get("message") or event_type
+        out.append(f"Error: {message}")
+        return out, has_seen_native_reasoning
+
     choices = raw_event.get("choices", [])
     if not choices or not isinstance(choices, list):
         return out, has_seen_native_reasoning
@@ -181,11 +382,9 @@ def _extract_tokens_from_openai_stream_event(
             continue
 
         if has_seen_native_reasoning:
-            for parsed_kind, parsed_text in think_parser.feed_sync(text):
-                if not parsed_text:
-                    continue
-                if parsed_kind in ("content", "answer"):
-                    out.append(parsed_text)
+            cleaned = _strip_structured_tags(str(text))
+            if cleaned:
+                out.append(cleaned)
             continue
 
         for think_kind, parsed in think_parser.feed_sync(text):
@@ -257,7 +456,12 @@ class OpenAICompatProvider(BaseProvider):
                 "health_check",
                 "model_listing",
                 "chat_completions",
+                "responses_api",
                 "custom_headers",
+                "structured_outputs",
+                "native_tools",
+                "reasoning",
+                "stream_options",
                 "retries",
             ],
             cost_class="METERED",
@@ -345,12 +549,13 @@ class OpenAICompatProvider(BaseProvider):
         url = join_url(base, api_path, strip_prefixes=["/v1"])
         timeout = _timeout_seconds(config, 30)
         api_key = config.get("api_key")
-        test_payload = {
-            "model": config.get("model") or "gpt-3.5-turbo",
-            "messages": [{"role": "user", "content": "hello"}],
-            "max_tokens": 50,
-            "stream": False,
-        }
+        test_payload = _build_openai_payload(
+            prompt="hello",
+            model=str(config.get("model") or "gpt-3.5-turbo"),
+            config={**config, "max_tokens": 50, "max_output_tokens": 50},
+            api_path=api_path,
+            stream=False,
+        )
         return health_check_post(url, _headers(config, api_key), test_payload, timeout)
 
     def list_models(self, config: dict[str, Any]) -> ModelListResult:
@@ -396,35 +601,15 @@ class OpenAICompatProvider(BaseProvider):
                 error=f"Invalid model name: {validation.error}",
             )
 
-        # ADR-0090 W1.5: prefer the caller-supplied structured message array so
-        # the model's chat template sees real system/user/assistant anchoring.
-        payload: dict[str, Any] = {
-            "model": resolved.model,
-            "messages": _build_chat_messages_payload(
-                config.get("chat_messages"),
-                prompt,
-                system_prompt=config.get("system_prompt"),
-            ),
-            "temperature": float(config.get("temperature") or 0.2),
-        }
-        tools = config.get("tools")
-        if isinstance(tools, list) and tools:
-            payload["tools"] = tools
-            tool_choice = config.get("tool_choice")
-            if tool_choice not in (None, ""):
-                payload["tool_choice"] = tool_choice
-            parallel_tool_calls = config.get("parallel_tool_calls")
-            if isinstance(parallel_tool_calls, bool):
-                payload["parallel_tool_calls"] = parallel_tool_calls
-        response_format = config.get("response_format")
-        if isinstance(response_format, dict) and response_format:
-            payload["response_format"] = response_format
-        max_tokens = _resolve_max_tokens(config)
-        if max_tokens is not None:
-            payload["max_tokens"] = int(max_tokens)
-        overrides = config.get("request_overrides")
-        if isinstance(overrides, dict):
-            payload.update(overrides)
+        # ADR-0090 W1.5: prefer structured messages for Chat Completions. The
+        # Responses API is a different protocol and is built by path switch.
+        payload = _build_openai_payload(
+            prompt=prompt,
+            model=resolved.model,
+            config=config,
+            api_path=api_path,
+            stream=False,
+        )
         api_key = config.get("api_key")
         return invoke_with_retry(
             url,
@@ -455,6 +640,8 @@ class OpenAICompatProvider(BaseProvider):
                 )
                 for token in tokens:
                     yield token
+                    if token.startswith("Error:"):
+                        return
 
             for kind, text in think_parser.flush():  # type: ignore[attr-defined]
                 if not text:
@@ -513,25 +700,14 @@ class OpenAICompatProvider(BaseProvider):
             if system_prompt:
                 messages.insert(0, {"role": "system", "content": system_prompt})
 
-        payload: dict[str, Any] = {
-            "model": resolved.model,
-            "messages": messages,
-            "temperature": float(config.get("temperature") or 0.2),
-            "stream": True,
-        }
-        tools = config.get("tools")
-        if isinstance(tools, list) and tools:
-            payload["tools"] = tools
-            tool_choice = config.get("tool_choice")
-            if tool_choice not in (None, ""):
-                payload["tool_choice"] = tool_choice
-            parallel_tool_calls = config.get("parallel_tool_calls")
-            if isinstance(parallel_tool_calls, bool):
-                payload["parallel_tool_calls"] = parallel_tool_calls
-
-        max_tokens = _resolve_max_tokens(config)
-        if max_tokens is not None:
-            payload["max_tokens"] = int(max_tokens)
+        payload = _build_openai_payload(
+            prompt=prompt,
+            model=resolved.model,
+            config=config,
+            api_path=api_path,
+            stream=True,
+            messages=messages,
+        )
 
         api_key = config.get("api_key")
         headers = _headers(config, api_key)
@@ -584,8 +760,8 @@ def _usage_from_response(prompt: str, output: str, data: dict[str, Any]) -> Usag
     try:
         usage = data.get("usage") if isinstance(data, dict) else None
         if isinstance(usage, dict):
-            prompt_tokens = int(usage.get("prompt_tokens") or 0)
-            completion_tokens = int(usage.get("completion_tokens") or 0)
+            prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+            completion_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
             total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
             return Usage(
                 prompt_tokens=prompt_tokens,

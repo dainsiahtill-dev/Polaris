@@ -7168,6 +7168,94 @@ class TestQualityRepairMissingTargetContract:
         assert "MISSING TARGET FILES" in adapter.repair_message
 
     @pytest.mark.asyncio
+    async def test_package_manifest_missing_test_and_verify_scripts_create_entrypoint_targets(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.execute_method import (
+            _run_materialization_quality_repair_retry,
+        )
+
+        class _Execution:
+            @staticmethod
+            def extract_kernel_tool_results(result: dict[str, Any]) -> list[dict[str, Any]]:
+                return []
+
+            @staticmethod
+            async def execute_tools(
+                content: str,
+                target_task_id: str,
+                update_task_progress: Any,
+                **_: Any,
+            ) -> list[dict[str, Any]]:
+                del content, target_task_id, update_task_progress
+                return []
+
+        class _Adapter:
+            workspace = str(tmp_path)
+            _execution = _Execution()
+            _update_task_progress = staticmethod(lambda *args, **kwargs: None)
+
+            def __init__(self) -> None:
+                self.repair_message = ""
+                self.repair_context: dict[str, Any] = {}
+
+            async def _invoke_role_dialogue_with_timeout(
+                self,
+                message: str,
+                *,
+                context: dict[str, Any],
+                timeout_seconds: float,
+                stage_label: str,
+            ) -> dict[str, Any]:
+                del timeout_seconds, stage_label
+                self.repair_message = message
+                self.repair_context = context
+                return {"content": ""}
+
+        (tmp_path / "package.json").write_text(
+            json.dumps(
+                {
+                    "scripts": {
+                        "build": "tsc -p tsconfig.json",
+                        "test": "node --import tsx --test tests/**/*.test.ts",
+                        "verify": "node --import tsx scripts/verify.ts",
+                    },
+                    "devDependencies": {"tsx": "^4.7.2", "typescript": "^5.4.5"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        adapter = _Adapter()
+
+        _, summary = await _run_materialization_quality_repair_retry(
+            adapter,
+            task={"target_files": ["package.json"]},
+            target_task_id="task-1",
+            run_id="run-1",
+            context={},
+            original_message="Create TypeScript project scaffold.",
+            llm_call_timeout=1.0,
+            artifact_quality_errors=[
+                "Artifact quality scan failed: npm package manifest script "
+                "'test' references missing local entrypoint 'tests/**/*.test.ts' in package.json",
+                "Artifact quality scan failed: npm package manifest script "
+                "'verify' references missing local entrypoint 'scripts/verify.ts' in package.json",
+            ],
+            changed_files=["package.json"],
+        )
+
+        assert summary["semantic_quality_target_files"] == ["package.json"]
+        assert summary["missing_target_files"] == ["tests/generated.test.ts", "scripts/verify.ts"]
+        assert summary["repair_target_files"] == [
+            "tests/generated.test.ts",
+            "scripts/verify.ts",
+            "package.json",
+        ]
+        assert "MISSING TARGET FILES" in adapter.repair_message
+        assert "tests/generated.test.ts" in adapter.repair_message
+        assert "scripts/verify.ts" in adapter.repair_message
+        assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
+
+    @pytest.mark.asyncio
     async def test_package_manifest_quality_error_targets_existing_path_when_changed_files_empty(
         self, tmp_path
     ) -> None:
