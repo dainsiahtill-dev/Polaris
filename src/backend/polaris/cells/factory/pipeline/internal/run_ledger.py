@@ -42,6 +42,13 @@ def _string_items(value: Any) -> list[str]:
     return _string_list(value)
 
 
+def _modality_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw_items = [item.strip() for item in value.replace(";", ",").split(",")]
+        return _string_list([item for item in raw_items if item])
+    return _string_list(value)
+
+
 def _lineage_entries(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, (list, tuple)):
         return []
@@ -220,9 +227,7 @@ def _normalize_declared_modalities(value: Any) -> dict[str, dict[str, Any]]:
         entries = [(str(name), raw) for name, raw in value.items() if isinstance(raw, dict)]
     elif isinstance(value, list):
         entries = [
-            (str(item.get("name") or item.get("modality") or ""), item)
-            for item in value
-            if isinstance(item, dict)
+            (str(item.get("name") or item.get("modality") or ""), item) for item in value if isinstance(item, dict)
         ]
     else:
         return modalities
@@ -256,6 +261,76 @@ def _verifier_entries(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, list):
         return [item for item in value if isinstance(item, dict)]
     return []
+
+
+def _dict_value(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _record_policy_dict(record: dict[str, Any], *keys: str) -> dict[str, Any]:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _record_bool(record: dict[str, Any], *keys: str) -> bool:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes", "on"}:
+            return True
+    return False
+
+
+def _required_evidence_modalities_from_record(
+    record: dict[str, Any],
+    *,
+    stage: str,
+) -> list[str]:
+    required: list[str] = []
+
+    def extend(value: Any) -> None:
+        required.extend(_modality_list(value))
+
+    if stage == "real_run_gate":
+        required.extend(["code", "command"])
+    if _record_bool(record, "requires_browser_evidence", "browser_required", "qa_browser_required"):
+        required.append("browser")
+    if _record_bool(record, "requires_visual_evidence", "visual_required", "qa_visual_required"):
+        required.append("visual")
+
+    gate_policy = _record_policy_dict(record, "gate_policy", "quality_gate_policy")
+    verifier_policy = _record_policy_dict(record, "verifier_policy", "qa_verifier_policy", "domain_verifier_policy")
+    extend(record.get("required_evidence_modalities"))
+    extend(gate_policy.get("required_evidence_modalities") or gate_policy.get("required_modalities"))
+    extend(verifier_policy.get("required_evidence_modalities") or verifier_policy.get("required_modalities"))
+
+    verifier_specs = record.get("required_verifiers") or verifier_policy.get("required_verifiers")
+    for verifier in _verifier_entries(verifier_specs):
+        required.append("verifier")
+        required.append(_clean_string(verifier.get("modality") or verifier.get("kind") or "domain"))
+
+    return _string_list(required)
+
+
+def _required_modalities_from_job_token(job_token: dict[str, Any]) -> list[str]:
+    gate_policy = _dict_value(job_token.get("gate_policy"))
+    return _modality_list(gate_policy.get("required_evidence_modalities") or gate_policy.get("required_modalities"))
+
+
+def _missing_required_modalities(
+    required_modalities: list[str],
+    gate_modalities: dict[str, dict[str, Any]],
+) -> list[str]:
+    missing: list[str] = []
+    for modality_name in required_modalities:
+        modality = gate_modalities.get(modality_name)
+        if not isinstance(modality, dict) or not modality.get("present") or not modality.get("ok"):
+            missing.append(modality_name)
+    return _string_list(missing)
 
 
 def _evidence_modalities_from_physical_evidence(physical_evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -523,16 +598,11 @@ def build_job_token_from_record(
 ) -> JobToken:
     """Build a canonical job token from the current bench/factory record."""
 
-    raw_chain = record.get("chain")
-    chain: dict[str, Any] = raw_chain if isinstance(raw_chain, dict) else {}
-    raw_chain_results = record.get("chain_results")
-    chain_results: dict[str, Any] = raw_chain_results if isinstance(raw_chain_results, dict) else {}
-    raw_audit_bundle = chain.get("audit_bundle")
-    audit_bundle: dict[str, Any] = raw_audit_bundle if isinstance(raw_audit_bundle, dict) else {}
-    raw_record_artifacts = record.get("artifacts")
-    record_artifacts: dict[str, Any] = raw_record_artifacts if isinstance(raw_record_artifacts, dict) else {}
-    raw_audit_artifacts = audit_bundle.get("artifacts")
-    audit_artifacts: dict[str, Any] = raw_audit_artifacts if isinstance(raw_audit_artifacts, dict) else {}
+    chain = _dict_value(record.get("chain"))
+    chain_results = _dict_value(record.get("chain_results"))
+    audit_bundle = _dict_value(chain.get("audit_bundle"))
+    record_artifacts = _dict_value(record.get("artifacts"))
+    audit_artifacts = _dict_value(audit_bundle.get("artifacts"))
     target_files = _string_list(
         record.get("target_files") or record.get("declared_source_targets") or record.get("code_files")
     )
@@ -567,11 +637,16 @@ def build_job_token_from_record(
         or _string_items(record.get("acceptance"))
         or _string_items(record.get("qa_contract"))
     )
+    required_evidence_modalities = _required_evidence_modalities_from_record(
+        record,
+        stage=stage,
+    )
     gate_policy = {
         "stage": stage,
         "requires_physical_artifacts": True,
         "requires_real_entrypoint": stage == "real_run_gate",
         "requires_command_evidence": stage == "real_run_gate",
+        "required_evidence_modalities": required_evidence_modalities,
     }
     contract_sources: list[str] = []
     if chain_results.get("contract_goal") or record.get("contract_goal"):
@@ -754,6 +829,8 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
     sampled_command_count = 0
     truncated_command_events = 0
     evidence_modalities: dict[str, dict[str, Any]] = {}
+    required_modalities: list[str] = []
+    missing_required_modalities: list[str] = []
     for event in events:
         if not isinstance(event, dict) or event.get("event_type") != "gate_evaluated":
             continue
@@ -777,6 +854,10 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         if physical_evidence.get("commands_truncated"):
             truncated_command_events += 1
         gate_modalities = _evidence_modalities_from_physical_evidence(physical_evidence)
+        gate_required_modalities = _required_modalities_from_job_token(job_token)
+        required_modalities.extend(gate_required_modalities)
+        gate_missing_required_modalities = _missing_required_modalities(gate_required_modalities, gate_modalities)
+        missing_required_modalities.extend(gate_missing_required_modalities)
         for modality_name, modality in gate_modalities.items():
             summary = evidence_modalities.setdefault(
                 modality_name,
@@ -804,11 +885,16 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
                 "capability_ok": bool(capability_audit.get("ok")),
                 "capability_issues": list(issues) if isinstance(issues, list) else [],
                 "evidence_modalities": gate_modalities,
+                "required_evidence_modalities": gate_required_modalities,
+                "missing_required_evidence_modalities": gate_missing_required_modalities,
             }
         )
     failed_gates = [gate for gate in gates if not gate["ok"]]
     capability_ok = bool(gates) and not capability_issues and all(gate["capability_ok"] for gate in gates)
-    integrity_ok = bool(gates) and capability_ok
+    required_modalities = _string_list(required_modalities)
+    missing_required_modalities = _string_list(missing_required_modalities)
+    evidence_policy_ok = bool(gates) and not missing_required_modalities
+    integrity_ok = bool(gates) and capability_ok and evidence_policy_ok
     outcome_ok = bool(gates) and not failed_gates
     projection_ok = integrity_ok and outcome_ok
     return {
@@ -819,7 +905,7 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
         "outcome_ok": outcome_ok,
         "event_count": len(events),
         "gate_count": len(gates),
-        "missing": [] if gates else ["gate_events"],
+        "missing": ([] if gates else ["gate_events"]) + missing_required_modalities,
         "gates": gates,
         "failed_gates": failed_gates,
         "capability": {
@@ -836,6 +922,11 @@ def build_run_ledger_projection(events: list[dict[str, Any]]) -> dict[str, Any]:
             "truncated_command_events": truncated_command_events,
         },
         "evidence_modalities": dict(sorted(evidence_modalities.items())),
+        "evidence_policy": {
+            "ok": evidence_policy_ok,
+            "required_modalities": required_modalities,
+            "missing_required_modalities": missing_required_modalities,
+        },
     }
 
 
@@ -871,8 +962,30 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
             "missing": issue_list,
             "capability": capability_map,
         }
+    evidence_policy = value.get("evidence_policy")
+    evidence_policy_map = evidence_policy if isinstance(evidence_policy, dict) else {}
+    if evidence_policy_map and not bool(evidence_policy_map.get("ok")):
+        missing = evidence_policy_map.get("missing_required_modalities")
+        missing_list = [str(item) for item in missing] if isinstance(missing, list) else ["evidence_modalities"]
+        return {
+            "ok": False,
+            "detail": "run ledger projection missing required evidence: " + ", ".join(missing_list),
+            "missing": missing_list,
+            "capability": capability_map,
+            "evidence_policy": evidence_policy_map,
+        }
     failed_gates = value.get("failed_gates")
     failed_gate_count = len(failed_gates) if isinstance(failed_gates, list) else 0
+    if not bool(value.get("ok")):
+        return {
+            "ok": False,
+            "detail": f"run ledger projection has {failed_gate_count} failed gate(s)",
+            "missing": ["failed_gates"] if failed_gate_count else ["projection_ok"],
+            "outcome_ok": bool(value.get("outcome_ok")),
+            "failed_gate_count": failed_gate_count,
+            "capability": capability_map,
+            "evidence_policy": evidence_policy_map,
+        }
     return {
         "ok": True,
         "detail": f"run ledger projection ready ({int(value.get('gate_count') or 0)} gate event(s))",
@@ -880,6 +993,7 @@ def summarize_run_ledger_projection(value: Any) -> dict[str, Any]:
         "outcome_ok": bool(value.get("outcome_ok")),
         "failed_gate_count": failed_gate_count,
         "capability": capability_map,
+        "evidence_policy": evidence_policy_map,
     }
 
 

@@ -72,7 +72,7 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
 9. **全链路任务流唯一制**：运行态任务链路只能是 `PM → Chief Engineer → Director`。PM 只能生成任务合同并交给 Chief Engineer 产出蓝图/交接证据；Director 只能消费 CE 交接后的任务。禁止任何产品代码、脚本、UI 或文档回退为 `PM → Director` 旧链路，缺少 CE 投影/蓝图时必须显示阻塞或等待 CE，不得直连 Director。
 10. **工具调用归一化优先**：平台必须适配不同 LLM 的自然工具调用习惯，先通过统一 ToolSpecRegistry/tool alias/arg_aliases 归一化工具名与参数，再进入授权、路径、命令、读写门禁；禁止强迫 LLM 只按 Polaris 内部字段写调用。不可安全推断的调用必须 fail-closed 并留下工具/LLM/runtime 证据，禁止吞异常、硬编码成功、静默 fallback。
 11. **LLM 最终请求上下文审计**：每次真实 LLM 调用都必须审计最终 provider request，而不只统计 messages 投影；审计至少包含 message/tool schema/response_format token 估算、最终请求 token、窗口利用率，以及 PM 合同、Chief Engineer 蓝图、目标文件、失败反馈、workspace quality evidence 覆盖度 flags。ContextOS 必须优先展示最终请求上下文 token，禁止用 messages-only 或 prompt usage 冒充最终上下文占用。
-12. **角色工具失败外部审计**：PM、Chief Engineer、Director、QA 任一角色发生工具调用失败、工具调用缺失、工具参数无法归一化、工具结果被误判成功、或 LLM 输出被错误当作工具 action 时，主 Agent 必须安排至少一个 OpenCode 外部 Agent 做独立审计。审计必须覆盖最终送入 LLM 的完整 provider request 上下文、工具调用归一化链路、ToolSpec/arg_aliases、runtime event、LLM 调用日志、ContextOS 证据和失败归因；若 LLM event 因安全策略 redacted 了 `messages`/`content`，必须把 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件纳入 OpenCode 证据包；禁止只凭主 Agent 推断结案。
+12. **角色工具失败外部审计（主 Agent 专用，禁止产品化）**：PM、Chief Engineer、Director、QA 任一角色发生工具调用失败、工具调用缺失、工具参数无法归一化、工具结果被误判成功、或 LLM 输出被错误当作工具 action 时，主 Agent 可以安排至少一个 OpenCode 外部 Agent 做独立审计。该审计只属于 Codex/Claude 等主 Agent 的工程协作手段，绝对不是 Polaris 平台能力、运行时依赖、Factory gate、bench 成功条件、ContextOS/ReceiptStore 事实源或产品功能。Polaris 产品代码、脚本、UI、runtime event、Run Ledger、bench report 不得调度、等待、要求或展示 OpenCode 审计状态作为平台证据。外部审计应覆盖最终送入 LLM 的完整 provider request 上下文、工具调用归一化链路、ToolSpec/arg_aliases、runtime event、LLM 调用日志、ContextOS 证据和失败归因；若 LLM event 因安全策略 redacted 了 `messages`/`content`，主 Agent 必须把 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件纳入自己的外部审计证据包；禁止把 OpenCode 审计结论写成 Polaris 的 SSoT。
 13. **最终请求唯一真相与主动缺陷发现制**：主 Agent 不能等待用户从 UI 发现问题后再被动排查。每次 bench、角色运行或工具失败后，必须主动先验 `context_snapshot_ref` 对应的最终 provider request，并把它作为唯一事实源；`messages`、prompt 文本、RoleProfile whitelist、日志摘要、UI 文案都只能作为辅助证据，不能替代最终 provider request。必须逐项比对：
    - `provider_request.messages[0]` 的角色身份是否与当前角色一致，禁止 CE/Director/PM 系统提示串线。
    - `provider_request.tools` 是否包含任务和提示词要求的可调用工具；如果提示词要求 `repo_tree`、`read_file`、`repo_read_*`、`write_file`、`execute_command` 等工具，而最终 tools schema 缺失，直接按 P0 平台缺陷处理。
@@ -92,10 +92,11 @@ curl -X POST http://127.0.0.1:49977/v2/role/{pm|architect|chief_engineer|directo
    - 模型健康：绑定模型是否可达、连续失败是否应跳过、超时是否匹配模型速度、弱/强模型策略是否按配置生效。
    - 收敛性：当前问题是否是新通用根因，是否需要平台硬化、文档沉淀、回归测试和下一批验证。
 16. **用户观察反向触发复盘**：凡是用户通过 UI、截图、日志或手工观察先于主 Agent 发现缺陷，必须视为主 Agent 审计遗漏。修复时除解决代码根因外，还必须补充一条可自动发现同类问题的审计规则、测试、日志断言或文档硬约束；禁止只修当前样例。
+17. **Bench 测试态边界（强制）**：任何 `Bench`、`Factory Bench`、`factory_bench`、`L1-L12 bench`、benchmark harness、压力测试 UI/API/脚本都只允许存在于 Polaris 内部测试/开发/审计模式，用于压测平台能力、暴露通用根因和生成审计证据。Bench **不是**正式项目功能、不是生产工作台、不是用户交付体验、不是控制面事实源；正式环境/生产环境不得出现 Bench 入口、Bench 文案、Bench 专属 UI、Bench 专属状态模型或以 Bench 命名的业务 API。平台基础设施能力（如 Run Ledger、Job Token、ContextOS、ReceiptStore、Verifier/Gate Policy）必须以平台级命名和契约沉淀，Bench 只能在内部测试态作为这些平台能力的生产者/消费者之一。禁止把为 Bench 写的临时字段、视图、路由或运行假设上升为生产语义；需要在正式产品展示时必须接入平台级 projection/API，而不是 `benchService`、bench session 或 factory audit 文件。
 
 ### 实时推送硬门禁
 
-- 首页主工作区、Factory 工作区、PM/ChiefEngineer/Director 工作区、ContextOS 实时视图必须通过同一套 Nats-JetStream runtime.v2 WebSocket 接收推送。
+- 首页主工作区、Factory 工作区、PM/ChiefEngineer/Director 工作区、ContextOS 实时视图必须通过同一套 Nats-JetStream runtime.v2 WebSocket 接收推送。内部 Bench harness 可以消费同一事实流做压力测试和审计，但不得成为正式产品实时链路或生产 UI 的依赖。
 - 禁止为了"兜底"并行保留第二套实时机制；发现双轨（SSE + WS、WS + HTTP polling、WS + 文件轮询）视为 P0。
 - WebSocket 订阅/连接失败必须 fail-closed：UI 应显示断线/订阅失败并等待用户操作或连接恢复；禁止自动调用 HTTP status/get/list 接口作为实时兜底，禁止用“最近一次快照”冒充正在实时更新。
 - 新增实时事件必须先定义 JetStream subject/channel 映射，再由 `RuntimeTransportProvider`/`runtimeSocketManager` 订阅；不得在组件内用 `setInterval` 调接口模拟实时。
@@ -363,9 +364,9 @@ python -m scripts.director.cli_thin --workspace . --iterations 1
 3. **闭环修复**：根据报错信息反思根本原因，修改你的代码，并**重新运行**对应的检查工具。
 4. **循环熔断**：重复此过程，直到三个工具全部验收通过。如果在同一个问题上连续失败 5 次，请停止重试，向人类求助，并提供精炼后的报错上下文和你之前的尝试思路。
 
-## 外部并行工程 Agent 调用规范
+## 外部并行工程 Agent 调用规范（主 Agent 专用）
 
-Codex、Claude Code 等主 Agent 可以通过 OpenCode CLI 将独立工程任务派发给额外 Agent。
+Codex、Claude Code 等主 Agent 可以通过 OpenCode CLI 将独立工程任务派发给额外 Agent。OpenCode 只能作为主 Agent 的外部工程协作/审计工具使用，不属于 Polaris 平台自身。禁止在 Polaris 产品代码、Factory Bench、Run Ledger、ContextOS、ReceiptStore、UI、runtime event 或质量门禁中引入对 OpenCode 的运行时依赖、调度逻辑、状态投影或成功条件。
 
 ### 调用方式
 
@@ -395,8 +396,8 @@ wait
 3. 使用仓库提供的代码图谱、符号索引或 MCP 工具审计相关代码。
 4. 将问题拆分成多个互不重叠、可独立完成的任务包。
 5. 为每个任务包明确目标、代码范围、禁止事项和验收命令。
-6. 若任务源自角色工具调用失败，必须派发 OpenCode 审计最终 LLM 上下文、工具调用归一化路径、ToolSpec/arg_aliases、runtime event、LLM 调用日志与 ContextOS 证据；若事件中 `messages`/`content` 被 redacted，必须同时提供 `context_snapshot_ref` 对应的完整上下文快照文件；审计任务默认只读，除非已经拆出互不重叠的明确修复范围。
-7. Factory Bench 记录到角色工具失败时，`factory_audits.json` 必须写出机器可读 `opencode_audit` 字段；缺少该字段不能视为完成失败归因。
+6. 若任务源自角色工具调用失败，主 Agent 可在自身工作流中派发 OpenCode 审计最终 LLM 上下文、工具调用归一化路径、ToolSpec/arg_aliases、runtime event、LLM 调用日志与 ContextOS 证据；若事件中 `messages`/`content` 被 redacted，必须同时提供 `context_snapshot_ref` 对应的完整上下文快照文件；审计任务默认只读，除非已经拆出互不重叠的明确修复范围。
+7. Factory Bench 与 Polaris 运行时不得要求、生成或消费 `opencode_audit` 作为机器可读平台字段；角色工具失败归因必须依赖 Polaris 自身的 provider request、runtime event、ContextOS、ReceiptStore、Run Ledger、命令门禁和日志证据。
 
 适合并行的任务示例：
 

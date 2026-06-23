@@ -32,6 +32,7 @@ async def _collect_stream(
         "llm_calls": comp.llm_calls,
         "tool_calls": comp.tool_calls,
         "status": comp.status,
+        "batch_receipt": dict(comp.batch_receipt),
     }
 
 
@@ -108,6 +109,8 @@ class TestStreamNonStreamParity:
         assert stream_summary["status"] == "success"
         assert run_result["metrics"]["llm_calls"] == stream_summary["llm_calls"] == 2
         assert run_result["metrics"]["tool_calls"] == stream_summary["tool_calls"] == 1
+        assert run_result["batch_receipt"]["results"][0]["tool_name"] == "read_file"
+        assert stream_summary["batch_receipt"]["results"][0]["tool_name"] == "read_file"
 
     @pytest.mark.asyncio
     async def test_llm_once_mode_parity(self) -> None:
@@ -153,6 +156,8 @@ class TestStreamNonStreamParity:
         assert run_result["finalization"]["mode"] == "llm_once"
         assert stream_summary["status"] == "success"
         assert run_result["metrics"]["llm_calls"] == stream_summary["llm_calls"] == 2
+        assert run_result["batch_receipt"]["results"][0]["tool_name"] == "read_file"
+        assert stream_summary["batch_receipt"]["results"][0]["tool_name"] == "read_file"
 
     @pytest.mark.asyncio
     async def test_handoff_workflow_parity(self) -> None:

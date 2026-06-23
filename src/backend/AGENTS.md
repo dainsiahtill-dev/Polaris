@@ -131,17 +131,17 @@ Cell 是最小自治边界。
 3. 禁止新增或保留 `PM -> Director`、`PM->Director`、`PM → Director` 旧链路作为产品执行路径、UI 文案、实时投影、脚本兜底或恢复策略。
 4. `start_from=director`、`run_director=false` 等历史字段只能作为兼容输入被规范化到完整链路，不得改变执行链路。
 5. 缺少 CE 蓝图、handoff 或实时投影时必须 fail-closed：展示等待/阻塞 CE，不得把 PM 合同直接送入 Director。
-6. Factory Bench、首页主战场、PM/ChiefEngineer/Director 工作区必须展示同一条 `PM -> Chief Engineer -> Director` 三段状态事实。
+6. 首页主战场、PM/ChiefEngineer/Director 工作区必须展示同一条 `PM -> Chief Engineer -> Director` 三段状态事实；Factory Bench 仅作为内部测试 harness 消费同一事实流做压力测试/审计，不得定义生产 UI 或正式状态语义。
 7. `KERNELONE_TASK_MARKET_MODE=off|shadow` 和 `direct_to_director|pending_exec` 只允许作为历史兼容输入；运行态必须归一到 `mainline-full` / `chief_blueprint_required`，不得恢复 PM 直达 Director。
-8. Factory Bench 必须经 HTTP Factory API 启动 `PM -> Chief Engineer -> Director` 全链路；`--use-legacy-chain`、`workflow` driver、subprocess PM->Director 只能 fail-closed，不得作为自动回退。
+8. Factory Bench 作为内部测试 harness 时必须经 HTTP Factory API 启动 `PM -> Chief Engineer -> Director` 全链路；`--use-legacy-chain`、`workflow` driver、subprocess PM->Director 只能 fail-closed，不得作为自动回退。该规则不得被理解为生产环境需要暴露 Bench。
 
-### 4.14 Role Tool Failure External Audit
+### 4.14 Role Tool Failure External Audit（主 Agent 专用，禁止产品化）
 
-1. PM、Chief Engineer、Director、QA 任一角色出现工具调用失败、工具调用缺失、工具参数无法归一化、工具结果被误判成功、或 LLM 输出被错误送入 action/parser 时，必须安排 OpenCode 外部 Agent 独立审计，不能只由主 Agent 自查结案。
-2. 审计范围必须覆盖最终送入 provider 的 LLM request（messages、tool schema、response format、token 估算、覆盖度 flags）、工具调用解析与归一化链路、`ToolSpecRegistry` aliases/arg_aliases、runtime event、LLM 调用日志、ContextOS 证据、bench session 和角色日志；若事件中 `messages`/`content` 被 redacted，必须把 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件纳入证据包，禁止只看 redacted event。
-3. OpenCode 审计默认只读；只有在主 Agent 已经拆分出互不重叠且授权明确的修复范围时，才允许子 Agent 修改代码。
-4. 审计结论必须归入允许的失败分类之一：PM Contract、Chief Engineer Blueprint、Director Execution、LLM Output、Context Budget、Baseline Issue、Runtime Environment。无法归类时视为平台审计缺口，先补证据链。
-5. Factory Bench 每条角色工具失败记录必须写出 `opencode_audit` 机器可读字段；字段缺失时不得宣称失败归因闭环。
+1. PM、Chief Engineer、Director、QA 任一角色出现工具调用失败、工具调用缺失、工具参数无法归一化、工具结果被误判成功、或 LLM 输出被错误送入 action/parser 时，主 Agent 可以安排 OpenCode 外部 Agent 独立审计，不能只凭主 Agent 口头推断结案。
+2. OpenCode 审计只属于 Codex/Claude 等主 Agent 的外部工程协作手段，绝对不是 Polaris 后端、Factory、Run Ledger、ContextOS、ReceiptStore、runtime event、UI 或质量门禁的一部分。后端产品代码不得调度 OpenCode、等待 OpenCode、生成 `opencode_audit` 平台字段，或把 OpenCode 状态作为成功/失败依据。
+3. 审计范围必须覆盖最终送入 provider 的 LLM request（messages、tool schema、response format、token 估算、覆盖度 flags）、工具调用解析与归一化链路、`ToolSpecRegistry` aliases/arg_aliases、runtime event、LLM 调用日志、ContextOS 证据、bench session 和角色日志；若事件中 `messages`/`content` 被 redacted，主 Agent 必须把 `context_snapshot_ref` 对应的 `runtime/contexts/<shard>/<hash>` 快照文件纳入自己的外部审计证据包，禁止只看 redacted event。
+4. OpenCode 审计默认只读；只有在主 Agent 已经拆分出互不重叠且授权明确的修复范围时，才允许子 Agent 修改代码。
+5. 平台自身的失败分类仍必须由 Polaris 原生证据闭环完成：PM Contract、Chief Engineer Blueprint、Director Execution、LLM Output、Context Budget、Baseline Issue、Runtime Environment。无法归类时视为 Polaris 证据链缺口，先补 runtime/ledger/receipt/command 证据，不得用 OpenCode 审计状态补位。
 
 ### 4.15 Director Multi-Binding Degraded Execution
 
@@ -150,6 +150,16 @@ Cell 是最小自治边界。
 3. 跳过 binding 不得静默 fallback：`/v2/llm/status` 必须展示 `DEGRADED`、`skipped_bindings`、`skip_reason`；bench/runtime 证据必须保留 provider_id、model、binding_id 与失败原因。
 4. 如果 Director 所有 bindings 均不可用，Factory 必须 BLOCKED，不得继续运行。
 5. LLM route audit 必须以实际可达/可用 binding 为准，不得要求已跳过的坏 binding 产生 LLM 调用；也不得把跳过伪装为该 binding 成功运行。
+
+### 4.16 Bench Is Internal Test/Dev/Audit Harness Only
+
+1. `Bench`、`Factory Bench`、`factory_bench`、`L1-L12 bench`、benchmark harness、压力测试脚本/API/UI 均只允许存在于内部测试/开发/审计模式，用来压测 Polaris、发现平台通用根因、生成审计样本。
+2. 当前 L1-L12 压测、factory bench session、bench panel、bench API 可以在内部测试模式运行；它们不得进入正式项目功能、生产工作台、用户交付体验或控制面事实源。
+3. 正式环境/生产环境不得出现 Bench 入口、Bench 菜单、Bench 面板、Bench 命名业务 API、Bench 专属状态模型或 Bench 文案。
+4. Run Ledger、Job Token、ContextOS、ReceiptStore、Verifier/Gate Policy 等是平台内置基础设施，必须以平台级契约、平台级 projection、平台级 API 暴露；禁止把这些能力归属到 Bench 或依赖 `benchService` 承载正式语义。
+5. Bench 可以作为平台基础设施的内部 producer/consumer：写入测试样本、读取 projection、聚合压力测试结果。但它只能验证平台能力，不得反向决定平台架构边界。
+6. 如果某项能力未来要进入正式项目工作台，必须先从 Bench 命名空间抽离为平台级 Cell/contract/API/UI 类型，再由正式视图消费；禁止把 `factory_audits.json`、bench session、bench route、bench-only metadata 直接接入生产 UI。
+7. 审计时发现生产路径、正式 UI、设置页、ContextOS、TaskBoard、QA 工作台或 public API 依赖 Bench 命名空间时，按 P0 边界污染处理，必须迁移到平台级 Run Ledger/Control Plane projection。
 
 ## 5. 根目录与归属裁决
 
@@ -331,6 +341,8 @@ Cell 是最小自治边界。
 
 ### 10.5 Benchmark / 矩阵测试只走 agentic-eval CLI（强制）
 
+> 边界声明：本节所有 benchmark/bench/matrix 语义均指内部测试/开发/审计 harness。它们可以在当前测试模式运行，但不得作为生产功能、正式项目工作台、用户可见产品入口或控制面事实源暴露。
+
 1. 任何**矩阵测试 / benchmark / 评分跑分**必须表达为 agentic-eval **CASE JSON**
    （`polaris/cells/llm/evaluation/fixtures/agentic_benchmark/cases/*.json`），
    并通过 agentic-eval CLI 运行：`python -m polaris.delivery.cli.agentic_eval --suite <suite> [--level l1-l6]`。
@@ -495,6 +507,8 @@ Cell 是最小自治边界。
 9. `tool_calling_canonical_gate`
 
 补充规则：
+
+- `opencode_convergence_gate` 若存在，只能用于审计本仓已引入的 OpenCode 机制兼容代码，禁止触发外部 OpenCode CLI、禁止调度外部 Agent、禁止作为 Factory/角色运行成功条件。
 
 1. `docs/governance/ci/fitness-rules.yaml` 中的 `agent_instruction_snapshot_consistent` 要求 `AGENTS.md / CLAUDE.md / GEMINI.md` 的快照事实保持一致。
 2. 修改 `§15 / §16 / §17` 时必须同步三个指令文件。

@@ -1011,6 +1011,7 @@ async def _run_materialization_quality_repair_retry(
     repair_context = {
         **dict(context or {}),
         "run_id": run_id,
+        "task_id": target_task_id,
         "delivery_mode": "materialize_changes",
         "director_quality_repair": {
             "artifact_quality_errors": prompt_safe_artifact_quality_errors,
@@ -1027,6 +1028,7 @@ async def _run_materialization_quality_repair_retry(
         repair_metadata = {}
         repair_context["metadata"] = repair_metadata
     repair_metadata["delivery_mode"] = "materialize_changes"
+    repair_metadata["task_id"] = target_task_id
     # Force tool_choice=write_file whenever repair can be tied to exact target
     # files. Missing files need creation; Python runtime-smoke failures need a
     # complete rewrite of the already-written failing script. Leaving either

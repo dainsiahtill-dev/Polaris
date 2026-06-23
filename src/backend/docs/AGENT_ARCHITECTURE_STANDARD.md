@@ -150,7 +150,7 @@
 1. 平台运行态任务链路唯一为 `PM → Chief Engineer → Director`；PM 产出任务合同，Chief Engineer 产出蓝图/交接证据，Director 执行 CE 交接后的任务。
 2. 禁止新增或保留 `PM → Director`、`PM->Director`、`PM -> Director` 旧链路作为产品执行路径、UI 文案、实时投影或兜底逻辑。
 3. 缺少 Chief Engineer 蓝图、handoff 或实时投影时必须 fail-closed：展示等待/阻塞 CE，不得把 PM 合同直接送入 Director，也不得用 Director 队列状态冒充 CE 已完成。
-4. Factory Bench、首页主战场、PM/ChiefEngineer/Director 工作区必须订阅同一 runtime.v2 事件事实，并展示 `PM → Chief Engineer → Director` 三段状态；任一阶段状态不得通过 HTTP 轮询或旧 PM→Director 快照推断补齐。
+4. 首页主战场、PM/ChiefEngineer/Director 工作区必须订阅同一 runtime.v2 事件事实，并展示 `PM → Chief Engineer → Director` 三段状态；任一阶段状态不得通过 HTTP 轮询或旧 PM→Director 快照推断补齐。Factory Bench 仅可作为内部测试 harness 订阅同一事实流做压力测试和审计，不得作为正式产品视图或生产状态源。
 5. 审计时必须 grep `PM → Director`、`PM->Director`、`PM -> Director`、`PM 规划 → Director`；命中产品代码或规范即 P0，除非文件明确标注为历史归档。
 
 ## 8.2 工具调用归一化标准
@@ -185,6 +185,16 @@
 3. 降级状态必须可观测：`/v2/llm/status` 输出 `DEGRADED`、`degraded_roles`、`factory_degraded_roles`、`skipped_bindings`、`skip_reason`；Factory/bench/runtime 证据必须记录被跳过的 provider/model/binding_id 和原因。
 4. 所有 Director bindings 都不可用时必须 BLOCKED，不得继续运行。
 5. 审计口径必须以实际可用 binding 为准；已跳过的 binding 不要求 LLM 调用证据，但必须有跳过证据，禁止把 degraded run 报告成全路成功。
+
+## 8.6 Bench / Benchmark 测试态与生产边界标准
+
+1. `Bench`、`Factory Bench`、`factory_bench`、`L1-L12 bench`、benchmark harness、压力测试脚本/API/UI 只允许存在于内部测试/开发/审计模式，服务于压力测试、根因发现、回归验证和审计样本生成。
+2. 当前 L1-L12 压测、factory bench session、bench panel、bench API 可以在内部测试模式运行；这些设施不得被解释为正式项目功能、生产工作台、用户交付体验或控制面事实源。
+3. 正式环境/生产环境不得出现 Bench 入口、Bench 菜单、Bench 面板、Bench 专属 API、Bench 文案或 Bench 专属状态模型。
+4. Run Ledger、Job Token、ContextOS、ReceiptStore、Verifier/Gate Policy 是平台基础设施，必须以平台级 Cell/contract/projection/API/type 命名和暴露。Bench 只能在内部测试态作为这些平台能力的 producer/consumer，不得承载正式语义。
+5. 禁止让正式 UI、ContextOS、TaskBoard、QA 工作台、Settings、public API 或生产运行时依赖 `benchService`、bench session、`factory_audits.json`、bench-only metadata 或任何 Bench 命名空间。
+6. 如果某项能力先在 Bench 中验证成功，进入正式产品前必须完成命名空间提升：从 Bench 抽离到平台级 Control Plane / Run Ledger projection，再由正式视图消费。
+7. 审计发现生产路径出现 Bench 依赖时按 P0 边界污染处理；修复优先级高于新增功能。
 
 ---
 

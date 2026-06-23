@@ -9309,6 +9309,8 @@ class TestQualityRepairMissingTargetContract:
         )
 
         assert adapter.invocations == 1, summary
+        assert adapter.repair_context["task_id"] == "PM-0001-1"
+        assert adapter.repair_context["metadata"]["task_id"] == "PM-0001-1"
         assert adapter.repair_context["_transaction_kernel_forced_tool_choice"] == {
             "type": "function",
             "function": {"name": "write_file"},

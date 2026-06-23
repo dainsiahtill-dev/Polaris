@@ -261,6 +261,8 @@ def test_run_ledger_projection_is_canonical_read_model(tmp_path: Path) -> None:
     assert projection["capability"]["ok"] is True
     assert projection["capability"]["latest_token_id"] == ledger_meta["job_token_id"]
     assert projection["physical_evidence"]["command_count"] >= projection["physical_evidence"]["sampled_command_count"]
+    assert projection["evidence_policy"]["ok"] is True
+    assert projection["evidence_policy"]["required_modalities"] == ["code", "command"]
 
 
 def test_run_ledger_projection_tracks_user_verifier_modalities(tmp_path: Path) -> None:
@@ -271,10 +273,11 @@ def test_run_ledger_projection_tracks_user_verifier_modalities(tmp_path: Path) -
         "factory_run_id": "bench_1",
         "target_files": ["src/physics.ts"],
         "scope_paths": ["src/physics.ts", "tests/physics.test.ts"],
+        "required_evidence_modalities": ["physics"],
         "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
         "chain_results": {"contract_goal": "verify particle physics"},
     }
-    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1")
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1", stage="qa_verifier")
     event = build_gate_ledger_event(
         token,
         {
@@ -301,6 +304,91 @@ def test_run_ledger_projection_tracks_user_verifier_modalities(tmp_path: Path) -
     projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
 
     assert projection["ok"] is True
+    assert projection["evidence_policy"] == {
+        "ok": True,
+        "required_modalities": ["physics"],
+        "missing_required_modalities": [],
+    }
     assert projection["evidence_modalities"]["verifier"]["ok"] == 1
     assert projection["evidence_modalities"]["physics"]["ok"] == 1
     assert projection["gates"][0]["evidence_modalities"]["physics"]["metadata"]["script"] == "tests/physics.test.ts"
+
+
+def test_run_ledger_projection_fails_closed_when_required_verifier_evidence_is_missing(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "target_files": ["src/physics.ts"],
+        "scope_paths": ["src/physics.ts"],
+        "required_evidence_modalities": ["physics"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "verify particle physics"},
+    }
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1", stage="qa_verifier")
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": True,
+            "summary": "domain verifier claimed pass without evidence",
+        },
+        gate_name="qa_domain_verifier",
+    )
+
+    RunLedger(tmp_path, run_id="bench_1").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+
+    assert projection["ok"] is False
+    assert projection["integrity_ok"] is False
+    assert projection["evidence_policy"]["ok"] is False
+    assert projection["evidence_policy"]["missing_required_modalities"] == ["physics"]
+
+
+def test_run_ledger_policy_does_not_require_browser_unless_explicit(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "code_files": ["index.html"],
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "run static web app"},
+    }
+
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1")
+
+    assert token.gate_policy["required_evidence_modalities"] == ["code", "command"]
+
+
+def test_run_ledger_policy_can_explicitly_require_browser_evidence(tmp_path: Path) -> None:
+    record = {
+        "id": "P1",
+        "run_id": "bench_1",
+        "project_id": "P1",
+        "factory_run_id": "bench_1",
+        "code_files": ["index.html"],
+        "requires_browser_evidence": True,
+        "chain": {"audit_bundle": {"blueprint_id": "bp-1"}},
+        "chain_results": {"contract_goal": "run static web app"},
+    }
+    token = build_job_token_from_record(record, run_id="bench_1", project_id="P1")
+    event = build_gate_ledger_event(
+        token,
+        {
+            "ok": True,
+            "summary": "claimed pass without browser smoke",
+            "requirements": {
+                "artifact_landed": {"ok": True, "detail": "1 file"},
+                "build_test_lint_ran": {"ok": True, "detail": "static check"},
+            },
+            "commands": [{"ok": True, "tool": "static-check"}],
+            "command_count_total": 1,
+        },
+    )
+
+    RunLedger(tmp_path, run_id="bench_1").append_event(event)
+    projection = load_run_ledger_projection(tmp_path, run_id="bench_1")
+
+    assert projection["ok"] is False
+    assert projection["evidence_policy"]["missing_required_modalities"] == ["browser"]

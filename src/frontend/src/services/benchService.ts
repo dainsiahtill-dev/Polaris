@@ -14,34 +14,14 @@
 import { getBackendInfo } from '@/api';
 import { apiGet, apiPost } from './apiClient';
 import type { ApiResult } from './api.types';
+import type {
+  ControlPlaneProjectProjection,
+  ControlPlaneProjection,
+} from './controlPlane';
 
-export interface FactoryBenchControlPlaneProject {
-  project_id: string;
-  ok: boolean;
-  integrity_ok: boolean;
-  outcome_ok: boolean;
-  gate_count: number;
-  failed_gate_count: number;
-  latest_token_id: string;
-  detail: string;
-  missing: string[];
-}
+export type FactoryBenchControlPlaneProject = ControlPlaneProjectProjection;
 
-export interface FactoryBenchControlPlaneProjection {
-  schema_version: number;
-  source: string;
-  available: boolean;
-  ok: boolean;
-  status: string;
-  audit_path: string;
-  total: number;
-  projected: number;
-  missing: number;
-  failed: number;
-  projects: FactoryBenchControlPlaneProject[];
-  goal_audit?: Record<string, unknown>;
-  detail: string;
-}
+export type FactoryBenchControlPlaneProjection = ControlPlaneProjection;
 
 export interface FactoryBenchSessionSummary {
   session_id: string;

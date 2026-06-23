@@ -79,6 +79,52 @@ def _empty_control_plane_projection(*, session_status: str, audit_path: Path | N
     }
 
 
+def _merge_project_evidence_policy(projects: list[dict[str, Any]]) -> dict[str, Any]:
+    required: list[str] = []
+    missing: list[str] = []
+    has_policy = False
+    for project in projects:
+        policy = project.get("evidence_policy")
+        if not isinstance(policy, dict):
+            continue
+        has_policy = True
+        raw_required = policy.get("required_modalities")
+        if isinstance(raw_required, list):
+            required.extend(str(item) for item in raw_required if str(item))
+        raw_missing = policy.get("missing_required_modalities")
+        if isinstance(raw_missing, list):
+            missing.extend(str(item) for item in raw_missing if str(item))
+    required = list(dict.fromkeys(required))
+    missing = list(dict.fromkeys(missing))
+    return {
+        "ok": has_policy and not missing,
+        "required_modalities": required,
+        "missing_required_modalities": missing,
+    }
+
+
+def _merge_project_evidence_modalities(projects: list[dict[str, Any]]) -> dict[str, Any]:
+    merged: dict[str, dict[str, Any]] = {}
+    for project in projects:
+        modalities = project.get("evidence_modalities")
+        if not isinstance(modalities, dict):
+            continue
+        for name, raw_summary in modalities.items():
+            if not isinstance(raw_summary, dict):
+                continue
+            key = str(name)
+            summary = merged.setdefault(
+                key,
+                {"total": 0, "present": 0, "ok": 0, "failed": 0, "latest_detail": ""},
+            )
+            for count_key in ("total", "present", "ok", "failed"):
+                summary[count_key] = int(summary.get(count_key) or 0) + int(raw_summary.get(count_key) or 0)
+            detail = str(raw_summary.get("latest_detail") or "")
+            if detail:
+                summary["latest_detail"] = detail
+    return dict(sorted(merged.items()))
+
+
 def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, Any]:
     """Build a read-only control-plane projection from factory_audits.json."""
 
@@ -120,6 +166,10 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
             failed += 1
         capability = projection_map.get("capability")
         capability_map: dict[str, Any] = capability if isinstance(capability, dict) else {}
+        evidence_policy = projection_map.get("evidence_policy")
+        evidence_policy_map: dict[str, Any] = evidence_policy if isinstance(evidence_policy, dict) else {}
+        evidence_modalities = projection_map.get("evidence_modalities")
+        evidence_modalities_map: dict[str, Any] = evidence_modalities if isinstance(evidence_modalities, dict) else {}
         projects.append(
             {
                 "project_id": str(record.get("project_id") or record.get("id") or f"record-{index + 1}"),
@@ -131,6 +181,8 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
                 "latest_token_id": str(capability_map.get("latest_token_id") or ""),
                 "detail": str(projection_status.get("detail") or ""),
                 "missing": list(projection_status.get("missing") or []),
+                "evidence_policy": evidence_policy_map,
+                "evidence_modalities": evidence_modalities_map,
             }
         )
 
@@ -153,6 +205,8 @@ def _control_plane_projection_from_audit(status: dict[str, Any]) -> dict[str, An
         "projects": projects,
         "goal_audit": goal_ledger if isinstance(goal_ledger, dict) else {},
         "detail": f"run ledger projection {projected}/{total} project(s) ready",
+        "evidence_policy": _merge_project_evidence_policy(projects),
+        "evidence_modalities": _merge_project_evidence_modalities(projects),
     }
 
 
