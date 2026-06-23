@@ -6,9 +6,10 @@
 
 import { apiGet, buildQueryString } from './apiClient';
 import type { ApiResult } from './api.types';
-import type { FilePayload } from './api.types';
+import type { FilePayload, WorkspaceFileTreeOptions, WorkspaceFileTreeResponse } from './api.types';
 
 export type { FilePayload };
+export type { WorkspaceFileNode, WorkspaceFileTreeOptions, WorkspaceFileTreeResponse } from './api.types';
 
 // ============================================================================
 // File API
@@ -44,6 +45,45 @@ export async function readFile(
   });
 
   return apiGet<FilePayload>(`/files/read${query}`, 'Failed to read file');
+}
+
+export async function readWorkspaceFile(
+  path: string,
+  tailLines?: number
+): Promise<ApiResult<FilePayload>> {
+  return readScopedFile(path, 'workspace', tailLines);
+}
+
+export async function readScopedFile(
+  path: string,
+  scope: 'workspace' | 'runtime' | 'config' = 'workspace',
+  tailLines = 0
+): Promise<ApiResult<FilePayload>> {
+  const readMode = tailLines > 0 ? 'tail' : 'head';
+  const query = buildQueryString({
+    path: String(path || '').trim(),
+    scope,
+    tail_lines: tailLines,
+    max_chars: 600000,
+    read_mode: readMode,
+  });
+
+  return apiGet<FilePayload>(`/v2/files/read${query}`, 'Failed to read scoped file');
+}
+
+export async function listWorkspaceFileTree(
+  options: WorkspaceFileTreeOptions = {},
+): Promise<ApiResult<WorkspaceFileTreeResponse>> {
+  const query = buildQueryString({
+    root: options.root || '',
+    scope: options.scope || 'workspace',
+    max_depth: options.maxDepth ?? 12,
+    max_entries: options.maxEntries ?? 6000,
+    include_hidden: options.includeHidden ?? true,
+    include_ignored: options.includeIgnored ?? false,
+  });
+
+  return apiGet<WorkspaceFileTreeResponse>(`/v2/files/tree${query}`, 'Failed to load workspace file tree');
 }
 
 /**

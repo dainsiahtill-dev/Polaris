@@ -32,6 +32,7 @@ import { ResidentWorkspace } from '@/app/components/resident';
 import { LlmRuntimeOverlay } from '@/app/components/LlmRuntimeOverlay';
 import { RuntimeDiagnosticsWorkspace } from '@/app/components/RuntimeDiagnosticsWorkspace';
 import { ContextOSWorkspace } from '@/app/components/contextos';
+import { WorkspaceFilesPage } from '@/app/components/workspace-files/WorkspaceFilesPage';
 import { openPath, pickWorkspace } from '@/api';
 import { runtimeService } from '@/services';
 import { useRuntime } from './hooks/useRuntime';
@@ -238,7 +239,7 @@ function AppContent() {
     ui.isPlanDialogOpen ||
     ui.isLanceDbDialogOpen ||
     ui.showTerminal;
-  const [activeRoleView, setActiveRoleView] = useState<'main' | 'pm' | 'chief_engineer' | 'director' | 'factory' | 'agi' | 'diagnostics' | 'contextos'>('main');
+  const [activeRoleView, setActiveRoleView] = useState<'main' | 'pm' | 'chief_engineer' | 'director' | 'factory' | 'agi' | 'diagnostics' | 'contextos' | 'files'>('main');
   const [contextSidebarTab, setContextSidebarTab] = useState<ContextTab>('dialogue');
   const [clearingDialogueLogs, setClearingDialogueLogs] = useState(false);
   const { settings, load: loadSettings, update: updateSettings } = useSettings();
@@ -835,6 +836,10 @@ function AppContent() {
     setActiveRoleView('contextos');
   };
 
+  const handleEnterFiles = () => {
+    setActiveRoleView('files');
+  };
+
   const handleBackToMain = () => {
     setActiveRoleView('main');
   };
@@ -1136,6 +1141,20 @@ function AppContent() {
     );
   }
 
+  if (activeRoleView === 'files') {
+    return (
+      <ErrorBoundaryClass onError={(error) => {
+        notifyError(error.message || '发生未知错误');
+      }}>
+        <WorkspaceFilesPage
+          workspace={workspace}
+          onBackToMain={handleBackToMain}
+        />
+        <Toaster position="bottom-right" />
+      </ErrorBoundaryClass>
+    );
+  }
+
   // Render Main View (default)
   return (
     <ErrorBoundaryClass onError={(error) => {
@@ -1193,6 +1212,7 @@ function AppContent() {
           onEnterAGIWorkspace={handleEnterAGIWorkspace}
           onEnterRuntimeDiagnostics={handleEnterRuntimeDiagnostics}
           onEnterContextOS={handleEnterContextOS}
+          onEnterFiles={handleEnterFiles}
           onOpenIntervention={() => uiActions.openIntervention()}
           // 新增：即时反馈状态
           currentPhase={effectiveCurrentPhase}

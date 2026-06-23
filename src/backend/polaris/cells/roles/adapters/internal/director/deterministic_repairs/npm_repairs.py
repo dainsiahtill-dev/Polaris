@@ -143,6 +143,7 @@ def _apply_deterministic_npm_test_script_repair(
 
     if any(_is_repairable_npm_test_script_error(error) for error in artifact_quality_errors):
         test_script = str(scripts.get("test") or "").strip()
+        missing_test_entrypoint = _missing_npm_script_entrypoint(artifact_quality_errors, script_name="test")
         if (
             not test_script
             or "test" in _placeholder_npm_script_names(artifact_quality_errors)
@@ -157,6 +158,16 @@ def _apply_deterministic_npm_test_script_repair(
             if repaired_test_script and repaired_test_script != test_script:
                 scripts["test"] = repaired_test_script
                 changed_scripts["test"] = repaired_test_script
+        elif missing_test_entrypoint:
+            verify_entrypoint = _compiled_typescript_verify_entrypoint(workspace_path)
+            if verify_entrypoint:
+                scripts["verify"] = f"npm run build && node {verify_entrypoint}"
+                scripts["test"] = "npm run verify"
+                changed_scripts["verify"] = str(scripts["verify"])
+                changed_scripts["test"] = "npm run verify"
+            else:
+                scripts["test"] = "npm run build"
+                changed_scripts["test"] = "npm run build"
 
     if "build" in _placeholder_npm_script_names(
         artifact_quality_errors
@@ -182,6 +193,20 @@ def _apply_deterministic_npm_test_script_repair(
         if missing_verify_entrypoint in test_script:
             scripts["test"] = "npm run verify"
             changed_scripts["test"] = "npm run verify"
+
+    for script_name, missing_entrypoint in _missing_npm_script_entrypoints(artifact_quality_errors).items():
+        if script_name in {"test", "start", "verify"} or script_name in changed_scripts:
+            continue
+        repaired_script = _repair_missing_local_script_entrypoint(
+            script_name=script_name,
+            missing_entrypoint=missing_entrypoint,
+            scripts=scripts,
+            workspace_path=workspace_path,
+            payload=payload,
+        )
+        if repaired_script:
+            scripts[script_name] = repaired_script
+            changed_scripts[script_name] = repaired_script
 
     if not changed_scripts and not changed_metadata:
         return []
@@ -231,8 +256,10 @@ def _is_repairable_npm_test_script_error(error: Any) -> bool:
         or "npm package manifest script 'test' has invalid shell syntax" in text
         or "npm package manifest script 'test' has invalid node eval syntax" in text
         or "npm package manifest script 'test' uses shell command substitution" in text
+        or "npm package manifest script 'test' references missing local entrypoint" in text
         or "npm package manifest script 'start' references missing local entrypoint" in text
         or "npm package manifest script 'verify' references missing local entrypoint" in text
+        or ("npm package manifest script" in text and "references missing local entrypoint" in text)
         or ("npm package manifest script" in text and "is a placeholder command" in text)
         or ("npm package manifest script" in text and "swallows command failures" in text)
         or _has_typescript_source_require_module_not_found([text])
@@ -302,6 +329,19 @@ def _missing_npm_script_entrypoint(errors: list[str], *, script_name: str) -> st
     return ""
 
 
+def _missing_npm_script_entrypoints(errors: list[str]) -> dict[str, str]:
+    pattern = re.compile(r"npm package manifest script '([^']+)' references missing local entrypoint '([^']+)'")
+    entrypoints: dict[str, str] = {}
+    for error in errors:
+        match = pattern.search(str(error or ""))
+        if match:
+            script_name = str(match.group(1) or "").strip()
+            entrypoint = str(match.group(2) or "").strip()
+            if script_name and entrypoint:
+                entrypoints[script_name] = entrypoint
+    return entrypoints
+
+
 def _placeholder_npm_script_names(errors: list[str]) -> set[str]:
     return _npm_script_names_matching(errors, marker="is a placeholder command")
 
@@ -335,6 +375,40 @@ def _compiled_typescript_entrypoint(workspace_path: Path, payload: dict[str, Any
         if (workspace_path / source_entry).is_file():
             return f"dist/{source_entry.removeprefix('src/').removesuffix('.ts')}.js"
     return fallback or "dist/index.js"
+
+
+def _compiled_typescript_verify_entrypoint(workspace_path: Path) -> str:
+    if (workspace_path / "src" / "verify.ts").is_file():
+        return "dist/verify.js"
+    if (workspace_path / "src" / "index.ts").is_file():
+        return "dist/index.js"
+    if (workspace_path / "src" / "main.ts").is_file():
+        return "dist/main.js"
+    return ""
+
+
+def _repair_missing_local_script_entrypoint(
+    *,
+    script_name: str,
+    missing_entrypoint: str,
+    scripts: dict[str, Any],
+    workspace_path: Path,
+    payload: dict[str, Any],
+) -> str:
+    script = str(scripts.get(script_name) or "").strip()
+    if not script or missing_entrypoint not in script:
+        return ""
+    if script_name in {"serve", "dev", "preview"}:
+        start_script = str(scripts.get("start") or "").strip()
+        if start_script and missing_entrypoint not in start_script and f"npm run {script_name}" not in start_script:
+            return "npm run start"
+        if (workspace_path / "index.html").is_file():
+            return "npm run build"
+        entrypoint = _compiled_typescript_entrypoint(workspace_path, payload, fallback="dist/main.js")
+        return f"npm run build && node {entrypoint}"
+    if script_name in {"lint", "typecheck", "check"}:
+        return "tsc --noEmit"
+    return "npm run build"
 
 
 def _workspace_has_typescript_context(workspace_path: Path, payload: dict[str, Any]) -> bool:

@@ -377,7 +377,11 @@ class MutationTargetGuardViolation:
 
 
 def resolve_mutation_target_guard_violation(
-    latest_user_request: str, invocations: list[Any], *, workspace: str = "."
+    latest_user_request: str,
+    invocations: list[Any],
+    *,
+    workspace: str = ".",
+    additional_allowed_targets: Sequence[str] = (),
 ) -> MutationTargetGuardViolation | str | None:
     """检测 mutation 目标漂移：LLM 写入的文件不在用户明确提到的目标范围内。
 
@@ -385,12 +389,13 @@ def resolve_mutation_target_guard_violation(
         若存在漂移，返回 MutationTargetGuardViolation 或描述字符串；否则返回 None。
     """
     explicit_targets = extract_target_files_from_message(latest_user_request)
+    allowed_targets = [*explicit_targets, *(str(item) for item in additional_allowed_targets)]
     write_targets = extract_write_targets_from_invocations(invocations)
     if not write_targets:
         return None
 
     # 启发式检测：当 explicit_targets 为空时，进行更严格的检查
-    if not explicit_targets:
+    if not allowed_targets:
         written_basenames = {Path(p).name for p in write_targets}
         common_extensions = {".py", ".md", ".txt", ".json", ".yaml", ".yml"}
         for wb in written_basenames:
@@ -423,7 +428,7 @@ def resolve_mutation_target_guard_violation(
         )
 
     read_targets = extract_read_targets_from_invocations(invocations)
-    allowed_candidates = build_path_match_candidates(explicit_targets + read_targets)
+    allowed_candidates = build_path_match_candidates(allowed_targets + read_targets)
     if not allowed_candidates:
         return None
 
@@ -440,7 +445,7 @@ def resolve_mutation_target_guard_violation(
     if not mismatched_targets:
         return None
 
-    expected_targets = explicit_targets[:6]
+    expected_targets = allowed_targets[:6]
     if read_targets:
         expected_targets.extend(read_targets[:6])
     expected_targets = expected_targets[:8]

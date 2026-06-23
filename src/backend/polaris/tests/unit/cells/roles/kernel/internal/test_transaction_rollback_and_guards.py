@@ -20,6 +20,7 @@ from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
     extract_target_file_from_invocation_args,
     filter_out_of_scope_write_invocations,
     is_write_invocation,
+    resolve_mutation_target_guard_violation,
     rollback_state_after_retry_batch_failure,
     tool_batch_has_write_invocation,
 )
@@ -150,6 +151,27 @@ class TestMutationTargetDriftFiltering:
         assert extract_target_file_from_invocation_args(invocation) == ""
         assert is_write_invocation(invocation) is False
         assert tool_batch_has_write_invocation([invocation]) is False
+
+    def test_strict_guard_uses_additional_allowed_targets_from_modification_contract(self) -> None:
+        invocations: list[dict[str, Any]] = [
+            {
+                "tool_name": "write_file",
+                "arguments": {"file": "tests/verify.test.js", "content": "console.log('ok');"},
+            }
+        ]
+
+        without_contract = resolve_mutation_target_guard_violation(
+            "Repair package.json target_files: package.json, tests/verify.test.ts",
+            invocations,
+        )
+        with_contract = resolve_mutation_target_guard_violation(
+            "Repair package.json target_files: package.json, tests/verify.test.ts",
+            invocations,
+            additional_allowed_targets=("tests/verify.test.js",),
+        )
+
+        assert without_contract is not None
+        assert with_contract is None
 
 
 # ---------------------------------------------------------------------------

@@ -387,6 +387,109 @@ def test_deterministic_npm_script_repair_replaces_missing_verify_entrypoint(tmp_
     assert not any("references missing local entrypoint" in error for error in repaired_errors)
 
 
+def test_deterministic_npm_script_repair_replaces_missing_test_entrypoint_with_verify_script(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_npm_test_script_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "verify.ts").write_text(
+        "console.log('firefly flower moon humidity verification');\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "verify.test.ts").write_text(
+        "console.log('firefly flower moon humidity test');\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"outDir": "dist", "rootDir": "src"}, "include": ["src/**/*.ts"]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "glowing-insect-garden",
+                "version": "1.0.0",
+                "scripts": {
+                    "build": "tsc",
+                    "test": "tsc -p tsconfig.json && node --test tests/verify.test.js",
+                },
+                "devDependencies": {"typescript": "^5.4.0"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert any("script 'test' references missing local entrypoint 'tests/verify.test.js'" in error for error in errors)
+
+    results = _apply_deterministic_npm_test_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["scripts"]["verify"] == "npm run build && node dist/verify.js"
+    assert repaired["scripts"]["test"] == "npm run verify"
+    repaired_errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert not any("references missing local entrypoint" in error for error in repaired_errors)
+
+
+def test_deterministic_npm_script_repair_replaces_missing_serve_entrypoint(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
+        _apply_deterministic_npm_test_script_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("console.log('firefly flower moon humidity');\n", encoding="utf-8")
+    (tmp_path / "index.html").write_text(
+        "<!doctype html><html><body><canvas id='garden'></canvas></body></html>\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps({"compilerOptions": {"outDir": "dist", "rootDir": "src"}, "include": ["src/**/*.ts"]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "glowing-insect-garden",
+                "version": "1.0.0",
+                "scripts": {
+                    "build": "tsc",
+                    "serve": "node scripts/serve.js",
+                    "start": "npm run serve",
+                    "test": "npm run build",
+                },
+                "devDependencies": {"typescript": "^5.4.0"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert any("script 'serve' references missing local entrypoint 'scripts/serve.js'" in error for error in errors)
+
+    results = _apply_deterministic_npm_test_script_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert repaired["scripts"]["serve"] == "npm run build"
+    repaired_errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+    assert not any("references missing local entrypoint" in error for error in repaired_errors)
+
+
 def test_deterministic_npm_script_repair_replaces_placeholder_start_and_swallowing_build(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs.npm_repairs import (
         _apply_deterministic_npm_test_script_repair,
@@ -1559,6 +1662,83 @@ def test_deterministic_typescript_tsconfig_lib_repair_adds_dom_for_window(
     assert repaired["compilerOptions"]["lib"] == ["ES2020", "DOM"]
 
 
+def test_deterministic_typescript_tsconfig_lib_repair_updates_module_for_import_meta(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_tsconfig_lib_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "verify.ts").write_text("console.log(import.meta.url);\n", encoding="utf-8")
+    (tmp_path / "tsconfig.json").write_text(
+        json.dumps(
+            {
+                "compilerOptions": {
+                    "target": "ES2020",
+                    "module": "CommonJS",
+                    "lib": ["ES2020"],
+                },
+                "include": ["src/**/*.ts"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/verify.ts(1,13): error TS1343: The 'import.meta' meta-property is only allowed "
+        "when the '--module' option is 'es2020', 'es2022', 'esnext', 'system', 'node16', "
+        "'node18', 'node20', or 'nodenext'."
+    ]
+
+    results = _apply_deterministic_typescript_tsconfig_lib_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = json.loads((tmp_path / "tsconfig.json").read_text(encoding="utf-8"))
+    assert repaired["compilerOptions"]["module"] == "ES2020"
+    assert repaired["compilerOptions"]["lib"] == ["ES2020"]
+
+
+def test_deterministic_typescript_reexported_type_binding_repair_adds_local_import(
+    tmp_path: Any,
+) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_reexported_type_binding_repair,
+    )
+
+    (tmp_path / "src" / "domain").mkdir(parents=True)
+    (tmp_path / "src" / "domain" / "firefly.ts").write_text(
+        "export interface Firefly { id: string; }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "index.ts").write_text(
+        'export { Firefly } from "./domain/firefly";\nexport interface GardenSnapshot {\n  fireflies: Firefly[];\n}\n',
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/index.ts(3,14): error TS2304: Cannot find name 'Firefly'."
+    ]
+
+    results = _apply_deterministic_typescript_reexported_type_binding_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "index.ts").read_text(encoding="utf-8")
+    assert 'import type { Firefly } from "./domain/firefly";' in repaired
+    assert repaired.index("import type") < repaired.index("export { Firefly }")
+
+
 def test_deterministic_typescript_nullable_canvas_context_repair_adds_guard(tmp_path: Any) -> None:
     from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
         _apply_deterministic_typescript_nullable_canvas_context_repair,
@@ -1629,6 +1809,41 @@ def test_deterministic_typescript_nullable_canvas_context_repair_handles_existin
     repaired = (tmp_path / "src" / "index.ts").read_text(encoding="utf-8")
     assert 'const ctx = canvas.getContext("2d")!;' in repaired
     assert repaired.count("if (!ctx) {") == 1
+
+
+def test_deterministic_typescript_nullable_dom_handle_repair_adds_guard(tmp_path: Any) -> None:
+    from polaris.cells.roles.adapters.internal.director.deterministic_repairs.typescript_repairs import (
+        _apply_deterministic_typescript_nullable_canvas_context_repair,
+    )
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "renderer.ts").write_text(
+        "const container = document.getElementById('app');\n"
+        "const canvas = container.querySelector('canvas');\n"
+        "container.appendChild(canvas);\n"
+        "canvas.setAttribute('width', '100');\n",
+        encoding="utf-8",
+    )
+    errors = [
+        "Artifact quality scan failed: TypeScript project typecheck failed: "
+        "src/renderer.ts(3,1): error TS18047: 'container' is possibly 'null'.\n"
+        "src/renderer.ts(4,1): error TS18047: 'canvas' is possibly 'null'."
+    ]
+
+    results = _apply_deterministic_typescript_nullable_canvas_context_repair(
+        _make_adapter(tmp_path),
+        task_id="task-1",
+        artifact_quality_errors=errors,
+    )
+
+    assert results
+    repaired = (tmp_path / "src" / "renderer.ts").read_text(encoding="utf-8")
+    assert "if (!container) {" in repaired
+    assert 'throw new Error("DOM element unavailable: container");' in repaired
+    assert "if (!canvas) {" in repaired
+    assert 'throw new Error("DOM element unavailable: canvas");' in repaired
+    assert repaired.index("if (!container) {") < repaired.index("const canvas")
+    assert repaired.index("if (!canvas) {") < repaired.index("container.appendChild")
 
 
 def test_deterministic_materialization_repair_routes_vitest_globals(tmp_path: Any) -> None:
@@ -8111,11 +8326,46 @@ class TestQualityRepairMissingTargetContract:
             workspace_full=str(tmp_path),
         )
 
-        assert targets == ["src/verify.ts"]
+        assert targets == ["src/verify.ts", "tests/verify.test.ts"]
         assert _should_preserve_materialization_quality_repair_batch(quality_errors) is True
         assert _select_materialization_quality_repair_target_batch(
             ["src/verify.ts", "tests/verify.test.ts"],
             repair_attempt=2,
+            preserve_batch_after_first_attempt=_should_preserve_materialization_quality_repair_batch(quality_errors),
+        ) == ["src/verify.ts", "tests/verify.test.ts"]
+
+    def test_unresolved_symbol_with_typescript_extension_preserves_importer_and_exporter_batch(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _select_materialization_quality_repair_target_batch,
+            _semantic_quality_repair_target_files,
+            _should_preserve_materialization_quality_repair_batch,
+        )
+
+        src_dir = tmp_path / "src"
+        tests_dir = tmp_path / "tests"
+        src_dir.mkdir()
+        tests_dir.mkdir()
+        (src_dir / "verify.ts").write_text("export const verify = () => true;\n", encoding="utf-8")
+        (tests_dir / "verify.test.ts").write_text(
+            "import { runChecks } from '../src/verify.ts';\nvoid runChecks;\n",
+            encoding="utf-8",
+        )
+        quality_errors = [
+            "Artifact quality scan failed: unresolved import symbol 'runChecks' from '../src/verify.ts' "
+            "in tests/verify.test.ts (sibling module does not define it)"
+        ]
+
+        targets = _semantic_quality_repair_target_files(
+            artifact_quality_errors=quality_errors,
+            changed_files=["README.md", "src/verify.ts", "tests/verify.test.ts", "package.json"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/verify.ts", "tests/verify.test.ts"]
+        assert _select_materialization_quality_repair_target_batch(
+            targets,
+            repair_attempt=4,
+            rotate_after_first_attempt=True,
             preserve_batch_after_first_attempt=_should_preserve_materialization_quality_repair_batch(quality_errors),
         ) == ["src/verify.ts", "tests/verify.test.ts"]
 
@@ -8147,6 +8397,45 @@ class TestQualityRepairMissingTargetContract:
         )
 
         assert targets == ["src/index.ts"]
+
+    def test_semantic_quality_repair_targets_unknown_exporter_and_usage_file(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _select_materialization_quality_repair_target_batch,
+            _semantic_quality_repair_target_files,
+            _should_preserve_materialization_quality_repair_batch,
+        )
+
+        src_dir = tmp_path / "src"
+        domain_dir = src_dir / "domain"
+        domain_dir.mkdir(parents=True)
+        (domain_dir / "humidity.ts").write_text(
+            "export const adjustHumidity: unknown = undefined;\n",
+            encoding="utf-8",
+        )
+        (src_dir / "main.ts").write_text(
+            "import { adjustHumidity } from './domain/humidity';\n"
+            "const humidity = adjustHumidity({ value: 0.5 }, 0.1);\n"
+            "void humidity;\n",
+            encoding="utf-8",
+        )
+        quality_errors = [
+            "Artifact quality scan failed: TypeScript project typecheck failed: "
+            "src/main.ts(2,18): error TS18046: 'adjustHumidity' is of type 'unknown'."
+        ]
+
+        targets = _semantic_quality_repair_target_files(
+            artifact_quality_errors=quality_errors,
+            changed_files=["src/main.ts", "src/domain/humidity.ts"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["src/domain/humidity.ts", "src/main.ts"]
+        assert _select_materialization_quality_repair_target_batch(
+            targets,
+            repair_attempt=2,
+            rotate_after_first_attempt=True,
+            preserve_batch_after_first_attempt=_should_preserve_materialization_quality_repair_batch(quality_errors),
+        ) == ["src/domain/humidity.ts", "src/main.ts"]
 
     def test_explicit_quality_repair_targets_vitest_source_and_test_files(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.quality_gate import (

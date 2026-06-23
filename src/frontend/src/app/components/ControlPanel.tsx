@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Anchor, Play, Square, Settings, FolderOpen, RefreshCw, Zap, Loader2, FastForward, FileText, Brain, Activity, TerminalSquare, Crown, Hammer, MoreHorizontal, Bot, ClipboardList, Gauge, ShieldAlert, Network } from 'lucide-react';
+import { Anchor, Play, Square, Settings, FolderOpen, RefreshCw, Zap, Loader2, FastForward, FileText, Brain, Activity, TerminalSquare, Crown, Hammer, MoreHorizontal, Bot, ClipboardList, Gauge, ShieldAlert, Network, Files } from 'lucide-react';
 import { WindowControls } from './WindowControls';
 import { UsageHUD, type UsageStats } from './UsageHUD';
 import { UI_TERMS } from '@/app/constants/uiTerminology';
@@ -45,6 +45,7 @@ interface ControlPanelProps {
   onEnterAGIWorkspace?: () => void;
   onEnterRuntimeDiagnostics?: () => void;
   onEnterContextOS?: () => void;
+  onEnterFiles?: () => void;
   onOpenIntervention?: () => void;
   workspaceError?: string | null;
   isStartingPM?: boolean;
@@ -131,6 +132,7 @@ export function ControlPanel({
   onEnterAGIWorkspace,
   onEnterRuntimeDiagnostics,
   onEnterContextOS,
+  onEnterFiles,
   onOpenIntervention,
   workspaceError,
   isStartingPM,
@@ -555,6 +557,19 @@ export function ControlPanel({
           </button>
         )}
 
+        {/* Workspace file browser entry */}
+        {onEnterFiles && (
+          <button
+            onClick={onEnterFiles}
+            data-testid="control-panel-enter-files"
+            className="no-drag flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all soft-chip text-text-muted hover:text-text-main"
+            title="Workspace 文件浏览器 - 浏览项目文件并预览代码"
+          >
+            <Files className="size-3.5" />
+            <span className="text-[10px] font-bold uppercase tracking-wider">Files</span>
+          </button>
+        )}
+
         {/* Vital Signs (Ping/Health) */}
         <div className="no-drag flex items-center gap-2 px-2.5 py-1 soft-panel-subtle rounded-lg">
           {/* 当前任务显示 */}
@@ -709,6 +724,12 @@ export function ControlPanel({
               <DropdownMenuItem data-testid="enter-contextos-menu-item" onClick={() => runMoreMenuAction(onEnterContextOS)}>
                 <Network className="size-4 mr-2" />
                 ContextOS 实时视图
+              </DropdownMenuItem>
+            )}
+            {onEnterFiles && (
+              <DropdownMenuItem data-testid="enter-files-menu-item" onClick={() => runMoreMenuAction(onEnterFiles)}>
+                <Files className="size-4 mr-2" />
+                Workspace 文件浏览器
               </DropdownMenuItem>
             )}
             {showAgents && (

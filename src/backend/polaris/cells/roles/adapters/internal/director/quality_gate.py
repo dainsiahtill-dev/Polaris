@@ -1184,6 +1184,8 @@ def _should_preserve_materialization_quality_repair_batch(artifact_quality_error
     joined_errors = "\n".join(str(item or "").lower() for item in artifact_quality_errors)
     if "unresolved import symbol" in joined_errors or "has no exported member" in joined_errors:
         return True
+    if "ts18046" in joined_errors or "is of type 'unknown'" in joined_errors or 'is of type "unknown"' in joined_errors:
+        return True
     coupled_hints = (
         "unresolved import symbol",
         "typescript project typecheck failed",
@@ -1217,6 +1219,16 @@ _TS_NO_EXPORTED_MEMBER_QUALITY_RE = re.compile(
 _TS_DIAGNOSTIC_PATH_RE = re.compile(
     r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.tsx?)\(\d+,\d+\):\s*error\s+TS\d+:",
     re.IGNORECASE,
+)
+_TS_UNKNOWN_VALUE_QUALITY_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.tsx?)\(\d+,\d+\):\s*"
+    r"error\s+TS18046:\s*['\"](?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)['\"]\s+is\s+of\s+type\s+"
+    r"['\"]unknown['\"]",
+    re.IGNORECASE,
+)
+_TS_EXPORTED_DECLARATION_TEMPLATE = (
+    r"\bexport\s+(?:declare\s+)?(?:(?:const|let|var|function|class|interface|type)\s+)"
+    r"{symbol}\b"
 )
 
 
@@ -1580,6 +1592,46 @@ def _typescript_diagnostic_target_files(
     return _dedupe_preserve_order(targets)
 
 
+def _typescript_unknown_exporter_target_files(
+    artifact_quality_errors: list[str],
+    workspace_root: Path,
+) -> list[str]:
+    symbols: list[str] = []
+    for item in artifact_quality_errors:
+        for match in _TS_UNKNOWN_VALUE_QUALITY_RE.finditer(str(item or "")):
+            symbol = str(match.group("symbol") or "").strip()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+    if not symbols:
+        return []
+
+    targets: list[str] = []
+    try:
+        root = workspace_root.resolve()
+        candidates = [
+            path
+            for path in root.rglob("*")
+            if path.is_file() and path.suffix.lower() in {".ts", ".tsx"} and "node_modules" not in path.parts
+        ]
+    except OSError:
+        return []
+    for path in candidates:
+        try:
+            rel = path.relative_to(root).as_posix()
+            text = path.read_text(encoding="utf-8")
+        except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+            continue
+        for symbol in symbols:
+            declaration_re = re.compile(
+                _TS_EXPORTED_DECLARATION_TEMPLATE.format(symbol=re.escape(symbol)),
+                re.MULTILINE,
+            )
+            if declaration_re.search(text):
+                targets.append(rel)
+                break
+    return _dedupe_preserve_order(targets)
+
+
 def _is_typescript_command_config_path(rel_path: str) -> bool:
     return Path(str(rel_path or "")).name.lower() in {"tsconfig.json", "jsconfig.json"}
 
@@ -1644,6 +1696,10 @@ def _semantic_quality_repair_target_files(
         artifact_quality_errors,
         workspace_root,
     )
+    unknown_exporter_targets = _typescript_unknown_exporter_target_files(
+        artifact_quality_errors,
+        workspace_root,
+    )
     diagnostic_targets = _typescript_diagnostic_target_files(artifact_quality_errors, workspace_root)
     candidates: list[str] = []
     for item in changed_files:
@@ -1668,13 +1724,24 @@ def _semantic_quality_repair_target_files(
                 explicit_candidates.append(rel)
     explicit_unique = _dedupe_preserve_order(explicit_candidates)
     if exporting_targets:
+        coupled_importers = [
+            rel
+            for rel in importing_files
+            if Path(rel).suffix.lower() in _SEMANTIC_QUALITY_REPAIR_SOURCE_SUFFIXES
+            and _workspace_path_exists_case_insensitive(workspace_root, rel)
+        ]
         filtered_diagnostics = [rel for rel in diagnostic_targets if rel not in importing_files]
         filtered_explicit = [
             rel
             for rel in explicit_unique
             if rel not in importing_files and not (diagnostic_targets and _is_typescript_command_config_path(rel))
         ]
-        return _dedupe_preserve_order([*exporting_targets, *filtered_diagnostics, *filtered_explicit])
+        return _dedupe_preserve_order(
+            [*exporting_targets, *coupled_importers, *filtered_diagnostics, *filtered_explicit]
+        )
+    if unknown_exporter_targets:
+        filtered_explicit = [rel for rel in explicit_unique if not _is_typescript_command_config_path(rel)]
+        return _dedupe_preserve_order([*unknown_exporter_targets, *filtered_explicit, *diagnostic_targets])
     if diagnostic_targets:
         filtered_explicit = [rel for rel in explicit_unique if not _is_typescript_command_config_path(rel)]
         return _dedupe_preserve_order([*filtered_explicit, *diagnostic_targets])

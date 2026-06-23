@@ -130,6 +130,17 @@ _TS_CANVAS_CONTEXT_DECLARATION_LINE_RE = re.compile(
     r"^(?P<indent>\s*)(?:const|let|var)\s+(?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)"
     r"(?:\s*:\s*[^=]+)?\s*=\s*[^;\n]*\.getContext\(\s*['\"]2d['\"]\s*\)\s*;?\s*$"
 )
+_TS_NAMED_REEXPORT_RE = re.compile(
+    r"export\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*from\s*['\"](?P<module>[^'\"]+)['\"]\s*;?",
+    re.MULTILINE | re.DOTALL,
+)
+_TS_NULLABLE_DOM_HANDLE_DECLARATION_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)(?:const|let|var)\s+(?P<symbol>[A-Za-z_$][A-Za-z0-9_$]*)"
+    r"(?:\s*:\s*[^=]+)?\s*=\s*(?P<source>[^;\n]*"
+    r"(?:document\.(?:getElementById|querySelector)|"
+    r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*\.querySelector)"
+    r"\s*\([^;\n]*\)[^;\n]*)\s*;?\s*$"
+)
 _TS_VITEST_IMPORT_RE = re.compile(
     r"import\s*\{\s*(?P<symbols>[^}]+)\s*\}\s*from\s*['\"]vitest['\"]\s*;?",
     re.MULTILINE,
@@ -588,7 +599,9 @@ def _apply_deterministic_typescript_tsconfig_lib_repair(
     task_id: str,
     artifact_quality_errors: list[str],
 ) -> list[dict[str, Any]]:
-    if not _typescript_errors_require_dom_lib(artifact_quality_errors):
+    needs_dom_lib = _typescript_errors_require_dom_lib(artifact_quality_errors)
+    needs_import_meta_module = _typescript_errors_require_import_meta_module(artifact_quality_errors)
+    if not needs_dom_lib and not needs_import_meta_module:
         return []
     workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
     tsconfig_path = workspace_path / "tsconfig.json"
@@ -602,15 +615,21 @@ def _apply_deterministic_typescript_tsconfig_lib_repair(
         return []
     compiler_options_raw = payload.get("compilerOptions")
     compiler_options: dict[str, Any] = dict(compiler_options_raw) if isinstance(compiler_options_raw, dict) else {}
+    changed = False
     libs_raw = compiler_options.get("lib")
     libs = [str(item) for item in libs_raw] if isinstance(libs_raw, list) else []
     normalized = {item.lower() for item in libs}
-    if "dom" in normalized:
+    if needs_dom_lib and "dom" not in normalized:
+        if not libs:
+            libs.append(str(compiler_options.get("target") or "ES2020"))
+        libs.append("DOM")
+        compiler_options["lib"] = libs
+        changed = True
+    if needs_import_meta_module and not _typescript_module_allows_import_meta(compiler_options.get("module")):
+        compiler_options["module"] = "ES2020"
+        changed = True
+    if not changed:
         return []
-    if not libs:
-        libs.append(str(compiler_options.get("target") or "ES2020"))
-    libs.append("DOM")
-    compiler_options["lib"] = libs
     payload["compilerOptions"] = compiler_options
     content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     message_bus = getattr(getattr(adapter, "_execution", None), "_message_bus", None)
@@ -637,6 +656,7 @@ def _apply_deterministic_typescript_tsconfig_lib_repair(
                 "source_tool": "deterministic_typescript_tsconfig_lib_repair",
                 "file": "tsconfig.json",
                 "libs": libs,
+                "module": compiler_options.get("module"),
                 "bytes_written": int(write_result.get("bytes_written") or len(content.encode("utf-8"))),
                 "operation": str(write_result.get("operation") or "modify"),
                 "broadcast_ok": bool(write_result.get("broadcast_ok")),
@@ -741,6 +761,58 @@ def _apply_deterministic_typescript_vitest_globals_repair(
     )
 
 
+def _apply_deterministic_typescript_reexported_type_binding_repair(
+    adapter: Any,
+    *,
+    task_id: str,
+    artifact_quality_errors: list[str],
+) -> list[dict[str, Any]]:
+    unresolved = _parse_typescript_cannot_find_name_errors(artifact_quality_errors)
+    if not unresolved:
+        return []
+
+    workspace_path = Path(str(getattr(adapter, "workspace", "") or "")).resolve()
+    if not workspace_path.exists() or not workspace_path.is_dir():
+        return []
+
+    updated_by_path: dict[Path, str] = {}
+    repaired: list[dict[str, str]] = []
+    by_file: dict[str, list[dict[str, str]]] = {}
+    for item in unresolved:
+        by_file.setdefault(item["file"], []).append(item)
+
+    for rel_file, items in by_file.items():
+        path = (workspace_path / rel_file).resolve()
+        if not _path_inside_workspace(path, workspace_path) or not path.is_file():
+            continue
+        try:
+            original = updated_by_path.get(path) or path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        repaired_text = original
+        for item in items:
+            if not _typescript_missing_identifier_usage_is_type_position(repaired_text, item):
+                continue
+            repaired_text, import_meta = _add_typescript_reexported_type_binding(
+                repaired_text,
+                missing_symbol=item["symbol"],
+            )
+            if import_meta:
+                repaired.append({"file": rel_file, **import_meta})
+        if repaired_text != original:
+            updated_by_path[path] = repaired_text
+
+    return _write_typescript_repair_results(
+        adapter,
+        workspace_path=workspace_path,
+        task_id=task_id,
+        updated_by_path=updated_by_path,
+        source_tool="deterministic_typescript_reexported_type_binding_repair",
+        metadata_key="imports",
+        metadata_value=repaired,
+    )
+
+
 def _typescript_errors_require_dom_lib(errors: list[str]) -> bool:
     joined = "\n".join(str(error or "").lower() for error in errors)
     if "include 'dom'" not in joined:
@@ -748,6 +820,97 @@ def _typescript_errors_require_dom_lib(errors: list[str]) -> bool:
     return any(
         f"cannot find name '{name}'" in joined for name in ("console", "window", "document", "navigator", "location")
     )
+
+
+def _typescript_errors_require_import_meta_module(errors: list[str]) -> bool:
+    joined = "\n".join(str(error or "").lower() for error in errors)
+    return "ts1343" in joined and "import.meta" in joined and "module" in joined
+
+
+def _typescript_module_allows_import_meta(raw_module: Any) -> bool:
+    module = str(raw_module or "").strip().lower()
+    return module in {"es2020", "es2022", "esnext", "system", "node16", "node18", "node20", "nodenext"}
+
+
+def _typescript_missing_identifier_usage_is_type_position(text: str, item: dict[str, str]) -> bool:
+    try:
+        line_number = int(item.get("line") or "0")
+    except ValueError:
+        return False
+    lines = str(text or "").splitlines()
+    if line_number <= 0 or line_number > len(lines):
+        return False
+    symbol = str(item.get("symbol") or "").strip()
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return False
+    line = lines[line_number - 1]
+    return bool(
+        re.search(rf"[:<,|&([]\s*{re.escape(symbol)}\b", line)
+        or re.search(rf"\b{re.escape(symbol)}\s*(?:\[\])", line)
+        or re.search(rf"\bas\s+{re.escape(symbol)}\b", line)
+    )
+
+
+def _add_typescript_reexported_type_binding(text: str, *, missing_symbol: str) -> tuple[str, dict[str, str]]:
+    symbol = str(missing_symbol or "").strip()
+    if not _TS_IDENTIFIER_RE.fullmatch(symbol):
+        return text, {}
+    module_ref = _typescript_reexport_module_for_symbol(text, symbol)
+    if not module_ref:
+        return text, {}
+    if _typescript_has_type_import_for_symbol(text, symbol, module_ref):
+        return text, {}
+    import_line = f'import type {{ {symbol} }} from "{module_ref}";\n'
+    insert_at = _typescript_import_insertion_index(text)
+    return text[:insert_at] + import_line + text[insert_at:], {"symbol": symbol, "module": module_ref}
+
+
+def _typescript_reexport_module_for_symbol(text: str, symbol: str) -> str:
+    for match in _TS_NAMED_REEXPORT_RE.finditer(str(text or "")):
+        module_ref = str(match.group("module") or "").strip()
+        for token in str(match.group("symbols") or "").split(","):
+            imported, exported = _typescript_named_export_token_symbols(token)
+            if symbol in {imported, exported}:
+                return module_ref
+    return ""
+
+
+def _typescript_named_export_token_symbols(token: str) -> tuple[str, str]:
+    raw = str(token or "").strip()
+    raw = re.sub(r"/\*.*?\*/", "", raw).strip()
+    raw = raw.split("//", 1)[0].strip()
+    if not raw:
+        return "", ""
+    parts = re.split(r"\s+as\s+", raw, maxsplit=1, flags=re.IGNORECASE)
+    imported = parts[0].strip()
+    exported = parts[1].strip() if len(parts) > 1 else imported
+    if not _TS_IDENTIFIER_RE.fullmatch(imported) or not _TS_IDENTIFIER_RE.fullmatch(exported):
+        return "", ""
+    return imported, exported
+
+
+def _typescript_has_type_import_for_symbol(text: str, symbol: str, module_ref: str) -> bool:
+    import_re = re.compile(
+        r"import\s+type\s*\{\s*(?P<symbols>[^}]+)\}\s*from\s*['\"]" + re.escape(module_ref) + r"['\"]",
+        re.MULTILINE | re.DOTALL,
+    )
+    for match in import_re.finditer(str(text or "")):
+        for token in str(match.group("symbols") or "").split(","):
+            imported, exported = _typescript_named_export_token_symbols(token)
+            if symbol in {imported, exported}:
+                return True
+    return False
+
+
+def _typescript_import_insertion_index(text: str) -> int:
+    stripped = str(text or "")
+    first_import = re.search(r"^\s*import\s", stripped, re.MULTILINE)
+    if first_import:
+        return first_import.start()
+    first_export = re.search(r"^\s*export\s", stripped, re.MULTILINE)
+    if first_export:
+        return first_export.start()
+    return 0
 
 
 def _apply_deterministic_typescript_number_to_string_argument_repair(
@@ -1378,23 +1541,38 @@ def _repair_typescript_nullable_canvas_context_guards(
     guarded: list[str] = []
     for index, line in enumerate(lines):
         match = _TS_CANVAS_CONTEXT_DECLARATION_LINE_RE.match(line)
-        if not match:
+        if match:
+            symbol = str(match.group("symbol") or "").strip()
+            if symbols and symbol not in symbols:
+                repaired_lines.append(line)
+                continue
+            repaired_line = _typescript_canvas_context_non_null_assertion_line(line)
+            line_changed = repaired_line != line
+            repaired_lines.append(repaired_line)
+            if _typescript_nullable_guard_follows(lines, index, symbol):
+                if line_changed:
+                    guarded.append(symbol)
+                continue
+            indent = str(match.group("indent") or "")
+            repaired_lines.append(f"{indent}if (!{symbol}) {{")
+            repaired_lines.append(f'{indent}  throw new Error("Canvas 2D context unavailable");')
+            repaired_lines.append(f"{indent}}}")
+            guarded.append(symbol)
+            continue
+        dom_match = _TS_NULLABLE_DOM_HANDLE_DECLARATION_LINE_RE.match(line)
+        if not dom_match:
             repaired_lines.append(line)
             continue
-        symbol = str(match.group("symbol") or "").strip()
+        symbol = str(dom_match.group("symbol") or "").strip()
         if symbols and symbol not in symbols:
             repaired_lines.append(line)
             continue
-        repaired_line = _typescript_canvas_context_non_null_assertion_line(line)
-        line_changed = repaired_line != line
-        repaired_lines.append(repaired_line)
+        repaired_lines.append(line)
         if _typescript_nullable_guard_follows(lines, index, symbol):
-            if line_changed:
-                guarded.append(symbol)
             continue
-        indent = str(match.group("indent") or "")
+        indent = str(dom_match.group("indent") or "")
         repaired_lines.append(f"{indent}if (!{symbol}) {{")
-        repaired_lines.append(f'{indent}  throw new Error("Canvas 2D context unavailable");')
+        repaired_lines.append(f'{indent}  throw new Error("DOM element unavailable: {symbol}");')
         repaired_lines.append(f"{indent}}}")
         guarded.append(symbol)
     if not guarded:

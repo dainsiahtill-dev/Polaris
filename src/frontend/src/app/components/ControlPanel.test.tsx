@@ -301,6 +301,21 @@ describe('ControlPanel', () => {
     });
   });
 
+  describe('Workspace Files', () => {
+    it('shows workspace file browser entry when provided', () => {
+      render(<ControlPanel {...defaultProps} onEnterFiles={vi.fn()} />);
+      expect(screen.getByTestId('control-panel-enter-files')).toBeInTheDocument();
+      expect(screen.getByText('Workspace 文件浏览器')).toBeInTheDocument();
+    });
+
+    it('calls onEnterFiles from the toolbar entry', () => {
+      const onEnterFiles = vi.fn();
+      render(<ControlPanel {...defaultProps} onEnterFiles={onEnterFiles} />);
+      fireEvent.click(screen.getByTestId('control-panel-enter-files'));
+      expect(onEnterFiles).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('Chief Engineer Workspace', () => {
     it('shows chief engineer workspace entry when provided', () => {
       render(<ControlPanel {...defaultProps} onEnterChiefEngineerWorkspace={vi.fn()} />);

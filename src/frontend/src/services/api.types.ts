@@ -514,12 +514,64 @@ export interface LLMStatusResponse {
 // ============================================================================
 
 export interface FilePayload {
+  path?: string;
+  rel_path?: string;
   content: string;
   mtime: string;
 }
 
 export interface FileReadOptions {
   tailLines?: number;
+}
+
+export type WorkspaceFileNodeType = 'directory' | 'file';
+
+export interface WorkspaceFileNode {
+  id: string;
+  name: string;
+  path: string;
+  type: WorkspaceFileNodeType;
+  depth: number;
+  extension?: string | null;
+  size?: number | null;
+  mtime?: string | null;
+  language?: string | null;
+  mime?: string | null;
+  icon?: string | null;
+  is_binary?: boolean;
+  is_symlink?: boolean;
+  children?: WorkspaceFileNode[] | null;
+}
+
+export interface WorkspaceFileTreeStats {
+  files: number;
+  directories: number;
+  omitted: number;
+  hidden: number;
+  binary: number;
+  total_size: number;
+}
+
+export interface WorkspaceFileTreeResponse {
+  workspace: string;
+  scope: string;
+  root: string;
+  generated_at: string;
+  max_depth: number;
+  max_entries: number;
+  truncated: boolean;
+  excluded: string[];
+  stats: WorkspaceFileTreeStats;
+  tree: WorkspaceFileNode;
+}
+
+export interface WorkspaceFileTreeOptions {
+  root?: string;
+  scope?: 'workspace' | 'runtime' | 'config';
+  maxDepth?: number;
+  maxEntries?: number;
+  includeHidden?: boolean;
+  includeIgnored?: boolean;
 }
 
 // ============================================================================

@@ -1080,7 +1080,11 @@ class ToolBatchExecutor:
                     user_request=latest_user_request,
                 )
         if requires_mutation:
-            violation = resolve_mutation_target_guard_violation(latest_user_request, invocations)
+            violation = resolve_mutation_target_guard_violation(
+                latest_user_request,
+                invocations,
+                additional_allowed_targets=tuple(single_target_candidates),
+            )
             if violation:
                 if guard_mode == "strict":
                     raise RuntimeError(violation)

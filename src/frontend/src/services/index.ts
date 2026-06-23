@@ -52,6 +52,9 @@ export type {
   ChatMessageRequest,
   // File
   FilePayload,
+  WorkspaceFileNode,
+  WorkspaceFileTreeOptions,
+  WorkspaceFileTreeResponse,
   // Memo
   MemoItem,
   MemoListResponse,
@@ -296,7 +299,10 @@ export {
 
 export {
   normalizeArtifactPath,
+  listWorkspaceFileTree,
   readFile,
+  readScopedFile,
+  readWorkspaceFile,
   readLogTail,
   readJsonFile,
 } from './fileService';

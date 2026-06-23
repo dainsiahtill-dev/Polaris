@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-06-23T20:37:17+08:00",
+  "updated_at": "2026-06-23T21:41:28+08:00",
   "objective": "Factory Bench L1-L12 generated projects must truly run with code on disk, environment/dependency readiness, at least one real build/test/lint gate, at least one real CLI/Web/API entry execution, evidence-backed failure attribution, and repeated batches with no new general root causes.",
   "current_position": {
     "level": "L1",
     "project": "L1-01",
-    "status": "l1_01_verify_script_missing_entrypoint_fix_verified_locally_pending_rerun",
+    "status": "l1_01_typescript_coupled_repair_targets_verified_locally_pending_director_only_rerun",
     "ordering_rule": "Run one project at a time in order L1-01..L12; do not proceed to L1-02 until L1-01 is runnable."
   },
   "latest_llm_binding_update": {
@@ -55,38 +55,49 @@
     ]
   },
   "latest_real_bench": {
-    "run_id": "codex-l1-01-anthropic-compat-minimax-m3-ts-targets-202606232027",
-    "factory_run_id": "factory_14b892be03e6",
-    "director_run_id": "director-867a0b1c4fa8",
+    "run_id": "codex-l1-01-anthropic-compat-minimax-m3-runability-loop-202606232122",
+    "factory_run_id": "factory_9a08c10525a9",
+    "bench_session_id": "bench-1782220884-c6a0da",
     "work_dir": "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229",
     "project": "L1-01",
     "result": "FAIL",
-    "wall_clock_seconds": 193.3,
+    "wall_clock_seconds": 496.8,
     "step_success_rate": "0/1",
     "runnable_rate": "0/1",
     "chain": "partial",
-    "qa_ran": false,
+    "qa_ran": true,
     "qa_passed": false,
     "llm_route_audit": "PASS",
-    "source_files": 6,
-    "static_artifact_checks": "FAIL: package_scripts verify references missing scripts/verify.js",
-    "real_run_gate": "FAIL: build_test_lint_ran and entrypoint_smoke failed because package script references missing local entrypoint",
-    "primary_failure_category": "director_tool_execution",
-    "root_cause_signature": "director_tool_execution:npm_script_missing_local_entrypoint_after_repair",
-    "director_primary_error": "Task 1 failed director_materialization_quality_failed after 26 tool executions and write_tool_evidence=true; residual artifact quality error was package.json script 'verify' references missing local entrypoint 'scripts/verify.js'.",
-    "tool_failure_at_20260623_202912": "write_file failed for src/main.ts due to TypeScript syntax validation errors; this was fail-closed syntax validation after normalized write_file execution, and later src/main.ts write succeeded at 20:29:49.",
+    "artifact_static_checks": {
+      "ts_syntax": "PASS",
+      "package_scripts": "PASS",
+      "source_target_coverage": "PASS",
+      "plan_artifact_present": "PASS",
+      "blueprint_artifact_present": "PASS",
+      "qa_verdict_artifact_present": "PASS"
+    },
+    "failed_gates": [
+      "chain_clean",
+      "integration_qa_passed",
+      "real_run_gate: build_test_lint_ran"
+    ],
+    "primary_failure_category": "director_llm_output_with_platform_repair_target_gap",
+    "root_cause_signature": "typescript_coupled_repair_targets_and_reexported_type_bindings",
+    "physical_errors": [
+      "task_3 semantic_quality_error unresolved import symbol 'runChecks' from '../src/verify.ts' in tests/verify.test.ts",
+      "npm run build exit_code=2: TS2304 Firefly/Flower/Moon/Humidity missing in src/index.ts; TS18046 adjustHumidity is unknown in src/main.ts"
+    ],
     "positive_progress": [
-      "Director/QA bindings stayed on anthropic_compat-1782212251463 | MiniMax-M3 and LLM route audit passed.",
-      "Provider/native tool path and tool normalization worked: write_file calls reached real execution and many writes succeeded.",
-      "The 20:29:12 write_file failure was syntax validation fail-closed, not missing tool normalization.",
-      "Remaining failure is package script/local entrypoint consistency after repair: scripts/verify.js was referenced but not created."
+      "Director/QA used anthropic_compat-1782212251463 MiniMax-M3; LLM route audit passed.",
+      "Director-only resume preserved PM/CE evidence and executed tasks sequentially through task_3.",
+      "Code artifacts, package scripts, npm install, npm build, and npm test all executed physically; failure is now in runability correctness rather than missing tool execution."
     ],
     "evidence_paths": [
-      "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-867a0b1c4fa8/results/director.result.json",
-      "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/runs/director-867a0b1c4fa8/logs/journal.enriched.jsonl",
+      "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/tasks/task_3.json",
+      "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/contexts/76/76383c0ef8dac4ebc7b0b409",
       "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json"
     ],
-    "platform_fix_after_run": "verified locally: deterministic_npm_script_contract_repair covers missing verify local entrypoint scripts/verify.js"
+    "platform_fix_after_run": "verified locally: coupled import/export semantic target batches, TS18046 exporter target discovery, deterministic reexported type binding repair"
   },
   "completed_platform_fixes_this_loop": [
     "Bench LLM route audit is now stage-aware for --start-from director and no longer falsely requires PM/Chief Engineer calls in Director-only resume.",
@@ -96,7 +107,10 @@
     "Director materialization quality repair now parses npm package script missing local entrypoint errors, maps test globs to concrete source test targets, filters generated outputs such as dist/build/out, and merges those missing entrypoints into the forced write_file repair batch.",
     "Director semantic quality repair now treats unresolved import symbol errors as first-class semantic repair triggers and preserves cross-file symbol repair batches after the first attempt.",
     "Director semantic quality repair now extracts TypeScript diagnostic file paths such as src/index.ts(32,14): error TS2304 and filters tsc command config arguments such as tsconfig.json from repair targets when diagnostics are present.",
-    "Deterministic npm script repair now handles missing verify local entrypoints by rewriting verify to npm run build and test to npm run verify when it referenced the missing verify file."
+    "Deterministic npm script repair now handles missing verify local entrypoints by rewriting verify to npm run build and test to npm run verify when it referenced the missing verify file.",
+    "Director semantic quality repair now treats unresolved TypeScript import/export symbol failures as coupled importer+exporter repair batches, including imports with explicit .ts suffixes.",
+    "Director semantic quality repair now targets TS18046 unknown exported values at both declaration and usage files and preserves that batch across retry attempts.",
+    "Deterministic TypeScript repair now adds local import type bindings when a file uses a symbol in type position that it only re-exports from another module."
   ],
   "verification_summary": {
     "ruff": [
@@ -140,12 +154,12 @@
     "real_bench": "FAIL with evidence: L1-01 Director-only rerun reached QA workspace quality validation; real npm build/test failed after three repair rounds with TS2304 in src/index.ts and no write_tool_evidence from workspace repair."
   },
   "open_risks": [
-    "L1-01 remains unproven until the fresh Director-only rerun shows package_scripts, real_run_gate and integration QA pass.",
-    "Factory dispatch may still surface task-2 claim_required as a secondary symptom after task-1 failure; next run must verify this does not hide the root cause if failure recurs.",
-    "Route audit still previously emitted no_dispatch_evidence_for_binding despite real AnthropicCompat calls; next completed run must be inspected for persistence."
+    "L1-01 remains unproven until a fresh Director-only rerun with the patched backend shows real_run_gate and integration QA pass.",
+    "Context snapshot 76383c0ef8dac4ebc7b0b409 showed duplicate quality-repair messages and stale mutation target detection; if next run fails, context hygiene becomes the next primary platform defect.",
+    "superpowers is not available in the current tool/PATH discovery; CodeGraph was used as required and the missing capability is recorded as environment evidence."
   ],
   "next_deterministic_entrypoint": {
-    "action": "restart backend to load npm_repairs.py, clean generated L1-01 target artifacts preserving PM/CE evidence, rerun L1-01 --start-from director, inspect package_scripts and real_run_gate",
+    "action": "restart backend to load quality_gate/typescript repair patches, clean generated L1-01 target artifacts preserving PM/CE evidence, rerun L1-01 --start-from director, inspect npm build/test, ContextOS snapshots, and factory_audits.json",
     "backend_command": "PYTHONPATH=src/backend python src/backend/server.py --host 127.0.0.1 --port 49977",
     "bench_command_template": "FACTORY_BENCH_BACKEND_URL=http://127.0.0.1:49977 FACTORY_BENCH_BACKEND_TOKEN=polaris-local-dev FACTORY_BENCH_RUN_ID=<run-id> PYTHONPATH=src/backend python src/backend/scripts/factory_bench/run_factory_bench.py --project-ids L1-01 --work-dir /home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229 --start-from director --timeout 5400 --real-run-timeout 120 --max-failed 1"
   },

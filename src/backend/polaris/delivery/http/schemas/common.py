@@ -941,6 +941,47 @@ class FileReadResponse(BaseModel):
     content: str
 
 
+class FileTreeItem(BaseModel):
+    model_config = {"extra": "allow"}
+
+    id: str
+    name: str
+    path: str
+    type: str
+    depth: int
+    extension: str | None = None
+    size: int | None = None
+    mtime: str | None = None
+    language: str | None = None
+    mime: str | None = None
+    icon: str | None = None
+    is_binary: bool = False
+    is_symlink: bool = False
+    children: list[FileTreeItem] | None = None
+
+
+class FileTreeStats(BaseModel):
+    files: int
+    directories: int
+    omitted: int
+    hidden: int
+    binary: int
+    total_size: int
+
+
+class FileTreeResponse(BaseModel):
+    workspace: str
+    scope: str
+    root: str
+    generated_at: str
+    max_depth: int
+    max_entries: int
+    truncated: bool
+    excluded: list[str]
+    stats: FileTreeStats
+    tree: FileTreeItem
+
+
 # ---- Logs response models ----
 
 

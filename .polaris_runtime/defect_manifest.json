@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-06-23T20:37:17+08:00",
+  "updated_at": "2026-06-23T21:41:28+08:00",
   "defects": [
     {
       "id": "DEFECT-director-idle-unresolved-taskboard-prevents-quality-handoff",
@@ -693,6 +693,40 @@
         "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json"
       ],
       "next_action": "Restart backend and rerun L1-01 Director-only resume. Expected package_scripts no longer fails on scripts/verify.js if deterministic repair reaches the residual verify-entrypoint error."
+    },
+    {
+      "id": "DEFECT-l1-01-typescript-coupled-repair-targets-and-reexport-bindings",
+      "status": "platform_fix_verified_locally_pending_real_bench_rerun",
+      "symptom": "L1-01 Director-only MiniMax-M3 run reached real npm install/build/test gates, but Director task 3 failed director_materialization_semantic_quality_failed after repeated semantic repair attempts.",
+      "physical_error": "bench-1782220884-c6a0da / factory_9a08c10525a9: task_3 status=failed, last_execution_error=director_materialization_semantic_quality_failed; semantic_quality_error=unresolved import symbol 'runChecks' from '../src/verify.ts' in tests/verify.test.ts; independent npm run build/test evidence still showed TS2304 missing Firefly/Flower/Moon/Humidity in src/index.ts and TS18046 adjustHumidity is unknown in src/main.ts.",
+      "root_cause_category": "Director LLM Output / Platform Repair Targeting",
+      "platform_gap": "TypeScript semantic repair treated import/export symbol failures and unknown exported values as single-file or rotating targets; context snapshot 76383c0ef8dac4ebc7b0b409 also showed repeated quality-repair messages and stale mutation target detection from earlier task files. Strong LLM output exposed that repair target topology, not model reachability, was the limiting factor.",
+      "fix_strategy": "Harden Polaris repair targeting: unresolved import/export symbol repairs now include importer and exporter as a coupled batch; TS18046 unknown-value diagnostics now locate exported declaration files and preserve declaration+usage batch; TS2304 local type usage from same-file re-export now has deterministic import type binding repair before LLM repair.",
+      "fix_files": [
+        "src/backend/polaris/cells/roles/adapters/internal/director/quality_gate.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/typescript_repairs.py",
+        "src/backend/polaris/cells/roles/adapters/internal/director/deterministic_repairs/generic_repairs.py",
+        "src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py"
+      ],
+      "verification": [
+        "CodeGraph inspected _semantic_quality_repair_target_files, _semantic_quality_exporting_module_targets, _select_materialization_quality_repair_target_batch, and TypeScript deterministic repair flow before edits.",
+        "PYTHONPATH=src/backend python -m pytest -q test_director_adapter_pure.py -k 'reexported_type_binding or unresolved_symbol_without_typecheck or typescript_extension_preserves_importer or unknown_exporter_and_usage_file' -> 4 passed",
+        "python -m ruff check changed Director repair files and test_director_adapter_pure.py -> All checks passed",
+        "python -m ruff format --check changed Director repair files and test_director_adapter_pure.py -> 4 files already formatted",
+        "PYTHONPATH=src/backend python -m mypy changed Director repair source files -> Success: no issues found",
+        "PYTHONPATH=src/backend python -m pytest -q src/backend/polaris/cells/roles/adapters/tests/test_director_adapter_pure.py -> 269 passed, 2 warnings"
+      ],
+      "evidence_paths": [
+        "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/tasks/task_3.json",
+        "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/tasks/task_3.session.json",
+        "/home/dains/.cache/polaris/.polaris/projects/l1-01-a87bf13d1f08/runtime/contexts/76/76383c0ef8dac4ebc7b0b409",
+        "/home/dains/Temp/factory-bench-l1-01-minimax-m3-codex-l1-01-minimax-m3-ce-timeout-20260623155229/factory_audits.json"
+      ],
+      "remaining_risks": [
+        "Context snapshot still shows duplicate quality-repair user messages and stale mutation target detection; this is recorded as a follow-up platform context hygiene gap if the next bench still fails after target hardening.",
+        "The generated L1-01 project itself was not manually edited; fresh Director-only rerun is required to prove platform fix."
+      ],
+      "next_action": "Restart backend to load patched repair target logic, clean L1-01 generated artifacts while preserving PM/CE evidence, rerun Director-only bench, then inspect real_run_gate and QA verdict."
     }
   ],
   "latest_evidence": {
