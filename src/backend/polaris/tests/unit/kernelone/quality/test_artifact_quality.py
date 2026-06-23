@@ -601,6 +601,94 @@ def test_scan_detects_node_test_runner_without_test_files_when_sources_exist(tmp
     assert any("test runner script but no test/spec files exist" in error for error in errors)
 
 
+def test_scan_detects_node_test_directory_script_even_when_tests_exist(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "name": "dream-note-alchemy-furnace",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "node --test tests"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "src" / "index.js"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("export const ready = true;\n", encoding="utf-8")
+    test_file = tmp_path / "tests" / "smoke.test.js"
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    test_file.write_text("import test from 'node:test';\ntest('smoke', () => {});\n", encoding="utf-8")
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("references test directory 'tests' instead of concrete test files" in error for error in errors)
+
+
+def test_scan_detects_type_module_commonjs_runtime_mismatch(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "name": "dream-note-alchemy-furnace",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test tests/*.test.js"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "src" / "index.js"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        'const Note = require("./models/Note");\nconsole.log(Note.name);\n',
+        encoding="utf-8",
+    )
+    test_file = tmp_path / "tests" / "smoke.test.js"
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    test_file.write_text("import test from 'node:test';\ntest('smoke', () => {});\n", encoding="utf-8")
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert any("declares type=module but workspace JavaScript uses CommonJS runtime syntax" in error for error in errors)
+
+
+def test_scan_allows_type_module_with_esm_source(tmp_path: Path) -> None:
+    package_json = tmp_path / "package.json"
+    package_json.write_text(
+        """
+{
+  "name": "dream-note-alchemy-furnace",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test tests/*.test.js"
+  }
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "src" / "index.js"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("export const ready = true;\nconsole.log(ready);\n", encoding="utf-8")
+    test_file = tmp_path / "tests" / "smoke.test.js"
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    test_file.write_text("import test from 'node:test';\ntest('smoke', () => {});\n", encoding="utf-8")
+
+    errors = scan_workspace_artifact_quality(str(tmp_path), relative_paths=["package.json"])
+
+    assert not any("CommonJS runtime syntax" in error for error in errors)
+
+
 def test_scan_detects_manifest_only_npm_test_script(tmp_path: Path) -> None:
     package_json = tmp_path / "package.json"
     package_json.write_text(

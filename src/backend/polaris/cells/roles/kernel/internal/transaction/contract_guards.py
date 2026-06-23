@@ -270,6 +270,24 @@ def _extract_file_tokens_from_text(text: str) -> list[str]:
     return _dedupe_normalized_paths(tokens)
 
 
+def _extract_scope_tokens_from_text(text: str) -> list[str]:
+    """Extract safe directory scope tokens from one structured scope fragment."""
+    raw = str(text or "")
+    if not raw:
+        return []
+    candidates: list[str] = []
+    for raw_token in re.split(r"[,，\s]+", raw):
+        token = raw_token.strip().strip("\"'`[](){}")
+        if not token:
+            continue
+        if token.endswith("/"):
+            token = token.rstrip("/")
+        normalized = _safe_relative_scope_path(token)
+        if normalized and _looks_like_scope_directory(normalized):
+            candidates.append(normalized)
+    return _dedupe_normalized_paths(candidates)
+
+
 def extract_target_files_from_message(message: str) -> list[str]:
     """从用户消息中提取疑似目标文件路径。"""
     raw = str(message or "")
@@ -287,22 +305,28 @@ def extract_target_files_from_message(message: str) -> list[str]:
 
 
 def extract_allowed_scope_paths_from_message(message: str) -> list[str]:
-    """Extract trusted directory scopes from structured scope arrays.
+    """Extract trusted directory scopes from structured contract fields.
 
     Unlike ``extract_target_files_from_message``, this deliberately ignores
-    prose and only accepts JSON-style ``scope_paths`` arrays. Natural-language
-    scope text is too broad to use as a write authorization prefix.
+    prose and only accepts JSON-style ``scope_paths`` arrays or declared target
+    lines such as ``范围: src/, tests/``. Natural-language scope text is too broad
+    to use as a write authorization prefix.
     """
     raw = str(message or "")
     if not raw:
         return []
 
     scopes: list[str] = []
-    for match in _STRUCTURED_SCOPE_ARRAY_RE.finditer(raw):
-        for item in _parse_json_string_array(match.group("value")):
+    for scope_array_match in _STRUCTURED_SCOPE_ARRAY_RE.finditer(raw):
+        for item in _parse_json_string_array(scope_array_match.group("value")):
             normalized = _safe_relative_scope_path(item)
             if normalized and _looks_like_scope_directory(normalized):
                 scopes.append(normalized)
+    for line in raw.splitlines():
+        line_match = _DECLARED_TARGET_LINE_RE.match(line)
+        if not line_match:
+            continue
+        scopes.extend(_extract_scope_tokens_from_text(line_match.group("value")))
     return _dedupe_normalized_paths(scopes)
 
 

@@ -37,6 +37,13 @@ from ..internal.factory_run_service import (
 )
 from ..internal.projection_change_analysis import ProjectionChangeAnalysisService
 from ..internal.projection_lab import FactoryProjectionLabService
+from ..internal.run_ledger import (
+    JobToken,
+    RunLedger,
+    build_gate_ledger_event,
+    build_job_token_from_record,
+    persist_real_run_gate_ledger,
+)
 from .contracts import (
     CancelFactoryRunCommandV1,
     FactoryPipelineError,
@@ -58,7 +65,6 @@ from .contracts import (
 
 __all__ = [
     "TERMINAL_RUN_STATUSES",
-    "build_real_run_gate",
     "CancelFactoryRunCommandV1",
     "FactoryConfig",
     "FactoryPipelineError",
@@ -72,6 +78,7 @@ __all__ = [
     "GetFactoryRunStatusQueryV1",
     "IFactoryPipeline",
     "IFactoryProjectionLab",
+    "JobToken",
     "ListFactoryRunsQueryV1",
     "ProjectionBackMappingRefreshResultV1",
     "ProjectionChangeAnalysisService",
@@ -79,6 +86,11 @@ __all__ = [
     "ProjectionReprojectionResultV1",
     "RefreshProjectionBackMappingCommandV1",
     "ReprojectProjectionExperimentCommandV1",
+    "RunLedger",
     "RunProjectionExperimentCommandV1",
     "StartFactoryRunCommandV1",
+    "build_gate_ledger_event",
+    "build_job_token_from_record",
+    "build_real_run_gate",
+    "persist_real_run_gate_ledger",
 ]

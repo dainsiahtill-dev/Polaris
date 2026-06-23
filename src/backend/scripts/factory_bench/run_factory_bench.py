@@ -44,6 +44,7 @@ from polaris.cells.factory.pipeline.internal.bench_gates import (
     collect_llm_events,
     resolve_expected_llm_bindings,
 )
+from polaris.cells.factory.pipeline.public.service import persist_real_run_gate_ledger
 from polaris.kernelone.benchmark.factory_audit import (
     aggregate_factory_audits,
     build_factory_audit_record,
@@ -3626,16 +3627,35 @@ def main() -> int:
         raw_audit_bundle = chain.get("audit_bundle")
         audit_bundle: dict[str, Any] = raw_audit_bundle if isinstance(raw_audit_bundle, dict) else {}
         record.update(backend_audit_context)
+        record["run_id"] = run_id
+        record["project_id"] = pid
+        record["factory_run_id"] = str(chain.get("run_id") or run_id)
         if chain_is_terminal:
             record["real_run_gate"] = build_real_run_gate(
                 workspace,
                 record,
                 timeout_s=int(args.real_run_timeout),
             )
+            record["run_ledger"] = persist_real_run_gate_ledger(
+                workspace,
+                record,
+                record["real_run_gate"],
+                run_id=run_id,
+                project_id=pid,
+            )
         else:
             record["real_run_gate"] = _build_non_terminal_real_run_gate(
                 chain_phase=chain_phase_raw,
                 chain_status=chain_status_raw,
+            )
+            record["run_ledger"] = persist_real_run_gate_ledger(
+                workspace,
+                record,
+                record["real_run_gate"],
+                run_id=run_id,
+                project_id=pid,
+                stage=chain_phase_raw or chain_status_raw or "chain_non_terminal",
+                gate_name="chain_non_terminal",
             )
         required_llm_roles = required_llm_roles_for_factory_record(chain=chain, record=record)
         record["required_llm_roles"] = list(required_llm_roles)

@@ -83,6 +83,11 @@ class TestMutationTargetDriftFiltering:
 
         assert extract_allowed_scope_paths_from_message(message) == ["src", "tests"]
 
+    def test_extracts_directory_scope_paths_from_structured_scope_line(self) -> None:
+        message = "范围: package.json, README.md, src/, tests/, src, tests"
+
+        assert extract_allowed_scope_paths_from_message(message) == ["src", "tests"]
+
     def test_drops_extra_out_of_scope_write_when_valid_target_write_exists(self) -> None:
         invocations: list[dict[str, Any]] = [
             {

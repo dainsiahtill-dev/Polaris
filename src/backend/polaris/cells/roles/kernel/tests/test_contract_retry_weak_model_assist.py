@@ -289,6 +289,53 @@ def test_contract_retry_context_restates_target_files_not_acceptance_artifacts()
     assert "not authorization" in system
 
 
+def test_contract_retry_context_preserves_authorized_directory_scopes() -> None:
+    out = build_contract_retry_context(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "[mode:materialize]\n"
+                    "{\n"
+                    '  "scope_paths": ["package.json", "README.md", "src", "tests"],\n'
+                    '  "target_files": ["package.json", "README.md"]\n'
+                    "}\n"
+                    "Create package.json, README.md, src/ and tests/ scaffolding."
+                ),
+            }
+        ],
+        [{"name": "write_file"}, {"name": "read_file"}],
+    )
+
+    system = next(m["content"] for m in out if m["role"] == "system")
+    user = next(m["content"] for m in out if m["role"] == "user")
+
+    assert '["src", "tests"]' in system
+    assert '"scope_paths": ["src", "tests"]' in user
+
+
+def test_contract_retry_context_drops_scope_that_broadens_specific_target() -> None:
+    out = build_contract_retry_context(
+        [
+            {
+                "role": "user",
+                "content": (
+                    "[mode:materialize]\n"
+                    "{\n"
+                    '  "scope_paths": ["src"],\n'
+                    '  "target_files": ["src/client/network-client.ts"]\n'
+                    "}\n"
+                ),
+            }
+        ],
+        [{"name": "write_file"}, {"name": "read_file"}],
+    )
+
+    user = next(m["content"] for m in out if m["role"] == "user")
+
+    assert "POLARIS_AUTHORIZED_SCOPE_PATHS" not in user
+
+
 def test_extract_target_files_includes_pyproject_toml() -> None:
     message = "Create pyproject.toml, README.md, and infrastructure/config.py."
 

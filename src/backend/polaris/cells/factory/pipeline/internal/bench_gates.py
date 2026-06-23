@@ -1557,6 +1557,8 @@ def build_real_run_gate(workspace: Path, record: dict[str, Any], *, timeout_s: i
         "ok": ok,
         "requirements": requirements,
         "commands": commands[-12:],
+        "command_count_total": len(commands),
+        "commands_truncated": len(commands) > 12,
         "entrypoint": entrypoint,
         "summary": "real run gate passed" if ok else "real run gate failed: " + ", ".join(failing),
     }

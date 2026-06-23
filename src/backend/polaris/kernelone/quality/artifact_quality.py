@@ -218,6 +218,15 @@ _NPM_MANIFEST_ONLY_TEST_SCRIPT_RE = re.compile(
     r"|dist/[^'\"]+\s+not\s+found",
     re.IGNORECASE,
 )
+_COMMONJS_RUNTIME_TOKEN_RE = re.compile(
+    r"(?:^|\n)\s*(?:"
+    r"(?:const|let|var)\s+[\w${}\s,]+=\s*require\s*\("
+    r"|module\s*\.\s*exports\b"
+    r"|exports\s*\.\s*[A-Za-z_$]\w*\s*="
+    r"|exports\s*\[\s*['\"][^'\"]+['\"]\s*\]\s*="
+    r")",
+    re.IGNORECASE,
+)
 _NPM_PLACEHOLDER_TEST_SCRIPT_RE = re.compile(
     r"\b(?:no\s+tests?\s+(?:specified|yet)|tests?\s+not\s+(?:implemented|available)|all\s+tests?\s+passed)\b",
     re.IGNORECASE,
@@ -673,6 +682,7 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
             if node_eval_error:
                 errors.append(node_eval_error)
                 continue
+            errors.extend(_scan_npm_script_node_test_directory_targets(root_full, tokens, str(script_name), relative_path))
             errors.extend(
                 _scan_npm_script_missing_local_entrypoints(root_full, script_text, str(script_name), relative_path)
             )
@@ -689,6 +699,7 @@ def _scan_package_manifest(root_full: Path, text: str, relative_path: str) -> li
         errors.append(
             f"Artifact quality scan failed: npm package manifest contains Python runtime entrypoint in {relative_path}"
         )
+    errors.extend(_scan_package_module_type_mismatch(root_full, payload, relative_path))
     for section_name in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
         section = payload.get(section_name)
         if not isinstance(section, dict):
@@ -844,6 +855,74 @@ def _scan_npm_script_missing_local_entrypoints(
                 f"{script_name!r} references missing local entrypoint {normalized!r} in {relative_path}"
             )
     return errors
+
+
+def _scan_npm_script_node_test_directory_targets(
+    root_full: Path,
+    tokens: list[str],
+    script_name: str,
+    relative_path: str,
+) -> list[str]:
+    if str(script_name or "").strip().lower() != "test":
+        return []
+    errors: list[str] = []
+    for index, token in enumerate(tokens[:-1]):
+        command = os.path.basename(str(token or "").strip().lower())
+        if command not in {"node", "node.exe"}:
+            continue
+        if not any(_node_token_enables_test_runner(item) for item in tokens[index + 1 :]):
+            continue
+        entrypoint = _npm_script_entrypoint_after_command(tokens, index)
+        normalized = entrypoint.replace("\\", "/").strip().strip("'\"")
+        if not normalized or normalized.startswith(("/", "http://", "https://")) or ".." in normalized.split("/"):
+            continue
+        if Path(normalized).suffix:
+            continue
+        target_dir = root_full / normalized
+        if not target_dir.is_dir():
+            continue
+        if not _directory_has_node_test_files(target_dir):
+            continue
+        errors.append(
+            "Artifact quality scan failed: npm package manifest script "
+            f"{script_name!r} references test directory {normalized!r} instead of concrete test files in "
+            f"{relative_path}"
+        )
+    return errors
+
+
+def _node_token_enables_test_runner(token: str) -> bool:
+    normalized = str(token or "").strip().lower()
+    return normalized == "--test" or normalized.startswith("--test=")
+
+
+def _directory_has_node_test_files(directory: Path) -> bool:
+    try:
+        for path in directory.rglob("*"):
+            if path.is_file() and _is_test_like_artifact_path(path.as_posix()):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _scan_package_module_type_mismatch(root_full: Path, payload: dict[str, Any], relative_path: str) -> list[str]:
+    if str(payload.get("type") or "").strip().lower() != "module":
+        return []
+    for candidate in _iter_workspace_relative_files(root_full):
+        if Path(candidate).suffix.lower() not in {".js", ".jsx"}:
+            continue
+        full_path = root_full / candidate
+        try:
+            text = full_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _COMMONJS_RUNTIME_TOKEN_RE.search(text):
+            return [
+                "Artifact quality scan failed: npm package manifest declares type=module but workspace "
+                f"JavaScript uses CommonJS runtime syntax in {relative_path}"
+            ]
+    return []
 
 
 def _scan_npm_script_missing_local_configs(

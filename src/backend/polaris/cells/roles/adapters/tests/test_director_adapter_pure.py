@@ -7788,6 +7788,57 @@ class TestQualityRepairMissingTargetContract:
         }
         assert "NPM PACKAGE MANIFEST REPAIR" in adapter.repair_message
 
+    def test_node_test_directory_quality_error_targets_package_json(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _semantic_quality_repair_target_files,
+        )
+
+        (tmp_path / "package.json").write_text(
+            '{"scripts":{"test":"node --test tests"}}\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "index.js").write_text("export const ready = true;\n", encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "smoke.test.js").write_text("export const testFile = true;\n", encoding="utf-8")
+
+        targets = _semantic_quality_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: npm package manifest script 'test' references test directory "
+                "'tests' instead of concrete test files in package.json"
+            ],
+            changed_files=["package.json", "src/index.js", "tests/smoke.test.js"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["package.json"]
+
+    def test_commonjs_type_module_quality_error_targets_package_json(self, tmp_path) -> None:
+        from polaris.cells.roles.adapters.internal.director.quality_gate import (
+            _semantic_quality_repair_target_files,
+        )
+
+        (tmp_path / "package.json").write_text(
+            '{"type":"module","scripts":{"start":"node src/index.js"}}\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "index.js").write_text(
+            'const Note = require("./models/Note");\n',
+            encoding="utf-8",
+        )
+
+        targets = _semantic_quality_repair_target_files(
+            artifact_quality_errors=[
+                "Artifact quality scan failed: npm package manifest declares type=module but workspace "
+                "JavaScript uses CommonJS runtime syntax in package.json"
+            ],
+            changed_files=["package.json", "src/index.js"],
+            workspace_full=str(tmp_path),
+        )
+
+        assert targets == ["package.json"]
+
     @pytest.mark.asyncio
     async def test_package_manifest_quality_error_preserves_missing_targets(self, tmp_path) -> None:
         from polaris.cells.roles.adapters.internal.director.execute_method import (

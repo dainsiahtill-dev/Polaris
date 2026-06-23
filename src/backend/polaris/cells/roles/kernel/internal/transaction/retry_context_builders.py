@@ -17,7 +17,9 @@ from typing import Any
 
 from polaris.cells.roles.kernel.internal.transaction.constants import WRITE_TOOLS
 from polaris.cells.roles.kernel.internal.transaction.contract_guards import (
+    extract_allowed_scope_paths_from_message,
     extract_target_files_from_message,
+    filter_scope_paths_for_explicit_targets,
 )
 from polaris.cells.roles.kernel.internal.transaction.task_contract_builder import (
     extract_latest_user_message,
@@ -56,6 +58,13 @@ def _extract_role_definition_block(context: list[dict]) -> str:
     return ""
 
 
+def _extract_authorized_scope_paths(context: list[dict], target_file_tokens: list[str]) -> list[str]:
+    """Extract retry-safe scope paths from the original context."""
+    raw_context = "\n".join(str(item.get("content") or "") for item in context if isinstance(item, Mapping))
+    scope_paths = extract_allowed_scope_paths_from_message(raw_context)
+    return filter_scope_paths_for_explicit_targets(scope_paths, target_file_tokens)
+
+
 def build_contract_retry_context(
     context: list[dict],
     tool_definitions: list[dict],
@@ -75,6 +84,7 @@ def build_contract_retry_context(
         if "/" not in normalized and suffix == "js" and name[:1].isupper():
             continue
         target_file_tokens.append(token)
+    authorized_scope_paths = _extract_authorized_scope_paths(context, target_file_tokens)
     write_candidates = set(WRITE_TOOLS)
     write_tools: list[str] = []
     for item in tool_definitions:
@@ -146,6 +156,13 @@ def build_contract_retry_context(
                 "named by the current task, but do not stop after only one sibling file. Do not modify package.json, "
                 "tsconfig.json, or an already-created sibling unless that exact file is one of the listed targets."
             )
+    if authorized_scope_paths:
+        retry_lines.append(
+            "Authorized directory scope_paths retained from the task contract: "
+            + json.dumps(authorized_scope_paths, ensure_ascii=False)
+            + ". These scope paths authorize files under the listed directories only when the current task "
+            "does not already pin a more specific target inside that directory."
+        )
 
     retry_mode_guard = (
         "RETRY MODE ACTIVE: discard only the previous staged execution workflow "
@@ -169,7 +186,14 @@ def build_contract_retry_context(
         }
     ]
     if latest_user:
-        retry_context.append({"role": "user", "content": latest_user})
+        user_content = latest_user
+        if authorized_scope_paths:
+            user_content = (
+                user_content.rstrip()
+                + "\nPOLARIS_AUTHORIZED_SCOPE_PATHS: "
+                + json.dumps({"scope_paths": authorized_scope_paths}, ensure_ascii=False)
+            )
+        retry_context.append({"role": "user", "content": user_content})
     else:
         for item in context:
             if not isinstance(item, Mapping):
